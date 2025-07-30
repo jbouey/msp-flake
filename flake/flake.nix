@@ -1,23 +1,20 @@
 {
-  description = "NixOS configuration pulling from GitHub flake";
+  description = "Infra-Watcher container (Fluent Bit + Python tailer)";
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";  # adjust if needed
-    mspflake.url = "git+file:///home/osirisclinic/msp-flake"; 
-    # later you can swap to "github:jbouey/msp-flake"
-  };
+  inputs.nixpkgs.url   = "github:NixOS/nixpkgs/nixos-24.05";
+  inputs.flake-utils.url = "github:numtide/flake-utils";
+  inputs.nix2container.url = "github:nlewo/nix2container";
 
-  outputs = { self, nixpkgs, mspflake, ... }@inputs:
-    let
-      system = "x86_64-linux";
-    in {
-      nixosConfigurations.vm = nixpkgs.lib.nixosSystem {
-        inherit system;
-        modules = [
-          mspflake/modules/base.nix
-          mspflake/modules/compliance.nix
-          mspflake/modules/monitoring.nix
-        ];
-      };
-    };
+  outputs = { self, nixpkgs, flake-utils, nix2container }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = import nixpkgs { inherit system; };
+        python = pkgs.python311;
+        infra-watcher = import ./pkgs/infra-watcher.nix { inherit pkgs python; };
+        container-img = import ./container { inherit pkgs infra-watcher nix2container; };
+      in {
+        packages.default = infra-watcher;
+        packages.container = container-img;
+        apps.default = flake-utils.lib.mkApp { drv = container-img; };
+      });
 }
