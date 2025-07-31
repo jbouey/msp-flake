@@ -11,7 +11,7 @@
         pkgs = import nixpkgs { inherit system; };
         python = pkgs.python311;
         infra-watcher = import ./flake/pkgs/infra-watcher.nix { inherit pkgs python; };
-        container-img = import ./container { inherit pkgs infra-watcher nix2container; };
+        container-img = import ./flake/container { inherit pkgs infra-watcher nix2container; };
       in {
         packages.default = infra-watcher;
         packages.container = container-img;
