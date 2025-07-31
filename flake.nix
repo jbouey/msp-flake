@@ -10,7 +10,7 @@
       let
         pkgs = import nixpkgs { inherit system; };
         python = pkgs.python311;
-        infra-watcher = import ./pkgs/infra-watcher.nix { inherit pkgs python; };
+        infra-watcher = import ./flake/pkgs/infrawatcher { inherit pkgs python; };
         container-img = import ./container { inherit pkgs infra-watcher nix2container; };
       in {
         packages.default = infra-watcher;
