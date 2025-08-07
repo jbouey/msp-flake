@@ -1,36 +1,65 @@
+# flake/container/default.nix - Back to nix2container (optimized)
 { pkgs, infra-watcher, nix2container }:
 
-# nix2container is the *package* that exposes `buildImage`
-nix2container.buildImage {
-  name = "infra-watcher";
+let
+  # Separate stable dependencies layer (rarely changes)
+  stableLayer = nix2container.buildLayer {
+    deps = [ 
+      pkgs.fluent-bit 
+      pkgs.coreutils 
+      pkgs.bash 
+      pkgs.curl  # For health endpoint and MCP communication
+    ];
+  };
+  
+  # Application layer (changes frequently during development)
+  # This will be rebuilt when your Python code changes, but stable layer won't
+  
+in nix2container.buildImage {
+  name = "registry.example.com/infra-watcher";
   tag = "0.1";
-
-  # Copy your application, config, and dependencies to the container
+  
+  # Use layered approach for better caching and smaller rebuilds
+  layers = [ stableLayer ];
+  
+  # Copy your application and config
   copyToRoot = [
-    infra-watcher 
-    pkgs.fluent-bit
-    pkgs.coreutils
-    pkgs.bash
-    # Copy the fluent-bit config to /assets in the container
-    (pkgs.runCommand "fluent-bit-config" {} ''
+    infra-watcher
+    # Copy fluent-bit config to the right place
+    (pkgs.runCommand "fluent-bit-assets" {} ''
       mkdir -p $out/assets
       cp ${./../assets}/fluent-bit.conf $out/assets/
     '')
   ];
+  
+  # Set up the container filesystem
+  perms = [
+    {
+      path = infra-watcher;
+      regex = ".*/bin/.*";
+      mode = "0755";
+    }
+  ];
 
   config = {
-    # Use 'cmd' instead of 'Cmd' (lowercase for OCI spec)
+    # Your original command structure for the MSP system
     cmd = [ "/bin/sh" "-c" 
            "infra-tailer & fluent-bit -c /assets/fluent-bit.conf" ];
     
-    # Use 'exposedPorts' instead of 'ExposedPorts' (camelCase for OCI spec)
+    # Health endpoint port (Step 7 from your plan)
     exposedPorts = { 
       "8080/tcp" = {}; 
     };
     
-    # Set PATH so binaries can be found
     env = [
-      "PATH=${pkgs.lib.makeBinPath [ infra-watcher pkgs.fluent-bit pkgs.coreutils pkgs.bash ]}"
+      "PATH=${pkgs.lib.makeBinPath [ infra-watcher pkgs.fluent-bit pkgs.coreutils pkgs.bash pkgs.curl ]}"
+      # Environment for MCP server communication (Step 9)
+      "MCP_URL=http://mcp-server:8000"
+      "LOG_LEVEL=INFO"
     ];
+    
+    # Run as non-root for security (MSP best practice)
+    user = "1000:1000";
+    workingDir = "/";
   };
 }

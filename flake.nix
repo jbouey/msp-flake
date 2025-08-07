@@ -1,30 +1,160 @@
 {
   description = "Infra-Watcher container (Fluent Bit + Python tailer)";
-  inputs.nixpkgs.url        = "github:NixOS/nixpkgs/nixos-24.05";
-  inputs.flake-utils.url    = "github:numtide/flake-utils";
-  inputs.nix2container.url  = "github:nlewo/nix2container";
-  inputs.nix2container.inputs.nixpkgs.follows = "nixpkgs";
   
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    flake-utils.url = "github:numtide/flake-utils";
+    nix2container.url = "github:nlewo/nix2container";
+    nix2container.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
   outputs = { self, nixpkgs, flake-utils, nix2container }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs   = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs { inherit system; };
         python = pkgs.python311;
-        # package derivation for the log-watcher
+        
+        # Package derivation for the log-watcher
         infra-watcher = import ./flake/pkgs/infra-watcher.nix {
           inherit pkgs python;
         };
-        # attr-set that actually exposes `buildImage`
+        
+        # Attr-set that actually exposes `buildImage`
         n2cPkgs = nix2container.packages."${system}";
-        # container image derivation
+        
+        # Container image derivation using nix2container
         container-img = import ./flake/container/default.nix {
           inherit pkgs infra-watcher;
-          nix2container = n2cPkgs.nix2container;  # Pass the nix2container package, not the package set
+          nix2container = n2cPkgs.nix2container;
         };
+        
+        # Development shell with all dependencies
+        devShell = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            python
+            fluent-bit
+            # Add development tools
+            python311Packages.pytest
+            python311Packages.black
+            python311Packages.mypy
+            # Container tools
+            podman
+            skopeo
+            # MSP development tools
+            curl
+            jq
+          ];
+          
+          shellHook = ''
+            echo "🔍 Infra-Watcher Development Environment"
+            echo "Python: $(python --version)"
+            echo "Fluent Bit: $(fluent-bit --version | head -1)"
+            echo ""
+            echo "MSP Log Watcher Container Build Commands:"
+            echo "  nix build .#container              # Build container image"
+            echo "  nix run .#load-to-docker           # Load into Docker"
+            echo "  nix run .#load-to-podman           # Load into Podman"
+            echo "  nix run .#push-to-registry         # Push to your registry"
+            echo "  nix develop                        # Enter dev shell"
+            echo ""
+            echo "Local testing:"
+            echo "  nix run .#test-local               # Run smoke test"
+          '';
+        };
+
       in
       {
-        packages.default   = infra-watcher;
-        packages.container = container-img;
-        apps.default       = flake-utils.lib.mkApp { drv = container-img; };
-      });
+        # Main outputs
+        packages = {
+          default = infra-watcher;
+          infra-watcher = infra-watcher;
+          container = container-img;
+        };
+        
+        # Apps for MSP workflow
+        apps = {
+          default = flake-utils.lib.mkApp { drv = container-img; };
+          
+          # Load into Docker (most common for MSP deployments)
+          load-to-docker = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "load-to-docker" ''
+              echo "🚀 Loading MSP Log Watcher into Docker..."
+              nix run .#container.copyToDockerDaemon
+              echo "✅ Done! Image: registry.example.com/infra-watcher:0.1"
+              echo ""
+              echo "Test locally:"
+              echo "  docker run -d --name infra-watcher -p 8080:8080 \\"
+              echo "    -v /var/log:/var/log:ro \\"
+              echo "    -e MCP_URL=http://your-mcp-server:8000 \\"
+              echo "    registry.example.com/infra-watcher:0.1"
+            '');
+          };
+          
+          # Load into Podman
+          load-to-podman = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "load-to-podman" ''
+              echo "🚀 Loading MSP Log Watcher into Podman..."
+              nix run .#container.copyToPodman
+              echo "✅ Done! Image: registry.example.com/infra-watcher:0.1"
+            '');
+          };
+          
+          # Push to registry for MSP-wide deployment
+          push-to-registry = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "push-to-registry" ''
+              if [ -z "$REGISTRY_URL" ]; then
+                echo "❌ Set REGISTRY_URL environment variable first"
+                echo "   Example: export REGISTRY_URL=your-registry.com/infra-watcher:0.1"
+                exit 1
+              fi
+              echo "🚀 Pushing to registry: $REGISTRY_URL"
+              nix run .#container.copyToRegistry -- "$REGISTRY_URL"
+              echo "✅ Done! All MSP offices can now pull: $REGISTRY_URL"
+            '');
+          };
+          
+          # Local smoke test (Step 11 from your plan)
+          test-local = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "test-local" ''
+              echo "🧪 Running local MSP smoke test..."
+              echo "1. Building container..."
+              nix build .#container
+              
+              echo "2. Loading into Docker..."
+              nix run .#load-to-docker
+              
+              echo "3. Starting test container..."
+              docker run -d --name infra-watcher-test -p 8080:8080 \
+                -v /tmp:/var/log:ro \
+                -e MCP_URL=http://localhost:8000 \
+                registry.example.com/infra-watcher:0.1
+              
+              echo "4. Testing health endpoint..."
+              sleep 3
+              if curl -f http://localhost:8080/status; then
+                echo "✅ Health endpoint working!"
+              else
+                echo "❌ Health endpoint failed"
+              fi
+              
+              echo "5. Cleaning up..."
+              docker stop infra-watcher-test
+              docker rm infra-watcher-test
+              
+              echo "✅ Smoke test complete!"
+            '');
+          };
+        };
+        
+        # Development environment
+        devShells.default = devShell;
+        
+        # Formatter for `nix fmt`
+        formatter = pkgs.nixpkgs-fmt;
+      }
+    );
 }
