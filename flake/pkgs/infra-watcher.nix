@@ -5,29 +5,32 @@ let
 in
 pkgs.stdenv.mkDerivation {
   pname = "infra-watcher";
-  version = "0.1";
-  src = ./.;  # this directory contains tailer.py
+  version = "0.1.1";
+  src = ./.;  # tailer.py is here
 
   buildInputs = [ py ];
+  dontConfigure = true;
+  dontBuild = true;
 
   installPhase = ''
-    mkdir -p $out/bin $out/etc
-    cp ${./tailer.py} $out/bin/infra-tailer
-    chmod +x $out/bin/infra-tailer
+    set -euxo pipefail
+    mkdir -p "$out/bin" "$out/etc"
 
-    # ship fluent-bit config alongside (container will place it in /etc/fluent-bit/)
-    cp ${../assets/fluent-bit.conf} $out/etc/fluent-bit.conf
+    cp ${./tailer.py} "$out/bin/infra-tailer"
+    chmod +x "$out/bin/infra-tailer"
+    test -x "$out/bin/infra-tailer"  # hard fail if missing
 
-    # lightweight entrypoint that runs both processes if you want it later
-    cat > $out/bin/infra-entry <<'EOF'
+    # If you ship Fluent Bit config:
+    cp ${../assets/fluent-bit.conf} "$out/etc/fluent-bit.conf"
+
+    cat > "$out/bin/infra-entry" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-# start fluent-bit in background if present
 if command -v fluent-bit >/dev/null 2>&1 && [ -f /etc/fluent-bit/fluent-bit.conf ]; then
   fluent-bit -c /etc/fluent-bit/fluent-bit.conf &
 fi
 exec infra-tailer
 EOF
-    chmod +x $out/bin/infra-entry
+    chmod +x "$out/bin/infra-entry"
   '';
 }
