@@ -1,41 +1,46 @@
-# flake/pkgs/infra-watcher.nix - Correct path to tailer.py
+# flake/pkgs/infra-watcher.nix
 { pkgs, python }:
 
+let
+  pythonEnv = python.withPackages (ps: with ps; [
+    requests
+    fastapi
+    uvicorn
+    httpx
+  ]);
+in
 pkgs.stdenv.mkDerivation rec {
   pname = "infra-watcher";
   version = "0.1";
   
-  # Point to current directory where tailer.py actually is
-  src = ./.;  # This is flake/pkgs/ directory
+  # Current directory where tailer.py is
+  src = ./.;
   
   buildInputs = [
     pkgs.fluent-bit
-    python
-    python.pkgs.requests
-    python.pkgs.fastapi
-    python.pkgs.uvicorn
-    python.pkgs.httpx
+    pythonEnv
   ];
   
-  # Install phase that handles the Python script properly
   installPhase = ''
     mkdir -p $out/bin
     
-    # Copy your Python script (it's in the same directory as this .nix file)
+    # Check if tailer.py exists
     if [ -f "tailer.py" ]; then
-      # Create a wrapper that ensures Python can find dependencies
+      echo "Found tailer.py, installing..."
+      
+      # Create executable wrapper with proper Python environment
       cat > $out/bin/infra-tailer << EOF
-#!${python}/bin/python3
-import sys
-sys.path.insert(0, '${python.pkgs.requests}/lib/python3.11/site-packages')
-sys.path.insert(0, '${python.pkgs.fastapi}/lib/python3.11/site-packages')
-sys.path.insert(0, '${python.pkgs.uvicorn}/lib/python3.11/site-packages')
-sys.path.insert(0, '${python.pkgs.httpx}/lib/python3.11/site-packages')
+#!${pythonEnv}/bin/python3
 EOF
-      cat tailer.py >> $out/bin/infra-tailer
+      # Append the actual Python code (skip the shebang line)
+      tail -n +2 tailer.py >> $out/bin/infra-tailer
       chmod +x $out/bin/infra-tailer
+      
+      echo "Installed infra-tailer to $out/bin/"
     else
-      echo "ERROR: tailer.py not found in $src"
+      echo "ERROR: tailer.py not found in source directory"
+      echo "Contents of source directory:"
+      ls -la
       exit 1
     fi
   '';
