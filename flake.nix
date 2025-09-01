@@ -9,6 +9,10 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, nix2container }:
+    let
+      # Define the NixOS module separately so it can be used across systems
+      logWatcherModule = import ./flake/modules/log-watcher.nix;
+    in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -37,6 +41,9 @@
             python311Packages.pytest
             python311Packages.black
             python311Packages.mypy
+            python311Packages.requests
+            python311Packages.fastapi
+            python311Packages.uvicorn
             # Container tools
             podman
             skopeo
@@ -59,6 +66,7 @@
             echo ""
             echo "Local testing:"
             echo "  nix run .#test-local               # Run smoke test"
+            echo "  nix run .#test-native              # Run native (non-container) test"
           '';
         };
 
@@ -148,6 +156,25 @@
               echo "✅ Smoke test complete!"
             '');
           };
+          
+          # Test native (non-containerized) for VM testing
+          test-native = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "test-native" ''
+              echo "🧪 Running native log watcher test..."
+              echo "Set MCP_URL environment variable first:"
+              echo "  export MCP_URL=http://192.168.1.100:8000"
+              echo ""
+              if [ -z "$MCP_URL" ]; then
+                echo "Using default: http://localhost:8000"
+                export MCP_URL=http://localhost:8000
+              fi
+              echo "MCP Server: $MCP_URL"
+              echo ""
+              echo "Starting log watcher..."
+              ${infra-watcher}/bin/infra-tailer
+            '');
+          };
         };
         
         # Development environment
@@ -156,5 +183,42 @@
         # Formatter for `nix fmt`
         formatter = pkgs.nixpkgs-fmt;
       }
-    );
+    ) // {
+      # Add NixOS module output (outside of eachDefaultSystem)
+      nixosModules = {
+        log-watcher = logWatcherModule;
+        default = logWatcherModule;
+      };
+      
+      # Example NixOS configuration for testing
+      nixosConfigurations.test-vm = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          # Base NixOS configuration
+          ({ pkgs, ... }: {
+            boot.isContainer = true; # For testing in container/VM
+            
+            # Import the log watcher module
+            imports = [ logWatcherModule ];
+            
+            # Enable and configure the service
+            services.msp-log-watcher = {
+              enable = true;
+              mcpUrl = "http://192.168.1.100:8000"; # Your laptop's IP
+              logLevel = "INFO";
+            };
+            
+            # Basic system config for testing
+            system.stateVersion = "24.05";
+            networking.hostName = "test-log-watcher";
+            
+            # For testing: create some log files
+            systemd.tmpfiles.rules = [
+              "f /var/log/test.log 0644 root root -"
+              "f /var/log/app.log 0644 root root -"
+            ];
+          })
+        ];
+      };
+    };
 }
