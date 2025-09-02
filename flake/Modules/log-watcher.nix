@@ -42,6 +42,7 @@ in {
         else "Infra Tailer (scheduled)";
       wantedBy = if cfg.schedule == null then [ "multi-user.target" ] else [];
       after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
 
       environment = {
         MCP_URL = cfg.mcpUrl;
