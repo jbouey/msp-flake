@@ -174,6 +174,7 @@
           # bring in the service module
           self.nixosModules.log-watcher
 
+          "${nixpkgs}/nixos/modules/virtualisation/qemu-vm.nix"
           
          {  
           users.users.root.initialPassword = "root";
