@@ -20,7 +20,7 @@
 
         # Packages
         infra-watcher = import ./flake/pkgs/infra-watcher.nix { inherit pkgs python; };
-        infra-watcher-fixed = import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs python; };
+        infra-watcher-fixed = import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs; };
         smoke = import ./flake/pkgs/smoke.nix { inherit pkgs; };
 
         # nix2container helpers
