@@ -80,6 +80,7 @@
           infra-watcher = infra-watcher;
           container = container-img;
           smoke         = smoke;
+          infra-watcher-fixed   = infra-watcher-fixed;
         };
         
         # Apps for MSP workflow
