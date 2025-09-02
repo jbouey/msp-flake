@@ -193,7 +193,7 @@
             systemd.services."log-watcher".after  = [ "network-online.target" ];
 
              # VM knobs (optional)
-            virtualisation.memorySize = 1024;
+            
             
 
       
