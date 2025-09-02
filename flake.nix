@@ -173,10 +173,14 @@
           # bring in the service module
           self.nixosModules.log-watcher
 
+          
           # host settings
           ({ pkgs, ... }: {
-            boot.isContainer = true;
-
+            
+            users.users.osirisclinic = {
+              isNormalUser = true;
+              extraGroups = [ "wheel" "docker" ];
+            };
             services.infraWatcher = {
               enable  = true;
               package = self.packages.${pkgs.system}.infra-watcher-fixed;
