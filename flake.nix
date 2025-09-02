@@ -175,6 +175,16 @@
           self.nixosModules.log-watcher
 
           
+         {  
+          users.users.root.initialPassword = "root";
+          services.getty.autologinUser = "root";
+          services.openssh.enable = true;
+          virtualisation.forwardPorts = [
+        { from = "host"; host.port = 2222; guest.port = 22; }
+          ];
+        }
+
+          
           # host settings
           ({ pkgs, ... }: {
             boot.initrd.enable = true;
