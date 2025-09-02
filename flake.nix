@@ -17,6 +17,8 @@
       let
         pkgs = import nixpkgs { inherit system; };
         python = pkgs.python311;
+
+        smoke = import ./flake/pkgs/smoke.nix { inherit pkgs; };
         
         # Package derivation for the log-watcher
         infra-watcher = import ./flake/pkgs/infra-watcher.nix {
@@ -25,8 +27,6 @@
         
         # Attr-set that actually exposes `buildImage`
         n2cPkgs = nix2container.packages."${system}";
-
-        smoke = import ./flake/pkgs/smoke.nix { inherit pkgs; };
         
         # Container image derivation using nix2container
         container-img = import ./flake/container/default.nix {
@@ -79,6 +79,7 @@
           default = infra-watcher;
           infra-watcher = infra-watcher;
           container = container-img;
+          smoke         = smoke;
         };
         
         # Apps for MSP workflow
