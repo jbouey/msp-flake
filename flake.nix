@@ -78,12 +78,11 @@
       {
         # Main outputs
         packages = {
-          default = infra-watcher;
-          infra-watcher = infra-watcher;
-          container = container-img;
-          smoke         = smoke;
-          infra-watcher-fixed =
-          import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs; };
+        default        = infra-watcher;
+       infra-watcher  = infra-watcher;
+        infra-watcher-fixed = infra-watcher-fixed;
+        container      = container-img;
+        smoke          = smoke;
         };
         
         # Apps for MSP workflow
@@ -204,6 +203,11 @@
           # Base NixOS configuration
           ({ pkgs, ... }: {
             boot.isContainer = true; # For testing in container/VM
+
+            services.infraWatcher.enable = true;
+           # run on a schedule (every 5 minutes). Omit this line to run continuously.
+            services.infraWatcher.package = self.packages.${pkgs.system}.infra-watcher-fixed;
+
             
             # Import the log watcher module
             imports = [ logWatcherModule ];
