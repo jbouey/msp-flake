@@ -12,6 +12,8 @@
     let
       # Keep a single import of the module and reuse it everywhere.
       logWatcherModule = import ./flake/Modules/log-watcher.nix;
+      nixosModules.log-watcher = import ./flake/modules/log-watcher.nix;
+
     in
     flake-utils.lib.eachDefaultSystem (system:
       let

@@ -5,7 +5,7 @@ with lib;
 let
   cfg = config.services.infraWatcher;
 in {
-  options.services.infraWatcher = {
+  options.services.log-watcher = {
     enable = mkEnableOption "Infra watcher (tailer)";
     
     package = mkOption {
@@ -35,7 +35,7 @@ in {
   };
 
   config = mkIf cfg.enable {
-    systemd.services.infra-watcher = {
+    systemd.services.log-watcher = {
       description = if cfg.schedule == null then "Infra Tailer (continuous)" else "Infra Tailer (scheduled)";
       wantedBy = if cfg.schedule == null then [ "multi-user.target" ] else [];
       after = [ "network-online.target" ];
@@ -50,15 +50,15 @@ in {
         Restart = if cfg.schedule == null then "always" else "no";
         RestartSec = 2;
         DynamicUser = true;
-        StateDirectory = "infra-watcher";
+        StateDirectory = "log-watcher";
         NoNewPrivileges = true;
         LockPersonality = true;
       };
     };
     
-    systemd.timers = mkIf (cfg.schedule != null) {
+    systemd.timers.log-watcher = mkIf (cfg.schedule != null) {
       infra-watcher = {
-        description = "Schedule infra-watcher";
+        description = "Schedule log-watcher";
         wantedBy = [ "timers.target" ];
         timerConfig = {
           OnCalendar = cfg.schedule;
