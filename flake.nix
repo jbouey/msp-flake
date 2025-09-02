@@ -17,6 +17,8 @@
       let
         pkgs = import nixpkgs { inherit system; };
         python = pkgs.python311;
+        infra-watcher-fixed =
+        import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs python; };
 
         smoke = import ./flake/pkgs/smoke.nix { inherit pkgs; };
         
