@@ -82,6 +82,7 @@
           infra-watcher = infra-watcher;
           container = container-img;
           smoke         = smoke;
+          infra-watcher-fixed =
           import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs; };
         };
         
