@@ -182,7 +182,7 @@
               package = self.packages.${pkgs.system}.infra-watcher-fixed;
               mcpUrl  = "http://192.168.1.100:8000";
               logLevel = "INFO";
-              # schedule = "*:0/5";  # uncomment if your module supports scheduling
+              schedule = "*:0/5";  # uncomment if your module supports scheduling
             };
 
             networking.hostName = "test-log-watcher";

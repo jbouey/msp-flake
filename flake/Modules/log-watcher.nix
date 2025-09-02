@@ -1,54 +1,63 @@
 { config, lib, pkgs, ... }:
+
+with lib;
+
 let
-  inherit (lib) mkEnableOption mkOption mkIf types;
   cfg = config.services.infraWatcher;
 in {
   options.services.infraWatcher = {
     enable = mkEnableOption "Infra watcher (tailer)";
-    # If you don’t override this, it will build from the local nix file:
+    
     package = mkOption {
       type = types.package;
       default = pkgs.callPackage ../pkgs/infra-watcher-fixed.nix {};
       description = "Package to run for infra watcher.";
     };
-    # If null: run as a persistent service. If string: use as systemd OnCalendar.
+    
     schedule = mkOption {
       type = types.nullOr types.str;
       default = null;
-      example = "*:0/5"; # every 5 minutes
+      example = "*:0/5";
       description = "systemd OnCalendar expression; null = run continuously.";
+    };
+    
+    mcpUrl = mkOption {
+      type = types.str;
+      default = "http://localhost:8000";
+      description = "MCP server URL";
+    };
+    
+    logLevel = mkOption {
+      type = types.str;
+      default = "INFO";
+      description = "Log level";
     };
   };
 
-  config = mkIf cfg.enable (
-    if cfg.schedule == null then {
-      # Long-running daemon
-      systemd.services.infra-watcher = {
-        description = "Infra Tailer (continuous)";
-        wantedBy = [ "multi-user.target" ];
-        after = [ "network-online.target" ];
-        serviceConfig = {
-          ExecStart = "${cfg.package}/bin/infra-tailer";
-          Restart = "always";
-          RestartSec = 2;
-          DynamicUser = true;
-          StateDirectory = "infra-watcher";
-          NoNewPrivileges = true;
-          LockPersonality = true;
-        };
+  config = mkIf cfg.enable {
+    systemd.services.infra-watcher = {
+      description = if cfg.schedule == null then "Infra Tailer (continuous)" else "Infra Tailer (scheduled)";
+      wantedBy = if cfg.schedule == null then [ "multi-user.target" ] else [];
+      after = [ "network-online.target" ];
+      
+      environment = {
+        MCP_URL = cfg.mcpUrl;
+        LOG_LEVEL = cfg.logLevel;
       };
-    } else {
-      # Scheduled run
-      systemd.services.infra-watcher = {
-        description = "Infra Tailer (scheduled)";
-        serviceConfig = {
-          ExecStart = "${cfg.package}/bin/infra-tailer";
-          DynamicUser = true;
-          NoNewPrivileges = true;
-          LockPersonality = true;
-        };
+      
+      serviceConfig = {
+        ExecStart = "${cfg.package}/bin/infra-tailer";
+        Restart = if cfg.schedule == null then "always" else "no";
+        RestartSec = 2;
+        DynamicUser = true;
+        StateDirectory = "infra-watcher";
+        NoNewPrivileges = true;
+        LockPersonality = true;
       };
-      systemd.timers.infra-watcher = {
+    };
+    
+    systemd.timers = mkIf (cfg.schedule != null) {
+      infra-watcher = {
         description = "Schedule infra-watcher";
         wantedBy = [ "timers.target" ];
         timerConfig = {
@@ -56,6 +65,6 @@ in {
           Persistent = true;
         };
       };
-    }
-  );
+    };
+  };
 }
