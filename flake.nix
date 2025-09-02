@@ -22,7 +22,7 @@
 
         # Packages
         log-watcher = infra-watcher-fixed; 
-        infra-watcher-fixed = import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs python; };
+        infra-watcher-fixed = import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs; };
         
 
         # nix2container helpers
