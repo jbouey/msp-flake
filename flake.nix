@@ -26,7 +26,7 @@
         # nix2container helpers
         n2cPkgs = nix2container.packages."${system}";
         container-img = import ./flake/container/default.nix {
-          inherit pkgs infra-watcher;
+          inherit pkgs log-watcher;
           nix2container = n2cPkgs.nix2container;
         };
 
