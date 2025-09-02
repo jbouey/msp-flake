@@ -176,7 +176,7 @@
           
           # host settings
           ({ pkgs, ... }: {
-            boot.isContainer = true;
+            boot.initrd.enable = true;
             users.users.osirisclinic = {
               isNormalUser = true;
               extraGroups = [ "wheel" "docker" ];
@@ -188,7 +188,15 @@
               logLevel = "INFO";
               schedule = "*:0/5";  # uncomment if your module supports scheduling
             };
+                  # Make sure “network-online.target” is actually waited for
+            systemd.services."log-watcher".wants = [ "network-online.target" ];
+            systemd.services."log-watcher".after  = [ "network-online.target" ];
 
+             # VM knobs (optional)
+            virtualisation.memorySize = 1024;
+            virtualisation.cores = 2;
+
+      
             networking.hostName = "test-log-watcher";
             system.stateVersion = "24.05";
 
