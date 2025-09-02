@@ -194,7 +194,7 @@
 
              # VM knobs (optional)
             virtualisation.memorySize = 1024;
-            virtualisation.cores = 2;
+            
 
       
             networking.hostName = "test-log-watcher";
