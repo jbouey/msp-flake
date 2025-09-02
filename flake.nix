@@ -1,6 +1,6 @@
 {
   description = "Infra-Watcher container (Fluent Bit + Python tailer)";
-  
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
@@ -10,52 +10,42 @@
 
   outputs = { self, nixpkgs, flake-utils, nix2container }:
     let
-      # Define the NixOS module separately so it can be used across systems
+      # Keep a single import of the module and reuse it everywhere.
       logWatcherModule = import ./flake/modules/log-watcher.nix;
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
         python = pkgs.python311;
-        infra-watcher-fixed =
-        import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs python; };
 
+        # Packages
+        infra-watcher = import ./flake/pkgs/infra-watcher.nix { inherit pkgs python; };
+        infra-watcher-fixed = import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs python; };
         smoke = import ./flake/pkgs/smoke.nix { inherit pkgs; };
-        
-        # Package derivation for the log-watcher
-        infra-watcher = import ./flake/pkgs/infra-watcher.nix {
-          inherit pkgs python;
-        };
-        
-        # Attr-set that actually exposes `buildImage`
+
+        # nix2container helpers
         n2cPkgs = nix2container.packages."${system}";
-        
-        # Container image derivation using nix2container
         container-img = import ./flake/container/default.nix {
           inherit pkgs infra-watcher;
           nix2container = n2cPkgs.nix2container;
         };
-        
-        # Development shell with all dependencies
+
+        # Dev shell
         devShell = pkgs.mkShell {
           buildInputs = with pkgs; [
             python
             fluent-bit
-            # Add development tools
             python311Packages.pytest
             python311Packages.black
             python311Packages.mypy
             python311Packages.requests
             python311Packages.fastapi
             python311Packages.uvicorn
-            # Container tools
             podman
             skopeo
-            # MSP development tools
             curl
             jq
           ];
-          
           shellHook = ''
             echo "🔍 Infra-Watcher Development Environment"
             echo "Python: $(python --version)"
@@ -73,23 +63,20 @@
             echo "  nix run .#test-native              # Run native (non-container) test"
           '';
         };
-
       in
       {
-        # Main outputs
+        # === per-system outputs ===
         packages = {
-        default        = infra-watcher;
-       infra-watcher  = infra-watcher;
-        infra-watcher-fixed = infra-watcher-fixed;
-        container      = container-img;
-        smoke          = smoke;
+          default              = infra-watcher;
+          infra-watcher        = infra-watcher;
+          infra-watcher-fixed  = infra-watcher-fixed;
+          container            = container-img;
+          smoke                = smoke;
         };
-        
-        # Apps for MSP workflow
+
         apps = {
           default = flake-utils.lib.mkApp { drv = container-img; };
-          
-          # Load into Docker (most common for MSP deployments)
+
           load-to-docker = {
             type = "app";
             program = toString (pkgs.writeShellScript "load-to-docker" ''
@@ -104,8 +91,7 @@
               echo "    registry.example.com/infra-watcher:0.1"
             '');
           };
-          
-          # Load into Podman
+
           load-to-podman = {
             type = "app";
             program = toString (pkgs.writeShellScript "load-to-podman" ''
@@ -114,8 +100,7 @@
               echo "✅ Done! Image: registry.example.com/infra-watcher:0.1"
             '');
           };
-          
-          # Push to registry for MSP-wide deployment
+
           push-to-registry = {
             type = "app";
             program = toString (pkgs.writeShellScript "push-to-registry" ''
@@ -129,101 +114,77 @@
               echo "✅ Done! All MSP offices can now pull: $REGISTRY_URL"
             '');
           };
-          
-          # Local smoke test (Step 11 from your plan)
+
+          # (Optional) use the fixed package here too
+          test-native = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "test-native" ''
+              echo "🧪 Running native log watcher test..."
+              : "${MCP_URL:=http://localhost:8000}"
+              echo "MCP Server: $MCP_URL"
+              ${infra-watcher-fixed}/bin/infra-tailer
+            '');
+          };
+
           test-local = {
             type = "app";
             program = toString (pkgs.writeShellScript "test-local" ''
               echo "🧪 Running local MSP smoke test..."
-              echo "1. Building container..."
               nix build .#container
-              
-              echo "2. Loading into Docker..."
               nix run .#load-to-docker
-              
-              echo "3. Starting test container..."
               docker run -d --name infra-watcher-test -p 8080:8080 \
                 -v /tmp:/var/log:ro \
                 -e MCP_URL=http://localhost:8000 \
                 registry.example.com/infra-watcher:0.1
-              
-              echo "4. Testing health endpoint..."
               sleep 3
               if curl -f http://localhost:8080/status; then
                 echo "✅ Health endpoint working!"
               else
                 echo "❌ Health endpoint failed"
               fi
-              
-              echo "5. Cleaning up..."
-              docker stop infra-watcher-test
-              docker rm infra-watcher-test
-              
+              docker rm -f infra-watcher-test
               echo "✅ Smoke test complete!"
             '');
           };
-          
-          # Test native (non-containerized) for VM testing
-          test-native = {
-            type = "app";
-            program = toString (pkgs.writeShellScript "test-native" ''
-              echo "🧪 Running native log watcher test..."
-              echo "Set MCP_URL environment variable first:"
-              echo "  export MCP_URL=http://192.168.1.100:8000"
-              echo ""
-              if [ -z "$MCP_URL" ]; then
-                echo "Using default: http://localhost:8000"
-                export MCP_URL=http://localhost:8000
-              fi
-              echo "MCP Server: $MCP_URL"
-              echo ""
-              echo "Starting log watcher..."
-              ${infra-watcher}/bin/infra-tailer
-            '');
-          };
         };
-        
-        # Development environment
+
         devShells.default = devShell;
-        
-        # Formatter for `nix fmt`
         formatter = pkgs.nixpkgs-fmt;
       }
-    ) // {
-      # Add NixOS module output (outside of eachDefaultSystem)
+    )
+    //
+    {
+      # === cross-system outputs ===
       nixosModules = {
         log-watcher = logWatcherModule;
         default = logWatcherModule;
       };
-      
-      # Example NixOS configuration for testing
+
+      # Example NixOS host (VM/container) using the module
       nixosConfigurations.test-vm = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
+        # so we can reference self.packages inside the machine config
+        specialArgs = { inherit self; };
+
         modules = [
-          # Base NixOS configuration
+          # bring in the service module
+          self.nixosModules.log-watcher
+
+          # host settings
           ({ pkgs, ... }: {
-            boot.isContainer = true; # For testing in container/VM
+            boot.isContainer = true;
 
-            services.infraWatcher.enable = true;
-           # run on a schedule (every 5 minutes). Omit this line to run continuously.
-            services.infraWatcher.package = self.packages.${pkgs.system}.infra-watcher-fixed;
-
-            
-            # Import the log watcher module
-            imports = [ logWatcherModule ];
-            
-            # Enable and configure the service
             services.msp-log-watcher = {
-              enable = true;
-              mcpUrl = "http://192.168.1.100:8000"; # Your laptop's IP
+              enable  = true;
+              package = self.packages.${pkgs.system}.infra-watcher-fixed;
+              mcpUrl  = "http://192.168.1.100:8000";
               logLevel = "INFO";
+              # schedule = "*:0/5";  # uncomment if your module supports scheduling
             };
-            
-            # Basic system config for testing
-            system.stateVersion = "24.05";
+
             networking.hostName = "test-log-watcher";
-            
-            # For testing: create some log files
+            system.stateVersion = "24.05";
+
             systemd.tmpfiles.rules = [
               "f /var/log/test.log 0644 root root -"
               "f /var/log/app.log 0644 root root -"
