@@ -3,7 +3,7 @@
 with lib;
 
 let
-  cfg = config.services.infraWatcher;
+  cfg = config.services.log-watcher;
 in {
   options.services.log-watcher = {
     enable = mkEnableOption "Infra watcher (tailer)";
