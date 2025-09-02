@@ -11,7 +11,7 @@
   outputs = { self, nixpkgs, flake-utils, nix2container }:
     let
       # Keep a single import of the module and reuse it everywhere.
-      logWatcherModule = import ./flake/modules/log-watcher.nix;
+      logWatcherModule = import ./flake/Modules/log-watcher.nix;
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -177,7 +177,7 @@
           ({ pkgs, ... }: {
             boot.isContainer = true;
 
-            services.msp-log-watcher = {
+            services.infraWatcher = {
               enable  = true;
               package = self.packages.${pkgs.system}.infra-watcher-fixed;
               mcpUrl  = "http://192.168.1.100:8000";
