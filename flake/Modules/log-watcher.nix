@@ -57,7 +57,7 @@ in {
     };
     
     systemd.timers.log-watcher = mkIf (cfg.schedule != null) {
-      infra-watcher = {
+      log-watcher = {
         description = "Schedule log-watcher";
         wantedBy = [ "timers.target" ];
         timerConfig = {
