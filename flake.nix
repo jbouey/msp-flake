@@ -67,9 +67,8 @@
       {
         # === per-system outputs ===
         packages = {
-          default              = infra-watcher;
-          infra-watcher        = infra-watcher;
-          infra-watcher-fixed  = infra-watcher-fixed;
+          default      = log-watcher; 
+          log-watcher  = log-watcher;
           container            = container-img;
           smoke                = smoke;
         };
@@ -164,7 +163,7 @@
       };
 
       # Example NixOS host (VM/container) using the module
-      nixosConfigurations.test-vm = nixpkgs.lib.nixosSystem {
+      nixosConfigurations.log-watcher-test = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         # so we can reference self.packages inside the machine config
         specialArgs = { inherit self; };
@@ -176,15 +175,15 @@
           
           # host settings
           ({ pkgs, ... }: {
-            
+            boot.isContainer = true;
             users.users.osirisclinic = {
               isNormalUser = true;
               extraGroups = [ "wheel" "docker" ];
             };
-            services.infraWatcher = {
-              enable  = true;
-              package = self.packages.${pkgs.system}.infra-watcher-fixed;
-              mcpUrl  = "http://192.168.1.100:8000";
+            services.log-watcher = {
+              enable = true;
+              package = self.packages.${pkgs.system}.log-watcher;
+              mcpUrl = "http://192.168.1.100:8000";
               logLevel = "INFO";
               schedule = "*:0/5";  # uncomment if your module supports scheduling
             };
