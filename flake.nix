@@ -116,15 +116,17 @@
           };
 
           # (Optional) use the fixed package here too
-          test-native = {
-            type = "app";
-            program = toString (pkgs.writeShellScript "test-native" ''
-              echo "🧪 Running native log watcher test..."
-              : "${MCP_URL:=http://localhost:8000}"
-              echo "MCP Server: $MCP_URL"
-              ${infra-watcher-fixed}/bin/infra-tailer
+         test-native = {
+          type = "app";
+          program = toString (pkgs.writeShellScript "test-native" ''
+          echo "🧪 Running native log watcher test..."
+         : "\${MCP_URL:=http://localhost:8000}"
+         echo "MCP Server: $MCP_URL"
+          ${infra-watcher-fixed}/bin/infra-tailer
+          echo "✅ Native test complete!"
             '');
-          };
+};
+
 
           test-local = {
             type = "app";
