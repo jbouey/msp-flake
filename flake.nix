@@ -19,9 +19,9 @@
         python = pkgs.python311;
 
         # Packages
-        infra-watcher = import ./flake/pkgs/infra-watcher.nix { inherit pkgs python; };
+        log-watcher = import ./flake/pkgs/infra-watcher.nix { inherit pkgs python; };
         infra-watcher-fixed = import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs; };
-        smoke = import ./flake/pkgs/smoke.nix { inherit pkgs; };
+        
 
         # nix2container helpers
         n2cPkgs = nix2container.packages."${system}";
@@ -70,7 +70,6 @@
           default      = log-watcher; 
           log-watcher  = log-watcher;
           container            = container-img;
-          smoke                = smoke;
         };
 
         apps = {
