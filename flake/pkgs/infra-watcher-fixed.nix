@@ -1,23 +1,17 @@
-{ pkgs, python }:
+# flake/pkgs/infra-watcher-fixed.nix
+{ pkgs }:
 
 let
-  py = python.withPackages (ps: with ps; [ requests fastapi uvicorn httpx ]);
+  py = pkgs.python3;
+  pyEnv = py.withPackages (ps: with ps; [ fastapi uvicorn requests ]);
 in
-pkgs.stdenv.mkDerivation {
-  pname = "infra-watcher-fixed";   # new name → new store path
-  version = "0.1.2";               # bump as needed
-  src = ./.;                       # directory that contains tailer.py
-
-  buildInputs = [ py ];
-  dontConfigure = true;
-  dontBuild = true;
-
-  installPhase = ''
-    set -euxo pipefail
-    mkdir -p "$out/bin" "$out/etc"
-
-    cp ${./tailer.py} "$out/bin/infra-tailer"
-    chmod +x "$out/bin/infra-tailer"
-    test -x "$out/bin/infra-tailer"   # fail hard if missing
-  '';
-}
+pkgs.runCommand "infra-watcher-fixed-0.1.2" {
+  # only to make the binary runnable inside nix-shell/containers
+  buildInputs = [ pyEnv ];
+} ''
+  set -eux
+  mkdir -p "$out/bin"
+  cp ${./tailer.py} "$out/bin/infra-tailer"
+  chmod +x "$out/bin/infra-tailer"
+  test -x "$out/bin/infra-tailer"
+''
