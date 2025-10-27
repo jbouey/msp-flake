@@ -1,0 +1,105 @@
+id: RB-CERT-001
+name: "SSL/TLS Certificate Expiry Remediation"
+description: "Automated certificate renewal and deployment"
+version: "1.0.0"
+severity: high
+
+hipaa_controls:
+  - "164.312(e)(1)"        # Transmission Security
+  - "164.312(a)(2)(iv)"    # Encryption and Decryption
+
+triggers:
+  - certificate_expires_30_days
+  - certificate_expires_7_days
+  - certificate_expired
+
+steps:
+  - id: step_1
+    action: check_certificate_status
+    description: "Verify current certificate expiry date"
+    timeout_seconds: 10
+    params:
+      cert_path: "/etc/ssl/certs/{{ cert_name }}.crt"
+      domains: "{{ domains }}"
+
+  - id: step_2
+    action: backup_existing_certificate
+    description: "Backup current certificate and key"
+    timeout_seconds: 5
+    params:
+      cert_path: "/etc/ssl/certs/{{ cert_name }}.crt"
+      key_path: "/etc/ssl/private/{{ cert_name }}.key"
+      backup_dir: "/var/backups/ssl"
+
+  - id: step_3
+    action: request_new_certificate
+    description: "Request certificate renewal via ACME/Let's Encrypt"
+    timeout_seconds: 120
+    params:
+      provider: "letsencrypt"
+      domains: "{{ domains }}"
+      email: "{{ admin_email }}"
+      challenge_type: "http-01"
+
+  - id: step_4
+    action: validate_new_certificate
+    description: "Verify new certificate is valid and matches domains"
+    timeout_seconds: 15
+    params:
+      cert_path: "/tmp/new_cert.crt"
+      expected_domains: "{{ domains }}"
+      min_validity_days: 60
+
+  - id: step_5
+    action: deploy_new_certificate
+    description: "Install new certificate and key"
+    timeout_seconds: 10
+    params:
+      cert_source: "/tmp/new_cert.crt"
+      key_source: "/tmp/new_key.key"
+      cert_dest: "/etc/ssl/certs/{{ cert_name }}.crt"
+      key_dest: "/etc/ssl/private/{{ cert_name }}.key"
+      permissions: "0600"
+
+  - id: step_6
+    action: reload_services
+    description: "Reload services using the certificate"
+    timeout_seconds: 30
+    params:
+      services:
+        - nginx
+        - apache2
+
+rollback:
+  - action: restore_certificate_backup
+    description: "Restore previous certificate if renewal fails"
+    params:
+      backup_dir: "/var/backups/ssl"
+      cert_dest: "/etc/ssl/certs/{{ cert_name }}.crt"
+      key_dest: "/etc/ssl/private/{{ cert_name }}.key"
+
+evidence_required:
+  - old_cert_expiry_date
+  - old_cert_fingerprint
+  - new_cert_expiry_date
+  - new_cert_fingerprint
+  - new_cert_domains
+  - renewal_log
+  - service_reload_status
+  - certificate_validation_result
+
+success_criteria:
+  - certificate_renewed: true
+  - certificate_installed: true
+  - services_reloaded: true
+  - certificate_valid_60_days: true
+
+sla:
+  max_duration_minutes: 15
+  escalate_after_minutes: 30
+
+metadata:
+  created: "2025-10-24"
+  updated: "2025-10-24"
+  author: "MSP Automation Platform"
+  review_cycle_days: 90

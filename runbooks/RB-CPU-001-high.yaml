@@ -1,0 +1,134 @@
+id: RB-CPU-001
+name: "High CPU Usage Remediation"
+description: "Automated response to sustained high CPU utilization"
+version: "1.0.0"
+severity: medium
+
+hipaa_controls:
+  - "164.308(a)(1)(ii)(D)"  # Information System Activity Review
+  - "164.312(b)"            # Audit Controls
+
+triggers:
+  - cpu_usage_above_90_percent_5min
+  - cpu_usage_above_95_percent_1min
+  - load_average_high
+
+steps:
+  - id: step_1
+    action: check_cpu_metrics
+    description: "Gather current CPU usage statistics"
+    timeout_seconds: 10
+    params:
+      metrics:
+        - current_usage_percent
+        - load_average_1min
+        - load_average_5min
+        - load_average_15min
+        - core_count
+
+  - id: step_2
+    action: identify_top_processes
+    description: "Find processes consuming most CPU"
+    timeout_seconds: 10
+    params:
+      top_n: 10
+      min_cpu_percent: 5
+      include_threads: true
+
+  - id: step_3
+    action: check_for_runaway_processes
+    description: "Detect processes with abnormal CPU usage"
+    timeout_seconds: 15
+    params:
+      patterns:
+        - process_name_repeated: true
+        - cpu_sustained_above_80: true
+        - unexpected_user: true
+
+  - id: step_4
+    action: analyze_process_patterns
+    description: "Determine if high CPU is expected or anomalous"
+    timeout_seconds: 10
+    params:
+      check_cron_jobs: true
+      check_backup_jobs: true
+      check_known_intensive_tasks: true
+
+  - id: step_5
+    action: check_system_resources
+    description: "Verify other resource constraints"
+    timeout_seconds: 10
+    params:
+      check_memory_usage: true
+      check_disk_io: true
+      check_network_io: true
+      check_swap_usage: true
+
+  - id: step_6
+    action: apply_cpu_limits
+    description: "Throttle resource-intensive processes if safe"
+    timeout_seconds: 30
+    params:
+      method: "nice_renice"
+      target_processes: "{{ identified_processes }}"
+      max_cpu_percent: 50
+      only_if_user_process: true
+
+  - id: step_7
+    action: verify_cpu_normalized
+    description: "Confirm CPU usage has returned to normal"
+    timeout_seconds: 60
+    params:
+      target_cpu_percent: 75
+      sustained_seconds: 30
+
+rollback:
+  - action: restore_process_priority
+    description: "Restore original process priorities if issues detected"
+    params:
+      processes: "{{ modified_processes }}"
+  - action: alert_administrator
+    description: "Escalate if CPU usage remains high"
+    params:
+      severity: medium
+      message: "High CPU usage persists after automated remediation"
+
+evidence_required:
+  - cpu_usage_before
+  - cpu_usage_after
+  - load_average_before
+  - load_average_after
+  - top_processes_list
+  - process_modifications
+  - resource_usage_summary
+  - remediation_actions_log
+
+success_criteria:
+  - cpu_usage_below_75_percent: true
+  - load_average_normalized: true
+  - no_critical_services_affected: true
+
+sla:
+  max_duration_minutes: 10
+  escalate_after_minutes: 20
+
+safe_to_throttle_patterns:
+  - "backup"
+  - "compress"
+  - "tar"
+  - "gzip"
+  - "rsync"
+  - "find"
+
+never_throttle:
+  - "systemd"
+  - "init"
+  - "sshd"
+  - "dockerd"
+  - "postgres"
+
+metadata:
+  created: "2025-10-24"
+  updated: "2025-10-24"
+  author: "MSP Automation Platform"
+  review_cycle_days: 90

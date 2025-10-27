@@ -1,0 +1,116 @@
+id: RB-DISK-001
+name: "Disk Space Critical Remediation"
+description: "Automated cleanup when disk usage exceeds thresholds"
+version: "1.0.0"
+severity: critical
+
+hipaa_controls:
+  - "164.308(a)(1)(ii)(D)"  # Information System Activity Review
+  - "164.310(d)(1)"         # Device and Media Controls
+
+triggers:
+  - disk_usage_above_90_percent
+  - disk_usage_above_95_percent
+  - disk_full
+
+steps:
+  - id: step_1
+    action: check_disk_usage
+    description: "Get current disk usage statistics"
+    timeout_seconds: 10
+    params:
+      filesystem: "{{ filesystem }}"
+      format: "json"
+
+  - id: step_2
+    action: identify_large_files
+    description: "Find largest files and directories"
+    timeout_seconds: 30
+    params:
+      path: "{{ filesystem }}"
+      top_n: 20
+      min_size_mb: 100
+      exclude_paths:
+        - "/proc"
+        - "/sys"
+        - "/dev"
+
+  - id: step_3
+    action: rotate_logs
+    description: "Force log rotation to free space"
+    timeout_seconds: 20
+    params:
+      force: true
+      compress: true
+
+  - id: step_4
+    action: clean_package_cache
+    description: "Clear package manager cache"
+    timeout_seconds: 60
+    params:
+      package_manager: "auto-detect"
+      clean_cache: true
+      remove_old_kernels: true
+
+  - id: step_5
+    action: clean_tmp_directories
+    description: "Remove old temporary files"
+    timeout_seconds: 30
+    params:
+      paths:
+        - "/tmp"
+        - "/var/tmp"
+      older_than_days: 7
+      exclude_patterns:
+        - "*.sock"
+        - "systemd-*"
+
+  - id: step_6
+    action: compress_old_logs
+    description: "Compress logs older than 7 days"
+    timeout_seconds: 60
+    params:
+      log_dir: "/var/log"
+      older_than_days: 7
+      compression: "gzip"
+
+  - id: step_7
+    action: verify_disk_space_recovered
+    description: "Confirm disk usage is below threshold"
+    timeout_seconds: 10
+    params:
+      filesystem: "{{ filesystem }}"
+      target_usage_percent: 85
+
+rollback:
+  - action: alert_administrator
+    description: "Escalate if automated cleanup insufficient"
+    params:
+      severity: critical
+      message: "Automated disk cleanup completed but usage still above threshold"
+      include_disk_report: true
+
+evidence_required:
+  - disk_usage_before
+  - disk_usage_after
+  - space_freed_bytes
+  - large_files_identified
+  - logs_rotated_count
+  - tmp_files_removed_count
+  - cache_cleared_bytes
+  - cleanup_actions_log
+
+success_criteria:
+  - disk_usage_below_85_percent: true
+  - space_freed_min_gb: 5
+  - no_critical_files_deleted: true
+
+sla:
+  max_duration_minutes: 10
+  escalate_after_minutes: 20
+
+metadata:
+  created: "2025-10-24"
+  updated: "2025-10-24"
+  author: "MSP Automation Platform"
+  review_cycle_days: 90

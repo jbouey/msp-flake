@@ -1,0 +1,134 @@
+id: RB-RESTORE-001
+name: "Weekly Backup Restore Test"
+description: "Automated backup restore verification testing"
+version: "1.0.0"
+severity: low
+
+hipaa_controls:
+  - "164.308(a)(7)(ii)(A)"  # Contingency Plan - Data Backup Plan
+  - "164.310(d)(2)(iv)"     # Device and Media Controls - Data Backup and Storage
+
+triggers:
+  - schedule_weekly_sunday_2am
+  - manual_trigger
+
+steps:
+  - id: step_1
+    action: select_random_backup
+    description: "Choose a recent backup snapshot for testing"
+    timeout_seconds: 10
+    params:
+      repository: "/backup/restic"
+      age_days_max: 7
+      selection_method: "random"
+
+  - id: step_2
+    action: create_scratch_environment
+    description: "Provision temporary VM or container for restore test"
+    timeout_seconds: 180
+    params:
+      environment_type: "docker_container"
+      base_image: "alpine:latest"
+      name: "restore-test-{{ timestamp }}"
+      auto_cleanup: true
+
+  - id: step_3
+    action: restore_files_to_scratch
+    description: "Restore selected files from backup"
+    timeout_seconds: 600
+    params:
+      backup_snapshot: "{{ selected_snapshot }}"
+      destination: "/tmp/restore-test"
+      files_to_restore:
+        - path: "/etc/hosts"
+          type: "system_file"
+        - path: "/var/lib/important.db"
+          type: "database"
+        - path: "/home/user/document.txt"
+          type: "user_data"
+      verify_ownership: true
+      verify_permissions: true
+
+  - id: step_4
+    action: verify_file_checksums
+    description: "Validate restored files match original checksums"
+    timeout_seconds: 120
+    params:
+      files: "{{ restored_files }}"
+      checksum_algorithm: "sha256"
+      compare_with_manifest: true
+
+  - id: step_5
+    action: test_database_restore
+    description: "If database files restored, verify integrity"
+    timeout_seconds: 300
+    params:
+      database_type: "auto-detect"
+      database_file: "{{ restored_db_file }}"
+      integrity_checks:
+        - schema_valid: true
+        - no_corruption: true
+        - indexes_intact: true
+
+  - id: step_6
+    action: generate_restore_report
+    description: "Document restore test results"
+    timeout_seconds: 30
+    params:
+      include_metrics:
+        - restore_duration_seconds
+        - files_restored_count
+        - bytes_restored
+        - checksum_verification_results
+        - database_integrity_results
+      output_format: "json"
+      output_path: "/var/lib/msp/evidence/restore-tests/"
+
+  - id: step_7
+    action: cleanup_scratch_environment
+    description: "Remove temporary restore test environment"
+    timeout_seconds: 60
+    params:
+      environment_name: "restore-test-{{ timestamp }}"
+      verify_cleanup: true
+
+rollback:
+  - action: cleanup_on_failure
+    description: "Clean up test environment even if restore fails"
+    params:
+      environment_name: "restore-test-{{ timestamp }}"
+  - action: alert_administrator
+    description: "Alert on restore test failure"
+    params:
+      severity: high
+      message: "Weekly backup restore test failed - backup integrity may be compromised"
+
+evidence_required:
+  - backup_snapshot_id
+  - restore_start_timestamp
+  - restore_end_timestamp
+  - restore_duration_seconds
+  - files_restored_list
+  - bytes_restored
+  - checksum_verification_results
+  - database_integrity_results
+  - restore_test_transcript
+  - cleanup_confirmation
+
+success_criteria:
+  - files_restored_successfully: true
+  - checksums_match: true
+  - database_integrity_verified: true
+  - no_restore_errors: true
+  - cleanup_completed: true
+
+sla:
+  max_duration_minutes: 30
+  escalate_after_minutes: 60
+
+metadata:
+  created: "2025-10-24"
+  updated: "2025-10-24"
+  author: "MSP Automation Platform"
+  review_cycle_days: 90
+  schedule: "0 2 * * 0"  # Sunday 2 AM

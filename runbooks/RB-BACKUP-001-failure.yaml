@@ -1,0 +1,88 @@
+id: RB-BACKUP-001
+name: "Backup Failure Remediation"
+description: "Automated remediation for failed backup jobs"
+version: "1.0.0"
+severity: critical
+
+hipaa_controls:
+  - "164.308(a)(7)(ii)(A)"  # Contingency Plan - Data Backup Plan
+  - "164.310(d)(2)(iv)"     # Device and Media Controls - Data Backup and Storage
+
+triggers:
+  - backup_job_failed
+  - backup_timeout
+  - backup_incomplete
+
+steps:
+  - id: step_1
+    action: check_backup_logs
+    description: "Retrieve last 100 lines of backup logs"
+    timeout_seconds: 30
+    params:
+      log_path: "/var/log/restic/backup.log"
+      lines: 100
+
+  - id: step_2
+    action: verify_disk_space
+    description: "Check available disk space on backup target"
+    timeout_seconds: 10
+    params:
+      path: "/backup"
+      min_free_gb: 10
+
+  - id: step_3
+    action: check_network_connectivity
+    description: "Verify network connectivity to backup target"
+    timeout_seconds: 15
+    params:
+      target: "{{ backup_server }}"
+      port: 22
+
+  - id: step_4
+    action: restart_backup_service
+    description: "Restart backup service if safe to do so"
+    timeout_seconds: 60
+    params:
+      service_name: "restic-backup"
+      verify_stopped: true
+
+  - id: step_5
+    action: trigger_manual_backup
+    description: "Initiate backup job manually"
+    timeout_seconds: 300
+    params:
+      service_name: "restic-backup"
+      verify_completion: true
+
+rollback:
+  - action: alert_administrator
+    description: "Send critical alert if automated remediation fails"
+    params:
+      severity: critical
+      message: "Automated backup remediation failed - manual intervention required"
+
+evidence_required:
+  - backup_log_excerpt
+  - disk_usage_before
+  - disk_usage_after
+  - network_connectivity_test
+  - service_status_before
+  - service_status_after
+  - backup_completion_hash
+  - backup_size_bytes
+  - backup_duration_seconds
+
+success_criteria:
+  - backup_completed: true
+  - backup_verified: true
+  - no_errors_in_log: true
+
+sla:
+  max_duration_minutes: 30
+  escalate_after_minutes: 45
+
+metadata:
+  created: "2025-10-24"
+  updated: "2025-10-24"
+  author: "MSP Automation Platform"
+  review_cycle_days: 90

@@ -1,0 +1,22 @@
+# Network Discovery System Requirements
+
+# Network scanning
+python-nmap3>=1.6.0
+
+# Packet capture and passive discovery
+scapy>=2.5.0
+
+# SNMP queries
+pysnmp>=4.4.12
+
+# Async SSH for agent deployment
+asyncssh>=2.13.2
+
+# HTTP client for API calls
+aiohttp>=3.9.0
+
+# Data validation
+pydantic>=2.5.0
+
+# JSON schema validation
+jsonschema>=4.20.0

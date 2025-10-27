@@ -1,0 +1,126 @@
+id: RB-SERVICE-001
+name: "Service Crash Remediation"
+description: "Automated restart and recovery for failed services"
+version: "1.0.0"
+severity: high
+
+hipaa_controls:
+  - "164.308(a)(1)(ii)(D)"  # Information System Activity Review
+  - "164.312(b)"            # Audit Controls
+
+triggers:
+  - service_stopped_unexpected
+  - service_failed
+  - service_crash_loop
+
+steps:
+  - id: step_1
+    action: check_service_status
+    description: "Verify current service state"
+    timeout_seconds: 10
+    params:
+      service_name: "{{ service_name }}"
+      include_logs: true
+      log_lines: 50
+
+  - id: step_2
+    action: check_crash_frequency
+    description: "Check if service is in crash loop"
+    timeout_seconds: 5
+    params:
+      service_name: "{{ service_name }}"
+      time_window_minutes: 15
+      max_restarts: 3
+
+  - id: step_3
+    action: analyze_crash_cause
+    description: "Examine logs for common failure patterns"
+    timeout_seconds: 15
+    params:
+      service_name: "{{ service_name }}"
+      log_path: "/var/log/{{ service_name }}.log"
+      patterns:
+        - "out of memory"
+        - "permission denied"
+        - "port already in use"
+        - "connection refused"
+        - "database connection failed"
+
+  - id: step_4
+    action: check_dependencies
+    description: "Verify dependent services are running"
+    timeout_seconds: 20
+    params:
+      service_name: "{{ service_name }}"
+      check_network: true
+      check_database: true
+      check_filesystem: true
+
+  - id: step_5
+    action: restart_service
+    description: "Attempt service restart with verification"
+    timeout_seconds: 60
+    params:
+      service_name: "{{ service_name }}"
+      wait_for_startup: true
+      startup_timeout_seconds: 30
+      verify_health_endpoint: "{{ health_endpoint }}"
+
+  - id: step_6
+    action: verify_service_health
+    description: "Confirm service is healthy and responsive"
+    timeout_seconds: 30
+    params:
+      service_name: "{{ service_name }}"
+      health_checks:
+        - process_running: true
+        - listening_on_port: "{{ port }}"
+        - http_endpoint: "{{ health_endpoint }}"
+        - response_time_ms: 1000
+
+rollback:
+  - action: stop_service_prevent_crash_loop
+    description: "Stop service if crash loop detected"
+    params:
+      service_name: "{{ service_name }}"
+      disable_autostart: true
+  - action: alert_administrator
+    description: "Escalate persistent service failures"
+    params:
+      severity: high
+      message: "Service {{ service_name }} failed to restart - crash loop detected"
+
+evidence_required:
+  - service_status_before
+  - service_status_after
+  - crash_logs
+  - restart_timestamp
+  - restart_duration_seconds
+  - dependency_check_results
+  - health_check_results
+  - crash_pattern_analysis
+
+success_criteria:
+  - service_running: true
+  - service_healthy: true
+  - no_errors_in_logs_5min: true
+  - health_endpoint_responding: true
+
+sla:
+  max_duration_minutes: 5
+  escalate_after_minutes: 10
+
+whitelisted_services:
+  - nginx
+  - postgresql
+  - redis
+  - docker
+  - containerd
+  - grafana
+  - prometheus
+
+metadata:
+  created: "2025-10-24"
+  updated: "2025-10-24"
+  author: "MSP Automation Platform"
+  review_cycle_days: 90

@@ -1,0 +1,49 @@
+hipaa_control,hipaa_title,nixos_module,nixos_option,baseline_setting,implementation_notes,verification_method
+164.308(a)(1)(ii)(D),Information System Activity Review,services.auditd,enable,true,Enable auditd for comprehensive system auditing,Check systemctl status auditd
+164.308(a)(1)(ii)(D),Information System Activity Review,services.journald,extraConfig,ForwardToSyslog=yes,Forward journald logs to syslog for central collection,Check journalctl config
+164.308(a)(1)(ii)(D),Information System Activity Review,services.log-watcher,enable,true,Deploy MSP log watcher for automated monitoring,Check /status endpoint
+164.308(a)(3)(ii)(A),Workforce Access - Authorization,security.sudo,enable,true,Enforce sudo for privilege escalation,Check /etc/sudoers
+164.308(a)(3)(ii)(A),Workforce Access - Authorization,security.sudo,extraRules,Require password + timeout,Configure sudo with re-authentication,Test sudo timeout
+164.308(a)(3)(ii)(B),Workforce Access - Determination,users.users,isNormalUser,true,No shared accounts - one user per person,Audit user list
+164.308(a)(3)(ii)(C),Workforce Access - Termination,security.pam,failDelay,1000000,Lock accounts after failed attempts,Test account lockout
+164.308(a)(4)(ii)(A),Access Authorization - Isolating Clearinghouse,N/A,N/A,N/A,Not applicable - no clearinghouse function,N/A
+164.308(a)(4)(ii)(B),Access Establishment & Modification,users.users,extraGroups,Minimal groups per user,Least privilege group membership,Review group memberships
+164.308(a)(4)(ii)(C),Security Reminders,security.pam,loginLimits,Enforce password age limits,90-day password expiration,Check password age
+164.308(a)(5)(ii)(B),Protection from Malicious Software,services.clamav,daemon.enable,true,Enable ClamAV antimalware scanning,Check systemctl status clamav-daemon
+164.308(a)(5)(ii)(B),Protection from Malicious Software,security.apparmor,enable,true,Enable AppArmor for application confinement,Check aa-status
+164.308(a)(5)(ii)(D),Security Awareness & Training,N/A,N/A,N/A,Organizational policy - not technical control,Documentation review
+164.308(a)(6)(i),Security Incident Procedures,services.mcp,enable,true,Automated incident response via MCP,Check MCP incident logs
+164.308(a)(6)(ii),Response & Reporting,services.mcp,alerting,Email + webhook alerts,Automatic escalation on incident,Test alert delivery
+164.308(a)(7)(ii)(A),Contingency Plan - Data Backup,services.restic,enable,true,Automated encrypted backups,Check backup completion
+164.308(a)(7)(ii)(A),Contingency Plan - Data Backup,systemd.timers.restic-backup,enable,true,Daily backup schedule,Verify timer execution
+164.308(a)(7)(ii)(B),Disaster Recovery Plan,services.restic,verifyBackups,true,Weekly restore testing via RB-RESTORE-001,Review restore test logs
+164.308(a)(8),Evaluation,services.mcp,complianceReporting,true,Automated monthly compliance packets,Review generated packets
+164.310(a)(1),Facility Access Controls,N/A,N/A,N/A,Physical security - not applicable to cloud/VM,Site inspection
+164.310(d)(1),Device and Media Controls,boot.initrd.luks,enable,true,Full-disk encryption with LUKS,Check lsblk encryption status
+164.310(d)(1),Device and Media Controls,boot.initrd.luks.devices,type,luks,AES-256-XTS encryption algorithm,cryptsetup status
+164.310(d)(2)(iii),Accountability - Media Movement,services.auditd,rules,"-w /media -p wa",Audit all media mount/unmount,ausearch -k media
+164.310(d)(2)(iv),Data Backup and Storage,services.restic,repository,Encrypted offsite,Offsite encrypted backup repository,Check restic snapshots
+164.312(a)(1),Access Control,networking.firewall,enable,true,Enable host-based firewall,Check iptables/nftables rules
+164.312(a)(1),Access Control,networking.firewall,allowedTCPPorts,"[22, 443]",Whitelist only required ports,nmap scan verification
+164.312(a)(2)(i),Unique User Identification,services.openssh,settings.PasswordAuthentication,false,Disable password SSH auth,Test SSH password auth
+164.312(a)(2)(i),Unique User Identification,services.openssh,settings.PubkeyAuthentication,true,Require SSH key-based auth,Test SSH key auth
+164.312(a)(2)(ii),Emergency Access,users.users.breakglass,hashedPassword,Set,Break-glass account with monitoring,Test break-glass login
+164.312(a)(2)(iii),Automatic Logoff,services.openssh,settings.ClientAliveInterval,300,5-minute SSH timeout,Test SSH timeout
+164.312(a)(2)(iii),Automatic Logoff,security.pam.services.login,limits.maxlogins,3,Limit concurrent sessions,Test session limit
+164.312(a)(2)(iv),Encryption and Decryption,boot.initrd.luks,enable,true,LUKS full-disk encryption,cryptsetup status
+164.312(a)(2)(iv),Encryption and Decryption,services.openssh,settings.Ciphers,AES-256+,Strong SSH ciphers only,sshd -T | grep ciphers
+164.312(b),Audit Controls,services.auditd,enable,true,Comprehensive audit logging,aureport summary
+164.312(b),Audit Controls,services.journald,extraConfig,Storage=persistent,Persistent journal storage,journalctl --disk-usage
+164.312(b),Audit Controls,services.timesyncd,enable,true,NTP time synchronization for accurate timestamps,timedatectl status
+164.312(c)(1),Integrity - Data Authentication,security.apparmor,enable,true,Prevent unauthorized data modification,aa-status
+164.312(c)(2),Integrity - Data Encryption,boot.initrd.luks,enable,true,Encrypted storage prevents tampering,cryptsetup luksDump
+164.312(d),Person or Entity Authentication,services.openssh,settings.PubkeyAuthentication,true,SSH key-based authentication,Test SSH auth methods
+164.312(d),Person or Entity Authentication,security.pam,enableSSHAgentAuth,true,SSH certificate authentication,Test cert auth
+164.312(e)(1),Transmission Security,services.nginx,sslProtocols,"TLSv1.2 TLSv1.3",TLS 1.2+ for all HTTPS,openssl s_client test
+164.312(e)(1),Transmission Security,services.nginx,sslCiphers,ECDHE+AES256+,Strong cipher suites only,nmap --script ssl-enum-ciphers
+164.312(e)(2)(i),Encryption,networking.wireguard,enable,true,VPN encryption for remote access,wg show
+164.312(e)(2)(ii),Encryption Network Transmission,services.openssh,settings.MACs,hmac-sha2-512+,Strong SSH MACs,sshd -T | grep macs
+164.316(b)(1),Policies and Procedures,N/A,N/A,N/A,Documented in baseline/hipaa-v1.yaml,Review baseline file
+164.316(b)(2)(i),Documentation - Time Limit,services.mcp,evidenceRetentionDays,730,2-year evidence retention minimum,Check evidence store size
+164.316(b)(2)(ii),Documentation - Availability,services.mcp,evidenceStorage,WORM S3 bucket,Immutable evidence storage,Check object lock status
+164.316(b)(2)(iii),Documentation - Updates,git,baseline,Version controlled,Baseline changes tracked in git,git log baseline/

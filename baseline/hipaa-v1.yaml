@@ -1,0 +1,298 @@
+# NixOS-HIPAA Baseline v1.0
+# HIPAA Security Rule compliance baseline for healthcare MSP clients
+# Based on NIST 800-66 Rev. 2 and HIPAA Security Rule (45 CFR Parts 160, 162, and 164)
+
+version: "1.0.0"
+name: "NixOS-HIPAA-Baseline-v1"
+description: "Baseline security configuration for HIPAA-compliant healthcare infrastructure"
+created: "2025-10-24"
+updated: "2025-10-24"
+review_cycle_days: 90
+
+# Authentication & Access Control (§164.312(a))
+authentication:
+  # Unique User Identification (§164.312(a)(2)(i))
+  enforce_unique_users: true
+  no_shared_accounts: true
+  service_accounts_documented: true
+
+  # Password Requirements
+  min_password_length: 14
+  password_complexity: true
+  password_history: 12
+  password_max_age_days: 90
+  password_min_age_days: 1
+
+  # Account Lockout
+  max_failed_attempts: 5
+  lockout_duration_minutes: 15
+  lockout_counter_reset_minutes: 15
+
+  # Session Management
+  session_timeout_minutes: 15
+  concurrent_session_limit: 3
+  idle_timeout_minutes: 10
+
+# SSH Configuration (§164.312(a)(2)(i))
+ssh:
+  disable_password_auth: true
+  enable_key_based_auth: true
+  enable_certificate_auth: true
+  disable_root_login: true
+  permitted_auth_methods:
+    - "publickey"
+    - "keyboard-interactive"
+  disallowed_users:
+    - root
+    - guest
+  max_auth_tries: 3
+  login_grace_time_seconds: 30
+  client_alive_interval_seconds: 300
+  client_alive_count_max: 2
+  use_pam: true
+  challenge_response_auth: false
+
+# Encryption (§164.312(a)(2)(iv), §164.312(e))
+encryption:
+  # Data at Rest
+  full_disk_encryption: true
+  encryption_algorithm: "AES-256-XTS"
+  luks_enabled: true
+  encrypted_swap: true
+
+  # Data in Transit
+  tls_min_version: "1.2"
+  tls_preferred_version: "1.3"
+  allowed_ciphers:
+    - "TLS_AES_256_GCM_SHA384"
+    - "TLS_CHACHA20_POLY1305_SHA256"
+    - "TLS_AES_128_GCM_SHA256"
+  disable_weak_ciphers: true
+
+  # Certificate Management
+  cert_min_validity_days: 30
+  cert_renewal_threshold_days: 30
+  auto_renew_certificates: true
+
+# Audit Controls (§164.312(b))
+audit:
+  enable_auditd: true
+  enable_journald: true
+  log_all_authentication: true
+  log_privilege_escalation: true
+  log_file_access: true
+  log_system_changes: true
+
+  # Log Retention
+  log_retention_days: 730  # 2 years minimum for HIPAA
+  log_rotation_enabled: true
+  log_compression_enabled: true
+
+  # Remote Logging
+  forward_logs_to_central: true
+  log_forwarding_encrypted: true
+
+  # Audit Log Protection
+  audit_logs_immutable: true
+  audit_logs_signed: true
+
+# Time Synchronization (§164.312(b))
+time_sync:
+  enable_ntp: true
+  ntp_servers:
+    - "time.nist.gov"
+    - "time.google.com"
+  max_time_drift_seconds: 90
+  verify_ntp_server_authenticity: true
+
+# Firewall & Network Security (§164.312(a)(1))
+network:
+  enable_firewall: true
+  default_policy: "deny"
+
+  # Required Open Ports (minimum)
+  allowed_inbound_ports:
+    - port: 22
+      protocol: "tcp"
+      source: "management_network"
+      description: "SSH from management network only"
+    - port: 443
+      protocol: "tcp"
+      source: "any"
+      description: "HTTPS"
+
+  # Disable Unnecessary Services
+  disable_services:
+    - telnet
+    - ftp
+    - rsh
+    - rlogin
+    - tftp
+
+  # Network Monitoring
+  enable_intrusion_detection: true
+  enable_network_flow_logging: true
+
+# Malware Protection (§164.308(a)(5)(ii)(B))
+malware:
+  enable_antimalware: true
+  realtime_scanning: true
+  scheduled_scans: true
+  scan_frequency: "daily"
+  auto_update_signatures: true
+  quarantine_detected_threats: true
+
+# Patch Management (§164.308(a)(5)(ii)(B))
+patching:
+  auto_security_updates: true
+  patch_critical_within_days: 7
+  patch_high_within_days: 30
+  patch_medium_within_days: 90
+  reboot_if_required: true
+  reboot_window: "02:00-04:00"
+
+  # Update Sources
+  use_official_repos_only: true
+  verify_package_signatures: true
+
+# Backup & Recovery (§164.308(a)(7)(ii)(A))
+backup:
+  enable_automated_backups: true
+  backup_frequency: "daily"
+  backup_time: "02:00"
+  backup_retention_days: 90
+  backup_encryption: true
+  backup_verification: true
+  test_restore_frequency_days: 7
+  offsite_backup: true
+  backup_integrity_checking: true
+
+# User & Group Management (§164.308(a)(3))
+users:
+  # Minimum Necessary Access
+  enforce_least_privilege: true
+  regular_access_reviews: true
+  access_review_frequency_days: 90
+
+  # Privileged Accounts
+  max_sudo_users: 5
+  require_sudo_password: true
+  sudo_session_timeout_minutes: 15
+  log_all_sudo_commands: true
+
+  # Account Lifecycle
+  disable_inactive_accounts_days: 90
+  remove_terminated_users_immediately: true
+  periodic_user_audit: true
+
+  # Break-Glass Accounts
+  max_break_glass_accounts: 2
+  break_glass_audit_frequency_days: 30
+  break_glass_usage_alerts: true
+
+# System Hardening
+hardening:
+  # Kernel Hardening
+  disable_unused_filesystems: true
+  disable_unused_protocols: true
+  enable_kaslr: true
+  enable_stack_protection: true
+
+  # Core Dumps
+  disable_core_dumps: true
+
+  # USB & Removable Media (§164.310(d)(1))
+  disable_usb_storage: true
+  disable_firewire: true
+  disable_thunderbolt: true
+
+  # Compiler & Development Tools
+  restrict_compiler_access: true
+  allowed_compiler_groups:
+    - developers
+
+# Monitoring & Alerting (§164.308(a)(1)(ii)(D))
+monitoring:
+  enable_health_monitoring: true
+  enable_performance_monitoring: true
+  enable_security_monitoring: true
+
+  # Alert Thresholds
+  alert_on_failed_login_attempts: 5
+  alert_on_privilege_escalation: true
+  alert_on_config_changes: true
+  alert_on_service_failures: true
+  alert_on_disk_usage_percent: 90
+  alert_on_memory_usage_percent: 90
+  alert_on_cpu_usage_percent: 90
+
+  # Alert Destinations
+  alert_methods:
+    - email
+    - syslog
+    - webhook
+
+# Secure Boot & Boot Security
+boot:
+  enable_secure_boot: false  # Set true if hardware supports
+  boot_password_required: false  # Set true for physical security
+  single_user_mode_password: true
+  disable_usb_boot: true
+  disable_network_boot: true
+
+# PHI Data Boundary (§164.308(a)(1)(ii)(D))
+phi_controls:
+  # This system processes infrastructure metadata only
+  phi_processing_allowed: false
+  phi_storage_allowed: false
+
+  # Data Classification
+  enforce_data_classification: true
+  log_scrubbing_enabled: true
+  phi_detection_patterns:
+    - "\\b\\d{3}-\\d{2}-\\d{4}\\b"  # SSN
+    - "\\b[A-Z]{2}\\d{2}[A-Z]{2}\\d{4}\\b"  # MRN patterns
+    - "\\b\\d{2}/\\d{2}/\\d{4}\\b.*(?:birth|dob)\\b"  # DOB
+
+  # Evidence Collection Scope
+  collect_system_logs: true
+  collect_application_logs: false  # Unless scrubbed
+  collect_database_queries: false  # PHI risk
+  collect_file_contents: false  # PHI risk
+
+# Compliance Reporting
+compliance:
+  generate_evidence_bundles: true
+  evidence_retention_days: 730  # 2 years
+  evidence_signing: true
+  evidence_encryption: true
+
+  # HIPAA Control Mappings
+  auto_generate_compliance_packets: true
+  packet_frequency: "monthly"
+  include_control_attestations: true
+
+# Change Management (§164.308(a)(8))
+change_management:
+  require_change_approval: true
+  track_all_config_changes: true
+  config_changes_logged: true
+  baseline_drift_detection: true
+  auto_remediate_drift: true
+
+# Incident Response (§164.308(a)(6))
+incident_response:
+  enable_automated_response: true
+  auto_remediation_enabled: true
+  escalation_on_failure: true
+  incident_logging: true
+  incident_retention_days: 2555  # 7 years for breaches
+
+# Exceptions & Deviations
+exceptions:
+  allow_baseline_exceptions: true
+  exceptions_require_approval: true
+  exceptions_require_risk_assessment: true
+  exceptions_require_expiry_date: true
+  exception_max_duration_days: 90
+  exception_review_frequency_days: 30
