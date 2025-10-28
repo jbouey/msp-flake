@@ -62,7 +62,7 @@ Enterprise-grade HIPAA compliance automation at SMB price points. This platform 
 | **Large** | 15-50 | $1500-3000 | ~$500 | 83%+ |
 
 **Value Proposition:**
-- 6-week implementation vs. 6-month enterprise solutions
+- **Deploy in 3 hours, validate in 6 weeks** (vs. 6-month enterprise implementations)
 - Solo engineer can support 10-50 clients at 40%+ margins
 - Evidence packets eliminate consultant fees during audits
 - Metadata-only processing avoids PHI liability exposure
@@ -326,6 +326,38 @@ msp-flake/
 
 ---
 
+## Client Deployment Timeline
+
+### Understanding the "6 Weeks"
+
+**The platform itself (one-time build): 5-6 weeks**
+- Week 1-3: ✅ Core platform (completed)
+- Week 4-5: 🚧 Hardening & evidence (in progress)
+- Week 6: Lab testing & refinement
+
+**Per-client onboarding: 6 weeks to auditor-ready compliance**
+
+| Phase | Duration | Engineer Hours | What Happens |
+|-------|----------|----------------|--------------|
+| **Day 1: Technical Deployment** | 2-3 hours | 3 hours | • Run `terraform apply`<br>• Configure networking/DNS<br>• Deploy watcher containers<br>• Verify connectivity |
+| **Week 1: Initial Monitoring** | 7 days | 2 hours | • Validate evidence collection<br>• Test auto-remediation triggers<br>• Generate first compliance snapshot<br>• Review false positives |
+| **Week 2-4: Burn-in Period** | 3 weeks | 3 hours | • Monitor for edge cases<br>• Tune runbook thresholds<br>• Client reviews dashboards<br>• Adjust baseline exceptions |
+| **Week 5: Compliance Validation** | 7 days | 2 hours | • Generate first monthly packet<br>• Validate evidence completeness<br>• Review HIPAA control coverage<br>• Document any gaps |
+| **Week 6: Production Handoff** | 7 days | 2 hours | • Client admin training<br>• Final compliance packet review<br>• Production cutover<br>• SLA activation |
+
+**Total engineer effort:** ~12 hours over 6 weeks
+**Why 6 weeks?** Compliance validation and evidence collection require time to prove the system works under real conditions. This isn't technical complexity—it's regulatory diligence.
+
+**Compare to competitors:**
+
+| Approach | Setup Time | Engineer Effort | What's Happening |
+|----------|-----------|-----------------|------------------|
+| **This Platform** | 6 weeks | 12 hours | Automated monitoring + evidence validation |
+| **Traditional MSP** | 3-6 months | 80-120 hours | Manual configuration + documentation |
+| **Enterprise Platform** | 6-12 months | 500+ hours | Customization + integration + training |
+
+---
+
 ## Competitive Positioning
 
 ### vs. Traditional MSPs
@@ -335,7 +367,7 @@ msp-flake/
 - **Scale:** One engineer supports 50 clients vs. 1:10 ratio
 
 ### vs. Enterprise Compliance Platforms
-- **Time to Deploy:** 6 weeks vs. 6 months
+- **Client Onboarding:** 3 hours deploy + 6 weeks validation vs. 6-month implementations
 - **Cost:** $200-3000/mo vs. $5000-50000/mo
 - **Complexity:** SMB-focused vs. enterprise bureaucracy
 - **Transparency:** Open baseline vs. proprietary black box
