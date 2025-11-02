@@ -1,0 +1,17 @@
+# Evidence Pipeline Dependencies
+
+# JSON schema validation
+jsonschema>=4.19.0
+
+# AWS S3 integration (for WORM storage uploader)
+boto3>=1.28.0
+
+# YAML parsing (for runbook definitions)
+PyYAML>=6.0.0
+
+# Type hints and data validation
+typing-extensions>=4.8.0
+
+# Development/testing
+pytest>=7.4.0
+pytest-cov>=4.1.0

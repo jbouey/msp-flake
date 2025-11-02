@@ -1,0 +1,127 @@
+# Runbook: Backup Failure Remediation
+#
+# Handles backup job failures by checking logs, verifying disk space,
+# restarting backup service, and triggering manual backup.
+#
+# HIPAA Controls: §164.308(a)(7)(ii)(A), §164.310(d)(2)(iv)
+
+id: RB-BACKUP-001
+name: Backup Failure Remediation
+version: "1.0"
+description: Automated remediation for backup job failures
+
+# When this runbook is triggered
+triggers:
+  - event_type: backup_failure
+  - event_type: backup_age_exceeded
+
+# Incident severity levels this runbook handles
+severity:
+  - critical
+  - high
+
+# Target systems
+applicable_to:
+  - linux_server
+  - windows_server
+
+# HIPAA compliance mapping
+hipaa_controls:
+  - "164.308(a)(7)(ii)(A)"  # Data Backup Plan
+  - "164.310(d)(2)(iv)"      # Data Backup and Storage
+
+# SLA target for resolution
+sla_target_seconds: 14400  # 4 hours
+
+# Remediation steps (executed in order)
+steps:
+  - step: 1
+    name: check_backup_logs
+    description: Check backup service logs for errors
+    script: scripts/check_backup_logs.sh
+    timeout_seconds: 30
+    retry_on_failure: false
+    evidence_required:
+      - log_excerpt
+      - error_message
+
+  - step: 2
+    name: verify_disk_space
+    description: Verify sufficient disk space for backups
+    script: scripts/verify_disk_space.sh
+    timeout_seconds: 10
+    retry_on_failure: false
+    evidence_required:
+      - disk_usage_before
+      - available_space_gb
+    failure_action: escalate  # If disk full, escalate immediately
+
+  - step: 3
+    name: restart_backup_service
+    description: Restart backup service (restic/duplicity/etc)
+    script: scripts/restart_backup_service.sh
+    timeout_seconds: 60
+    retry_on_failure: true
+    retry_count: 2
+    evidence_required:
+      - service_status_before
+      - service_status_after
+
+  - step: 4
+    name: trigger_manual_backup
+    description: Manually trigger backup job
+    script: scripts/trigger_manual_backup.sh
+    timeout_seconds: 3600  # 1 hour for large backups
+    retry_on_failure: false
+    evidence_required:
+      - backup_start_time
+      - backup_end_time
+      - backup_size_gb
+      - backup_checksum
+      - backup_completion_status
+
+# Rollback steps if remediation fails
+rollback:
+  - action: alert_administrator
+    message: "Backup remediation failed - manual intervention required"
+    channels:
+      - email
+      - sms
+  - action: create_ticket
+    priority: urgent
+    assign_to: backup_team
+
+# Evidence collection requirements
+evidence_artifacts:
+  required:
+    - log_excerpts.backup_log
+    - checksums.backup_file
+    - outputs.backup_duration_seconds
+    - outputs.disk_usage_before
+    - outputs.disk_usage_after
+  optional:
+    - configurations.backup_config
+    - outputs.backup_error_count
+
+# Success criteria
+success_criteria:
+  - backup_completion_status == "success"
+  - backup_size_gb > 0
+  - disk_usage_after < 95%
+
+# Validation checks after execution
+post_execution_validation:
+  - name: verify_backup_exists
+    command: "ls -l /var/backups/latest.tar.gz"
+    expected_exit_code: 0
+  - name: verify_backup_age
+    command: "find /var/backups/latest.tar.gz -mmin -60"
+    expected_exit_code: 0  # Should be less than 60 minutes old
+
+# Metadata
+metadata:
+  author: MSP Compliance Platform
+  created: 2025-11-01
+  last_modified: 2025-11-01
+  tested: true
+  production_ready: true

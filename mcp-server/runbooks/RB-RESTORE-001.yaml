@@ -1,0 +1,133 @@
+# Runbook: Weekly Backup Restore Test
+#
+# Tests backup integrity by performing weekly restore tests to scratch
+# environment and verifying checksums.
+#
+# HIPAA Controls: §164.308(a)(7)(ii)(A), §164.310(d)(2)(iv)
+
+id: RB-RESTORE-001
+name: Weekly Backup Restore Test
+version: "1.0"
+description: Automated backup restore verification
+
+triggers:
+  - event_type: scheduled_restore_test
+  - schedule: "0 2 * * 0"  # Sunday 2 AM
+
+severity:
+  - medium
+
+applicable_to:
+  - linux_server
+  - windows_server
+
+hipaa_controls:
+  - "164.308(a)(7)(ii)(A)"  # Data Backup Plan
+  - "164.310(d)(2)(iv)"      # Data Backup and Storage
+
+sla_target_seconds: 7200  # 2 hours
+
+steps:
+  - step: 1
+    name: select_random_backup
+    description: Select random backup from last 7 days
+    script: scripts/select_random_backup.sh
+    timeout_seconds: 30
+    retry_on_failure: false
+    evidence_required:
+      - backup_selected
+      - backup_date
+      - backup_size_gb
+      - backup_location
+
+  - step: 2
+    name: create_scratch_environment
+    description: Create scratch directory or VM for restore test
+    script: scripts/create_scratch_env.sh
+    timeout_seconds: 180
+    retry_on_failure: false
+    evidence_required:
+      - scratch_location
+      - scratch_size_gb
+
+  - step: 3
+    name: restore_to_scratch
+    description: Restore backup to scratch environment
+    script: scripts/restore_backup.sh
+    timeout_seconds: 1800  # 30 minutes
+    retry_on_failure: true
+    retry_count: 2
+    evidence_required:
+      - restore_start_time
+      - restore_end_time
+      - restore_duration_seconds
+      - files_restored_count
+      - data_restored_gb
+
+  - step: 4
+    name: verify_checksums
+    description: Verify checksums of restored files
+    script: scripts/verify_restore_checksums.sh
+    timeout_seconds: 300
+    retry_on_failure: false
+    evidence_required:
+      - files_verified_count
+      - checksum_matches
+      - checksum_failures
+      - verification_result
+
+  - step: 5
+    name: test_database_restore
+    description: If backup includes database, test restore and query
+    script: scripts/test_database_restore.sh
+    timeout_seconds: 300
+    retry_on_failure: false
+    evidence_required:
+      - database_restored
+      - test_query_result
+      - row_count
+
+  - step: 6
+    name: cleanup_scratch
+    description: Remove scratch environment
+    script: scripts/cleanup_scratch_env.sh
+    timeout_seconds: 60
+    retry_on_failure: false
+    evidence_required:
+      - cleanup_result
+
+rollback:
+  - action: cleanup_scratch
+    script: scripts/cleanup_scratch_env.sh
+  - action: alert_administrator
+    message: "Restore test failed - backup integrity issue"
+    priority: high
+
+evidence_artifacts:
+  required:
+    - outputs.backup_selected
+    - outputs.restore_duration_seconds
+    - outputs.files_restored_count
+    - outputs.checksum_matches
+    - outputs.checksum_failures
+    - checksums.restored_files
+  optional:
+    - outputs.database_test_result
+    - log_excerpts.restore_log
+
+success_criteria:
+  - verification_result == "success"
+  - checksum_failures == 0
+  - files_restored_count > 0
+
+post_execution_validation:
+  - name: verify_scratch_cleaned
+    command: "ls -d /tmp/restore-test-*"
+    expected_exit_code: 2  # Directory should not exist
+
+metadata:
+  author: MSP Compliance Platform
+  created: 2025-11-01
+  last_modified: 2025-11-01
+  tested: true
+  production_ready: true

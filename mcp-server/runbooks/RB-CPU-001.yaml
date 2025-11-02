@@ -1,0 +1,116 @@
+# Runbook: High CPU Usage Remediation
+#
+# Handles high CPU usage by identifying top processes, checking for runaway
+# processes, and optionally killing non-critical processes.
+#
+# HIPAA Controls: §164.308(a)(1)(ii)(D)
+
+id: RB-CPU-001
+name: High CPU Usage Remediation
+version: "1.0"
+description: Automated high CPU remediation
+
+triggers:
+  - event_type: cpu_high
+  - event_type: cpu_sustained_high
+
+severity:
+  - high
+  - medium
+
+applicable_to:
+  - linux_server
+  - windows_server
+
+hipaa_controls:
+  - "164.308(a)(1)(ii)(D)"  # Information System Activity Review
+
+sla_target_seconds: 1800  # 30 minutes
+
+steps:
+  - step: 1
+    name: check_cpu_usage
+    description: Check current CPU usage and load average
+    script: scripts/check_cpu_usage.sh
+    timeout_seconds: 30
+    retry_on_failure: false
+    evidence_required:
+      - cpu_usage_percent
+      - load_average_1m
+      - load_average_5m
+      - load_average_15m
+      - cpu_count
+
+  - step: 2
+    name: identify_top_processes
+    description: Identify processes consuming most CPU
+    script: scripts/identify_top_cpu_processes.sh
+    timeout_seconds: 30
+    retry_on_failure: false
+    evidence_required:
+      - top_processes
+      - process_details
+
+  - step: 3
+    name: check_process_legitimacy
+    description: Check if high-CPU processes are legitimate
+    script: scripts/check_process_legitimacy.sh
+    timeout_seconds: 30
+    retry_on_failure: false
+    evidence_required:
+      - legitimate_processes
+      - suspicious_processes
+      - runaway_processes
+
+  - step: 4
+    name: restart_runaway_services
+    description: Restart services with runaway processes
+    script: scripts/restart_runaway_services.sh
+    timeout_seconds: 120
+    retry_on_failure: true
+    retry_count: 2
+    evidence_required:
+      - services_restarted
+      - restart_results
+
+  - step: 5
+    name: verify_cpu_normalized
+    description: Verify CPU usage has returned to normal
+    script: scripts/check_cpu_usage.sh
+    timeout_seconds: 30
+    retry_on_failure: false
+    evidence_required:
+      - cpu_usage_after
+      - load_average_after
+
+rollback:
+  - action: alert_administrator
+    message: "CPU remediation failed - manual investigation required"
+  - action: capture_diagnostic_data
+    script: scripts/capture_cpu_diagnostics.sh
+
+evidence_artifacts:
+  required:
+    - outputs.cpu_usage_before
+    - outputs.cpu_usage_after
+    - outputs.top_processes
+    - outputs.services_restarted
+  optional:
+    - outputs.suspicious_processes
+    - log_excerpts.system_log
+
+success_criteria:
+  - cpu_usage_after < 80%
+  - load_average_after < (cpu_count * 2)
+
+post_execution_validation:
+  - name: verify_cpu_ok
+    command: "top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1"
+    expected_less_than: 80
+
+metadata:
+  author: MSP Compliance Platform
+  created: 2025-11-01
+  last_modified: 2025-11-01
+  tested: true
+  production_ready: true
