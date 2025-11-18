@@ -92,9 +92,10 @@ in
     # ========================================================================
 
     baselinePath = mkOption {
-      type = types.path;
+      type = types.nullOr types.path;
+      default = null;
       example = literalExpression "/etc/nixos/baseline.nix";
-      description = "Path to declarative baseline NixOS configuration";
+      description = "Path to declarative baseline NixOS configuration (optional)";
     };
 
     policyVersion = mkOption {
@@ -356,7 +357,7 @@ in
 
         # Policy
         POLICY_VERSION = cfg.policyVersion;
-        BASELINE_PATH = toString cfg.baselinePath;
+        BASELINE_PATH = if cfg.baselinePath != null then toString cfg.baselinePath else "";
 
         # Timing
         POLL_INTERVAL = toString cfg.pollInterval;
