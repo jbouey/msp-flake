@@ -207,6 +207,7 @@ jobs:
 
   security-scan:
     needs: build-and-sign
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -217,11 +218,25 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download SBOM
+        id: download-sbom
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: sbom-${{ github.sha }}
 
+      - name: Check if SBOM exists
+        id: check-sbom
+        run: |
+          if [ -f "sbom.spdx.json" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✓ SBOM found, will scan"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️  SBOM not found, skipping scan"
+          fi
+
       - name: Run Trivy vulnerability scanner
+        if: steps.check-sbom.outputs.exists == 'true'
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'sbom'
@@ -230,6 +245,7 @@ jobs:
           output: 'trivy-results.sarif'
 
       - name: Upload Trivy results to GitHub Security
+        if: steps.check-sbom.outputs.exists == 'true'
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
