@@ -1,0 +1,55 @@
+id: RB-TIMESYNC-001
+name: "Time Synchronization Remediation"
+description: "Fix NTP synchronization issues"
+severity: medium
+
+hipaa_controls:
+  - "164.312(b)"
+
+steps:
+  - action: run_command
+    description: "Check chrony status"
+    params:
+      command: chronyc
+      args: ["tracking"]
+    timeout: 10
+
+  - action: restart_service
+    description: "Restart chronyd service"
+    params:
+      service: "chronyd"
+    timeout: 30
+
+  - action: run_command
+    description: "Force time sync"
+    params:
+      command: chronyc
+      args: ["makestep"]
+    timeout: 10
+
+  - action: run_command
+    description: "Wait for sync to stabilize"
+    params:
+      command: sleep
+      args: ["5"]
+    timeout: 10
+
+  - action: run_command
+    description: "Verify time sync status"
+    params:
+      command: chronyc
+      args: ["tracking"]
+    timeout: 10
+
+rollback:
+  - action: run_command
+    description: "Alert administrator of time sync failure"
+    params:
+      command: logger
+      args: ["-t", "msp-healer", "-p", "warning", "Time sync remediation failed"]
+    timeout: 5
+
+evidence_required:
+  - chrony_tracking_before
+  - chrony_tracking_after
+  - time_drift_ms

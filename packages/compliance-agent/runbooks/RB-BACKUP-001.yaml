@@ -1,0 +1,57 @@
+id: RB-BACKUP-001
+name: "Backup Failure Remediation"
+description: "Remediate failed or stale backups by triggering new backup job"
+severity: critical
+
+hipaa_controls:
+  - "164.308(a)(7)(ii)(A)"
+  - "164.310(d)(2)(iv)"
+
+steps:
+  - action: run_command
+    description: "Check backup service status"
+    params:
+      command: systemctl
+      args: ["status", "backup.service"]
+    timeout: 10
+
+  - action: run_command
+    description: "Verify disk space available"
+    params:
+      command: df
+      args: ["-h", "/var/backups"]
+    timeout: 10
+
+  - action: trigger_backup
+    description: "Trigger manual backup job"
+    params:
+      backup_type: "full"
+    timeout: 300
+
+  - action: run_command
+    description: "Wait for backup completion"
+    params:
+      command: sleep
+      args: ["10"]
+    timeout: 15
+
+  - action: run_command
+    description: "Verify backup file created"
+    params:
+      command: ls
+      args: ["-lh", "/var/backups/latest"]
+    timeout: 10
+
+rollback:
+  - action: run_command
+    description: "Alert administrator of backup failure"
+    params:
+      command: logger
+      args: ["-t", "msp-healer", "-p", "err", "Backup remediation failed, manual intervention required"]
+    timeout: 5
+
+evidence_required:
+  - backup_log_excerpt
+  - disk_usage_before
+  - disk_usage_after
+  - backup_completion_hash

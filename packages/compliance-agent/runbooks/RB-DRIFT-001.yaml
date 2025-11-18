@@ -1,0 +1,57 @@
+id: RB-DRIFT-001
+name: "Flake Hash Drift Remediation"
+description: "Sync system to approved flake configuration"
+severity: critical
+
+hipaa_controls:
+  - "164.308(a)(1)(ii)(D)"
+  - "164.310(d)(1)"
+
+steps:
+  - action: run_command
+    description: "Query current flake hash"
+    params:
+      command: nix
+      args: ["flake", "metadata", "/run/current-system", "--json"]
+    timeout: 30
+
+  - action: run_command
+    description: "Backup current generation"
+    params:
+      command: nix-env
+      args: ["--list-generations"]
+    timeout: 10
+
+  - action: sync_flake
+    description: "Sync to target flake hash"
+    params:
+      target_hash: "{{target_flake_hash}}"
+    timeout: 300
+
+  - action: run_command
+    description: "Verify new flake hash"
+    params:
+      command: nix
+      args: ["flake", "metadata", "/run/current-system", "--json"]
+    timeout: 30
+
+rollback:
+  - action: run_command
+    description: "Rollback to previous generation"
+    params:
+      command: nixos-rebuild
+      args: ["switch", "--rollback"]
+    timeout: 120
+
+  - action: run_command
+    description: "Alert administrator of drift remediation failure"
+    params:
+      command: logger
+      args: ["-t", "msp-healer", "-p", "err", "Flake sync failed, rolled back to previous generation"]
+    timeout: 5
+
+evidence_required:
+  - flake_hash_before
+  - flake_hash_after
+  - nixos_rebuild_log
+  - generation_diff

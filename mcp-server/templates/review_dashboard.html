@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Runbook Review Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 1.5rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .header .subtitle {
+            color: #ecf0f1;
+            font-size: 0.9rem;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 2rem auto;
+            padding: 0 2rem;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .stat-card .value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-card .label {
+            color: #7f8c8d;
+            font-size: 0.9rem;
+        }
+
+        .stat-card.priority-high .value {
+            color: #e74c3c;
+        }
+
+        .review-list {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .review-list-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid #ecf0f1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .review-list-header h2 {
+            font-size: 1.2rem;
+        }
+
+        .filter-buttons button {
+            padding: 0.5rem 1rem;
+            margin-left: 0.5rem;
+            border: 1px solid #bdc3c7;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .filter-buttons button.active {
+            background: #3498db;
+            color: white;
+            border-color: #3498db;
+        }
+
+        .review-item {
+            padding: 1.5rem;
+            border-bottom: 1px solid #ecf0f1;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .review-item:hover {
+            background: #f8f9fa;
+        }
+
+        .review-item:last-child {
+            border-bottom: none;
+        }
+
+        .review-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 0.75rem;
+        }
+
+        .review-item-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .review-item-meta {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.85rem;
+            color: #7f8c8d;
+        }
+
+        .priority-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .priority-high {
+            background: #fee;
+            color: #e74c3c;
+        }
+
+        .priority-medium {
+            background: #fef5e7;
+            color: #f39c12;
+        }
+
+        .priority-low {
+            background: #e8f8f5;
+            color: #16a085;
+        }
+
+        .review-item-reason {
+            color: #555;
+            margin-bottom: 0.5rem;
+        }
+
+        .review-actions {
+            margin-top: 1rem;
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+
+        .btn-success {
+            background: #27ae60;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            max-width: 1200px;
+            max-height: 90vh;
+            width: 90%;
+            overflow: auto;
+        }
+
+        .modal-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid #ecf0f1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        .modal-footer {
+            padding: 1.5rem;
+            border-top: 1px solid #ecf0f1;
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+        }
+
+        .code-comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .code-block {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 1rem;
+            overflow: auto;
+        }
+
+        .code-block h3 {
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+            color: #7f8c8d;
+        }
+
+        pre {
+            margin: 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+        }
+
+        .failure-context {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        .failure-context h3 {
+            margin-bottom: 0.5rem;
+            color: #856404;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: #7f8c8d;
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧠 Runbook Review Dashboard</h1>
+        <div class="subtitle">LLM-Generated Runbook Approval System</div>
+    </div>
+
+    <div class="container">
+        <!-- Stats Overview -->
+        <div class="stats">
+            <div class="stat-card">
+                <div class="value" id="stat-pending">-</div>
+                <div class="label">Pending Review</div>
+            </div>
+            <div class="stat-card priority-high">
+                <div class="value" id="stat-high-priority">-</div>
+                <div class="label">High Priority</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="stat-in-review">-</div>
+                <div class="label">In Review</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="stat-approved">-</div>
+                <div class="label">Approved</div>
+            </div>
+        </div>
+
+        <!-- Review List -->
+        <div class="review-list">
+            <div class="review-list-header">
+                <h2>Pending Reviews</h2>
+                <div class="filter-buttons">
+                    <button class="active" onclick="filterReviews('all')">All</button>
+                    <button onclick="filterReviews('high')">High Priority</button>
+                    <button onclick="filterReviews('medium')">Medium</button>
+                    <button onclick="filterReviews('low')">Low</button>
+                </div>
+            </div>
+            <div id="review-items">
+                <!-- Populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Review Modal -->
+    <div id="review-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Review Runbook</h2>
+                <button class="btn btn-secondary" onclick="closeModal()">×</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Populated by JavaScript -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-success" onclick="approveRunbook()">✓ Approve</button>
+                <button class="btn btn-danger" onclick="rejectRunbook()">✗ Reject</button>
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentRunbookId = null;
+
+        // Load stats and reviews on page load
+        async function loadDashboard() {
+            await loadStats();
+            await loadReviews();
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/review/stats');
+                const data = await response.json();
+                const stats = data.queue_stats;
+
+                document.getElementById('stat-pending').textContent = stats.pending_review;
+                document.getElementById('stat-high-priority').textContent = stats.high_priority_pending;
+                document.getElementById('stat-in-review').textContent = stats.in_review;
+                document.getElementById('stat-approved').textContent = stats.approved;
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        async function loadReviews(priority = null) {
+            try {
+                let url = '/api/review/pending';
+                if (priority && priority !== 'all') {
+                    url += `?priority=${priority}`;
+                }
+
+                const response = await fetch(url);
+                const data = await response.json();
+                const reviews = data.pending_reviews;
+
+                const container = document.getElementById('review-items');
+
+                if (reviews.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <p>No pending reviews! All caught up.</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = reviews.map(review => `
+                    <div class="review-item" onclick="openReviewModal('${review.runbook_id}')">
+                        <div class="review-item-header">
+                            <div>
+                                <div class="review-item-title">${review.runbook_id}</div>
+                                <div class="review-item-meta">
+                                    <span>Created: ${formatDate(review.created_at)}</span>
+                                </div>
+                            </div>
+                            <span class="priority-badge priority-${review.priority}">${review.priority}</span>
+                        </div>
+                        <div class="review-item-reason">${review.reason}</div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load reviews:', error);
+            }
+        }
+
+        async function openReviewModal(runbookId) {
+            currentRunbookId = runbookId;
+
+            try {
+                const response = await fetch(`/api/review/runbook/${runbookId}`);
+                const data = await response.json();
+
+                document.getElementById('modal-title').textContent = `Review: ${runbookId}`;
+
+                let failureContext = '';
+                if (data.failure_context) {
+                    failureContext = `
+                        <div class="failure-context">
+                            <h3>Failure That Triggered Generation</h3>
+                            <p><strong>Error:</strong> ${data.failure_context.error_message}</p>
+                            <p><strong>Failed at step:</strong> ${data.failure_context.error_step}</p>
+                            <p><strong>Failure type:</strong> ${data.failure_context.failure_type || 'unknown'}</p>
+                        </div>
+                    `;
+                }
+
+                let comparison = '';
+                if (data.parent_runbook) {
+                    comparison = `
+                        <h3>Runbook Comparison</h3>
+                        <div class="code-comparison">
+                            <div class="code-block">
+                                <h3>Parent Runbook (${data.parent_runbook.id})</h3>
+                                <pre>${JSON.stringify(data.parent_runbook, null, 2)}</pre>
+                            </div>
+                            <div class="code-block">
+                                <h3>Improved Runbook (${data.runbook.id})</h3>
+                                <pre>${JSON.stringify(data.runbook, null, 2)}</pre>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                document.getElementById('modal-body').innerHTML = `
+                    ${failureContext}
+                    ${comparison}
+                    <div style="margin-top: 1rem;">
+                        <p><strong>Generated at:</strong> ${formatDate(data.metadata.generated_at)}</p>
+                        <p><strong>Generation model:</strong> ${data.metadata.generation_model}</p>
+                    </div>
+                `;
+
+                document.getElementById('review-modal').classList.add('active');
+            } catch (error) {
+                console.error('Failed to load runbook details:', error);
+                alert('Failed to load runbook details');
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('review-modal').classList.remove('active');
+            currentRunbookId = null;
+        }
+
+        async function approveRunbook() {
+            if (!currentRunbookId) return;
+
+            const notes = prompt('Approval notes (optional):');
+
+            try {
+                await fetch(`/api/review/approve/${currentRunbookId}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        reviewer: 'current_user',  // TODO: Get from auth
+                        notes: notes
+                    })
+                });
+
+                alert('Runbook approved!');
+                closeModal();
+                loadDashboard();
+            } catch (error) {
+                console.error('Failed to approve:', error);
+                alert('Failed to approve runbook');
+            }
+        }
+
+        async function rejectRunbook() {
+            if (!currentRunbookId) return;
+
+            const reason = prompt('Rejection reason (required):');
+            if (!reason) return;
+
+            try {
+                await fetch(`/api/review/reject/${currentRunbookId}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        reviewer: 'current_user',  // TODO: Get from auth
+                        reason: reason
+                    })
+                });
+
+                alert('Runbook rejected');
+                closeModal();
+                loadDashboard();
+            } catch (error) {
+                console.error('Failed to reject:', error);
+                alert('Failed to reject runbook');
+            }
+        }
+
+        function filterReviews(priority) {
+            // Update button states
+            document.querySelectorAll('.filter-buttons button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Load filtered reviews
+            loadReviews(priority);
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return 'N/A';
+            const date = new Date(dateStr);
+            return date.toLocaleString();
+        }
+
+        // Load dashboard on page load
+        loadDashboard();
+
+        // Auto-refresh every 30 seconds
+        setInterval(loadDashboard, 30000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+id: RB-SERVICE-001
+name: "Service Health Remediation"
+description: "Restart failed critical services with health verification"
+severity: high
+
+hipaa_controls:
+  - "164.308(a)(1)(ii)(D)"
+
+steps:
+  - action: run_command
+    description: "Check service status before restart"
+    params:
+      command: systemctl
+      args: ["status", "{{service}}"]
+    timeout: 10
+
+  - action: restart_service
+    description: "Restart the failed service"
+    params:
+      service: "{{service}}"
+    timeout: 60
+
+  - action: run_command
+    description: "Wait for service to stabilize"
+    params:
+      command: sleep
+      args: ["5"]
+    timeout: 10
+
+  - action: run_command
+    description: "Verify service is now active"
+    params:
+      command: systemctl
+      args: ["is-active", "{{service}}"]
+    timeout: 10
+
+rollback:
+  - action: run_command
+    description: "Alert administrator of service failure"
+    params:
+      command: logger
+      args: ["-t", "msp-healer", "-p", "err", "Service restart failed: {{service}}"]
+    timeout: 5
+
+evidence_required:
+  - service_status_before
+  - service_restart_log
+  - service_status_after

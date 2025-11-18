@@ -1,0 +1,2 @@
+[console_scripts]
+compliance-agent = compliance_agent.agent:main

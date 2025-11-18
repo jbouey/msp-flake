@@ -1,0 +1,542 @@
+"""
+Tests for drift detection.
+"""
+
+import pytest
+import tempfile
+import shutil
+from pathlib import Path
+from datetime import datetime
+from unittest.mock import patch, MagicMock, AsyncMock
+
+from compliance_agent.drift import (
+    DriftType,
+    DriftItem,
+    DriftReport,
+    DriftDetector,
+    generate_drift_report
+)
+from compliance_agent.config import AgentConfig
+from compliance_agent.crypto import generate_keypair
+
+
+@pytest.fixture
+def test_config(tmp_path):
+    """Create test configuration."""
+    # Create mock baseline file
+    baseline_path = tmp_path / "baseline.nix"
+    baseline_path.write_text("{ }")
+
+    # Create mock certificate files
+    cert_file = tmp_path / "cert.pem"
+    cert_file.write_text("MOCK_CERT")
+    key_file = tmp_path / "key.pem"
+    key_file.write_text("MOCK_KEY")
+    signing_key = tmp_path / "signing.key"
+    signing_key.write_bytes(generate_keypair()[0])
+
+    # Create state directory
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+
+    import os
+    os.environ.update({
+        'SITE_ID': 'test-site-001',
+        'HOST_ID': 'test-host',
+        'DEPLOYMENT_MODE': 'direct',
+        'STATE_DIR': str(state_dir),
+        'MCP_URL': 'http://localhost:8888',
+        'BASELINE_PATH': str(baseline_path),
+        'CLIENT_CERT_FILE': str(cert_file),
+        'CLIENT_KEY_FILE': str(key_file),
+        'SIGNING_KEY_FILE': str(signing_key),
+    })
+
+    from compliance_agent.config import load_config
+    config = load_config()
+
+    return config
+
+
+@pytest.mark.asyncio
+async def test_drift_item_creation():
+    """Test DriftItem creation and representation."""
+    item = DriftItem(
+        drift_type=DriftType.FLAKE_HASH,
+        path="/run/current-system",
+        expected="abc123",
+        actual="def456",
+        severity="high",
+        hipaa_control="164.310(d)(1)"
+    )
+
+    assert item.drift_type == DriftType.FLAKE_HASH
+    assert item.path == "/run/current-system"
+    assert item.expected == "abc123"
+    assert item.actual == "def456"
+    assert item.severity == "high"
+    assert item.hipaa_control == "164.310(d)(1)"
+    assert isinstance(item.detected_at, datetime)
+
+    # Test to_dict
+    item_dict = item.to_dict()
+    assert item_dict["drift_type"] == DriftType.FLAKE_HASH
+    assert item_dict["path"] == "/run/current-system"
+    assert item_dict["expected"] == "abc123"
+    assert item_dict["actual"] == "def456"
+    assert item_dict["severity"] == "high"
+
+    # Test repr
+    repr_str = repr(item)
+    assert "DriftItem" in repr_str
+    assert "flake_hash" in repr_str
+
+
+@pytest.mark.asyncio
+async def test_drift_report_empty():
+    """Test empty drift report."""
+    report = DriftReport(site_id="test-site", host_id="test-host")
+
+    assert report.site_id == "test-site"
+    assert report.host_id == "test-host"
+    assert isinstance(report.timestamp, datetime)
+    assert not report.has_drift()
+    assert len(report.items) == 0
+
+
+@pytest.mark.asyncio
+async def test_drift_report_with_items():
+    """Test drift report with multiple items."""
+    report = DriftReport(site_id="test-site", host_id="test-host")
+
+    # Add drift items
+    report.add_drift(DriftItem(
+        drift_type=DriftType.FLAKE_HASH,
+        path="/run/current-system",
+        expected="abc123",
+        actual="def456",
+        severity="high"
+    ))
+
+    report.add_drift(DriftItem(
+        drift_type=DriftType.SERVICE_STATE,
+        path="sshd.service",
+        expected="active",
+        actual="inactive",
+        severity="critical"
+    ))
+
+    report.add_drift(DriftItem(
+        drift_type=DriftType.CONFIGURATION,
+        path="/etc/ssh/sshd_config",
+        expected="checksum1",
+        actual="checksum2",
+        severity="medium"
+    ))
+
+    assert report.has_drift()
+    assert len(report.items) == 3
+
+    # Test count by severity
+    by_severity = report.count_by_severity()
+    assert by_severity["high"] == 1
+    assert by_severity["critical"] == 1
+    assert by_severity["medium"] == 1
+    assert by_severity["low"] == 0
+
+    # Test count by type
+    by_type = report.count_by_type()
+    assert by_type[DriftType.FLAKE_HASH] == 1
+    assert by_type[DriftType.SERVICE_STATE] == 1
+    assert by_type[DriftType.CONFIGURATION] == 1
+
+
+@pytest.mark.asyncio
+async def test_drift_report_to_dict():
+    """Test drift report serialization to dict."""
+    report = DriftReport(site_id="test-site", host_id="test-host")
+
+    report.add_drift(DriftItem(
+        drift_type=DriftType.FLAKE_HASH,
+        path="/run/current-system",
+        expected="abc123",
+        actual="def456",
+        severity="high"
+    ))
+
+    report_dict = report.to_dict()
+
+    assert report_dict["site_id"] == "test-site"
+    assert report_dict["host_id"] == "test-host"
+    assert report_dict["drift_detected"] is True
+    assert report_dict["total_drift_items"] == 1
+    assert "by_severity" in report_dict
+    assert "by_type" in report_dict
+    assert len(report_dict["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_drift_report_to_json():
+    """Test drift report serialization to JSON."""
+    report = DriftReport(site_id="test-site", host_id="test-host")
+
+    report.add_drift(DriftItem(
+        drift_type=DriftType.FLAKE_HASH,
+        path="/run/current-system",
+        expected="abc123",
+        actual="def456",
+        severity="high"
+    ))
+
+    json_str = report.to_json()
+
+    assert "test-site" in json_str
+    assert "test-host" in json_str
+    assert "flake_hash" in json_str
+    assert "abc123" in json_str
+
+
+@pytest.mark.asyncio
+async def test_detector_initialization(test_config):
+    """Test drift detector initialization."""
+    detector = DriftDetector(test_config)
+
+    assert detector.config == test_config
+    assert detector.baseline_path == test_config.baseline_path
+
+
+@pytest.mark.asyncio
+async def test_check_flake_drift_no_drift(test_config):
+    """Test flake drift detection when no drift exists."""
+    detector = DriftDetector(test_config)
+
+    # Mock both hashes to be the same
+    with patch.object(detector, '_get_baseline_flake_hash', new_callable=AsyncMock) as mock_baseline, \
+         patch.object(detector, '_get_current_flake_hash', new_callable=AsyncMock) as mock_current:
+
+        mock_baseline.return_value = "abc123"
+        mock_current.return_value = "abc123"
+
+        drift = await detector.check_flake_drift()
+
+        assert drift is None
+
+
+@pytest.mark.asyncio
+async def test_check_flake_drift_with_drift(test_config):
+    """Test flake drift detection when drift exists."""
+    detector = DriftDetector(test_config)
+
+    # Mock different hashes
+    with patch.object(detector, '_get_baseline_flake_hash', new_callable=AsyncMock) as mock_baseline, \
+         patch.object(detector, '_get_current_flake_hash', new_callable=AsyncMock) as mock_current:
+
+        mock_baseline.return_value = "abc123"
+        mock_current.return_value = "def456"
+
+        drift = await detector.check_flake_drift()
+
+        assert drift is not None
+        assert drift.drift_type == DriftType.FLAKE_HASH
+        assert drift.expected == "abc123"
+        assert drift.actual == "def456"
+        assert drift.severity == "high"
+
+
+@pytest.mark.asyncio
+async def test_check_configuration_drift_no_drift(test_config):
+    """Test configuration drift when no drift exists."""
+    detector = DriftDetector(test_config)
+
+    # Mock checksums to match
+    with patch.object(detector, '_get_baseline_file_checksum', new_callable=AsyncMock) as mock_baseline, \
+         patch.object(detector, '_compute_file_checksum', new_callable=AsyncMock) as mock_current:
+
+        mock_baseline.return_value = "checksum123"
+        mock_current.return_value = "checksum123"
+
+        drifts = await detector.check_configuration_drift()
+
+        assert len(drifts) == 0
+
+
+@pytest.mark.asyncio
+async def test_check_configuration_drift_with_drift(test_config):
+    """Test configuration drift when drift exists."""
+    detector = DriftDetector(test_config)
+
+    # Mock checksums to differ
+    with patch.object(detector, '_get_baseline_file_checksum', new_callable=AsyncMock) as mock_baseline, \
+         patch.object(detector, '_compute_file_checksum', new_callable=AsyncMock) as mock_current:
+
+        mock_baseline.return_value = "checksum123"
+        mock_current.return_value = "checksum456"
+
+        drifts = await detector.check_configuration_drift()
+
+        # Should detect drift for all monitored config files
+        assert len(drifts) > 0
+        assert all(d.drift_type == DriftType.CONFIGURATION for d in drifts)
+
+
+@pytest.mark.asyncio
+async def test_check_service_drift_no_drift(test_config):
+    """Test service drift when all services are active."""
+    detector = DriftDetector(test_config)
+
+    # Mock all services as active
+    with patch.object(detector, '_is_service_active', new_callable=AsyncMock) as mock_active:
+        mock_active.return_value = True
+
+        drifts = await detector.check_service_drift()
+
+        assert len(drifts) == 0
+
+
+@pytest.mark.asyncio
+async def test_check_service_drift_with_drift(test_config):
+    """Test service drift when services are inactive."""
+    detector = DriftDetector(test_config)
+
+    # Mock services as inactive
+    with patch.object(detector, '_is_service_active', new_callable=AsyncMock) as mock_active:
+        mock_active.return_value = False
+
+        drifts = await detector.check_service_drift()
+
+        # Should detect drift for all expected services
+        assert len(drifts) > 0
+        assert all(d.drift_type == DriftType.SERVICE_STATE for d in drifts)
+        assert all(d.expected == "active" for d in drifts)
+        assert all(d.actual == "inactive" for d in drifts)
+
+
+@pytest.mark.asyncio
+async def test_check_package_drift_no_drift(test_config):
+    """Test package drift when versions match."""
+    detector = DriftDetector(test_config)
+
+    # Mock versions to match
+    with patch.object(detector, '_get_baseline_package_version', new_callable=AsyncMock) as mock_baseline, \
+         patch.object(detector, '_get_current_package_version', new_callable=AsyncMock) as mock_current:
+
+        mock_baseline.return_value = "1.2.3"
+        mock_current.return_value = "1.2.3"
+
+        drifts = await detector.check_package_drift()
+
+        assert len(drifts) == 0
+
+
+@pytest.mark.asyncio
+async def test_check_package_drift_with_drift(test_config):
+    """Test package drift when versions differ."""
+    detector = DriftDetector(test_config)
+
+    # Mock versions to differ
+    with patch.object(detector, '_get_baseline_package_version', new_callable=AsyncMock) as mock_baseline, \
+         patch.object(detector, '_get_current_package_version', new_callable=AsyncMock) as mock_current:
+
+        mock_baseline.return_value = "1.2.3"
+        mock_current.return_value = "1.2.4"
+
+        drifts = await detector.check_package_drift()
+
+        # Should detect drift for monitored packages
+        assert len(drifts) > 0
+        assert all(d.drift_type == DriftType.PACKAGE_VERSION for d in drifts)
+
+
+@pytest.mark.asyncio
+async def test_detect_all_drift_no_drift(test_config):
+    """Test complete drift detection when no drift exists."""
+    detector = DriftDetector(test_config)
+
+    # Mock all checks to return no drift
+    with patch.object(detector, 'check_flake_drift', new_callable=AsyncMock) as mock_flake, \
+         patch.object(detector, 'check_configuration_drift', new_callable=AsyncMock) as mock_config, \
+         patch.object(detector, 'check_service_drift', new_callable=AsyncMock) as mock_service, \
+         patch.object(detector, 'check_package_drift', new_callable=AsyncMock) as mock_package:
+
+        mock_flake.return_value = None
+        mock_config.return_value = []
+        mock_service.return_value = []
+        mock_package.return_value = []
+
+        report = await detector.detect_all_drift()
+
+        assert not report.has_drift()
+        assert len(report.items) == 0
+
+
+@pytest.mark.asyncio
+async def test_detect_all_drift_with_drift(test_config):
+    """Test complete drift detection when drift exists."""
+    detector = DriftDetector(test_config)
+
+    # Mock checks to return various drift
+    with patch.object(detector, 'check_flake_drift', new_callable=AsyncMock) as mock_flake, \
+         patch.object(detector, 'check_configuration_drift', new_callable=AsyncMock) as mock_config, \
+         patch.object(detector, 'check_service_drift', new_callable=AsyncMock) as mock_service, \
+         patch.object(detector, 'check_package_drift', new_callable=AsyncMock) as mock_package:
+
+        mock_flake.return_value = DriftItem(
+            drift_type=DriftType.FLAKE_HASH,
+            path="/run/current-system",
+            expected="abc",
+            actual="def",
+            severity="high"
+        )
+
+        mock_config.return_value = [
+            DriftItem(
+                drift_type=DriftType.CONFIGURATION,
+                path="/etc/ssh/sshd_config",
+                expected="checksum1",
+                actual="checksum2",
+                severity="medium"
+            )
+        ]
+
+        mock_service.return_value = [
+            DriftItem(
+                drift_type=DriftType.SERVICE_STATE,
+                path="sshd.service",
+                expected="active",
+                actual="inactive",
+                severity="high"
+            )
+        ]
+
+        mock_package.return_value = [
+            DriftItem(
+                drift_type=DriftType.PACKAGE_VERSION,
+                path="openssh",
+                expected="1.2.3",
+                actual="1.2.4",
+                severity="medium"
+            )
+        ]
+
+        report = await detector.detect_all_drift()
+
+        assert report.has_drift()
+        assert len(report.items) == 4
+
+        # Verify all drift types are present
+        by_type = report.count_by_type()
+        assert by_type[DriftType.FLAKE_HASH] == 1
+        assert by_type[DriftType.CONFIGURATION] == 1
+        assert by_type[DriftType.SERVICE_STATE] == 1
+        assert by_type[DriftType.PACKAGE_VERSION] == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_drift_report(test_config):
+    """Test drift report generation function."""
+    # Mock detector to return controlled drift
+    with patch('compliance_agent.drift.DriftDetector.detect_all_drift', new_callable=AsyncMock) as mock_detect:
+
+        test_report = DriftReport(
+            site_id=test_config.site_id,
+            host_id=test_config.host_id
+        )
+        test_report.add_drift(DriftItem(
+            drift_type=DriftType.FLAKE_HASH,
+            path="/run/current-system",
+            expected="abc",
+            actual="def",
+            severity="high"
+        ))
+
+        mock_detect.return_value = test_report
+
+        report = await generate_drift_report(test_config)
+
+        assert report.has_drift()
+        assert report.site_id == test_config.site_id
+        assert report.host_id == test_config.host_id
+
+
+@pytest.mark.asyncio
+async def test_is_service_active_true(test_config):
+    """Test service active check when service is running."""
+    detector = DriftDetector(test_config)
+
+    # Mock run_command to return "active"
+    from compliance_agent.utils import CommandResult
+    mock_result = CommandResult(
+        exit_code=0,
+        stdout="active",
+        stderr="",
+        duration_sec=0.1
+    )
+
+    with patch('compliance_agent.drift.run_command', new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = mock_result
+
+        is_active = await detector._is_service_active("test.service")
+
+        assert is_active is True
+
+
+@pytest.mark.asyncio
+async def test_is_service_active_false(test_config):
+    """Test service active check when service is not running."""
+    detector = DriftDetector(test_config)
+
+    # Mock run_command to raise exception (service not active)
+    with patch('compliance_agent.drift.run_command', new_callable=AsyncMock) as mock_run:
+        mock_run.side_effect = Exception("Service not active")
+
+        is_active = await detector._is_service_active("test.service")
+
+        assert is_active is False
+
+
+@pytest.mark.asyncio
+async def test_compute_file_checksum(test_config, tmp_path):
+    """Test file checksum computation."""
+    detector = DriftDetector(test_config)
+
+    # Create test file
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("test content")
+
+    # Mock run_command to return checksum
+    from compliance_agent.utils import CommandResult
+    mock_result = CommandResult(
+        exit_code=0,
+        stdout="abc123def456 /path/to/file",
+        stderr="",
+        duration_sec=0.1
+    )
+
+    with patch('compliance_agent.drift.run_command', new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = mock_result
+
+        checksum = await detector._compute_file_checksum(str(test_file))
+
+        assert checksum == "abc123def456"
+
+
+@pytest.mark.asyncio
+async def test_get_current_package_version(test_config):
+    """Test getting current package version."""
+    detector = DriftDetector(test_config)
+
+    # Mock run_command to return package info
+    from compliance_agent.utils import CommandResult
+    mock_result = CommandResult(
+        exit_code=0,
+        stdout="openssh-9.3p1",
+        stderr="",
+        duration_sec=0.1
+    )
+
+    with patch('compliance_agent.drift.run_command', new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = mock_result
+
+        version = await detector._get_current_package_version("openssh")
+
+        assert version == "9.3p1"
