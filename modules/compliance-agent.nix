@@ -110,19 +110,22 @@ in
     # ========================================================================
 
     clientCertFile = mkOption {
-      type = types.path;
+      type = types.nullOr types.path;
+      default = null;
       example = literalExpression "config.sops.secrets.\"compliance/client-cert\".path";
       description = "Path to mTLS client certificate (SOPS-encrypted)";
     };
 
     clientKeyFile = mkOption {
-      type = types.path;
+      type = types.nullOr types.path;
+      default = null;
       example = literalExpression "config.sops.secrets.\"compliance/client-key\".path";
       description = "Path to mTLS client key (SOPS-encrypted)";
     };
 
     signingKeyFile = mkOption {
-      type = types.path;
+      type = types.nullOr types.path;
+      default = null;
       example = literalExpression "config.sops.secrets.\"compliance/signing-key\".path";
       description = "Path to Ed25519 signing key for evidence bundles";
     };
@@ -366,9 +369,9 @@ in
         ALLOW_DISRUPTIVE_OUTSIDE_WINDOW = if cfg.allowDisruptiveOutsideWindow then "true" else "false";
 
         # Secrets (paths)
-        CLIENT_CERT_FILE = toString cfg.clientCertFile;
-        CLIENT_KEY_FILE = toString cfg.clientKeyFile;
-        SIGNING_KEY_FILE = toString cfg.signingKeyFile;
+        CLIENT_CERT_FILE = if cfg.clientCertFile != null then toString cfg.clientCertFile else "";
+        CLIENT_KEY_FILE = if cfg.clientKeyFile != null then toString cfg.clientKeyFile else "";
+        SIGNING_KEY_FILE = if cfg.signingKeyFile != null then toString cfg.signingKeyFile else "";
         WEBHOOK_SECRET_FILE = if cfg.webhookSecretFile != null then toString cfg.webhookSecretFile else "";
 
         # Evidence
