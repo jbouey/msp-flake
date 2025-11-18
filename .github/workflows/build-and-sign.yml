@@ -32,8 +32,12 @@ jobs:
             experimental-features = nix-command flakes
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
+      # Optional: Setup Cachix for faster builds (requires setup - see docs/CACHIX-SETUP.md)
+      # Without Cachix: builds take ~15-20 minutes (builds from source)
+      # With Cachix: builds take ~2-5 minutes (uses cached packages)
       - name: Setup Cachix
         uses: cachix/cachix-action@v13
+        continue-on-error: true  # Allow workflow to continue without Cachix
         with:
           name: msp-platform
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
