@@ -1,5 +1,11 @@
 # MSP HIPAA Compliance Platform - Demo Instructions
 
+**Status:** ✅ All services running and tested (November 5, 2025)
+
+**⚠️ Setup Issues?** See [DEMO_SETUP_TROUBLESHOOTING.md](./DEMO_SETUP_TROUBLESHOOTING.md) for solutions to common problems.
+
+---
+
 ## Quick Start
 
 ```bash

@@ -8,6 +8,19 @@
 
 ---
 
+## 📋 Quick Links
+
+| Document | Purpose |
+|----------|---------|
+| **[CLAUDE.md](./CLAUDE.md)** | Master plan - architecture, business model, compliance framework (5,471 lines) |
+| **[IMPLEMENTATION-STATUS.md](./IMPLEMENTATION-STATUS.md)** | Current progress, alignment tracking, next steps |
+| **[PHASE1-COMPLETE.md](./PHASE1-COMPLETE.md)** | Phase 1 deliverables, test results, handoff |
+| **[README-compliance-agent.md](./README-compliance-agent.md)** | NixOS compliance agent documentation |
+
+**Current Status:** Phase 1 Complete (Scaffold) → Phase 2 Starting (Implementation)
+
+---
+
 ## Overview
 
 Enterprise-grade HIPAA compliance automation at SMB price points. This platform provides deterministic infrastructure management, automated remediation, and auditor-ready evidence generation for healthcare organizations.
