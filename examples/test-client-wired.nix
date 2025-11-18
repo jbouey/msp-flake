@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, pkgs, modulesPath, ... }:
 
 # Test client configuration for wired network deployment
 # This triggers the build-vm.yml workflow to build a VirtualBox OVA
@@ -6,6 +6,7 @@
 {
   imports = [
     ../modules/compliance-agent.nix
+    "${modulesPath}/virtualisation/virtualbox-image.nix"
   ];
 
   # Enable compliance agent with MCP server connection
@@ -64,4 +65,24 @@
     jq
     vim
   ];
+
+  # VirtualBox configuration
+  virtualbox = {
+    vmName = "test-client-001";
+  };
+
+  # Enable guest additions for better VM integration
+  virtualisation.virtualbox.guest.enable = true;
+
+  # Set root password for initial login (change after first boot!)
+  users.users.root.password = "root";
+
+  # Enable SSH for remote access
+  services.openssh = {
+    enable = true;
+    settings = {
+      PermitRootLogin = "yes";
+      PasswordAuthentication = true;
+    };
+  };
 }
