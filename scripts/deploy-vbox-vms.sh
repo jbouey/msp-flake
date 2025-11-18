@@ -222,20 +222,47 @@ package_flake() {
     log_debug "Creating tarball..."
     cd "$PROJECT_ROOT" || fatal_error "Failed to cd to project root"
 
+    # Build list of directories to include (only if they exist)
+    local tar_includes=()
+
+    # Always include these files
+    tar_includes+=("flake-compliance.nix")
+    [ -f "flake.lock" ] && tar_includes+=("flake.lock")
+
+    # Include directories only if they exist
+    local optional_dirs=("modules" "packages" "examples" "nixosTests" "checks")
+    for dir in "${optional_dirs[@]}"; do
+        if [ -d "$dir" ]; then
+            tar_includes+=("$dir/")
+            log_debug "Including directory: $dir/"
+        else
+            log_warn "Directory not found, skipping: $dir/"
+        fi
+    done
+
+    log_debug "Packaging ${#tar_includes[@]} items into tarball"
+
+    # Create tarball with error capture (exclude patterns must come before files)
+    local tar_error_log="$DEPLOY_DIR/tar-error.log"
     if ! tar czf "$tarball" \
-        flake-compliance.nix \
-        flake.lock \
-        modules/ \
-        packages/ \
-        examples/ \
-        nixosTests/ \
-        checks/ \
-        --exclude='*.pyc' \
-        --exclude='__pycache__' \
-        --exclude='.git' \
-        --exclude='result*' 2>>"$LOG_FILE"; then
-        fatal_error "Failed to create tarball"
+        --exclude '*.pyc' \
+        --exclude '__pycache__' \
+        --exclude '.git' \
+        --exclude 'result*' \
+        "${tar_includes[@]}" 2>"$tar_error_log"; then
+
+        log_error "Failed to create tarball"
+        if [ -f "$tar_error_log" ] && [ -s "$tar_error_log" ]; then
+            log_error "Tar error details:"
+            cat "$tar_error_log" | while read line; do
+                log_error "  $line"
+            done
+            cat "$tar_error_log" >> "$LOG_FILE"
+        fi
+        rm -f "$tar_error_log"
+        fatal_error "Tarball creation failed - see errors above"
     fi
+    rm -f "$tar_error_log"
 
     # Verify tarball was created and is not empty
     if [ ! -f "$tarball" ]; then
