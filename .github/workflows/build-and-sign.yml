@@ -126,10 +126,15 @@ jobs:
         run: |
           SOURCE_IMAGE="registry.example.com/infra-watcher:0.1"
 
-          for tag in ${{ steps.meta.outputs.tags }}; do
-            echo "Tagging: $tag"
-            docker tag $SOURCE_IMAGE $tag
-            docker push $tag
+          # Convert multi-line tags to array
+          mapfile -t TAGS <<< "${{ steps.meta.outputs.tags }}"
+
+          for tag in "${TAGS[@]}"; do
+            if [ -n "$tag" ]; then
+              echo "Tagging: $tag"
+              docker tag $SOURCE_IMAGE $tag
+              docker push $tag
+            fi
           done
 
       - name: Sign container image with cosign (keyless)
@@ -138,9 +143,13 @@ jobs:
           COSIGN_EXPERIMENTAL: "true"
         run: |
           # Sign all pushed tags
-          for tag in ${{ steps.meta.outputs.tags }}; do
-            echo "Signing image: $tag"
-            cosign sign --yes $tag
+          mapfile -t TAGS <<< "${{ steps.meta.outputs.tags }}"
+
+          for tag in "${TAGS[@]}"; do
+            if [ -n "$tag" ]; then
+              echo "Signing image: $tag"
+              cosign sign --yes $tag
+            fi
           done
 
       - name: Attach SBOM to image
