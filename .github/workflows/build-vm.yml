@@ -1,0 +1,121 @@
+name: Build VirtualBox VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      config_name:
+        description: 'VM configuration name (e.g., test-client-wired)'
+        required: true
+        default: 'test-client-wired'
+  push:
+    branches: [ main ]
+    paths:
+      - 'examples/test-client-*.nix'
+      - 'modules/compliance-agent.nix'
+
+env:
+  CONFIG_NAME: ${{ github.event.inputs.config_name || 'test-client-wired' }}
+
+jobs:
+  build-ova:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v24
+        with:
+          nix_path: nixpkgs=channel:nixos-24.05
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Cachix (optional)
+        uses: cachix/cachix-action@v13
+        continue-on-error: true
+        with:
+          name: msp-platform
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build VirtualBox OVA
+        run: |
+          echo "Building VirtualBox OVA for: $CONFIG_NAME"
+
+          # Build the OVA
+          nix-build '<nixpkgs/nixos>' \
+            -A config.system.build.virtualBoxOVA \
+            -I nixos-config=./examples/$CONFIG_NAME.nix \
+            --argstr system x86_64-linux \
+            --option system-features "nixos-test benchmark big-parallel kvm" \
+            --show-trace \
+            -o result-ova
+
+          # Get the OVA filename
+          OVA_FILE=$(ls result-ova/*.ova | head -n1)
+          OVA_NAME=$(basename "$OVA_FILE")
+
+          echo "OVA built: $OVA_NAME"
+          echo "ova_name=$OVA_NAME" >> $GITHUB_OUTPUT
+          echo "ova_path=$OVA_FILE" >> $GITHUB_OUTPUT
+
+          # Show OVA details
+          ls -lh "$OVA_FILE"
+        id: build
+
+      - name: Upload OVA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.CONFIG_NAME }}-ova
+          path: result-ova/*.ova
+          retention-days: 30
+          compression-level: 0  # OVA is already compressed
+
+      - name: Create Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: result-ova/*.ova
+          body: |
+            VirtualBox OVA for ${{ env.CONFIG_NAME }}
+
+            ## Import Instructions
+
+            ```bash
+            # Download the OVA
+            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.build.outputs.ova_name }}
+
+            # Import to VirtualBox
+            VBoxManage import ${{ steps.build.outputs.ova_name }}
+
+            # Start the VM
+            VBoxManage startvm ${{ env.CONFIG_NAME }} --type headless
+
+            # SSH into the VM (password: root)
+            ssh -p 4444 root@localhost
+            ```
+
+      - name: Build summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          # VirtualBox OVA Build Complete
+
+          **Configuration:** $CONFIG_NAME
+          **OVA File:** ${{ steps.build.outputs.ova_name }}
+          **Size:** $(ls -lh ${{ steps.build.outputs.ova_path }} | awk '{print $5}')
+
+          ## Download OVA
+
+          1. Go to [Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          2. Download the artifact: $CONFIG_NAME-ova
+          3. Extract the .ova file
+
+          ## Import to VirtualBox
+
+          \`\`\`bash
+          VBoxManage import ${{ steps.build.outputs.ova_name }}
+          VBoxManage startvm $CONFIG_NAME --type headless
+          ssh -p 4444 root@localhost
+          \`\`\`
+          EOF
