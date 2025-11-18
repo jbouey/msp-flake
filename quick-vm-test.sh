@@ -9,6 +9,20 @@ echo "  MSP Compliance VM - Quick Test"
 echo "════════════════════════════════════════════════════════════"
 echo ""
 
+# Ensure we're in the right directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || {
+    echo "❌ Failed to change to script directory"
+    exit 1
+}
+
+# Check if deployment script exists
+if [ ! -f "scripts/deploy-vbox-vms.sh" ]; then
+    echo "❌ Deployment script not found: scripts/deploy-vbox-vms.sh"
+    echo "   Are you in the MSP Flakes project directory?"
+    exit 1
+fi
+
 # Check if VirtualBox is installed
 if ! command -v VBoxManage &> /dev/null; then
     echo "❌ VirtualBox not installed"
@@ -19,6 +33,7 @@ if ! command -v VBoxManage &> /dev/null; then
 fi
 
 echo "✓ VirtualBox found"
+echo "✓ Deployment script found"
 echo ""
 
 # Ask user what they want to do

@@ -52,19 +52,33 @@ trap cleanup_on_exit EXIT
 trap 'log_error "Script interrupted"; exit 130' INT TERM
 
 log_info() {
-    echo -e "${GREEN}[INFO]${NC} $*" | tee -a "$LOG_FILE"
+    local msg="${GREEN}[INFO]${NC} $*"
+    echo -e "$msg"
+    if [ -d "$DEPLOY_DIR" ]; then
+        echo -e "$msg" >> "$LOG_FILE"
+    fi
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $*" | tee -a "$LOG_FILE"
+    local msg="${YELLOW}[WARN]${NC} $*"
+    echo -e "$msg"
+    if [ -d "$DEPLOY_DIR" ]; then
+        echo -e "$msg" >> "$LOG_FILE"
+    fi
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $*" | tee -a "$LOG_FILE" >&2
+    local msg="${RED}[ERROR]${NC} $*"
+    echo -e "$msg" >&2
+    if [ -d "$DEPLOY_DIR" ]; then
+        echo -e "$msg" >> "$LOG_FILE"
+    fi
 }
 
 log_debug() {
-    echo -e "${BLUE}[DEBUG]${NC} $*" >> "$LOG_FILE"
+    if [ -d "$DEPLOY_DIR" ]; then
+        echo -e "${BLUE}[DEBUG]${NC} $*" >> "$LOG_FILE"
+    fi
 }
 
 fatal_error() {
@@ -73,6 +87,18 @@ fatal_error() {
 }
 
 validate_environment() {
+    # Create deploy directory FIRST (before any logging)
+    mkdir -p "$DEPLOY_DIR" 2>/dev/null || {
+        echo -e "${RED}[ERROR]${NC} Failed to create deploy directory: $DEPLOY_DIR" >&2
+        exit 1
+    }
+
+    # Initialize log file
+    echo "=== MSP VirtualBox Deployment Log ===" > "$LOG_FILE"
+    echo "Started: $(date)" >> "$LOG_FILE"
+    echo "Working directory: $PROJECT_ROOT" >> "$LOG_FILE"
+    echo "" >> "$LOG_FILE"
+
     log_debug "Validating environment..."
 
     # Check we're in the right directory
@@ -88,14 +114,6 @@ validate_environment() {
         log_warn "Low disk space: $(($available_space / 1024 / 1024))GB available"
         log_warn "Recommended: At least 10GB free"
     fi
-
-    # Create log directory
-    mkdir -p "$DEPLOY_DIR" || fatal_error "Failed to create deploy directory"
-
-    # Initialize log file
-    echo "=== MSP VirtualBox Deployment Log ===" > "$LOG_FILE"
-    echo "Started: $(date)" >> "$LOG_FILE"
-    echo "" >> "$LOG_FILE"
 
     log_debug "Environment validation complete"
 }
