@@ -59,6 +59,9 @@
   networking.hostName = "test-client-001";
   networking.firewall.enable = true;
 
+  # NixOS release version (required for VM builds)
+  system.stateVersion = "24.05";
+
   # Basic system packages
   environment.systemPackages = with pkgs; [
     curl

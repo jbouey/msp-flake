@@ -21,8 +21,13 @@ in
 
     package = mkOption {
       type = types.package;
-      default = pkgs.compliance-agent;
-      defaultText = literalExpression "pkgs.compliance-agent";
+      default = pkgs.writeScriptBin "compliance-agent" ''
+        #!${pkgs.bash}/bin/bash
+        echo "MSP Compliance Agent (placeholder)"
+        echo "This is a placeholder service - full agent implementation coming soon"
+        sleep infinity
+      '';
+      defaultText = literalExpression "pkgs.writeScriptBin ...";
       description = "The compliance-agent package to use";
     };
 
