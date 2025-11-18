@@ -2,51 +2,35 @@
 
 {
   imports = [
-    ../flake-compliance.nix
+    ../modules/compliance-agent.nix
   ];
 
   # Enable compliance agent with MCP server connection
-  services.msp-compliance = {
+  services.compliance-agent = {
     enable = true;
 
-    # Connect to your test MCP server
-    mcpServer = {
-      url = "http://MCP_SERVER_IP:8000";  # REPLACE WITH ACTUAL IP
-      apiKey = "test-key-12345";
-    };
+    # Site identification
+    siteId = "test-client-001";
 
-    # Client identification
-    clientId = "test-client-001";
-    resellerId = null;  # Direct mode for testing
+    # Deployment mode (direct for testing)
+    deploymentMode = "direct";
 
-    # Monitoring configuration
-    monitoring = {
-      services = [
-        "nginx"
-        "test-service"  # We'll create this for testing
-      ];
-      interval = 60;  # Check every 60 seconds
-    };
+    # MCP server connection
+    mcpUrl = "http://MCP_SERVER_IP:8000";  # REPLACE WITH ACTUAL IP
 
-    # Evidence storage
-    evidence = {
-      localPath = "/var/lib/msp/evidence";
-      retention = 7;  # 7 days for testing
-    };
+    # Secrets management (for testing, use test values)
+    secretsProvider = "env";  # Use environment variables for testing
 
-    # Network restrictions
-    networking = {
-      egressAllowlist = [
-        "MCP_SERVER_IP:8000"  # REPLACE WITH ACTUAL IP
-      ];
-      blockInbound = true;
-    };
+    # Network egress allowlist
+    egressAllowlist = [
+      "MCP_SERVER_IP:8000"  # REPLACE WITH ACTUAL IP
+    ];
 
-    # Logging
-    logging = {
-      level = "debug";  # Verbose for testing
-      destination = "local";
-    };
+    # Evidence retention
+    evidenceRetentionDays = 7;  # 7 days for testing
+
+    # Verbose logging for testing
+    logLevel = "debug";
   };
 
   # Create a test service that we can crash/restart
