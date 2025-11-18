@@ -18,19 +18,16 @@
     # MCP server connection
     mcpUrl = "http://MCP_SERVER_IP:8000";  # REPLACE WITH ACTUAL IP
 
-    # Secrets management (for testing, use test values)
-    secretsProvider = "env";  # Use environment variables for testing
-
-    # Network egress allowlist
-    egressAllowlist = [
-      "MCP_SERVER_IP:8000"  # REPLACE WITH ACTUAL IP
+    # Network egress allowlist (hostnames only, no ports)
+    allowedHosts = [
+      "MCP_SERVER_IP"  # REPLACE WITH ACTUAL IP/HOSTNAME
     ];
 
-    # Evidence retention
-    evidenceRetentionDays = 7;  # 7 days for testing
+    # Evidence retention (number of bundles to keep, not days)
+    evidenceRetention = 50;  # Keep 50 most recent evidence bundles
 
-    # Verbose logging for testing
-    logLevel = "debug";
+    # Verbose logging for testing (uppercase values)
+    logLevel = "DEBUG";
   };
 
   # Create a test service that we can crash/restart
