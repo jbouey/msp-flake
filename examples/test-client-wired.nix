@@ -1,5 +1,8 @@
 { config, pkgs, ... }:
 
+# Test client configuration for wired network deployment
+# This triggers the build-vm.yml workflow to build a VirtualBox OVA
+
 {
   imports = [
     ../modules/compliance-agent.nix
