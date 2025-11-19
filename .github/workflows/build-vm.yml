@@ -11,6 +11,7 @@ on:
     branches: [ main ]
     paths:
       - 'examples/test-client-*.nix'
+      - 'examples/mcp-server.nix'
       - 'modules/compliance-agent.nix'
 
 env:
