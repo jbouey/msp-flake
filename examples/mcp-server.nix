@@ -70,13 +70,16 @@
     port = 6379;
     requirePass = "mcp-redis-password";  # Change in production!
 
-    # Enable AOF persistence for durability
-    appendOnly = true;
-    appendFsync = "everysec";
+    # Settings are passed directly to redis.conf
+    settings = {
+      # Enable AOF persistence for durability
+      appendonly = "yes";
+      appendfsync = "everysec";
 
-    # Memory limits
-    maxmemory = "256mb";
-    maxmemoryPolicy = "allkeys-lru";
+      # Memory limits
+      maxmemory = "256mb";
+      maxmemory-policy = "allkeys-lru";
+    };
   };
 
   # ============================================================================
