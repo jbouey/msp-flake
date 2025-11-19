@@ -1,116 +1,69 @@
-# Runbook: Disk Space Full Remediation
-#
-# Handles disk space issues by cleaning temporary files, rotating logs,
-# and identifying large files for removal.
-#
-# HIPAA Controls: §164.308(a)(1)(ii)(D)
-
 id: RB-DISK-001
-name: Disk Space Full Remediation
-version: "1.0"
-description: Automated disk space cleanup
-
-triggers:
-  - event_type: disk_full
-  - event_type: disk_usage_high
-
-severity:
-  - critical
-  - high
-
-applicable_to:
-  - linux_server
-  - windows_server
-
+name: "Disk Full Remediation"
+description: "Free up disk space when partitions reach critical levels"
 hipaa_controls:
-  - "164.308(a)(1)(ii)(D)"  # Information System Activity Review
-
-sla_target_seconds: 1800  # 30 minutes
+  - "164.308(a)(7)(ii)(B)"  # Contingency Plan - Disaster Recovery Plan
+  - "164.310(d)(1)"  # Device and Media Controls
+severity: critical
+category: storage
 
 steps:
-  - step: 1
-    name: check_disk_usage
-    description: Check current disk usage per mount point
-    script: scripts/check_disk_usage.sh
-    timeout_seconds: 30
-    retry_on_failure: false
-    evidence_required:
-      - disk_usage_before
-      - filesystem
-      - mount_point
-      - used_gb
-      - available_gb
-      - usage_percent
+  - id: 1
+    action: check_disk_usage
+    description: "Identify partitions over 90% full"
+    timeout: 10
+    command: "df -h | awk '$5 > 90 {print $0}'"
+    parse_output: true
 
-  - step: 2
-    name: clean_temp_files
-    description: Clean /tmp and application temp directories
-    script: scripts/clean_temp_files.sh
-    timeout_seconds: 120
-    retry_on_failure: false
-    evidence_required:
-      - files_deleted_count
-      - space_freed_gb
+  - id: 2
+    action: find_large_log_files
+    description: "Locate log files over 100MB"
+    timeout: 30
+    command: "find /var/log -type f -size +100M -exec ls -lh {} \;"
 
-  - step: 3
-    name: rotate_logs
-    description: Force log rotation for all services
-    script: scripts/force_log_rotation.sh
-    timeout_seconds: 60
-    retry_on_failure: false
-    evidence_required:
-      - logs_rotated
-      - log_space_freed_gb
+  - id: 3
+    action: rotate_logs
+    description: "Force log rotation"
+    timeout: 30
+    command: "logrotate -f /etc/logrotate.conf"
 
-  - step: 4
-    name: find_large_files
-    description: Identify files >1GB for potential removal
-    script: scripts/find_large_files.sh
-    timeout_seconds: 180
-    retry_on_failure: false
-    evidence_required:
-      - large_files_list
-      - total_large_files_gb
+  - id: 4
+    action: clean_package_cache
+    description: "Clear package manager cache"
+    timeout: 60
+    command: "nix-collect-garbage -d"
+    verify_space_freed: true
 
-  - step: 5
-    name: verify_disk_space
-    description: Re-check disk usage after cleanup
-    script: scripts/check_disk_usage.sh
-    timeout_seconds: 30
-    retry_on_failure: false
-    evidence_required:
-      - disk_usage_after
-      - space_freed_total_gb
+  - id: 5
+    action: remove_old_journals
+    description: "Remove systemd journals older than 7 days"
+    timeout: 30
+    command: "journalctl --vacuum-time=7d"
+
+  - id: 6
+    action: verify_space_available
+    description: "Confirm disk usage is below 85%"
+    timeout: 10
+    command: "df -h | awk '$5 > 85 {exit 1}'"
+    success_condition: "exit_code == 0"
 
 rollback:
   - action: alert_administrator
-    message: "Disk cleanup failed - manual intervention required"
-  - action: create_ticket
-    priority: critical
-    assign_to: infrastructure_team
+    description: "Alert if automatic cleanup insufficient"
+    command: "echo 'Disk cleanup failed - manual intervention required' | mail -s 'CRITICAL: Disk Full' admin@clinic.local"
 
-evidence_artifacts:
-  required:
-    - outputs.disk_usage_before
-    - outputs.disk_usage_after
-    - outputs.space_freed_gb
-    - outputs.files_deleted_count
-  optional:
-    - outputs.large_files_list
-    - log_excerpts.cleanup_log
+evidence_required:
+  - disk_usage_before
+  - disk_usage_after
+  - files_removed
+  - space_freed_mb
+  - log_rotation_output
 
-success_criteria:
-  - disk_usage_after < 85%
-  - space_freed_gb > 1
-
-post_execution_validation:
-  - name: verify_disk_space_ok
-    command: "df -h / | tail -1 | awk '{print $5}' | sed 's/%//'"
-    expected_less_than: 85
-
-metadata:
-  author: MSP Compliance Platform
-  created: 2025-11-01
-  last_modified: 2025-11-01
-  tested: true
-  production_ready: true
+output_format:
+  type: "json"
+  schema:
+    incident_id: "string"
+    runbook_id: "string"
+    partitions_cleaned: "array"
+    space_freed_mb: "integer"
+    outcome: "success|failure"

@@ -1,122 +1,74 @@
-# Runbook: Service Crash Remediation
-#
-# Handles crashed system services by checking status, logs, and dependencies,
-# then restarting with proper error handling.
-#
-# HIPAA Controls: §164.308(a)(1)(ii)(D)
-
 id: RB-SERVICE-001
-name: Service Crash Remediation
-version: "1.0"
-description: Automated service recovery
-
-triggers:
-  - event_type: service_crashed
-  - event_type: service_stopped
-
-severity:
-  - critical
-  - high
-  - medium
-
-applicable_to:
-  - linux_server
-  - windows_server
-
+name: "Service Crash Remediation"
+description: "Automatically restart and recover crashed systemd services"
 hipaa_controls:
-  - "164.308(a)(1)(ii)(D)"  # Information System Activity Review
-
-sla_target_seconds: 900  # 15 minutes
+  - "164.308(a)(7)(ii)(C)"  # Contingency Plan - Emergency Mode Operation Plan
+  - "164.312(a)(1)"  # Access Control - Automatic Logoff
+severity: high
+category: availability
 
 steps:
-  - step: 1
-    name: check_service_status
-    description: Check service status and dependencies
-    script: scripts/check_service_status.sh
-    timeout_seconds: 30
-    retry_on_failure: false
-    evidence_required:
-      - service_name
-      - service_status
-      - uptime_seconds
-      - dependent_services
+  - id: 1
+    action: identify_failed_service
+    description: "Detect which service failed"
+    timeout: 10
+    command: "systemctl list-units --state=failed --no-pager"
+    parse_output: true
 
-  - step: 2
-    name: check_service_logs
-    description: Check service logs for errors
-    script: scripts/check_service_logs.sh
-    timeout_seconds: 30
-    retry_on_failure: false
-    evidence_required:
-      - log_excerpt
-      - error_message
-      - crash_count_24h
+  - id: 2
+    action: check_service_logs
+    description: "Review logs for crash reason"
+    timeout: 30
+    command: "journalctl -u ${SERVICE_NAME} -n 50 --no-pager"
+    capture_output: true
 
-  - step: 3
-    name: check_dependencies
-    description: Verify all service dependencies are running
-    script: scripts/check_service_dependencies.sh
-    timeout_seconds: 30
-    retry_on_failure: false
-    evidence_required:
-      - dependencies_status
-      - missing_dependencies
+  - id: 3
+    action: check_port_conflicts
+    description: "Ensure required ports are available"
+    timeout: 10
+    command: "netstat -tlnp | grep ${SERVICE_PORT}"
+    failure_is_success: true  # Port should be free
 
-  - step: 4
-    name: restart_service
-    description: Restart the service
-    script: scripts/restart_service.sh
-    timeout_seconds: 120
-    retry_on_failure: true
-    retry_count: 2
-    retry_delay_seconds: 10
-    evidence_required:
-      - restart_timestamp
-      - restart_result
-      - service_status_after
+  - id: 4
+    action: restart_service
+    description: "Attempt service restart"
+    timeout: 60
+    command: "systemctl restart ${SERVICE_NAME}"
+    wait_for_active: true
+    max_wait_seconds: 30
 
-  - step: 5
-    name: verify_service_health
-    description: Verify service is healthy after restart
-    script: scripts/verify_service_health.sh
-    timeout_seconds: 60
-    retry_on_failure: false
-    evidence_required:
-      - health_check_result
-      - response_time_ms
-      - error_count
+  - id: 5
+    action: verify_service_health
+    description: "Confirm service is responding"
+    timeout: 30
+    command: "systemctl is-active ${SERVICE_NAME}"
+    success_condition: "output == 'active'"
+
+  - id: 6
+    action: test_service_endpoint
+    description: "Test service HTTP endpoint if applicable"
+    timeout: 10
+    command: "curl -f http://localhost:${SERVICE_PORT}/health"
+    optional: true
 
 rollback:
   - action: stop_service
-    script: scripts/stop_service.sh
+    command: "systemctl stop ${SERVICE_NAME}"
   - action: alert_administrator
-    message: "Service restart failed - service stopped to prevent issues"
+    command: "echo 'Service ${SERVICE_NAME} failed to restart' | mail -s 'URGENT: Service Failure' admin@clinic.local"
 
-evidence_artifacts:
-  required:
-    - log_excerpts.service_log
-    - outputs.service_status_before
-    - outputs.service_status_after
-    - outputs.crash_count_24h
-  optional:
-    - outputs.dependencies_status
-    - outputs.error_message
+evidence_required:
+  - service_name
+  - crash_logs
+  - restart_timestamp
+  - service_status_after
+  - health_check_result
 
-success_criteria:
-  - service_status_after == "active"
-  - health_check_result == "ok"
-
-post_execution_validation:
-  - name: verify_service_running
-    command: "systemctl is-active {service_name}"
-    expected_output: "active"
-  - name: verify_no_recent_crashes
-    command: "journalctl -u {service_name} --since '5 minutes ago' | grep -c 'Failed\\|Stopped\\|Killed'"
-    expected_output: "0"
-
-metadata:
-  author: MSP Compliance Platform
-  created: 2025-11-01
-  last_modified: 2025-11-01
-  tested: true
-  production_ready: true
+output_format:
+  type: "json"
+  schema:
+    incident_id: "string"
+    runbook_id: "string"
+    service_name: "string"
+    restart_count: "integer"
+    outcome: "success|failure"

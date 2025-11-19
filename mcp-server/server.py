@@ -1,496 +1,436 @@
+#!/usr/bin/env python3
 """
-MCP Server - Main FastAPI server for incident processing
-
-Architecture:
-1. Receives incidents via /chat endpoint
-2. Passes to Planner for runbook selection (LLM)
-3. Passes to Executor for runbook execution
-4. Returns result with evidence bundle
-
-This is the orchestration layer that connects:
-- Event queue → Planner → Executor → Evidence writer
-
-HIPAA Compliance:
-- All requests/responses logged (§164.312(b))
-- Rate limiting prevents abuse
-- API key authentication
-- No PHI processing
+MCP Server - Central Control Plane for MSP Compliance Platform
+Receives incidents, uses LLM to select runbooks, manages evidence
 """
 
-from fastapi import FastAPI, HTTPException, Depends, Header, status
-from fastapi.security import APIKeyHeader
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import Dict, Optional, List
-from datetime import datetime
-import logging
-import asyncio
+import os
 import json
+import yaml
+import hashlib
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+import asyncio
 
-from planner import Planner, Incident, RunbookSelection
-from executor import Executor, ExecutionResult
-from guardrails import RateLimiter, InputValidator, CircuitBreaker
+from fastapi import FastAPI, HTTPException, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, validator
+import redis.asyncio as redis
+import aiohttp
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# ============================================================================
+# Configuration
+# ============================================================================
 
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "mcp-redis-password")
+RUNBOOK_DIR = Path(os.getenv("RUNBOOK_DIR", "/var/lib/mcp-server/runbooks"))
+EVIDENCE_DIR = Path(os.getenv("EVIDENCE_DIR", "/var/lib/mcp-server/evidence"))
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-# Pydantic models for API
+# OpenAI API (for LLM runbook selection)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # Set in production
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+# Rate limiting
+RATE_LIMIT_COOLDOWN_SECONDS = 300  # 5 minutes
+
+# ============================================================================
+# Pydantic Models
+# ============================================================================
+
 class IncidentRequest(BaseModel):
-    """Request model for /chat endpoint"""
-    client_id: str = Field(..., description="Client identifier")
-    hostname: str = Field(..., description="Hostname where incident occurred")
+    """Incident reported by compliance agent"""
+    client_id: str = Field(..., description="Client/site identifier")
+    hostname: str = Field(..., description="Hostname of affected system")
     incident_type: str = Field(..., description="Type of incident")
-    severity: str = Field(..., description="Severity: critical, high, medium, low")
+    severity: str = Field(..., description="Severity level")
     details: Dict = Field(default_factory=dict, description="Additional incident details")
-    metadata: Dict = Field(default_factory=dict, description="System metadata")
+    
+    @validator('severity')
+    def validate_severity(cls, v):
+        allowed = ['low', 'medium', 'high', 'critical']
+        if v.lower() not in allowed:
+            raise ValueError(f'Severity must be one of {allowed}')
+        return v.lower()
 
+class RunbookSelection(BaseModel):
+    """LLM-selected runbook for incident"""
+    runbook_id: str = Field(..., description="Selected runbook ID")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="LLM confidence score")
+    reasoning: str = Field(..., description="Why this runbook was selected")
+    parameters: Dict = Field(default_factory=dict, description="Runbook-specific parameters")
 
-class RemediationResponse(BaseModel):
-    """Response model for /chat endpoint"""
-    status: str = Field(..., description="Status: success, failed, rate_limited, requires_approval")
-    incident_id: str = Field(..., description="Unique incident ID")
-    runbook_id: Optional[str] = Field(None, description="Selected runbook ID")
-    confidence: Optional[float] = Field(None, description="Planner confidence score")
-    execution_result: Optional[Dict] = Field(None, description="Execution result details")
-    evidence_bundle_id: Optional[str] = Field(None, description="Evidence bundle ID")
-    message: str = Field(..., description="Human-readable status message")
-    requires_human_approval: bool = Field(default=False, description="Whether human approval needed")
+class RemediationOrder(BaseModel):
+    """Order sent to compliance agent for execution"""
+    order_id: str = Field(..., description="Unique order identifier")
+    runbook_id: str = Field(..., description="Runbook to execute")
+    runbook_content: Dict = Field(..., description="Full runbook definition")
+    parameters: Dict = Field(default_factory=dict, description="Execution parameters")
+    expires_at: str = Field(..., description="Order expiration time (ISO format)")
+    
+class EvidenceBundle(BaseModel):
+    """Evidence bundle from completed remediation"""
+    bundle_id: str
+    order_id: str
+    client_id: str
+    hostname: str
+    runbook_id: str
+    executed_at: str
+    duration_seconds: int
+    outcome: str
+    evidence_data: Dict
+    
+# ============================================================================
+# FastAPI App
+# ============================================================================
 
-
-# Initialize FastAPI app
 app = FastAPI(
-    title="MSP MCP Server",
-    description="Model Context Protocol server for HIPAA-compliant infrastructure automation",
+    title="MCP Server",
+    description="MSP Compliance Platform - Central Control Plane",
     version="1.0.0"
 )
 
-# Add CORS middleware (configure for production)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Global Redis connection
+redis_client: Optional[redis.Redis] = None
 
-# API key security
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-
-# Global instances
-planner: Optional[Planner] = None
-executor: Optional[Executor] = None
-rate_limiter: Optional[RateLimiter] = None
-input_validator: Optional[InputValidator] = None
-circuit_breaker: Optional[CircuitBreaker] = None
-
+# ============================================================================
+# Startup / Shutdown
+# ============================================================================
 
 @app.on_event("startup")
-async def startup_event():
-    """Initialize components on startup"""
-    global planner, executor, rate_limiter, input_validator, circuit_breaker
-
-    logger.info("Starting MCP Server...")
-
-    # Initialize planner
-    planner = Planner(
-        runbooks_dir="./runbooks",
-        model="gpt-4o",
-        temperature=0.1
+async def startup():
+    """Initialize Redis connection"""
+    global redis_client
+    redis_client = await redis.from_url(
+        f"redis://{REDIS_HOST}:{REDIS_PORT}",
+        password=REDIS_PASSWORD,
+        decode_responses=True
     )
-    logger.info("Planner initialized")
-
-    # Initialize executor
-    executor = Executor(
-        runbooks_dir="./runbooks",
-        scripts_dir="./scripts"
-    )
-    logger.info("Executor initialized")
-
-    # Initialize guardrails
-    rate_limiter = RateLimiter(redis_url="redis://localhost:6379")
-    input_validator = InputValidator()
-    circuit_breaker = CircuitBreaker(failure_threshold=5, timeout_seconds=60)
-    logger.info("Guardrails initialized")
-
-    logger.info("MCP Server started successfully")
-
+    print(f"✓ Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
+    
+    # Ensure directories exist
+    EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"✓ Evidence directory: {EVIDENCE_DIR}")
+    print(f"✓ Runbook directory: {RUNBOOK_DIR}")
+    print(f"✓ MCP Server started")
 
 @app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    logger.info("Shutting down MCP Server...")
+async def shutdown():
+    """Close Redis connection"""
+    if redis_client:
+        await redis_client.close()
+    print("✓ MCP Server stopped")
 
+# ============================================================================
+# Runbook Management
+# ============================================================================
 
-def verify_api_key(api_key: str = Depends(api_key_header)) -> str:
-    """Verify API key authentication"""
-    # TODO: Implement proper API key validation from secrets manager
-    # For now, accept any non-empty key (development only)
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing API key"
-        )
+def load_runbooks() -> Dict[str, Dict]:
+    """Load all runbooks from disk"""
+    runbooks = {}
+    
+    if not RUNBOOK_DIR.exists():
+        print(f"⚠ Runbook directory not found: {RUNBOOK_DIR}")
+        return runbooks
+    
+    for runbook_file in RUNBOOK_DIR.glob("*.yaml"):
+        try:
+            with open(runbook_file, 'r') as f:
+                runbook = yaml.safe_load(f)
+                runbook_id = runbook.get('id')
+                if runbook_id:
+                    runbooks[runbook_id] = runbook
+                    print(f"  Loaded runbook: {runbook_id}")
+        except Exception as e:
+            print(f"✗ Failed to load {runbook_file}: {e}")
+    
+    return runbooks
 
-    # In production, validate against database/secrets manager
-    # valid_keys = await secrets_manager.get_valid_api_keys()
-    # if api_key not in valid_keys:
-    #     raise HTTPException(status_code=401, detail="Invalid API key")
+# Load runbooks at startup
+RUNBOOKS = load_runbooks()
 
-    return api_key
+# ============================================================================
+# Rate Limiting
+# ============================================================================
 
+async def check_rate_limit(client_id: str, hostname: str, action: str) -> bool:
+    """Check if action is rate limited"""
+    rate_key = f"rate:{client_id}:{hostname}:{action}"
+    
+    if await redis_client.exists(rate_key):
+        return False  # Rate limited
+    
+    # Set cooldown
+    await redis_client.setex(rate_key, RATE_LIMIT_COOLDOWN_SECONDS, "1")
+    return True  # Allowed
+
+async def get_remaining_cooldown(client_id: str, hostname: str, action: str) -> int:
+    """Get remaining cooldown seconds"""
+    rate_key = f"rate:{client_id}:{hostname}:{action}"
+    ttl = await redis_client.ttl(rate_key)
+    return max(0, ttl)
+
+# ============================================================================
+# LLM Integration
+# ============================================================================
+
+async def select_runbook_with_llm(incident: IncidentRequest) -> RunbookSelection:
+    """Use GPT-4o to select appropriate runbook for incident"""
+    
+    # Build prompt with incident details and available runbooks
+    runbook_descriptions = "\n".join([
+        f"- {rb_id}: {rb.get('name', '')} - {rb.get('description', '')}"
+        for rb_id, rb in RUNBOOKS.items()
+    ])
+    
+    prompt = f"""You are an expert system administrator tasked with selecting the best remediation runbook for a compliance incident.
+
+Incident Details:
+- Type: {incident.incident_type}
+- Severity: {incident.severity}
+- Hostname: {incident.hostname}
+- Client: {incident.client_id}
+- Details: {json.dumps(incident.details, indent=2)}
+
+Available Runbooks:
+{runbook_descriptions}
+
+Analyze the incident and select the SINGLE most appropriate runbook. Consider:
+1. Incident type match with runbook category
+2. Severity alignment
+3. Likelihood of success
+4. Risk of making things worse
+
+Respond with JSON only (no markdown, no explanations):
+{{
+  "runbook_id": "<runbook_id>",
+  "confidence": <0.0-1.0>,
+  "reasoning": "<brief explanation>",
+  "parameters": {{"key": "value"}}
+}}
+"""
+
+    if not OPENAI_API_KEY:
+        # Fallback: Simple rule-based selection for testing
+        print("⚠ No OpenAI API key - using fallback rule-based selection")
+        return await select_runbook_fallback(incident)
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": OPENAI_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 300,
+                    "temperature": 0.1
+                }
+            ) as resp:
+                if resp.status != 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="LLM service unavailable"
+                    )
+                
+                result = await resp.json()
+                llm_response = result['choices'][0]['message']['content'].strip()
+                
+                # Parse JSON response
+                selection = json.loads(llm_response)
+                return RunbookSelection(**selection)
+                
+    except Exception as e:
+        print(f"✗ LLM selection failed: {e}")
+        return await select_runbook_fallback(incident)
+
+async def select_runbook_fallback(incident: IncidentRequest) -> RunbookSelection:
+    """Simple rule-based runbook selection (no LLM)"""
+    
+    # Map incident types to runbooks
+    incident_type_lower = incident.incident_type.lower()
+    
+    mapping = {
+        'backup': 'RB-BACKUP-001',
+        'certificate': 'RB-CERT-001',
+        'cert': 'RB-CERT-001',
+        'disk': 'RB-DISK-001',
+        'storage': 'RB-DISK-001',
+        'service': 'RB-SERVICE-001',
+        'crash': 'RB-SERVICE-001',
+        'drift': 'RB-DRIFT-001',
+        'configuration': 'RB-DRIFT-001',
+    }
+    
+    # Find matching runbook
+    for keyword, runbook_id in mapping.items():
+        if keyword in incident_type_lower:
+            return RunbookSelection(
+                runbook_id=runbook_id,
+                confidence=0.8,
+                reasoning=f"Rule-based match: '{keyword}' in incident type",
+                parameters={}
+            )
+    
+    # Default fallback
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"No runbook found for incident type: {incident.incident_type}"
+    )
+
+# ============================================================================
+# API Endpoints
+# ============================================================================
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    try:
+        await redis_client.ping()
+        redis_status = "connected"
+    except:
+        redis_status = "disconnected"
+    
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "components": {
-            "planner": "ready" if planner else "not_initialized",
-            "executor": "ready" if executor else "not_initialized",
-            "rate_limiter": "ready" if rate_limiter else "not_initialized"
-        }
+        "redis": redis_status,
+        "runbooks_loaded": len(RUNBOOKS),
+        "timestamp": datetime.utcnow().isoformat()
     }
-
-
-@app.post("/chat", response_model=RemediationResponse)
-async def process_incident(
-    incident_request: IncidentRequest,
-    api_key: str = Depends(verify_api_key)
-):
-    """
-    Main endpoint for incident processing
-
-    Flow:
-    1. Validate input
-    2. Check rate limits
-    3. Check circuit breaker
-    4. Plan: Select runbook via LLM
-    5. Execute: Run runbook steps
-    6. Generate evidence bundle
-    7. Return result
-
-    HIPAA Controls:
-    - §164.312(b): Audit trail logged
-    - §164.308(a)(1)(ii)(D): Automated system activity review
-    """
-
-    # Generate incident ID
-    incident_id = f"INC-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{incident_request.client_id}"
-
-    logger.info(f"Processing incident {incident_id}: {incident_request.incident_type}")
-
-    try:
-        # Step 1: Validate input
-        validation_result = input_validator.validate_incident(incident_request.dict())
-        if not validation_result.is_valid:
-            logger.warning(f"Invalid incident: {validation_result.errors}")
-            return RemediationResponse(
-                status="failed",
-                incident_id=incident_id,
-                message=f"Validation failed: {validation_result.errors}",
-                requires_human_approval=False
-            )
-
-        # Step 2: Check rate limits
-        rate_check = await rate_limiter.check_rate_limit(
-            client_id=incident_request.client_id,
-            hostname=incident_request.hostname,
-            action="remediation"
-        )
-
-        if not rate_check.allowed:
-            logger.warning(f"Rate limited: {incident_request.client_id}/{incident_request.hostname}")
-            return RemediationResponse(
-                status="rate_limited",
-                incident_id=incident_id,
-                message=f"Rate limited. Retry after {rate_check.retry_after_seconds}s",
-                requires_human_approval=False
-            )
-
-        # Step 3: Check circuit breaker
-        if circuit_breaker.is_open():
-            logger.error("Circuit breaker is open - too many recent failures")
-            return RemediationResponse(
-                status="failed",
-                incident_id=incident_id,
-                message="Service temporarily unavailable due to repeated failures",
-                requires_human_approval=True
-            )
-
-        # Step 4: Planning phase - Select runbook
-        incident = Incident(
-            client_id=incident_request.client_id,
-            hostname=incident_request.hostname,
-            incident_type=incident_request.incident_type,
-            severity=incident_request.severity,
-            timestamp=datetime.utcnow().isoformat(),
-            details=incident_request.details,
-            metadata=incident_request.metadata
-        )
-
-        try:
-            selection: RunbookSelection = await planner.select_runbook(incident)
-
-            logger.info(
-                f"Runbook selected: {selection.runbook_id} "
-                f"(confidence: {selection.confidence:.2%})"
-            )
-
-            # Check if human approval required
-            if selection.requires_human_approval:
-                logger.info(f"Human approval required for {incident_id}")
-                return RemediationResponse(
-                    status="requires_approval",
-                    incident_id=incident_id,
-                    runbook_id=selection.runbook_id,
-                    confidence=selection.confidence,
-                    message=f"Runbook {selection.runbook_id} requires human approval",
-                    requires_human_approval=True
-                )
-
-        except Exception as e:
-            logger.error(f"Planning failed: {e}")
-            circuit_breaker.record_failure()
-            return RemediationResponse(
-                status="failed",
-                incident_id=incident_id,
-                message=f"Planning failed: {str(e)}",
-                requires_human_approval=True
-            )
-
-        # Step 5: Execution phase - Run runbook
-        try:
-            execution_result: ExecutionResult = await executor.execute_runbook(
-                runbook_id=selection.runbook_id,
-                incident=incident,
-                incident_id=incident_id
-            )
-
-            logger.info(
-                f"Execution completed: {execution_result.status} "
-                f"({execution_result.steps_completed}/{execution_result.total_steps} steps)"
-            )
-
-            # Record success in circuit breaker
-            if execution_result.status == "success":
-                circuit_breaker.record_success()
-            else:
-                circuit_breaker.record_failure()
-
-            # Step 6: Generate evidence bundle (done by executor)
-            # Evidence bundle ID is in execution_result.evidence_bundle_id
-
-            # Step 7: Return result
-            return RemediationResponse(
-                status=execution_result.status,
-                incident_id=incident_id,
-                runbook_id=selection.runbook_id,
-                confidence=selection.confidence,
-                execution_result=execution_result.dict(),
-                evidence_bundle_id=execution_result.evidence_bundle_id,
-                message=f"Remediation {execution_result.status}: {execution_result.summary}",
-                requires_human_approval=False
-            )
-
-        except Exception as e:
-            logger.error(f"Execution failed: {e}")
-            circuit_breaker.record_failure()
-            return RemediationResponse(
-                status="failed",
-                incident_id=incident_id,
-                runbook_id=selection.runbook_id,
-                confidence=selection.confidence,
-                message=f"Execution failed: {str(e)}",
-                requires_human_approval=True
-            )
-
-    except Exception as e:
-        logger.error(f"Unexpected error processing incident {incident_id}: {e}")
-        return RemediationResponse(
-            status="failed",
-            incident_id=incident_id,
-            message=f"Internal error: {str(e)}",
-            requires_human_approval=True
-        )
-
-
-@app.post("/execute/{runbook_id}")
-async def execute_runbook_direct(
-    runbook_id: str,
-    incident_request: IncidentRequest,
-    api_key: str = Depends(verify_api_key)
-):
-    """
-    Direct runbook execution (bypasses planning)
-
-    Use this for:
-    - Manual remediation
-    - Testing specific runbooks
-    - Pre-approved actions
-
-    Requires explicit runbook_id, no LLM selection
-    """
-
-    incident_id = f"INC-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{incident_request.client_id}"
-
-    logger.info(f"Direct execution requested: {runbook_id}")
-
-    try:
-        # Validate runbook exists
-        runbook = executor.get_runbook(runbook_id)
-        if not runbook:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Runbook {runbook_id} not found"
-            )
-
-        # Create incident
-        incident = Incident(
-            client_id=incident_request.client_id,
-            hostname=incident_request.hostname,
-            incident_type=incident_request.incident_type,
-            severity=incident_request.severity,
-            timestamp=datetime.utcnow().isoformat(),
-            details=incident_request.details,
-            metadata=incident_request.metadata
-        )
-
-        # Execute
-        execution_result = await executor.execute_runbook(
-            runbook_id=runbook_id,
-            incident=incident,
-            incident_id=incident_id
-        )
-
-        return RemediationResponse(
-            status=execution_result.status,
-            incident_id=incident_id,
-            runbook_id=runbook_id,
-            confidence=1.0,  # Direct execution = full confidence
-            execution_result=execution_result.dict(),
-            evidence_bundle_id=execution_result.evidence_bundle_id,
-            message=f"Direct execution {execution_result.status}",
-            requires_human_approval=False
-        )
-
-    except Exception as e:
-        logger.error(f"Direct execution failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
 
 @app.get("/runbooks")
-async def list_runbooks(api_key: str = Depends(verify_api_key)):
+async def list_runbooks():
     """List all available runbooks"""
-
-    runbooks = []
-
-    for rb_id, rb_data in planner.library.runbooks.items():
-        runbooks.append({
-            "id": rb_id,
-            "name": rb_data['name'],
-            "description": rb_data['description'],
-            "severity": rb_data['severity'],
-            "hipaa_controls": rb_data.get('hipaa_controls', []),
-            "auto_fix_enabled": rb_data.get('auto_fix', {}).get('enabled', False),
-            "steps_count": len(rb_data.get('steps', []))
-        })
-
     return {
-        "runbooks": runbooks,
-        "total": len(runbooks)
+        "runbooks": [
+            {
+                "id": rb_id,
+                "name": rb.get("name"),
+                "description": rb.get("description"),
+                "severity": rb.get("severity"),
+                "category": rb.get("category"),
+                "hipaa_controls": rb.get("hipaa_controls", [])
+            }
+            for rb_id, rb in RUNBOOKS.items()
+        ],
+        "total": len(RUNBOOKS)
     }
-
 
 @app.get("/runbooks/{runbook_id}")
-async def get_runbook(
-    runbook_id: str,
-    api_key: str = Depends(verify_api_key)
-):
-    """Get details for specific runbook"""
-
-    runbook = planner.get_runbook_metadata(runbook_id)
-
-    if not runbook:
+async def get_runbook(runbook_id: str):
+    """Get specific runbook details"""
+    if runbook_id not in RUNBOOKS:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Runbook {runbook_id} not found"
+            detail=f"Runbook not found: {runbook_id}"
         )
+    
+    return RUNBOOKS[runbook_id]
 
-    return runbook
-
-
-@app.get("/incidents/history/{client_id}")
-async def get_incident_history(
-    client_id: str,
-    days: int = 30,
-    api_key: str = Depends(verify_api_key)
-):
-    """Get incident history for a client"""
-
-    # TODO: Implement incident history retrieval from database
-    # For now, return placeholder
-
+@app.post("/chat")
+async def process_incident(incident: IncidentRequest):
+    """
+    Main endpoint: Receive incident, select runbook, create remediation order
+    """
+    
+    # Check rate limit
+    allowed = await check_rate_limit(
+        incident.client_id,
+        incident.hostname,
+        incident.incident_type
+    )
+    
+    if not allowed:
+        remaining = await get_remaining_cooldown(
+            incident.client_id,
+            incident.hostname,
+            incident.incident_type
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limited. Try again in {remaining} seconds."
+        )
+    
+    # Use LLM to select runbook
+    selection = await select_runbook_with_llm(incident)
+    
+    # Verify runbook exists
+    if selection.runbook_id not in RUNBOOKS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Selected runbook not found: {selection.runbook_id}"
+        )
+    
+    # Create remediation order
+    order_id = hashlib.sha256(
+        f"{incident.client_id}{incident.hostname}{datetime.utcnow().isoformat()}".encode()
+    ).hexdigest()[:16]
+    
+    order = RemediationOrder(
+        order_id=order_id,
+        runbook_id=selection.runbook_id,
+        runbook_content=RUNBOOKS[selection.runbook_id],
+        parameters=selection.parameters,
+        expires_at=(datetime.utcnow().isoformat())
+    )
+    
+    # Store order in Redis
+    order_key = f"order:{incident.client_id}:{order_id}"
+    await redis_client.setex(
+        order_key,
+        900,  # 15 minutes TTL
+        order.json()
+    )
+    
+    print(f"✓ Created order {order_id} for {incident.client_id} ({selection.runbook_id})")
+    
     return {
-        "client_id": client_id,
-        "days": days,
-        "incidents": [],
-        "message": "History retrieval not yet implemented"
+        "status": "order_created",
+        "order_id": order_id,
+        "runbook_id": selection.runbook_id,
+        "confidence": selection.confidence,
+        "reasoning": selection.reasoning,
+        "order": order.dict()
     }
 
-
-@app.get("/evidence/{evidence_bundle_id}")
-async def get_evidence_bundle(
-    evidence_bundle_id: str,
-    api_key: str = Depends(verify_api_key)
-):
-    """Retrieve evidence bundle by ID"""
-
-    # TODO: Implement evidence bundle retrieval from WORM storage
-    # For now, return placeholder
-
+@app.post("/evidence")
+async def submit_evidence(evidence: EvidenceBundle):
+    """Accept evidence bundle from compliance agent"""
+    
+    # Save evidence to disk
+    evidence_file = EVIDENCE_DIR / f"{evidence.bundle_id}.json"
+    with open(evidence_file, 'w') as f:
+        json.dump(evidence.dict(), f, indent=2)
+    
+    print(f"✓ Stored evidence bundle: {evidence.bundle_id}")
+    
     return {
-        "evidence_bundle_id": evidence_bundle_id,
-        "message": "Evidence retrieval not yet implemented"
+        "status": "evidence_received",
+        "bundle_id": evidence.bundle_id,
+        "stored_at": str(evidence_file)
     }
 
-
-# Development/testing endpoints
-@app.get("/debug/rate-limits/{client_id}")
-async def debug_rate_limits(
-    client_id: str,
-    api_key: str = Depends(verify_api_key)
-):
-    """Debug endpoint to check rate limit status"""
-
-    return await rate_limiter.get_rate_limit_status(client_id)
-
-
-@app.post("/debug/reset-circuit-breaker")
-async def debug_reset_circuit_breaker(api_key: str = Depends(verify_api_key)):
-    """Debug endpoint to reset circuit breaker"""
-
-    circuit_breaker.reset()
-    return {"status": "Circuit breaker reset"}
-
+# ============================================================================
+# Main Entry Point
+# ============================================================================
 
 if __name__ == "__main__":
     import uvicorn
-
-    # Run server
+    
+    host = os.getenv("MCP_API_HOST", "0.0.0.0")
+    port = int(os.getenv("MCP_API_PORT", "8000"))
+    
+    print(f"Starting MCP Server on {host}:{port}...")
+    
     uvicorn.run(
-        "server:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,  # Auto-reload on code changes (development only)
-        log_level="info"
+        app,
+        host=host,
+        port=port,
+        log_level=LOG_LEVEL.lower()
     )

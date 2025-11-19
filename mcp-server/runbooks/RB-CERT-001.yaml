@@ -1,108 +1,66 @@
-# Runbook: SSL/TLS Certificate Expiry Remediation
-#
-# Handles expiring or expired SSL/TLS certificates by checking expiry,
-# renewing via Let's Encrypt/ACME, and reloading services.
-#
-# HIPAA Controls: §164.312(e)(1)
-
 id: RB-CERT-001
-name: Certificate Expiry Remediation
-version: "1.0"
-description: Automated SSL/TLS certificate renewal
-
-triggers:
-  - event_type: cert_expiry_warning
-  - event_type: cert_expired
-
-severity:
-  - high
-  - medium
-
-applicable_to:
-  - linux_server
-  - network_device
-
+name: "Certificate Expiry Remediation"
+description: "Automatically renew expiring SSL/TLS certificates"
 hipaa_controls:
   - "164.312(e)(1)"  # Transmission Security
-
-sla_target_seconds: 3600  # 1 hour
+  - "164.312(a)(2)(iv)"  # Encryption and Decryption
+severity: medium
+category: encryption
 
 steps:
-  - step: 1
-    name: check_certificate_expiry
-    description: Check certificate expiration dates
-    script: scripts/check_cert_expiry.sh
-    timeout_seconds: 30
-    retry_on_failure: false
-    evidence_required:
-      - cert_subject
-      - cert_expiry_date
-      - days_until_expiry
+  - id: 1
+    action: check_certificate_expiry
+    description: "Check certificate expiration date"
+    timeout: 10
+    command: "openssl x509 -in /etc/ssl/certs/server.crt -noout -enddate"
+    parse_output: true
 
-  - step: 2
-    name: backup_current_cert
-    description: Backup existing certificate before renewal
-    script: scripts/backup_cert.sh
-    timeout_seconds: 10
-    retry_on_failure: false
-    evidence_required:
-      - backup_path
-      - backup_checksum
+  - id: 2
+    action: backup_existing_cert
+    description: "Backup current certificate before renewal"
+    timeout: 10
+    command: "cp /etc/ssl/certs/server.crt /etc/ssl/certs/server.crt.backup-$(date +%Y%m%d)"
 
-  - step: 3
-    name: renew_certificate
-    description: Renew certificate via ACME (Let's Encrypt)
-    script: scripts/renew_cert_acme.sh
-    timeout_seconds: 120
+  - id: 3
+    action: renew_certificate
+    description: "Request new certificate from Let's Encrypt"
+    timeout: 60
+    command: "certbot renew --force-renewal"
     retry_on_failure: true
-    retry_count: 3
-    evidence_required:
-      - renewal_method
-      - new_cert_expiry_date
-      - acme_response
+    max_retries: 3
 
-  - step: 4
-    name: reload_services
-    description: Reload services using certificate (nginx, apache, etc)
-    script: scripts/reload_web_services.sh
-    timeout_seconds: 60
-    retry_on_failure: true
-    retry_count: 2
-    evidence_required:
-      - services_reloaded
-      - service_status
+  - id: 4
+    action: reload_web_server
+    description: "Reload web server to use new certificate"
+    timeout: 30
+    command: "systemctl reload nginx"
+    verify_service_active: true
+
+  - id: 5
+    action: verify_new_certificate
+    description: "Confirm new certificate is valid"
+    timeout: 10
+    command: "openssl x509 -in /etc/ssl/certs/server.crt -noout -enddate"
+    success_condition: "expiry_date > 30_days_from_now"
 
 rollback:
-  - action: restore_certificate
-    script: scripts/restore_cert_backup.sh
-  - action: alert_administrator
-    message: "Certificate renewal failed - restored backup"
+  - action: restore_backup_certificate
+    command: "mv /etc/ssl/certs/server.crt.backup-* /etc/ssl/certs/server.crt"
+  - action: reload_web_server
+    command: "systemctl reload nginx"
 
-evidence_artifacts:
-  required:
-    - outputs.cert_subject
-    - outputs.old_expiry_date
-    - outputs.new_expiry_date
-    - outputs.days_until_expiry
-    - checksums.certificate_file
-  optional:
-    - log_excerpts.acme_log
+evidence_required:
+  - old_cert_expiry_date
+  - new_cert_expiry_date
+  - renewal_logs
+  - nginx_reload_status
+  - verification_result
 
-success_criteria:
-  - days_until_expiry > 30
-  - service_status == "active"
-
-post_execution_validation:
-  - name: verify_cert_valid
-    command: "openssl x509 -in /etc/ssl/certs/domain.crt -noout -checkend 2592000"
-    expected_exit_code: 0  # Valid for at least 30 days
-  - name: verify_web_service
-    command: "curl -s -o /dev/null -w '%{http_code}' https://localhost/"
-    expected_output: "200"
-
-metadata:
-  author: MSP Compliance Platform
-  created: 2025-11-01
-  last_modified: 2025-11-01
-  tested: true
-  production_ready: true
+output_format:
+  type: "json"
+  schema:
+    incident_id: "string"
+    runbook_id: "string"
+    old_expiry: "datetime"
+    new_expiry: "datetime"
+    outcome: "success|failure"
