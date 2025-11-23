@@ -19,7 +19,7 @@ steps:
     action: find_large_log_files
     description: "Locate log files over 100MB"
     timeout: 30
-    command: "find /var/log -type f -size +100M -exec ls -lh {} \;"
+    command: 'find /var/log -type f -size +100M -exec ls -lh {} \;'
 
   - id: 3
     action: rotate_logs

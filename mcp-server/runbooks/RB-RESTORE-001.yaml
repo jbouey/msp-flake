@@ -34,14 +34,14 @@ steps:
     action: verify_file_integrity
     description: "Check restored files match original checksums"
     timeout: 120
-    command: "find ${RESTORE_DIR} -type f -exec sha256sum {} \; > ${RESTORE_DIR}/checksums.txt"
+    command: 'find ${RESTORE_DIR} -type f -exec sha256sum {} \; > ${RESTORE_DIR}/checksums.txt'
     compare_with_source: true
 
   - id: 5
     action: test_file_readability
     description: "Ensure files are readable and not corrupted"
     timeout: 60
-    command: "find ${RESTORE_DIR} -type f -exec file {} \;"
+    command: 'find ${RESTORE_DIR} -type f -exec file {} \;'
     success_condition: "no_errors"
 
   - id: 6
