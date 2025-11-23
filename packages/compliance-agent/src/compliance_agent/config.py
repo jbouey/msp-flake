@@ -43,6 +43,10 @@ class AgentConfig(BaseModel):
         default="https://mcp.local",
         description="MCP base URL"
     )
+    mcp_api_key_file: Optional[Path] = Field(
+        default=None,
+        description="Path to MCP API key file"
+    )
 
     # ========================================================================
     # Policy
@@ -106,6 +110,19 @@ class AgentConfig(BaseModel):
     webhook_secret_file: Optional[Path] = Field(
         default=None,
         description="Path to webhook HMAC secret"
+    )
+
+    # ========================================================================
+    # Storage Paths
+    # ========================================================================
+
+    state_dir: Path = Field(
+        default=Path("/var/lib/msp-compliance-agent"),
+        description="State directory for queue database, etc."
+    )
+    evidence_dir: Path = Field(
+        default=Path("/var/lib/msp-compliance-agent/evidence"),
+        description="Evidence storage directory"
     )
 
     # ========================================================================
@@ -241,6 +258,11 @@ class AgentConfig(BaseModel):
     def queue_db_path(self) -> Path:
         """SQLite queue database path."""
         return self.state_dir / 'queue.db'
+
+    @property
+    def mcp_poll_interval_sec(self) -> int:
+        """Alias for poll_interval for backward compatibility."""
+        return self.poll_interval
 
     class Config:
         """Pydantic config."""

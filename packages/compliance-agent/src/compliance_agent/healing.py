@@ -22,8 +22,8 @@ from .models import (
     RemediationResult,
     ActionTaken,
     DriftResult,
-    AgentConfig
 )
+from .config import AgentConfig
 from .utils import (
     run_command,
     is_within_maintenance_window,

@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock, Mock, patch, MagicMock
 from pathlib import Path
 
 from compliance_agent.agent import ComplianceAgent
+from compliance_agent.config import AgentConfig
 from compliance_agent.models import (
-    AgentConfig,
     DriftResult,
     RemediationResult,
     ActionTaken,
@@ -36,21 +36,32 @@ from compliance_agent.models import (
 @pytest.fixture
 def test_config(tmp_path):
     """Create test configuration."""
+    # Create required files
+    baseline = tmp_path / "baseline.yaml"
+    baseline.write_text("baseline_generation: 1000\n")
+
+    cert_file = tmp_path / "client.crt"
+    cert_file.write_text("CERT")
+
+    key_file = tmp_path / "client.key"
+    key_file.write_text("KEY")
+
+    signing_key = tmp_path / "signing-key.pem"
+    signing_key.write_text("SIGNINGKEY")
+
+    api_key = tmp_path / "api-key.txt"
+    api_key.write_text("test-api-key")
+
     return AgentConfig(
-        deployment_mode="direct",
-        client_id="test-client",
         site_id="test-site",
         host_id="test-host",
-        state_dir=str(tmp_path / "state"),
-        evidence_dir=str(tmp_path / "evidence"),
-        log_dir=str(tmp_path / "logs"),
-        baseline_path=str(tmp_path / "baseline.yaml"),
-        signing_key_file=str(tmp_path / "signing-key.pem"),
+        deployment_mode="direct",
+        baseline_path=str(baseline),
+        client_cert_file=str(cert_file),
+        client_key_file=str(key_file),
+        signing_key_file=str(signing_key),
         mcp_url="https://mcp.example.com",
-        mcp_api_key_file=str(tmp_path / "api-key.txt"),
-        mcp_poll_interval_sec=60,
-        maintenance_window_start=time(2, 0),
-        maintenance_window_end=time(4, 0)
+        maintenance_window="02:00-04:00"
     )
 
 
@@ -108,22 +119,31 @@ def test_agent_initialization(agent, test_config):
 
 def test_agent_initialization_without_mcp(test_config, mock_signer, tmp_path):
     """Test agent initialization without MCP server (offline mode)."""
+    # Create required files
+    baseline = tmp_path / "baseline.yaml"
+    baseline.write_text("baseline_generation: 1000\n")
+
+    cert_file = tmp_path / "client.crt"
+    cert_file.write_text("CERT")
+
+    key_file = tmp_path / "client.key"
+    key_file.write_text("KEY")
+
+    signing_key = tmp_path / "signing-key.pem"
+    signing_key.write_text("SIGNINGKEY")
+
     # Create config without MCP URL
     config_no_mcp = AgentConfig(
-        deployment_mode="direct",
-        client_id="test-client",
         site_id="test-site",
         host_id="test-host",
-        state_dir=str(tmp_path / "state"),
-        evidence_dir=str(tmp_path / "evidence"),
-        log_dir=str(tmp_path / "logs"),
-        baseline_path=str(tmp_path / "baseline.yaml"),
-        signing_key_file=str(tmp_path / "signing-key.pem"),
-        mcp_url=None,  # No MCP server
-        mcp_poll_interval_sec=60
+        deployment_mode="direct",
+        baseline_path=str(baseline),
+        client_cert_file=str(cert_file),
+        client_key_file=str(key_file),
+        signing_key_file=str(signing_key),
+        mcp_url="",  # No MCP server
+        maintenance_window="02:00-04:00"
     )
-    
-    (tmp_path / "baseline.yaml").write_text("baseline: test")
     
     with patch('compliance_agent.agent.DriftDetector'), \
          patch('compliance_agent.agent.HealingEngine'), \

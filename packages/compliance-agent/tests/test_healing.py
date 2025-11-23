@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from pathlib import Path
 
 from compliance_agent.healing import HealingEngine
+from compliance_agent.config import AgentConfig
 from compliance_agent.models import (
-    AgentConfig,
     DriftResult,
     RemediationResult
 )
@@ -33,15 +33,28 @@ from compliance_agent.utils import AsyncCommandError
 @pytest.fixture
 def test_config(tmp_path):
     """Create test configuration."""
+    # Create required files
+    baseline = tmp_path / "baseline.yaml"
+    baseline.write_text("baseline_generation: 1000\n")
+
+    cert_file = tmp_path / "client.crt"
+    cert_file.write_text("CERT")
+
+    key_file = tmp_path / "client.key"
+    key_file.write_text("KEY")
+
+    signing_key = tmp_path / "signing.key"
+    signing_key.write_text("SIGNINGKEY")
+
     return AgentConfig(
+        site_id="test-site",
+        host_id="test-host",
         deployment_mode="direct",
-        client_id="test-client",
-        state_dir=str(tmp_path / "state"),
-        evidence_dir=str(tmp_path / "evidence"),
-        log_dir=str(tmp_path / "logs"),
-        baseline_path=str(tmp_path / "baseline.yaml"),
-        maintenance_window_start=time(2, 0),
-        maintenance_window_end=time(4, 0)
+        baseline_path=str(baseline),
+        client_cert_file=str(cert_file),
+        client_key_file=str(key_file),
+        signing_key_file=str(signing_key),
+        maintenance_window="02:00-04:00"
     )
 
 

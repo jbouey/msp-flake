@@ -20,6 +20,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class AsyncCommandError(Exception):
+    """Error raised when an async command fails."""
+
+    def __init__(self, cmd: list, exit_code: int, stdout: str = "", stderr: str = ""):
+        self.cmd = cmd
+        self.exit_code = exit_code
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(f"Command {cmd} failed with exit code {exit_code}: {stderr}")
+
+
 class MaintenanceWindow:
     """Check if current time is within maintenance window."""
 
@@ -98,6 +109,41 @@ class MaintenanceWindow:
 
         next_start = self.next_window_start(now)
         return next_start - now
+
+
+def is_within_maintenance_window(
+    window_str: Optional[str],
+    now: Optional[datetime] = None
+) -> bool:
+    """
+    Check if current time is within maintenance window.
+
+    Args:
+        window_str: Maintenance window string in format "HH:MM-HH:MM" (UTC)
+        now: Time to check (default: datetime.utcnow())
+
+    Returns:
+        True if in window or no window defined, False otherwise
+    """
+    if not window_str:
+        return False  # No window defined = not in window
+
+    if now is None:
+        now = datetime.utcnow()
+
+    try:
+        start_str, end_str = window_str.split('-')
+        start_h, start_m = map(int, start_str.split(':'))
+        end_h, end_m = map(int, end_str.split(':'))
+
+        window = MaintenanceWindow(
+            start=time(start_h, start_m),
+            end=time(end_h, end_m)
+        )
+        return window.is_in_window(now)
+    except (ValueError, AttributeError) as e:
+        logger.warning(f"Invalid maintenance window format '{window_str}': {e}")
+        return False
 
 
 def apply_jitter(base_value: int, jitter_pct: float = 0.1) -> int:

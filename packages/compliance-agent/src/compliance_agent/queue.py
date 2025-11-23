@@ -433,3 +433,7 @@ class EvidenceQueue:
         so this is a no-op for now. Included for API completeness.
         """
         pass
+
+
+# Alias for backward compatibility
+OfflineQueue = EvidenceQueue
