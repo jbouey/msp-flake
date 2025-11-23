@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2025-11-06
-**Current Phase:** Phase 1 Complete → Phase 2 Starting
+**Last Updated:** 2025-11-21
+**Current Phase:** Phase 2 Active - MCP Server Running
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -257,12 +257,20 @@ Required fields per CLAUDE.md:
 - ✅ Evidence retention: Last 200 bundles, 90-day minimum age
 - ✅ Default deployment mode: Reseller (with direct examples)
 
-### Pending (for Phase 2)
-- ⭕ MCP server implementation: FastAPI or other framework?
+### Resolved in Phase 2
+- ✅ MCP server implementation: FastAPI (server.py running)
 - ⭕ LLM provider: Azure OpenAI (for BAA) or OpenAI directly?
 - ⭕ WORM storage: Client's S3 account or centrally hosted?
-- ⭕ Runbook format: YAML structure finalized?
+- ✅ Runbook format: YAML structure implemented (7 runbooks, 5 loading)
 - ⭕ Evidence bundle storage: Local + remote, or remote-only after sync?
+
+### Infrastructure Status (2025-11-21)
+- ✅ Mac Host: 174.178.63.139 (SSH working)
+- ✅ MCP Server VM: Running (port 4445 SSH, port 8001 API)
+- ✅ Test Client VM: Running (port 4444 SSH)
+- ✅ Redis: Running on MCP server
+- ✅ Cachix: Configured locally and in CI
+- 🟡 2 Runbooks: YAML parse errors need fixing
 
 ---
 

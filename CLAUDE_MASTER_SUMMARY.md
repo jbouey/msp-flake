@@ -369,11 +369,16 @@
 - ✅ 10 guardrails implemented
 - ✅ VM integration tests passing
 
-**Phase 2 Goals (In Progress):**
-- 🟡 Agent core implementation
-- 🟡 MCP client integration
+**Phase 2 Status (As of 2025-11-21):**
+- ✅ MCP Server running on VM (FastAPI + Redis)
+- ✅ 5/7 Runbooks loaded and operational
+- ✅ VM infrastructure: Mac host + 2 NixOS VMs
+- ✅ SSH access chain configured
+- ✅ Cachix binary cache configured
+- 🟡 Agent core implementation (pending client wiring)
 - 🟡 Drift detection & self-healing
 - 🟡 Evidence generation pipeline
+- 🟡 2 runbooks need YAML fixes (RB-DISK-001, RB-RESTORE-001)
 
 **Long-Term Goals:**
 - 10-50 clients supported by solo engineer
@@ -430,8 +435,68 @@
 
 ---
 
+## Current Infrastructure Status (2025-11-21)
+
+### VM Environment
+| Component | Status | Access |
+|-----------|--------|--------|
+| Mac Host | Running | `ssh dad@174.178.63.139` |
+| MCP Server VM | Running | `ssh -p 4445 root@localhost` (from Mac) |
+| Test Client VM | Running | `ssh -p 4444 root@localhost` (from Mac) |
+| MCP API | Healthy | `curl http://localhost:8001/health` (from Mac) |
+| Redis | Running | Port 6379 on MCP server |
+
+### Components Working
+- FastAPI MCP server (server.py)
+- 5/7 YAML runbooks loaded
+- Health/runbooks API endpoints
+- SSH key authentication
+- VirtualBox port forwarding
+
+### Known Issues
+- 2 runbooks fail YAML parsing (RB-DISK-001, RB-RESTORE-001) - need escaped characters
+- Server must be started manually (NixOS read-only filesystem)
+- Client VM not yet wired to MCP server
+
+---
+
+## Design Review Checklist
+
+**For another agent reviewing this design:**
+
+### Architecture Questions
+- [ ] Is pull-only architecture sufficient for all use cases?
+- [ ] Are 10 guardrails comprehensive enough?
+- [ ] Is the tier-based pricing model appropriate?
+
+### Implementation Questions
+- [ ] Is the runbook YAML format well-designed?
+- [ ] Should evidence bundles use different format than JSON?
+- [ ] Is SQLite appropriate for evidence registry at scale?
+
+### Security Questions
+- [ ] Is mTLS sufficient for agent-to-MCP communication?
+- [ ] Should runbooks be signed as well as evidence?
+- [ ] Is the metadata-only approach truly PHI-safe?
+
+### Scalability Questions
+- [ ] Can Redis handle 50+ clients without clustering?
+- [ ] Is 60-second poll interval appropriate?
+- [ ] How do we handle VM resource constraints?
+
+### Key Documents to Review
+1. `CLAUDE.md` - Master architecture document (5,499 lines)
+2. `modules/compliance-agent.nix` - NixOS module (546 lines, 27 options)
+3. `/var/lib/mcp-server/server.py` - MCP server implementation
+4. `flake-compliance.nix` - Production flake configuration
+5. `VM-ACCESS-GUIDE.md` - Infrastructure access instructions
+6. `MCP-SERVER-STATUS.md` - Current server status
+
+---
+
 **End of Master Summary**
-**Generated:** 2025-11-07
+**Last Updated:** 2025-11-21
 **Source:** CLAUDE.md v2.2 (5,499 lines)
 **Individual Summaries:** See `claude_summaries/` directory
 **Full Chunks:** See `claude_chunks/` directory
+**Infrastructure Docs:** See `VM-ACCESS-GUIDE.md`, `MCP-SERVER-STATUS.md`, `CACHIX-SETUP.md`

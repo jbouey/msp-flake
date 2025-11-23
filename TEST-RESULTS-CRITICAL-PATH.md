@@ -1,8 +1,8 @@
 # Critical Path Test Results
 
-**Test Date:** [Fill in]
-**Tester:** [Your name]
-**Environment:** macOS Desktop + NixOS VM/Laptop + MCP Server Laptop
+**Test Date:** 2025-11-21
+**Tester:** Claude Code (automated)
+**Environment:** Mac Host (174.178.63.139) + VirtualBox VMs
 
 ---
 
@@ -10,51 +10,56 @@
 
 ### Hardware Configuration
 
-**Architecture:** `MCP Server (VM1) ← Test Client (VM2)` + Control Station (Laptop)
+**Architecture:** `MCP Server (VM2) ← Test Client (VM1)` + Remote Control
 
-**RECOMMENDED SETUP (Phase 1 - NixOS Only):**
+**CURRENT SETUP (Operational):**
 
-**macOS Desktop (Always-On Host):**
-- **VM1 - NixOS (MCP Server):**
-  - VirtualBox, 2GB RAM, 20GB disk
-  - Runs: `mcp-server/server_minimal.py`
-  - Port: 8000 (bridged or NAT with port forward)
-  - Role: Central automation brain - receives incidents from ALL clients
-  - Network: Static IP or DHCP reservation
+**Mac Host (174.178.63.139):**
+- VirtualBox running two NixOS VMs
+- SSH access via port 22
+- Port forwarding configured
 
-- **VM2 - NixOS (Test Client):**
-  - VirtualBox, 2GB RAM, 20GB disk
-  - Runs: `compliance-agent` systemd service
+- **VM1 - NixOS (Test Client):**
+  - VirtualBox, NixOS 24.05
+  - Hostname: `test-client-001`
+  - SSH: `ssh -p 4444 root@localhost` (from Mac)
   - Role: Simulates clinic's server being monitored
-  - Must have: nginx or test-service for crash testing
-  - Network: Must reach VM1 on port 8000 (pull-only)
+  - Status: Running
 
-**Laptop (Control Station):**
+- **VM2 - NixOS (MCP Server):**
+  - VirtualBox, NixOS 24.05
+  - Hostname: `mcp-server`
+  - SSH: `ssh -p 4445 root@localhost` (from Mac)
+  - API: `http://localhost:8001` (from Mac)
+  - Role: Central automation brain - receives incidents from ALL clients
+  - Status: Running (server.py active)
+
+**Remote Control (Your Machine):**
 - Role: MSP operator's workstation
-- Does: SSH to VMs, run curl tests, monitor logs, trigger incidents
+- Does: SSH chain (local → Mac → VMs), run curl tests, monitor logs
 - Can close/reboot without disrupting infrastructure
-- NOT part of the production architecture
 
 **Network Topology:**
-- [ ] VirtualBox Bridged Networking (VMs get LAN IPs - easiest)
-- [ ] VirtualBox NAT Network (isolated, requires port forwarding)
-- Required: VM2 (Test Client) can HTTP to VM1:8000 (MCP Server)
+- [x] VirtualBox NAT with Port Forwarding (current setup)
+- [x] Port 4444 → VM1 SSH
+- [x] Port 4445 → VM2 SSH
+- [x] Port 8001 → VM2 API (8000)
 - Architecture: Pull-only (MCP Server never initiates to clients)
 
 **Why This Setup:**
-✅ Always-on infrastructure (desktop stays up)
+✅ Always-on infrastructure (Mac stays up)
 ✅ Uses existing Phase 1 code (no Windows porting needed)
 ✅ Proper separation (MCP Server = 1 instance, many clients connect)
-✅ Can test from anywhere (laptop SSH)
+✅ Can test from anywhere (SSH access)
 
 **Future Expansion (Phase 2+):**
 - VM3: Windows Server (requires agent porting - see CLAUDE.md "Add Windows Support")
-- Spare laptop: Physical MCP Server (replace VM1)
 - Cloud: Production MCP Server deployment
 
 ### IP Addresses
-- MCP Server: `_____._____._____._____ : 8000`
-- Test Client: `_____._____._____._____ `
+- Mac Host: `174.178.63.139 : 22`
+- MCP Server API: `localhost:8001` (from Mac)
+- Test Client: `localhost:4444` (from Mac)
 
 ---
 
@@ -103,28 +108,33 @@ nix build .#nixosTests.compliance-agent -L
 ## Phase 2: MCP Server Setup
 
 ### Server Installation
-- [ ] Python environment configured
-- [ ] Dependencies installed (fastapi, uvicorn, pydantic)
-- [ ] minimal_server.py deployed
-- [ ] Server starts without errors
-- [ ] Health endpoint responds
-- [ ] Tools endpoint lists restart_service
+- [x] Python environment configured (Python 3.11.10)
+- [x] Dependencies installed (fastapi, uvicorn, pydantic, redis, aiohttp, PyYAML)
+- [x] server.py deployed (/var/lib/mcp-server/server.py)
+- [x] Server starts without errors
+- [x] Health endpoint responds
+- [x] Runbooks endpoint lists loaded runbooks
 
 ### Server Connectivity
 ```bash
-# Health check from macOS:
-curl http://MCP_SERVER_IP:8000/health
-# Response: [Paste JSON]
+# Health check from Mac host:
+curl http://localhost:8001/health
+# Response: {"status": "healthy", "redis": "connected", "runbooks_loaded": 5}
 
-# Tools endpoint:
-curl http://MCP_SERVER_IP:8000/tools
-# Response: [Paste JSON]
+# Runbooks endpoint:
+curl http://localhost:8001/runbooks
+# Response: Lists 5 loaded runbooks (2 failed YAML parse)
 
-# Test execute:
-curl -X POST http://MCP_SERVER_IP:8000/execute \
-  -H "Content-Type: application/json" \
-  -d '{"tool_name":"restart_service","params":{"service_name":"nginx"}}'
-# Response: [Paste evidence bundle]
+# Runbooks loaded:
+# - RB-SERVICE-001 (Service Restart)
+# - RB-CERT-001 (Certificate Renewal)
+# - RB-CPU-001 (CPU High Usage)
+# - RB-DRIFT-001 (Configuration Drift)
+# - RB-BACKUP-001 (Backup Failure)
+
+# Runbooks failed to load:
+# - RB-DISK-001 (YAML error line 22)
+# - RB-RESTORE-001 (YAML error line 37)
 ```
 
 ---

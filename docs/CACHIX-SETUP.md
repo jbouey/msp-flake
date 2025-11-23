@@ -10,7 +10,7 @@ Cachix is a binary cache for Nix that speeds up builds by caching compiled packa
 
 Visit https://app.cachix.org and sign up (free tier available)
 
-### 2. Create Binary Cache
+"### 2. Create Binary Cache
 
 1. Click "Create binary cache"
 2. Name it: `msp-platform` (must match workflow config)

@@ -49,7 +49,7 @@ This document describes the complete technology stack for the MSP HIPAA Complian
 │  Docker (Demo) • NixOS (Production) • Cloud Provider         │
 └─────────────────────────────────────────────────────────────┘
 ```
-
+"
 ---
 
 ## Core Technologies
