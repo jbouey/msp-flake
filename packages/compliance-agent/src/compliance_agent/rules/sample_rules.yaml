@@ -1,0 +1,93 @@
+# Sample Custom Rules for Level 1 Deterministic Engine
+# Place custom rules in /etc/msp/rules/ on deployed systems
+
+rules:
+  # Custom rule for high CPU usage
+  - id: L1-CUSTOM-CPU-001
+    name: High CPU Usage Alert
+    description: Alert when CPU usage exceeds 95% for extended period
+    conditions:
+      - field: incident_type
+        operator: eq
+        value: cpu_high
+      - field: details.cpu_percent
+        operator: gt
+        value: 95
+    action: restart_service
+    action_params:
+      service_name: "{{details.service_name}}"
+      graceful: true
+    hipaa_controls: []
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 30
+    cooldown_seconds: 600
+    max_retries: 2
+
+  # Custom rule for memory pressure
+  - id: L1-CUSTOM-MEM-001
+    name: Memory Pressure Response
+    description: Clear caches when memory usage exceeds threshold
+    conditions:
+      - field: incident_type
+        operator: eq
+        value: memory_high
+      - field: details.memory_percent
+        operator: gt
+        value: 90
+    action: clear_cache
+    action_params:
+      targets:
+        - /var/cache
+        - /tmp
+    hipaa_controls: []
+    enabled: true
+    priority: 25
+    cooldown_seconds: 300
+
+  # Custom rule for failed SSH authentication
+  - id: L1-CUSTOM-SSH-001
+    name: SSH Brute Force Detection
+    description: Escalate on multiple failed SSH attempts
+    conditions:
+      - field: incident_type
+        operator: eq
+        value: ssh_failed_auth
+      - field: details.failed_attempts
+        operator: gt
+        value: 10
+    action: escalate
+    action_params:
+      reason: Possible SSH brute force attack detected
+      urgency: high
+      include_logs: true
+    hipaa_controls:
+      - "164.312(a)(2)(i)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 60
+
+  # Custom rule for NTP drift
+  - id: L1-CUSTOM-NTP-001
+    name: NTP Time Drift
+    description: Restart NTP service on time drift
+    conditions:
+      - field: incident_type
+        operator: eq
+        value: time_drift
+      - field: details.drift_seconds
+        operator: gt
+        value: 90
+    action: restart_service
+    action_params:
+      service_name: chronyd
+    hipaa_controls:
+      - "164.312(b)"
+    enabled: true
+    priority: 20
+    cooldown_seconds: 300

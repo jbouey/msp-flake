@@ -120,10 +120,17 @@ class AgentConfig(BaseModel):
         default=Path("/var/lib/msp-compliance-agent"),
         description="State directory for queue database, etc."
     )
-    evidence_dir: Path = Field(
-        default=Path("/var/lib/msp-compliance-agent/evidence"),
-        description="Evidence storage directory"
+    evidence_dir: Optional[Path] = Field(
+        default=None,
+        description="Evidence storage directory (defaults to state_dir/evidence)"
     )
+
+    @validator('evidence_dir', always=True)
+    def set_evidence_dir(cls, v, values):
+        """Set evidence_dir from state_dir if not explicitly provided."""
+        if v is None and 'state_dir' in values:
+            return values['state_dir'] / 'evidence'
+        return v
 
     # ========================================================================
     # Evidence
@@ -244,17 +251,6 @@ class AgentConfig(BaseModel):
         return self.deployment_mode == 'reseller'
 
     @property
-    def state_dir(self) -> Path:
-        """State directory path."""
-        import os
-        return Path(os.getenv('STATE_DIR', '/var/lib/compliance-agent'))
-
-    @property
-    def evidence_dir(self) -> Path:
-        """Evidence directory path."""
-        return self.state_dir / 'evidence'
-
-    @property
     def queue_db_path(self) -> Path:
         """SQLite queue database path."""
         return self.state_dir / 'queue.db'
@@ -311,6 +307,9 @@ def load_config() -> AgentConfig:
         'client_key_file': os.environ['CLIENT_KEY_FILE'],
         'signing_key_file': os.environ['SIGNING_KEY_FILE'],
         'webhook_secret_file': os.environ.get('WEBHOOK_SECRET_FILE') or None,
+
+        # Storage paths
+        'state_dir': Path(os.environ.get('STATE_DIR', '/var/lib/msp-compliance-agent')),
 
         # Evidence
         'evidence_retention': int(os.environ.get('EVIDENCE_RETENTION', '200')),

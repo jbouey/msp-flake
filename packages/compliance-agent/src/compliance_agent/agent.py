@@ -24,7 +24,7 @@ from .crypto import Ed25519Signer
 from .drift import DriftDetector
 from .healing import HealingEngine
 from .evidence import EvidenceGenerator
-from .queue import OfflineQueue
+from .offline_queue import OfflineQueue
 from .mcp_client import MCPClient
 from .models import DriftResult, RemediationResult, EvidenceBundle
 from .utils import apply_jitter

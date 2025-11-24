@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import sqlite3
 
-from compliance_agent.queue import EvidenceQueue
+from compliance_agent.offline_queue import EvidenceQueue
 
 
 @pytest.fixture

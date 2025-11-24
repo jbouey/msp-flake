@@ -19,7 +19,7 @@ class ActionTaken(BaseModel):
     """Single remediation action within evidence bundle."""
 
     step: int = Field(
-        ...,
+        default=1,
         ge=1,
         description="Step number in remediation sequence"
     )

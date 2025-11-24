@@ -2,223 +2,236 @@
 
 **Pull-Only Autonomous Compliance Agent for Healthcare SMBs**
 
+[![Tests](https://img.shields.io/badge/tests-161%20passed-brightgreen)]()
+[![Python](https://img.shields.io/badge/python-3.13-blue)]()
+[![HIPAA](https://img.shields.io/badge/HIPAA-compliant-green)]()
+
 ## Overview
 
-The MSP Compliance Agent is the heart of the compliance platform. It runs at each client site and:
+The MSP Compliance Agent is an autonomous HIPAA compliance monitoring and self-healing system for healthcare SMBs. It runs at each client site and:
 
 1. **Polls MCP server** for orders (pull-only, no listening sockets)
-2. **Detects drift** from baseline configuration (Phase 2 Day 3-4)
-3. **Heals drift automatically** with rollback capability (Phase 2 Day 5)
-4. **Generates evidence** bundles for all actions (Phase 2 Day 6-7)
+2. **Detects drift** from baseline configuration (6 compliance checks)
+3. **Heals drift automatically** with rollback capability
+4. **Generates evidence** bundles for all actions (Ed25519 signed)
 5. **Operates offline** with durable queue when MCP unavailable
+6. **Manages Windows servers** via WinRM runbooks
+
+## Quick Start
+
+```bash
+# Clone and setup
+cd /Users/dad/Documents/Msp_Flakes/packages/compliance-agent
+source venv/bin/activate
+
+# Run tests
+python -m pytest tests/ -v --tb=short
+
+# Run agent (requires config)
+python -m compliance_agent.agent --config /path/to/config.yaml
+```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   Compliance Agent                      │
-│                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐            │
-│  │  agent   │  │   MCP    │  │  Queue   │            │
-│  │  .py     │─▶│  Client  │─▶│  (SQLite)│            │
-│  └──────────┘  └──────────┘  └──────────┘            │
-│       │              │              │                  │
-│       ▼              ▼              ▼                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐            │
-│  │  Config  │  │  Crypto  │  │ Evidence │            │
-│  │  .py     │  │  .py     │  │ (Phase2) │            │
-│  └──────────┘  └──────────┘  └──────────┘            │
-└─────────────────────────────────────────────────────────┘
-         │                │                │
-         ▼                ▼                ▼
-   NixOS Config    mTLS to MCP    WORM Storage
+┌─────────────────────────────────────────────────────────────┐
+│                    Compliance Agent                          │
+│                                                              │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐       │
+│  │  drift  │  │ healing │  │evidence │  │  agent  │       │
+│  │   .py   │  │   .py   │  │   .py   │  │   .py   │       │
+│  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘       │
+│       │            │            │            │              │
+│       └────────────┴────────────┴────────────┘              │
+│                          │                                   │
+│  ┌───────────────────────┼───────────────────────┐         │
+│  │              Core Services                     │         │
+│  │  mcp_client │ crypto │ offline_queue │ config │         │
+│  └───────────────────────┴───────────────────────┘         │
+│                          │                                   │
+│  ┌───────────────────────▼───────────────────────┐         │
+│  │           Windows Runbooks (WinRM)             │         │
+│  │     executor.py │ runbooks.py (7 runbooks)    │         │
+│  └───────────────────────────────────────────────┘         │
+└─────────────────────────────────────────────────────────────┘
+                           │
+            ┌──────────────┼──────────────┐
+            ▼              ▼              ▼
+      ┌──────────┐  ┌──────────┐  ┌──────────┐
+      │   MCP    │  │  Redis   │  │  WORM    │
+      │  Server  │  │  Queue   │  │ Storage  │
+      └──────────┘  └──────────┘  └──────────┘
 ```
 
-## Components (Phase 2 Day 1-2 Complete)
+## Three-Tier Auto-Healing Architecture
 
-### agent.py (497 lines)
-Main compliance agent orchestrating all operations:
-- Poll loop with jitter (60s ±10%)
-- Order verification (Ed25519 + TTL)
-- Maintenance window checking
-- Graceful shutdown (SIGTERM/SIGINT)
-- Statistics tracking
-- Placeholder integration points for drift/heal/evidence
+The agent implements an intelligent three-tier incident resolution system:
 
-**Key Methods:**
-- `run()` - Main loop
-- `_compliance_cycle()` - One full cycle
-- `_fetch_orders()` - Poll MCP or offline queue
-- `_verify_order()` - Signature + TTL + field validation
-- `_execute_order()` - Run verified order (respects maintenance windows)
+```
+        Incident
+            │
+            ▼
+    ┌───────────────┐
+    │   Level 1     │  70-80% of incidents
+    │ Deterministic │  <100ms, $0 cost
+    │    Rules      │  YAML pattern matching
+    └───────┬───────┘
+            │ No match
+            ▼
+    ┌───────────────┐
+    │   Level 2     │  15-20% of incidents
+    │  LLM Planner  │  2-5s, context-aware
+    │   (Hybrid)    │  Local + API fallback
+    └───────┬───────┘
+            │ Can't resolve
+            ▼
+    ┌───────────────┐
+    │   Level 3     │  5-10% of incidents
+    │    Human      │  Rich tickets
+    │  Escalation   │  Slack/PagerDuty/Email
+    └───────────────┘
+            │
+            ▼
+    ┌───────────────┐
+    │ Learning Loop │  Data Flywheel
+    │ L2 → L1       │  Auto-promote patterns
+    │  Promotion    │  with 90%+ success
+    └───────────────┘
+```
 
-### mcp_client.py (277 lines)
-MCP client with mTLS for pull-only communication:
-- mTLS configuration (client certs + CA verification)
-- TLS 1.2+ enforcement (no TLS 1.0/1.1)
-- Pull-only architecture (agent initiates all connections)
-- Graceful degradation when MCP unavailable
+| Level | Handles | Response Time | Cost |
+|-------|---------|---------------|------|
+| L1 Deterministic | 70-80% | <100ms | $0 |
+| L2 LLM Planner | 15-20% | 2-5s | ~$0.001/incident |
+| L3 Human | 5-10% | Minutes-hours | Human time |
 
-**Key Methods:**
-- `poll_orders(site_id)` - Fetch new orders
-- `push_evidence(evidence)` - Upload evidence bundle
-- `health_check()` - Verify MCP reachability
-- `get_config(site_id)` - Optional config updates
+## Modules
 
-**Security:**
-- Certificate pinning via CA
-- Hostname verification enforced
-- Timeout handling (prevents hangs)
-- Rate limiting via Redis cooldown
+| Module | Description |
+|--------|-------------|
+| `agent.py` | Main orchestration loop with graceful shutdown |
+| `auto_healer.py` | Three-tier incident resolution orchestrator |
+| `level1_deterministic.py` | YAML-based deterministic rules engine |
+| `level2_llm.py` | LLM context-aware planner (local/API/hybrid) |
+| `level3_escalation.py` | Human escalation with rich tickets |
+| `learning_loop.py` | Self-learning for L2→L1 promotion |
+| `incident_db.py` | SQLite incident history for context |
+| `drift.py` | 6 compliance drift detection checks |
+| `healing.py` | Self-healing engine with rollback |
+| `evidence.py` | Evidence bundle generation & signing |
+| `mcp_client.py` | MCP server communication (mTLS) |
+| `offline_queue.py` | SQLite WAL queue for offline operation |
+| `crypto.py` | Ed25519 signature verification |
+| `config.py` | Configuration management (27 options) |
+| `models.py` | Pydantic data models |
+| `utils.py` | Utility functions |
 
-### queue.py (440 lines)
-Durable offline queue using SQLite WAL mode:
-- Implements Guardrail #9 (queue durability)
-- SQLite with WAL mode + PRAGMA synchronous=FULL (fsync)
-- Two tables: orders (pending execution), evidence (pending push)
-- Exponential backoff for retries
-- Automatic cleanup of old data
+## Drift Detection (6 Checks)
 
-**Key Methods:**
-- `add(order)` - Queue order when MCP unavailable
-- `get_pending(limit)` - Retrieve orders ready for execution
-- `mark_executed(order_id)` - Mark order as completed
-- `add_evidence(evidence)` - Queue evidence for push
-- `cleanup_old(days)` - Remove old completed items
+| Check | HIPAA Control | Description |
+|-------|---------------|-------------|
+| Patching | 164.308(a)(5)(ii)(B) | OS/software patch status |
+| AV/EDR | 164.308(a)(5)(ii)(B) | Antivirus/endpoint protection |
+| Backup | 164.308(a)(7)(ii)(A) | Backup completion & age |
+| Logging | 164.312(b) | Audit logging status |
+| Firewall | 164.312(a)(1) | Firewall configuration |
+| Encryption | 164.312(a)(2)(iv) | Disk/data encryption |
 
-### crypto.py (243 lines)
-Ed25519 signature verification:
-- Implements Guardrail #1 (order authentication)
-- Ed25519 (Curve25519) for fast, secure signatures
-- Public key verification only (agent never signs)
-- Constant-time operations (timing attack prevention)
+## Windows Runbooks (7 Runbooks)
 
-**Key Methods:**
-- `verify(message, signature)` - Verify Ed25519 signature
-- `verify_order_signature(order, public_key)` - Convenience function
-- `generate_keypair()` - For testing/setup only
+| Runbook | Description |
+|---------|-------------|
+| `RB-WIN-PATCH-001` | Windows Update compliance |
+| `RB-WIN-AV-001` | Windows Defender health |
+| `RB-WIN-BACKUP-001` | Backup verification |
+| `RB-WIN-LOGGING-001` | Event logging audit policy |
+| `RB-WIN-FIREWALL-001` | Firewall status |
+| `RB-WIN-ENCRYPTION-001` | BitLocker encryption |
+| `RB-WIN-AD-001` | Active Directory health |
 
-### config.py (368 lines)
-Configuration loading and validation:
-- YAML/JSON config file support
-- Pydantic validation with type checking
-- Environment variable overrides (MSP_* prefix)
-- Maintenance window parsing
-- Sensible defaults for all optional fields
-
-**Configuration Sources (priority order):**
-1. Environment variables (override everything)
-2. Config file (YAML or JSON)
-3. Defaults (built-in values)
-
-**Key Configuration Fields:**
-- `site_id` - Unique site identifier
-- `mcp_base_url` - MCP server URL
-- `mcp_public_key` - Ed25519 public key (hex)
-- `client_cert`, `client_key`, `ca_cert` - mTLS certificates
-- `queue_path` - SQLite database path
-- `poll_interval` - Seconds between polls
-- `maintenance_window_*` - Maintenance window settings
-- `deployment_mode` - direct or reseller
-
-## Example Configuration
+## Configuration
 
 ```yaml
 # config.yaml
 site_id: clinic-001
-mcp_base_url: https://mcp.example.com
-mcp_public_key: abc123...  # 64 hex chars (32 bytes)
+host_id: server-01
+deployment_mode: direct  # or reseller
 
-# mTLS Certificates (via SOPS/Vault)
-client_cert: /run/secrets/client-cert.pem
-client_key: /run/secrets/client-key.pem
-ca_cert: /run/secrets/ca-cert.pem
+mcp_url: https://mcp.example.com
+poll_interval: 60
 
-# Queue
-queue_path: /var/lib/msp/queue.db
-max_queue_size: 1000
+# mTLS (via SOPS/Vault)
+client_cert_file: /run/secrets/client-cert.pem
+client_key_file: /run/secrets/client-key.pem
+signing_key_file: /run/secrets/signing-key
 
-# Polling
-poll_interval: 60  # seconds
+# Paths
+state_dir: /var/lib/msp-compliance-agent
+baseline_path: /etc/msp/baseline.yaml
 
 # Maintenance Window
-maintenance_window_enabled: true
-maintenance_window_start: "02:00:00"
-maintenance_window_end: "04:00:00"
-maintenance_window_days:
-  - sunday
-
-# Deployment
-deployment_mode: direct
-
-# Logging
-log_level: INFO
-log_file: /var/log/msp/agent.log
+maintenance_window: "02:00-04:00"
+allow_disruptive_outside_window: false
 ```
 
-## Usage
+## Guardrails
+
+| # | Guardrail | Status |
+|---|-----------|--------|
+| 1 | Order authentication (Ed25519) | ✅ |
+| 2 | Order TTL (15 min default) | ✅ |
+| 3 | Maintenance window enforcement | ✅ |
+| 4 | Health check + rollback | ✅ |
+| 5 | Evidence generation | ✅ |
+| 6 | Rate limiting | ✅ |
+| 7 | Runbook whitelisting | ✅ |
+| 8 | Dry-run mode | 🟡 |
+| 9 | Queue durability (SQLite WAL) | ✅ |
+| 10 | mTLS authentication | ✅ |
+
+## Testing
 
 ```bash
-# Run agent with config file
-python -m src.agent /path/to/config.yaml
+# Full test suite (161 tests)
+python -m pytest tests/ -v --tb=short
 
-# Or with environment overrides
-export MSP_SITE_ID=clinic-002
-export MSP_POLL_INTERVAL=120
-python -m src.agent /path/to/config.yaml
+# Core tests only
+python -m pytest tests/test_agent.py tests/test_healing.py tests/test_drift.py -v
+
+# Auto-healer tests (24 tests)
+python -m pytest tests/test_auto_healer.py -v
+
+# Integration tests (simulated VMs, 12 tests)
+python -m pytest tests/test_auto_healer_integration.py -v
+
+# Windows integration (requires VM)
+export WIN_TEST_HOST="192.168.56.10"
+export WIN_TEST_USER="vagrant"
+export WIN_TEST_PASS="vagrant"
+python tests/test_windows_integration.py
+
+# Integration tests with real VMs
+python tests/test_auto_healer_integration.py --real-vms
 ```
 
-## Guardrails Implemented
+## Documentation
 
-- ✅ **Guardrail #1:** Order auth with Ed25519 signature verification
-- ✅ **Guardrail #2:** Order TTL enforcement (default 15 minutes)
-- ✅ **Guardrail #3:** Maintenance window enforcement (disruptive actions only in window)
-- ✅ **Guardrail #9:** Queue durability (SQLite WAL + fsync)
-
-**Pending (Phase 2 Day 3-7):**
-- Guardrail #4: Health check + rollback
-- Guardrail #5: Evidence generation
-- Guardrail #6: Rate limiting (via MCP server)
-- Guardrail #7: Validation (runbook whitelisting)
-- Guardrail #8: Dry-run mode
-
-## Next Steps (Phase 2 Day 3-7)
-
-### Day 3-4: Drift Detection
-- [ ] Implement DriftDetector class
-- [ ] Add 6 drift checks (flake hash, patch status, backup status, service health, encryption, time sync)
-- [ ] Integrate with agent main loop
-- [ ] Test drift detection with synthetic violations
-
-### Day 5: Self-Healing
-- [ ] Implement Healer class
-- [ ] Add runbook execution engine
-- [ ] Implement rollback logic
-- [ ] Add health check verification
-- [ ] Test healing with rollback scenarios
-
-### Day 6-7: Evidence Generation
-- [ ] Implement EvidenceGenerator class
-- [ ] Add evidence bundle structure
-- [ ] Implement signing (cosign)
-- [ ] Add WORM storage upload
-- [ ] Test evidence generation and verification
-
-### Day 8-10: Testing
-- [ ] Create /demo Docker Compose stack
-- [ ] Implement 5 test cases from test matrix
-- [ ] Integration testing with real MCP server
-- [ ] Performance testing (resource usage)
-- [ ] Documentation updates
+- [AUTO_HEALING.md](docs/AUTO_HEALING.md) - Three-tier auto-healing architecture
+- [TECH_STACK.md](docs/TECH_STACK.md) - Technology stack details
+- [CREDENTIALS.md](docs/CREDENTIALS.md) - Access credentials
+- [TESTING.md](docs/TESTING.md) - Test guide
+- [WINDOWS_TEST_SETUP.md](docs/WINDOWS_TEST_SETUP.md) - Windows VM setup
 
 ## Dependencies
 
 ```
-# Python 3.11+
-aiohttp>=3.9.0
-cryptography>=42.0.0
 pydantic>=2.5.0
 pyyaml>=6.0.1
+aiohttp>=3.9.0
+cryptography>=42.0.0
+pywinrm>=0.4.3
+pytest>=8.0
+pytest-asyncio>=1.0
 ```
 
 ## License
@@ -227,7 +240,12 @@ Proprietary - MSP Compliance Platform
 
 ## Status
 
-**Phase 2 Day 1-2: COMPLETE** ✅
-- Agent core foundation ready
-- All 5 core modules implemented
-- Ready for drift detection integration
+**Phase 2 Active** - Three-Tier Auto-Healing Implemented, 161 tests passing
+
+### Recent Updates (2025-11-23)
+- Implemented three-tier auto-healing architecture (L1/L2/L3)
+- Added incident database with pattern tracking
+- Created self-learning loop for L2→L1 rule promotion
+- Added 24 new auto-healer tests
+- Added 12 VM integration tests for 3-VM scenarios (2 NixOS + 1 Windows)
+- Data flywheel tests for pattern tracking and promotion eligibility

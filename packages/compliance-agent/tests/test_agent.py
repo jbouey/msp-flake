@@ -14,7 +14,7 @@ Test Coverage:
 
 import pytest
 import asyncio
-from datetime import time
+from datetime import time, datetime
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
 from pathlib import Path
 
@@ -52,6 +52,12 @@ def test_config(tmp_path):
     api_key = tmp_path / "api-key.txt"
     api_key.write_text("test-api-key")
 
+    # Create state and evidence directories in tmp_path
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+
     return AgentConfig(
         site_id="test-site",
         host_id="test-host",
@@ -61,7 +67,9 @@ def test_config(tmp_path):
         client_key_file=str(key_file),
         signing_key_file=str(signing_key),
         mcp_url="https://mcp.example.com",
-        maintenance_window="02:00-04:00"
+        maintenance_window="02:00-04:00",
+        state_dir=str(state_dir),
+        evidence_dir=str(evidence_dir)
     )
 
 
@@ -86,14 +94,17 @@ def agent(test_config, mock_signer, tmp_path):
     # Create dummy files
     (tmp_path / "api-key.txt").write_text("test-api-key")
     (tmp_path / "baseline.yaml").write_text("baseline: test")
-    
+
     with patch('compliance_agent.agent.DriftDetector'), \
          patch('compliance_agent.agent.HealingEngine'), \
          patch('compliance_agent.agent.EvidenceGenerator'), \
          patch('compliance_agent.agent.OfflineQueue'), \
          patch('compliance_agent.agent.MCPClient'):
-        
+
         agent = ComplianceAgent(test_config)
+        # Ensure offline_queue methods are AsyncMock for await usage
+        agent.offline_queue.get_pending = AsyncMock(return_value=[])
+        agent.offline_queue.list_pending = AsyncMock(return_value=[])
         return agent
 
 
@@ -132,6 +143,12 @@ def test_agent_initialization_without_mcp(test_config, mock_signer, tmp_path):
     signing_key = tmp_path / "signing-key.pem"
     signing_key.write_text("SIGNINGKEY")
 
+    # Create state and evidence directories (use exist_ok=True or different path)
+    state_dir = tmp_path / "state2"
+    state_dir.mkdir(exist_ok=True)
+    evidence_dir = tmp_path / "evidence2"
+    evidence_dir.mkdir(exist_ok=True)
+
     # Create config without MCP URL
     config_no_mcp = AgentConfig(
         site_id="test-site",
@@ -142,7 +159,9 @@ def test_agent_initialization_without_mcp(test_config, mock_signer, tmp_path):
         client_key_file=str(key_file),
         signing_key_file=str(signing_key),
         mcp_url="",  # No MCP server
-        maintenance_window="02:00-04:00"
+        maintenance_window="02:00-04:00",
+        state_dir=str(state_dir),
+        evidence_dir=str(evidence_dir)
     )
     
     with patch('compliance_agent.agent.DriftDetector'), \
@@ -187,42 +206,53 @@ async def test_run_iteration_with_drift(agent):
         recommended_action="update_to_baseline_generation",
         hipaa_controls=["164.308(a)(5)(ii)(B)"]
     )
-    
+
     agent.drift_detector.check_all = AsyncMock(return_value=[drift])
-    
+
     # Mock healing engine
     remediation = RemediationResult(
         check="patching",
         outcome="success",
         pre_state={"generation": 999},
         post_state={"generation": 1000},
-        actions=[ActionTaken(action="switch_generation", timestamp=Mock())]
+        actions=[ActionTaken(step=1, action="switch_generation")]
     )
-    
+
     agent.healing_engine.remediate = AsyncMock(return_value=remediation)
-    
-    # Mock evidence generator
+
+    # Mock evidence generator with fixed bundle_id
+    bundle_id = "test-bundle-drift-001"
     evidence = EvidenceBundle(
         site_id="test-site",
         host_id="test-host",
         deployment_mode="direct",
-        timestamp_start=Mock(),
-        timestamp_end=Mock(),
+        timestamp_start=datetime(2025, 11, 7, 14, 30, 0),
+        timestamp_end=datetime(2025, 11, 7, 14, 32, 0),
         policy_version="1.0",
         check="patching",
-        outcome="success"
+        outcome="success",
+        bundle_id=bundle_id
     )
-    
+
+    # Create the expected evidence file (agent looks here)
+    bundle_dir = (
+        agent.config.evidence_dir /
+        "2025" / "11" / "07" / bundle_id
+    )
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "bundle.json").write_text('{"test": "evidence"}')
+    (bundle_dir / "bundle.sig").write_text("signature")
+
     agent.evidence_generator.create_evidence = AsyncMock(return_value=evidence)
     agent.evidence_generator.store_evidence = AsyncMock(
-        return_value=(Path("/tmp/bundle.json"), Path("/tmp/bundle.sig"))
+        return_value=(bundle_dir / "bundle.json", bundle_dir / "bundle.sig")
     )
-    
+
     # Mock MCP client
     agent.mcp_client.upload_evidence = AsyncMock(return_value=True)
-    
+
     await agent._run_iteration()
-    
+
     # Verify flow
     assert agent.stats["drift_detected"] == 1
     assert agent.stats["remediations_attempted"] == 1
@@ -258,22 +288,22 @@ async def test_run_iteration_remediation_failure(agent):
         site_id="test-site",
         host_id="test-host",
         deployment_mode="direct",
-        timestamp_start=Mock(),
-        timestamp_end=Mock(),
+        timestamp_start=datetime(2025, 11, 7, 14, 30, 0),
+        timestamp_end=datetime(2025, 11, 7, 14, 32, 0),
         policy_version="1.0",
         check="patching",
         outcome="failed"
     )
-    
+
     agent.evidence_generator.create_evidence = AsyncMock(return_value=evidence)
     agent.evidence_generator.store_evidence = AsyncMock(
         return_value=(Path("/tmp/bundle.json"), None)
     )
-    
+
     agent.mcp_client.upload_evidence = AsyncMock(return_value=True)
-    
+
     await agent._run_iteration()
-    
+
     # Should attempt but not succeed
     assert agent.stats["remediations_attempted"] == 1
     assert agent.stats["remediations_successful"] == 0
@@ -292,8 +322,8 @@ async def test_submit_evidence_success(agent, tmp_path):
         site_id="test-site",
         host_id="test-host",
         deployment_mode="direct",
-        timestamp_start=Mock(year=2025, month=11, day=7),
-        timestamp_end=Mock(),
+        timestamp_start=datetime(2025, 11, 7, 14, 30, 0),
+        timestamp_end=datetime(2025, 11, 7, 14, 32, 0),
         policy_version="1.0",
         check="patching",
         outcome="success",
@@ -324,8 +354,8 @@ async def test_submit_evidence_failure_queues(agent, tmp_path):
         site_id="test-site",
         host_id="test-host",
         deployment_mode="direct",
-        timestamp_start=Mock(year=2025, month=11, day=7),
-        timestamp_end=Mock(),
+        timestamp_start=datetime(2025, 11, 7, 14, 30, 0),
+        timestamp_end=datetime(2025, 11, 7, 14, 32, 0),
         policy_version="1.0",
         check="patching",
         outcome="success",
@@ -375,17 +405,18 @@ async def test_process_offline_queue_empty(agent):
 async def test_process_offline_queue_success(agent, tmp_path):
     """Test successful processing of queued evidence."""
     from compliance_agent.models import QueuedEvidence
-    from datetime import datetime
-    
+
     # Create queued evidence file
     bundle_path = tmp_path / "queued_bundle.json"
     bundle_path.write_text('{"test": "queued"}')
-    
+    sig_path = tmp_path / "queued_bundle.sig"
+    sig_path.write_text("signature-data")
+
     queued = QueuedEvidence(
         id=1,
         bundle_id="queued-123",
         bundle_path=str(bundle_path),
-        signature_path=None,
+        signature_path=str(sig_path),
         created_at=datetime.utcnow(),
         retry_count=0
     )
@@ -495,22 +526,28 @@ async def test_remediation_exception_handling(agent):
     
     # Mock remediation raising exception
     agent.healing_engine.remediate = AsyncMock(side_effect=Exception("Remediation error"))
-    
-    # Mock evidence generation
-    agent.evidence_generator.create_evidence = AsyncMock(return_value=Mock(
+
+    # Mock evidence generation with proper EvidenceBundle
+    evidence = EvidenceBundle(
         site_id="test",
         host_id="test",
-        timestamp_start=Mock(year=2025, month=11, day=7),
+        deployment_mode="direct",
+        timestamp_start=datetime(2025, 11, 7, 14, 30, 0),
+        timestamp_end=datetime(2025, 11, 7, 14, 32, 0),
+        policy_version="1.0",
+        check="patching",
+        outcome="failed",
         bundle_id="test-123"
-    ))
+    )
+    agent.evidence_generator.create_evidence = AsyncMock(return_value=evidence)
     agent.evidence_generator.store_evidence = AsyncMock(
         return_value=(Path("/tmp/bundle.json"), None)
     )
-    
+
     agent.mcp_client.upload_evidence = AsyncMock(return_value=True)
-    
+
     # Should not raise, should create evidence with error
     await agent._run_iteration()
-    
+
     assert agent.stats["remediations_attempted"] == 1
     assert agent.stats["remediations_successful"] == 0

@@ -36,7 +36,7 @@ from datetime import datetime, timedelta
 
 # Will be implemented
 from .mcp_client import MCPClient
-from .queue import OfflineQueue
+from .offline_queue import OfflineQueue
 from .config import Config
 from .crypto import SignatureVerifier
 

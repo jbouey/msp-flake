@@ -320,13 +320,15 @@ async def test_restart_av_service_not_active_after(healing_engine, av_drift):
     """Test AV service not active after restart."""
     with patch('compliance_agent.healing.run_command') as mock_run:
         # Mock: restart succeeds, but service still inactive
+        # Note: need 3 mocks because av_drift has av_binary_path which triggers hash check
         mock_run.side_effect = [
             AsyncMock(stdout=""),  # Restart
-            AsyncMock(stdout="inactive")  # Still inactive
+            AsyncMock(stdout="inactive"),  # Still inactive
+            AsyncMock(stdout="abc123def456")  # Hash (still runs even if inactive)
         ]
-        
+
         result = await healing_engine.restart_av_service(av_drift)
-        
+
         assert result.outcome == "failed"
         assert "not active" in result.error.lower()
 
@@ -397,9 +399,18 @@ async def test_run_backup_job_not_successful(healing_engine, backup_drift):
 @pytest.mark.asyncio
 async def test_restart_logging_services_success(healing_engine, logging_drift):
     """Test successful logging services restart."""
+    from datetime import datetime as real_datetime
+
+    # Fixed timestamp for deterministic canary message
+    fixed_time = real_datetime(2025, 11, 7, 14, 30, 0)
+    expected_canary = f"MSP Compliance Agent - Logging Health Check - {fixed_time.isoformat()}"
+
     with patch('compliance_agent.healing.run_command') as mock_run, \
-         patch('compliance_agent.healing.asyncio.sleep'):
-        
+         patch('compliance_agent.healing.asyncio.sleep'), \
+         patch('compliance_agent.healing.datetime') as mock_dt:
+        # Mock datetime.utcnow() to return fixed time
+        mock_dt.utcnow.return_value = fixed_time
+
         # Mock: restart rsyslog, restart journald, check active x2, logger, journalctl
         mock_run.side_effect = [
             AsyncMock(stdout=""),  # Restart rsyslog
@@ -407,11 +418,11 @@ async def test_restart_logging_services_success(healing_engine, logging_drift):
             AsyncMock(stdout="active"),  # Check rsyslog
             AsyncMock(stdout="active"),  # Check journald
             AsyncMock(stdout=""),  # Logger
-            AsyncMock(stdout="MSP Compliance Agent - Logging Health Check")  # Journalctl
+            AsyncMock(stdout=expected_canary)  # Journalctl with matching canary
         ]
-        
+
         result = await healing_engine.restart_logging_services(logging_drift)
-        
+
         assert result.outcome == "success"
         assert result.check == "logging_continuity"
         assert result.post_state["canary_verified"] is True
