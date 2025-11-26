@@ -11,7 +11,7 @@ With self-learning loop for continuous improvement.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -171,7 +171,7 @@ class AutoHealer:
 
         Returns the result of the healing attempt.
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         # Create incident record
         incident = self.incident_db.create_incident(
@@ -202,7 +202,7 @@ class AutoHealer:
             return result
 
         # Fallback: no levels enabled
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
         return HealingResult(
@@ -222,7 +222,7 @@ class AutoHealer:
         raw_data: Dict[str, Any]
     ) -> Optional[HealingResult]:
         """Try to resolve incident with Level 1 deterministic rules."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         # Match against rules
         match = self.level1.match(
@@ -250,7 +250,7 @@ class AutoHealer:
         else:
             result = await self.level1.execute(match, site_id, host_id)
 
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
         return HealingResult(
@@ -270,7 +270,7 @@ class AutoHealer:
         host_id: str
     ) -> Optional[HealingResult]:
         """Try to resolve incident with Level 2 LLM planner."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         # Check if LLM is available
         if not await self.level2.is_available():
@@ -300,7 +300,7 @@ class AutoHealer:
                 success=False,
                 resolution_level=ResolutionLevel.LEVEL2_LLM,
                 action_taken=None,
-                resolution_time_ms=int((datetime.utcnow() - start_time).total_seconds() * 1000),
+                resolution_time_ms=int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000),
                 escalated=True,
                 error=decision.reasoning
             )
@@ -313,7 +313,7 @@ class AutoHealer:
                 success=False,
                 resolution_level=ResolutionLevel.LEVEL2_LLM,
                 action_taken=decision.recommended_action,
-                resolution_time_ms=int((datetime.utcnow() - start_time).total_seconds() * 1000),
+                resolution_time_ms=int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000),
                 escalated=True,
                 error="Requires human approval"
             )
@@ -325,7 +325,7 @@ class AutoHealer:
         else:
             result = await self.level2.execute(decision, site_id, host_id)
 
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
         return HealingResult(
@@ -345,7 +345,7 @@ class AutoHealer:
         host_id: str
     ) -> HealingResult:
         """Escalate incident to Level 3 human handling."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         # Build context for the ticket
         context = {}
@@ -359,7 +359,7 @@ class AutoHealer:
             context=context
         )
 
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
         return HealingResult(

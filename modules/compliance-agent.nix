@@ -244,6 +244,27 @@ in
       default = "INFO";
       description = "Agent log level";
     };
+
+    # ========================================================================
+    # Web UI (Dashboard)
+    # ========================================================================
+
+    webUI = {
+      enable = mkEnableOption "Compliance dashboard web UI";
+
+      port = mkOption {
+        type = types.port;
+        default = 8080;
+        description = "Port for web UI to listen on";
+      };
+
+      bindAddress = mkOption {
+        type = types.str;
+        default = "127.0.0.1";
+        example = "0.0.0.0";
+        description = "Address to bind web UI (127.0.0.1 for local only, 0.0.0.0 for all interfaces)";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -393,6 +414,51 @@ in
       };
     };
 
+    # Web UI service (optional)
+    systemd.services.compliance-agent-web = mkIf cfg.webUI.enable {
+      description = "MSP Compliance Agent Web Dashboard";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" "compliance-agent.service" ];
+      wants = [ "network-online.target" ];
+
+      serviceConfig = {
+        Type = "simple";
+        User = "compliance-agent";
+        Group = "compliance-agent";
+        Restart = "always";
+        RestartSec = "5s";
+
+        ExecStart = "${cfg.package}/bin/compliance-web --host ${cfg.webUI.bindAddress} --port ${toString cfg.webUI.port} --evidence-dir /var/lib/compliance-agent/evidence --db-path /var/lib/compliance-agent/incidents.db --site-id ${cfg.siteId} --host-id ${cfg.hostId}";
+
+        # Same hardening as main agent
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        ReadWritePaths = [ "/var/lib/compliance-agent" ];
+        NoNewPrivileges = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictAddressFamilies = "AF_INET AF_INET6 AF_UNIX";
+        CapabilityBoundingSet = "";
+        SystemCallFilter = "@system-service";
+        SystemCallErrorNumber = "EPERM";
+        ProtectHostname = true;
+        ProtectClock = true;
+        ProtectKernelLogs = true;
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        RemoveIPC = true;
+
+        StandardOutput = "journal";
+        StandardError = "journal";
+        SyslogIdentifier = "compliance-agent-web";
+      };
+    };
+
     # Timer for DNS resolution and nftables refresh
     systemd.timers.compliance-agent-firewall-refresh = {
       description = "Refresh compliance agent egress allowlist";
@@ -447,6 +513,27 @@ in
           set mcp_allowed {
             type ipv4_addr
             flags dynamic
+          }
+
+          chain input {
+            type filter hook input priority 0; policy drop;
+
+            # Allow loopback
+            iif lo accept
+
+            # Allow established/related connections
+            ct state established,related accept
+
+            # Allow SSH (management)
+            tcp dport 22 accept
+
+            ${optionalString cfg.webUI.enable ''
+            # Allow web UI port
+            tcp dport ${toString cfg.webUI.port} accept
+            ''}
+
+            # Drop everything else
+            drop
           }
 
           chain output {

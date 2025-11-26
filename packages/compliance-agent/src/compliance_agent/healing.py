@@ -13,7 +13,7 @@ All remediations support rollback where applicable.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import json
@@ -148,7 +148,7 @@ class HealingEngine:
         
         actions.append(ActionTaken(
             action="capture_current_generation",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             details={"generation": current_gen}
         ))
         
@@ -172,7 +172,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="switch_generation",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 command=f'nixos-rebuild switch --rollback {target_gen}',
                 exit_code=0,
                 details={"target_generation": target_gen}
@@ -180,7 +180,7 @@ class HealingEngine:
         except AsyncCommandError as e:
             actions.append(ActionTaken(
                 action="switch_generation",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 command=f'nixos-rebuild switch --rollback {target_gen}',
                 exit_code=e.exit_code,
                 stdout=e.stdout,
@@ -212,7 +212,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="verify_generation",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details=post_state
             ))
             
@@ -288,7 +288,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="restart_service",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 command=f'systemctl restart {service_name}',
                 exit_code=0,
                 details={"service": service_name}
@@ -296,7 +296,7 @@ class HealingEngine:
         except AsyncCommandError as e:
             actions.append(ActionTaken(
                 action="restart_service",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 command=f'systemctl restart {service_name}',
                 exit_code=e.exit_code,
                 stdout=e.stdout,
@@ -336,7 +336,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="verify_service",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details=post_state
             ))
             
@@ -402,7 +402,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="trigger_backup",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 command=f'systemctl start {backup_service}',
                 exit_code=0,
                 details={"service": backup_service}
@@ -410,7 +410,7 @@ class HealingEngine:
         except AsyncCommandError as e:
             actions.append(ActionTaken(
                 action="trigger_backup",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 command=f'systemctl start {backup_service}',
                 exit_code=e.exit_code,
                 stdout=e.stdout,
@@ -440,7 +440,7 @@ class HealingEngine:
                            "completed" in result.stdout.lower()
             
             # Get backup timestamp and checksum (if available)
-            backup_timestamp = datetime.utcnow().isoformat()
+            backup_timestamp = datetime.now(timezone.utc).isoformat()
             backup_checksum = None
             
             if "backup_repo" in pre_state:
@@ -463,7 +463,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="verify_backup",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details=post_state
             ))
             
@@ -533,7 +533,7 @@ class HealingEngine:
                 
                 actions.append(ActionTaken(
                     action="restart_service",
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc),
                     command=f'systemctl restart {service}',
                     exit_code=0,
                     details={"service": service}
@@ -541,7 +541,7 @@ class HealingEngine:
             except AsyncCommandError as e:
                 actions.append(ActionTaken(
                     action="restart_service",
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc),
                     command=f'systemctl restart {service}',
                     exit_code=e.exit_code,
                     stdout=e.stdout,
@@ -568,7 +568,7 @@ class HealingEngine:
                 service_statuses[service] = result.stdout.strip() == "active"
             
             # Write canary log entry
-            canary_msg = f"MSP Compliance Agent - Logging Health Check - {datetime.utcnow().isoformat()}"
+            canary_msg = f"MSP Compliance Agent - Logging Health Check - {datetime.now(timezone.utc).isoformat()}"
             await run_command(
                 f'logger -t msp-agent "{canary_msg}"',
                 timeout=5.0
@@ -589,7 +589,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="verify_logging",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details=post_state
             ))
             
@@ -671,7 +671,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="save_current_rules",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details={"rollback_path": str(rollback_path)}
             ))
         except Exception as e:
@@ -703,7 +703,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="apply_baseline_rules",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 command=f'iptables-restore < {baseline_rules_path}',
                 exit_code=0,
                 details={"baseline_path": baseline_rules_path}
@@ -711,7 +711,7 @@ class HealingEngine:
         except AsyncCommandError as e:
             actions.append(ActionTaken(
                 action="apply_baseline_rules",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 command=f'iptables-restore < {baseline_rules_path}',
                 exit_code=e.exit_code,
                 stdout=e.stdout,
@@ -753,7 +753,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="verify_rules",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details=post_state
             ))
             
@@ -829,7 +829,7 @@ class HealingEngine:
         
         actions.append(ActionTaken(
             action="document_unencrypted_volumes",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             details={
                 "unencrypted_volumes": unencrypted_volumes,
                 "requires_manual_intervention": True
@@ -853,7 +853,7 @@ class HealingEngine:
             
             actions.append(ActionTaken(
                 action="log_alert",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details={"alert_message": alert_message}
             ))
         except Exception:

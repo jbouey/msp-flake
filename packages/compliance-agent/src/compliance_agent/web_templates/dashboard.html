@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+
+{% block title %}Compliance Dashboard - {{ site_id }}{% endblock %}
+
+{% block content %}
+<!-- Overall Status -->
+<div class="grid grid-4" style="margin-bottom: 2rem;">
+    <div class="card kpi">
+        <div class="kpi-value {% if status.status == 'healthy' %}green{% elif status.status == 'warning' %}yellow{% else %}red{% endif %}">
+            {{ status.score }}%
+        </div>
+        <div class="kpi-label">Compliance Score</div>
+        <div style="margin-top: 0.5rem;">
+            <span class="badge badge-{{ status.status }}">{{ status.status }}</span>
+        </div>
+    </div>
+
+    <div class="card kpi">
+        <div class="kpi-value green">{{ status.checks_passed }}</div>
+        <div class="kpi-label">Controls Passing</div>
+    </div>
+
+    <div class="card kpi">
+        <div class="kpi-value {% if status.checks_failed > 0 %}red{% else %}green{% endif %}">
+            {{ status.checks_failed }}
+        </div>
+        <div class="kpi-label">Controls Failed</div>
+    </div>
+
+    <div class="card kpi">
+        <div class="kpi-value {% if incidents.avg_mttr_seconds > 300 %}yellow{% else %}green{% endif %}">
+            {{ "%.1f"|format(incidents.avg_mttr_seconds / 60) }}m
+        </div>
+        <div class="kpi-label">Avg MTTR</div>
+    </div>
+</div>
+
+<!-- Incident Summary & Flywheel -->
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Incidents (24h)</span>
+            <span class="badge badge-info">{{ incidents.total_24h }} total</span>
+        </div>
+        <div class="grid grid-3" style="text-align: center;">
+            <div>
+                <div style="font-size: 1.5rem; font-weight: bold; color: var(--accent-green);">
+                    {{ incidents.auto_resolved }}
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">Auto-Resolved</div>
+            </div>
+            <div>
+                <div style="font-size: 1.5rem; font-weight: bold; color: var(--accent-yellow);">
+                    {{ incidents.escalated }}
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">Escalated</div>
+            </div>
+            <div>
+                <div style="font-size: 1.5rem; font-weight: bold; color: var(--accent-blue);">
+                    {{ incidents.l1_handled + incidents.l2_handled }}
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">L1+L2 Handled</div>
+            </div>
+        </div>
+        <div style="margin-top: 1rem;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem; font-size: 0.85rem;">
+                <span>L1 (Deterministic)</span>
+                <span>{{ incidents.l1_handled }}</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill green" style="width: {% if incidents.total_24h > 0 %}{{ (incidents.l1_handled / incidents.total_24h * 100)|int }}{% else %}0{% endif %}%;"></div>
+            </div>
+        </div>
+        <div style="margin-top: 0.5rem;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem; font-size: 0.85rem;">
+                <span>L2 (LLM Planner)</span>
+                <span>{{ incidents.l2_handled }}</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill yellow" style="width: {% if incidents.total_24h > 0 %}{{ (incidents.l2_handled / incidents.total_24h * 100)|int }}{% else %}0{% endif %}%;"></div>
+            </div>
+        </div>
+        <div style="margin-top: 0.5rem;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem; font-size: 0.85rem;">
+                <span>L3 (Human Escalation)</span>
+                <span>{{ incidents.l3_handled }}</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill red" style="width: {% if incidents.total_24h > 0 %}{{ (incidents.l3_handled / incidents.total_24h * 100)|int }}{% else %}0{% endif %}%;"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Data Flywheel</span>
+            <span class="badge badge-{% if flywheel.status == 'excellent' %}pass{% elif flywheel.status == 'good' %}pass{% elif flywheel.status == 'developing' %}warn{% else %}fail{% endif %}">
+                {{ flywheel.status }}
+            </span>
+        </div>
+        <div style="margin-bottom: 1rem;">
+            <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">
+                Self-learning system that promotes successful L2 patterns to L1 rules.
+            </p>
+            <div class="grid grid-3" style="text-align: center;">
+                <div>
+                    <div style="font-size: 1.25rem; font-weight: bold;">{{ flywheel.patterns_tracked }}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary);">Patterns Tracked</div>
+                </div>
+                <div>
+                    <div style="font-size: 1.25rem; font-weight: bold; color: var(--accent-yellow);">
+                        {{ flywheel.promotion_candidates }}
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary);">Ready to Promote</div>
+                </div>
+                <div>
+                    <div style="font-size: 1.25rem; font-weight: bold; color: var(--accent-green);">
+                        {{ flywheel.rules_promoted }}
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary);">Rules Promoted</div>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top: 1rem;">
+            <div style="font-size: 0.85rem; margin-bottom: 0.5rem;">Resolution Breakdown (30d)</div>
+            <div style="display: flex; height: 24px; border-radius: 4px; overflow: hidden;">
+                <div style="width: {{ flywheel.l1_percentage }}%; background: var(--accent-green);" title="L1: {{ flywheel.l1_percentage }}%"></div>
+                <div style="width: {{ flywheel.l2_percentage }}%; background: var(--accent-yellow);" title="L2: {{ flywheel.l2_percentage }}%"></div>
+                <div style="width: {{ flywheel.l3_percentage }}%; background: var(--accent-red);" title="L3: {{ flywheel.l3_percentage }}%"></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-top: 0.25rem; font-size: 0.75rem; color: var(--text-secondary);">
+                <span>L1: {{ flywheel.l1_percentage }}%</span>
+                <span>L2: {{ flywheel.l2_percentage }}%</span>
+                <span>L3: {{ flywheel.l3_percentage }}%</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- HIPAA Controls Grid -->
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">HIPAA Security Controls</span>
+        <a href="/reports" class="btn btn-secondary no-print">Generate Report</a>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Control</th>
+                <th>HIPAA Citation</th>
+                <th>Status</th>
+                <th>Last Checked</th>
+                <th>Evidence</th>
+                <th>Auto-Fixed</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for control in controls %}
+            <tr>
+                <td>
+                    <strong>{{ control.name }}</strong>
+                    <div style="font-size: 0.8rem; color: var(--text-secondary);">{{ control.description }}</div>
+                </td>
+                <td><code>{{ control.hipaa_citation }}</code></td>
+                <td>
+                    <span class="badge badge-{{ control.status }}">{{ control.status }}</span>
+                </td>
+                <td style="font-size: 0.9rem;">
+                    {% if control.last_checked and control.last_checked != 'Never' %}
+                        {{ control.last_checked[:19] }}
+                    {% else %}
+                        <span style="color: var(--text-secondary);">Never</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="/evidence?check_type={{ control.control_id }}" style="color: var(--accent-blue);">
+                        {{ control.evidence_count }} bundles
+                    </a>
+                </td>
+                <td>{{ control.auto_fixed }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Architecture Diagram -->
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Three-Tier Auto-Healing Architecture</span>
+    </div>
+    <pre style="font-family: monospace; font-size: 0.8rem; overflow-x: auto; color: var(--text-secondary);">
+        Incident
+            |
+            v
+    +---------------+
+    |   Level 1     |  {{ flywheel.l1_percentage }}% of incidents
+    | Deterministic |  &lt;100ms, $0 cost
+    |    Rules      |  YAML pattern matching
+    +-------+-------+
+            | No match
+            v
+    +---------------+
+    |   Level 2     |  {{ flywheel.l2_percentage }}% of incidents
+    |  LLM Planner  |  2-5s, context-aware
+    |   (Hybrid)    |  Local + API fallback
+    +-------+-------+
+            | Can't resolve
+            v
+    +---------------+
+    |   Level 3     |  {{ flywheel.l3_percentage }}% of incidents
+    |    Human      |  Rich tickets
+    |  Escalation   |  Slack/PagerDuty/Email
+    +---------------+
+            |
+            v
+    +---------------+
+    | Learning Loop |  Data Flywheel
+    | L2 -> L1      |  Auto-promote patterns
+    |  Promotion    |  with 90%+ success
+    +---------------+
+    </pre>
+</div>
+
+<!-- Timestamp -->
+<div style="text-align: right; color: var(--text-secondary); font-size: 0.85rem; margin-top: 1rem;">
+    Last updated: {{ timestamp }}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Auto-refresh every 60 seconds
+setTimeout(function() {
+    location.reload();
+}, 60000);
+</script>
+{% endblock %}

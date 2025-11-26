@@ -4,9 +4,9 @@ Data models for compliance agent.
 Defines evidence bundle schema and related types per CLAUDE.md requirements.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, field_serializer, ConfigDict
 import uuid
 
 
@@ -219,21 +219,24 @@ class EvidenceBundle(BaseModel):
     # Validators
     # ========================================================================
 
-    @validator('timestamp_end')
-    def validate_end_after_start(cls, v, values):
+    @field_validator('timestamp_end')
+    @classmethod
+    def validate_end_after_start(cls, v, info):
         """Ensure end timestamp is after start timestamp."""
-        if 'timestamp_start' in values and v < values['timestamp_start']:
+        if 'timestamp_start' in info.data and v < info.data['timestamp_start']:
             raise ValueError('timestamp_end must be after timestamp_start')
         return v
 
-    @validator('reseller_id')
-    def validate_reseller_id_if_needed(cls, v, values):
+    @field_validator('reseller_id')
+    @classmethod
+    def validate_reseller_id_if_needed(cls, v, info):
         """Require reseller_id if deployment_mode=reseller."""
-        if values.get('deployment_mode') == 'reseller' and not v:
+        if info.data.get('deployment_mode') == 'reseller' and not v:
             raise ValueError('reseller_id required when deployment_mode=reseller')
         return v
 
-    @validator('check')
+    @field_validator('check')
+    @classmethod
     def validate_check_type(cls, v):
         """Validate check type."""
         valid_checks = [
@@ -255,11 +258,13 @@ class EvidenceBundle(BaseModel):
         """Calculate total duration."""
         return (self.timestamp_end - self.timestamp_start).total_seconds()
 
-    class Config:
-        """Pydantic config."""
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    # Pydantic v2 config and serializers
+    model_config = ConfigDict(ser_json_timedelta='iso8601')
+
+    @field_serializer('timestamp_start', 'timestamp_end')
+    def serialize_datetime(self, v: datetime) -> str:
+        """Serialize datetime to ISO format."""
+        return v.isoformat()
 
 
 # ============================================================================
@@ -313,14 +318,16 @@ class MCPOrder(BaseModel):
     @property
     def is_expired(self) -> bool:
         """Check if order has expired based on TTL."""
-        age_seconds = (datetime.utcnow() - self.issued_at).total_seconds()
+        age_seconds = (datetime.now(timezone.utc) - self.issued_at).total_seconds()
         return age_seconds > self.ttl
 
-    class Config:
-        """Pydantic config."""
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    # Pydantic v2 config and serializers
+    model_config = ConfigDict(ser_json_timedelta='iso8601')
+
+    @field_serializer('issued_at')
+    def serialize_datetime(self, v: datetime) -> str:
+        """Serialize datetime to ISO format."""
+        return v.isoformat()
 
 
 # ============================================================================
@@ -455,8 +462,10 @@ class QueuedEvidence(BaseModel):
         description="Last upload error message"
     )
 
-    class Config:
-        """Pydantic config."""
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    # Pydantic v2 config and serializers
+    model_config = ConfigDict(ser_json_timedelta='iso8601')
+
+    @field_serializer('created_at')
+    def serialize_datetime(self, v: datetime) -> str:
+        """Serialize datetime to ISO format."""
+        return v.isoformat()

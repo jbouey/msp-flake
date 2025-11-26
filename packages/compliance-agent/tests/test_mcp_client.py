@@ -7,7 +7,7 @@ import tempfile
 import shutil
 import asyncio
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from aiohttp import web
 import ssl
@@ -77,7 +77,7 @@ def test_order():
         params={"service_name": "nginx"},
         nonce="test-nonce-12345",
         ttl=3600,
-        issued_at=datetime.utcnow(),
+        issued_at=datetime.now(timezone.utc),
         site_id="test-site-001",
         host_id="test-host",
         priority="high",
@@ -135,7 +135,7 @@ class MockMCPServer:
             'order_id': order_id,
             'status': 'pending',
             'order_data': order_data,
-            'created_at': datetime.utcnow().isoformat()
+            'created_at': datetime.now(timezone.utc).isoformat()
         }
 
         return web.json_response({'order_id': order_id}, status=201)
@@ -151,7 +151,7 @@ class MockMCPServer:
         return web.json_response({
             'order_id': order_id,
             'status': order['status'],
-            'updated_at': datetime.utcnow().isoformat()
+            'updated_at': datetime.now(timezone.utc).isoformat()
         })
 
     async def upload_evidence(self, request):
@@ -177,7 +177,7 @@ class MockMCPServer:
             'bundle_id': bundle_id,
             'bundle_data': bundle_json,
             'has_signature': signature_data is not None,
-            'uploaded_at': datetime.utcnow().isoformat()
+            'uploaded_at': datetime.now(timezone.utc).isoformat()
         })
 
         return web.json_response({'bundle_id': bundle_id}, status=201)

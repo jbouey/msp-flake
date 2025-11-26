@@ -4,12 +4,25 @@ Windows Runbook Definitions for HIPAA Compliance.
 Each runbook contains:
 - PowerShell detection script (check for drift)
 - PowerShell remediation script (fix drift)
+- PowerShell verification script (confirm remediation)
 - HIPAA control mappings
 - Severity and timeout settings
+- Execution constraints and evidence requirements
+
+Version: 2.0
 """
 
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
+
+
+@dataclass
+class ExecutionConstraints:
+    """Execution constraints for runbooks."""
+    max_retries: int = 2
+    retry_delay_seconds: int = 30
+    requires_maintenance_window: bool = False
+    allow_concurrent: bool = False
 
 
 @dataclass
@@ -18,6 +31,7 @@ class WindowsRunbook:
     id: str
     name: str
     description: str
+    version: str
     hipaa_controls: List[str]
     severity: str  # low, medium, high, critical
 
@@ -31,8 +45,38 @@ class WindowsRunbook:
     requires_reboot: bool = False
     disruptive: bool = False
 
+    # Execution constraints
+    constraints: ExecutionConstraints = field(default_factory=ExecutionConstraints)
+
     # Evidence fields to capture
     evidence_fields: List[str] = field(default_factory=list)
+
+    # Pre/post state capture
+    capture_pre_state: bool = True
+    capture_post_state: bool = True
+
+
+# Common PowerShell helper functions injected into all scripts
+PS_HELPERS = r'''
+function Write-JsonOutput {
+    param([hashtable]$Data)
+    $Data | ConvertTo-Json -Depth 5 -Compress
+}
+
+function Get-Timestamp {
+    (Get-Date).ToUniversalTime().ToString("o")
+}
+
+function Safe-Execute {
+    param([scriptblock]$Script, [string]$ErrorMessage = "Operation failed")
+    try {
+        & $Script
+        return @{ Success = $true }
+    } catch {
+        return @{ Success = $false; Error = $_.Exception.Message }
+    }
+}
+'''
 
 
 # =============================================================================
@@ -43,11 +87,20 @@ RUNBOOK_WIN_PATCH = WindowsRunbook(
     id="RB-WIN-PATCH-001",
     name="Windows Patch Compliance",
     description="Check and apply missing Windows security updates via WSUS or Windows Update",
-    hipaa_controls=["164.308(a)(5)(ii)(B)"],
+    version="2.0",
+    hipaa_controls=["164.308(a)(5)(ii)(B)", "164.312(c)(1)"],
     severity="high",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=60,
+        requires_maintenance_window=True,
+        allow_concurrent=False
+    ),
 
     detect_script=r'''
 # Check for pending Windows updates
+$ErrorActionPreference = "Stop"
+$StartTime = Get-Date
 $UpdateSession = New-Object -ComObject Microsoft.Update.Session
 $UpdateSearcher = $UpdateSession.CreateUpdateSearcher()
 
@@ -140,8 +193,15 @@ RUNBOOK_WIN_AV = WindowsRunbook(
     id="RB-WIN-AV-001",
     name="Windows Defender Health",
     description="Check Windows Defender status, signatures, and real-time protection",
+    version="2.0",
     hipaa_controls=["164.308(a)(5)(ii)(B)", "164.312(b)"],
     severity="critical",
+    constraints=ExecutionConstraints(
+        max_retries=3,
+        retry_delay_seconds=30,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
 
     detect_script=r'''
 # Check Windows Defender status
@@ -223,8 +283,15 @@ RUNBOOK_WIN_BACKUP = WindowsRunbook(
     id="RB-WIN-BACKUP-001",
     name="Backup Verification",
     description="Verify Windows Server Backup or Veeam backup status and age",
+    version="2.0",
     hipaa_controls=["164.308(a)(7)(ii)(A)", "164.310(d)(2)(iv)"],
     severity="critical",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=120,
+        requires_maintenance_window=False,
+        allow_concurrent=False
+    ),
 
     detect_script=r'''
 # Check backup status (Windows Server Backup or Veeam)
@@ -342,8 +409,15 @@ RUNBOOK_WIN_LOGGING = WindowsRunbook(
     id="RB-WIN-LOGGING-001",
     name="Windows Event Logging",
     description="Verify Windows audit policy and event log forwarding",
+    version="2.0",
     hipaa_controls=["164.312(b)", "164.308(a)(1)(ii)(D)"],
     severity="high",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=30,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
 
     detect_script=r'''
 # Check audit policy and event log health
@@ -440,8 +514,15 @@ RUNBOOK_WIN_FIREWALL = WindowsRunbook(
     id="RB-WIN-FIREWALL-001",
     name="Windows Firewall Status",
     description="Verify Windows Firewall is enabled on all profiles",
+    version="2.0",
     hipaa_controls=["164.312(a)(1)", "164.312(e)(1)"],
     severity="critical",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=15,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
 
     detect_script=r'''
 # Check Windows Firewall status
@@ -503,8 +584,15 @@ RUNBOOK_WIN_ENCRYPTION = WindowsRunbook(
     id="RB-WIN-ENCRYPTION-001",
     name="BitLocker Encryption",
     description="Verify BitLocker encryption status on system drives",
+    version="2.0",
     hipaa_controls=["164.312(a)(2)(iv)", "164.312(e)(2)(ii)"],
     severity="critical",
+    constraints=ExecutionConstraints(
+        max_retries=1,
+        retry_delay_seconds=60,
+        requires_maintenance_window=True,  # Encryption is disruptive
+        allow_concurrent=False
+    ),
 
     detect_script=r'''
 # Check BitLocker status
@@ -571,8 +659,15 @@ RUNBOOK_WIN_AD_HEALTH = WindowsRunbook(
     id="RB-WIN-AD-001",
     name="Active Directory Health",
     description="Check AD replication, DNS, and account lockout status",
+    version="2.0",
     hipaa_controls=["164.312(a)(1)", "164.308(a)(3)(ii)(C)"],
     severity="high",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=30,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
 
     detect_script=r'''
 # Check AD health (run on Domain Controller)

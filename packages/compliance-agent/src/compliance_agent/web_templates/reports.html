@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block title %}Compliance Reports - {{ site_id }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Generate Compliance Reports</span>
+    </div>
+    <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+        Generate print-ready HIPAA compliance packets for auditors. Reports include evidence summaries,
+        control status, incident history, and cryptographic verification.
+    </p>
+
+    <div class="grid grid-3">
+        {% for report in reports %}
+        <div class="card" style="background: var(--bg-secondary);">
+            <h3 style="margin-bottom: 0.5rem;">{{ report.name }}</h3>
+            <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">
+                {{ report.description }}
+            </p>
+            <div style="display: flex; gap: 0.5rem;">
+                {% for format in report.formats %}
+                <a href="/api/reports/generate?report_type={{ report.type }}&format={{ format }}"
+                   class="btn btn-{% if format == 'html' %}primary{% else %}secondary{% endif %}">
+                    {{ format | upper }}
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Monthly Compliance Packet Template</span>
+    </div>
+    <div style="font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; background: var(--bg-secondary); padding: 1.5rem; border-radius: 4px; max-height: 400px; overflow-y: auto;">
+# HIPAA Compliance Report
+
+**Client:** {{ site_id }}
+**Period:** [Report Period]
+**Baseline:** NixOS-HIPAA v1.0
+
+## Executive Summary
+
+**PHI Disclaimer:** This report contains system metadata and operational
+metrics only. No Protected Health Information (PHI) is processed, stored,
+or transmitted by the compliance monitoring system.
+
+## Controls Status
+
+| Control | Status | Evidence | HIPAA Citation |
+|---------|--------|----------|----------------|
+| Patching | [STATUS] | [COUNT] bundles | 164.308(a)(5)(ii)(B) |
+| Backup | [STATUS] | [COUNT] bundles | 164.308(a)(7)(ii)(A) |
+| Logging | [STATUS] | [COUNT] bundles | 164.312(b) |
+| Encryption | [STATUS] | [COUNT] bundles | 164.312(a)(2)(iv) |
+| Firewall | [STATUS] | [COUNT] bundles | 164.312(a)(1) |
+| AV/EDR | [STATUS] | [COUNT] bundles | 164.308(a)(5)(ii)(B) |
+
+## Incident Summary
+
+- Total Incidents: [COUNT]
+- Auto-Resolved (L1+L2): [COUNT]
+- Escalated (L3): [COUNT]
+- Average MTTR: [TIME]
+
+## Data Flywheel Status
+
+- L1 Resolution Rate: [PERCENTAGE]%
+- L2 Resolution Rate: [PERCENTAGE]%
+- L3 Resolution Rate: [PERCENTAGE]%
+- Patterns Tracked: [COUNT]
+- Rules Promoted: [COUNT]
+
+## Evidence Bundle Manifest
+
+All evidence bundles are:
+- Cryptographically signed (Ed25519)
+- Hash-chained for tamper detection
+- Stored in append-only registry
+
+---
+
+Generated: [TIMESTAMP]
+Signature: [HASH]
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Report Automation</span>
+    </div>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+        Reports can be automatically generated and delivered on schedule:
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>Schedule</th>
+                <th>Report Type</th>
+                <th>Delivery</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Daily at 6:00 AM</td>
+                <td>Daily Summary</td>
+                <td>Email to admins</td>
+                <td><span class="badge badge-pass">Active</span></td>
+            </tr>
+            <tr>
+                <td>Monday at 8:00 AM</td>
+                <td>Weekly Executive</td>
+                <td>Email PDF</td>
+                <td><span class="badge badge-pass">Active</span></td>
+            </tr>
+            <tr>
+                <td>1st of Month</td>
+                <td>Monthly Packet</td>
+                <td>WORM Storage + Email</td>
+                <td><span class="badge badge-pass">Active</span></td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -8,7 +8,7 @@ Validates all required settings and provides typed access.
 import os
 from pathlib import Path
 from typing import Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from datetime import time
 
 
@@ -125,12 +125,12 @@ class AgentConfig(BaseModel):
         description="Evidence storage directory (defaults to state_dir/evidence)"
     )
 
-    @validator('evidence_dir', always=True)
-    def set_evidence_dir(cls, v, values):
+    @model_validator(mode='after')
+    def set_evidence_dir(self):
         """Set evidence_dir from state_dir if not explicitly provided."""
-        if v is None and 'state_dir' in values:
-            return values['state_dir'] / 'evidence'
-        return v
+        if self.evidence_dir is None and self.state_dir:
+            self.evidence_dir = self.state_dir / 'evidence'
+        return self
 
     # ========================================================================
     # Evidence
@@ -146,6 +146,41 @@ class AgentConfig(BaseModel):
         default=90,
         ge=1,
         description="Never delete bundles < N days old"
+    )
+
+    # ========================================================================
+    # WORM Storage (Immutable Cloud Backup)
+    # ========================================================================
+
+    worm_enabled: bool = Field(
+        default=False,
+        description="Enable WORM storage upload"
+    )
+
+    worm_mode: str = Field(
+        default="proxy",
+        description="WORM upload mode: proxy (via MCP) or direct (S3)"
+    )
+
+    worm_s3_bucket: Optional[str] = Field(
+        default=None,
+        description="S3 bucket name for direct mode"
+    )
+
+    worm_s3_region: str = Field(
+        default="us-east-1",
+        description="S3 region for direct mode"
+    )
+
+    worm_retention_days: int = Field(
+        default=90,
+        ge=90,
+        description="WORM retention period (minimum 90 for HIPAA)"
+    )
+
+    worm_auto_upload: bool = Field(
+        default=True,
+        description="Auto-upload evidence on creation"
     )
 
     # ========================================================================
@@ -196,35 +231,54 @@ class AgentConfig(BaseModel):
     # Validators
     # ========================================================================
 
-    @validator('deployment_mode')
+    @field_validator('deployment_mode')
+    @classmethod
     def validate_deployment_mode(cls, v):
         if v not in ['reseller', 'direct']:
             raise ValueError('deployment_mode must be reseller or direct')
         return v
 
-    @validator('reseller_id')
-    def validate_reseller_id(cls, v, values):
-        if values.get('deployment_mode') == 'reseller' and not v:
+    @field_validator('reseller_id')
+    @classmethod
+    def validate_reseller_id(cls, v, info):
+        if info.data.get('deployment_mode') == 'reseller' and not v:
             raise ValueError('reseller_id required when deployment_mode=reseller')
         return v
 
-    @validator('maintenance_window')
+    @field_validator('maintenance_window')
+    @classmethod
     def validate_maintenance_window(cls, v):
         import re
         if not re.match(r'^\d{2}:\d{2}-\d{2}:\d{2}$', v):
             raise ValueError('maintenance_window must be HH:MM-HH:MM format')
         return v
 
-    @validator('baseline_path', 'client_cert_file', 'client_key_file', 'signing_key_file')
+    @field_validator('baseline_path', 'client_cert_file', 'client_key_file', 'signing_key_file')
+    @classmethod
     def validate_file_exists(cls, v):
         if v and not Path(v).exists():
             raise ValueError(f'File does not exist: {v}')
         return Path(v)
 
-    @validator('log_level')
+    @field_validator('log_level')
+    @classmethod
     def validate_log_level(cls, v):
         if v not in ['DEBUG', 'INFO', 'WARNING', 'ERROR']:
             raise ValueError('log_level must be DEBUG, INFO, WARNING, or ERROR')
+        return v
+
+    @field_validator('worm_mode')
+    @classmethod
+    def validate_worm_mode(cls, v):
+        if v not in ['proxy', 'direct']:
+            raise ValueError('worm_mode must be proxy or direct')
+        return v
+
+    @field_validator('worm_s3_bucket')
+    @classmethod
+    def validate_worm_s3_bucket(cls, v, info):
+        if info.data.get('worm_enabled') and info.data.get('worm_mode') == 'direct' and not v:
+            raise ValueError('worm_s3_bucket required when worm_mode=direct')
         return v
 
     # ========================================================================
@@ -260,10 +314,11 @@ class AgentConfig(BaseModel):
         """Alias for poll_interval for backward compatibility."""
         return self.poll_interval
 
-    class Config:
-        """Pydantic config."""
-        validate_assignment = True
-        extra = 'forbid'  # Reject unknown fields
+    # Pydantic v2 model config
+    model_config = ConfigDict(
+        validate_assignment=True,
+        extra='forbid'  # Reject unknown fields
+    )
 
 
 def load_config() -> AgentConfig:
@@ -314,6 +369,14 @@ def load_config() -> AgentConfig:
         # Evidence
         'evidence_retention': int(os.environ.get('EVIDENCE_RETENTION', '200')),
         'prune_retention_days': int(os.environ.get('PRUNE_RETENTION_DAYS', '90')),
+
+        # WORM storage
+        'worm_enabled': os.environ.get('WORM_ENABLED', 'false').lower() == 'true',
+        'worm_mode': os.environ.get('WORM_MODE', 'proxy'),
+        'worm_s3_bucket': os.environ.get('WORM_S3_BUCKET') or None,
+        'worm_s3_region': os.environ.get('WORM_S3_REGION', 'us-east-1'),
+        'worm_retention_days': int(os.environ.get('WORM_RETENTION_DAYS', '90')),
+        'worm_auto_upload': os.environ.get('WORM_AUTO_UPLOAD', 'true').lower() == 'true',
 
         # Clock
         'ntp_max_skew_ms': int(os.environ.get('NTP_MAX_SKEW_MS', '5000')),

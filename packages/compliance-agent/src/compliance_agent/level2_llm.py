@@ -12,7 +12,7 @@ import json
 import logging
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
@@ -493,7 +493,7 @@ class Level2Planner:
 
     async def plan(self, incident: Incident) -> LLMDecision:
         """Generate a plan for the incident."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         # Build context
         context = self.build_context(incident)
@@ -504,7 +504,7 @@ class Level2Planner:
         # Apply guardrails
         decision = self._apply_guardrails(decision)
 
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         decision.context_used["planning_time_ms"] = int(
             (end_time - start_time).total_seconds() * 1000
         )
@@ -541,7 +541,7 @@ class Level2Planner:
         host_id: str
     ) -> Dict[str, Any]:
         """Execute an LLM decision."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         result = {
             "incident_id": decision.incident_id,
@@ -578,7 +578,7 @@ class Level2Planner:
                 result["output"] = "DRY_RUN"
                 result["success"] = True
 
-            end_time = datetime.utcnow()
+            end_time = datetime.now(timezone.utc)
             result["completed_at"] = end_time.isoformat()
             result["duration_ms"] = int((end_time - start_time).total_seconds() * 1000)
 
@@ -601,7 +601,7 @@ class Level2Planner:
                 resolution_level=ResolutionLevel.LEVEL2_LLM,
                 resolution_action=decision.recommended_action,
                 outcome=IncidentOutcome.FAILURE,
-                resolution_time_ms=int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                resolution_time_ms=int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
             )
 
         return result

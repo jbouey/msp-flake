@@ -17,7 +17,7 @@ import re
 import yaml
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -461,7 +461,7 @@ class DeterministicEngine:
 
                 if cooldown_key in self.cooldowns:
                     last_exec = self.cooldowns[cooldown_key]
-                    elapsed = (datetime.utcnow() - last_exec).total_seconds()
+                    elapsed = (datetime.now(timezone.utc) - last_exec).total_seconds()
 
                     if elapsed < rule.cooldown_seconds:
                         logger.debug(
@@ -472,7 +472,7 @@ class DeterministicEngine:
                 return RuleMatch(
                     rule=rule,
                     incident_id=incident_id,
-                    matched_at=datetime.utcnow().isoformat(),
+                    matched_at=datetime.now(timezone.utc).isoformat(),
                     action=rule.action,
                     action_params=rule.action_params
                 )
@@ -490,7 +490,7 @@ class DeterministicEngine:
 
         Returns execution result with success/failure status.
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         result = {
             "rule_id": match.rule.id,
             "incident_id": match.incident_id,
@@ -522,7 +522,7 @@ class DeterministicEngine:
                 result["output"] = "DRY_RUN"
                 result["success"] = True
 
-            end_time = datetime.utcnow()
+            end_time = datetime.now(timezone.utc)
             result["completed_at"] = end_time.isoformat()
             result["duration_ms"] = int((end_time - start_time).total_seconds() * 1000)
 
@@ -540,7 +540,7 @@ class DeterministicEngine:
         except Exception as e:
             logger.error(f"Rule execution failed: {e}")
             result["error"] = str(e)
-            result["completed_at"] = datetime.utcnow().isoformat()
+            result["completed_at"] = datetime.now(timezone.utc).isoformat()
 
             if self.incident_db:
                 self.incident_db.resolve_incident(
@@ -548,7 +548,7 @@ class DeterministicEngine:
                     resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
                     resolution_action=match.action,
                     outcome=IncidentOutcome.FAILURE,
-                    resolution_time_ms=int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                    resolution_time_ms=int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
                 )
 
         return result

@@ -1,48 +1,140 @@
 id: RB-SERVICE-001
 name: "Service Health Remediation"
-description: "Restart failed critical services with health verification"
+description: "Restart failed critical services with health verification and evidence collection"
+version: "2.0"
 severity: high
 
 hipaa_controls:
-  - "164.308(a)(1)(ii)(D)"
+  - "164.308(a)(1)(ii)(D)"  # Information system activity review
+  - "164.312(b)"            # Audit controls
+
+# Execution constraints
+constraints:
+  max_retries: 3
+  retry_delay_seconds: 10
+  requires_maintenance_window: false
+
+# Allowed services whitelist (security guardrail)
+allowed_services:
+  - chronyd
+  - sshd
+  - nginx
+  - postgresql
+  - redis
+  - backup.service
+  - msp-compliance-agent
 
 steps:
-  - action: run_command
-    description: "Check service status before restart"
+  - action: capture_state
+    description: "Capture pre-remediation service state"
     params:
-      command: systemctl
-      args: ["status", "{{service}}"]
-    timeout: 10
+      command: bash
+      args:
+        - "-c"
+        - |
+          SERVICE="{{service}}"
+          STATUS=$(systemctl is-active "$SERVICE" 2>/dev/null || echo "unknown")
+          ENABLED=$(systemctl is-enabled "$SERVICE" 2>/dev/null || echo "unknown")
+          UPTIME=$(systemctl show "$SERVICE" --property=ActiveEnterTimestamp --value 2>/dev/null || echo "unknown")
+          MEMORY=$(systemctl show "$SERVICE" --property=MemoryCurrent --value 2>/dev/null || echo "0")
+          echo "{\"service\": \"$SERVICE\", \"status\": \"$STATUS\", \"enabled\": \"$ENABLED\", \"uptime_since\": \"$UPTIME\", \"memory_bytes\": \"$MEMORY\"}"
+    timeout: 15
+    evidence_key: service_status_before
 
-  - action: restart_service
-    description: "Restart the failed service"
+  - action: run_command
+    description: "Capture recent journal logs for diagnostics"
     params:
-      service: "{{service}}"
+      command: bash
+      args:
+        - "-c"
+        - |
+          journalctl -u "{{service}}" --no-pager -n 50 --output=json 2>/dev/null | tail -20 || echo '{"error": "no_logs"}'
+    timeout: 15
+    evidence_key: service_logs_before
+    continue_on_failure: true
+
+  - action: run_command
+    description: "Restart the service with systemd"
+    params:
+      command: bash
+      args:
+        - "-c"
+        - |
+          SERVICE="{{service}}"
+          START_TIME=$(date +%s)
+          systemctl restart "$SERVICE" 2>&1
+          EXIT_CODE=$?
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "{\"service\": \"$SERVICE\", \"action\": \"restart\", \"exit_code\": $EXIT_CODE, \"duration_seconds\": $DURATION}"
+          exit $EXIT_CODE
     timeout: 60
+    evidence_key: restart_result
 
   - action: run_command
-    description: "Wait for service to stabilize"
+    description: "Wait for service to stabilize and verify health"
     params:
-      command: sleep
-      args: ["5"]
-    timeout: 10
+      command: bash
+      args:
+        - "-c"
+        - |
+          SERVICE="{{service}}"
+          MAX_WAIT=30
+          INTERVAL=2
+          WAITED=0
 
-  - action: run_command
-    description: "Verify service is now active"
+          while [ $WAITED -lt $MAX_WAIT ]; do
+            STATUS=$(systemctl is-active "$SERVICE" 2>/dev/null)
+            if [ "$STATUS" = "active" ]; then
+              # Additional health check - verify not in restart loop
+              RESTART_COUNT=$(systemctl show "$SERVICE" --property=NRestarts --value 2>/dev/null || echo "0")
+              echo "{\"status\": \"healthy\", \"service\": \"$SERVICE\", \"wait_seconds\": $WAITED, \"restart_count\": $RESTART_COUNT}"
+              exit 0
+            fi
+            sleep $INTERVAL
+            WAITED=$((WAITED + INTERVAL))
+          done
+
+          echo "{\"status\": \"unhealthy\", \"service\": \"$SERVICE\", \"wait_seconds\": $WAITED, \"final_status\": \"$STATUS\"}"
+          exit 1
+    timeout: 45
+    evidence_key: health_verification
+
+  - action: capture_state
+    description: "Capture post-remediation service state"
     params:
-      command: systemctl
-      args: ["is-active", "{{service}}"]
-    timeout: 10
+      command: bash
+      args:
+        - "-c"
+        - |
+          SERVICE="{{service}}"
+          STATUS=$(systemctl is-active "$SERVICE" 2>/dev/null || echo "unknown")
+          ENABLED=$(systemctl is-enabled "$SERVICE" 2>/dev/null || echo "unknown")
+          UPTIME=$(systemctl show "$SERVICE" --property=ActiveEnterTimestamp --value 2>/dev/null || echo "unknown")
+          MEMORY=$(systemctl show "$SERVICE" --property=MemoryCurrent --value 2>/dev/null || echo "0")
+          PID=$(systemctl show "$SERVICE" --property=MainPID --value 2>/dev/null || echo "0")
+          echo "{\"service\": \"$SERVICE\", \"status\": \"$STATUS\", \"enabled\": \"$ENABLED\", \"uptime_since\": \"$UPTIME\", \"memory_bytes\": \"$MEMORY\", \"main_pid\": $PID}"
+    timeout: 15
+    evidence_key: service_status_after
 
 rollback:
   - action: run_command
-    description: "Alert administrator of service failure"
+    description: "Log service failure to system journal"
     params:
       command: logger
-      args: ["-t", "msp-healer", "-p", "err", "Service restart failed: {{service}}"]
+      args: ["-t", "msp-healer", "-p", "err", "Service restart failed: {{service}} - manual intervention required"]
     timeout: 5
+
+  - action: send_alert
+    description: "Send alert to administrator"
+    params:
+      severity: high
+      message: "Service {{service}} failed to restart on {{host_id}}"
+      hipaa_control: "164.308(a)(1)(ii)(D)"
 
 evidence_required:
   - service_status_before
-  - service_restart_log
+  - service_logs_before
+  - restart_result
+  - health_verification
   - service_status_after

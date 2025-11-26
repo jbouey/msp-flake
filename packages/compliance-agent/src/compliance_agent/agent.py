@@ -14,7 +14,7 @@ The agent is designed to run as a systemd service with graceful shutdown.
 import asyncio
 import signal
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from pathlib import Path
 import logging
@@ -174,7 +174,7 @@ class ComplianceAgent:
         4. Submit evidence to MCP
         5. Queue evidence if offline
         """
-        iteration_start = datetime.utcnow()
+        iteration_start = datetime.now(timezone.utc)
         logger.info(f"Starting iteration at {iteration_start.isoformat()}")
         
         # Step 1: Detect drift
@@ -196,7 +196,7 @@ class ComplianceAgent:
         if self.mcp_client:
             await self._process_offline_queue()
         
-        iteration_end = datetime.utcnow()
+        iteration_end = datetime.now(timezone.utc)
         duration = (iteration_end - iteration_start).total_seconds()
         logger.info(f"Iteration completed in {duration:.1f}s")
     
@@ -210,7 +210,7 @@ class ComplianceAgent:
         logger.info(f"Remediating drift: {drift.check} (severity: {drift.severity})")
         
         self.stats["remediations_attempted"] += 1
-        timestamp_start = datetime.utcnow()
+        timestamp_start = datetime.now(timezone.utc)
         
         # Execute remediation
         try:
@@ -224,7 +224,7 @@ class ComplianceAgent:
                 error=str(e)
             )
         
-        timestamp_end = datetime.utcnow()
+        timestamp_end = datetime.now(timezone.utc)
         
         # Log outcome
         logger.info(
@@ -422,7 +422,7 @@ class ComplianceAgent:
         """
         health = {
             "status": "healthy" if self.running else "stopped",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "site_id": self.config.site_id,
             "host_id": self.config.host_id,
             "stats": self.stats.copy()

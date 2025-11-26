@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}Audit Log - {{ site_id }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Hash Chain Integrity</span>
+        <div id="chain-status">
+            <span class="badge badge-info">Checking...</span>
+        </div>
+    </div>
+    <div id="chain-details" style="color: var(--text-secondary); font-size: 0.9rem;">
+        Verifying hash chain integrity...
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Audit Log</span>
+        <form method="GET" action="/audit" style="display: flex; gap: 1rem; align-items: center;">
+            <input type="text" name="search" value="{{ search or '' }}" placeholder="Search logs..."
+                   style="padding: 0.4rem 0.75rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary);">
+            <button type="submit" class="btn btn-primary">Search</button>
+        </form>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Hash</th>
+                <th>Previous Hash</th>
+                <th>Log Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td style="font-size: 0.85rem;">{{ log.timestamp }}</td>
+                <td>
+                    <code style="font-size: 0.75rem; color: var(--accent-green);">{{ log.hash[:16] }}...</code>
+                </td>
+                <td>
+                    <code style="font-size: 0.75rem; color: var(--text-secondary);">{{ log.prev_hash[:16] }}...</code>
+                </td>
+                <td>{{ log.log_count }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="4" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                    No audit logs found. Hash chain may not be initialized.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if pagination.pages > 1 %}
+    <div style="display: flex; justify-content: center; gap: 0.5rem; margin-top: 1.5rem;">
+        {% if pagination.page > 1 %}
+        <a href="?page={{ pagination.page - 1 }}{% if search %}&search={{ search }}{% endif %}" class="btn btn-secondary">Prev</a>
+        {% endif %}
+
+        <span style="padding: 0.5rem 1rem; color: var(--text-secondary);">
+            Page {{ pagination.page }} of {{ pagination.pages }}
+        </span>
+
+        {% if pagination.page < pagination.pages %}
+        <a href="?page={{ pagination.page + 1 }}{% if search %}&search={{ search }}{% endif %}" class="btn btn-secondary">Next</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Hash Chain Architecture</span>
+    </div>
+    <pre style="font-family: monospace; font-size: 0.8rem; overflow-x: auto; color: var(--text-secondary);">
+    +----------------+     +----------------+     +----------------+
+    |    Link N-2    |     |    Link N-1    |     |    Link N      |
+    +----------------+     +----------------+     +----------------+
+    | timestamp      |     | timestamp      |     | timestamp      |
+    | prev_hash: 0.. | --> | prev_hash: a1b | --> | prev_hash: c3d |
+    | hash: a1b2...  |     | hash: c3d4...  |     | hash: e5f6...  |
+    | log_count: 42  |     | log_count: 47  |     | log_count: 51  |
+    +----------------+     +----------------+     +----------------+
+
+    Each link contains:
+    - Nanosecond timestamp
+    - Hash of current log state
+    - Previous hash (blockchain-style linking)
+    - Number of logs in snapshot
+
+    Tampering Detection:
+    - Any modification breaks the hash chain
+    - Verification walks the entire chain
+    - Missing links detected immediately
+    </pre>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Check hash chain status on load
+fetch('/api/hash-chain/status')
+    .then(r => r.json())
+    .then(data => {
+        const statusEl = document.getElementById('chain-status');
+        const detailsEl = document.getElementById('chain-details');
+
+        let badgeClass = 'badge-info';
+        if (data.status === 'verified') {
+            badgeClass = 'badge-pass';
+        } else if (data.status === 'tampered') {
+            badgeClass = 'badge-fail';
+        } else if (data.status === 'error') {
+            badgeClass = 'badge-warn';
+        }
+
+        statusEl.innerHTML = `<span class="badge ${badgeClass}">${data.status}</span>`;
+        detailsEl.textContent = data.message;
+
+        if (data.total_links) {
+            detailsEl.innerHTML += `<br>Total links: ${data.total_links}`;
+            detailsEl.innerHTML += `<br>First: ${data.first_link}`;
+            detailsEl.innerHTML += `<br>Last: ${data.last_link}`;
+        }
+    })
+    .catch(err => {
+        document.getElementById('chain-status').innerHTML = '<span class="badge badge-fail">Error</span>';
+        document.getElementById('chain-details').textContent = 'Failed to verify hash chain';
+    });
+</script>
+{% endblock %}

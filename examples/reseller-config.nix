@@ -97,6 +97,15 @@
     # Logging
     # ========================================================================
     logLevel = "INFO";
+
+    # ========================================================================
+    # Web UI (Dashboard)
+    # ========================================================================
+    webUI = {
+      enable = true;
+      port = 8080;
+      bindAddress = "0.0.0.0"; # Accessible from local network
+    };
   };
 
   # Example baseline (referenced by baselinePath above)

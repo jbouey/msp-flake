@@ -12,7 +12,7 @@ Test Coverage:
 """
 
 import pytest
-from datetime import time
+from datetime import time, timezone
 from unittest.mock import AsyncMock, patch, MagicMock
 from pathlib import Path
 
@@ -399,17 +399,17 @@ async def test_run_backup_job_not_successful(healing_engine, backup_drift):
 @pytest.mark.asyncio
 async def test_restart_logging_services_success(healing_engine, logging_drift):
     """Test successful logging services restart."""
-    from datetime import datetime as real_datetime
+    from datetime import datetime as real_datetime, timezone
 
-    # Fixed timestamp for deterministic canary message
-    fixed_time = real_datetime(2025, 11, 7, 14, 30, 0)
+    # Fixed timestamp for deterministic canary message (must be timezone-aware)
+    fixed_time = real_datetime(2025, 11, 7, 14, 30, 0, tzinfo=timezone.utc)
     expected_canary = f"MSP Compliance Agent - Logging Health Check - {fixed_time.isoformat()}"
 
     with patch('compliance_agent.healing.run_command') as mock_run, \
          patch('compliance_agent.healing.asyncio.sleep'), \
          patch('compliance_agent.healing.datetime') as mock_dt:
-        # Mock datetime.utcnow() to return fixed time
-        mock_dt.utcnow.return_value = fixed_time
+        # Mock datetime.now(timezone.utc) to return fixed time
+        mock_dt.now.return_value = fixed_time
 
         # Mock: restart rsyslog, restart journald, check active x2, logger, journalctl
         mock_run.side_effect = [

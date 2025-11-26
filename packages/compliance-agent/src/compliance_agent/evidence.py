@@ -3,13 +3,22 @@ Evidence bundle generation and storage.
 
 Generates signed evidence bundles for every compliance action.
 Stores in /var/lib/compliance-agent/evidence/YYYY/MM/DD/<uuid>/
+
+Optionally uploads to WORM storage (S3 with Object Lock) for
+immutable, HIPAA-compliant evidence retention.
+
+HIPAA Controls:
+- §164.310(d)(2)(iv) - Data Backup and Storage
+- §164.312(b) - Audit Controls
+- §164.312(c)(1) - Integrity Controls
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import logging
+import asyncio
 
 from .models import EvidenceBundle, ActionTaken
 from .crypto import Ed25519Signer
@@ -25,6 +34,8 @@ class EvidenceGenerator:
     Each bundle includes:
     - bundle.json: Full evidence data
     - bundle.sig: Ed25519 detached signature
+
+    Optionally uploads to WORM storage for immutable backup.
     """
 
     def __init__(self, config: AgentConfig, signer: Ed25519Signer):
@@ -38,6 +49,45 @@ class EvidenceGenerator:
         self.config = config
         self.signer = signer
         self.evidence_dir = config.evidence_dir
+
+        # Initialize WORM uploader if enabled
+        self._worm_uploader = None
+        if config.worm_enabled:
+            self._init_worm_uploader()
+
+    def _init_worm_uploader(self):
+        """Initialize WORM uploader with config."""
+        try:
+            from .worm_uploader import WormUploader, WormConfig
+
+            worm_config = WormConfig(
+                enabled=self.config.worm_enabled,
+                mode=self.config.worm_mode,
+                mcp_upload_endpoint=self.config.mcp_url,
+                s3_bucket=self.config.worm_s3_bucket,
+                s3_region=self.config.worm_s3_region,
+                retention_days=self.config.worm_retention_days,
+                auto_upload=self.config.worm_auto_upload
+            )
+
+            # Read API key if available
+            mcp_api_key = None
+            if self.config.mcp_api_key_file and self.config.mcp_api_key_file.exists():
+                mcp_api_key = self.config.mcp_api_key_file.read_text().strip()
+
+            self._worm_uploader = WormUploader(
+                config=worm_config,
+                evidence_dir=self.evidence_dir,
+                client_id=self.config.site_id,
+                mcp_api_key=mcp_api_key,
+                client_cert=self.config.client_cert_file,
+                client_key=self.config.client_key_file
+            )
+            logger.info("WORM uploader initialized")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize WORM uploader: {e}")
+            self._worm_uploader = None
 
     async def create_evidence(
         self,
@@ -85,9 +135,9 @@ class EvidenceGenerator:
             EvidenceBundle ready for signing and storage
         """
         if timestamp_start is None:
-            timestamp_start = datetime.utcnow()
+            timestamp_start = datetime.now(timezone.utc)
         if timestamp_end is None:
-            timestamp_end = datetime.utcnow()
+            timestamp_end = datetime.now(timezone.utc)
         if post_state is None:
             post_state = {}
         if actions is None:
@@ -145,10 +195,11 @@ class EvidenceGenerator:
     async def store_evidence(
         self,
         bundle: EvidenceBundle,
-        sign: bool = True
-    ) -> tuple[Path, Optional[Path]]:
+        sign: bool = True,
+        upload_to_worm: bool = True
+    ) -> tuple[Path, Optional[Path], Optional[str]]:
         """
-        Store evidence bundle to disk.
+        Store evidence bundle to disk and optionally upload to WORM storage.
 
         Storage structure:
         /var/lib/compliance-agent/evidence/YYYY/MM/DD/<bundle_id>/
@@ -158,9 +209,10 @@ class EvidenceGenerator:
         Args:
             bundle: Evidence bundle to store
             sign: Whether to sign the bundle (default: True)
+            upload_to_worm: Whether to upload to WORM storage (default: True)
 
         Returns:
-            Tuple of (bundle_path, signature_path)
+            Tuple of (bundle_path, signature_path, worm_uri)
         """
         # Create date-based directory structure
         date = bundle.timestamp_start
@@ -197,7 +249,22 @@ class EvidenceGenerator:
             f"Stored evidence bundle {bundle.bundle_id} at {bundle_dir}"
         )
 
-        return bundle_path, signature_path
+        # Upload to WORM storage if enabled
+        worm_uri = None
+        if upload_to_worm and self._worm_uploader and self.config.worm_auto_upload:
+            try:
+                result = await self._worm_uploader.upload_bundle(
+                    bundle_path, signature_path
+                )
+                if result.success:
+                    worm_uri = result.s3_uri
+                    logger.info(f"Uploaded to WORM: {worm_uri}")
+                else:
+                    logger.warning(f"WORM upload failed: {result.error}")
+            except Exception as e:
+                logger.error(f"WORM upload error: {e}")
+
+        return bundle_path, signature_path, worm_uri
 
     async def load_evidence(self, bundle_id: str) -> Optional[EvidenceBundle]:
         """
@@ -350,7 +417,7 @@ class EvidenceGenerator:
 
         # Identify bundles to delete
         to_delete = []
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         for i, bundle in enumerate(all_bundles):
             # Keep last N bundles
@@ -438,3 +505,72 @@ class EvidenceGenerator:
             stats["total_size_bytes"] += sig_file.stat().st_size
 
         return stats
+
+    async def sync_to_worm(self) -> Dict[str, Any]:
+        """
+        Sync all pending evidence bundles to WORM storage.
+
+        Use this to catch up on bundles that weren't uploaded
+        (e.g., due to network issues or disabled auto-upload).
+
+        Returns:
+            Dict with sync results (uploaded, failed, pending)
+        """
+        if not self._worm_uploader:
+            return {
+                "enabled": False,
+                "uploaded": 0,
+                "failed": 0,
+                "pending": 0,
+                "error": "WORM uploader not initialized"
+            }
+
+        try:
+            results = await self._worm_uploader.sync_pending()
+
+            uploaded = sum(1 for r in results if r.success)
+            failed = sum(1 for r in results if not r.success)
+            pending = self._worm_uploader.get_pending_count()
+
+            return {
+                "enabled": True,
+                "uploaded": uploaded,
+                "failed": failed,
+                "pending": pending,
+                "results": [
+                    {
+                        "bundle_id": r.bundle_id,
+                        "success": r.success,
+                        "s3_uri": r.s3_uri,
+                        "error": r.error
+                    }
+                    for r in results
+                ]
+            }
+
+        except Exception as e:
+            logger.error(f"WORM sync failed: {e}")
+            return {
+                "enabled": True,
+                "uploaded": 0,
+                "failed": 0,
+                "pending": 0,
+                "error": str(e)
+            }
+
+    def get_worm_stats(self) -> Dict[str, Any]:
+        """
+        Get WORM storage statistics.
+
+        Returns:
+            Dict with WORM storage status and stats
+        """
+        if not self._worm_uploader:
+            return {
+                "enabled": False,
+                "mode": None,
+                "total_uploaded": 0,
+                "pending_count": 0
+            }
+
+        return self._worm_uploader.get_stats()

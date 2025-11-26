@@ -9,7 +9,7 @@ import pytest
 import asyncio
 import tempfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import sys
@@ -258,7 +258,7 @@ class TestLevel1Deterministic:
         assert match1 is not None
 
         # Simulate execution to set cooldown
-        l1_engine.cooldowns[f"{match1.rule.id}:test-host"] = datetime.utcnow()
+        l1_engine.cooldowns[f"{match1.rule.id}:test-host"] = datetime.now(timezone.utc)
 
         # Second match should fail due to cooldown
         match2 = l1_engine.match(
@@ -424,7 +424,7 @@ class TestLearningLoop:
             l3_resolutions=2,
             success_rate=0.9,
             avg_resolution_time_ms=1500,
-            last_seen=datetime.utcnow().isoformat(),
+            last_seen=datetime.now(timezone.utc).isoformat(),
             recommended_action="run_backup_job",
             promotion_eligible=True
         )

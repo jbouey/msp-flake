@@ -1,57 +1,218 @@
 id: RB-DRIFT-001
 name: "Flake Hash Drift Remediation"
-description: "Sync system to approved flake configuration"
+description: "Sync system to approved flake configuration with rollback capability"
+version: "2.0"
 severity: critical
 
 hipaa_controls:
-  - "164.308(a)(1)(ii)(D)"
-  - "164.310(d)(1)"
+  - "164.308(a)(1)(ii)(D)"  # Information system activity review
+  - "164.310(d)(1)"         # Device and media controls
+  - "164.312(c)(1)"         # Integrity controls
+
+# Execution constraints
+constraints:
+  max_retries: 1
+  retry_delay_seconds: 60
+  requires_maintenance_window: true
+
+# Preconditions
+preconditions:
+  - action: check_disk_space
+    description: "Ensure sufficient disk space for rebuild"
+    params:
+      path: "/nix/store"
+      min_free_gb: 5
+    on_failure: abort
+
+  - action: check_network
+    description: "Verify network connectivity to cache"
+    params:
+      host: "cache.nixos.org"
+      port: 443
+    on_failure: abort
 
 steps:
-  - action: run_command
-    description: "Query current flake hash"
+  - action: capture_state
+    description: "Capture current system state and flake metadata"
     params:
-      command: nix
-      args: ["flake", "metadata", "/run/current-system", "--json"]
+      command: bash
+      args:
+        - "-c"
+        - |
+          CURRENT_GEN=$(readlink /nix/var/nix/profiles/system 2>/dev/null | grep -oE '[0-9]+' | tail -1 || echo "0")
+          CURRENT_HASH=$(nix flake metadata /run/current-system --json 2>/dev/null | jq -r '.locked.narHash // "unknown"' || echo "unknown")
+          CURRENT_REV=$(nix flake metadata /run/current-system --json 2>/dev/null | jq -r '.locked.rev // "unknown"' || echo "unknown")
+          BOOT_TIME=$(who -b 2>/dev/null | awk '{print $3, $4}' || echo "unknown")
+          echo "{\"current_generation\": $CURRENT_GEN, \"current_hash\": \"$CURRENT_HASH\", \"current_rev\": \"$CURRENT_REV\", \"boot_time\": \"$BOOT_TIME\"}"
     timeout: 30
+    evidence_key: system_state_before
 
   - action: run_command
-    description: "Backup current generation"
+    description: "List recent generations for rollback reference"
     params:
-      command: nix-env
-      args: ["--list-generations"]
-    timeout: 10
-
-  - action: sync_flake
-    description: "Sync to target flake hash"
-    params:
-      target_hash: "{{target_flake_hash}}"
-    timeout: 300
+      command: bash
+      args:
+        - "-c"
+        - |
+          nix-env --list-generations --profile /nix/var/nix/profiles/system 2>/dev/null | tail -10 | while read line; do
+            GEN=$(echo "$line" | awk '{print $1}')
+            DATE=$(echo "$line" | awk '{print $2, $3}')
+            CURRENT=$(echo "$line" | grep -q current && echo "true" || echo "false")
+            echo "{\"generation\": $GEN, \"date\": \"$DATE\", \"current\": $CURRENT}"
+          done
+    timeout: 15
+    evidence_key: generations_before
 
   - action: run_command
-    description: "Verify new flake hash"
+    description: "Perform NixOS rebuild to target flake"
     params:
-      command: nix
-      args: ["flake", "metadata", "/run/current-system", "--json"]
+      command: bash
+      args:
+        - "-c"
+        - |
+          TARGET_HASH="{{target_flake_hash}}"
+          FLAKE_URL="{{flake_url}}"
+          START_TIME=$(date +%s)
+
+          # Build and switch
+          nixos-rebuild switch --flake "${FLAKE_URL}" 2>&1
+          EXIT_CODE=$?
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            NEW_GEN=$(readlink /nix/var/nix/profiles/system | grep -oE '[0-9]+' | tail -1)
+            echo "{\"status\": \"success\", \"exit_code\": $EXIT_CODE, \"duration_seconds\": $DURATION, \"new_generation\": $NEW_GEN}"
+          else
+            echo "{\"status\": \"failed\", \"exit_code\": $EXIT_CODE, \"duration_seconds\": $DURATION}"
+          fi
+          exit $EXIT_CODE
+    timeout: 600
+    evidence_key: rebuild_result
+
+  - action: run_command
+    description: "Verify new system hash matches target"
+    params:
+      command: bash
+      args:
+        - "-c"
+        - |
+          TARGET_HASH="{{target_flake_hash}}"
+          ACTUAL_HASH=$(nix flake metadata /run/current-system --json 2>/dev/null | jq -r '.locked.narHash // "unknown"' || echo "unknown")
+
+          if [ "$ACTUAL_HASH" = "$TARGET_HASH" ]; then
+            echo "{\"status\": \"verified\", \"target_hash\": \"$TARGET_HASH\", \"actual_hash\": \"$ACTUAL_HASH\", \"match\": true}"
+            exit 0
+          else
+            echo "{\"status\": \"mismatch\", \"target_hash\": \"$TARGET_HASH\", \"actual_hash\": \"$ACTUAL_HASH\", \"match\": false}"
+            exit 1
+          fi
     timeout: 30
+    evidence_key: hash_verification
+
+  - action: run_command
+    description: "Run post-rebuild health checks"
+    params:
+      command: bash
+      args:
+        - "-c"
+        - |
+          CHECKS_PASSED=0
+          CHECKS_TOTAL=4
+          RESULTS=""
+
+          # Check 1: System services
+          FAILED_SERVICES=$(systemctl list-units --failed --no-legend 2>/dev/null | wc -l)
+          if [ "$FAILED_SERVICES" -eq 0 ]; then
+            CHECKS_PASSED=$((CHECKS_PASSED + 1))
+            RESULTS="$RESULTS{\"check\": \"services\", \"status\": \"pass\", \"failed_count\": 0},"
+          else
+            RESULTS="$RESULTS{\"check\": \"services\", \"status\": \"fail\", \"failed_count\": $FAILED_SERVICES},"
+          fi
+
+          # Check 2: Network connectivity
+          if ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1; then
+            CHECKS_PASSED=$((CHECKS_PASSED + 1))
+            RESULTS="$RESULTS{\"check\": \"network\", \"status\": \"pass\"},"
+          else
+            RESULTS="$RESULTS{\"check\": \"network\", \"status\": \"fail\"},"
+          fi
+
+          # Check 3: SSH service
+          if systemctl is-active sshd >/dev/null 2>&1; then
+            CHECKS_PASSED=$((CHECKS_PASSED + 1))
+            RESULTS="$RESULTS{\"check\": \"sshd\", \"status\": \"pass\"},"
+          else
+            RESULTS="$RESULTS{\"check\": \"sshd\", \"status\": \"fail\"},"
+          fi
+
+          # Check 4: Disk space
+          FREE_PERCENT=$(df /nix/store 2>/dev/null | tail -1 | awk '{print 100-$5}' | tr -d '%')
+          if [ "$FREE_PERCENT" -gt 10 ]; then
+            CHECKS_PASSED=$((CHECKS_PASSED + 1))
+            RESULTS="$RESULTS{\"check\": \"disk_space\", \"status\": \"pass\", \"free_percent\": $FREE_PERCENT}"
+          else
+            RESULTS="$RESULTS{\"check\": \"disk_space\", \"status\": \"fail\", \"free_percent\": $FREE_PERCENT}"
+          fi
+
+          echo "{\"checks_passed\": $CHECKS_PASSED, \"checks_total\": $CHECKS_TOTAL, \"results\": [$RESULTS]}"
+
+          if [ "$CHECKS_PASSED" -lt "$CHECKS_TOTAL" ]; then
+            exit 1
+          fi
+    timeout: 60
+    evidence_key: health_checks
+    continue_on_failure: true
+
+  - action: capture_state
+    description: "Capture post-rebuild system state"
+    params:
+      command: bash
+      args:
+        - "-c"
+        - |
+          NEW_GEN=$(readlink /nix/var/nix/profiles/system 2>/dev/null | grep -oE '[0-9]+' | tail -1 || echo "0")
+          NEW_HASH=$(nix flake metadata /run/current-system --json 2>/dev/null | jq -r '.locked.narHash // "unknown"' || echo "unknown")
+          NEW_REV=$(nix flake metadata /run/current-system --json 2>/dev/null | jq -r '.locked.rev // "unknown"' || echo "unknown")
+          echo "{\"new_generation\": $NEW_GEN, \"new_hash\": \"$NEW_HASH\", \"new_rev\": \"$NEW_REV\"}"
+    timeout: 30
+    evidence_key: system_state_after
 
 rollback:
   - action: run_command
-    description: "Rollback to previous generation"
+    description: "Rollback to previous NixOS generation"
     params:
-      command: nixos-rebuild
-      args: ["switch", "--rollback"]
-    timeout: 120
+      command: bash
+      args:
+        - "-c"
+        - |
+          echo "Initiating rollback to previous generation..."
+          nixos-rebuild switch --rollback 2>&1
+          EXIT_CODE=$?
+          CURRENT_GEN=$(readlink /nix/var/nix/profiles/system | grep -oE '[0-9]+' | tail -1)
+          echo "{\"action\": \"rollback\", \"exit_code\": $EXIT_CODE, \"current_generation\": $CURRENT_GEN}"
+          exit $EXIT_CODE
+    timeout: 300
 
   - action: run_command
-    description: "Alert administrator of drift remediation failure"
+    description: "Log rollback event"
     params:
       command: logger
-      args: ["-t", "msp-healer", "-p", "err", "Flake sync failed, rolled back to previous generation"]
+      args: ["-t", "msp-healer", "-p", "err", "Flake sync failed - rolled back to previous generation"]
     timeout: 5
 
+  - action: send_alert
+    description: "Send critical alert for drift remediation failure"
+    params:
+      severity: critical
+      message: "Flake drift remediation failed on {{host_id}} - system rolled back"
+      hipaa_control: "164.310(d)(1)"
+
 evidence_required:
-  - flake_hash_before
-  - flake_hash_after
-  - nixos_rebuild_log
-  - generation_diff
+  - system_state_before
+  - generations_before
+  - rebuild_result
+  - hash_verification
+  - health_checks
+  - system_state_after

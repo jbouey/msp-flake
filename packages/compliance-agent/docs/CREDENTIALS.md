@@ -9,33 +9,41 @@
 
 | System | Host | Port | Username | Password |
 |--------|------|------|----------|----------|
-| Windows Test VM | 127.0.0.1 (via tunnel) | 55985 (WinRM) | vagrant | vagrant |
-| Windows VM Direct | 192.168.56.10 | 5985 (WinRM) | vagrant | vagrant |
+| Windows DC (Domain) | 127.0.0.1 (via tunnel) | 55985 (WinRM) | MSP\\vagrant | vagrant |
+| Windows DC (Local) | 127.0.0.1 (via tunnel) | 55985 (WinRM) | .\\Administrator | Vagrant123! |
 | Remote Mac (VMs) | 174.178.63.139 | 22 (SSH) | jrelly | SSH key |
 | MCP Server | localhost | 8000 | - | - |
 | Redis Queue | localhost | 6379 | - | - |
 
 ---
 
-## 1. Windows Test VM (VirtualBox on Remote Mac)
+## 1. Windows Domain Controller (VirtualBox on Remote Mac)
 
 ### Connection Architecture
 
 ```
-Local Mac ──SSH Tunnel──▶ Remote Mac (174.178.63.139) ──NAT──▶ Windows VM
+Local Mac ──SSH Tunnel──▶ Remote Mac (174.178.63.139) ──NAT──▶ Windows DC
 localhost:55985          127.0.0.1:55985                      guest:5985
 ```
 
-### VM Details
+### VM & Domain Details
 
 | Property | Value |
 |----------|-------|
 | **VM Name** | win-test-vm_default_1763941055603_9826 |
 | **Computer Name** | WINTEST |
-| **OS** | Windows Server 2016 (64-bit) |
+| **FQDN** | wintest.msp.local |
+| **OS** | Windows Server 2022 (64-bit) |
+| **Role** | Active Directory Domain Controller |
+| **Domain** | msp.local |
+| **NetBIOS Name** | MSP |
+| **Domain Mode** | Windows2016Domain |
 | **WinRM Port** | 5985 (guest) → 55985 (NAT forwarded) |
-| **Username** | vagrant |
-| **Password** | vagrant |
+| **Domain User** | MSP\\vagrant |
+| **Domain Password** | vagrant |
+| **Local Admin** | .\\Administrator |
+| **Local Admin Password** | Vagrant123! |
+| **DSRM Password** | Vagrant123! |
 | **Transport** | NTLM |
 | **Host Machine** | Remote Mac (174.178.63.139) |
 
@@ -65,18 +73,36 @@ export WIN_TEST_PASS="vagrant"
 cd /Users/dad/Documents/Msp_Flakes/packages/compliance-agent
 source venv/bin/activate
 
-# Quick Python test
+# Quick Python test with domain credentials
 python3 << 'EOF'
 import winrm
 
 session = winrm.Session(
     'http://127.0.0.1:55985/wsman',
-    auth=('vagrant', 'vagrant'),
+    auth=('MSP\\vagrant', 'vagrant'),
     transport='ntlm'
 )
 
-result = session.run_ps('$env:COMPUTERNAME')
-print(f"Connected to: {result.std_out.decode().strip()}")
+result = session.run_ps('whoami; (Get-ADDomain).DNSRoot')
+print(result.std_out.decode().strip())
+EOF
+```
+
+### AD Operations Example
+
+```bash
+# Query AD users
+python3 << 'EOF'
+import winrm
+
+session = winrm.Session(
+    'http://127.0.0.1:55985/wsman',
+    auth=('MSP\\vagrant', 'vagrant'),
+    transport='ntlm'
+)
+
+result = session.run_ps('Get-ADUser -Filter * | Select Name, SamAccountName | Format-Table')
+print(result.std_out.decode())
 EOF
 ```
 
@@ -187,7 +213,7 @@ ssh jrelly@174.178.63.139 "echo connected"
 |----|---------|--------|
 | nixos-24.05... | NixOS test environment | Running |
 | mcp-server | MCP server VM | Running |
-| win-test-vm | Windows Server 2016 | Running |
+| win-test-vm | Windows Server 2022 DC (msp.local) | Running |
 
 ### Key Paths
 
@@ -260,10 +286,11 @@ pip install pywinrm pydantic pytest pytest-asyncio pyyaml
 ### Test Environment
 
 ```bash
-# Windows VM
-export WIN_TEST_HOST="192.168.56.10"
-export WIN_TEST_USER="vagrant"
+# Windows DC (via SSH tunnel)
+export WIN_TEST_HOST="127.0.0.1:55985"
+export WIN_TEST_USER="MSP\\vagrant"
 export WIN_TEST_PASS="vagrant"
+export WIN_TEST_DOMAIN="msp.local"
 
 # Agent Config (from NixOS module)
 export SITE_ID="test-site-001"
@@ -315,9 +342,9 @@ python -m pytest tests/test_auto_healer_integration.py -v
 # Step 1: Create SSH tunnel
 ssh -f -N -L 55985:127.0.0.1:55985 jrelly@174.178.63.139
 
-# Step 2: Run tests
+# Step 2: Run tests with domain credentials
 export WIN_TEST_HOST="127.0.0.1:55985"
-export WIN_TEST_USER="vagrant"
+export WIN_TEST_USER="MSP\\vagrant"
 export WIN_TEST_PASS="vagrant"
 python -m pytest tests/test_windows_integration.py -v
 ```
@@ -330,7 +357,8 @@ python -m pytest tests/test_windows_integration.py -v
 
 | Setting | Development | Production |
 |---------|-------------|------------|
-| WinRM Auth | Basic/NTLM | Kerberos/HTTPS |
+| WinRM Auth | NTLM (Domain) | Kerberos/HTTPS |
+| AD Domain | msp.local (test) | Production AD |
 | MCP Server | HTTP | HTTPS + mTLS |
 | Redis | No auth | AUTH + TLS |
 | Secrets | Plaintext | SOPS encrypted |

@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}Evidence Browser - {{ site_id }}{% endblock %}
+
+{% block content %}
+<div class="grid grid-4" style="margin-bottom: 2rem;">
+    <div class="card kpi">
+        <div class="kpi-value blue">{{ stats.total }}</div>
+        <div class="kpi-label">Total Bundles</div>
+    </div>
+    <div class="card kpi">
+        <div class="kpi-value green">{{ stats.by_outcome.get('success', 0) }}</div>
+        <div class="kpi-label">Successful</div>
+    </div>
+    <div class="card kpi">
+        <div class="kpi-value red">{{ stats.by_outcome.get('failed', 0) }}</div>
+        <div class="kpi-label">Failed</div>
+    </div>
+    <div class="card kpi">
+        <div class="kpi-value yellow">{{ stats.by_check | length }}</div>
+        <div class="kpi-label">Check Types</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Evidence Bundles</span>
+        <form method="GET" action="/evidence" style="display: flex; gap: 1rem; align-items: center;">
+            <select name="check_type" class="btn btn-secondary" style="padding: 0.4rem 0.75rem;">
+                <option value="">All Checks</option>
+                {% for check in stats.by_check.keys() %}
+                <option value="{{ check }}" {% if filters.check_type == check %}selected{% endif %}>{{ check }}</option>
+                {% endfor %}
+            </select>
+            <select name="outcome" class="btn btn-secondary" style="padding: 0.4rem 0.75rem;">
+                <option value="">All Outcomes</option>
+                {% for outcome in stats.by_outcome.keys() %}
+                <option value="{{ outcome }}" {% if filters.outcome == outcome %}selected{% endif %}>{{ outcome }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary">Filter</button>
+        </form>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Bundle ID</th>
+                <th>Check</th>
+                <th>Outcome</th>
+                <th>HIPAA Controls</th>
+                <th>Timestamp</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for bundle in bundles %}
+            <tr>
+                <td>
+                    <code style="font-size: 0.85rem;">{{ bundle.bundle_id[:16] }}...</code>
+                </td>
+                <td>{{ bundle.check }}</td>
+                <td>
+                    <span class="badge badge-{% if bundle.outcome == 'success' %}pass{% elif bundle.outcome == 'failed' %}fail{% else %}warn{% endif %}">
+                        {{ bundle.outcome }}
+                    </span>
+                </td>
+                <td>
+                    {% for ctrl in bundle.hipaa_controls[:2] %}
+                    <code style="font-size: 0.75rem; background: var(--bg-secondary); padding: 0.2rem 0.4rem; border-radius: 3px;">{{ ctrl }}</code>
+                    {% endfor %}
+                    {% if bundle.hipaa_controls | length > 2 %}
+                    <span style="color: var(--text-secondary);">+{{ bundle.hipaa_controls | length - 2 }}</span>
+                    {% endif %}
+                </td>
+                <td style="font-size: 0.85rem;">{{ bundle.timestamp[:19] if bundle.timestamp else '-' }}</td>
+                <td>
+                    <a href="/evidence/{{ bundle.bundle_id }}/download" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
+                        Download
+                    </a>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                    No evidence bundles found.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if pagination.pages > 1 %}
+    <div style="display: flex; justify-content: center; gap: 0.5rem; margin-top: 1.5rem;">
+        {% if pagination.page > 1 %}
+        <a href="?page={{ pagination.page - 1 }}{% if filters.check_type %}&check_type={{ filters.check_type }}{% endif %}{% if filters.outcome %}&outcome={{ filters.outcome }}{% endif %}" class="btn btn-secondary">Prev</a>
+        {% endif %}
+
+        <span style="padding: 0.5rem 1rem; color: var(--text-secondary);">
+            Page {{ pagination.page }} of {{ pagination.pages }}
+        </span>
+
+        {% if pagination.page < pagination.pages %}
+        <a href="?page={{ pagination.page + 1 }}{% if filters.check_type %}&check_type={{ filters.check_type }}{% endif %}{% if filters.outcome %}&outcome={{ filters.outcome }}{% endif %}" class="btn btn-secondary">Next</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Evidence by Check Type</span>
+    </div>
+    <div class="grid grid-4">
+        {% for check, count in stats.by_check.items() %}
+        <div style="text-align: center; padding: 1rem;">
+            <div style="font-size: 1.5rem; font-weight: bold;">{{ count }}</div>
+            <div style="font-size: 0.85rem; color: var(--text-secondary);">{{ check }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

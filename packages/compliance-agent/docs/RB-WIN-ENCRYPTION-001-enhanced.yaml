@@ -1,0 +1,267 @@
+id: RB-WIN-ENCRYPTION-001
+name: "BitLocker Encryption Status"
+description: "Verify BitLocker encryption is enabled on system volume with recovery key backup"
+severity: critical
+
+hipaa_controls:
+  - "164.312(a)(2)(iv)"  # Encryption and Decryption
+  - "164.310(d)(1)"  # Device and Media Controls
+  - "164.308(a)(7)"  # Contingency Plan (recovery key backup)
+
+platforms:
+  - windows-server-2019
+  - windows-server-2022
+
+steps:
+  - action: check_bitlocker_feature
+    description: "Verify BitLocker feature is installed"
+    powershell: |
+      $Feature = Get-WindowsFeature -Name BitLocker
+      @{
+        Installed = $Feature.Installed
+        Name = $Feature.Name
+      } | ConvertTo-Json
+    timeout: 30
+
+  - action: install_bitlocker
+    description: "Install BitLocker feature if missing"
+    powershell: |
+      $Feature = Get-WindowsFeature -Name BitLocker
+      if (-not $Feature.Installed) {
+          Install-WindowsFeature -Name BitLocker -IncludeManagementTools
+          @{ Installed = $true; Action = "installed"; RequiresReboot = $true } | ConvertTo-Json
+      } else {
+          @{ Installed = $true; Action = "already_installed" } | ConvertTo-Json
+      }
+    timeout: 300
+    requires_reboot: true
+
+  - action: check_encryption_status
+    description: "Check BitLocker encryption status for all volumes"
+    powershell: |
+      $Volumes = Get-BitLockerVolume
+      $VolumeStatus = @{}
+
+      foreach ($Vol in $Volumes) {
+          $VolumeStatus[$Vol.MountPoint] = @{
+              VolumeStatus = $Vol.VolumeStatus
+              EncryptionPercentage = $Vol.EncryptionPercentage
+              ProtectionStatus = $Vol.ProtectionStatus
+              EncryptionMethod = $Vol.EncryptionMethod
+              Encrypted = ($Vol.VolumeStatus -eq 'FullyEncrypted')
+          }
+      }
+
+      $VolumeStatus | ConvertTo-Json -Depth 3
+    timeout: 30
+
+  - action: enable_bitlocker_c
+    description: "Enable BitLocker on C: drive if not encrypted"
+    powershell: |
+      $Volume = Get-BitLockerVolume -MountPoint C:
+
+      if ($Volume.VolumeStatus -ne 'FullyEncrypted') {
+          # Enable BitLocker with recovery password
+          $RecoveryPassword = Add-BitLockerKeyProtector -MountPoint C: `
+            -RecoveryPasswordProtector
+
+          Enable-BitLocker -MountPoint C: `
+            -EncryptionMethod XtsAes256 `
+            -UsedSpaceOnly `
+            -SkipHardwareTest
+
+          @{
+            Enabled = $true
+            RecoveryKeyId = $RecoveryPassword.KeyProtectorId
+            EncryptionStarted = $true
+          } | ConvertTo-Json
+      } else {
+          @{
+            Enabled = $true
+            AlreadyEncrypted = $true
+          } | ConvertTo-Json
+      }
+    timeout: 600
+
+  - action: backup_recovery_key
+    description: "Backup recovery key to Active Directory and secure location"
+    powershell: |
+      $Volume = Get-BitLockerVolume -MountPoint C:
+      $RecoveryKey = $Volume.KeyProtector | Where-Object {$_.KeyProtectorType -eq 'RecoveryPassword'}
+
+      if (-not $RecoveryKey) {
+          @{
+            Error = "No recovery password found"
+            Success = $false
+          } | ConvertTo-Json
+          exit 1
+      }
+
+      $BackupResults = @{
+        RecoveryKeyId = $RecoveryKey.KeyProtectorId
+        RecoveryPassword = $RecoveryKey.RecoveryPassword
+        KeyBackedUpToAD = $false
+        KeyExportedToFile = $false
+        Timestamp = (Get-Date).ToString('o')
+      }
+
+      # Try to backup to Active Directory (if domain-joined)
+      try {
+          $ComputerSystem = Get-WmiObject -Class Win32_ComputerSystem
+          if ($ComputerSystem.PartOfDomain) {
+              Backup-BitLockerKeyProtector -MountPoint C: -KeyProtectorId $RecoveryKey.KeyProtectorId
+              $BackupResults.KeyBackedUpToAD = $true
+              $BackupResults.ADBackupDomain = $ComputerSystem.Domain
+          } else {
+              $BackupResults.ADBackupSkipped = "Not domain-joined"
+          }
+      } catch {
+          $BackupResults.ADBackupError = $_.Exception.Message
+      }
+
+      # Export to secure file location
+      # NOTE: In production, this should be a network share with restricted access
+      try {
+          $BackupDir = "C:\BitLockerRecoveryKeys"
+          if (-not (Test-Path $BackupDir)) {
+              New-Item -Path $BackupDir -ItemType Directory -Force | Out-Null
+          }
+
+          $BackupFile = Join-Path $BackupDir "$env:COMPUTERNAME-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+
+          # Create backup file with key information
+          @"
+BitLocker Recovery Key Backup
+==============================
+Computer Name: $env:COMPUTERNAME
+Domain: $($ComputerSystem.Domain)
+Volume: C:
+Backup Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+Key Protector ID: $($RecoveryKey.KeyProtectorId)
+
+RECOVERY PASSWORD (48 digits):
+$($RecoveryKey.RecoveryPassword)
+
+IMPORTANT: Store this key in a secure location separate from the encrypted system.
+If the system fails to boot or the encryption key is lost, this recovery password
+is the ONLY way to decrypt the data.
+
+HIPAA Compliance Note:
+This recovery key backup satisfies 164.308(a)(7) contingency plan requirements.
+"@ | Out-File -FilePath $BackupFile -Encoding UTF8
+
+          # Set restrictive ACL on backup file (Administrators only)
+          $Acl = Get-Acl $BackupFile
+          $Acl.SetAccessRuleProtection($true, $false)  # Disable inheritance
+          $AdminRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+              "BUILTIN\Administrators", "FullControl", "Allow"
+          )
+          $Acl.AddAccessRule($AdminRule)
+          Set-Acl -Path $BackupFile -AclObject $Acl
+
+          $BackupResults.KeyExportedToFile = $true
+          $BackupResults.BackupFilePath = $BackupFile
+
+      } catch {
+          $BackupResults.FileExportError = $_.Exception.Message
+      }
+
+      $BackupResults | ConvertTo-Json -Depth 3
+    timeout: 60
+
+  - action: verify_recovery_key_backup
+    description: "Verify recovery key backup is accessible and valid"
+    powershell: |
+      $Volume = Get-BitLockerVolume -MountPoint C:
+      $RecoveryKey = $Volume.KeyProtector | Where-Object {$_.KeyProtectorType -eq 'RecoveryPassword'}
+
+      $VerificationResults = @{
+        RecoveryKeyExists = ($null -ne $RecoveryKey)
+        RecoveryKeyId = $RecoveryKey.KeyProtectorId
+        BackupVerified = $false
+      }
+
+      # Verify AD backup if domain-joined
+      $ComputerSystem = Get-WmiObject -Class Win32_ComputerSystem
+      if ($ComputerSystem.PartOfDomain) {
+          try {
+              # Query AD for backed up recovery information
+              # This verifies the key was actually written to AD
+              $ADBackup = Get-ADObject -Filter {objectClass -eq 'msFVE-RecoveryInformation'} `
+                -SearchBase "CN=$env:COMPUTERNAME,OU=Computers,DC=domain,DC=com" `
+                -Properties msFVE-RecoveryPassword `
+                -ErrorAction SilentlyContinue
+
+              $VerificationResults.ADBackupExists = ($null -ne $ADBackup)
+          } catch {
+              $VerificationResults.ADVerificationError = $_.Exception.Message
+          }
+      }
+
+      # Verify local backup file exists
+      $BackupDir = "C:\BitLockerRecoveryKeys"
+      if (Test-Path $BackupDir) {
+          $LatestBackup = Get-ChildItem -Path $BackupDir -Filter "$env:COMPUTERNAME-*.txt" |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+
+          if ($LatestBackup) {
+              $VerificationResults.LocalBackupExists = $true
+              $VerificationResults.LocalBackupPath = $LatestBackup.FullName
+              $VerificationResults.LocalBackupAge = ((Get-Date) - $LatestBackup.LastWriteTime).TotalHours
+              $VerificationResults.BackupVerified = $true
+          } else {
+              $VerificationResults.LocalBackupExists = $false
+          }
+      } else {
+          $VerificationResults.LocalBackupDirMissing = $true
+      }
+
+      $VerificationResults | ConvertTo-Json -Depth 3
+    timeout: 30
+
+rollback:
+  - action: disable_bitlocker_if_failed
+    description: "Disable BitLocker if encryption or backup failed"
+    powershell: |
+      try {
+          $Volume = Get-BitLockerVolume -MountPoint C:
+          if ($Volume.ProtectionStatus -eq 'On') {
+              Disable-BitLocker -MountPoint C:
+              @{ RollbackSuccess = $true; Action = "BitLocker disabled" } | ConvertTo-Json
+          } else {
+              @{ RollbackSuccess = $true; Action = "BitLocker was not enabled" } | ConvertTo-Json
+          }
+      } catch {
+          @{ RollbackSuccess = $false; Error = $_.Exception.Message } | ConvertTo-Json
+      }
+    timeout: 120
+
+evidence_required:
+  - bitlocker_installed
+  - c_drive_encrypted
+  - encryption_percentage
+  - protection_status
+  - encryption_method
+  - recovery_key_id
+  - recovery_key_backed_up_to_ad
+  - recovery_key_exported_to_file
+  - backup_file_path
+  - backup_verification_timestamp
+
+verification:
+  - c_drive_encryption: FullyEncrypted
+  - encryption_method: XtsAes256
+  - protection_status: On
+  - recovery_key_backed_up: true
+
+manual_steps_required:
+  - title: "Copy recovery key to offsite location"
+    description: "Copy C:\\BitLockerRecoveryKeys\\*.txt to secure offsite backup (encrypted USB drive, password manager, or secure cloud storage)"
+    hipaa_rationale: "Required for HIPAA 164.308(a)(7)(ii)(A) - Data backup and recovery"
+
+  - title: "Document recovery key location in contingency plan"
+    description: "Update organization's HIPAA contingency plan documentation with location of BitLocker recovery keys"
+
+  - title: "Test recovery key (annual)"
+    description: "Annually verify recovery key works by performing test recovery on non-production system"

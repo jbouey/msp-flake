@@ -21,7 +21,7 @@ import json
 import tempfile
 import logging
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Setup logging
 logging.basicConfig(
@@ -71,7 +71,7 @@ class DriftTestSetup:
         if scenario == "fresh":
             # Recent backup
             backup_metadata = {
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "size_gb": 127.4,
                 "checksum": "sha256:test123"
             }
@@ -82,7 +82,7 @@ class DriftTestSetup:
 
             # Recent restore test
             restore_metadata = {
-                "timestamp": (datetime.utcnow() - timedelta(days=5)).isoformat(),
+                "timestamp": (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(),
                 "files_verified": 3,
                 "checksum_valid": True
             }
@@ -96,7 +96,7 @@ class DriftTestSetup:
         elif scenario == "stale":
             # Old backup (2 days ago)
             backup_metadata = {
-                "timestamp": (datetime.utcnow() - timedelta(days=2)).isoformat(),
+                "timestamp": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
                 "size_gb": 125.1,
                 "checksum": "sha256:test456"
             }

@@ -6,7 +6,7 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 
 from compliance_agent.models import EvidenceBundle, ActionTaken
@@ -146,11 +146,14 @@ async def test_store_evidence(test_config, test_signer):
         post_state={"last_backup": "2025-11-06"}
     )
 
-    bundle_path, sig_path = await generator.store_evidence(bundle, sign=True)
+    bundle_path, sig_path, worm_uri = await generator.store_evidence(bundle, sign=True)
 
     # Check files exist
     assert bundle_path.exists()
     assert sig_path.exists()
+
+    # WORM is disabled by default, so URI should be None
+    assert worm_uri is None
 
     # Check directory structure
     date = bundle.timestamp_start
@@ -182,7 +185,7 @@ async def test_store_and_verify_evidence(test_config, test_signer):
         post_state={"ruleset_hash": "def456"}
     )
 
-    bundle_path, sig_path = await generator.store_evidence(bundle, sign=True)
+    bundle_path, sig_path, _ = await generator.store_evidence(bundle, sign=True)
 
     # Verify signature
     is_valid = await generator.verify_evidence(bundle_path, sig_path)
@@ -262,7 +265,7 @@ async def test_prune_old_evidence(test_config, test_signer):
     generator = EvidenceGenerator(test_config, test_signer)
 
     # Create bundles with different timestamps
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     for i in range(10):
         timestamp = now - timedelta(days=i * 10)
@@ -362,8 +365,8 @@ def test_evidence_bundle_validation():
         site_id="test-site",
         host_id="test-host",
         deployment_mode="direct",
-        timestamp_start=datetime.utcnow(),
-        timestamp_end=datetime.utcnow() + timedelta(seconds=10),
+        timestamp_start=datetime.now(timezone.utc),
+        timestamp_end=datetime.now(timezone.utc) + timedelta(seconds=10),
         policy_version="1.0",
         check="patching",
         outcome="success"
@@ -376,8 +379,8 @@ def test_evidence_bundle_validation():
             site_id="test-site",
             host_id="test-host",
             deployment_mode="direct",
-            timestamp_start=datetime.utcnow(),
-            timestamp_end=datetime.utcnow() - timedelta(seconds=10),
+            timestamp_start=datetime.now(timezone.utc),
+            timestamp_end=datetime.now(timezone.utc) - timedelta(seconds=10),
             policy_version="1.0",
             check="patching",
             outcome="success"
@@ -390,9 +393,212 @@ def test_evidence_bundle_validation():
             host_id="test-host",
             deployment_mode="reseller",
             reseller_id=None,
-            timestamp_start=datetime.utcnow(),
-            timestamp_end=datetime.utcnow(),
+            timestamp_start=datetime.now(timezone.utc),
+            timestamp_end=datetime.now(timezone.utc),
             policy_version="1.0",
             check="patching",
             outcome="success"
         )
+
+
+# =============================================================================
+# WORM Uploader Tests
+# =============================================================================
+
+from compliance_agent.worm_uploader import WormUploader, WormConfig, UploadResult
+
+
+@pytest.fixture
+def worm_config():
+    """Create test WORM config (disabled by default)."""
+    return WormConfig(
+        enabled=False,
+        mode="proxy",
+        retention_days=90
+    )
+
+
+@pytest.fixture
+def worm_config_proxy(tmp_path):
+    """Create test WORM config for proxy mode."""
+    return WormConfig(
+        enabled=True,
+        mode="proxy",
+        mcp_upload_endpoint="http://localhost:8080",
+        retention_days=90,
+        max_retries=1,
+        retry_delay_seconds=0
+    )
+
+
+@pytest.fixture
+def worm_uploader(worm_config, temp_evidence_dir):
+    """Create test WORM uploader (disabled)."""
+    return WormUploader(
+        config=worm_config,
+        evidence_dir=temp_evidence_dir,
+        client_id="test-client-001"
+    )
+
+
+def test_worm_config_defaults():
+    """Test WORM config default values."""
+    config = WormConfig()
+    assert config.enabled is False
+    assert config.mode == "proxy"
+    assert config.retention_days == 90
+    assert config.max_retries == 3
+    assert config.auto_upload is True
+
+
+def test_worm_uploader_init(temp_evidence_dir):
+    """Test WORM uploader initialization."""
+    config = WormConfig(enabled=True, mode="proxy")
+    uploader = WormUploader(
+        config=config,
+        evidence_dir=temp_evidence_dir,
+        client_id="test-client"
+    )
+
+    assert uploader.client_id == "test-client"
+    assert uploader.evidence_dir == temp_evidence_dir
+    assert uploader.config.enabled is True
+
+
+@pytest.mark.asyncio
+async def test_worm_upload_disabled(worm_uploader, temp_evidence_dir):
+    """Test that uploads are skipped when disabled."""
+    # Create a fake bundle
+    bundle_path = temp_evidence_dir / "test-bundle.json"
+    bundle_path.write_text('{"bundle_id": "EB-test-0001"}')
+
+    result = await worm_uploader.upload_bundle(bundle_path)
+
+    assert result.success is False
+    assert "disabled" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_worm_upload_proxy_no_endpoint(temp_evidence_dir):
+    """Test proxy mode fails without endpoint."""
+    config = WormConfig(
+        enabled=True,
+        mode="proxy",
+        mcp_upload_endpoint=None
+    )
+    uploader = WormUploader(
+        config=config,
+        evidence_dir=temp_evidence_dir,
+        client_id="test-client"
+    )
+
+    bundle_path = temp_evidence_dir / "test-bundle.json"
+    bundle_path.write_text('{"bundle_id": "EB-test-0001"}')
+
+    result = await uploader.upload_bundle(bundle_path)
+
+    assert result.success is False
+    assert "endpoint" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_worm_upload_direct_no_bucket(temp_evidence_dir):
+    """Test direct mode fails without bucket."""
+    config = WormConfig(
+        enabled=True,
+        mode="direct",
+        s3_bucket=None
+    )
+    uploader = WormUploader(
+        config=config,
+        evidence_dir=temp_evidence_dir,
+        client_id="test-client"
+    )
+
+    bundle_path = temp_evidence_dir / "test-bundle.json"
+    bundle_path.write_text('{"bundle_id": "EB-test-0001"}')
+
+    result = await uploader.upload_bundle(bundle_path)
+
+    assert result.success is False
+    assert "bucket" in result.error.lower()
+
+
+def test_worm_uploader_stats(worm_uploader):
+    """Test WORM uploader stats."""
+    stats = worm_uploader.get_stats()
+
+    assert stats["enabled"] is False
+    assert stats["mode"] == "proxy"
+    assert stats["total_uploaded"] == 0
+    assert stats["pending_count"] == 0
+
+
+def test_worm_upload_registry(temp_evidence_dir):
+    """Test upload registry persistence."""
+    config = WormConfig(enabled=False)
+    uploader = WormUploader(
+        config=config,
+        evidence_dir=temp_evidence_dir,
+        client_id="test-client"
+    )
+
+    # Manually add to registry
+    uploader._upload_registry["EB-test-0001"] = {
+        "success": True,
+        "s3_uri": "s3://bucket/key",
+        "upload_timestamp": "2025-11-06T00:00:00"
+    }
+    uploader._save_registry()
+
+    # Create new uploader and verify registry loaded
+    uploader2 = WormUploader(
+        config=config,
+        evidence_dir=temp_evidence_dir,
+        client_id="test-client"
+    )
+
+    assert "EB-test-0001" in uploader2._upload_registry
+    assert uploader2._upload_registry["EB-test-0001"]["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_worm_sync_pending_disabled(worm_uploader):
+    """Test sync returns empty when disabled."""
+    results = await worm_uploader.sync_pending()
+    assert results == []
+
+
+def test_worm_uploader_extract_bundle_id(worm_uploader, temp_evidence_dir):
+    """Test bundle ID extraction."""
+    # Test from parent directory name
+    bundle_dir = temp_evidence_dir / "2025" / "11" / "06" / "EB-20251106-0001"
+    bundle_dir.mkdir(parents=True)
+    bundle_path = bundle_dir / "bundle.json"
+    bundle_path.write_text('{"bundle_id": "EB-20251106-0001"}')
+
+    bundle_id = worm_uploader._extract_bundle_id(bundle_path)
+    assert bundle_id == "EB-20251106-0001"
+
+
+@pytest.mark.asyncio
+async def test_evidence_worm_stats(test_config, test_signer):
+    """Test evidence generator WORM stats."""
+    generator = EvidenceGenerator(test_config, test_signer)
+
+    stats = generator.get_worm_stats()
+
+    # WORM is disabled in test config
+    assert stats["enabled"] is False
+    assert stats["total_uploaded"] == 0
+
+
+@pytest.mark.asyncio
+async def test_evidence_sync_to_worm_disabled(test_config, test_signer):
+    """Test WORM sync returns error when disabled."""
+    generator = EvidenceGenerator(test_config, test_signer)
+
+    result = await generator.sync_to_worm()
+
+    assert result["enabled"] is False
+    assert "not initialized" in result["error"]

@@ -14,7 +14,7 @@ import ssl
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .models import MCPOrder
 from .config import AgentConfig
@@ -341,10 +341,10 @@ class MCPClient:
         Raises:
             MCPOrderError: If order fails or timeout occurs
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         timeout_dt = start_time + timedelta(seconds=timeout_sec)
 
-        while datetime.utcnow() < timeout_dt:
+        while datetime.now(timezone.utc) < timeout_dt:
             status = await self.get_order_status(order_id)
 
             order_status = status.get('status')
@@ -362,7 +362,7 @@ class MCPClient:
             await asyncio.sleep(poll_interval)
 
         # Timeout
-        elapsed = (datetime.utcnow() - start_time).total_seconds()
+        elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
         raise MCPOrderError(
             f"Order {order_id} timed out after {elapsed:.1f} seconds"
         )

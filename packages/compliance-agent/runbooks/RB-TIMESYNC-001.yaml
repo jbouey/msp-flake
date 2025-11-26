@@ -1,55 +1,240 @@
 id: RB-TIMESYNC-001
 name: "Time Synchronization Remediation"
-description: "Fix NTP synchronization issues"
+description: "Fix NTP synchronization issues with multi-source verification"
+version: "2.0"
 severity: medium
 
 hipaa_controls:
-  - "164.312(b)"
+  - "164.312(b)"            # Audit controls (accurate timestamps required)
+  - "164.308(a)(1)(ii)(D)"  # Information system activity review
+
+# Execution constraints
+constraints:
+  max_retries: 3
+  retry_delay_seconds: 15
+  requires_maintenance_window: false
+
+# Maximum acceptable drift threshold (milliseconds)
+thresholds:
+  max_drift_ms: 5000
+  warn_drift_ms: 1000
 
 steps:
-  - action: run_command
-    description: "Check chrony status"
+  - action: capture_state
+    description: "Capture pre-remediation time sync state"
     params:
-      command: chronyc
-      args: ["tracking"]
-    timeout: 10
+      command: bash
+      args:
+        - "-c"
+        - |
+          # Get chrony tracking info
+          TRACKING=$(chronyc tracking 2>/dev/null || echo "chrony_unavailable")
 
-  - action: restart_service
+          if [ "$TRACKING" != "chrony_unavailable" ]; then
+            REF_ID=$(echo "$TRACKING" | grep "Reference ID" | awk '{print $4}')
+            STRATUM=$(echo "$TRACKING" | grep "Stratum" | awk '{print $3}')
+            OFFSET=$(echo "$TRACKING" | grep "System time" | awk '{print $4}')
+            OFFSET_UNIT=$(echo "$TRACKING" | grep "System time" | awk '{print $5}')
+            LAST_OFFSET=$(echo "$TRACKING" | grep "Last offset" | awk '{print $4}')
+            FREQ=$(echo "$TRACKING" | grep "Frequency" | awk '{print $3}')
+
+            # Convert offset to milliseconds
+            OFFSET_MS=$(echo "$OFFSET" | awk '{printf "%.3f", $1 * 1000}')
+
+            echo "{\"status\": \"available\", \"reference_id\": \"$REF_ID\", \"stratum\": $STRATUM, \"offset_seconds\": $OFFSET, \"offset_ms\": $OFFSET_MS, \"last_offset\": \"$LAST_OFFSET\", \"frequency_ppm\": \"$FREQ\"}"
+          else
+            echo "{\"status\": \"unavailable\", \"error\": \"chrony not responding\"}"
+          fi
+    timeout: 15
+    evidence_key: time_state_before
+
+  - action: run_command
+    description: "Check chrony sources status"
+    params:
+      command: bash
+      args:
+        - "-c"
+        - |
+          SOURCES=$(chronyc sources 2>/dev/null)
+          if [ -n "$SOURCES" ]; then
+            REACHABLE=$(echo "$SOURCES" | grep -c "^\^" || echo "0")
+            SELECTED=$(echo "$SOURCES" | grep -c "^\^\*" || echo "0")
+            echo "{\"total_sources\": $REACHABLE, \"selected_sources\": $SELECTED}"
+          else
+            echo "{\"total_sources\": 0, \"selected_sources\": 0, \"error\": \"no_sources\"}"
+          fi
+    timeout: 10
+    evidence_key: sources_before
+
+  - action: run_command
     description: "Restart chronyd service"
     params:
-      service: "chronyd"
+      command: bash
+      args:
+        - "-c"
+        - |
+          START_TIME=$(date +%s)
+          systemctl restart chronyd 2>&1
+          EXIT_CODE=$?
+          END_TIME=$(date +%s)
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "{\"action\": \"restart\", \"service\": \"chronyd\", \"exit_code\": 0, \"duration_seconds\": $((END_TIME - START_TIME))}"
+          else
+            echo "{\"action\": \"restart\", \"service\": \"chronyd\", \"exit_code\": $EXIT_CODE, \"error\": \"restart_failed\"}"
+            exit $EXIT_CODE
+          fi
     timeout: 30
+    evidence_key: service_restart
 
   - action: run_command
-    description: "Force time sync"
+    description: "Force immediate time step if drift is large"
     params:
-      command: chronyc
-      args: ["makestep"]
-    timeout: 10
+      command: bash
+      args:
+        - "-c"
+        - |
+          # Wait briefly for chrony to start
+          sleep 2
+
+          # Get current offset
+          OFFSET=$(chronyc tracking 2>/dev/null | grep "System time" | awk '{print $4}' | tr -d '-')
+
+          # If offset > 0.5 seconds, force step
+          if [ -n "$OFFSET" ]; then
+            OFFSET_CHECK=$(echo "$OFFSET > 0.5" | bc -l 2>/dev/null || echo "0")
+            if [ "$OFFSET_CHECK" = "1" ]; then
+              chronyc makestep 2>&1
+              echo "{\"action\": \"makestep\", \"reason\": \"large_offset\", \"offset_before\": $OFFSET}"
+            else
+              echo "{\"action\": \"skipped\", \"reason\": \"offset_acceptable\", \"offset\": $OFFSET}"
+            fi
+          else
+            # Force step anyway as we can't determine offset
+            chronyc makestep 2>&1
+            echo "{\"action\": \"makestep\", \"reason\": \"unknown_offset\"}"
+          fi
+    timeout: 15
+    evidence_key: time_step_result
 
   - action: run_command
-    description: "Wait for sync to stabilize"
+    description: "Wait for sync to stabilize and verify"
     params:
-      command: sleep
-      args: ["5"]
-    timeout: 10
+      command: bash
+      args:
+        - "-c"
+        - |
+          MAX_WAIT=30
+          INTERVAL=3
+          WAITED=0
+          MAX_DRIFT_MS={{max_drift_ms:-5000}}
+
+          while [ $WAITED -lt $MAX_WAIT ]; do
+            TRACKING=$(chronyc tracking 2>/dev/null)
+            OFFSET=$(echo "$TRACKING" | grep "System time" | awk '{print $4}' | tr -d '-')
+
+            if [ -n "$OFFSET" ]; then
+              # Convert to milliseconds and check
+              OFFSET_MS=$(echo "$OFFSET * 1000" | bc -l 2>/dev/null | cut -d. -f1)
+              OFFSET_MS=${OFFSET_MS:-999999}
+
+              if [ "$OFFSET_MS" -lt "$MAX_DRIFT_MS" ]; then
+                STRATUM=$(echo "$TRACKING" | grep "Stratum" | awk '{print $3}')
+                if [ "$STRATUM" != "0" ] && [ -n "$STRATUM" ]; then
+                  echo "{\"status\": \"synchronized\", \"offset_ms\": $OFFSET_MS, \"stratum\": $STRATUM, \"wait_seconds\": $WAITED}"
+                  exit 0
+                fi
+              fi
+            fi
+
+            sleep $INTERVAL
+            WAITED=$((WAITED + INTERVAL))
+          done
+
+          echo "{\"status\": \"timeout\", \"offset_ms\": ${OFFSET_MS:-unknown}, \"wait_seconds\": $WAITED}"
+          exit 1
+    timeout: 45
+    evidence_key: sync_verification
+
+  - action: capture_state
+    description: "Capture post-remediation time sync state"
+    params:
+      command: bash
+      args:
+        - "-c"
+        - |
+          TRACKING=$(chronyc tracking 2>/dev/null || echo "chrony_unavailable")
+
+          if [ "$TRACKING" != "chrony_unavailable" ]; then
+            REF_ID=$(echo "$TRACKING" | grep "Reference ID" | awk '{print $4}')
+            STRATUM=$(echo "$TRACKING" | grep "Stratum" | awk '{print $3}')
+            OFFSET=$(echo "$TRACKING" | grep "System time" | awk '{print $4}')
+            OFFSET_MS=$(echo "$OFFSET" | awk '{printf "%.3f", $1 * 1000}')
+            ROOT_DELAY=$(echo "$TRACKING" | grep "Root delay" | awk '{print $4}')
+            ROOT_DISP=$(echo "$TRACKING" | grep "Root dispersion" | awk '{print $4}')
+
+            echo "{\"status\": \"available\", \"reference_id\": \"$REF_ID\", \"stratum\": $STRATUM, \"offset_ms\": $OFFSET_MS, \"root_delay\": \"$ROOT_DELAY\", \"root_dispersion\": \"$ROOT_DISP\"}"
+          else
+            echo "{\"status\": \"unavailable\", \"error\": \"chrony not responding\"}"
+          fi
+    timeout: 15
+    evidence_key: time_state_after
 
   - action: run_command
-    description: "Verify time sync status"
+    description: "Verify sources are reachable"
     params:
-      command: chronyc
-      args: ["tracking"]
+      command: bash
+      args:
+        - "-c"
+        - |
+          SOURCES=$(chronyc sources -v 2>/dev/null | tail -n +4)
+          REACHABLE=$(echo "$SOURCES" | grep -c "^\^" || echo "0")
+          SELECTED=$(echo "$SOURCES" | grep -c "^\^\*" || echo "0")
+
+          if [ "$SELECTED" -gt 0 ]; then
+            echo "{\"status\": \"healthy\", \"reachable_sources\": $REACHABLE, \"selected_sources\": $SELECTED}"
+            exit 0
+          else
+            echo "{\"status\": \"degraded\", \"reachable_sources\": $REACHABLE, \"selected_sources\": $SELECTED, \"warning\": \"no_selected_source\"}"
+            exit 0  # Don't fail - degraded is still functional
+          fi
     timeout: 10
+    evidence_key: sources_after
 
 rollback:
   - action: run_command
-    description: "Alert administrator of time sync failure"
+    description: "Log time sync failure"
     params:
       command: logger
-      args: ["-t", "msp-healer", "-p", "warning", "Time sync remediation failed"]
+      args: ["-t", "msp-healer", "-p", "warning", "Time sync remediation failed - manual intervention may be required"]
     timeout: 5
 
+  - action: run_command
+    description: "Attempt to use fallback NTP server"
+    params:
+      command: bash
+      args:
+        - "-c"
+        - |
+          # Try to add pool.ntp.org as fallback
+          echo "server pool.ntp.org iburst" >> /etc/chrony.conf.d/fallback.conf 2>/dev/null || true
+          systemctl restart chronyd 2>/dev/null || true
+          echo "{\"action\": \"fallback_configured\"}"
+    timeout: 15
+    continue_on_failure: true
+
+  - action: send_alert
+    description: "Send alert for time sync issues"
+    params:
+      severity: medium
+      message: "Time synchronization remediation failed on {{host_id}} - audit timestamps may be affected"
+      hipaa_control: "164.312(b)"
+
 evidence_required:
-  - chrony_tracking_before
-  - chrony_tracking_after
-  - time_drift_ms
+  - time_state_before
+  - sources_before
+  - service_restart
+  - time_step_result
+  - sync_verification
+  - time_state_after
+  - sources_after

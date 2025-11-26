@@ -7,7 +7,7 @@ import tempfile
 import shutil
 import asyncio
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import sqlite3
 
 from compliance_agent.offline_queue import EvidenceQueue
@@ -216,7 +216,7 @@ async def test_exponential_backoff(queue, mock_evidence_paths):
     conn.close()
 
     next_retry_dt = datetime.fromisoformat(next_retry)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Should be scheduled for future (2^1 = 2 minutes)
     assert next_retry_dt > now
@@ -293,7 +293,7 @@ async def test_prune_uploaded(queue, mock_evidence_paths):
 
     # Manually set uploaded_at to 10 days ago for testing
     conn = sqlite3.connect(queue.db_path)
-    old_date = (datetime.utcnow() - timedelta(days=10)).isoformat()
+    old_date = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
     conn.execute('''
         UPDATE queued_evidence
         SET uploaded_at = ?

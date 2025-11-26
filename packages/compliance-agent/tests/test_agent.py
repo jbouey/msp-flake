@@ -14,7 +14,7 @@ Test Coverage:
 
 import pytest
 import asyncio
-from datetime import time, datetime
+from datetime import time, datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
 from pathlib import Path
 
@@ -417,7 +417,7 @@ async def test_process_offline_queue_success(agent, tmp_path):
         bundle_id="queued-123",
         bundle_path=str(bundle_path),
         signature_path=str(sig_path),
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         retry_count=0
     )
     

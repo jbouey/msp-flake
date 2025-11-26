@@ -16,7 +16,7 @@ severity level, and recommended remediation action.
 import asyncio
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
@@ -349,7 +349,7 @@ class DriftDetector:
         if last_backup_str:
             try:
                 last_backup = datetime.fromisoformat(last_backup_str)
-                backup_age_hours = (datetime.utcnow() - last_backup).total_seconds() / 3600
+                backup_age_hours = (datetime.now(timezone.utc) - last_backup).total_seconds() / 3600
                 pre_state["backup_age_hours"] = round(backup_age_hours, 2)
             except Exception as e:
                 logger.error(f"Failed to parse backup timestamp: {e}")
@@ -361,7 +361,7 @@ class DriftDetector:
         if last_restore_str:
             try:
                 last_restore = datetime.fromisoformat(last_restore_str)
-                restore_test_age_days = (datetime.utcnow() - last_restore).days
+                restore_test_age_days = (datetime.now(timezone.utc) - last_restore).days
                 pre_state["restore_test_age_days"] = restore_test_age_days
             except Exception as e:
                 logger.error(f"Failed to parse restore test timestamp: {e}")

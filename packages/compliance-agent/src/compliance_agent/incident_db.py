@@ -12,7 +12,7 @@ Implements the "data flywheel" for continuous improvement.
 import sqlite3
 import json
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
@@ -219,7 +219,7 @@ class IncidentDatabase:
     ) -> Incident:
         """Create and store a new incident."""
         import uuid
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         incident_id = f"INC-{now.strftime('%Y%m%d%H%M%S')}-{now.microsecond:06d}-{uuid.uuid4().hex[:4]}"
         pattern_signature = self.generate_pattern_signature(incident_type, raw_data)
 
@@ -231,7 +231,7 @@ class IncidentDatabase:
             severity=severity,
             raw_data=raw_data,
             pattern_signature=pattern_signature,
-            created_at=datetime.utcnow().isoformat()
+            created_at=datetime.now(timezone.utc).isoformat()
         )
 
         conn = sqlite3.connect(self.db_path)
@@ -270,7 +270,7 @@ class IncidentDatabase:
         resolution_time_ms: int
     ):
         """Mark an incident as resolved and update stats."""
-        resolved_at = datetime.utcnow().isoformat()
+        resolved_at = datetime.now(timezone.utc).isoformat()
 
         conn = sqlite3.connect(self.db_path)
 
@@ -495,7 +495,7 @@ class IncidentDatabase:
                     occurrences_at_promotion
                 ) VALUES (?, ?, ?, ?, ?, ?)
             """, (
-                pattern_signature, rule_yaml, datetime.utcnow().isoformat(),
+                pattern_signature, rule_yaml, datetime.now(timezone.utc).isoformat(),
                 json.dumps(incident_ids), success_rate, occurrences
             ))
 
@@ -531,7 +531,7 @@ class IncidentDatabase:
             ) VALUES (?, ?, ?, ?)
         """, (
             incident_id, feedback_type,
-            json.dumps(feedback_data), datetime.utcnow().isoformat()
+            json.dumps(feedback_data), datetime.now(timezone.utc).isoformat()
         ))
 
         # Also update incident human_feedback field for quick reference
@@ -577,7 +577,7 @@ class IncidentDatabase:
         """Get summary statistics for dashboard."""
         conn = sqlite3.connect(self.db_path)
 
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         cursor = conn.execute("""
             SELECT

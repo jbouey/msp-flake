@@ -11,7 +11,7 @@ Includes:
 import asyncio
 import random
 import subprocess
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
 import json
@@ -50,13 +50,13 @@ class MaintenanceWindow:
         Check if current time is within maintenance window.
 
         Args:
-            now: Time to check (default: datetime.utcnow())
+            now: Time to check (default: datetime.now(timezone.utc))
 
         Returns:
             True if in window, False otherwise
         """
         if now is None:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
         current_time = now.time()
 
@@ -73,13 +73,13 @@ class MaintenanceWindow:
         Calculate when the next maintenance window starts.
 
         Args:
-            now: Current time (default: datetime.utcnow())
+            now: Current time (default: datetime.now(timezone.utc))
 
         Returns:
             Datetime when next window starts
         """
         if now is None:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
         # Calculate today's window start
         today_start = datetime.combine(now.date(), self.start)
@@ -96,13 +96,13 @@ class MaintenanceWindow:
         Calculate time until next maintenance window.
 
         Args:
-            now: Current time (default: datetime.utcnow())
+            now: Current time (default: datetime.now(timezone.utc))
 
         Returns:
             Timedelta until next window starts
         """
         if now is None:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
         if self.is_in_window(now):
             return timedelta(0)
@@ -120,7 +120,7 @@ def is_within_maintenance_window(
 
     Args:
         window_str: Maintenance window string in format "HH:MM-HH:MM" (UTC)
-        now: Time to check (default: datetime.utcnow())
+        now: Time to check (default: datetime.now(timezone.utc))
 
     Returns:
         True if in window or no window defined, False otherwise
@@ -129,7 +129,7 @@ def is_within_maintenance_window(
         return False  # No window defined = not in window
 
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     try:
         start_str, end_str = window_str.split('-')
@@ -285,7 +285,7 @@ async def run_command(
         subprocess.CalledProcessError: If check=True and command fails
         asyncio.TimeoutError: If timeout exceeded
     """
-    start_time = datetime.utcnow()
+    start_time = datetime.now(timezone.utc)
 
     try:
         if capture_output:
@@ -306,7 +306,7 @@ async def run_command(
         else:
             stdout, stderr = await process.communicate()
 
-        duration = (datetime.utcnow() - start_time).total_seconds()
+        duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 
         result = CommandResult(
             exit_code=process.returncode,

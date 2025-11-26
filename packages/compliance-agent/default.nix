@@ -18,6 +18,9 @@ python311Packages.buildPythonApplication rec {
     cryptography
     pydantic
     pydantic-settings
+    fastapi
+    uvicorn
+    jinja2
   ];
 
   buildInputs = [

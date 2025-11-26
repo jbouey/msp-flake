@@ -10,7 +10,7 @@ Handles 5-10% of incidents that require human intervention:
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -158,7 +158,7 @@ class EscalationHandler:
             priority = self._determine_priority(incident, reason)
 
         # Create ticket ID
-        ticket_id = f"ESC-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{incident.id[-8:]}"
+        ticket_id = f"ESC-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{incident.id[-8:]}"
 
         # Build ticket
         ticket = EscalationTicket(
@@ -175,7 +175,7 @@ class EscalationHandler:
             historical_context=context.get("historical", {}),
             similar_incidents=context.get("similar_incidents", []),
             attempted_actions=attempted_actions or [],
-            created_at=datetime.utcnow().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
             escalation_reason=reason,
             recommended_action=recommended_action,
             hipaa_controls=self._get_hipaa_controls(incident),
@@ -560,7 +560,7 @@ This incident may affect the following HIPAA controls:
 
         ticket.status = "resolved"
         ticket.resolution = resolution
-        ticket.resolved_at = datetime.utcnow().isoformat()
+        ticket.resolved_at = datetime.now(timezone.utc).isoformat()
         ticket.feedback = feedback
 
         # Record feedback in incident database for learning

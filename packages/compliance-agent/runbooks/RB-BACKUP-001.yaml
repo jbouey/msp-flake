@@ -1,57 +1,114 @@
 id: RB-BACKUP-001
 name: "Backup Failure Remediation"
-description: "Remediate failed or stale backups by triggering new backup job"
+description: "Remediate failed or stale backups with verification and evidence collection"
+version: "2.0"
 severity: critical
 
 hipaa_controls:
-  - "164.308(a)(7)(ii)(A)"
-  - "164.310(d)(2)(iv)"
+  - "164.308(a)(7)(ii)(A)"  # Data backup plan
+  - "164.310(d)(2)(iv)"     # Data backup and storage
+
+# Execution constraints
+constraints:
+  max_retries: 2
+  retry_delay_seconds: 30
+  requires_maintenance_window: false
+
+# Pre-conditions that must be met
+preconditions:
+  - action: check_disk_space
+    description: "Ensure sufficient disk space for backup"
+    params:
+      path: "/var/backups"
+      min_free_gb: 10
+    on_failure: abort
 
 steps:
-  - action: run_command
-    description: "Check backup service status"
+  - action: capture_state
+    description: "Capture pre-remediation state"
     params:
-      command: systemctl
-      args: ["status", "backup.service"]
-    timeout: 10
+      command: "df -h /var/backups && systemctl status backup.service --no-pager -l 2>/dev/null || echo 'backup.service not found'"
+    timeout: 15
+    evidence_key: disk_usage_before
 
   - action: run_command
-    description: "Verify disk space available"
+    description: "Check and restart backup service if needed"
     params:
-      command: df
-      args: ["-h", "/var/backups"]
-    timeout: 10
+      command: bash
+      args:
+        - "-c"
+        - |
+          if systemctl is-active backup.service >/dev/null 2>&1; then
+            echo '{"service_status": "active", "action": "none"}'
+          elif systemctl is-enabled backup.service >/dev/null 2>&1; then
+            systemctl restart backup.service
+            sleep 2
+            if systemctl is-active backup.service >/dev/null 2>&1; then
+              echo '{"service_status": "restarted", "action": "restart"}'
+            else
+              echo '{"service_status": "failed", "action": "restart_failed"}'
+              exit 1
+            fi
+          else
+            echo '{"service_status": "not_configured", "action": "skip"}'
+          fi
+    timeout: 30
+    continue_on_failure: true
 
   - action: trigger_backup
-    description: "Trigger manual backup job"
+    description: "Trigger backup and wait for completion"
     params:
-      backup_type: "full"
-    timeout: 300
+      backup_type: "incremental"
+      wait_for_completion: true
+      max_wait_seconds: 600
+    timeout: 660
+    evidence_key: backup_job_result
 
-  - action: run_command
-    description: "Wait for backup completion"
+  - action: verify_backup
+    description: "Verify backup integrity"
     params:
-      command: sleep
-      args: ["10"]
-    timeout: 15
+      command: bash
+      args:
+        - "-c"
+        - |
+          BACKUP_DIR="/var/backups"
+          LATEST=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name "*.tar*" -mmin -30 2>/dev/null | head -1)
+          if [ -n "$LATEST" ]; then
+            SIZE=$(stat -c%s "$LATEST" 2>/dev/null || stat -f%z "$LATEST" 2>/dev/null)
+            HASH=$(sha256sum "$LATEST" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$LATEST" 2>/dev/null | cut -d' ' -f1)
+            echo "{\"status\": \"success\", \"file\": \"$LATEST\", \"size_bytes\": $SIZE, \"sha256\": \"$HASH\"}"
+          else
+            echo '{"status": "no_recent_backup", "error": "No backup file found in last 30 minutes"}'
+            exit 1
+          fi
+    timeout: 60
+    evidence_key: backup_verification
 
-  - action: run_command
-    description: "Verify backup file created"
+  - action: capture_state
+    description: "Capture post-remediation state"
     params:
-      command: ls
-      args: ["-lh", "/var/backups/latest"]
+      command: "df -h /var/backups"
     timeout: 10
+    evidence_key: disk_usage_after
 
 rollback:
   - action: run_command
-    description: "Alert administrator of backup failure"
+    description: "Log backup failure and alert"
     params:
       command: logger
-      args: ["-t", "msp-healer", "-p", "err", "Backup remediation failed, manual intervention required"]
+      args: ["-t", "msp-healer", "-p", "err", "Backup remediation failed - manual intervention required"]
     timeout: 5
 
+  - action: send_alert
+    description: "Send alert to administrator"
+    params:
+      severity: critical
+      message: "Backup remediation failed on {{host_id}}"
+      hipaa_control: "164.308(a)(7)(ii)(A)"
+
 evidence_required:
-  - backup_log_excerpt
   - disk_usage_before
+  - backup_job_result
+  - backup_verification
   - disk_usage_after
   - backup_completion_hash

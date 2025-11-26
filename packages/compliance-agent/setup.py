@@ -5,11 +5,22 @@ setup(
     version="0.1.0",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
+    package_data={
+        "compliance_agent": [
+            "web_templates/*.html",
+            "runbooks/*.yaml",
+        ],
+    },
+    include_package_data=True,
     install_requires=[
         "aiohttp>=3.9.0",
         "cryptography>=41.0.0",
         "pydantic>=2.5.0",
         "pydantic-settings>=2.1.0",
+        "fastapi>=0.104.0",
+        "uvicorn>=0.24.0",
+        "jinja2>=3.1.0",
+        "pywinrm>=0.4.3",
     ],
     extras_require={
         "dev": [
@@ -21,6 +32,7 @@ setup(
     entry_points={
         "console_scripts": [
             "compliance-agent=compliance_agent.agent:main",
+            "compliance-web=compliance_agent.web_ui:main",
         ],
     },
     python_requires=">=3.11",

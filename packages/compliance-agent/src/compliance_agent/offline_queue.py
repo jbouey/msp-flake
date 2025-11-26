@@ -7,7 +7,7 @@ Uses SQLite with WAL mode for crash-safe persistence.
 
 import sqlite3
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import logging
@@ -116,8 +116,8 @@ class EvidenceQueue:
                 bundle_id,
                 str(bundle_path),
                 str(signature_path),
-                datetime.utcnow().isoformat(),
-                datetime.utcnow().isoformat()  # Ready immediately
+                datetime.now(timezone.utc).isoformat(),
+                datetime.now(timezone.utc).isoformat()  # Ready immediately
             ))
 
             queue_id = cursor.lastrowid
@@ -160,7 +160,7 @@ class EvidenceQueue:
 
             if ready_only:
                 query += ' AND (next_retry_at IS NULL OR next_retry_at <= ?)'
-                params.append(datetime.utcnow().isoformat())
+                params.append(datetime.now(timezone.utc).isoformat())
 
             query += ' ORDER BY created_at ASC'
 
@@ -202,7 +202,7 @@ class EvidenceQueue:
                 UPDATE queued_evidence
                 SET uploaded_at = ?
                 WHERE id = ?
-            ''', (datetime.utcnow().isoformat(), queue_id))
+            ''', (datetime.now(timezone.utc).isoformat(), queue_id))
 
             conn.commit()
 
@@ -247,7 +247,7 @@ class EvidenceQueue:
                 backoff_minutes = min(2 ** retry_count, 60)
                 retry_after_sec = backoff_minutes * 60
 
-            next_retry = datetime.utcnow() + timedelta(seconds=retry_after_sec)
+            next_retry = datetime.now(timezone.utc) + timedelta(seconds=retry_after_sec)
 
             # Update record
             conn.execute('''
@@ -322,7 +322,7 @@ class EvidenceQueue:
                 SELECT COUNT(*) FROM queued_evidence
                 WHERE uploaded_at IS NULL
                 AND (next_retry_at IS NULL OR next_retry_at <= ?)
-            ''', (datetime.utcnow().isoformat(),))
+            ''', (datetime.now(timezone.utc).isoformat(),))
             ready_count = cursor.fetchone()[0]
 
             return {
@@ -349,7 +349,7 @@ class EvidenceQueue:
         conn = sqlite3.connect(self.db_path)
 
         try:
-            cutoff_date = datetime.utcnow() - timedelta(days=older_than_days)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=older_than_days)
 
             cursor = conn.execute('''
                 DELETE FROM queued_evidence

@@ -7,7 +7,7 @@ Tests all 6 drift detection checks with mocked system state.
 import pytest
 import json
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch, MagicMock
 from typing import Any, Dict
 
@@ -100,7 +100,7 @@ async def test_load_baseline(detector):
 @pytest.mark.asyncio
 async def test_patching_no_drift(detector):
     """Test patching check with no drift."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     # Use recent date to avoid age drift
     recent_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -125,7 +125,7 @@ async def test_patching_no_drift(detector):
 @pytest.mark.asyncio
 async def test_patching_generation_drift(detector):
     """Test patching check with generation mismatch."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     # Use recent date so only generation drift is detected (not age drift)
     recent_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -271,8 +271,8 @@ async def test_backup_no_drift(detector, tmp_path):
     # Create backup status file
     status_file = tmp_path / "backup-status.json"
     status_data = {
-        "last_backup": (datetime.utcnow() - timedelta(hours=1)).isoformat(),
-        "last_restore_test": (datetime.utcnow() - timedelta(days=7)).isoformat(),
+        "last_backup": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        "last_restore_test": (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
         "checksum": "backup123hash"
     }
     status_file.write_text(json.dumps(status_data))
@@ -297,8 +297,8 @@ async def test_backup_age_drift(detector, tmp_path):
     """Test backup check with old backup."""
     status_file = tmp_path / "backup-status.json"
     status_data = {
-        "last_backup": (datetime.utcnow() - timedelta(hours=48)).isoformat(),
-        "last_restore_test": (datetime.utcnow() - timedelta(days=7)).isoformat()
+        "last_backup": (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat(),
+        "last_restore_test": (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     }
     status_file.write_text(json.dumps(status_data))
     
@@ -322,8 +322,8 @@ async def test_backup_restore_test_drift(detector, tmp_path):
     """Test backup check with old restore test."""
     status_file = tmp_path / "backup-status.json"
     status_data = {
-        "last_backup": datetime.utcnow().isoformat(),
-        "last_restore_test": (datetime.utcnow() - timedelta(days=45)).isoformat()
+        "last_backup": datetime.now(timezone.utc).isoformat(),
+        "last_restore_test": (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
     }
     status_file.write_text(json.dumps(status_data))
     
@@ -556,7 +556,7 @@ async def test_check_all_with_drift(detector, tmp_path):
     # Create backup status with old backup
     status_file = tmp_path / "backup-status.json"
     status_data = {
-        "last_backup": (datetime.utcnow() - timedelta(hours=48)).isoformat()
+        "last_backup": (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     }
     status_file.write_text(json.dumps(status_data))
     

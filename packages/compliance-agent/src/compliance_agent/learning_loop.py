@@ -11,7 +11,7 @@ Implements the "data flywheel" concept:
 import json
 import yaml
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
@@ -182,7 +182,7 @@ class SelfLearningSystem:
         # Penalty for old patterns (may be stale)
         try:
             last_seen = datetime.fromisoformat(stats.last_seen)
-            days_since = (datetime.utcnow() - last_seen).days
+            days_since = (datetime.now(timezone.utc) - last_seen).days
             recency_penalty = min(days_since / 30, 0.2) * -1
         except (ValueError, TypeError):
             recency_penalty = 0
@@ -196,10 +196,105 @@ class SelfLearningSystem:
         incidents: List[Dict[str, Any]],
         action_name: str
     ) -> Dict[str, Any]:
-        """Extract common action parameters from successful incidents."""
-        # In a full implementation, this would analyze the incident data
-        # to extract parameters that were commonly used
-        return {}
+        """
+        Extract common action parameters from successful incidents.
+
+        Analyzes incident raw_data to find parameters that were consistently
+        used in successful resolutions, enabling promoted rules to have
+        properly configured action parameters.
+        """
+        if not incidents:
+            return {}
+
+        params = {}
+
+        # Collect all raw_data from incidents
+        raw_data_list = []
+        for incident in incidents:
+            raw_data_value = incident.get("raw_data", "{}")
+            if isinstance(raw_data_value, dict):
+                raw_data_list.append(raw_data_value)
+            else:
+                try:
+                    raw_data_list.append(json.loads(raw_data_value))
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+        if not raw_data_list:
+            return {}
+
+        # Parameter extraction based on action type
+        action_param_keys = {
+            "update_to_baseline_generation": [
+                "target_generation", "baseline_hash", "flake_url"
+            ],
+            "restart_av_service": [
+                "service_name", "av_product", "expected_hash"
+            ],
+            "run_backup_job": [
+                "backup_repo", "backup_paths", "restic_repo", "retention_days"
+            ],
+            "restart_logging_services": [
+                "logging_services", "log_destination", "service_name"
+            ],
+            "restore_firewall_baseline": [
+                "ruleset_path", "baseline_rules", "allowed_ports"
+            ],
+            "enable_volume_encryption": [
+                "volume_path", "encryption_type", "key_file"
+            ]
+        }
+
+        # Get keys to look for based on action
+        keys_to_extract = action_param_keys.get(action_name, [])
+
+        # Also extract common keys that appear across all action types
+        common_keys = [
+            "service_name", "target_path", "timeout", "host_id",
+            "check_type", "severity"
+        ]
+        keys_to_extract.extend(common_keys)
+
+        # Count occurrences of each parameter value
+        param_counts: Dict[str, Dict[Any, int]] = {}
+
+        for raw_data in raw_data_list:
+            for key in keys_to_extract:
+                if key in raw_data:
+                    value = raw_data[key]
+                    # Convert lists to tuples for hashability
+                    if isinstance(value, list):
+                        value = tuple(value)
+
+                    if key not in param_counts:
+                        param_counts[key] = {}
+
+                    # Convert value to string for counting (handles unhashable types)
+                    value_key = str(value) if not isinstance(value, (str, int, float, bool, tuple)) else value
+                    param_counts[key][value_key] = param_counts[key].get(value_key, 0) + 1
+
+        # Select the most common value for each parameter
+        min_occurrences = max(len(raw_data_list) // 2, 1)  # Must appear in at least half
+
+        for key, counts in param_counts.items():
+            if counts:
+                # Find the most common value
+                most_common_value = max(counts.items(), key=lambda x: x[1])
+                value, count = most_common_value
+
+                # Only include if it appears in enough incidents
+                if count >= min_occurrences:
+                    # Convert tuples back to lists for JSON serialization
+                    if isinstance(value, tuple):
+                        value = list(value)
+                    params[key] = value
+
+        logger.debug(
+            f"Extracted {len(params)} parameters for action {action_name}: "
+            f"{list(params.keys())}"
+        )
+
+        return params
 
     def _generate_promotion_reason(
         self,
@@ -329,7 +424,7 @@ class SelfLearningSystem:
 
         rule_yaml = rule.to_yaml()
         rule_yaml["_promotion_metadata"] = {
-            "promoted_at": datetime.utcnow().isoformat(),
+            "promoted_at": datetime.now(timezone.utc).isoformat(),
             "promoted_by": approved_by or "auto",
             "confidence_score": candidate.confidence_score,
             "promotion_reason": candidate.promotion_reason,
@@ -353,7 +448,7 @@ class SelfLearningSystem:
         )
 
         # Track promotion
-        self.promoted_patterns[candidate.pattern_signature] = datetime.utcnow()
+        self.promoted_patterns[candidate.pattern_signature] = datetime.now(timezone.utc)
 
         logger.info(
             f"Promoted pattern {candidate.pattern_signature} to rule {rule.id}"
@@ -366,7 +461,7 @@ class SelfLearningSystem:
         candidates = self.find_promotion_candidates()
 
         return {
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "total_candidates": len(candidates),
             "promotion_criteria": {
                 "min_occurrences": self.config.min_occurrences,
@@ -434,3 +529,241 @@ class SelfLearningSystem:
             return "developing"
         else:
             return "needs_attention"
+
+    # =========================================================================
+    # Post-Promotion Monitoring & Rollback
+    # =========================================================================
+
+    def monitor_promoted_rules(self) -> Dict[str, Any]:
+        """
+        Monitor promoted rules for effectiveness and trigger rollback if needed.
+
+        Checks each promoted rule's post-promotion performance against the
+        rollback threshold. Rules exceeding the failure rate will be disabled.
+
+        Returns:
+            Monitoring report with rule status and any rollback actions taken
+        """
+        report = {
+            "monitored_at": datetime.now(timezone.utc).isoformat(),
+            "rules_monitored": 0,
+            "rules_healthy": 0,
+            "rules_degraded": 0,
+            "rollbacks_triggered": [],
+            "rule_details": []
+        }
+
+        # Get all promoted rules
+        if not self.config.promotion_output_dir.exists():
+            return report
+
+        rule_files = list(self.config.promotion_output_dir.glob("*.yaml"))
+        report["rules_monitored"] = len(rule_files)
+
+        for rule_file in rule_files:
+            try:
+                with open(rule_file, 'r') as f:
+                    rule_data = yaml.safe_load(f)
+
+                if not rule_data:
+                    continue
+
+                rule_id = rule_data.get("id", rule_file.stem)
+                promotion_meta = rule_data.get("_promotion_metadata", {})
+                promoted_at = promotion_meta.get("promoted_at")
+
+                if not promoted_at:
+                    continue
+
+                # Get post-promotion incident stats for this rule
+                stats = self._get_post_promotion_stats(rule_id, promoted_at)
+
+                rule_detail = {
+                    "rule_id": rule_id,
+                    "promoted_at": promoted_at,
+                    "post_promotion_incidents": stats["total"],
+                    "success_rate": stats["success_rate"],
+                    "failure_rate": stats["failure_rate"],
+                    "status": "healthy"
+                }
+
+                # Check if failure rate exceeds threshold
+                if stats["total"] >= 3:  # Need minimum sample size
+                    if stats["failure_rate"] > self.config.rollback_on_failure_rate:
+                        rule_detail["status"] = "degraded"
+                        report["rules_degraded"] += 1
+
+                        # Trigger rollback if auto-rollback is enabled
+                        if self.config.track_promotion_effectiveness:
+                            rollback_result = self._rollback_rule(rule_id, rule_file, stats)
+                            report["rollbacks_triggered"].append(rollback_result)
+                            rule_detail["rollback"] = rollback_result
+                    else:
+                        report["rules_healthy"] += 1
+                else:
+                    # Not enough data yet
+                    rule_detail["status"] = "monitoring"
+                    report["rules_healthy"] += 1
+
+                report["rule_details"].append(rule_detail)
+
+            except Exception as e:
+                logger.warning(f"Error monitoring rule {rule_file}: {e}")
+                report["rule_details"].append({
+                    "rule_id": rule_file.stem,
+                    "status": "error",
+                    "error": str(e)
+                })
+
+        return report
+
+    def _get_post_promotion_stats(
+        self,
+        rule_id: str,
+        promoted_at: str
+    ) -> Dict[str, Any]:
+        """
+        Get incident statistics for a rule since its promotion.
+
+        Args:
+            rule_id: The promoted rule ID
+            promoted_at: ISO timestamp of when rule was promoted
+
+        Returns:
+            Stats dict with total, successes, failures, and rates
+        """
+        try:
+            promotion_time = datetime.fromisoformat(promoted_at)
+        except (ValueError, TypeError):
+            return {"total": 0, "successes": 0, "failures": 0,
+                    "success_rate": 1.0, "failure_rate": 0.0}
+
+        # Query incidents resolved by this rule since promotion
+        # Note: This requires the incident_db to track which rule resolved each incident
+        conn = self.incident_db._get_connection()
+        cursor = conn.execute('''
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN resolution_status = 'success' THEN 1 ELSE 0 END) as successes,
+                SUM(CASE WHEN resolution_status = 'failed' THEN 1 ELSE 0 END) as failures
+            FROM incidents
+            WHERE resolution_level = 'L1'
+            AND resolution_action LIKE ?
+            AND resolved_at >= ?
+        ''', (f'%{rule_id}%', promoted_at))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row or row[0] == 0:
+            return {"total": 0, "successes": 0, "failures": 0,
+                    "success_rate": 1.0, "failure_rate": 0.0}
+
+        total = row[0]
+        successes = row[1] or 0
+        failures = row[2] or 0
+
+        return {
+            "total": total,
+            "successes": successes,
+            "failures": failures,
+            "success_rate": successes / total if total > 0 else 1.0,
+            "failure_rate": failures / total if total > 0 else 0.0
+        }
+
+    def _rollback_rule(
+        self,
+        rule_id: str,
+        rule_file: Path,
+        stats: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Rollback a promoted rule by disabling it.
+
+        Args:
+            rule_id: The rule ID to rollback
+            rule_file: Path to the rule YAML file
+            stats: The statistics that triggered rollback
+
+        Returns:
+            Rollback result dict
+        """
+        rollback_result = {
+            "rule_id": rule_id,
+            "rolled_back_at": datetime.now(timezone.utc).isoformat(),
+            "reason": f"Failure rate {stats['failure_rate']:.1%} exceeds threshold {self.config.rollback_on_failure_rate:.1%}",
+            "stats_at_rollback": stats,
+            "success": False
+        }
+
+        try:
+            # Load the rule
+            with open(rule_file, 'r') as f:
+                rule_data = yaml.safe_load(f)
+
+            # Disable the rule
+            rule_data["enabled"] = False
+            rule_data["_rollback_metadata"] = {
+                "rolled_back_at": datetime.now(timezone.utc).isoformat(),
+                "reason": rollback_result["reason"],
+                "stats_at_rollback": stats
+            }
+
+            # Move to rolled-back directory
+            rollback_dir = self.config.promotion_output_dir / "rolled_back"
+            rollback_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save to rollback location
+            rollback_file = rollback_dir / rule_file.name
+            with open(rollback_file, 'w') as f:
+                yaml.dump(rule_data, f, default_flow_style=False)
+
+            # Remove from active rules
+            rule_file.unlink()
+
+            # Remove from tracked patterns
+            if rule_id in self.promoted_patterns:
+                del self.promoted_patterns[rule_id]
+
+            rollback_result["success"] = True
+            rollback_result["rollback_file"] = str(rollback_file)
+
+            logger.warning(
+                f"Rolled back rule {rule_id}: {rollback_result['reason']}"
+            )
+
+        except Exception as e:
+            rollback_result["error"] = str(e)
+            logger.error(f"Failed to rollback rule {rule_id}: {e}")
+
+        return rollback_result
+
+    def get_rollback_history(self) -> List[Dict[str, Any]]:
+        """
+        Get history of rolled-back rules.
+
+        Returns:
+            List of rolled-back rule metadata
+        """
+        history = []
+
+        rollback_dir = self.config.promotion_output_dir / "rolled_back"
+        if not rollback_dir.exists():
+            return history
+
+        for rule_file in rollback_dir.glob("*.yaml"):
+            try:
+                with open(rule_file, 'r') as f:
+                    rule_data = yaml.safe_load(f)
+
+                if rule_data:
+                    history.append({
+                        "rule_id": rule_data.get("id", rule_file.stem),
+                        "name": rule_data.get("name", "Unknown"),
+                        "rollback_metadata": rule_data.get("_rollback_metadata", {}),
+                        "promotion_metadata": rule_data.get("_promotion_metadata", {})
+                    })
+            except Exception as e:
+                logger.warning(f"Error reading rollback history for {rule_file}: {e}")
+
+        return history
