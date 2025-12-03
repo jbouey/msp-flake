@@ -30,7 +30,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -54,7 +54,7 @@ class DriftResult:
     details: Dict
     remediation_runbook: Optional[str] = None
     hipaa_controls: List[str] = field(default_factory=list)
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class DriftDetector:
@@ -118,7 +118,7 @@ class DriftDetector:
             Dictionary mapping check name to DriftResult
         """
         logger.info("Starting drift detection sweep")
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         # Run all checks in parallel
         results = await asyncio.gather(
@@ -141,7 +141,7 @@ class DriftDetector:
             drift_results[result.check_name] = result
 
         # Log summary
-        duration = (datetime.utcnow() - start_time).total_seconds()
+        duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         drift_count = sum(1 for r in drift_results.values() if r.drift_detected)
 
         logger.info(f"Drift detection complete: {drift_count}/{len(drift_results)} checks detected drift ({duration:.2f}s)")
@@ -248,7 +248,7 @@ class DriftDetector:
             # Placeholder: In real implementation, query nixos-rebuild --check
             # or compare current channel with latest
             critical_pending = 0  # Would be populated from actual check
-            last_update = datetime.utcnow() - timedelta(days=3)  # Placeholder
+            last_update = datetime.now(timezone.utc) - timedelta(days=3)  # Placeholder
 
             drift_detected = critical_pending > 0
 
@@ -327,7 +327,7 @@ class DriftDetector:
                 backup_metadata = json.load(f)
 
             last_backup = datetime.fromisoformat(backup_metadata['timestamp'])
-            backup_age_hours = (datetime.utcnow() - last_backup).total_seconds() / 3600
+            backup_age_hours = (datetime.now(timezone.utc) - last_backup).total_seconds() / 3600
 
             # Check restore test
             restore_test_files = sorted(backup_dir.glob("restore-test-*.json"), reverse=True)
@@ -336,7 +336,7 @@ class DriftDetector:
                 with open(restore_test_files[0], 'r') as f:
                     restore_metadata = json.load(f)
                 last_restore_test = datetime.fromisoformat(restore_metadata['timestamp'])
-                restore_test_age_days = (datetime.utcnow() - last_restore_test).days
+                restore_test_age_days = (datetime.now(timezone.utc) - last_restore_test).days
             else:
                 last_restore_test = None
                 restore_test_age_days = 999

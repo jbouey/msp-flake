@@ -1,0 +1,69 @@
+id: RB-DISK-001
+name: "Disk Full Remediation"
+description: "Free up disk space when partitions reach critical levels"
+hipaa_controls:
+  - "164.308(a)(7)(ii)(B)"  # Contingency Plan - Disaster Recovery Plan
+  - "164.310(d)(1)"  # Device and Media Controls
+severity: critical
+category: storage
+
+steps:
+  - id: 1
+    action: check_disk_usage
+    description: "Identify partitions over 90% full"
+    timeout: 10
+    command: "df -h | awk '$5 > 90 {print $0}'"
+    parse_output: true
+
+  - id: 2
+    action: find_large_log_files
+    description: "Locate log files over 100MB"
+    timeout: 30
+    command: 'find /var/log -type f -size +100M -exec ls -lh {} \;'
+
+  - id: 3
+    action: rotate_logs
+    description: "Force log rotation"
+    timeout: 30
+    command: "logrotate -f /etc/logrotate.conf"
+
+  - id: 4
+    action: clean_package_cache
+    description: "Clear package manager cache"
+    timeout: 60
+    command: "nix-collect-garbage -d"
+    verify_space_freed: true
+
+  - id: 5
+    action: remove_old_journals
+    description: "Remove systemd journals older than 7 days"
+    timeout: 30
+    command: "journalctl --vacuum-time=7d"
+
+  - id: 6
+    action: verify_space_available
+    description: "Confirm disk usage is below 85%"
+    timeout: 10
+    command: "df -h | awk '$5 > 85 {exit 1}'"
+    success_condition: "exit_code == 0"
+
+rollback:
+  - action: alert_administrator
+    description: "Alert if automatic cleanup insufficient"
+    command: "echo 'Disk cleanup failed - manual intervention required' | mail -s 'CRITICAL: Disk Full' admin@clinic.local"
+
+evidence_required:
+  - disk_usage_before
+  - disk_usage_after
+  - files_removed
+  - space_freed_mb
+  - log_rotation_output
+
+output_format:
+  type: "json"
+  schema:
+    incident_id: "string"
+    runbook_id: "string"
+    partitions_cleaned: "array"
+    space_freed_mb: "integer"
+    outcome: "success|failure"

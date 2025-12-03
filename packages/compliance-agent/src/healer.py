@@ -34,7 +34,7 @@ import yaml
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -58,7 +58,7 @@ class StepResult:
     output: str
     error: Optional[str] = None
     duration_seconds: float = 0
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 @dataclass
@@ -71,7 +71,7 @@ class HealingResult:
     health_check_passed: bool
     total_duration_seconds: float
     error_message: Optional[str] = None
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class Healer:
@@ -201,7 +201,7 @@ class Healer:
         Returns:
             HealingResult with execution details
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         if runbook_id not in self.runbooks:
             logger.error(f"Runbook not found: {runbook_id}")
@@ -277,7 +277,7 @@ class Healer:
             error_message = None
 
         # Calculate duration
-        total_duration = (datetime.utcnow() - start_time).total_seconds()
+        total_duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 
         return HealingResult(
             runbook_id=runbook_id,
@@ -322,7 +322,7 @@ class Healer:
                 duration_seconds=0
             )
 
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         try:
             # Execute action based on type
@@ -343,7 +343,7 @@ class Healer:
             else:
                 status = 'success'
 
-            duration = (datetime.utcnow() - start_time).total_seconds()
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 
             return StepResult(
                 step_number=step_number,
@@ -355,7 +355,7 @@ class Healer:
             )
 
         except asyncio.TimeoutError:
-            duration = (datetime.utcnow() - start_time).total_seconds()
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.error(f"Step {step_number} timed out after {timeout}s")
 
             return StepResult(
@@ -368,7 +368,7 @@ class Healer:
             )
 
         except Exception as e:
-            duration = (datetime.utcnow() - start_time).total_seconds()
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.error(f"Step {step_number} failed: {e}")
 
             return StepResult(
@@ -603,7 +603,7 @@ class Healer:
             Dictionary with health metrics
         """
         snapshot = {
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'services': {},
             'disk_usage': {},
             'load_average': None

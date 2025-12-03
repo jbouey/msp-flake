@@ -207,3 +207,45 @@ python tests/test_windows_integration.py
 winrm invoke Restore winrm/config @{}
 # Then re-run setup script
 ```
+
+### Windows Firewall Blocking VM-to-VM Traffic
+
+**Symptom:** WinRM works from Mac host (192.168.56.1) but times out from NixOS test client (192.168.56.103).
+
+**Diagnosis:**
+```bash
+# From test client - ARP works but TCP fails
+arping -c 3 -I enp0s8 192.168.56.102    # Returns MAC address
+nc -zv 192.168.56.102 5985              # Times out
+```
+
+**Root Cause:** Windows Firewall allows traffic from gateway (192.168.56.1) but blocks traffic from other VMs on the same subnet.
+
+**Solution:** Run this PowerShell on Windows VM as Administrator:
+```powershell
+# Allow WinRM from entire host-only network
+New-NetFirewallRule -Name "WinRM_HostOnly" `
+    -DisplayName "WinRM from Host-Only Network" `
+    -Enabled True `
+    -Direction Inbound `
+    -Protocol TCP `
+    -LocalPort 5985 `
+    -RemoteAddress 192.168.56.0/24 `
+    -Action Allow
+
+# Allow ICMP (ping) for troubleshooting
+New-NetFirewallRule -Name "ICMP_HostOnly" `
+    -DisplayName "ICMP from Host-Only Network" `
+    -Enabled True `
+    -Direction Inbound `
+    -Protocol ICMPv4 `
+    -RemoteAddress 192.168.56.0/24 `
+    -Action Allow
+```
+
+**Quick Fix via RDP:**
+1. RDP to Windows VM from Mac: `open rdp://192.168.56.102` (or use Microsoft Remote Desktop)
+2. Login as vagrant/vagrant
+3. Open PowerShell as Administrator
+4. Run firewall commands above
+5. Test from NixOS client: `nc -zv 192.168.56.102 5985`

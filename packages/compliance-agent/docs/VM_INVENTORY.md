@@ -259,6 +259,8 @@ Get-NetFirewallProfile | Select Name, Enabled
 2. Check WinRM: `ssh -p 4444 root@174.178.63.139 "nc -zv 192.168.56.102 5985"`
 3. Check collector log: `ssh -p 4444 root@174.178.63.139 "tail -50 /var/log/windows_collector.log"`
 
+**Known Issue (2025-11-28):** Windows Firewall blocks VM-to-VM traffic by default. WinRM works from Mac host (192.168.56.1) but times out from NixOS appliance (192.168.56.103). See `WINDOWS_TEST_SETUP.md` section "Windows Firewall Blocking VM-to-VM Traffic" for fix.
+
 ### VMs not starting?
 ```bash
 # On Mac - list VMs
@@ -271,4 +273,4 @@ VBoxManage startvm "win-test-vm..." --type headless
 
 ---
 
-**Last Updated:** 2025-11-24
+**Last Updated:** 2025-11-28

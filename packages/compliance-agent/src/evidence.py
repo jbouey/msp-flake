@@ -44,7 +44,7 @@ import subprocess
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field, asdict
 import sqlite3
 
@@ -301,7 +301,7 @@ class EvidenceGenerator:
 
     def generate_bundle_id(self) -> str:
         """Generate unique bundle ID"""
-        date_str = datetime.utcnow().strftime('%Y%m%d')
+        date_str = datetime.now(timezone.utc).strftime('%Y%m%d')
         self.bundle_count += 1
         return f"EB-{date_str}-{self.bundle_count:04d}"
 
@@ -336,7 +336,7 @@ class EvidenceGenerator:
         bundle = EvidenceBundle(
             bundle_id=bundle_id,
             site_id=self.site_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             event_type="drift_detection",
             drift_detected=any(r.drift_detected for r in drift_results.values()),
             actions_taken=drift_summary,
@@ -385,7 +385,7 @@ class EvidenceGenerator:
         bundle = EvidenceBundle(
             bundle_id=bundle_id,
             site_id=self.site_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             event_type="drift_healing",
             drift_check=drift_result.check_name,
             drift_severity=drift_result.severity.value,
@@ -440,7 +440,7 @@ class EvidenceGenerator:
         bundle = EvidenceBundle(
             bundle_id=bundle_id,
             site_id=self.site_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             event_type="rollback",
             drift_check=drift_result.check_name,
             drift_severity=drift_result.severity.value,
@@ -570,7 +570,7 @@ class EvidenceGenerator:
         Args:
             retention_days: Days to retain evidence
         """
-        cutoff = datetime.utcnow() - timedelta(days=retention_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
 
         deleted_count = 0
 
@@ -630,7 +630,7 @@ if __name__ == '__main__':
         bundle = EvidenceBundle(
             bundle_id="EB-TEST-0001",
             site_id=config.site_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             event_type="test",
             success=True,
             hipaa_controls=["164.312(b)"]
