@@ -382,7 +382,7 @@ class RemediationResult(BaseModel):
         description="Check type that was remediated"
     )
 
-    outcome: Literal["success", "failed", "reverted", "deferred", "alert"] = Field(
+    outcome: Literal["success", "failed", "reverted", "deferred", "alert", "pending_approval"] = Field(
         ...,
         description="Remediation outcome"
     )

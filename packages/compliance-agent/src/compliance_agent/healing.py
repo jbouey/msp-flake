@@ -3,16 +3,18 @@ Self-healing remediation engine for compliance drift.
 
 This module implements automated remediation actions for the 6 drift types
 detected by the DriftDetector. Each remediation follows a pattern:
-1. Check maintenance window (if disruptive)
-2. Capture pre-state
-3. Execute remediation steps
-4. Verify post-state health check
-5. Generate RemediationResult with evidence
+1. Check if approval is required (for disruptive actions)
+2. Check maintenance window (if disruptive)
+3. Capture pre-state
+4. Execute remediation steps
+5. Verify post-state health check
+6. Generate RemediationResult with evidence
 
 All remediations support rollback where applicable.
 """
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from pathlib import Path
@@ -29,12 +31,16 @@ from .utils import (
     is_within_maintenance_window,
     AsyncCommandError
 )
+from .approval import ApprovalManager, ACTION_POLICIES
+
+
+logger = logging.getLogger(__name__)
 
 
 class HealingEngine:
     """
     Self-healing engine for automated remediation.
-    
+
     Implements 6 remediation actions:
     1. update_to_baseline_generation - Switch NixOS generation
     2. restart_av_service - Restart AV/EDR service
@@ -42,29 +48,56 @@ class HealingEngine:
     4. restart_logging_services - Restart logging stack
     5. restore_firewall_baseline - Reapply firewall ruleset
     6. enable_volume_encryption - Alert for manual intervention
+
+    Actions can be gated by approval policy for disruptive operations.
     """
-    
-    def __init__(self, config: AgentConfig):
+
+    # Map drift checks to action names for approval lookup
+    DRIFT_TO_ACTION = {
+        "patching": "update_to_baseline_generation",
+        "av_edr_health": "restart_av_service",
+        "backup_verification": "run_backup_job",
+        "logging_continuity": "restart_logging_services",
+        "firewall_baseline": "restore_firewall_baseline",
+        "encryption": "enable_volume_encryption"
+    }
+
+    def __init__(
+        self,
+        config: AgentConfig,
+        approval_manager: Optional[ApprovalManager] = None
+    ):
         """
         Initialize healing engine.
-        
+
         Args:
             config: Agent configuration
+            approval_manager: Optional approval manager for gated actions
         """
         self.config = config
         self.deployment_mode = config.deployment_mode
         self.maintenance_window_start = config.maintenance_window_start
         self.maintenance_window_end = config.maintenance_window_end
+        self.approval_manager = approval_manager
+
+        # Track pending approval requests by drift check
+        self._pending_approvals: Dict[str, str] = {}
         
-    async def remediate(self, drift: DriftResult) -> RemediationResult:
+    async def remediate(
+        self,
+        drift: DriftResult,
+        approval_request_id: Optional[str] = None
+    ) -> RemediationResult:
         """
         Main remediation dispatcher.
-        
+
         Routes drift to appropriate remediation handler based on check type.
-        
+        Checks approval requirements for disruptive actions.
+
         Args:
             drift: DriftResult from detection
-            
+            approval_request_id: Optional pre-approved request ID
+
         Returns:
             RemediationResult with outcome and evidence
         """
@@ -76,16 +109,28 @@ class HealingEngine:
             "firewall_baseline": self.restore_firewall_baseline,
             "encryption": self.enable_volume_encryption
         }
-        
+
         handler = remediation_map.get(drift.check)
-        
+
         if not handler:
             return RemediationResult(
                 check=drift.check,
                 outcome="failed",
                 error=f"No remediation handler for check: {drift.check}"
             )
-        
+
+        # Check approval requirement
+        action_name = self.DRIFT_TO_ACTION.get(drift.check, drift.check)
+        approval_result = await self._check_approval(
+            action_name=action_name,
+            drift=drift,
+            approval_request_id=approval_request_id
+        )
+
+        if approval_result is not None:
+            # Approval is pending or blocked
+            return approval_result
+
         try:
             return await handler(drift)
         except Exception as e:
@@ -95,6 +140,105 @@ class HealingEngine:
                 pre_state=drift.pre_state,
                 error=str(e)
             )
+
+    async def _check_approval(
+        self,
+        action_name: str,
+        drift: DriftResult,
+        approval_request_id: Optional[str] = None
+    ) -> Optional[RemediationResult]:
+        """
+        Check if action requires and has approval.
+
+        Args:
+            action_name: Name of the remediation action
+            drift: The drift result triggering remediation
+            approval_request_id: Optional pre-approved request ID
+
+        Returns:
+            None if approved (or no approval needed), RemediationResult if blocked
+        """
+        if self.approval_manager is None:
+            # No approval manager configured - allow all actions
+            return None
+
+        # Check if in maintenance window
+        in_maintenance = is_within_maintenance_window(
+            self.maintenance_window_start,
+            self.maintenance_window_end
+        )
+
+        # Check if approval is required
+        if not self.approval_manager.requires_approval(action_name, in_maintenance):
+            logger.debug(f"Action {action_name} does not require approval")
+            return None
+
+        # Check if we have a pre-approved request ID
+        if approval_request_id:
+            if self.approval_manager.is_approved(approval_request_id):
+                logger.info(f"Action {action_name} approved via request {approval_request_id}")
+                return None
+            else:
+                logger.warning(f"Approval request {approval_request_id} is not approved")
+                return RemediationResult(
+                    check=drift.check,
+                    outcome="pending_approval",
+                    pre_state=drift.pre_state,
+                    error=f"Approval request {approval_request_id} not approved"
+                )
+
+        # Check if we already have a pending request for this drift check
+        existing_request_id = self._pending_approvals.get(drift.check)
+        if existing_request_id:
+            existing = self.approval_manager.get_request(existing_request_id)
+            if existing and existing.status == "pending":
+                logger.info(f"Action {action_name} waiting for approval: {existing_request_id}")
+                return RemediationResult(
+                    check=drift.check,
+                    outcome="pending_approval",
+                    pre_state=drift.pre_state,
+                    error=f"Waiting for approval: {existing_request_id}"
+                )
+            elif existing and existing.status == "approved":
+                # Request was approved since last check
+                logger.info(f"Action {action_name} approved: {existing_request_id}")
+                del self._pending_approvals[drift.check]
+                return None
+            elif existing and existing.status in ("rejected", "expired"):
+                # Request was rejected/expired - create new one
+                del self._pending_approvals[drift.check]
+
+        # Create new approval request
+        request = self.approval_manager.create_request(
+            action_name=action_name,
+            drift_check=drift.check,
+            site_id=self.config.site_id,
+            host_id=self.config.host_id,
+            pre_state=drift.pre_state
+        )
+
+        self._pending_approvals[drift.check] = request.request_id
+
+        logger.info(
+            f"Created approval request {request.request_id} for {action_name} "
+            f"(risk: {request.risk_level})"
+        )
+
+        return RemediationResult(
+            check=drift.check,
+            outcome="pending_approval",
+            pre_state=drift.pre_state,
+            error=f"Approval required: {request.request_id}"
+        )
+
+    def get_pending_approvals(self) -> Dict[str, str]:
+        """
+        Get pending approval request IDs.
+
+        Returns:
+            Dict mapping drift check to request ID
+        """
+        return self._pending_approvals.copy()
     
     # ========================================================================
     # Remediation Action 1: Update to Baseline Generation

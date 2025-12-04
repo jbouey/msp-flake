@@ -616,8 +616,191 @@ async def test_remediate_exception_handling(healing_engine, patching_drift):
     """Test remediate handles exceptions gracefully."""
     with patch.object(healing_engine, 'update_to_baseline_generation') as mock_handler:
         mock_handler.side_effect = Exception("Unexpected error")
-        
+
         result = await healing_engine.remediate(patching_drift)
-        
+
         assert result.outcome == "failed"
         assert "Unexpected error" in result.error
+
+
+# ============================================================================
+# Approval Integration Tests
+# ============================================================================
+
+
+@pytest.fixture
+def approval_db(tmp_path):
+    """Create temporary approval database."""
+    from compliance_agent.approval import ApprovalManager
+    db_path = tmp_path / "approvals.db"
+    return ApprovalManager(db_path)
+
+
+@pytest.fixture
+def healing_engine_with_approval(test_config, approval_db):
+    """Create HealingEngine with approval manager."""
+    return HealingEngine(test_config, approval_manager=approval_db)
+
+
+@pytest.mark.asyncio
+async def test_remediate_no_approval_manager(healing_engine, patching_drift):
+    """Test remediate proceeds without approval manager."""
+    # No approval manager = all actions allowed
+    with patch('compliance_agent.healing.run_command') as mock_run, \
+         patch('compliance_agent.healing.is_within_maintenance_window') as mock_mw:
+
+        mock_mw.return_value = True
+        mock_run.side_effect = [
+            AsyncMock(stdout="999   2025-01-15 10:23:45"),
+            AsyncMock(stdout="Switching"),
+            AsyncMock(stdout="1000")
+        ]
+
+        result = await healing_engine.remediate(patching_drift)
+
+        # Should proceed without approval check
+        assert result.outcome in ("success", "failed", "deferred")
+        assert result.outcome != "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_remediate_non_disruptive_no_approval(healing_engine_with_approval):
+    """Test non-disruptive actions don't require approval."""
+    av_drift = DriftResult(
+        check="av_edr_health",
+        drifted=True,
+        pre_state={"av_service": "clamav-daemon"},
+        severity="medium"
+    )
+
+    with patch('compliance_agent.healing.run_command') as mock_run:
+        mock_run.side_effect = [
+            AsyncMock(stdout=""),  # restart
+            AsyncMock(stdout="active")  # is-active
+        ]
+
+        result = await healing_engine_with_approval.remediate(av_drift)
+
+        # Non-disruptive action should not need approval
+        assert result.outcome != "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_remediate_disruptive_requires_approval(healing_engine_with_approval, patching_drift):
+    """Test disruptive actions require approval."""
+    with patch('compliance_agent.healing.is_within_maintenance_window') as mock_mw:
+        mock_mw.return_value = False  # Not in maintenance window
+
+        result = await healing_engine_with_approval.remediate(patching_drift)
+
+        assert result.outcome == "pending_approval"
+        assert "Approval required" in result.error
+        assert result.error.startswith("Approval required: APR-")
+
+
+@pytest.mark.asyncio
+async def test_remediate_with_pre_approved_request(
+    test_config, approval_db, patching_drift
+):
+    """Test remediate proceeds with pre-approved request."""
+    # Create and approve a request
+    request = approval_db.create_request(
+        action_name="update_to_baseline_generation",
+        drift_check="patching",
+        site_id="test-site",
+        host_id="test-host",
+        pre_state={}
+    )
+    approval_db.approve(request.request_id, approved_by="admin")
+
+    engine = HealingEngine(test_config, approval_manager=approval_db)
+
+    with patch('compliance_agent.healing.run_command') as mock_run, \
+         patch('compliance_agent.healing.is_within_maintenance_window') as mock_mw:
+
+        mock_mw.return_value = True
+        mock_run.side_effect = [
+            AsyncMock(stdout="999   2025-01-15 10:23:45"),
+            AsyncMock(stdout="Switching"),
+            AsyncMock(stdout="1000")
+        ]
+
+        result = await engine.remediate(
+            patching_drift,
+            approval_request_id=request.request_id
+        )
+
+        # Should proceed with approval
+        assert result.outcome != "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_remediate_auto_approve_in_maintenance(
+    healing_engine_with_approval, patching_drift
+):
+    """Test disruptive actions auto-approve in maintenance window."""
+    with patch('compliance_agent.healing.run_command') as mock_run, \
+         patch('compliance_agent.healing.is_within_maintenance_window') as mock_mw:
+
+        mock_mw.return_value = True  # In maintenance window
+        mock_run.side_effect = [
+            AsyncMock(stdout="999   2025-01-15 10:23:45"),
+            AsyncMock(stdout="Switching"),
+            AsyncMock(stdout="1000")
+        ]
+
+        result = await healing_engine_with_approval.remediate(patching_drift)
+
+        # Should auto-approve in maintenance window
+        assert result.outcome != "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_remediate_encryption_never_auto_approves(healing_engine_with_approval):
+    """Test encryption actions never auto-approve even in maintenance."""
+    encryption_drift = DriftResult(
+        check="encryption",
+        drifted=True,
+        pre_state={"unencrypted_volumes": ["/dev/sda1"]},
+        severity="critical"
+    )
+
+    with patch('compliance_agent.healing.is_within_maintenance_window') as mock_mw:
+        mock_mw.return_value = True  # Even in maintenance window
+
+        result = await healing_engine_with_approval.remediate(encryption_drift)
+
+        # Encryption should still require approval
+        assert result.outcome == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_get_pending_approvals(healing_engine_with_approval, patching_drift):
+    """Test tracking pending approval requests."""
+    with patch('compliance_agent.healing.is_within_maintenance_window') as mock_mw:
+        mock_mw.return_value = False
+
+        # First call creates approval request
+        await healing_engine_with_approval.remediate(patching_drift)
+
+        pending = healing_engine_with_approval.get_pending_approvals()
+
+        assert "patching" in pending
+        assert pending["patching"].startswith("APR-")
+
+
+@pytest.mark.asyncio
+async def test_remediate_reuses_pending_request(healing_engine_with_approval, patching_drift):
+    """Test that repeated calls reuse pending approval request."""
+    with patch('compliance_agent.healing.is_within_maintenance_window') as mock_mw:
+        mock_mw.return_value = False
+
+        # First call
+        result1 = await healing_engine_with_approval.remediate(patching_drift)
+        request_id1 = result1.error.split(": ")[-1]
+
+        # Second call should reuse same request
+        result2 = await healing_engine_with_approval.remediate(patching_drift)
+        request_id2 = result2.error.split(": ")[-1]
+
+        assert request_id1 == request_id2

@@ -126,7 +126,12 @@ def incident_db(temp_dirs):
 
 @pytest.fixture
 def sample_evidence(temp_dirs):
-    """Create sample evidence bundles."""
+    """Create sample evidence bundles in expected directory structure.
+
+    The web_ui code looks for bundle.json inside subdirectories
+    (rglob("bundle.json")), so we need to create the proper structure:
+    evidence_dir/{bundle_id}/bundle.json
+    """
     evidence_dir = temp_dirs["evidence_dir"]
 
     bundles = []
@@ -147,7 +152,10 @@ def sample_evidence(temp_dirs):
             "hipaa_controls": ["164.308(a)(5)(ii)(B)"]
         }
 
-        bundle_path = evidence_dir / f"{bundle_id}.json"
+        # Create subdirectory for each bundle (matches expected structure)
+        bundle_dir = evidence_dir / bundle_id
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle_path = bundle_dir / "bundle.json"
         bundle_path.write_text(json.dumps(bundle, indent=2))
         bundles.append(bundle)
 
@@ -394,8 +402,8 @@ def test_api_evidence_detail_not_found(client):
 
 
 def test_api_health_endpoint(client):
-    """Test /api/health endpoint."""
-    response = client.get("/api/health")
+    """Test /health endpoint."""
+    response = client.get("/health")
 
     assert response.status_code == 200
     data = response.json()
@@ -554,10 +562,11 @@ async def test_get_evidence_stats(web_ui, sample_evidence):
     """Test _get_evidence_stats method."""
     stats = await web_ui._get_evidence_stats()
 
-    assert "total_bundles" in stats
-    assert "success_count" in stats
-    assert "failed_count" in stats
-    assert stats["total_bundles"] == len(sample_evidence)
+    # Method returns 'total' not 'total_bundles', and uses by_outcome dict
+    assert "total" in stats
+    assert "by_outcome" in stats
+    assert "by_check" in stats
+    assert stats["total"] == len(sample_evidence)
 
 
 # ============================================================================
@@ -565,19 +574,18 @@ async def test_get_evidence_stats(web_ui, sample_evidence):
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_get_hash_chain_status_empty(web_ui):
-    """Test _get_hash_chain_status with empty chain."""
-    status = await web_ui._get_hash_chain_status()
+async def test_verify_hash_chain_no_file(web_ui):
+    """Test _verify_hash_chain with no chain file."""
+    status = await web_ui._verify_hash_chain()
 
-    assert "verified" in status
-    # Empty chain should still be valid
-    assert status.get("total_links", 0) == 0
+    # When no chain file exists, should return no_chain status
+    assert status["status"] == "no_chain"
 
 
 @pytest.mark.asyncio
-async def test_get_hash_chain_status_with_data(web_ui, temp_dirs):
-    """Test _get_hash_chain_status with chain data."""
-    # Create chain file
+async def test_verify_hash_chain_with_data(web_ui, temp_dirs):
+    """Test _verify_hash_chain with valid chain data."""
+    # Create chain file with valid genesis and linked blocks
     chain_file = temp_dirs["hash_chain_dir"] / "chain.jsonl"
 
     links = [
@@ -589,8 +597,9 @@ async def test_get_hash_chain_status_with_data(web_ui, temp_dirs):
         for link in links:
             f.write(json.dumps(link) + "\n")
 
-    status = await web_ui._get_hash_chain_status()
+    status = await web_ui._verify_hash_chain()
 
+    assert status["status"] == "verified"
     assert status["total_links"] == 2
 
 
@@ -650,3 +659,209 @@ def test_dashboard_data_consistency(client, sample_evidence):
 
     assert status["checks_passed"] == passed
     assert status["checks_failed"] == failed
+
+
+# ============================================================================
+# Regulatory Monitoring Tests
+# ============================================================================
+
+def test_api_regulatory_endpoint(client):
+    """Test /api/regulatory endpoint."""
+    response = client.get("/api/regulatory")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should return alert data structure
+    assert "new_updates_count" in data or "status" in data
+    assert "active_comment_periods_count" in data or "status" in data
+
+
+def test_api_regulatory_updates_endpoint(client):
+    """Test /api/regulatory/updates endpoint."""
+    response = client.get("/api/regulatory/updates?limit=5")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should return list of updates
+    assert isinstance(data, list)
+
+
+def test_api_regulatory_comments_endpoint(client):
+    """Test /api/regulatory/comments endpoint."""
+    response = client.get("/api/regulatory/comments")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should return list of active comment periods
+    assert isinstance(data, list)
+
+
+@pytest.mark.asyncio
+async def test_get_regulatory_alerts(web_ui):
+    """Test _get_regulatory_alerts method."""
+    alerts = await web_ui._get_regulatory_alerts()
+
+    # Should return a dict with expected keys
+    assert isinstance(alerts, dict)
+    # Either has status (error/unavailable) or has update counts
+    assert "status" in alerts or "new_updates_count" in alerts
+
+
+@pytest.mark.asyncio
+async def test_get_regulatory_updates(web_ui):
+    """Test _get_regulatory_updates method."""
+    updates = await web_ui._get_regulatory_updates(limit=5)
+
+    # Should return a list
+    assert isinstance(updates, list)
+
+
+@pytest.mark.asyncio
+async def test_get_active_comment_periods(web_ui):
+    """Test _get_active_comment_periods method."""
+    periods = await web_ui._get_active_comment_periods()
+
+    # Should return a list
+    assert isinstance(periods, list)
+
+
+@pytest.mark.asyncio
+async def test_federal_register_monitor_lazy_loading(web_ui):
+    """Test that FederalRegisterMonitor is lazily loaded."""
+    # First call should create the monitor
+    monitor1 = web_ui._get_federal_register_monitor()
+
+    # Second call should return the same instance
+    monitor2 = web_ui._get_federal_register_monitor()
+
+    # Should be the same object (lazy loaded once)
+    assert monitor1 is monitor2
+
+
+# ============================================================================
+# Rollback Tracking Tests
+# ============================================================================
+
+def test_api_rollback_stats_endpoint(client):
+    """Test /api/rollback/stats endpoint."""
+    response = client.get("/api/rollback/stats")
+    assert response.status_code == 200
+    data = response.json()
+    # Should have rollback_rate key (even if 0)
+    assert "rollback_rate" in data or "status" in data
+
+
+def test_api_rollback_history_endpoint(client):
+    """Test /api/rollback/history endpoint."""
+    response = client.get("/api/rollback/history")
+    assert response.status_code == 200
+    data = response.json()
+    # Should have rollbacks list
+    assert "rollbacks" in data or "status" in data
+
+
+def test_api_rollback_monitoring_endpoint(client):
+    """Test /api/rollback/monitoring endpoint."""
+    response = client.get("/api/rollback/monitoring")
+    assert response.status_code == 200
+    data = response.json()
+    # Should have monitoring status
+    assert "rules_monitored" in data or "status" in data
+
+
+@pytest.mark.asyncio
+async def test_get_rollback_stats(web_ui):
+    """Test _get_rollback_stats method."""
+    stats = await web_ui._get_rollback_stats()
+
+    assert isinstance(stats, dict)
+    # Should always have rollback_rate
+    assert "rollback_rate" in stats
+    assert isinstance(stats["rollback_rate"], (int, float))
+
+
+@pytest.mark.asyncio
+async def test_get_rollback_history(web_ui):
+    """Test _get_rollback_history method."""
+    history = await web_ui._get_rollback_history()
+
+    assert isinstance(history, dict)
+    # Should have rollbacks list
+    assert "rollbacks" in history
+    assert isinstance(history["rollbacks"], list)
+
+
+@pytest.mark.asyncio
+async def test_get_rule_monitoring_status(web_ui):
+    """Test _get_rule_monitoring_status method."""
+    status = await web_ui._get_rule_monitoring_status()
+
+    assert isinstance(status, dict)
+    # Should have monitoring info
+    assert "rules_monitored" in status or "status" in status
+
+
+def test_learning_system_method_exists(web_ui):
+    """Test that _get_learning_system method exists."""
+    # Just verify the method exists and is callable
+    assert hasattr(web_ui, '_get_learning_system')
+    assert callable(web_ui._get_learning_system)
+
+
+# ============================================================================
+# Evidence Caching Tests
+# ============================================================================
+
+def test_evidence_cache_method_exists(web_ui):
+    """Test that evidence cache methods exist."""
+    assert hasattr(web_ui, '_get_evidence_cache')
+    assert hasattr(web_ui, 'invalidate_evidence_cache')
+    assert callable(web_ui._get_evidence_cache)
+    assert callable(web_ui.invalidate_evidence_cache)
+
+
+def test_evidence_cache_returns_list(web_ui):
+    """Test that _get_evidence_cache returns a list."""
+    cache = web_ui._get_evidence_cache()
+    assert isinstance(cache, list)
+
+
+def test_evidence_cache_invalidation(web_ui):
+    """Test that cache invalidation resets cache."""
+    # Get cache first
+    _ = web_ui._get_evidence_cache()
+
+    # Invalidate
+    web_ui.invalidate_evidence_cache()
+
+    # Cache should be reset
+    assert web_ui._evidence_cache is None
+    assert web_ui._evidence_cache_time == 0
+
+
+def test_evidence_cache_consistency(web_ui):
+    """Test that cache returns consistent results."""
+    # First call
+    cache1 = web_ui._get_evidence_cache()
+
+    # Second call should return same data (within TTL)
+    cache2 = web_ui._get_evidence_cache()
+
+    # Both should be equal
+    assert cache1 == cache2
+
+
+@pytest.mark.asyncio
+async def test_list_evidence_uses_cache(web_ui):
+    """Test that _list_evidence uses cached data."""
+    # Call list_evidence twice
+    result1 = await web_ui._list_evidence()
+    result2 = await web_ui._list_evidence()
+
+    # Both should have same structure
+    assert "items" in result1
+    assert "pagination" in result1
+    assert result1["pagination"]["total"] == result2["pagination"]["total"]

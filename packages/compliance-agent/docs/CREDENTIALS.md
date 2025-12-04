@@ -50,8 +50,9 @@ localhost:55985          127.0.0.1:55985                      guest:5985
 ### SSH Tunnel Setup (Required First)
 
 ```bash
-# Create SSH tunnel to access Windows VM from local machine
-ssh -f -N -L 55985:127.0.0.1:55985 jrelly@174.178.63.139
+# Create SSH tunnel to access Windows VM via host-only network
+# NOTE: Use host-only IP (192.168.56.102:5985), NOT NAT (127.0.0.1:55985)
+ssh -f -N -L 55985:192.168.56.102:5985 jrelly@174.178.63.139
 
 # Verify tunnel is running
 lsof -i:55985

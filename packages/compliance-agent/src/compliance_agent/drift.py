@@ -191,8 +191,8 @@ class DriftDetector:
                 parts = result.stdout.strip().split()
                 if len(parts) >= 3:
                     gen_date_str = f"{parts[1]} {parts[2]}"
-                    gen_date = datetime.strptime(gen_date_str, "%Y-%m-%d %H:%M:%S")
-                    age_days = (datetime.now() - gen_date).days
+                    gen_date = datetime.strptime(gen_date_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    age_days = (datetime.now(timezone.utc) - gen_date).days
 
                     pre_state["generation_age_days"] = age_days
 

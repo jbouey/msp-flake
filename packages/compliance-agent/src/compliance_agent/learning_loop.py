@@ -640,12 +640,13 @@ class SelfLearningSystem:
 
         # Query incidents resolved by this rule since promotion
         # Note: This requires the incident_db to track which rule resolved each incident
-        conn = self.incident_db._get_connection()
+        import sqlite3
+        conn = sqlite3.connect(self.incident_db.db_path)
         cursor = conn.execute('''
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN resolution_status = 'success' THEN 1 ELSE 0 END) as successes,
-                SUM(CASE WHEN resolution_status = 'failed' THEN 1 ELSE 0 END) as failures
+                SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as successes,
+                SUM(CASE WHEN outcome = 'failed' OR outcome = 'failure' THEN 1 ELSE 0 END) as failures
             FROM incidents
             WHERE resolution_level = 'L1'
             AND resolution_action LIKE ?

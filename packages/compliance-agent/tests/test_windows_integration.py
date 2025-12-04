@@ -18,20 +18,64 @@ Or run with pytest:
 
 import asyncio
 import os
+import socket
 import sys
 from datetime import datetime
+
+import pytest
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 
+def is_windows_vm_available() -> bool:
+    """Check if Windows VM is reachable (quick socket check)."""
+    host_env = os.environ.get('WIN_TEST_HOST', '192.168.56.10')
+
+    # Parse host:port format (e.g., "127.0.0.1:55985")
+    if ':' in host_env:
+        host, port_str = host_env.rsplit(':', 1)
+        port = int(port_str)
+    else:
+        host = host_env
+        port = 5985  # WinRM HTTP port default
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)  # 2 second timeout
+        result = sock.connect_ex((host, port))
+        sock.close()
+        return result == 0
+    except (socket.error, socket.timeout):
+        return False
+
+
+# Skip all tests in this module if Windows VM is not available
+pytestmark = pytest.mark.skipif(
+    not is_windows_vm_available(),
+    reason="Windows VM not available (set WIN_TEST_HOST or start VM)"
+)
+
+
 def get_test_config():
-    """Get Windows test configuration from environment."""
-    host = os.environ.get('WIN_TEST_HOST', '192.168.56.10')
+    """Get Windows test configuration from environment.
+
+    Returns:
+        tuple: (host, port, user, password)
+    """
+    host_env = os.environ.get('WIN_TEST_HOST', '192.168.56.10')
     user = os.environ.get('WIN_TEST_USER', 'vagrant')
     password = os.environ.get('WIN_TEST_PASS', 'vagrant')
 
-    return host, user, password
+    # Parse host:port format (e.g., "127.0.0.1:55985")
+    if ':' in host_env:
+        host, port_str = host_env.rsplit(':', 1)
+        port = int(port_str)
+    else:
+        host = host_env
+        port = 5985  # WinRM HTTP port default
+
+    return host, port, user, password
 
 
 def check_winrm_installed():
@@ -49,12 +93,13 @@ async def test_basic_connection():
     """Test basic WinRM connection."""
     from compliance_agent.runbooks.windows.executor import WindowsExecutor, WindowsTarget
 
-    host, user, password = get_test_config()
-    print(f"\n[TEST] Basic Connection to {host}")
+    host, port, user, password = get_test_config()
+    print(f"\n[TEST] Basic Connection to {host}:{port}")
     print("-" * 50)
 
     target = WindowsTarget(
         hostname=host,
+        port=port,
         username=user,
         password=password,
         use_ssl=False,
@@ -84,12 +129,13 @@ async def test_health_check():
     """Test comprehensive health check."""
     from compliance_agent.runbooks.windows.executor import WindowsExecutor, WindowsTarget
 
-    host, user, password = get_test_config()
+    host, port, user, password = get_test_config()
     print(f"\n[TEST] Health Check")
     print("-" * 50)
 
     target = WindowsTarget(
         hostname=host,
+        port=port,
         username=user,
         password=password,
         use_ssl=False,
@@ -115,7 +161,7 @@ async def _run_runbook_detection(runbook_id: str):
     from compliance_agent.runbooks.windows.executor import WindowsExecutor, WindowsTarget
     from compliance_agent.runbooks.windows.runbooks import get_runbook
 
-    host, user, password = get_test_config()
+    host, port, user, password = get_test_config()
 
     runbook = get_runbook(runbook_id)
     if not runbook:
@@ -128,6 +174,7 @@ async def _run_runbook_detection(runbook_id: str):
 
     target = WindowsTarget(
         hostname=host,
+        port=port,
         username=user,
         password=password,
         use_ssl=False,
@@ -212,8 +259,8 @@ async def run_interactive_test():
     print("WINDOWS SERVER COMPLIANCE RUNBOOK TESTER")
     print("=" * 60)
 
-    host, user, password = get_test_config()
-    print(f"\nTarget: {user}@{host}")
+    host, port, user, password = get_test_config()
+    print(f"\nTarget: {user}@{host}:{port}")
     print(f"Password: {'*' * len(password)}")
 
     if not check_winrm_installed():

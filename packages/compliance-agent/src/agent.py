@@ -32,7 +32,7 @@ import random
 import logging
 from pathlib import Path
 from typing import Optional, Dict, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Will be implemented
 from .mcp_client import MCPClient
@@ -407,8 +407,8 @@ class ComplianceAgent:
         if not self.config.maintenance_window_enabled:
             return True  # No window configured, always allowed
 
-        # Get current time in configured timezone
-        now = datetime.now()
+        # Get current time in configured timezone (using UTC for consistency)
+        now = datetime.now(timezone.utc)
         current_time = now.time()
 
         # Check if current day is in allowed days

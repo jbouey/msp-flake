@@ -20,6 +20,7 @@ from pathlib import Path
 
 from compliance_agent.agent import ComplianceAgent
 from compliance_agent.config import AgentConfig
+from compliance_agent.crypto import generate_keypair
 from compliance_agent.models import (
     DriftResult,
     RemediationResult,
@@ -46,8 +47,10 @@ def test_config(tmp_path):
     key_file = tmp_path / "client.key"
     key_file.write_text("KEY")
 
-    signing_key = tmp_path / "signing-key.pem"
-    signing_key.write_text("SIGNINGKEY")
+    # Generate real Ed25519 signing key (raw 32 bytes)
+    signing_key = tmp_path / "signing.key"
+    private_key_bytes, _ = generate_keypair()
+    signing_key.write_bytes(private_key_bytes)
 
     api_key = tmp_path / "api-key.txt"
     api_key.write_text("test-api-key")
@@ -76,14 +79,15 @@ def test_config(tmp_path):
 @pytest.fixture
 def mock_signer(tmp_path):
     """Create mock Ed25519Signer."""
-    # Create dummy key file
-    key_file = tmp_path / "signing-key.pem"
-    key_file.write_text("dummy-key-content")
-    
+    # Generate real Ed25519 key for ensure_signing_key to find
+    key_file = tmp_path / "signing.key"
+    private_key_bytes, public_key_bytes = generate_keypair()
+    key_file.write_bytes(private_key_bytes)
+
     with patch('compliance_agent.agent.Ed25519Signer') as mock_class:
         mock_instance = Mock()
-        mock_instance.sign.return_value = b"signature"
-        mock_instance.get_public_key_bytes.return_value = b"publickey"
+        mock_instance.sign.return_value = b"signature" * 8  # 64 bytes
+        mock_instance.get_public_key_bytes.return_value = public_key_bytes
         mock_class.return_value = mock_instance
         yield mock_instance
 
@@ -95,7 +99,11 @@ def agent(test_config, mock_signer, tmp_path):
     (tmp_path / "api-key.txt").write_text("test-api-key")
     (tmp_path / "baseline.yaml").write_text("baseline: test")
 
-    with patch('compliance_agent.agent.DriftDetector'), \
+    # Mock ensure_signing_key to return success without actual key ops
+    mock_ensure = Mock(return_value=(False, "deadbeef" * 8))
+
+    with patch('compliance_agent.agent.ensure_signing_key', mock_ensure), \
+         patch('compliance_agent.agent.DriftDetector'), \
          patch('compliance_agent.agent.HealingEngine'), \
          patch('compliance_agent.agent.EvidenceGenerator'), \
          patch('compliance_agent.agent.OfflineQueue'), \
@@ -140,8 +148,10 @@ def test_agent_initialization_without_mcp(test_config, mock_signer, tmp_path):
     key_file = tmp_path / "client.key"
     key_file.write_text("KEY")
 
-    signing_key = tmp_path / "signing-key.pem"
-    signing_key.write_text("SIGNINGKEY")
+    # Generate real Ed25519 signing key
+    signing_key = tmp_path / "signing.key"
+    private_key_bytes, _ = generate_keypair()
+    signing_key.write_bytes(private_key_bytes)
 
     # Create state and evidence directories (use exist_ok=True or different path)
     state_dir = tmp_path / "state2"
@@ -163,8 +173,12 @@ def test_agent_initialization_without_mcp(test_config, mock_signer, tmp_path):
         state_dir=str(state_dir),
         evidence_dir=str(evidence_dir)
     )
-    
-    with patch('compliance_agent.agent.DriftDetector'), \
+
+    # Mock ensure_signing_key to avoid file ops
+    mock_ensure = Mock(return_value=(False, "deadbeef" * 8))
+
+    with patch('compliance_agent.agent.ensure_signing_key', mock_ensure), \
+         patch('compliance_agent.agent.DriftDetector'), \
          patch('compliance_agent.agent.HealingEngine'), \
          patch('compliance_agent.agent.EvidenceGenerator'), \
          patch('compliance_agent.agent.OfflineQueue'):

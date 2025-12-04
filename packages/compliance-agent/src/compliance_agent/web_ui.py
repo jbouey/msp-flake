@@ -417,6 +417,131 @@ class ComplianceWebUI:
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
 
+        # ====================================================================
+        # Approval Queue Routes
+        # ====================================================================
+
+        @self.app.get("/approvals", response_class=HTMLResponse)
+        async def approvals_page(request: Request):
+            """Approval queue page."""
+            pending = await self._get_pending_approvals()
+            stats = await self._get_approval_stats()
+
+            return self.templates.TemplateResponse(
+                "approvals.html",
+                {
+                    "request": request,
+                    "site_id": self.site_id,
+                    "pending": pending,
+                    "stats": stats,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+            )
+
+        @self.app.get("/api/approvals")
+        async def api_approvals(status: Optional[str] = None, limit: int = 100):
+            """API: Get approval requests."""
+            return await self._get_approvals(status=status, limit=limit)
+
+        @self.app.get("/api/approvals/pending")
+        async def api_pending_approvals():
+            """API: Get pending approval requests."""
+            return await self._get_pending_approvals()
+
+        @self.app.get("/api/approvals/stats")
+        async def api_approval_stats():
+            """API: Get approval statistics."""
+            return await self._get_approval_stats()
+
+        @self.app.get("/api/approvals/{request_id}")
+        async def api_approval_detail(request_id: str):
+            """API: Get approval request details."""
+            approval = await self._get_approval_detail(request_id)
+            if not approval:
+                raise HTTPException(status_code=404, detail="Approval request not found")
+            return approval
+
+        @self.app.post("/api/approvals/{request_id}/approve")
+        async def api_approve_request(request_id: str, approved_by: str = "web_ui_user"):
+            """API: Approve a pending request."""
+            result = await self._approve_request(request_id, approved_by)
+            if not result:
+                raise HTTPException(status_code=404, detail="Request not found or not pending")
+            return {"status": "approved", "request_id": request_id}
+
+        @self.app.post("/api/approvals/{request_id}/reject")
+        async def api_reject_request(request_id: str, reason: str = "Rejected via web UI", rejected_by: str = "web_ui_user"):
+            """API: Reject a pending request."""
+            result = await self._reject_request(request_id, rejected_by, reason)
+            if not result:
+                raise HTTPException(status_code=404, detail="Request not found or not pending")
+            return {"status": "rejected", "request_id": request_id, "reason": reason}
+
+        @self.app.get("/api/approvals/{request_id}/audit")
+        async def api_approval_audit(request_id: str):
+            """API: Get audit log for approval request."""
+            return await self._get_approval_audit(request_id)
+
+        # ====================================================================
+        # Regulatory Monitoring Routes
+        # ====================================================================
+
+        @self.app.get("/regulatory", response_class=HTMLResponse)
+        async def regulatory_page(request: Request):
+            """Regulatory monitoring page."""
+            alerts = await self._get_regulatory_alerts()
+            updates = await self._get_regulatory_updates()
+
+            return self.templates.TemplateResponse(
+                "regulatory.html",
+                {
+                    "request": request,
+                    "site_id": self.site_id,
+                    "alerts": alerts,
+                    "updates": updates,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+            )
+
+        @self.app.get("/api/regulatory")
+        async def api_regulatory():
+            """API: Get regulatory monitoring data."""
+            return await self._get_regulatory_alerts()
+
+        @self.app.get("/api/regulatory/updates")
+        async def api_regulatory_updates(limit: int = 10):
+            """API: Get latest regulatory updates."""
+            return await self._get_regulatory_updates(limit=limit)
+
+        @self.app.get("/api/regulatory/comments")
+        async def api_active_comments():
+            """API: Get active comment periods."""
+            return await self._get_active_comment_periods()
+
+        @self.app.post("/api/regulatory/check")
+        async def api_trigger_regulatory_check():
+            """API: Trigger a regulatory check."""
+            return await self._trigger_regulatory_check()
+
+        # ====================================================================
+        # Rollback Tracking Routes
+        # ====================================================================
+
+        @self.app.get("/api/rollback/stats")
+        async def api_rollback_stats():
+            """API: Get rollback statistics."""
+            return await self._get_rollback_stats()
+
+        @self.app.get("/api/rollback/history")
+        async def api_rollback_history():
+            """API: Get rollback history."""
+            return await self._get_rollback_history()
+
+        @self.app.get("/api/rollback/monitoring")
+        async def api_rollback_monitoring():
+            """API: Get current rule monitoring status."""
+            return await self._get_rule_monitoring_status()
+
     # ========================================================================
     # Data Methods
     # ========================================================================
@@ -679,6 +804,63 @@ class ComplianceWebUI:
             "rules_promoted": 0
         }
 
+    def _get_evidence_cache(self) -> List[Dict[str, Any]]:
+        """Get cached evidence bundle list, refreshing if stale."""
+        # Cache for 60 seconds to avoid repeated directory scans
+        cache_ttl = 60
+
+        # Initialize cache if not exists
+        if not hasattr(self, '_evidence_cache'):
+            self._evidence_cache = None
+            self._evidence_cache_time = 0
+
+        current_time = datetime.now(timezone.utc).timestamp()
+
+        # Check if cache is valid
+        if (self._evidence_cache is not None and
+            (current_time - self._evidence_cache_time) < cache_ttl):
+            return self._evidence_cache
+
+        # Rebuild cache
+        bundles = []
+
+        if not self.evidence_dir.exists():
+            self._evidence_cache = []
+            self._evidence_cache_time = current_time
+            return []
+
+        # Walk evidence directory
+        for bundle_json in self.evidence_dir.rglob("bundle.json"):
+            try:
+                with open(bundle_json, 'r') as f:
+                    data = json.load(f)
+
+                bundles.append({
+                    "bundle_id": data.get("bundle_id"),
+                    "check": data.get("check"),
+                    "outcome": data.get("outcome"),
+                    "timestamp": data.get("timestamp_start"),
+                    "hipaa_controls": data.get("hipaa_controls", []),
+                    "site_id": data.get("site_id"),
+                    "host_id": data.get("host_id"),
+                    "_path": str(bundle_json)  # Store path for quick lookup
+                })
+            except Exception as e:
+                logger.warning(f"Failed to load bundle {bundle_json}: {e}")
+
+        # Sort by timestamp (newest first)
+        bundles.sort(key=lambda b: b.get("timestamp", ""), reverse=True)
+
+        self._evidence_cache = bundles
+        self._evidence_cache_time = current_time
+
+        return bundles
+
+    def invalidate_evidence_cache(self):
+        """Invalidate the evidence cache. Call after storing new bundles."""
+        self._evidence_cache = None
+        self._evidence_cache_time = 0
+
     async def _list_evidence(
         self,
         page: int = 1,
@@ -688,50 +870,36 @@ class ComplianceWebUI:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None
     ) -> Dict[str, Any]:
-        """List evidence bundles with pagination."""
-        bundles = []
+        """List evidence bundles with pagination and caching."""
+        # Get cached bundle list
+        all_bundles = self._get_evidence_cache()
 
-        if not self.evidence_dir.exists():
+        if not all_bundles:
             return {"items": [], "pagination": {"page": 1, "per_page": per_page, "total": 0, "pages": 0}}
 
-        # Walk evidence directory
-        for bundle_json in self.evidence_dir.rglob("bundle.json"):
-            try:
-                with open(bundle_json, 'r') as f:
-                    data = json.load(f)
-
-                # Apply filters
-                if check_type and data.get("check") != check_type:
+        # Apply filters
+        bundles = []
+        for data in all_bundles:
+            if check_type and data.get("check") != check_type:
+                continue
+            if outcome and data.get("outcome") != outcome:
+                continue
+            if start_date:
+                bundle_date = data.get("timestamp", "")
+                if bundle_date < start_date:
                     continue
-                if outcome and data.get("outcome") != outcome:
+            if end_date:
+                bundle_date = data.get("timestamp", "")
+                if bundle_date > end_date:
                     continue
-                if start_date:
-                    bundle_date = data.get("timestamp_start", "")
-                    if bundle_date < start_date:
-                        continue
-                if end_date:
-                    bundle_date = data.get("timestamp_start", "")
-                    if bundle_date > end_date:
-                        continue
 
-                bundles.append({
-                    "bundle_id": data.get("bundle_id"),
-                    "check": data.get("check"),
-                    "outcome": data.get("outcome"),
-                    "timestamp": data.get("timestamp_start"),
-                    "hipaa_controls": data.get("hipaa_controls", []),
-                    "site_id": data.get("site_id"),
-                    "host_id": data.get("host_id")
-                })
-            except Exception as e:
-                logger.warning(f"Failed to load bundle {bundle_json}: {e}")
-
-        # Sort by timestamp (newest first)
-        bundles.sort(key=lambda b: b.get("timestamp", ""), reverse=True)
+            # Remove internal fields from response
+            bundle_data = {k: v for k, v in data.items() if not k.startswith('_')}
+            bundles.append(bundle_data)
 
         # Paginate
         total = len(bundles)
-        pages = (total + per_page - 1) // per_page
+        pages = (total + per_page - 1) // per_page if per_page > 0 else 0
         start = (page - 1) * per_page
         end = start + per_page
 
@@ -746,7 +914,19 @@ class ComplianceWebUI:
         }
 
     async def _get_evidence_bundle(self, bundle_id: str) -> Optional[Dict[str, Any]]:
-        """Get a specific evidence bundle."""
+        """Get a specific evidence bundle using cache for path lookup."""
+        # Try cache first for fast path lookup
+        cached_bundles = self._get_evidence_cache()
+        for cached in cached_bundles:
+            if cached.get("bundle_id") == bundle_id:
+                # Found in cache, load full data from file
+                try:
+                    with open(cached["_path"], 'r') as f:
+                        return json.load(f)
+                except Exception:
+                    pass
+
+        # Fallback to full scan if not in cache
         for bundle_json in self.evidence_dir.rglob("bundle.json"):
             try:
                 with open(bundle_json, 'r') as f:
@@ -758,7 +938,14 @@ class ComplianceWebUI:
         return None
 
     async def _find_evidence_path(self, bundle_id: str) -> Optional[Path]:
-        """Find path to evidence bundle."""
+        """Find path to evidence bundle using cache."""
+        # Try cache first
+        cached_bundles = self._get_evidence_cache()
+        for cached in cached_bundles:
+            if cached.get("bundle_id") == bundle_id:
+                return Path(cached["_path"])
+
+        # Fallback to full scan if not in cache
         for bundle_json in self.evidence_dir.rglob("bundle.json"):
             try:
                 with open(bundle_json, 'r') as f:
@@ -807,7 +994,7 @@ class ComplianceWebUI:
 
             conn = sqlite3.connect(self.incident_db_path)
             count = conn.execute(
-                "SELECT COUNT(*) FROM incidents WHERE incident_type = ? AND resolution_level IN ('L1', 'L2')",
+                "SELECT COUNT(*) FROM incidents WHERE check_type = ? AND resolution_level IN ('L1', 'L2')",
                 (check_type,)
             ).fetchone()[0]
             conn.close()
@@ -979,6 +1166,356 @@ class ComplianceWebUI:
             return {
                 "status": "error",
                 "message": str(e)
+            }
+
+    # ========================================================================
+    # Approval Queue Methods
+    # ========================================================================
+
+    def _get_approval_manager(self):
+        """Get or create ApprovalManager instance."""
+        if not hasattr(self, '_approval_manager'):
+            from .approval import ApprovalManager
+            db_path = Path(self.incident_db_path).parent / "approvals.db"
+            self._approval_manager = ApprovalManager(db_path)
+        return self._approval_manager
+
+    async def _get_pending_approvals(self) -> List[Dict[str, Any]]:
+        """Get pending approval requests."""
+        try:
+            manager = self._get_approval_manager()
+            requests = manager.get_pending(site_id=self.site_id)
+            return [r.to_dict() for r in requests]
+        except Exception as e:
+            logger.error(f"Failed to get pending approvals: {e}")
+            return []
+
+    async def _get_approvals(
+        self,
+        status: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get approval requests, optionally filtered by status."""
+        try:
+            import sqlite3
+            manager = self._get_approval_manager()
+
+            conn = sqlite3.connect(manager.db_path)
+            conn.row_factory = sqlite3.Row
+
+            if status:
+                cursor = conn.execute(
+                    'SELECT * FROM approval_requests WHERE status = ? ORDER BY created_at DESC LIMIT ?',
+                    (status, limit)
+                )
+            else:
+                cursor = conn.execute(
+                    'SELECT * FROM approval_requests ORDER BY created_at DESC LIMIT ?',
+                    (limit,)
+                )
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get approvals: {e}")
+            return []
+
+    async def _get_approval_stats(self) -> Dict[str, Any]:
+        """Get approval statistics."""
+        try:
+            manager = self._get_approval_manager()
+            return manager.get_stats()
+        except Exception as e:
+            logger.error(f"Failed to get approval stats: {e}")
+            return {"by_status": {}, "by_action": {}, "requests_24h": 0}
+
+    async def _get_approval_detail(self, request_id: str) -> Optional[Dict[str, Any]]:
+        """Get details for a specific approval request."""
+        try:
+            manager = self._get_approval_manager()
+            request = manager.get_request(request_id)
+            if request:
+                return request.to_dict()
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get approval detail: {e}")
+            return None
+
+    async def _approve_request(self, request_id: str, approved_by: str) -> bool:
+        """Approve an approval request."""
+        try:
+            manager = self._get_approval_manager()
+            result = manager.approve(request_id, approved_by)
+            return result is not None
+        except Exception as e:
+            logger.error(f"Failed to approve request: {e}")
+            return False
+
+    async def _reject_request(
+        self,
+        request_id: str,
+        rejected_by: str,
+        reason: str
+    ) -> bool:
+        """Reject an approval request."""
+        try:
+            manager = self._get_approval_manager()
+            result = manager.reject(request_id, rejected_by, reason)
+            return result is not None
+        except Exception as e:
+            logger.error(f"Failed to reject request: {e}")
+            return False
+
+    async def _get_approval_audit(self, request_id: str) -> List[Dict[str, Any]]:
+        """Get audit log for an approval request."""
+        try:
+            manager = self._get_approval_manager()
+            return manager.get_audit_log(request_id=request_id)
+        except Exception as e:
+            logger.error(f"Failed to get approval audit: {e}")
+            return []
+
+    # ========================================================================
+    # Regulatory Monitoring Methods
+    # ========================================================================
+
+    def _get_federal_register_monitor(self):
+        """Get or create FederalRegisterMonitor instance."""
+        if not hasattr(self, '_fed_register_monitor'):
+            try:
+                from .regulatory.federal_register import FederalRegisterMonitor
+                cache_dir = Path(self.incident_db_path).parent / "regulatory"
+                self._fed_register_monitor = FederalRegisterMonitor(
+                    cache_dir=str(cache_dir),
+                    lookback_days=30
+                )
+            except ImportError:
+                logger.warning("Federal Register monitor not available")
+                self._fed_register_monitor = None
+        return self._fed_register_monitor
+
+    async def _get_regulatory_alerts(self) -> Dict[str, Any]:
+        """Get regulatory monitoring alerts."""
+        try:
+            monitor = self._get_federal_register_monitor()
+            if monitor is None:
+                return {
+                    "status": "unavailable",
+                    "message": "Federal Register monitor not available",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "new_updates_count": 0,
+                    "new_updates": [],
+                    "active_comment_periods_count": 0,
+                    "active_comment_periods": [],
+                    "requires_attention": False
+                }
+
+            # Generate compliance alert
+            alert = await monitor.generate_compliance_alert()
+            return alert
+
+        except Exception as e:
+            logger.error(f"Failed to get regulatory alerts: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "new_updates_count": 0,
+                "new_updates": [],
+                "active_comment_periods_count": 0,
+                "active_comment_periods": [],
+                "requires_attention": False
+            }
+
+    async def _get_regulatory_updates(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get latest regulatory updates."""
+        try:
+            monitor = self._get_federal_register_monitor()
+            if monitor is None:
+                return []
+
+            from dataclasses import asdict
+            updates = await monitor.get_latest_updates(limit=limit)
+            return [asdict(u) for u in updates]
+
+        except Exception as e:
+            logger.error(f"Failed to get regulatory updates: {e}")
+            return []
+
+    async def _get_active_comment_periods(self) -> List[Dict[str, Any]]:
+        """Get active comment periods for proposed rules."""
+        try:
+            monitor = self._get_federal_register_monitor()
+            if monitor is None:
+                return []
+
+            from dataclasses import asdict
+            updates = await monitor.get_active_comment_periods()
+            return [asdict(u) for u in updates]
+
+        except Exception as e:
+            logger.error(f"Failed to get active comment periods: {e}")
+            return []
+
+    async def _trigger_regulatory_check(self) -> Dict[str, Any]:
+        """Trigger an immediate regulatory check."""
+        try:
+            monitor = self._get_federal_register_monitor()
+            if monitor is None:
+                return {
+                    "status": "error",
+                    "message": "Federal Register monitor not available"
+                }
+
+            # Check for updates
+            updates = await monitor.check_for_updates()
+
+            return {
+                "status": "success",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "new_updates_found": len(updates),
+                "updates": [
+                    {"document_number": u.document_number, "title": u.title}
+                    for u in updates[:5]
+                ]
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to trigger regulatory check: {e}")
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+
+    # ========================================================================
+    # Rollback Tracking Data Methods
+    # ========================================================================
+
+    def _get_learning_system(self):
+        """Get or create SelfLearningSystem instance."""
+        if not hasattr(self, '_learning_system'):
+            try:
+                from .learning_loop import SelfLearningSystem
+                from .incident_db import IncidentDatabase
+
+                # Create incident database if needed
+                incident_db = IncidentDatabase(db_path=self.incident_db_path)
+
+                self._learning_system = SelfLearningSystem(incident_db=incident_db)
+            except ImportError:
+                logger.warning("SelfLearningSystem not available")
+                self._learning_system = None
+        return self._learning_system
+
+    async def _get_rollback_stats(self) -> Dict[str, Any]:
+        """Get rollback statistics."""
+        try:
+            learning_system = self._get_learning_system()
+            if learning_system is None:
+                return {
+                    "status": "unavailable",
+                    "message": "Learning system not available",
+                    "rollback_rate": 0.0,
+                    "total_rollbacks": 0,
+                    "total_promotions": 0
+                }
+
+            # Get rollback history
+            history = learning_system.get_rollback_history()
+            total_rollbacks = len(history)
+
+            # Get promotion report for total promotions
+            promotion_report = learning_system.get_promotion_report()
+            l1_percentage = promotion_report.get("flywheel_metrics", {}).get("l1_percentage", 0)
+
+            # Calculate rollback rate
+            monitoring_report = learning_system.monitor_promoted_rules()
+            rules_monitored = monitoring_report.get("rules_monitored", 0)
+            rules_degraded = monitoring_report.get("rules_degraded", 0)
+
+            rollback_rate = (rules_degraded / rules_monitored * 100) if rules_monitored > 0 else 0.0
+
+            return {
+                "status": "success",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "rollback_rate": round(rollback_rate, 1),
+                "total_rollbacks": total_rollbacks,
+                "rules_monitored": rules_monitored,
+                "rules_healthy": monitoring_report.get("rules_healthy", 0),
+                "rules_degraded": rules_degraded,
+                "l1_percentage": round(l1_percentage, 1),
+                "flywheel_health": promotion_report.get("flywheel_health", "unknown")
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get rollback stats: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "rollback_rate": 0.0,
+                "total_rollbacks": 0
+            }
+
+    async def _get_rollback_history(self) -> Dict[str, Any]:
+        """Get rollback history."""
+        try:
+            learning_system = self._get_learning_system()
+            if learning_system is None:
+                return {
+                    "status": "unavailable",
+                    "message": "Learning system not available",
+                    "rollbacks": []
+                }
+
+            history = learning_system.get_rollback_history()
+
+            return {
+                "status": "success",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "total": len(history),
+                "rollbacks": history
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get rollback history: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "rollbacks": []
+            }
+
+    async def _get_rule_monitoring_status(self) -> Dict[str, Any]:
+        """Get current rule monitoring status."""
+        try:
+            learning_system = self._get_learning_system()
+            if learning_system is None:
+                return {
+                    "status": "unavailable",
+                    "message": "Learning system not available",
+                    "rules": []
+                }
+
+            # Get monitoring report
+            report = learning_system.monitor_promoted_rules()
+
+            return {
+                "status": "success",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "rules_monitored": report.get("rules_monitored", 0),
+                "rules_healthy": report.get("rules_healthy", 0),
+                "rules_degraded": report.get("rules_degraded", 0),
+                "rollbacks_triggered": report.get("rollbacks_triggered", []),
+                "rule_details": report.get("rule_details", [])
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get rule monitoring status: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "rules": []
             }
 
 

@@ -20,7 +20,7 @@ from pathlib import Path
 import logging
 
 from .config import AgentConfig
-from .crypto import Ed25519Signer
+from .crypto import Ed25519Signer, ensure_signing_key
 from .drift import DriftDetector
 from .healing import HealingEngine
 from .evidence import EvidenceGenerator
@@ -57,6 +57,12 @@ class ComplianceAgent:
         self.shutdown_event = asyncio.Event()
         
         # Initialize components
+        # Ensure signing key exists (auto-generate on first run)
+        was_generated, public_key_hex = ensure_signing_key(config.signing_key_file)
+        if was_generated:
+            logging.getLogger(__name__).info(
+                f"First run: generated signing key. Public key: {public_key_hex}"
+            )
         self.signer = Ed25519Signer(config.signing_key_file)
         self.drift_detector = DriftDetector(config)
         self.healing_engine = HealingEngine(config)

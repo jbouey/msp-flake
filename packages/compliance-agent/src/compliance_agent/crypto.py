@@ -274,3 +274,59 @@ def verify_hash(data: Union[bytes, str, Path], expected_hash: str) -> bool:
     """
     actual_hash = sha256_hash(data)
     return actual_hash == expected_hash
+
+
+def ensure_signing_key(key_path: Path) -> tuple[bool, str]:
+    """
+    Ensure signing key exists, generating one if needed.
+
+    On first run, generates a new Ed25519 keypair and saves:
+    - Private key: key_path (raw 32 bytes)
+    - Public key: key_path.with_suffix('.pub') (raw 32 bytes)
+
+    Args:
+        key_path: Path where private key should be stored
+
+    Returns:
+        Tuple of (was_generated, public_key_hex)
+        - was_generated: True if key was just created, False if already existed
+        - public_key_hex: Hex-encoded public key for verification
+
+    Raises:
+        PermissionError: If directory not writable
+        OSError: If key generation fails
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    key_path = Path(key_path)
+    pub_path = key_path.with_suffix('.pub')
+
+    # Check if key already exists
+    if key_path.exists():
+        # Load existing key and return public key
+        signer = Ed25519Signer(key_path)
+        public_key_hex = signer.get_public_key_bytes().hex()
+        logger.debug(f"Using existing signing key: {key_path}")
+        return False, public_key_hex
+
+    # Generate new keypair
+    logger.info(f"Generating new Ed25519 signing key at {key_path}")
+
+    private_bytes, public_bytes = generate_keypair()
+
+    # Ensure directory exists
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write private key with secure permissions
+    key_path.write_bytes(private_bytes)
+    key_path.chmod(0o600)  # Owner read/write only
+
+    # Write public key
+    pub_path.write_bytes(public_bytes)
+    pub_path.chmod(0o644)  # World readable
+
+    logger.info(f"Generated signing keypair: private={key_path}, public={pub_path}")
+    logger.info(f"Public key (hex): {public_bytes.hex()}")
+
+    return True, public_bytes.hex()
