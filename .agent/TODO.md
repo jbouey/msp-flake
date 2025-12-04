@@ -144,9 +144,11 @@
 - [x] Test count: 429 passed, 1 skipped (was 423 passed, 7 skipped)
 
 ### 14. Async Pattern Improvements
-**Status:** ✅ PARTIAL (Drift checks already parallel)
+**Status:** ✅ COMPLETE (2025-12-04)
 - [x] Drift checks use `asyncio.gather()` for parallel execution (drift.py:92-99)
-- [ ] Evidence upload batch processing (future enhancement)
+- [x] Evidence upload batch processing (`store_evidence_batch()`, `sync_to_worm_parallel()`)
+- [x] Semaphore-based concurrency control with progress callbacks
+- [x] 8 new batch processing tests in test_evidence.py
 
 ### 15. Backup Restore Testing Runbook
 **Status:** ✅ COMPLETE (2025-12-04)
@@ -183,6 +185,8 @@
 - [x] Windows VM recreated with WinRM port 55987 - 2025-12-04
 - [x] 6 of 7 skipped tests now passing - 2025-12-04
 - [x] 429 passed, 1 skipped (with USE_REAL_VMS=1)
+- [x] Evidence batch processing (parallel uploads) - 2025-12-04
+- [x] Async Pattern Improvements complete - 2025-12-04
 
 ---
 

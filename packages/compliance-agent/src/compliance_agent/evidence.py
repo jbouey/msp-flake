@@ -192,6 +192,62 @@ class EvidenceGenerator:
 
         return bundle
 
+    async def store_evidence_batch(
+        self,
+        bundles: List[EvidenceBundle],
+        sign: bool = True,
+        upload_to_worm: bool = True,
+        max_concurrency: int = 5
+    ) -> List[tuple[Path, Optional[Path], Optional[str]]]:
+        """
+        Store multiple evidence bundles concurrently.
+
+        Processes bundles in parallel for improved throughput when
+        handling multiple compliance checks or incident resolutions.
+
+        Args:
+            bundles: List of evidence bundles to store
+            sign: Whether to sign each bundle (default: True)
+            upload_to_worm: Whether to upload to WORM storage (default: True)
+            max_concurrency: Maximum concurrent uploads (default: 5)
+
+        Returns:
+            List of tuples: (bundle_path, signature_path, worm_uri) for each bundle
+        """
+        if not bundles:
+            return []
+
+        results = []
+
+        # Process in batches to limit concurrency
+        for i in range(0, len(bundles), max_concurrency):
+            batch = bundles[i:i + max_concurrency]
+
+            # Create coroutines for each bundle
+            tasks = [
+                self.store_evidence(bundle, sign=sign, upload_to_worm=upload_to_worm)
+                for bundle in batch
+            ]
+
+            # Execute batch concurrently
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for j, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    logger.error(
+                        f"Failed to store evidence bundle {batch[j].bundle_id}: {result}"
+                    )
+                    # Return empty tuple for failed bundles
+                    results.append((None, None, None))
+                else:
+                    results.append(result)
+
+        logger.info(
+            f"Batch stored {len([r for r in results if r[0]])} of {len(bundles)} bundles"
+        )
+
+        return results
+
     async def store_evidence(
         self,
         bundle: EvidenceBundle,
@@ -506,12 +562,20 @@ class EvidenceGenerator:
 
         return stats
 
-    async def sync_to_worm(self) -> Dict[str, Any]:
+    async def sync_to_worm(
+        self,
+        max_concurrency: Optional[int] = None,
+        batch_size: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Sync all pending evidence bundles to WORM storage.
 
         Use this to catch up on bundles that weren't uploaded
         (e.g., due to network issues or disabled auto-upload).
+
+        Args:
+            max_concurrency: Maximum parallel uploads (default: from config)
+            batch_size: Number of bundles per batch (default: from config)
 
         Returns:
             Dict with sync results (uploaded, failed, pending)
@@ -526,7 +590,17 @@ class EvidenceGenerator:
             }
 
         try:
+            # Override batch size if specified
+            original_batch_size = None
+            if batch_size is not None:
+                original_batch_size = self._worm_uploader.config.upload_batch_size
+                self._worm_uploader.config.upload_batch_size = batch_size
+
             results = await self._worm_uploader.sync_pending()
+
+            # Restore original batch size
+            if original_batch_size is not None:
+                self._worm_uploader.config.upload_batch_size = original_batch_size
 
             uploaded = sum(1 for r in results if r.success)
             failed = sum(1 for r in results if not r.success)
@@ -537,6 +611,7 @@ class EvidenceGenerator:
                 "uploaded": uploaded,
                 "failed": failed,
                 "pending": pending,
+                "batch_size": batch_size or self._worm_uploader.config.upload_batch_size,
                 "results": [
                     {
                         "bundle_id": r.bundle_id,
@@ -550,6 +625,114 @@ class EvidenceGenerator:
 
         except Exception as e:
             logger.error(f"WORM sync failed: {e}")
+            return {
+                "enabled": True,
+                "uploaded": 0,
+                "failed": 0,
+                "pending": 0,
+                "error": str(e)
+            }
+
+    async def sync_to_worm_parallel(
+        self,
+        max_workers: int = 5,
+        progress_callback: Optional[callable] = None
+    ) -> Dict[str, Any]:
+        """
+        Sync pending evidence bundles with explicit parallelism control.
+
+        This method provides finer control over parallel uploads compared
+        to sync_to_worm(), which uses the config's batch_size setting.
+
+        Args:
+            max_workers: Number of parallel upload workers (default: 5)
+            progress_callback: Optional callback(uploaded, total) for progress
+
+        Returns:
+            Dict with detailed sync results
+        """
+        if not self._worm_uploader:
+            return {
+                "enabled": False,
+                "uploaded": 0,
+                "failed": 0,
+                "pending": 0,
+                "error": "WORM uploader not initialized"
+            }
+
+        try:
+            # Find pending bundles
+            pending_bundles = self._worm_uploader._find_pending_bundles()
+            total = len(pending_bundles)
+
+            if total == 0:
+                return {
+                    "enabled": True,
+                    "uploaded": 0,
+                    "failed": 0,
+                    "pending": 0,
+                    "results": []
+                }
+
+            logger.info(f"Starting parallel WORM sync: {total} bundles, {max_workers} workers")
+
+            results = []
+            uploaded_count = 0
+
+            # Use semaphore to limit concurrency
+            semaphore = asyncio.Semaphore(max_workers)
+
+            async def upload_with_semaphore(bundle_path, sig_path):
+                async with semaphore:
+                    return await self._worm_uploader.upload_bundle(bundle_path, sig_path)
+
+            # Create all tasks
+            tasks = [
+                upload_with_semaphore(bundle_path, sig_path)
+                for bundle_path, sig_path in pending_bundles
+            ]
+
+            # Execute with progress tracking
+            for i, coro in enumerate(asyncio.as_completed(tasks)):
+                result = await coro
+                results.append(result)
+
+                if result.success:
+                    uploaded_count += 1
+
+                if progress_callback:
+                    try:
+                        progress_callback(i + 1, total)
+                    except Exception:
+                        pass  # Don't let callback errors break sync
+
+            uploaded = sum(1 for r in results if r.success)
+            failed = sum(1 for r in results if not r.success)
+            pending = self._worm_uploader.get_pending_count()
+
+            logger.info(f"Parallel WORM sync complete: {uploaded}/{total} succeeded")
+
+            return {
+                "enabled": True,
+                "uploaded": uploaded,
+                "failed": failed,
+                "pending": pending,
+                "total_processed": total,
+                "max_workers": max_workers,
+                "results": [
+                    {
+                        "bundle_id": r.bundle_id,
+                        "success": r.success,
+                        "s3_uri": r.s3_uri,
+                        "error": r.error,
+                        "retry_count": r.retry_count
+                    }
+                    for r in results
+                ]
+            }
+
+        except Exception as e:
+            logger.error(f"Parallel WORM sync failed: {e}")
             return {
                 "enabled": True,
                 "uploaded": 0,

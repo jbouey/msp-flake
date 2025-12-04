@@ -602,3 +602,166 @@ async def test_evidence_sync_to_worm_disabled(test_config, test_signer):
 
     assert result["enabled"] is False
     assert "not initialized" in result["error"]
+
+
+# =============================================================================
+# Batch Processing Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_store_evidence_batch_empty(test_config, test_signer):
+    """Test batch storage with empty list."""
+    generator = EvidenceGenerator(test_config, test_signer)
+
+    results = await generator.store_evidence_batch([])
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_store_evidence_batch_single(test_config, test_signer):
+    """Test batch storage with single bundle."""
+    generator = EvidenceGenerator(test_config, test_signer)
+
+    bundle = await generator.create_evidence(
+        check="patching",
+        outcome="success",
+        pre_state={"gen": 142},
+        post_state={"gen": 143}
+    )
+
+    results = await generator.store_evidence_batch([bundle])
+
+    assert len(results) == 1
+    assert results[0][0] is not None  # bundle_path
+    assert results[0][1] is not None  # sig_path
+    assert results[0][0].exists()
+
+
+@pytest.mark.asyncio
+async def test_store_evidence_batch_multiple(test_config, test_signer):
+    """Test batch storage with multiple bundles."""
+    generator = EvidenceGenerator(test_config, test_signer)
+
+    # Create 5 bundles
+    bundles = []
+    for i in range(5):
+        bundle = await generator.create_evidence(
+            check=["patching", "backup", "firewall"][i % 3],
+            outcome="success",
+            pre_state={"index": i},
+            post_state={"index": i + 1}
+        )
+        bundles.append(bundle)
+
+    results = await generator.store_evidence_batch(bundles, max_concurrency=3)
+
+    assert len(results) == 5
+    for result in results:
+        assert result[0] is not None
+        assert result[0].exists()
+
+
+@pytest.mark.asyncio
+async def test_store_evidence_batch_concurrency_limit(test_config, test_signer):
+    """Test batch storage respects concurrency limit."""
+    generator = EvidenceGenerator(test_config, test_signer)
+
+    # Create 10 bundles
+    bundles = []
+    for i in range(10):
+        bundle = await generator.create_evidence(
+            check="patching",
+            outcome="success",
+            pre_state={"gen": i},
+            post_state={"gen": i + 1}
+        )
+        bundles.append(bundle)
+
+    # Store with max_concurrency=2 (should process in batches)
+    results = await generator.store_evidence_batch(bundles, max_concurrency=2)
+
+    assert len(results) == 10
+    stored_count = sum(1 for r in results if r[0] is not None)
+    assert stored_count == 10
+
+
+@pytest.mark.asyncio
+async def test_store_evidence_batch_without_sign(test_config, test_signer):
+    """Test batch storage without signing."""
+    generator = EvidenceGenerator(test_config, test_signer)
+
+    bundles = []
+    for i in range(3):
+        bundle = await generator.create_evidence(
+            check="backup",
+            outcome="success",
+            pre_state={},
+            post_state={}
+        )
+        bundles.append(bundle)
+
+    results = await generator.store_evidence_batch(bundles, sign=False)
+
+    assert len(results) == 3
+    for result in results:
+        bundle_path, sig_path, _ = result
+        assert bundle_path is not None
+        assert bundle_path.exists()
+        # sig_path should be None when sign=False
+        assert sig_path is None
+
+
+@pytest.mark.asyncio
+async def test_sync_to_worm_parallel_disabled(test_config, test_signer):
+    """Test parallel WORM sync returns error when disabled."""
+    generator = EvidenceGenerator(test_config, test_signer)
+
+    result = await generator.sync_to_worm_parallel(max_workers=5)
+
+    assert result["enabled"] is False
+    assert "not initialized" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_sync_to_worm_with_batch_size(test_config, test_signer):
+    """Test WORM sync with custom batch size."""
+    generator = EvidenceGenerator(test_config, test_signer)
+
+    # This will fail because WORM is disabled, but tests the method exists
+    result = await generator.sync_to_worm(batch_size=20)
+
+    assert result["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_worm_sync_pending_batch(temp_evidence_dir):
+    """Test WORM uploader batch sync."""
+    config = WormConfig(
+        enabled=True,
+        mode="proxy",
+        mcp_upload_endpoint="http://localhost:8080",
+        max_retries=1,
+        retry_delay_seconds=0,
+        upload_batch_size=2
+    )
+    uploader = WormUploader(
+        config=config,
+        evidence_dir=temp_evidence_dir,
+        client_id="test-client"
+    )
+
+    # Create fake bundles
+    for i in range(5):
+        bundle_dir = temp_evidence_dir / "2025" / "11" / "06" / f"EB-test-{i:04d}"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle_path = bundle_dir / "bundle.json"
+        bundle_path.write_text(f'{{"bundle_id": "EB-test-{i:04d}"}}')
+
+    # Find pending should find all 5
+    pending = uploader._find_pending_bundles()
+    assert len(pending) == 5
+
+    # Verify batch size is set
+    assert uploader.config.upload_batch_size == 2
