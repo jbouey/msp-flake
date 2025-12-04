@@ -150,9 +150,9 @@ class ComplianceWebUI:
             flywheel = await self._get_flywheel_metrics()
 
             return self.templates.TemplateResponse(
+                request,
                 "dashboard.html",
                 {
-                    "request": request,
                     "site_id": self.site_id,
                     "host_id": self.host_id,
                     "status": status,
@@ -209,9 +209,9 @@ class ComplianceWebUI:
             stats = await self._get_evidence_stats()
 
             return self.templates.TemplateResponse(
+                request,
                 "evidence.html",
                 {
-                    "request": request,
                     "bundles": bundles["items"],
                     "pagination": bundles["pagination"],
                     "stats": stats,
@@ -263,9 +263,9 @@ class ComplianceWebUI:
             """Reports download page."""
             available_reports = await self._get_available_reports()
             return self.templates.TemplateResponse(
+                request,
                 "reports.html",
                 {
-                    "request": request,
                     "reports": available_reports
                 }
             )
@@ -295,9 +295,9 @@ class ComplianceWebUI:
             """Audit log viewer."""
             logs = await self._get_audit_logs(page, per_page, search)
             return self.templates.TemplateResponse(
+                request,
                 "audit.html",
                 {
-                    "request": request,
                     "logs": logs["items"],
                     "pagination": logs["pagination"],
                     "search": search
@@ -428,9 +428,9 @@ class ComplianceWebUI:
             stats = await self._get_approval_stats()
 
             return self.templates.TemplateResponse(
+                request,
                 "approvals.html",
                 {
-                    "request": request,
                     "site_id": self.site_id,
                     "pending": pending,
                     "stats": stats,
@@ -493,9 +493,9 @@ class ComplianceWebUI:
             updates = await self._get_regulatory_updates()
 
             return self.templates.TemplateResponse(
+                request,
                 "regulatory.html",
                 {
-                    "request": request,
                     "site_id": self.site_id,
                     "alerts": alerts,
                     "updates": updates,

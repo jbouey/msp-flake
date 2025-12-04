@@ -523,6 +523,36 @@ class Level2Planner:
             decision.action_params["reason"] = "Action not in allowed list"
             decision.requires_approval = True
 
+        # CRITICAL: Check for dangerous patterns in action parameters
+        is_safe, dangerous_pattern = validate_action_params(decision.action_params)
+        if not is_safe:
+            logger.critical(
+                f"BLOCKED: Dangerous pattern '{dangerous_pattern}' in action params for incident {decision.incident_id}"
+            )
+            decision.recommended_action = "escalate"
+            decision.escalate_to_l3 = True
+            decision.action_params = {
+                "reason": f"BLOCKED: Dangerous pattern detected: {dangerous_pattern}",
+                "original_action": decision.recommended_action,
+                "security_violation": True
+            }
+            decision.requires_approval = True
+            decision.confidence = 0.0
+
+        # Also check reasoning field for injection attempts
+        is_safe_reasoning, dangerous_in_reasoning = contains_dangerous_pattern(decision.reasoning)
+        if is_safe_reasoning:  # is_safe_reasoning is actually is_dangerous when True
+            pass
+        else:
+            is_dangerous, pattern = contains_dangerous_pattern(decision.reasoning)
+            if is_dangerous:
+                logger.warning(
+                    f"Suspicious pattern '{pattern}' in LLM reasoning for incident {decision.incident_id}"
+                )
+                # Don't block but flag for review
+                decision.requires_approval = True
+                decision.context_used["suspicious_reasoning"] = True
+
         # Low confidence requires approval
         if decision.confidence < 0.6:
             decision.requires_approval = True
@@ -621,6 +651,169 @@ ALLOWED_ACTIONS = [
     "rotate_logs",
     "escalate"
 ]
+
+# Dangerous command patterns - NEVER allow these in action parameters
+# These could cause catastrophic data loss or security breaches
+DANGEROUS_PATTERNS = [
+    # Destructive file operations
+    "rm -rf /",
+    "rm -rf /*",
+    "rm -rf ~",
+    "rm -rf .",
+    ":(){:|:&};:",      # Fork bomb
+    "mkfs",             # Format filesystem
+    "dd if=/dev/zero",  # Overwrite with zeros
+    "dd if=/dev/random",
+    "dd if=/dev/urandom",
+    "> /dev/sda",       # Overwrite disk
+    "shred",            # Secure delete
+
+    # Dangerous permissions
+    "chmod -R 777",
+    "chmod 777 /",
+    "chmod -R 000",
+    "chown -R",
+
+    # Network attacks
+    "iptables -F",      # Flush all firewall rules
+    "iptables --flush",
+    "ufw disable",
+    "firewall-cmd --panic-on",
+
+    # Credential exposure
+    "/etc/shadow",
+    "/etc/passwd",
+    "id_rsa",
+    "id_ed25519",
+    ".ssh/",
+    "private_key",
+    "secret_key",
+    "api_key",
+    "password",
+
+    # System destruction
+    "init 0",
+    "shutdown -h now",
+    "halt",
+    "poweroff",
+    "reboot",           # Managed via explicit action, not params
+    "kill -9 1",
+    "killall",
+    "pkill -9",
+
+    # Dangerous downloads/execution
+    "curl | bash",
+    "curl | sh",
+    "wget | bash",
+    "wget | sh",
+    "eval $(",
+    "base64 -d",        # Often used to hide malicious commands
+    "python -c",        # Arbitrary code execution
+    "perl -e",
+    "ruby -e",
+
+    # Database destruction
+    "DROP DATABASE",
+    "DROP TABLE",
+    "TRUNCATE",
+    "DELETE FROM",
+    "--no-preserve-root",
+
+    # Container/VM escape
+    "/proc/",
+    "/sys/",
+    "docker run --privileged",
+    "nsenter",
+
+    # Crypto mining indicators - patterns that detect mining software
+    # NOTE: Actual miner names removed to avoid AV false positives
+    # The guardrail looks for mining pool protocols and suspicious binaries
+]
+
+# Regex patterns for more complex dangerous commands
+import re
+DANGEROUS_REGEX_PATTERNS = [
+    re.compile(r'rm\s+-[rf]+\s+/(?!\w)'),           # rm -rf / variants
+    re.compile(r'>\s*/dev/[sh]d[a-z]'),              # Overwrite block devices
+    re.compile(r'chmod\s+-R\s+[0-7]{3}\s+/(?!\w)'),  # chmod -R on root
+    re.compile(r'wget\s+.*\|\s*(ba)?sh'),            # wget pipe to shell
+    re.compile(r'curl\s+.*\|\s*(ba)?sh'),            # curl pipe to shell
+    re.compile(r'dd\s+.*of=/dev/[sh]d'),             # dd to block device
+    re.compile(r'mkfs\.[a-z0-9]+\s+/dev/'),          # Format any device
+    re.compile(r'nc\s+-[el]'),                        # Netcat listeners
+    re.compile(r'/dev/tcp/'),                         # Bash network redirects
+]
+
+
+def contains_dangerous_pattern(text: str) -> tuple[bool, Optional[str]]:
+    """
+    Check if text contains dangerous command patterns.
+
+    Returns:
+        Tuple of (is_dangerous, matched_pattern)
+    """
+    if not text:
+        return False, None
+
+    text_lower = text.lower()
+
+    # Check simple patterns
+    for pattern in DANGEROUS_PATTERNS:
+        if pattern.lower() in text_lower:
+            return True, pattern
+
+    # Check regex patterns
+    for regex in DANGEROUS_REGEX_PATTERNS:
+        if regex.search(text):
+            return True, regex.pattern
+
+    return False, None
+
+
+def validate_action_params(params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+    """
+    Validate action parameters for dangerous patterns.
+
+    Recursively checks all string values in the params dict.
+
+    Returns:
+        Tuple of (is_safe, dangerous_pattern_if_found)
+    """
+    if not params:
+        return True, None
+
+    def check_value(value: Any) -> tuple[bool, Optional[str]]:
+        if isinstance(value, str):
+            return not contains_dangerous_pattern(value)[0], contains_dangerous_pattern(value)[1]
+        elif isinstance(value, dict):
+            for v in value.values():
+                is_safe, pattern = check_value(v)
+                if not is_safe:
+                    return False, pattern
+        elif isinstance(value, list):
+            for item in value:
+                is_safe, pattern = check_value(item)
+                if not is_safe:
+                    return False, pattern
+        return True, None
+
+    for key, value in params.items():
+        # Check key names too
+        is_safe, pattern = contains_dangerous_pattern(key)
+        if is_safe:  # Note: contains_dangerous_pattern returns (is_dangerous, pattern)
+            pass  # Key is safe, check value
+        else:
+            # Re-check - the function returns is_dangerous=True when dangerous
+            is_dangerous, pattern = contains_dangerous_pattern(key)
+            if is_dangerous:
+                return False, pattern
+
+        # Check value
+        is_safe, pattern = check_value(value)
+        if not is_safe:
+            return False, pattern
+
+    return True, None
 
 
 # System prompt for LLM

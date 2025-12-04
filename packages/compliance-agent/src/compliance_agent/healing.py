@@ -41,13 +41,14 @@ class HealingEngine:
     """
     Self-healing engine for automated remediation.
 
-    Implements 6 remediation actions:
+    Implements 7 remediation actions:
     1. update_to_baseline_generation - Switch NixOS generation
     2. restart_av_service - Restart AV/EDR service
     3. run_backup_job - Trigger backup manually
     4. restart_logging_services - Restart logging stack
     5. restore_firewall_baseline - Reapply firewall ruleset
     6. enable_volume_encryption - Alert for manual intervention
+    7. run_restore_test - Test backup restore (HIPAA requirement)
 
     Actions can be gated by approval policy for disruptive operations.
     """
@@ -1011,3 +1012,109 @@ class HealingEngine:
             actions=actions,
             error=alert_message
         )
+
+    # ========================================================================
+    # Remediation Action 7: Run Backup Restore Test
+    # ========================================================================
+
+    async def run_restore_test(
+        self,
+        drift: DriftResult
+    ) -> RemediationResult:
+        """
+        Run backup restore test.
+
+        This action is triggered when drift detection shows that no
+        restore test has been performed recently.
+
+        HIPAA §164.308(a)(7)(ii)(A) requires testing of backup procedures.
+
+        Args:
+            drift: Backup verification drift result
+
+        Returns:
+            RemediationResult with restore test outcome
+        """
+        from .backup_restore_test import (
+            BackupRestoreTester,
+            RestoreTestConfig
+        )
+
+        actions = []
+        pre_state = drift.pre_state.copy()
+
+        # Get backup configuration from pre_state
+        backup_repo = pre_state.get("backup_repo")
+        backup_type = pre_state.get("backup_type", "restic")
+        restic_password_file = pre_state.get("restic_password_file")
+
+        # Configure restore test
+        restore_config = RestoreTestConfig(
+            backup_type=backup_type,
+            backup_repo=backup_repo,
+            restic_password_file=restic_password_file
+        )
+
+        tester = BackupRestoreTester(self.config, restore_config)
+
+        actions.append(ActionTaken(
+            action="initialize_restore_test",
+            timestamp=datetime.now(timezone.utc),
+            details={
+                "backup_type": backup_type,
+                "backup_repo": backup_repo
+            }
+        ))
+
+        try:
+            # Run the restore test
+            result = await tester.run_restore_test()
+
+            # Convert result actions
+            actions.extend(result.actions)
+
+            post_state = {
+                "test_id": result.test_id,
+                "outcome": result.outcome,
+                "files_restored": result.files_restored,
+                "checksums_matched": result.checksums_matched,
+                "checksums_failed": result.checksums_failed,
+                "restore_duration_seconds": result.restore_duration_seconds
+            }
+
+            if result.outcome == "success":
+                return RemediationResult(
+                    check="backup_verification",
+                    outcome="success",
+                    pre_state=pre_state,
+                    post_state=post_state,
+                    actions=actions
+                )
+            elif result.outcome == "partial":
+                return RemediationResult(
+                    check="backup_verification",
+                    outcome="partial",
+                    pre_state=pre_state,
+                    post_state=post_state,
+                    actions=actions,
+                    error=f"Restore test partial: {result.checksums_failed} checksum failures"
+                )
+            else:
+                return RemediationResult(
+                    check="backup_verification",
+                    outcome="failed",
+                    pre_state=pre_state,
+                    post_state=post_state,
+                    actions=actions,
+                    error=result.error or "Restore test failed"
+                )
+
+        except Exception as e:
+            logger.error(f"Restore test failed: {e}")
+            return RemediationResult(
+                check="backup_verification",
+                outcome="failed",
+                pre_state=pre_state,
+                actions=actions,
+                error=f"Restore test exception: {e}"
+            )

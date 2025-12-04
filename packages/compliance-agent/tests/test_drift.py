@@ -186,34 +186,35 @@ async def test_patching_command_failure(detector):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Complex mocking causes hang - needs refactor for Windows integration")
-async def test_av_edr_no_drift(detector):
+async def test_av_edr_no_drift(detector, tmp_path):
     """Test AV/EDR check with no drift."""
-    with patch('compliance_agent.drift.run_command') as mock_run, \
-         patch('compliance_agent.drift.Path') as mock_path, \
-         patch('compliance_agent.drift.hashlib.sha256') as mock_hash:
+    # Create fake binary file
+    fake_binary = tmp_path / "clamscan"
+    fake_binary.write_bytes(b"test binary content")
+
+    # Calculate expected hash
+    import hashlib
+    expected_hash = hashlib.sha256(b"test binary content").hexdigest()
+
+    # Configure detector with test binary path and hash
+    detector._baseline_cache = {
+        'av_edr': {
+            'service_name': 'clamav',
+            'binary_path': str(fake_binary),
+            'binary_hash': expected_hash
+        }
+    }
+
+    with patch('compliance_agent.drift.run_command') as mock_run:
         # Mock run_command for service status
         mock_run.return_value = AsyncMock(stdout="active")
 
-        # Mock Path.exists() to return True
-        mock_path.return_value.exists.return_value = True
+        result = await detector.check_av_edr_health()
 
-        # Mock hashlib to return expected hash
-        mock_hash_instance = MagicMock()
-        mock_hash_instance.hexdigest.return_value = "abc123def456"
-        mock_hash.return_value = mock_hash_instance
-
-        # Mock file open using patch on open()
-        with patch('builtins.open', MagicMock(return_value=MagicMock(
-            __enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"test"))),
-            __exit__=MagicMock(return_value=False)
-        ))):
-            result = await detector.check_av_edr_health()
-
-            assert result.drifted is False
-            assert result.severity == "low"
-            assert result.pre_state["service_active"] is True
-            assert result.pre_state["hash_matches"] is True
+        assert result.drifted is False
+        assert result.severity == "low"
+        assert result.pre_state["service_active"] is True
+        assert result.pre_state["hash_matches"] is True
 
 
 @pytest.mark.asyncio
@@ -232,32 +233,30 @@ async def test_av_edr_service_inactive(detector):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Complex mocking causes hang - needs refactor for Windows integration")
-async def test_av_edr_hash_mismatch(detector):
+async def test_av_edr_hash_mismatch(detector, tmp_path):
     """Test AV/EDR check with binary hash mismatch."""
-    with patch('compliance_agent.drift.run_command') as mock_run, \
-         patch('compliance_agent.drift.Path') as mock_path, \
-         patch('compliance_agent.drift.hashlib.sha256') as mock_hash:
+    # Create fake binary file
+    fake_binary = tmp_path / "clamscan"
+    fake_binary.write_bytes(b"test binary content")
+
+    # Configure detector with WRONG expected hash (simulates hash mismatch)
+    detector._baseline_cache = {
+        'av_edr': {
+            'service_name': 'clamav',
+            'binary_path': str(fake_binary),
+            'binary_hash': "wrong_hash_that_wont_match"
+        }
+    }
+
+    with patch('compliance_agent.drift.run_command') as mock_run:
         mock_run.return_value = AsyncMock(stdout="active")
 
-        # Mock Path.exists() to return True
-        mock_path.return_value.exists.return_value = True
+        result = await detector.check_av_edr_health()
 
-        # Mock hashlib to return different hash (mismatch)
-        mock_hash_instance = MagicMock()
-        mock_hash_instance.hexdigest.return_value = "different_hash"
-        mock_hash.return_value = mock_hash_instance
-
-        with patch('builtins.open', MagicMock(return_value=MagicMock(
-            __enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"test"))),
-            __exit__=MagicMock(return_value=False)
-        ))):
-            result = await detector.check_av_edr_health()
-
-            assert result.drifted is True
-            assert result.severity == "high"
-            assert result.recommended_action == "verify_av_binary_integrity"
-            assert result.pre_state["hash_matches"] is False
+        assert result.drifted is True
+        assert result.severity == "high"
+        assert result.recommended_action == "verify_av_binary_integrity"
+        assert result.pre_state["hash_matches"] is False
 
 
 # =============================================================================

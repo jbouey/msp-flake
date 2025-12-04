@@ -9,6 +9,12 @@ from .level2_llm import Level2Planner, LLMConfig, LLMMode, LLMDecision
 from .level3_escalation import EscalationHandler, EscalationConfig, EscalationTicket
 from .learning_loop import SelfLearningSystem, PromotionConfig, PromotionCandidate
 from .auto_healer import AutoHealer, AutoHealerConfig, HealingResult, create_auto_healer
+from .backup_restore_test import (
+    BackupRestoreTester,
+    RestoreTestConfig,
+    RestoreTestResult,
+    run_backup_restore_test
+)
 
 __all__ = [
     # Version
@@ -46,4 +52,10 @@ __all__ = [
     "AutoHealerConfig",
     "HealingResult",
     "create_auto_healer",
+
+    # Backup Restore Testing
+    "BackupRestoreTester",
+    "RestoreTestConfig",
+    "RestoreTestResult",
+    "run_backup_restore_test",
 ]

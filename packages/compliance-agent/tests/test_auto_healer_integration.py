@@ -43,8 +43,15 @@ class VMConfig:
     """VM configuration from environment."""
 
     def __init__(self):
-        # Windows VM
-        self.win_host = os.environ.get('WIN_TEST_HOST', '192.168.56.10')
+        # Windows VM - support host:port format
+        win_host_env = os.environ.get('WIN_TEST_HOST', '192.168.56.10')
+        if ':' in win_host_env:
+            host, port_str = win_host_env.rsplit(':', 1)
+            self.win_host = host
+            self.win_port = int(port_str)
+        else:
+            self.win_host = win_host_env
+            self.win_port = 5985
         self.win_user = os.environ.get('WIN_TEST_USER', 'vagrant')
         self.win_pass = os.environ.get('WIN_TEST_PASS', 'vagrant')
 
@@ -52,9 +59,16 @@ class VMConfig:
         self.nixos1_host = os.environ.get('NIXOS_VM1_HOST', 'nixos-vm1')
         self.nixos2_host = os.environ.get('NIXOS_VM2_HOST', 'nixos-vm2')
 
-        # Test modes
-        self.use_real_vms = '--real-vms' in sys.argv
-        self.use_all_vms = '--all-vms' in sys.argv
+        # Test modes - detect from environment or sys.argv
+        # USE_REAL_VMS=1 or --real-vms flag
+        self.use_real_vms = (
+            os.environ.get('USE_REAL_VMS', '').lower() in ('1', 'true', 'yes') or
+            '--real-vms' in sys.argv
+        )
+        self.use_all_vms = (
+            os.environ.get('USE_ALL_VMS', '').lower() in ('1', 'true', 'yes') or
+            '--all-vms' in sys.argv
+        )
 
 
 VM_CONFIG = VMConfig()
@@ -71,12 +85,12 @@ class TestVMInfrastructure:
     async def test_windows_vm_connectivity(self):
         """Test Windows VM is reachable (if real VMs enabled)."""
         if not VM_CONFIG.use_real_vms:
-            pytest.skip("Real VM tests disabled. Use --real-vms to enable.")
+            pytest.skip("Real VM tests disabled. Set USE_REAL_VMS=1 or use --real-vms flag.")
 
         try:
             import winrm
             session = winrm.Session(
-                f'http://{VM_CONFIG.win_host}:5985/wsman',
+                f'http://{VM_CONFIG.win_host}:{VM_CONFIG.win_port}/wsman',
                 auth=(VM_CONFIG.win_user, VM_CONFIG.win_pass),
                 transport='ntlm'
             )
@@ -512,6 +526,7 @@ class TestWindowsVMIntegration:
 
             target = WindowsTarget(
                 hostname=VM_CONFIG.win_host,
+                port=VM_CONFIG.win_port,
                 username=VM_CONFIG.win_user,
                 password=VM_CONFIG.win_pass,
                 use_ssl=False,
