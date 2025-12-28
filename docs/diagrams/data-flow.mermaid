@@ -1,0 +1,131 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4a90d9', 'primaryTextColor': '#fff', 'primaryBorderColor': '#2d5986', 'lineColor': '#5c5c5c'}}}%%
+flowchart TB
+    subgraph ComplianceChecks["1. Compliance Check Initiation"]
+        direction LR
+        Timer["Systemd Timer<br/>(60s +-10% jitter)"]
+        AgentLoop["Agent Main Loop"]
+        DriftDetector["Drift Detector"]
+
+        Timer -->|"Triggers"| AgentLoop
+        AgentLoop -->|"check_all()"| DriftDetector
+    end
+
+    subgraph DriftChecks["Drift Detection (6 Checks)"]
+        direction TB
+        Patching["Patching Check<br/>(NixOS generation)"]
+        AVEDR["AV/EDR Health<br/>(service + hash)"]
+        Backup["Backup Verify<br/>(timestamp + checksum)"]
+        Logging["Logging Continuity<br/>(service + canary)"]
+        Firewall["Firewall Baseline<br/>(ruleset hash)"]
+        Encrypt["Encryption Status<br/>(LUKS + certs)"]
+    end
+
+    subgraph ThreeTierHealing["2. Self-Healing Trigger Propagation"]
+        direction TB
+
+        subgraph L1["L1: Deterministic Rules"]
+            YAML["YAML Runbooks"]
+            PatternMatch["Pattern Matching"]
+            FastRemediate["Fast Remediation<br/>(<100ms)"]
+            YAML --> PatternMatch --> FastRemediate
+        end
+
+        subgraph L2["L2: LLM Planner"]
+            IncidentContext["Incident Context"]
+            LLMCall["LLM API Call<br/>(GPT-4o)"]
+            RunbookSelect["Runbook Selection"]
+            IncidentContext --> LLMCall --> RunbookSelect
+        end
+
+        subgraph L3["L3: Human Escalation"]
+            TicketCreate["Ticket Creation"]
+            SLATrack["SLA Tracking"]
+            HumanReview["Human Review"]
+            TicketCreate --> SLATrack --> HumanReview
+        end
+
+        L1 -->|"No Match"| L2
+        L2 -->|"Uncertain/Risky"| L3
+    end
+
+    subgraph DataFlywheel["Learning Loop (Data Flywheel)"]
+        PatternTrack["Track L2 Patterns"]
+        ConfidenceScore["Build Confidence"]
+        PromoteL1["Promote to L1 Rules"]
+
+        PatternTrack --> ConfidenceScore --> PromoteL1
+        PromoteL1 -.->|"New YAML Rule"| YAML
+    end
+
+    subgraph EvidenceGeneration["3. Audit Log Generation & Storage"]
+        direction TB
+        PreState["Capture Pre-State"]
+        Actions["Record Actions"]
+        PostState["Capture Post-State"]
+        BundleCreate["Create Evidence Bundle"]
+        Ed25519Sign["Ed25519 Signature"]
+        JSONBundle["JSON Bundle<br/>(bundle.json + bundle.sig)"]
+
+        PreState --> Actions --> PostState
+        PostState --> BundleCreate
+        BundleCreate --> Ed25519Sign --> JSONBundle
+    end
+
+    subgraph EvidenceStorage["Evidence Storage Paths"]
+        direction LR
+        LocalStore["Local Storage<br/>/var/lib/compliance-agent/evidence/"]
+        OfflineQueue["Offline Queue<br/>(SQLite WAL)"]
+        MCPUpload["MCP Server Upload"]
+        WORMUpload["WORM Storage<br/>(S3 Object Lock)"]
+
+        LocalStore --> OfflineQueue
+        OfflineQueue -->|"Retry on Connect"| MCPUpload
+        LocalStore --> WORMUpload
+    end
+
+    subgraph ReportCompilation["4. Client Report Compilation"]
+        direction TB
+        QueryEvidence["Query Evidence Bundles"]
+        AggregateMetrics["Aggregate Metrics"]
+        HIPAAMapping["Map to HIPAA Controls"]
+        CompliancePacket["Generate Compliance Packet"]
+        ExecutiveReport["Executive Summary"]
+        DetailedAudit["Detailed Audit Trail"]
+
+        QueryEvidence --> AggregateMetrics
+        AggregateMetrics --> HIPAAMapping
+        HIPAAMapping --> CompliancePacket
+        CompliancePacket --> ExecutiveReport
+        CompliancePacket --> DetailedAudit
+    end
+
+    %% Main flow connections
+    DriftDetector --> DriftChecks
+    DriftChecks -->|"Drift Detected"| ThreeTierHealing
+    ThreeTierHealing --> DataFlywheel
+    ThreeTierHealing -->|"Remediation Result"| EvidenceGeneration
+    EvidenceGeneration --> EvidenceStorage
+    EvidenceStorage --> ReportCompilation
+
+    %% No drift path
+    DriftChecks -->|"No Drift"| EvidenceGeneration
+
+    %% Evidence bundle fields annotation
+    BundleFields["Evidence Bundle Fields:<br/>- site_id, host_id<br/>- check, outcome<br/>- pre_state, post_state<br/>- actions, timestamps<br/>- hipaa_controls<br/>- nixos_revision<br/>- rollback_available"]
+
+    JSONBundle -.- BundleFields
+
+    %% Styling
+    classDef initiation fill:#4a90d9,stroke:#2d5986,color:#fff
+    classDef detection fill:#fd7e14,stroke:#dc6a0f,color:#fff
+    classDef healing fill:#28a745,stroke:#1e7e34,color:#fff
+    classDef evidence fill:#6f42c1,stroke:#5a32a3,color:#fff
+    classDef storage fill:#dc3545,stroke:#c82333,color:#fff
+    classDef reports fill:#20c997,stroke:#17a085,color:#fff
+
+    class Timer,AgentLoop,DriftDetector initiation
+    class Patching,AVEDR,Backup,Logging,Firewall,Encrypt detection
+    class YAML,PatternMatch,FastRemediate,IncidentContext,LLMCall,RunbookSelect,TicketCreate,SLATrack,HumanReview,PatternTrack,ConfidenceScore,PromoteL1 healing
+    class PreState,Actions,PostState,BundleCreate,Ed25519Sign,JSONBundle evidence
+    class LocalStore,OfflineQueue,MCPUpload,WORMUpload storage
+    class QueryEvidence,AggregateMetrics,HIPAAMapping,CompliancePacket,ExecutiveReport,DetailedAudit reports

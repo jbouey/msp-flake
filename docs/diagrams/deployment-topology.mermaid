@@ -1,0 +1,152 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4a90d9', 'primaryTextColor': '#fff', 'primaryBorderColor': '#2d5986', 'lineColor': '#5c5c5c'}}}%%
+flowchart TB
+    subgraph Internet["Internet / Cloud"]
+        direction TB
+        OpenAI["OpenAI API<br/>(api.openai.com)"]
+        S3WORM["AWS S3 WORM<br/>(Object Lock)"]
+        RMMCloud["RMM/PSA Cloud<br/>(ConnectWise/Datto)"]
+    end
+
+    subgraph MSPDatacenter["MSP Datacenter (Managed)"]
+        direction TB
+
+        subgraph MCPInfra["MCP Infrastructure"]
+            MCPServer["MCP Server<br/>NixOS VM<br/>:8000 API / :4445 SSH"]
+            RedisCache["Redis<br/>:6379"]
+            EvidenceDB["Evidence Store<br/>(PostgreSQL)"]
+            RunbookRepo["Runbook Repository"]
+
+            MCPServer --> RedisCache
+            MCPServer --> EvidenceDB
+            MCPServer --> RunbookRepo
+        end
+
+        subgraph Monitoring["Observability"]
+            Prometheus["Prometheus<br/>:9090"]
+            Grafana["Grafana<br/>:3000"]
+            AlertManager["AlertManager"]
+
+            MCPServer --> Prometheus
+            Prometheus --> Grafana
+            Prometheus --> AlertManager
+        end
+    end
+
+    subgraph ClientSiteA["Client Site A (Healthcare Practice)"]
+        direction TB
+
+        subgraph HIPAAZones["HIPAA Data Zones"]
+            subgraph SystemZone["System Zone (Low Risk)"]
+                direction LR
+                SysLogs["syslog/journald"]
+                SSHAttempts["SSH Attempts"]
+                PkgHashes["Package Hashes"]
+                BackupStatus["Backup Status"]
+            end
+
+            subgraph AppZone["Application Zone (Moderate Risk)"]
+                direction LR
+                EHRAudit["EHR Audit Logs"]
+                AccessEvents["Access Events"]
+                AuthLogs["Auth Logs"]
+            end
+
+            subgraph DataZone["Data Zone (High Risk - Never Ingested)"]
+                direction LR
+                PatientRecords["Patient Records"]
+                LabResults["Lab Results"]
+                Demographics["Demographics"]
+            end
+        end
+
+        subgraph ClientAppliance["NixOS Compliance Appliance"]
+            direction TB
+            CompAgent["Compliance Agent<br/>systemd service"]
+            LocalRedis["Local Redis<br/>:6379"]
+            LocalMCP["Local MCP<br/>:8000"]
+            WebDash["Web Dashboard<br/>:8080"]
+            NFTables["nftables<br/>(Egress Filter)"]
+            LocalEvidence["Local Evidence<br/>/var/lib/compliance-agent/"]
+
+            CompAgent --> LocalRedis
+            CompAgent --> LocalMCP
+            LocalMCP --> LocalRedis
+            CompAgent --> WebDash
+            CompAgent --> LocalEvidence
+        end
+
+        subgraph NetworkBoundary["Network Security"]
+            Firewall["Site Firewall"]
+            VPN["VPN Gateway<br/>(WireGuard/IPSec)"]
+            EgressFilter["Egress Allowlist<br/>(DNS+Timer)"]
+        end
+
+        WinServer["Windows Server<br/>(Domain Controller)"]
+        EHRServer["EHR Server"]
+    end
+
+    subgraph ClientSiteB["Client Site B (Small Clinic)"]
+        direction TB
+        ApplianceB["NixOS Appliance"]
+        WinB["Windows Workstations"]
+    end
+
+    subgraph BackupDestinations["Backup Destinations"]
+        direction LR
+        LocalNAS["Local NAS<br/>(Primary)"]
+        OffSiteS3["Off-Site S3<br/>(Secondary)"]
+        WORMVault["WORM Vault<br/>(Compliance)"]
+    end
+
+    %% Encrypted Communication Paths
+    ClientAppliance <-->|"mTLS :443"| MCPInfra
+    ClientAppliance <-->|"HTTPS :443"| OpenAI
+    ClientAppliance -->|"S3 :443<br/>(Object Lock)"| S3WORM
+    MCPInfra -.->|"Webhook"| RMMCloud
+
+    %% Internal connections
+    ClientAppliance -->|"WinRM :5985/:5986"| WinServer
+    ClientAppliance -->|"Read Only"| SystemZone
+    ClientAppliance -->|"Tokenized"| AppZone
+    ClientAppliance -.-x|"NEVER ACCESS"| DataZone
+
+    %% Site B connection
+    ApplianceB <-->|"mTLS"| MCPInfra
+
+    %% Backup paths
+    ClientAppliance -->|"Restic (Encrypted)"| LocalNAS
+    LocalNAS -->|"Replication"| OffSiteS3
+    ClientAppliance -->|"Ed25519 Signed"| WORMVault
+
+    %% Legend
+    subgraph Legend["Legend"]
+        direction LR
+        EncPath["Encrypted Path"]
+        UnencPath["Unencrypted"]
+        BlockedPath["Blocked Access"]
+    end
+
+    %% Annotations
+    PHINote["PHI Scrubbing:<br/>- Fluent Bit filters<br/>- Regex patterns<br/>- Hash checksums<br/>- Metadata only"]
+    ClientAppliance -.- PHINote
+
+    EncNote["Encryption:<br/>- mTLS for API<br/>- Ed25519 for signing<br/>- LUKS at rest<br/>- TLS 1.3 in transit"]
+    NetworkBoundary -.- EncNote
+
+    %% Styling
+    classDef internet fill:#6c757d,stroke:#545b62,color:#fff
+    classDef msp fill:#28a745,stroke:#1e7e34,color:#fff
+    classDef client fill:#4a90d9,stroke:#2d5986,color:#fff
+    classDef hipaa_low fill:#20c997,stroke:#17a085,color:#fff
+    classDef hipaa_med fill:#ffc107,stroke:#d39e00,color:#000
+    classDef hipaa_high fill:#dc3545,stroke:#c82333,color:#fff
+    classDef backup fill:#fd7e14,stroke:#dc6a0f,color:#fff
+    classDef appliance fill:#6f42c1,stroke:#5a32a3,color:#fff
+
+    class OpenAI,S3WORM,RMMCloud internet
+    class MCPServer,RedisCache,EvidenceDB,RunbookRepo,Prometheus,Grafana,AlertManager msp
+    class CompAgent,LocalRedis,LocalMCP,WebDash,NFTables,LocalEvidence,ApplianceB appliance
+    class SysLogs,SSHAttempts,PkgHashes,BackupStatus hipaa_low
+    class EHRAudit,AccessEvents,AuthLogs hipaa_med
+    class PatientRecords,LabResults,Demographics hipaa_high
+    class LocalNAS,OffSiteS3,WORMVault backup

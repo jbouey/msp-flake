@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2025-12-04
-**Sprint:** Phase 2 Complete
+**Last Updated:** 2025-12-28
+**Sprint:** Phase 3 - Production MCP Server Deployed
 
 ---
 
@@ -187,6 +187,82 @@
 - [x] 429 passed, 1 skipped (with USE_REAL_VMS=1)
 - [x] Evidence batch processing (parallel uploads) - 2025-12-04
 - [x] Async Pattern Improvements complete - 2025-12-04
+- [x] NixOS module: Added local MCP server + Redis - 2025-12-08
+- [x] NixOS module: Updated firewall for local loopback + WinRM - 2025-12-08
+- [x] NixOS module: Default mcpUrl now http://127.0.0.1:8000 - 2025-12-08
+- [x] **Production MCP Server deployed to Hetzner VPS** - 2025-12-28
+  - FastAPI + PostgreSQL + Redis + MinIO (WORM)
+  - Ed25519 signed orders with 15-min TTL
+  - 6 default runbooks loaded from DB
+  - Rate limiting: 10 req/5min/site_id
+  - URL: http://178.156.162.116:8000
+- [x] **Architecture diagrams created** - 2025-12-28
+  - docs/diagrams/system-architecture.mermaid
+  - docs/diagrams/data-flow.mermaid
+  - docs/diagrams/deployment-topology.mermaid
+  - docs/diagrams/README.md
+
+---
+
+## 🔴 Phase 3: Hardware Deployment (Current)
+
+### 16. Create nixosConfigurations Target
+**Status:** ⭕ PENDING
+**Why:** Need deployable configuration for physical hardware
+**Files:** `flake-compliance.nix`
+**Acceptance:**
+- [ ] Add `nixosConfigurations.compliance-appliance` target
+- [ ] Include hardware-configuration.nix template
+- [ ] Test with `nix build .#nixosConfigurations.compliance-appliance.config.system.build.toplevel`
+
+### 17. Copy Runbooks to NixOS Module
+**Status:** ✅ COMPLETE (2025-12-08)
+**Why:** MCP server needs runbook YAML files at runtime
+**Files:** `modules/compliance-agent.nix`, `mcp-server/runbooks/*.yaml`
+**Acceptance:**
+- [x] Bundle runbooks into /var/lib/mcp-server/runbooks on activation
+- [x] Include all 7 runbooks (BACKUP, CERT, DISK, SERVICE, DRIFT, RESTORE, CPU)
+
+### 18. Deploy Production MCP Server
+**Status:** ✅ COMPLETE (2025-12-28)
+**Server:** Hetzner VPS (178.156.162.116)
+**Files:** `/opt/mcp-server/` on remote server
+**Acceptance:**
+- [x] Docker Compose stack running (FastAPI, PostgreSQL, Redis, MinIO)
+- [x] PostgreSQL schema with 8 tables initialized
+- [x] 6 default runbooks loaded
+- [x] Ed25519 signing key generated
+- [x] Health check returns `{"status": "ok"}`
+- [x] Test checkin and incident endpoints working
+
+### 19. Connect Compliance Agent to Production MCP
+**Status:** ⭕ PENDING
+**Why:** Agents at client sites need to reach central server
+**Files:** `modules/compliance-agent.nix`, `mcp_client.py`
+**Acceptance:**
+- [ ] Update mcpUrl to `http://178.156.162.116:8000`
+- [ ] Test checkin from appliance to production server
+- [ ] Verify signed orders are received
+- [ ] Confirm evidence uploads to MinIO
+
+### 20. Configure TLS for MCP Server
+**Status:** ⭕ PENDING
+**Why:** HIPAA requires encryption in transit
+**Files:** `/opt/mcp-server/docker-compose.yml`, nginx/caddy config
+**Acceptance:**
+- [ ] Obtain TLS certificate (Let's Encrypt)
+- [ ] Configure HTTPS termination (Caddy or nginx)
+- [ ] Update mcpUrl to https://mcp.osiriscare.net
+- [ ] Test mTLS client certificates (optional)
+
+### 21. MinIO Object Lock Configuration
+**Status:** ⭕ PENDING
+**Why:** Evidence must be immutable per HIPAA §164.312(b)
+**Acceptance:**
+- [ ] Enable versioning on evidence bucket
+- [ ] Configure Object Lock with GOVERNANCE mode
+- [ ] Set 7-year retention for compliance tier
+- [ ] Test evidence cannot be deleted
 
 ---
 

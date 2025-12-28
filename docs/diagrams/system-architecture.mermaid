@@ -1,0 +1,125 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4a90d9', 'primaryTextColor': '#fff', 'primaryBorderColor': '#2d5986', 'lineColor': '#5c5c5c', 'secondaryColor': '#f0f0f0', 'tertiaryColor': '#e8f4f8'}}}%%
+flowchart TB
+    subgraph NixOS["NixOS Base Infrastructure"]
+        direction TB
+        Flakes["Nix Flakes<br/>(Deterministic Builds)"]
+        Modules["NixOS Modules"]
+        SystemdUnits["Systemd Services"]
+        NFTables["nftables Firewall"]
+        TimeSync["systemd-timesyncd"]
+        AuditD["auditd"]
+
+        Flakes --> Modules
+        Modules --> SystemdUnits
+        Modules --> NFTables
+        Modules --> TimeSync
+        Modules --> AuditD
+    end
+
+    subgraph MCPServer["MCP Server (Central Control Plane)"]
+        direction TB
+        FastAPI["FastAPI Server<br/>:8000"]
+        Redis["Redis Cache<br/>:6379"]
+        LLMIntegration["LLM Integration<br/>(GPT-4o/Claude)"]
+        RunbookLib["Runbook Library<br/>(YAML)"]
+        Guardrails["Guardrails Engine"]
+        EvidenceStore["Evidence Store"]
+
+        FastAPI --> Redis
+        FastAPI --> LLMIntegration
+        FastAPI --> RunbookLib
+        FastAPI --> Guardrails
+        FastAPI --> EvidenceStore
+    end
+
+    subgraph ComplianceAgent["Compliance Agent (On-Prem)"]
+        direction TB
+        AgentCore["Agent Core<br/>(Main Loop)"]
+        DriftDetector["Drift Detector<br/>(6 Checks)"]
+
+        subgraph ThreeTier["Three-Tier Auto-Healing"]
+            L1["L1: Deterministic<br/>(70-80%, <100ms)"]
+            L2["L2: LLM Planner<br/>(15-20%, 2-5s)"]
+            L3["L3: Human Escalation<br/>(5-10%)"]
+        end
+
+        HealingEngine["Healing Engine"]
+        EvidenceGen["Evidence Generator"]
+        Ed25519["Ed25519 Signer"]
+        OfflineQueue["Offline Queue<br/>(SQLite WAL)"]
+        MCPClient["MCP Client<br/>(mTLS)"]
+        WebUI["Web Dashboard<br/>:8080"]
+
+        AgentCore --> DriftDetector
+        AgentCore --> ThreeTier
+        AgentCore --> HealingEngine
+        HealingEngine --> EvidenceGen
+        EvidenceGen --> Ed25519
+        EvidenceGen --> OfflineQueue
+        AgentCore --> MCPClient
+        AgentCore --> WebUI
+    end
+
+    subgraph BackupServices["Backup & Encryption Services"]
+        direction TB
+        WORMStorage["WORM Storage<br/>(S3 Object Lock)"]
+        BackupAgent["Backup Agent<br/>(Restic)"]
+        LUKSEncrypt["LUKS Encryption"]
+        CertManager["Certificate Manager"]
+
+        BackupAgent --> WORMStorage
+    end
+
+    subgraph ClientModules["Client-Facing Compliance Modules"]
+        direction TB
+        DriftChecks["Drift Checks"]
+        PatchMgmt["Patching"]
+        AVEDR["AV/EDR Health"]
+        BackupVerify["Backup Verification"]
+        LoggingCheck["Logging Continuity"]
+        FirewallCheck["Firewall Baseline"]
+        EncryptCheck["Encryption Status"]
+
+        DriftChecks --> PatchMgmt
+        DriftChecks --> AVEDR
+        DriftChecks --> BackupVerify
+        DriftChecks --> LoggingCheck
+        DriftChecks --> FirewallCheck
+        DriftChecks --> EncryptCheck
+    end
+
+    subgraph WindowsSupport["Windows Collector"]
+        WinRM["WinRM Client<br/>(:5985/:5986)"]
+        WinCollector["Windows Data Collector"]
+        WinRunbooks["Windows Runbooks<br/>(7 HIPAA)"]
+    end
+
+    %% Connections between major components
+    NixOS --> ComplianceAgent
+    ComplianceAgent <-->|"mTLS/HTTPS"| MCPServer
+    MCPServer -->|"API Calls"| LLMIntegration
+    ComplianceAgent -->|"Pull/Push"| BackupServices
+    ComplianceAgent --> ClientModules
+    ComplianceAgent --> WindowsSupport
+
+    %% External integrations
+    RMM["RMM/PSA<br/>(Reseller)"]
+    Syslog["Syslog Target"]
+
+    MCPServer -.->|"Webhooks"| RMM
+    ComplianceAgent -.->|"Events"| Syslog
+
+    %% Styling
+    classDef nixos fill:#4a90d9,stroke:#2d5986,color:#fff
+    classDef mcp fill:#28a745,stroke:#1e7e34,color:#fff
+    classDef agent fill:#6f42c1,stroke:#5a32a3,color:#fff
+    classDef backup fill:#fd7e14,stroke:#dc6a0f,color:#fff
+    classDef client fill:#20c997,stroke:#17a085,color:#fff
+    classDef windows fill:#0078d4,stroke:#005a9e,color:#fff
+
+    class Flakes,Modules,SystemdUnits,NFTables,TimeSync,AuditD nixos
+    class FastAPI,Redis,LLMIntegration,RunbookLib,Guardrails,EvidenceStore mcp
+    class AgentCore,DriftDetector,L1,L2,L3,HealingEngine,EvidenceGen,Ed25519,OfflineQueue,MCPClient,WebUI agent
+    class WORMStorage,BackupAgent,LUKSEncrypt,CertManager backup
+    class DriftChecks,PatchMgmt,AVEDR,BackupVerify,LoggingCheck,FirewallCheck,EncryptCheck client
+    class WinRM,WinCollector,WinRunbooks windows
