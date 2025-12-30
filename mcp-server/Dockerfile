@@ -20,13 +20,15 @@ RUN pip install --no-cache-dir \
     jsonschema \
     jinja2 \
     prometheus-client \
-    boto3
+    boto3 \
+    sqlalchemy \
+    aiohttp
 
 # Copy application code
 COPY . /app
 
 # Create necessary directories
-RUN mkdir -p /tmp/msp-demo-state /var/lib/msp/evidence
+RUN mkdir -p /tmp/msp-demo-state /var/lib/msp/evidence /var/lib/mcp-server
 
 # Expose port
 EXPOSE 8000
@@ -35,5 +37,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the minimal server for demo
-CMD ["uvicorn", "server_minimal:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the full server with database
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]

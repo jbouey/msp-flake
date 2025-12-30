@@ -1,0 +1,163 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* iOS-inspired base styles */
+@layer base {
+  html {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-background-primary text-label-primary;
+    margin: 0;
+    min-height: 100vh;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+}
+
+/* Glass morphism utilities */
+@layer components {
+  .glass {
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+  }
+
+  .glass-card {
+    @apply glass rounded-ios-lg shadow-card;
+    transition: all 0.2s ease;
+  }
+
+  .glass-card:hover {
+    @apply shadow-card-hover;
+  }
+
+  .glass-sidebar {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-right: 1px solid rgba(60, 60, 67, 0.1);
+  }
+
+  .glass-header {
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid rgba(60, 60, 67, 0.1);
+  }
+}
+
+/* Health status colors */
+@layer utilities {
+  .health-critical {
+    @apply text-health-critical;
+  }
+
+  .health-warning {
+    @apply text-health-warning;
+  }
+
+  .health-healthy {
+    @apply text-health-healthy;
+  }
+
+  .bg-health-critical {
+    background-color: #FF3B30;
+  }
+
+  .bg-health-warning {
+    background-color: #FF9500;
+  }
+
+  .bg-health-healthy {
+    background-color: #34C759;
+  }
+}
+
+/* Badge styles */
+@layer components {
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-critical {
+    @apply badge bg-red-100 text-health-critical;
+  }
+
+  .badge-warning {
+    @apply badge bg-orange-100 text-health-warning;
+  }
+
+  .badge-healthy {
+    @apply badge bg-green-100 text-health-healthy;
+  }
+
+  .badge-l1 {
+    @apply badge bg-blue-100 text-ios-blue;
+  }
+
+  .badge-l2 {
+    @apply badge bg-purple-100 text-ios-purple;
+  }
+
+  .badge-l3 {
+    @apply badge bg-orange-100 text-ios-orange;
+  }
+}
+
+/* Button styles */
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-ios-md font-medium text-sm transition-all;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent-primary text-white;
+  }
+
+  .btn-primary:hover {
+    @apply opacity-90;
+  }
+
+  .btn-secondary {
+    @apply btn bg-separator-light text-label-primary;
+  }
+
+  .btn-secondary:hover {
+    @apply bg-separator-medium;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-accent-primary;
+  }
+
+  .btn-ghost:hover {
+    @apply bg-accent-tint;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(60, 60, 67, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(60, 60, 67, 0.3);
+}

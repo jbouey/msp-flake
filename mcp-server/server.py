@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
 MCP Server - Central Control Plane for MSP Compliance Platform
-Receives incidents, uses LLM to select runbooks, manages evidence
+
+Receives incidents, uses LLM to select runbooks, manages evidence,
+and powers the learning loop (L2 -> L1 promotion).
+
+This is the brain of the MSP Compliance Platform.
 """
 
 import os
 import json
 import yaml
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import asyncio
 
 from fastapi import FastAPI, HTTPException, status
@@ -18,6 +22,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 import redis.asyncio as redis
 import aiohttp
+
+# Import our database layer
+from database import init_database, get_store, IncidentStore
 
 # ============================================================================
 # Configuration
@@ -28,6 +35,7 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "mcp-redis-password")
 RUNBOOK_DIR = Path(os.getenv("RUNBOOK_DIR", "/var/lib/mcp-server/runbooks"))
 EVIDENCE_DIR = Path(os.getenv("EVIDENCE_DIR", "/var/lib/mcp-server/evidence"))
+DATABASE_DIR = Path(os.getenv("DATABASE_DIR", "/var/lib/mcp-server"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # OpenAI API (for LLM runbook selection)
@@ -36,6 +44,9 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 
 # Rate limiting
 RATE_LIMIT_COOLDOWN_SECONDS = 300  # 5 minutes
+
+# Global store reference
+store: Optional[IncidentStore] = None
 
 # ============================================================================
 # Pydantic Models
@@ -102,17 +113,26 @@ redis_client: Optional[redis.Redis] = None
 
 @app.on_event("startup")
 async def startup():
-    """Initialize Redis connection"""
-    global redis_client
+    """Initialize Redis connection and database"""
+    global redis_client, store
+
+    # Initialize Redis
     redis_client = await redis.from_url(
         f"redis://{REDIS_HOST}:{REDIS_PORT}",
         password=REDIS_PASSWORD,
         decode_responses=True
     )
     print(f"✓ Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
-    
+
     # Ensure directories exist
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+    DATABASE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Initialize database
+    db_path = DATABASE_DIR / "mcp.db"
+    store = init_database(f"sqlite:///{db_path}")
+    print(f"✓ Database initialized: {db_path}")
+
     print(f"✓ Evidence directory: {EVIDENCE_DIR}")
     print(f"✓ Runbook directory: {RUNBOOK_DIR}")
     print(f"✓ MCP Server started")
@@ -296,12 +316,16 @@ async def health_check():
         redis_status = "connected"
     except:
         redis_status = "disconnected"
-    
+
+    # Database status
+    db_status = "connected" if store is not None else "disconnected"
+
     return {
         "status": "healthy",
         "redis": redis_status,
+        "database": db_status,
         "runbooks_loaded": len(RUNBOOKS),
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 @app.get("/runbooks")
@@ -336,16 +360,19 @@ async def get_runbook(runbook_id: str):
 @app.post("/chat")
 async def process_incident(incident: IncidentRequest):
     """
-    Main endpoint: Receive incident, select runbook, create remediation order
+    Main endpoint: Receive incident, select runbook, create remediation order.
+
+    This is the L2 decision path - uses LLM to select runbook.
+    Every decision here feeds the learning loop for potential L1 promotion.
     """
-    
+
     # Check rate limit
     allowed = await check_rate_limit(
         incident.client_id,
         incident.hostname,
         incident.incident_type
     )
-    
+
     if not allowed:
         remaining = await get_remaining_cooldown(
             incident.client_id,
@@ -356,44 +383,80 @@ async def process_incident(incident: IncidentRequest):
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Rate limited. Try again in {remaining} seconds."
         )
-    
-    # Use LLM to select runbook
-    selection = await select_runbook_with_llm(incident)
-    
+
+    # Store incident in database
+    db_incident = None
+    if store:
+        db_incident = store.create_incident(
+            site_id=incident.client_id,
+            hostname=incident.hostname,
+            incident_type=incident.incident_type,
+            severity=incident.severity,
+            details=incident.details
+        )
+        print(f"✓ Created incident {db_incident.incident_id}")
+
+    # First, check if we have an L1 rule for this incident type
+    resolution_level = "L2"  # Default to LLM-assisted
+    if store:
+        l1_rules = store.get_rules_for_incident_type(incident.incident_type)
+        if l1_rules:
+            # We have an L1 rule! Use it directly (no LLM cost)
+            rule = l1_rules[0]
+            selection = RunbookSelection(
+                runbook_id=rule.runbook_id,
+                confidence=0.95,
+                reasoning=f"L1 rule match: {rule.name}",
+                parameters=rule.parameters or {}
+            )
+            resolution_level = "L1"
+            print(f"✓ L1 rule matched: {rule.rule_id}")
+        else:
+            # No L1 rule - use LLM (L2)
+            selection = await select_runbook_with_llm(incident)
+    else:
+        selection = await select_runbook_with_llm(incident)
+
     # Verify runbook exists
     if selection.runbook_id not in RUNBOOKS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Selected runbook not found: {selection.runbook_id}"
         )
-    
+
     # Create remediation order
     order_id = hashlib.sha256(
-        f"{incident.client_id}{incident.hostname}{datetime.utcnow().isoformat()}".encode()
+        f"{incident.client_id}{incident.hostname}{datetime.now(timezone.utc).isoformat()}".encode()
     ).hexdigest()[:16]
-    
+
     order = RemediationOrder(
         order_id=order_id,
         runbook_id=selection.runbook_id,
         runbook_content=RUNBOOKS[selection.runbook_id],
         parameters=selection.parameters,
-        expires_at=(datetime.utcnow().isoformat())
+        expires_at=(datetime.now(timezone.utc).isoformat())
     )
-    
-    # Store order in Redis
+
+    # Store order in Redis with incident reference
     order_key = f"order:{incident.client_id}:{order_id}"
+    order_data = order.dict()
+    order_data["incident_id"] = db_incident.incident_id if db_incident else None
+    order_data["resolution_level"] = resolution_level
+
     await redis_client.setex(
         order_key,
         900,  # 15 minutes TTL
-        order.json()
+        json.dumps(order_data)
     )
-    
-    print(f"✓ Created order {order_id} for {incident.client_id} ({selection.runbook_id})")
-    
+
+    print(f"✓ Created order {order_id} for {incident.client_id} ({selection.runbook_id}) [{resolution_level}]")
+
     return {
         "status": "order_created",
         "order_id": order_id,
+        "incident_id": db_incident.incident_id if db_incident else None,
         "runbook_id": selection.runbook_id,
+        "resolution_level": resolution_level,
         "confidence": selection.confidence,
         "reasoning": selection.reasoning,
         "order": order.dict()
@@ -401,20 +464,302 @@ async def process_incident(incident: IncidentRequest):
 
 @app.post("/evidence")
 async def submit_evidence(evidence: EvidenceBundle):
-    """Accept evidence bundle from compliance agent"""
-    
+    """
+    Accept evidence bundle from compliance agent.
+
+    This is the completion of the incident lifecycle:
+    1. Incident reported -> /chat
+    2. Runbook executed by agent
+    3. Evidence submitted -> /evidence (here)
+    4. Learning engine analyzes result
+    5. Patterns are aggregated for L1 promotion
+    """
+
     # Save evidence to disk
     evidence_file = EVIDENCE_DIR / f"{evidence.bundle_id}.json"
     with open(evidence_file, 'w') as f:
         json.dump(evidence.dict(), f, indent=2)
-    
+
     print(f"✓ Stored evidence bundle: {evidence.bundle_id}")
-    
+
+    # Record execution in database
+    execution = None
+    if store:
+        success = evidence.outcome.lower() in ["success", "resolved", "fixed"]
+        execution = store.record_execution(
+            runbook_id=evidence.runbook_id,
+            site_id=evidence.client_id,
+            hostname=evidence.hostname,
+            success=success,
+            incident_id=evidence.evidence_data.get("incident_id"),
+            incident_type=evidence.evidence_data.get("incident_type"),
+            duration_seconds=evidence.duration_seconds,
+            status="success" if success else "failure",
+            evidence_bundle_id=evidence.bundle_id,
+            state_before=evidence.evidence_data.get("state_before", {}),
+            state_after=evidence.evidence_data.get("state_after", {}),
+            state_diff=evidence.evidence_data.get("state_diff", {}),
+            executed_steps=evidence.evidence_data.get("executed_steps", []),
+            error_message=evidence.evidence_data.get("error_message"),
+        )
+        print(f"✓ Recorded execution {execution.execution_id} (success={success})")
+
+        # Resolve the incident if execution was successful
+        incident_id = evidence.evidence_data.get("incident_id")
+        if incident_id and success:
+            resolution_level = evidence.evidence_data.get("resolution_level", "L2")
+            store.resolve_incident(
+                incident_id=incident_id,
+                resolution_level=resolution_level,
+                runbook_id=evidence.runbook_id,
+                evidence_bundle_id=evidence.bundle_id
+            )
+            print(f"✓ Resolved incident {incident_id} via {resolution_level}")
+
     return {
         "status": "evidence_received",
         "bundle_id": evidence.bundle_id,
-        "stored_at": str(evidence_file)
+        "execution_id": execution.execution_id if execution else None,
+        "stored_at": str(evidence_file),
+        "learning_updated": execution is not None
     }
+
+# ============================================================================
+# Learning Loop & Rule Distribution Endpoints
+# ============================================================================
+
+@app.get("/rules")
+async def get_active_rules():
+    """
+    Get all active L1 rules.
+
+    Agents call this to sync their local L1 rule cache.
+    These rules run locally without server calls ($0, <100ms).
+    """
+    if not store:
+        return {"rules": [], "total": 0}
+
+    rules = store.get_active_rules()
+    return {
+        "rules": [
+            {
+                "rule_id": r.rule_id,
+                "name": r.name,
+                "incident_type": r.incident_type,
+                "runbook_id": r.runbook_id,
+                "match_conditions": r.match_conditions,
+                "parameters": r.parameters,
+                "hipaa_controls": r.hipaa_controls,
+                "version": r.version,
+            }
+            for r in rules
+        ],
+        "total": len(rules),
+        "synced_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+@app.get("/learning/status")
+async def get_learning_status():
+    """Get learning loop statistics for dashboard."""
+    if not store:
+        return {
+            "total_l1_rules": 0,
+            "total_l2_decisions_30d": 0,
+            "patterns_awaiting_promotion": 0,
+            "recently_promoted_count": 0,
+            "promotion_success_rate": 0.0,
+        }
+
+    return store.get_learning_status()
+
+
+@app.get("/learning/candidates")
+async def get_promotion_candidates(
+    min_occurrences: int = 5,
+    min_success_rate: float = 90.0
+):
+    """
+    Get patterns eligible for L1 promotion.
+
+    Criteria:
+    - min_occurrences: Minimum times the pattern has been seen
+    - min_success_rate: Minimum success rate (%)
+    """
+    if not store:
+        return {"candidates": [], "total": 0}
+
+    candidates = store.get_promotion_candidates(min_occurrences, min_success_rate)
+    return {
+        "candidates": [
+            {
+                "pattern_id": p.pattern_id,
+                "pattern_signature": p.pattern_signature,
+                "description": p.description,
+                "incident_type": p.incident_type,
+                "runbook_id": p.runbook_id,
+                "occurrences": p.occurrences,
+                "success_rate": p.success_rate,
+                "avg_resolution_time_ms": p.avg_resolution_time_ms,
+                "proposed_rule": p.proposed_rule,
+                "first_seen": p.first_seen.isoformat() if p.first_seen else None,
+                "last_seen": p.last_seen.isoformat() if p.last_seen else None,
+            }
+            for p in candidates
+        ],
+        "total": len(candidates)
+    }
+
+
+@app.post("/learning/promote/{pattern_id}")
+async def promote_pattern(pattern_id: str, promoted_by: str = "admin"):
+    """
+    Promote a pattern to L1 rule.
+
+    This creates a new deterministic rule from a successful L2 pattern.
+    Once promoted, future incidents of this type will be handled locally
+    by agents without server calls.
+    """
+    if not store:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database not initialized"
+        )
+
+    rule = store.promote_pattern(pattern_id, promoted_by)
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Pattern not found: {pattern_id}"
+        )
+
+    print(f"✓ Promoted pattern {pattern_id} -> rule {rule.rule_id}")
+
+    return {
+        "status": "promoted",
+        "pattern_id": pattern_id,
+        "new_rule_id": rule.rule_id,
+        "message": f"Pattern promoted to L1 rule: {rule.name}"
+    }
+
+
+@app.get("/learning/history")
+async def get_promotion_history(limit: int = 20):
+    """Get recently promoted patterns."""
+    if not store:
+        return {"history": [], "total": 0}
+
+    history = store.get_promotion_history(limit)
+    return {
+        "history": [
+            {
+                "pattern_id": p.pattern_id,
+                "pattern_signature": p.pattern_signature,
+                "rule_id": p.promoted_to_rule_id,
+                "promoted_at": p.promoted_at.isoformat() if p.promoted_at else None,
+            }
+            for p in history
+        ],
+        "total": len(history)
+    }
+
+
+# ============================================================================
+# Agent Registration & Health Reporting
+# ============================================================================
+
+class AgentCheckin(BaseModel):
+    """Health check-in from compliance agent"""
+    appliance_id: str
+    site_id: str
+    hostname: str
+    version: Optional[str] = None
+    ip_address: Optional[str] = None
+    health_metrics: Dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/agent/checkin")
+async def agent_checkin(checkin: AgentCheckin):
+    """
+    Receive health check-in from agent.
+
+    Agents call this periodically to report their status.
+    This updates the dashboard's fleet view.
+    """
+    if store:
+        store.register_appliance(
+            appliance_id=checkin.appliance_id,
+            site_id=checkin.site_id,
+            hostname=checkin.hostname,
+            version=checkin.version,
+            ip_address=checkin.ip_address,
+        )
+        store.appliance_checkin(checkin.appliance_id, checkin.health_metrics)
+
+    return {
+        "status": "ok",
+        "server_time": datetime.now(timezone.utc).isoformat()
+    }
+
+
+@app.get("/stats")
+async def get_global_stats():
+    """Get aggregate statistics for dashboard."""
+    if not store:
+        return {
+            "total_clients": 0,
+            "total_appliances": 0,
+            "online_appliances": 0,
+            "incidents_24h": 0,
+            "l1_resolution_rate": 0.0,
+        }
+
+    return store.get_global_stats()
+
+
+# ============================================================================
+# Agent Sync Endpoint
+# ============================================================================
+
+@app.get("/agent/sync")
+async def agent_sync(site_id: Optional[str] = None, current_rules_version: Optional[str] = None):
+    """
+    Full sync endpoint for agents.
+
+    Returns:
+        - All active L1 rules
+        - Current configuration
+        - Server timestamp
+
+    Agents should call this periodically (default: every hour) to sync their
+    local rule cache. The rules_version field can be used for quick change
+    detection to avoid re-parsing rules if nothing changed.
+    """
+    from agent_sync import build_sync_response, compute_rules_version, get_rules_for_agent
+
+    rules = get_rules_for_agent(store, site_id)
+    rules_version = compute_rules_version(rules)
+
+    # If agent already has current version, return minimal response
+    if current_rules_version and current_rules_version == rules_version:
+        return {
+            "server_time": datetime.now(timezone.utc).isoformat(),
+            "rules_version": rules_version,
+            "rules_changed": False,
+            "message": "Rules are up to date"
+        }
+
+    # Return full sync response
+    response = build_sync_response(store, site_id)
+    return {
+        "server_time": response.server_time,
+        "rules": [r.dict() for r in response.rules],
+        "rules_version": response.rules_version,
+        "rules_changed": True,
+        "config": response.config.dict(),
+        "message": f"Synced {len(response.rules)} L1 rules"
+    }
+
 
 # ============================================================================
 # Main Entry Point
