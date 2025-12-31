@@ -207,7 +207,7 @@ export interface ComplianceChecks {
 }
 
 export interface OnboardingClient {
-  id: number;
+  id: string;
   name: string;
   contact_name?: string;
   contact_email?: string;

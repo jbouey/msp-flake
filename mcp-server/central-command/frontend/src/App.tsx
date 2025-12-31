@@ -5,9 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
-import { Dashboard, Runbooks, Learning, Onboarding, ClientDetail, Login, AuditLogs } from './pages';
+import { Dashboard, Runbooks, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, Documentation } from './pages';
 import { useFleet, useRefreshFleet, useCommandPalette } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { PortalDashboard } from './portal/PortalDashboard';
 
 // Create a client for React Query
 const queryClient = new QueryClient({
@@ -22,11 +23,13 @@ const queryClient = new QueryClient({
 // Page titles for header
 const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
+  '/sites': 'Sites',
   '/onboarding': 'Onboarding Pipeline',
   '/runbooks': 'Runbook Library',
   '/learning': 'Learning Loop',
   '/reports': 'Reports',
   '/audit-logs': 'Audit Logs',
+  '/docs': 'Documentation',
 };
 
 const AppLayout: React.FC = () => {
@@ -114,10 +117,13 @@ const AppLayout: React.FC = () => {
         <main className="p-6">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/sites" element={<Sites />} />
+            <Route path="/sites/:siteId" element={<SiteDetail />} />
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/runbooks" element={<Runbooks />} />
             <Route path="/learning" element={<Learning />} />
             <Route path="/audit-logs" element={<AuditLogs />} />
+            <Route path="/docs" element={<Documentation />} />
             <Route path="/client/:siteId" element={<ClientDetail />} />
             <Route path="/reports" element={<ComingSoon title="Reports" />} />
           </Routes>
@@ -158,7 +164,13 @@ const App: React.FC = () => {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <BrowserRouter>
-          <AuthenticatedApp />
+          <Routes>
+            {/* Portal routes - no auth required */}
+            <Route path="/portal/site/:siteId" element={<PortalDashboard />} />
+
+            {/* Admin routes - auth required */}
+            <Route path="/*" element={<AuthenticatedApp />} />
+          </Routes>
         </BrowserRouter>
       </AuthProvider>
     </QueryClientProvider>

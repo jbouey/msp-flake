@@ -39,8 +39,8 @@ const getCheckinStatusColor = (status?: string): string => {
 
 export const OnboardingCard: React.FC<OnboardingCardProps> = ({ client, onClick }) => {
   const phase = getStagePhase(client.stage);
-  const isAtRisk = client.days_in_stage > 7;
-  const hasBlockers = client.blockers.length > 0;
+  const isAtRisk = (client.days_in_stage ?? 0) > 7;
+  const hasBlockers = (client.blockers?.length ?? 0) > 0;
 
   return (
     <GlassCard hover onClick={onClick} className="cursor-pointer">
@@ -77,7 +77,7 @@ export const OnboardingCard: React.FC<OnboardingCardProps> = ({ client, onClick 
           {/* Blockers */}
           {hasBlockers && (
             <div className="flex flex-wrap gap-1 mb-2">
-              {client.blockers.map((blocker, i) => (
+              {(client.blockers || []).map((blocker, i) => (
                 <span
                   key={i}
                   className="px-2 py-0.5 text-xs bg-health-critical/10 text-health-critical rounded"
@@ -122,10 +122,10 @@ export const OnboardingCard: React.FC<OnboardingCardProps> = ({ client, onClick 
           )}
 
           {/* Compliance score (Phase 2 only) */}
-          {phase === 2 && client.compliance_score !== undefined && (
+          {phase === 2 && client.compliance_score != null && (
             <div className="text-right">
               <p className="text-sm font-medium text-label-secondary">
-                {client.compliance_score.toFixed(0)}%
+                {(client?.compliance_score ?? 0).toFixed(0)}%
               </p>
               <p className="text-xs text-label-tertiary">compliance</p>
             </div>

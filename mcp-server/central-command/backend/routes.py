@@ -40,6 +40,9 @@ from .models import (
     HealthStatus,
     CheckinStatus,
     ComplianceChecks,
+    L2TestRequest,
+    L2DecisionResponse,
+    L2ConfigResponse,
 )
 from .fleet import get_mock_fleet_overview, get_mock_client_detail
 from .metrics import calculate_health_from_raw
@@ -99,8 +102,8 @@ async def get_fleet_overview():
                 for c in clients
             ]
 
-    # Fallback to mock data
-    return get_mock_fleet_overview()
+    # No clients in database - return empty list (production mode)
+    return []
 
 
 @router.get("/fleet/{site_id}", response_model=ClientDetail)
@@ -166,11 +169,8 @@ async def get_client_detail(site_id: str):
                 ],
             )
 
-    # Fallback to mock data
-    detail = get_mock_client_detail(site_id)
-    if not detail:
-        raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
-    return detail
+    # Client not found (production mode)
+    raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
 
 
 @router.get("/fleet/{site_id}/appliances", response_model=List[Appliance])
@@ -200,11 +200,8 @@ async def get_client_appliances(site_id: str):
                 for a in appliances
             ]
 
-    # Fallback to mock data
-    detail = get_mock_client_detail(site_id)
-    if not detail:
-        raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
-    return detail.appliances
+    # No appliances found (production mode)
+    return []
 
 
 # =============================================================================
@@ -229,99 +226,60 @@ async def get_incidents(
     Returns:
         List of incidents with resolution details.
     """
-    now = datetime.now(timezone.utc)
+    store = _get_db()
+    if store:
+        incidents = store.get_incidents(
+            site_id=site_id,
+            limit=limit,
+            level=level,
+            resolved=resolved,
+        )
+        if incidents:
+            return [
+                Incident(
+                    id=i.id,
+                    site_id=i.site_id,
+                    hostname=i.hostname,
+                    check_type=CheckType(i.check_type) if i.check_type else CheckType.BACKUP,
+                    severity=Severity(i.severity),
+                    resolution_level=ResolutionLevel(i.resolution_level) if i.resolution_level else None,
+                    resolved=i.resolved,
+                    resolved_at=i.resolved_at,
+                    hipaa_controls=i.hipaa_controls or [],
+                    created_at=i.created_at,
+                )
+                for i in incidents
+            ]
 
-    # Mock incidents for Phase 1
-    incidents = [
-        Incident(
-            id=1001,
-            site_id="north-valley-family-practice",
-            hostname="NVFP-DC01",
-            check_type=CheckType.BACKUP,
-            severity=Severity.MEDIUM,
-            resolution_level=ResolutionLevel.L1,
-            resolved=True,
-            resolved_at=now - timedelta(hours=4),
-            hipaa_controls=["164.308(a)(7)"],
-            created_at=now - timedelta(hours=4, minutes=5),
-        ),
-        Incident(
-            id=1002,
-            site_id="cedar-medical-group",
-            hostname="CMG-DC01",
-            check_type=CheckType.PATCHING,
-            severity=Severity.HIGH,
-            resolution_level=ResolutionLevel.L2,
-            resolved=True,
-            resolved_at=now - timedelta(hours=2),
-            hipaa_controls=["164.308(a)(5)(ii)(B)"],
-            created_at=now - timedelta(hours=2, minutes=30),
-        ),
-        Incident(
-            id=1003,
-            site_id="lakeside-pediatrics",
-            hostname="LP-FS01",
-            check_type=CheckType.ANTIVIRUS,
-            severity=Severity.HIGH,
-            resolution_level=ResolutionLevel.L1,
-            resolved=True,
-            resolved_at=now - timedelta(hours=6),
-            hipaa_controls=["164.308(a)(5)(ii)(B)"],
-            created_at=now - timedelta(hours=6, minutes=2),
-        ),
-        Incident(
-            id=1004,
-            site_id="cedar-medical-group",
-            hostname="CMG-DC01",
-            check_type=CheckType.FIREWALL,
-            severity=Severity.CRITICAL,
-            resolution_level=ResolutionLevel.L3,
-            resolved=False,
-            hipaa_controls=["164.312(e)(1)"],
-            created_at=now - timedelta(hours=1),
-        ),
-    ]
-
-    # Apply filters
-    if site_id:
-        incidents = [i for i in incidents if i.site_id == site_id]
-    if level:
-        incidents = [i for i in incidents if i.resolution_level and i.resolution_level.value == level]
-    if resolved is not None:
-        incidents = [i for i in incidents if i.resolved == resolved]
-
-    return incidents[:limit]
+    # No incidents - return empty list (production mode)
+    return []
 
 
 @router.get("/incidents/{incident_id}", response_model=IncidentDetail)
 async def get_incident_detail(incident_id: int):
     """Get full incident detail including evidence bundle."""
-    now = datetime.now(timezone.utc)
-
-    # Mock incident detail for Phase 1
-    if incident_id == 1001:
-        return IncidentDetail(
-            id=1001,
-            site_id="north-valley-family-practice",
-            appliance_id=1,
-            hostname="NVFP-DC01",
-            check_type=CheckType.BACKUP,
-            severity=Severity.MEDIUM,
-            drift_data={
-                "last_backup": (now - timedelta(hours=26)).isoformat(),
-                "backup_sla_hours": 24,
-                "backup_tool": "Veeam",
-            },
-            resolution_level=ResolutionLevel.L1,
-            resolved=True,
-            resolved_at=now - timedelta(hours=4),
-            hipaa_controls=["164.308(a)(7)"],
-            evidence_bundle_id=5001,
-            evidence_hash="a1b2c3d4e5f6...",
-            runbook_executed="RB-WIN-BACKUP-001",
-            execution_log="Backup service restarted successfully",
-            created_at=now - timedelta(hours=4, minutes=5),
-        )
+    store = _get_db()
+    if store:
+        incident = store.get_incident(incident_id)
+        if incident:
+            return IncidentDetail(
+                id=incident.id,
+                site_id=incident.site_id,
+                appliance_id=incident.appliance_id,
+                hostname=incident.hostname,
+                check_type=CheckType(incident.check_type) if incident.check_type else CheckType.BACKUP,
+                severity=Severity(incident.severity),
+                drift_data=incident.drift_data or {},
+                resolution_level=ResolutionLevel(incident.resolution_level) if incident.resolution_level else None,
+                resolved=incident.resolved,
+                resolved_at=incident.resolved_at,
+                hipaa_controls=incident.hipaa_controls or [],
+                evidence_bundle_id=incident.evidence_bundle_id,
+                evidence_hash=incident.evidence_hash,
+                runbook_executed=incident.runbook_executed,
+                execution_log=incident.execution_log,
+                created_at=incident.created_at,
+            )
 
     raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
@@ -532,76 +490,27 @@ async def get_promotion_candidates():
 
     Criteria: 5+ occurrences, 90%+ success rate.
     """
-    now = datetime.now(timezone.utc)
+    store = _get_db()
+    if store:
+        candidates = store.get_promotion_candidates()
+        if candidates:
+            return candidates
 
-    return [
-        PromotionCandidate(
-            id="pattern-001",
-            pattern_signature="backup_vss_writer_failure",
-            description="VSS Writer service failure during backup",
-            occurrences=12,
-            success_rate=100.0,
-            avg_resolution_time_ms=45000,
-            proposed_rule="Restart VSS Writer service when backup fails with VSS error",
-            first_seen=now - timedelta(days=30),
-            last_seen=now - timedelta(hours=6),
-        ),
-        PromotionCandidate(
-            id="pattern-002",
-            pattern_signature="defender_signature_stale",
-            description="Windows Defender signatures older than 7 days",
-            occurrences=8,
-            success_rate=100.0,
-            avg_resolution_time_ms=120000,
-            proposed_rule="Force Defender signature update via Update-MpSignature",
-            first_seen=now - timedelta(days=21),
-            last_seen=now - timedelta(days=1),
-        ),
-        PromotionCandidate(
-            id="pattern-003",
-            pattern_signature="temp_disk_full",
-            description="Temp folder consuming >90% of disk space",
-            occurrences=6,
-            success_rate=83.3,
-            avg_resolution_time_ms=30000,
-            proposed_rule="Clear temp files older than 7 days when disk >90%",
-            first_seen=now - timedelta(days=14),
-            last_seen=now - timedelta(days=2),
-        ),
-    ]
+    # No candidates - return empty list (production mode)
+    return []
 
 
 @router.get("/learning/history", response_model=List[PromotionHistory])
 async def get_promotion_history(limit: int = Query(default=20, le=100)):
     """Get recently promoted L2->L1 rules."""
-    now = datetime.now(timezone.utc)
+    store = _get_db()
+    if store:
+        history = store.get_promotion_history(limit=limit)
+        if history:
+            return history
 
-    return [
-        PromotionHistory(
-            id=1,
-            pattern_signature="disk_temp_cleanup",
-            rule_id="RB-WIN-DISK-002",
-            promoted_at=now - timedelta(days=2),
-            post_promotion_success_rate=100.0,
-            executions_since_promotion=8,
-        ),
-        PromotionHistory(
-            id=2,
-            pattern_signature="eventlog_full",
-            rule_id="RB-WIN-LOGGING-002",
-            promoted_at=now - timedelta(days=15),
-            post_promotion_success_rate=98.0,
-            executions_since_promotion=24,
-        ),
-        PromotionHistory(
-            id=3,
-            pattern_signature="cert_expiry_30d",
-            rule_id="RB-WIN-CERT-001",
-            promoted_at=now - timedelta(days=29),
-            post_promotion_success_rate=100.0,
-            executions_since_promotion=12,
-        ),
-    ][:limit]
+    # No history - return empty list (production mode)
+    return []
 
 
 @router.post("/learning/promote/{pattern_id}")
@@ -610,15 +519,134 @@ async def promote_pattern(pattern_id: str):
 
     Requires: Human review confirmation.
     """
-    if pattern_id not in ["pattern-001", "pattern-002", "pattern-003"]:
-        raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+    store = _get_db()
+    if store:
+        result = store.promote_pattern(pattern_id)
+        if result:
+            return result
+
+    raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
+
+# =============================================================================
+# L2 LLM PLANNER ENDPOINTS
+# =============================================================================
+
+# Try to import the L2 planner
+try:
+    from .l2_planner import (
+        analyze_incident,
+        get_l2_config,
+        is_l2_available,
+        AVAILABLE_RUNBOOKS,
+    )
+    HAS_L2_PLANNER = True
+except ImportError:
+    HAS_L2_PLANNER = False
+    analyze_incident = None
+    get_l2_config = None
+    is_l2_available = None
+    AVAILABLE_RUNBOOKS = {}
+
+
+@router.get("/l2/config", response_model=L2ConfigResponse)
+async def get_l2_configuration():
+    """Get L2 LLM planner configuration and status.
+
+    Returns:
+        Current L2 configuration including enabled status, provider, model.
+    """
+    if not HAS_L2_PLANNER or not get_l2_config:
+        return L2ConfigResponse(
+            enabled=False,
+            provider=None,
+            model="not configured",
+            timeout_seconds=30,
+            max_tokens=1024,
+            temperature=0.1,
+            runbooks_available=0,
+        )
+
+    config = get_l2_config()
+    return L2ConfigResponse(**config)
+
+
+@router.get("/l2/runbooks")
+async def get_l2_runbooks():
+    """Get available runbooks for L2 selection.
+
+    Returns:
+        Dict of runbook_id -> runbook details.
+    """
+    if not HAS_L2_PLANNER:
+        return {"runbooks": {}, "count": 0}
 
     return {
-        "status": "promoted",
-        "pattern_id": pattern_id,
-        "new_rule_id": f"RB-AUTO-{pattern_id.upper()}",
-        "message": "Pattern promoted to L1 successfully",
+        "runbooks": AVAILABLE_RUNBOOKS,
+        "count": len(AVAILABLE_RUNBOOKS),
     }
+
+
+@router.post("/l2/test", response_model=L2DecisionResponse)
+async def test_l2_planner(request: L2TestRequest):
+    """Test the L2 LLM planner with a sample incident.
+
+    This endpoint allows testing the LLM connection and runbook selection
+    without creating a real incident.
+
+    Args:
+        request: Incident details to analyze
+
+    Returns:
+        L2 decision including runbook recommendation, reasoning, confidence.
+    """
+    if not HAS_L2_PLANNER or not analyze_incident:
+        return L2DecisionResponse(
+            runbook_id=None,
+            reasoning="L2 planner not available - module not loaded",
+            confidence=0.0,
+            alternative_runbooks=[],
+            requires_human_review=True,
+            pattern_signature="",
+            llm_model="none",
+            llm_latency_ms=0,
+            error="L2 planner not configured",
+        )
+
+    if not is_l2_available():
+        return L2DecisionResponse(
+            runbook_id=None,
+            reasoning="No LLM API key configured (OPENAI_API_KEY or ANTHROPIC_API_KEY)",
+            confidence=0.0,
+            alternative_runbooks=[],
+            requires_human_review=True,
+            pattern_signature="",
+            llm_model="none",
+            llm_latency_ms=0,
+            error="No LLM API key configured",
+        )
+
+    # Call the L2 planner
+    decision = await analyze_incident(
+        incident_type=request.incident_type,
+        severity=request.severity,
+        check_type=request.check_type,
+        details=request.details or {},
+        pre_state={},
+        hipaa_controls=None,
+    )
+
+    return L2DecisionResponse(
+        runbook_id=decision.runbook_id,
+        reasoning=decision.reasoning,
+        confidence=decision.confidence,
+        alternative_runbooks=decision.alternative_runbooks,
+        requires_human_review=decision.requires_human_review,
+        pattern_signature=decision.pattern_signature,
+        llm_model=decision.llm_model,
+        llm_latency_ms=decision.llm_latency_ms,
+        error=decision.error,
+    )
 
 
 # =============================================================================
@@ -632,104 +660,14 @@ async def get_onboarding_pipeline():
     Returns:
         List of clients with stage, progress, blockers.
     """
-    now = datetime.now(timezone.utc)
+    store = _get_db()
+    if store:
+        prospects = store.get_onboarding_prospects()
+        if prospects:
+            return prospects
 
-    return [
-        OnboardingClient(
-            id=1,
-            name="Riverside Family Care",
-            contact_name="Dr. Michael Chen",
-            contact_email="mchen@riversidefc.com",
-            contact_phone="(570) 555-0101",
-            stage=OnboardingStage.CONNECTIVITY,
-            stage_entered_at=now - timedelta(days=2),
-            days_in_stage=2,
-            blockers=["WinRM not enabled on target servers"],
-            lead_at=now - timedelta(days=15),
-            discovery_at=now - timedelta(days=12),
-            proposal_at=now - timedelta(days=10),
-            contract_at=now - timedelta(days=8),
-            intake_at=now - timedelta(days=6),
-            creds_at=now - timedelta(days=5),
-            shipped_at=now - timedelta(days=4),
-            received_at=now - timedelta(days=2),
-            connectivity_at=now - timedelta(days=2),
-            tracking_number="1Z999AA10123456784",
-            tracking_carrier="UPS",
-            appliance_serial="T640-2024-0042",
-            site_id="riverside-family-care",
-            checkin_status=CheckinStatus.CONNECTED,
-            last_checkin=now - timedelta(minutes=2),
-            progress_percent=69,
-            phase=2,
-            phase_progress=33,
-            created_at=now - timedelta(days=15),
-        ),
-        OnboardingClient(
-            id=2,
-            name="Valley Pediatrics",
-            contact_name="Dr. Sarah Mitchell",
-            contact_email="smitchell@valleypeds.com",
-            contact_phone="(570) 555-0202",
-            stage=OnboardingStage.RECEIVED,
-            stage_entered_at=now - timedelta(days=1),
-            days_in_stage=1,
-            blockers=["Appliance not phoning home - possible firewall issue"],
-            lead_at=now - timedelta(days=14),
-            discovery_at=now - timedelta(days=12),
-            proposal_at=now - timedelta(days=10),
-            contract_at=now - timedelta(days=9),
-            intake_at=now - timedelta(days=7),
-            creds_at=now - timedelta(days=5),
-            shipped_at=now - timedelta(days=3),
-            received_at=now - timedelta(days=1),
-            tracking_number="1Z999AA10123456785",
-            tracking_carrier="UPS",
-            appliance_serial="T640-2024-0043",
-            checkin_status=CheckinStatus.PENDING,
-            progress_percent=62,
-            phase=2,
-            phase_progress=17,
-            created_at=now - timedelta(days=14),
-        ),
-        OnboardingClient(
-            id=3,
-            name="Mountain View Medical",
-            contact_name="Jennifer Walsh",
-            contact_email="jwalsh@mvmedical.com",
-            contact_phone="(570) 555-0303",
-            stage=OnboardingStage.INTAKE,
-            stage_entered_at=now - timedelta(days=5),
-            days_in_stage=5,
-            blockers=["Awaiting IT contact for AD credentials"],
-            lead_at=now - timedelta(days=18),
-            discovery_at=now - timedelta(days=15),
-            proposal_at=now - timedelta(days=12),
-            contract_at=now - timedelta(days=10),
-            intake_at=now - timedelta(days=5),
-            progress_percent=38,
-            phase=1,
-            phase_progress=71,
-            created_at=now - timedelta(days=18),
-        ),
-        OnboardingClient(
-            id=4,
-            name="Cedar Heights Clinic",
-            contact_name="Dr. Robert Park",
-            contact_email="rpark@cedarheights.com",
-            contact_phone="(570) 555-0404",
-            stage=OnboardingStage.DISCOVERY,
-            stage_entered_at=now - timedelta(days=3),
-            days_in_stage=3,
-            notes="Call scheduled for Jan 2, 2:00 PM",
-            lead_at=now - timedelta(days=5),
-            discovery_at=now - timedelta(days=3),
-            progress_percent=15,
-            phase=1,
-            phase_progress=29,
-            created_at=now - timedelta(days=5),
-        ),
-    ]
+    # No prospects in database - return empty list (production mode)
+    return []
 
 
 @router.get("/onboarding/metrics", response_model=OnboardingMetrics)
@@ -739,30 +677,37 @@ async def get_onboarding_metrics():
     Returns:
         Counts by stage, avg time to deploy, at-risk clients.
     """
+    store = _get_db()
+    if store:
+        metrics = store.get_onboarding_metrics()
+        if metrics:
+            return OnboardingMetrics(**metrics)
+
+    # No data - return empty metrics (production mode)
     return OnboardingMetrics(
-        total_prospects=11,
+        total_prospects=0,
         acquisition={
-            "lead": 2,
-            "discovery": 1,
-            "proposal": 1,
+            "lead": 0,
+            "discovery": 0,
+            "proposal": 0,
             "contract": 0,
-            "intake": 1,
+            "intake": 0,
             "creds": 0,
-            "shipped": 1,
+            "shipped": 0,
         },
         activation={
-            "received": 1,
-            "connectivity": 1,
+            "received": 0,
+            "connectivity": 0,
             "scanning": 0,
             "baseline": 0,
             "compliant": 0,
-            "active": 3,
+            "active": 0,
         },
-        avg_days_to_ship=10.5,
-        avg_days_to_active=18.0,
-        stalled_count=2,
-        at_risk_count=1,
-        connectivity_issues=1,
+        avg_days_to_ship=0.0,
+        avg_days_to_active=0.0,
+        stalled_count=0,
+        at_risk_count=0,
+        connectivity_issues=0,
     )
 
 

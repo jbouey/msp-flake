@@ -1,9 +1,16 @@
 # Client Onboarding: Quick Reference Guide
 
+**Version:** 2.0 | **Updated:** 2025-12-31
+
 **Quick Links:**
 - Full SOP: [CLIENT_ONBOARDING_SOP.md](CLIENT_ONBOARDING_SOP.md)
 - Templates: `templates/` directory
 - Scripts: `/opt/msp/scripts/`
+
+**Production URLs:**
+- Dashboard: https://dashboard.osiriscare.net
+- API: https://api.osiriscare.net
+- Alternate: https://msp.osiriscare.net
 
 ---
 
@@ -20,6 +27,38 @@ Ongoing:  Steady-State Support (1 hour/month)
 ### Total Setup Investment
 - **Engineer:** ~16 hours over 7 weeks
 - **Client:** ~5 hours over 7 weeks
+
+---
+
+## 🖥️ Central Command Dashboard
+
+### Create New Site
+1. Go to https://dashboard.osiriscare.net/sites
+2. Click **"+ New Site"**
+3. Enter clinic name, contact, tier
+4. Note the generated `site_id`
+
+### Site Status
+- 🟢 Online: Checkin < 5 min
+- 🟡 Stale: Checkin 5-15 min
+- 🔴 Offline: Checkin > 15 min
+- ⚪ Pending: Never connected
+
+### Quick API Commands
+```bash
+# Create site
+curl -X POST https://api.osiriscare.net/api/sites \
+  -H "Content-Type: application/json" \
+  -d '{"clinic_name": "Test Clinic", "tier": "mid"}'
+
+# Check site status
+curl https://api.osiriscare.net/api/sites
+
+# Test appliance checkin
+curl -X POST https://api.osiriscare.net/api/appliances/checkin \
+  -H "Content-Type: application/json" \
+  -d '{"site_id": "xxx", "mac_address": "aa:bb:cc:dd:ee:ff"}'
+```
 
 ---
 
@@ -241,12 +280,15 @@ curl -I https://mcp.msp.internal
 ## 💡 Pro Tips
 
 ### Deployment Day
+- Create site in Central Command first: https://dashboard.osiriscare.net/sites
+- Store credentials in Site Detail page before shipping appliance
 - Schedule during maintenance window (typically 2-5 AM)
 - Have client IT staff on standby (not actively needed, but available)
 - Take backup before starting
 - Document any deviations from plan
 
 ### Week 1
+- Monitor site status in dashboard (should show "Online")
 - Expect some threshold tuning (normal)
 - Daily check-ins build confidence
 - Document all adjustments
@@ -257,6 +299,7 @@ curl -I https://mcp.msp.internal
 - Get feedback early
 
 ### Ongoing
+- Check Sites page for offline appliances
 - Quarterly reviews keep relationship strong
 - Proactive baseline updates show value
 - Monthly packets should be routine
@@ -298,7 +341,13 @@ docs/
 ---
 
 **Created:** 2025-10-31
-**Version:** 1.0
+**Version:** 2.0
+**Updated:** 2025-12-31
 **For:** MSP Operations Team
+
+**What's New in v2.0:**
+- Central Command dashboard (osiriscare.net)
+- Sites management and phone-home system
+- API commands for automation
 
 **Next:** Read full [CLIENT_ONBOARDING_SOP.md](CLIENT_ONBOARDING_SOP.md) for complete procedures

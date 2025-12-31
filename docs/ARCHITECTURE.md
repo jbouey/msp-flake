@@ -1,10 +1,86 @@
 # MSP Platform Architecture
 
+**Last Updated:** 2025-12-31
+
 ## Overview
 
 **Stack:** NixOS + MCP + LLM
 **Target:** Small to mid-sized clinics (NEPA region)
 **Service Model:** Auto-heal infrastructure + HIPAA compliance monitoring
+
+## Production Infrastructure
+
+```
+                         ┌─────────────────┐
+                         │    INTERNET     │
+                         └────────┬────────┘
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+        │                         │                         │
+        ▼                         ▼                         ▼
+┌───────────────┐       ┌─────────────────┐       ┌─────────────────┐
+│   Clients     │       │  Central        │       │   Operators     │
+│  (Appliances) │       │  Command        │       │  (Dashboard)    │
+└───────┬───────┘       │  178.156.162.116│       └────────┬────────┘
+        │               └────────┬────────┘                │
+        │                        │                         │
+        │    ┌───────────────────┼───────────────────┐     │
+        │    │                   │                   │     │
+        ▼    ▼                   ▼                   ▼     ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Caddy Reverse Proxy                      │
+│                    (Auto TLS via Let's Encrypt)             │
+└─────────────────────────────────────────────────────────────┘
+        │                        │                        │
+        ▼                        ▼                        ▼
+┌───────────────┐       ┌───────────────┐       ┌───────────────┐
+│ api.osiris    │       │ dashboard.    │       │ msp.osiris    │
+│ care.net      │       │ osiriscare.net│       │ care.net      │
+│ :8000         │       │ :3000         │       │ :3000         │
+└───────────────┘       └───────────────┘       └───────────────┘
+        │                        │                        │
+        └────────────────────────┼────────────────────────┘
+                                 │
+        ┌────────────────────────┼────────────────────────┐
+        │                        │                        │
+        ▼                        ▼                        ▼
+┌───────────────┐       ┌───────────────┐       ┌───────────────┐
+│  PostgreSQL   │       │    Redis      │       │    MinIO      │
+│  :5432        │       │    :6379      │       │  :9000-9001   │
+│  (Sites, etc) │       │  (Cache)      │       │  (Evidence)   │
+└───────────────┘       └───────────────┘       └───────────────┘
+```
+
+### Production Endpoints
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| API | https://api.osiriscare.net | MCP API, phone-home, sites |
+| Dashboard | https://dashboard.osiriscare.net | Central Command UI |
+| Alternate | https://msp.osiriscare.net | Dashboard alias |
+
+### Appliance Phone-Home Flow
+
+```
+┌─────────────────┐     Every 60s      ┌─────────────────┐
+│  Client Site    │ ──────────────────▶│  Central        │
+│  NixOS Appliance│   POST /checkin    │  Command        │
+└─────────────────┘                    └────────┬────────┘
+                                                │
+                                       ┌────────▼────────┐
+                                       │  Updates:       │
+                                       │  - last_checkin │
+                                       │  - live_status  │
+                                       │  - appliance    │
+                                       │    metadata     │
+                                       └─────────────────┘
+```
+
+**Status Calculation:**
+- `online`: Last checkin < 5 minutes
+- `stale`: Last checkin 5-15 minutes
+- `offline`: Last checkin > 15 minutes
+- `pending`: Never checked in
 
 ## Repository Structure
 
@@ -18,9 +94,14 @@ MSP-PLATFORM/
 ├── modules/                  # NixOS modules
 │   └── compliance-agent.nix
 ├── mcp-server/              # Central MCP server
-│   ├── server.py            # FastAPI with LLM integration
-│   ├── tools/               # Remediation tools
-│   └── guardrails/          # Safety controls
+│   ├── central-command/     # Dashboard & API
+│   │   ├── backend/         # FastAPI (Python)
+│   │   └── frontend/        # React + Vite
+│   ├── app/                 # Production Docker app
+│   │   ├── main.py          # FastAPI application
+│   │   └── dashboard_api/   # Sites, phone-home, etc.
+│   ├── docker-compose.yml   # Production stack
+│   └── Caddyfile            # Reverse proxy config
 ├── terraform/               # Infrastructure as Code
 │   ├── modules/
 │   └── clients/
@@ -35,9 +116,14 @@ MSP-PLATFORM/
 | Agent | Python 3.13 | Drift detection, healing, evidence |
 | Communication | MCP Protocol | Structured LLM-to-tool interface |
 | LLM | GPT-4o / Claude | Incident triage, runbook selection |
-| Queue | NATS JetStream | Multi-tenant event durability |
+| Queue | Redis Streams | Multi-tenant event durability |
 | Evidence | WORM S3/MinIO | Tamper-evident storage |
 | Signing | Ed25519 | Cryptographic evidence bundles |
+| Dashboard | React + Vite | Central Command UI |
+| API | FastAPI | REST endpoints, phone-home |
+| Database | PostgreSQL 16 | Sites, incidents, evidence metadata |
+| Reverse Proxy | Caddy | Auto TLS, HTTPS termination |
+| Hosting | Hetzner VPS | Production infrastructure |
 
 ## Three-Tier Auto-Healing
 

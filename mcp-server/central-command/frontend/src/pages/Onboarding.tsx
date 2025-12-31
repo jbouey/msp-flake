@@ -1,18 +1,137 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { GlassCard, Spinner } from '../components/shared';
 import { OnboardingCard, PipelineStages } from '../components/onboarding';
-import { useOnboardingPipeline, useOnboardingMetrics } from '../hooks';
+import { useOnboardingPipeline, useOnboardingMetrics, useCreateSite } from '../hooks';
 import type { OnboardingClient, OnboardingStage } from '../types';
+
+/**
+ * New Prospect Modal - Create a new site/prospect
+ */
+const NewProspectModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (data: { clinic_name: string; contact_name?: string; contact_email?: string; tier?: string }) => void;
+  isLoading: boolean;
+}> = ({ isOpen, onClose, onSubmit, isLoading }) => {
+  const [clinicName, setClinicName] = useState('');
+  const [contactName, setContactName] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [tier, setTier] = useState('mid');
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit({
+      clinic_name: clinicName,
+      contact_name: contactName || undefined,
+      contact_email: contactEmail || undefined,
+      tier,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <GlassCard className="w-full max-w-md">
+        <h2 className="text-xl font-semibold mb-4">New Prospect</h2>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-label-secondary mb-1">
+              Clinic Name *
+            </label>
+            <input
+              type="text"
+              value={clinicName}
+              onChange={(e) => setClinicName(e.target.value)}
+              placeholder="e.g., Acme Dental"
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-label-secondary mb-1">
+              Contact Name
+            </label>
+            <input
+              type="text"
+              value={contactName}
+              onChange={(e) => setContactName(e.target.value)}
+              placeholder="e.g., Dr. Smith"
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-label-secondary mb-1">
+              Contact Email
+            </label>
+            <input
+              type="email"
+              value={contactEmail}
+              onChange={(e) => setContactEmail(e.target.value)}
+              placeholder="e.g., contact@acmedental.com"
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-label-secondary mb-1">
+              Practice Size
+            </label>
+            <select
+              value={tier}
+              onChange={(e) => setTier(e.target.value)}
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
+            >
+              <option value="small">Small (1-5 providers)</option>
+              <option value="mid">Mid (6-15 providers)</option>
+              <option value="large">Large (15-50 providers)</option>
+            </select>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2 rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!clinicName || isLoading}
+              className="flex-1 px-4 py-2 rounded-ios bg-accent-primary text-white hover:bg-accent-primary/90 transition-colors disabled:opacity-50"
+            >
+              {isLoading ? 'Creating...' : 'Add Prospect'}
+            </button>
+          </div>
+        </form>
+      </GlassCard>
+    </div>
+  );
+};
 
 /**
  * Onboarding page - Two-phase pipeline visualization
  */
 export const Onboarding: React.FC = () => {
+  const navigate = useNavigate();
   const [selectedPhase, setSelectedPhase] = useState<1 | 2 | 'all'>('all');
+  const [showNewProspectModal, setShowNewProspectModal] = useState(false);
 
   // Fetch data
   const { data: pipeline = [], isLoading: isLoadingPipeline } = useOnboardingPipeline();
   const { data: metrics, isLoading: isLoadingMetrics } = useOnboardingMetrics();
+  const createSite = useCreateSite();
+
+  // Handle creating a new prospect
+  const handleCreateProspect = async (data: { clinic_name: string; contact_name?: string; contact_email?: string; tier?: string }) => {
+    try {
+      const result = await createSite.mutateAsync(data);
+      setShowNewProspectModal(false);
+      navigate(`/sites/${result.site_id}`);
+    } catch (error) {
+      console.error('Failed to create prospect:', error);
+    }
+  };
 
   // Filter by phase
   const phase1Stages: OnboardingStage[] = ['lead', 'discovery', 'proposal', 'contract', 'intake', 'creds', 'shipped'];
@@ -28,10 +147,10 @@ export const Onboarding: React.FC = () => {
   const activeClients = pipeline.filter((client) => client.stage === 'active');
 
   // Sort by days in stage (at risk first)
-  const sortedPipeline = [...filteredPipeline].sort((a, b) => b.days_in_stage - a.days_in_stage);
+  const sortedPipeline = [...filteredPipeline].sort((a, b) => (b.days_in_stage ?? 0) - (a.days_in_stage ?? 0));
 
   // Clients with blockers
-  const blockedClients = pipeline.filter((client) => client.blockers.length > 0);
+  const blockedClients = pipeline.filter((client) => (client.blockers?.length ?? 0) > 0);
 
   return (
     <div className="space-y-6">
@@ -43,7 +162,12 @@ export const Onboarding: React.FC = () => {
             {metrics?.total_prospects ?? 0} active prospects
           </p>
         </div>
-        <button className="btn-primary">+ New Prospect</button>
+        <button
+          onClick={() => setShowNewProspectModal(true)}
+          className="btn-primary"
+        >
+          + New Prospect
+        </button>
       </div>
 
       {/* Pipeline visualization */}
@@ -141,7 +265,12 @@ export const Onboarding: React.FC = () => {
           <p className="text-label-tertiary text-sm mb-4">
             Click "New Prospect" to add your first client.
           </p>
-          <button className="btn-primary">+ New Prospect</button>
+          <button
+            onClick={() => setShowNewProspectModal(true)}
+            className="btn-primary"
+          >
+            + New Prospect
+          </button>
         </GlassCard>
       ) : (
         <div className="space-y-4">
@@ -187,6 +316,14 @@ export const Onboarding: React.FC = () => {
           </div>
         </GlassCard>
       )}
+
+      {/* New Prospect Modal */}
+      <NewProspectModal
+        isOpen={showNewProspectModal}
+        onClose={() => setShowNewProspectModal(false)}
+        onSubmit={handleCreateProspect}
+        isLoading={createSite.isPending}
+      />
     </div>
   );
 };

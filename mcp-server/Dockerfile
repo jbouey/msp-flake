@@ -22,7 +22,9 @@ RUN pip install --no-cache-dir \
     prometheus-client \
     boto3 \
     sqlalchemy \
-    aiohttp
+    aiohttp \
+    httpx \
+    structlog
 
 # Copy application code
 COPY . /app

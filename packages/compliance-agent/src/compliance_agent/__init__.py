@@ -15,6 +15,8 @@ from .backup_restore_test import (
     RestoreTestResult,
     run_backup_restore_test
 )
+from .portal_controls import PortalControlChecker, ControlResult
+from .phone_home import PhoneHome
 
 __all__ = [
     # Version
@@ -58,4 +60,11 @@ __all__ = [
     "RestoreTestConfig",
     "RestoreTestResult",
     "run_backup_restore_test",
+
+    # Portal Controls
+    "PortalControlChecker",
+    "ControlResult",
+
+    # Phone Home
+    "PhoneHome",
 ]

@@ -2,6 +2,33 @@ import React from 'react';
 import { GlassCard } from '../shared';
 import type { OnboardingMetrics } from '../../types';
 
+// Error Boundary for debugging
+class PipelineErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-4 bg-red-500/20 border border-red-500 rounded-lg text-red-500">
+          <strong>PipelineStages Error:</strong> {this.state.error?.message}
+          <pre className="mt-2 text-xs overflow-auto">{this.state.error?.stack}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 interface PipelineStagesProps {
   metrics?: OnboardingMetrics;
   isLoading?: boolean;
@@ -82,6 +109,7 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ metrics, isLoadi
   };
 
   return (
+    <PipelineErrorBoundary>
     <GlassCard>
       {/* Phase 1: Acquisition */}
       <div className="mb-6">
@@ -91,7 +119,7 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ metrics, isLoadi
           </h2>
           {metrics && (
             <span className="text-sm text-label-secondary">
-              Avg {metrics.avg_days_to_ship.toFixed(0)} days to ship
+              Avg {(metrics?.avg_days_to_ship ?? 0).toFixed(0)} days to ship
             </span>
           )}
         </div>
@@ -115,13 +143,14 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ metrics, isLoadi
           </h2>
           {metrics && (
             <span className="text-sm text-label-secondary">
-              Avg {metrics.avg_days_to_active.toFixed(0)} days to active
+              Avg {(metrics?.avg_days_to_active ?? 0).toFixed(0)} days to active
             </span>
           )}
         </div>
         {renderStages(phase2Stages, 'activation', 'bg-level-l2')}
       </div>
     </GlassCard>
+    </PipelineErrorBoundary>
   );
 };
 

@@ -3,7 +3,8 @@
  */
 
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi } from '../utils/api';
+import type { Site, SiteDetail } from '../utils/api';
 import type { ClientOverview, ClientDetail, Incident, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics } from '../types';
 
 // Polling interval in milliseconds (30 seconds)
@@ -186,5 +187,79 @@ export function useOnboardingMetrics() {
     queryFn: onboardingApi.getMetrics,
     refetchInterval: POLLING_INTERVAL,
     staleTime: STALE_TIME,
+  });
+}
+
+// =============================================================================
+// SITES HOOKS (Real appliance onboarding data)
+// =============================================================================
+
+/**
+ * Hook for fetching all sites with live status
+ */
+export function useSites(status?: string) {
+  return useQuery<{ sites: Site[]; count: number }>({
+    queryKey: ['sites', status],
+    queryFn: () => sitesApi.getSites(status),
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for fetching a single site's details
+ */
+export function useSite(siteId: string | null) {
+  return useQuery<SiteDetail>({
+    queryKey: ['site', siteId],
+    queryFn: () => sitesApi.getSite(siteId!),
+    enabled: !!siteId,
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for creating a new site
+ */
+export function useCreateSite() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: sitesApi.createSite,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sites'] });
+    },
+  });
+}
+
+/**
+ * Hook for updating a site
+ */
+export function useUpdateSite() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, data }: { siteId: string; data: Parameters<typeof sitesApi.updateSite>[1] }) =>
+      sitesApi.updateSite(siteId, data),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['sites'] });
+      queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+    },
+  });
+}
+
+/**
+ * Hook for adding credentials to a site
+ */
+export function useAddCredential() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, data }: { siteId: string; data: Parameters<typeof sitesApi.addCredential>[1] }) =>
+      sitesApi.addCredential(siteId, data),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+    },
   });
 }

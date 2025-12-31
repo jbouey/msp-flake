@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2025-12-28
-**Phase:** Phase 3 - Production MCP Server Deployed
-**Test Status:** 161 passed, 7 skipped
+**Last Updated:** 2025-12-30
+**Phase:** Phase 9 - Learning Loop + Central Command Dashboard
+**Test Status:** 169 passed
 
 ---
 
@@ -18,13 +18,13 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                 MCP Server (Hetzner VPS)                         │
-│                 http://178.156.162.116:8000                      │
+│                 Central Command (Hetzner VPS)                    │
+│                 http://178.156.162.116                           │
 │  ┌─────────────┬─────────────┬─────────────┬─────────────────┐  │
-│  │  FastAPI    │  PostgreSQL │   Redis     │   MinIO (WORM)  │  │
-│  │  :8000      │  16-alpine  │   7-alpine  │   :9000/:9001   │  │
+│  │  Dashboard  │  MCP Server │  PostgreSQL │   MinIO (WORM)  │  │
+│  │  :3000      │  :8000      │  16-alpine  │   :9000/:9001   │  │
 │  └─────────────┴─────────────┴─────────────┴─────────────────┘  │
-│  Ed25519 Signing │ 6 Runbooks │ Rate Limiting │ Evidence Store  │
+│  React UI │ Learning Loop │ Pattern DB │ Evidence Store          │
 └─────────────────────────────────────────────────────────────────┘
                               ▲
                               │ mTLS/HTTPS (pull-only)
@@ -88,11 +88,15 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ Ed25519 order signing
 - ✅ MinIO WORM evidence storage
 - ✅ Rate limiting (10 req/5min/site)
+- ✅ **Central Command Dashboard** (http://178.156.162.116:3000)
+- ✅ **Learning Loop Infrastructure** - PostgreSQL patterns table
+- ✅ **Agent Sync Endpoints** - `/agent/sync`, `/agent/checkin`
+- ✅ **Standards & Procedures** - Updated with Learning Loop section
 
 ### What's Pending
-- ⚠️ Connect compliance agent to production MCP server
 - ⚠️ Configure TLS certificates for MCP server
 - ⚠️ Set up MinIO object lock retention policy
+- ⚠️ First pilot client deployment
 
 ### Current Compliance Score
 - Windows Server: 28.6% (2 pass, 5 fail, 1 warning)
@@ -118,17 +122,20 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 | Agent Context | `.agent/` |
 | **Mermaid Diagrams** | `docs/diagrams/` |
 
-### Production MCP Server (Hetzner VPS)
+### Production Central Command (Hetzner VPS)
 
 | What | Location |
 |------|----------|
 | Server IP | `178.156.162.116` |
+| Dashboard | `http://178.156.162.116:3000` |
 | API Endpoint | `http://178.156.162.116:8000` |
 | MinIO Console | `http://178.156.162.116:9001` |
 | Server Files | `/opt/mcp-server/` |
+| Frontend Files | `/opt/mcp-server/frontend/dist/` |
 | Docker Compose | `/opt/mcp-server/docker-compose.yml` |
 | Signing Key | `/opt/mcp-server/secrets/signing.key` |
 | Init SQL | `/opt/mcp-server/init.sql` |
+| SOPs PDF | `http://178.156.162.116:3000/STANDARDS_AND_PROCEDURES.pdf` |
 
 ### Source Module Structure
 
@@ -186,16 +193,22 @@ s = winrm.Session('http://127.0.0.1:55985/wsman', auth=('MSP\\\\vagrant','vagran
 print(s.run_ps('whoami').std_out.decode())
 "
 
-# MCP Server (Production)
+# Central Command (Production)
 ssh root@178.156.162.116                           # SSH to Hetzner VPS
 curl http://178.156.162.116:8000/health            # Health check
 curl http://178.156.162.116:8000/runbooks          # List runbooks
 curl http://178.156.162.116:8000/stats             # Server stats
+curl http://178.156.162.116:8000/learning/status   # Learning loop status
+curl http://178.156.162.116:8000/learning/candidates # Promotion candidates
 
-# MCP Server Management (on Hetzner)
-cd /opt/mcp-server && docker compose logs -f mcp-server  # View logs
+# Dashboard (Production)
+open http://178.156.162.116:3000                   # Central Command Dashboard
+
+# Central Command Management (on Hetzner)
+cd /opt/mcp-server && docker compose logs -f mcp-server  # View API logs
+cd /opt/mcp-server && docker compose logs -f central-command  # View dashboard logs
 cd /opt/mcp-server && docker compose ps                   # Check status
-cd /opt/mcp-server && docker compose restart              # Restart
+cd /opt/mcp-server && docker compose restart              # Restart all
 ```
 
 ---

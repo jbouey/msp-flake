@@ -1,11 +1,79 @@
 # Network Topology & VM Inventory
 
-**Last Updated:** 2025-12-03
-**Environment:** Development/Test Lab
+**Last Updated:** 2025-12-31
+**Environment:** Production + Development/Test Lab
 
 ---
 
-## Network Diagram
+## Production Infrastructure
+
+### Central Command (Hetzner VPS)
+
+```
+                         ┌─────────────────┐
+                         │    INTERNET     │
+                         └────────┬────────┘
+                                  │
+                   ┌──────────────┼──────────────┐
+                   │              │              │
+        ┌──────────▼──────┐ ┌────▼────┐ ┌───────▼───────┐
+        │ api.osiriscare  │ │dashboard│ │msp.osiriscare │
+        │      .net       │ │.osiris  │ │    .net       │
+        │                 │ │care.net │ │               │
+        └─────────────────┘ └─────────┘ └───────────────┘
+                   │              │              │
+                   └──────────────┼──────────────┘
+                                  │ HTTPS (443)
+                         ┌────────▼────────┐
+                         │  Caddy Reverse  │
+                         │     Proxy       │
+                         │  (Auto TLS)     │
+                         └────────┬────────┘
+                   ┌──────────────┼──────────────┐
+                   │              │              │
+          ┌────────▼────┐  ┌─────▼─────┐  ┌─────▼─────┐
+          │ MCP Server  │  │ Dashboard │  │ PostgreSQL│
+          │ :8000       │  │ :3000     │  │ Redis     │
+          │ FastAPI     │  │ React     │  │ MinIO     │
+          └─────────────┘  └───────────┘  └───────────┘
+
+                    Hetzner VPS: 178.156.162.116
+```
+
+| Service | Internal | External URL | Purpose |
+|---------|----------|--------------|---------|
+| MCP API | :8000 | https://api.osiriscare.net | REST API, phone-home |
+| Dashboard | :3000 | https://dashboard.osiriscare.net | Central Command UI |
+| Dashboard | :3000 | https://msp.osiriscare.net | Alias for dashboard |
+| PostgreSQL | :5432 | (internal only) | Database |
+| Redis | :6379 | (internal only) | Caching, queues |
+| MinIO | :9000-9001 | (internal only) | Evidence storage |
+
+**DNS Records:**
+```
+api.osiriscare.net       A    178.156.162.116
+dashboard.osiriscare.net A    178.156.162.116
+msp.osiriscare.net       A    178.156.162.116
+```
+
+**SSH Access:**
+```bash
+ssh root@178.156.162.116
+```
+
+**Docker Services:**
+```bash
+# Check status
+ssh root@178.156.162.116 "docker ps"
+
+# View logs
+ssh root@178.156.162.116 "docker logs mcp-server"
+ssh root@178.156.162.116 "docker logs caddy"
+```
+
+---
+
+## Development/Test Lab (Mac Host)
 
 ```
                          ┌─────────────────┐
@@ -205,3 +273,126 @@ ssh jrelly@174.178.63.139 'VBoxManage list runningvms'
 ### MCP Server unreachable from Appliance
 1. Check NAT network connectivity
 2. Verify MCP service: `ssh -p 4445 root@174.178.63.139 'systemctl status msp-server'`
+
+---
+
+## Production API Endpoints
+
+### Central Command API (api.osiriscare.net)
+
+**Base URL:** `https://api.osiriscare.net`
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/health` | GET | Health check (status, DB, Redis, MinIO) |
+| `/api/sites` | GET | List all sites with status |
+| `/api/sites` | POST | Create new site |
+| `/api/sites/{site_id}` | GET | Get site details |
+| `/api/sites/{site_id}` | PUT | Update site |
+| `/api/appliances/checkin` | POST | Appliance phone-home endpoint |
+| `/api/sites/{site_id}/credentials` | POST | Store encrypted credentials |
+| `/api/webhooks/n8n/intake-received` | POST | n8n webhook for lead intake |
+| `/api/dashboard/fleet` | GET | Fleet overview for dashboard |
+| `/api/dashboard/incidents` | GET | Active incidents |
+| `/api/dashboard/learning` | GET | Learning loop status |
+
+### Appliance Phone-Home
+
+Appliances call the checkin endpoint every 60 seconds:
+
+```bash
+curl -X POST https://api.osiriscare.net/api/appliances/checkin \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "clinic-name-abc123",
+    "mac_address": "aa:bb:cc:dd:ee:ff",
+    "hostname": "msp-appliance-01",
+    "ip_addresses": ["192.168.1.100"],
+    "agent_version": "1.0.0",
+    "nixos_version": "24.05",
+    "uptime_seconds": 86400
+  }'
+```
+
+**Status Calculation:**
+- `online`: Last checkin < 5 minutes ago
+- `stale`: Last checkin 5-15 minutes ago
+- `offline`: Last checkin > 15 minutes ago
+- `pending`: Never checked in
+
+### Sites Management
+
+**Create a new site:**
+```bash
+curl -X POST https://api.osiriscare.net/api/sites \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clinic_name": "Acme Dental",
+    "contact_name": "Dr. Smith",
+    "contact_email": "smith@acmedental.com",
+    "tier": "mid"
+  }'
+# Returns: {"site_id": "acme-dental-a1b2c3", ...}
+```
+
+**List sites with status filter:**
+```bash
+curl "https://api.osiriscare.net/api/sites?status=online"
+```
+
+**Store encrypted credentials:**
+```bash
+curl -X POST https://api.osiriscare.net/api/sites/acme-dental-a1b2c3/credentials \
+  -H "Content-Type: application/json" \
+  -d '{
+    "credential_type": "router",
+    "credential_name": "Main Router",
+    "username": "admin",
+    "password": "secret123",
+    "host": "192.168.1.1"
+  }'
+```
+
+---
+
+## Central Command Dashboard
+
+**URL:** https://dashboard.osiriscare.net
+
+### Main Pages
+
+| Page | Path | Purpose |
+|------|------|---------|
+| Dashboard | `/` | Fleet overview, incidents, stats |
+| Sites | `/sites` | All client sites with status |
+| Site Detail | `/sites/{site_id}` | Site info, appliances, credentials |
+| Onboarding | `/onboarding` | Pipeline with stages |
+| Runbooks | `/runbooks` | Runbook library |
+| Learning | `/learning` | Data flywheel, pattern promotion |
+| Audit Logs | `/audit-logs` | Admin activity log |
+
+### Login Credentials
+
+| Role | Username | Password |
+|------|----------|----------|
+| Admin | admin | (configured in .env) |
+| Operator | operator | (configured in .env) |
+
+---
+
+## Onboarding Pipeline Stages
+
+Sites progress through these stages:
+
+```
+Lead → Discovery → Proposal → Contract → Intake → Credentials →
+Shipped → Received → Connectivity → Scanning → Baseline → Active
+```
+
+**Stage Triggers:**
+- `lead`: n8n webhook or manual creation
+- `intake_received`: Form submission
+- `connectivity`: First appliance checkin
+- `scanning`: Network discovery complete
+- `baseline`: Baseline enforcement applied
+- `active`: Validation period complete

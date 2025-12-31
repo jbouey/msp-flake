@@ -5,3 +5,6 @@ export { Onboarding } from './Onboarding';
 export { ClientDetail } from './ClientDetail';
 export { Login } from './Login';
 export { AuditLogs } from './AuditLogs';
+export { Sites } from './Sites';
+export { SiteDetail } from './SiteDetail';
+export { Documentation } from './Documentation';

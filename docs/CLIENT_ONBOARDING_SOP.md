@@ -1,24 +1,27 @@
 # Client Onboarding: Standard Operating Procedure
 
 **Document Type:** Standard Operating Procedure (SOP)
-**Version:** 1.0
-**Last Updated:** 2025-10-31
+**Version:** 2.0
+**Last Updated:** 2025-12-31
 **Owner:** MSP Operations Team
 **Review Cycle:** Quarterly
+
+> **New in v2.0:** Central Command dashboard integration, Sites management, appliance phone-home system, and HTTPS endpoints at osiriscare.net.
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Onboarding Timeline](#onboarding-timeline)
-3. [Pre-Onboarding Phase](#pre-onboarding-phase)
-4. [Technical Deployment Phase](#technical-deployment-phase)
-5. [Validation & Testing Phase](#validation--testing-phase)
-6. [Client Handoff Phase](#client-handoff-phase)
-7. [Post-Go-Live Support](#post-go-live-support)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Checklists](#checklists)
+2. [Central Command Dashboard](#central-command-dashboard)
+3. [Onboarding Timeline](#onboarding-timeline)
+4. [Pre-Onboarding Phase](#pre-onboarding-phase)
+5. [Technical Deployment Phase](#technical-deployment-phase)
+6. [Validation & Testing Phase](#validation--testing-phase)
+7. [Client Handoff Phase](#client-handoff-phase)
+8. [Post-Go-Live Support](#post-go-live-support)
+9. [Troubleshooting Guide](#troubleshooting-guide)
+10. [Checklists](#checklists)
 
 ---
 
@@ -55,6 +58,127 @@ This SOP defines the complete process for onboarding new clients to the MSP HIPA
 - [ ] First monthly compliance packet delivered
 - [ ] Client staff trained on dashboard
 - [ ] Zero critical incidents unresolved
+
+---
+
+## Central Command Dashboard
+
+### Production URLs
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| Dashboard | https://dashboard.osiriscare.net | Central Command UI |
+| API | https://api.osiriscare.net | REST API & phone-home |
+| Alternate | https://msp.osiriscare.net | Dashboard alias |
+
+### Sites Management
+
+The **Sites** page (`/sites`) is the primary interface for managing client onboarding:
+
+**Creating a New Site:**
+1. Navigate to https://dashboard.osiriscare.net/sites
+2. Click **"+ New Site"**
+3. Enter clinic name, contact info, and tier
+4. System generates unique `site_id` (e.g., `acme-dental-a1b2c3`)
+5. Site appears in pipeline at "Pending" stage
+
+**Site Status Indicators:**
+- 🟢 **Online**: Appliance checked in within 5 minutes
+- 🟡 **Stale**: Last checkin 5-15 minutes ago
+- 🔴 **Offline**: Last checkin > 15 minutes ago
+- ⚪ **Pending**: Appliance not yet connected
+
+**Site Detail Page (`/sites/{site_id}`):**
+- Contact information
+- Connected appliances with live status
+- Stored credentials (encrypted)
+- Onboarding progress timeline
+- Blockers and notes
+
+### Appliance Phone-Home System
+
+Each deployed appliance phones home every 60 seconds:
+
+```bash
+# Appliance calls this endpoint automatically
+POST https://api.osiriscare.net/api/appliances/checkin
+{
+  "site_id": "clinic-name-abc123",
+  "mac_address": "aa:bb:cc:dd:ee:ff",
+  "hostname": "msp-appliance-01",
+  "ip_addresses": ["192.168.1.100"],
+  "agent_version": "1.0.0",
+  "nixos_version": "24.05",
+  "uptime_seconds": 86400
+}
+```
+
+**First Checkin:**
+- Automatically registers appliance
+- Updates site stage to "Connectivity"
+- Site appears as "Online" in dashboard
+
+**Ongoing Checkins:**
+- Updates `last_checkin` timestamp
+- Maintains "Online" status
+- Tracks uptime and version info
+
+### Credential Storage
+
+Store client credentials securely for appliance use:
+
+1. Navigate to Site Detail page
+2. Click **"+ Add Credential"**
+3. Select type (Router, Active Directory, EHR, Backup, Other)
+4. Enter name, host, username, password
+5. Credentials are encrypted with Fernet before storage
+
+**Credential Types:**
+- `router` - Network device access
+- `active_directory` - Windows domain credentials
+- `ehr` - EHR system access
+- `backup` - Backup service credentials
+- `other` - Custom credentials
+
+### Onboarding Pipeline Stages
+
+Sites progress through 12 stages:
+
+```
+Lead → Discovery → Proposal → Contract → Intake → Credentials →
+Shipped → Received → Connectivity → Scanning → Baseline → Active
+```
+
+| Stage | Trigger | Dashboard Location |
+|-------|---------|-------------------|
+| Lead | n8n webhook or manual | Sites list |
+| Connectivity | First appliance checkin | Auto-updated |
+| Scanning | Discovery scan complete | Auto-updated |
+| Baseline | Baseline enforced | Auto-updated |
+| Active | Validation complete | Manual promotion |
+
+### API Quick Reference
+
+```bash
+# Health check
+curl https://api.osiriscare.net/health
+
+# List all sites
+curl https://api.osiriscare.net/api/sites
+
+# Create site
+curl -X POST https://api.osiriscare.net/api/sites \
+  -H "Content-Type: application/json" \
+  -d '{"clinic_name": "Test Clinic", "tier": "mid"}'
+
+# Get site details
+curl https://api.osiriscare.net/api/sites/{site_id}
+
+# Simulate appliance checkin
+curl -X POST https://api.osiriscare.net/api/appliances/checkin \
+  -H "Content-Type: application/json" \
+  -d '{"site_id": "{site_id}", "mac_address": "aa:bb:cc:dd:ee:ff"}'
+```
 
 ---
 
@@ -1430,10 +1554,11 @@ All scripts available in `/opt/msp/scripts/`:
 
 **End of SOP**
 
-**Document Version:** 1.0
-**Last Updated:** 2025-10-31
-**Next Review:** 2026-01-31
+**Document Version:** 2.0
+**Last Updated:** 2025-12-31
+**Next Review:** 2026-03-31
 **Owner:** MSP Operations Team
 
 **Change Log:**
-- 2025-10-31: Initial version created
+- 2025-12-31: v2.0 - Added Central Command dashboard section, Sites management, appliance phone-home system, HTTPS endpoints at osiriscare.net
+- 2025-10-31: v1.0 - Initial version created

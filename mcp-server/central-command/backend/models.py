@@ -442,5 +442,41 @@ class CommandResponse(BaseModel):
     error: Optional[str] = None
 
 
+# =============================================================================
+# L2 LLM PLANNER MODELS
+# =============================================================================
+
+class L2TestRequest(BaseModel):
+    """Request to test L2 LLM planner."""
+    incident_type: str = Field(..., description="Type of incident (e.g., 'backup_failure')")
+    severity: str = Field(default="medium", description="Incident severity")
+    check_type: Optional[str] = Field(default=None, description="Check type (e.g., 'backup')")
+    details: Optional[Dict[str, Any]] = Field(default=None, description="Additional incident details")
+
+
+class L2DecisionResponse(BaseModel):
+    """Response from L2 LLM planner."""
+    runbook_id: Optional[str] = Field(None, description="Recommended runbook ID")
+    reasoning: str = Field(..., description="LLM reasoning for the decision")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score 0-1")
+    alternative_runbooks: List[str] = Field(default_factory=list)
+    requires_human_review: bool = Field(default=False)
+    pattern_signature: str = Field(default="")
+    llm_model: str = Field(..., description="Model used for analysis")
+    llm_latency_ms: int = Field(..., description="LLM response latency")
+    error: Optional[str] = Field(default=None, description="Error if any")
+
+
+class L2ConfigResponse(BaseModel):
+    """L2 planner configuration status."""
+    enabled: bool
+    provider: Optional[str]
+    model: str
+    timeout_seconds: int
+    max_tokens: int
+    temperature: float
+    runbooks_available: int
+
+
 # Forward reference resolution
 ClientDetail.model_rebuild()

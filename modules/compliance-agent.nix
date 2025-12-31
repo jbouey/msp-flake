@@ -32,21 +32,77 @@ in
     };
 
     # ========================================================================
+    # MCP Server (Local)
+    # ========================================================================
+
+    mcpServer = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable local MCP server (recommended for production)";
+      };
+
+      port = mkOption {
+        type = types.port;
+        default = 8000;
+        description = "Port for local MCP server API";
+      };
+
+      openaiApiKeyFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        example = literalExpression "config.sops.secrets.\"mcp/openai-key\".path";
+        description = "Path to OpenAI API key for L2 LLM runbook selection (SOPS-encrypted)";
+      };
+
+      openaiModel = mkOption {
+        type = types.str;
+        default = "gpt-4o";
+        example = "gpt-4-turbo";
+        description = "OpenAI model for runbook selection";
+      };
+
+      runbookDir = mkOption {
+        type = types.path;
+        default = "/var/lib/mcp-server/runbooks";
+        description = "Directory containing YAML runbook definitions";
+      };
+    };
+
+    # ========================================================================
+    # Redis (Local)
+    # ========================================================================
+
+    redis = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable local Redis for MCP rate limiting and caching";
+      };
+
+      port = mkOption {
+        type = types.port;
+        default = 6379;
+        description = "Port for local Redis";
+      };
+    };
+
+    # ========================================================================
     # MCP Connection
     # ========================================================================
 
     mcpUrl = mkOption {
       type = types.str;
-      default = "https://mcp.local";
+      default = "http://127.0.0.1:8000";
       example = "https://mcp.example.com";
-      description = "MCP base URL for polling orders and pushing evidence";
+      description = "MCP base URL for polling orders and pushing evidence (defaults to local)";
     };
 
     allowedHosts = mkOption {
       type = types.listOf types.str;
-      default = [ "mcp.local" ];
-      example = [ "mcp.example.com" "backup-mcp.example.com" ];
-      description = "Allowlist for outbound HTTPS connections (nftables egress filter)";
+      default = [ ];
+      example = [ "api.openai.com" "s3.amazonaws.com" ];
+      description = "Allowlist for outbound HTTPS connections (for LLM API, WORM upload)";
     };
 
     # ========================================================================
@@ -283,15 +339,36 @@ in
         assertion = builtins.match "[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}" cfg.maintenanceWindow != null;
         message = "maintenanceWindow must be in format HH:MM-HH:MM";
       }
+      {
+        assertion = cfg.mcpServer.enable -> cfg.redis.enable;
+        message = "Redis must be enabled when MCP server is enabled";
+      }
     ];
+
+    # ========================================================================
+    # Redis (local instance for MCP)
+    # ========================================================================
+
+    services.redis.servers.mcp = mkIf cfg.redis.enable {
+      enable = true;
+      port = cfg.redis.port;
+      bind = "127.0.0.1";
+      settings = {
+        maxmemory = "64mb";
+        maxmemory-policy = "allkeys-lru";
+      };
+    };
 
     # Install the agent package
     environment.systemPackages = [ cfg.package ];
 
-    # State directory for evidence bundles and queue
+    # State directories for evidence bundles, queue, and MCP server
     systemd.tmpfiles.rules = [
       "d /var/lib/compliance-agent 0700 compliance-agent compliance-agent -"
       "d /var/lib/compliance-agent/evidence 0700 compliance-agent compliance-agent -"
+      "d /var/lib/mcp-server 0700 mcp-server mcp-server -"
+      "d /var/lib/mcp-server/runbooks 0700 mcp-server mcp-server -"
+      "d /var/lib/mcp-server/evidence 0700 mcp-server mcp-server -"
     ];
 
     # Create compliance-agent user
@@ -303,6 +380,16 @@ in
     };
 
     users.groups.compliance-agent = { };
+
+    # Create mcp-server user
+    users.users.mcp-server = mkIf cfg.mcpServer.enable {
+      isSystemUser = true;
+      group = "mcp-server";
+      description = "MCP Server";
+      home = "/var/lib/mcp-server";
+    };
+
+    users.groups.mcp-server = mkIf cfg.mcpServer.enable { };
 
     # Main agent service
     systemd.services.compliance-agent = {
@@ -414,6 +501,131 @@ in
       };
     };
 
+    # ========================================================================
+    # MCP Server Service (local)
+    # ========================================================================
+
+    systemd.services.mcp-server = mkIf cfg.mcpServer.enable {
+      description = "MCP Server - Local Control Plane for Compliance Agent";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" "redis-mcp.service" ];
+      wants = [ "network-online.target" ];
+      requires = [ "redis-mcp.service" ];
+
+      # Python environment for MCP server
+      path = with pkgs; [
+        (python311.withPackages (ps: with ps; [
+          fastapi
+          uvicorn
+          redis
+          aiohttp
+          pyyaml
+          pydantic
+        ]))
+      ];
+
+      serviceConfig = {
+        Type = "simple";
+        User = "mcp-server";
+        Group = "mcp-server";
+        Restart = "always";
+        RestartSec = "5s";
+
+        ExecStart = "${pkgs.python311.withPackages (ps: with ps; [ fastapi uvicorn redis aiohttp pyyaml pydantic ])}/bin/python -m uvicorn mcp_server:app --host 127.0.0.1 --port ${toString cfg.mcpServer.port}";
+        WorkingDirectory = "/var/lib/mcp-server";
+
+        # Systemd hardening
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        ReadWritePaths = [ "/var/lib/mcp-server" ];
+        NoNewPrivileges = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictAddressFamilies = "AF_INET AF_INET6 AF_UNIX";
+        CapabilityBoundingSet = "";
+        SystemCallFilter = "@system-service";
+        SystemCallErrorNumber = "EPERM";
+        ProtectHostname = true;
+        ProtectClock = true;
+        ProtectKernelLogs = true;
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        RemoveIPC = true;
+
+        StateDirectory = "mcp-server";
+        StateDirectoryMode = "0700";
+
+        StandardOutput = "journal";
+        StandardError = "journal";
+        SyslogIdentifier = "mcp-server";
+      };
+
+      environment = {
+        REDIS_HOST = "127.0.0.1";
+        REDIS_PORT = toString cfg.redis.port;
+        REDIS_PASSWORD = "";  # Local Redis, no auth needed
+        RUNBOOK_DIR = toString cfg.mcpServer.runbookDir;
+        EVIDENCE_DIR = "/var/lib/mcp-server/evidence";
+        LOG_LEVEL = cfg.logLevel;
+        MCP_API_HOST = "127.0.0.1";
+        MCP_API_PORT = toString cfg.mcpServer.port;
+        OPENAI_MODEL = cfg.mcpServer.openaiModel;
+      };
+    };
+
+    # MCP server Python script as a package
+    environment.etc."mcp-server/mcp_server.py" = mkIf cfg.mcpServer.enable {
+      source = pkgs.writeText "mcp_server.py" (builtins.readFile ../mcp-server/server.py);
+      mode = "0644";
+    };
+
+    # MCP server runbook YAML files
+    environment.etc."mcp-server/runbooks/RB-BACKUP-001.yaml" = mkIf cfg.mcpServer.enable {
+      source = ../mcp-server/runbooks/RB-BACKUP-001.yaml;
+      mode = "0644";
+    };
+    environment.etc."mcp-server/runbooks/RB-CERT-001.yaml" = mkIf cfg.mcpServer.enable {
+      source = ../mcp-server/runbooks/RB-CERT-001.yaml;
+      mode = "0644";
+    };
+    environment.etc."mcp-server/runbooks/RB-CPU-001.yaml" = mkIf cfg.mcpServer.enable {
+      source = ../mcp-server/runbooks/RB-CPU-001.yaml;
+      mode = "0644";
+    };
+    environment.etc."mcp-server/runbooks/RB-DISK-001.yaml" = mkIf cfg.mcpServer.enable {
+      source = ../mcp-server/runbooks/RB-DISK-001.yaml;
+      mode = "0644";
+    };
+    environment.etc."mcp-server/runbooks/RB-DRIFT-001.yaml" = mkIf cfg.mcpServer.enable {
+      source = ../mcp-server/runbooks/RB-DRIFT-001.yaml;
+      mode = "0644";
+    };
+    environment.etc."mcp-server/runbooks/RB-RESTORE-001.yaml" = mkIf cfg.mcpServer.enable {
+      source = ../mcp-server/runbooks/RB-RESTORE-001.yaml;
+      mode = "0644";
+    };
+    environment.etc."mcp-server/runbooks/RB-SERVICE-001.yaml" = mkIf cfg.mcpServer.enable {
+      source = ../mcp-server/runbooks/RB-SERVICE-001.yaml;
+      mode = "0644";
+    };
+
+    # Symlink MCP server files to state directory
+    system.activationScripts.mcp-server-setup = mkIf cfg.mcpServer.enable ''
+      # Link MCP server script to working directory
+      ln -sf /etc/mcp-server/mcp_server.py /var/lib/mcp-server/mcp_server.py 2>/dev/null || true
+
+      # Link runbooks to state directory
+      mkdir -p /var/lib/mcp-server/runbooks
+      for rb in /etc/mcp-server/runbooks/*.yaml; do
+        [ -f "$rb" ] && ln -sf "$rb" /var/lib/mcp-server/runbooks/ 2>/dev/null || true
+      done
+    '';
+
     # Web UI service (optional)
     systemd.services.compliance-agent-web = mkIf cfg.webUI.enable {
       description = "MSP Compliance Agent Web Dashboard";
@@ -491,9 +703,9 @@ in
           '') cfg.allowedHosts}
 
           # Build nftables set
-          RULES="flush set inet filter mcp_allowed\n"
+          RULES="flush set inet filter external_allowed\n"
           for ip in "''${IPS[@]}"; do
-            RULES+="add element inet filter mcp_allowed { $ip }\n"
+            RULES+="add element inet filter external_allowed { $ip }\n"
           done
 
           # Apply atomically
@@ -509,8 +721,8 @@ in
       enable = true;
       ruleset = ''
         table inet filter {
-          # Set for allowed MCP IPs (populated by timer)
-          set mcp_allowed {
+          # Set for allowed external IPs (OpenAI, S3, etc - populated by timer)
+          set external_allowed {
             type ipv4_addr
             flags dynamic
           }
@@ -518,7 +730,7 @@ in
           chain input {
             type filter hook input priority 0; policy drop;
 
-            # Allow loopback
+            # Allow loopback (critical for local MCP server)
             iif lo accept
 
             # Allow established/related connections
@@ -539,21 +751,25 @@ in
           chain output {
             type filter hook output priority 0; policy drop;
 
-            # Allow loopback
+            # Allow loopback (critical for agent <-> MCP <-> Redis communication)
             oif lo accept
 
             # Allow established/related connections
             ct state established,related accept
 
-            # Allow DNS (for MCP hostname resolution)
+            # Allow DNS (for hostname resolution)
             udp dport 53 accept
             tcp dport 53 accept
 
             # Allow NTP for time sync
             udp dport 123 accept
 
-            # Allow HTTPS to MCP allowlist
-            ip daddr @mcp_allowed tcp dport 443 accept
+            # Allow HTTPS to external allowlist (OpenAI API, S3 WORM, etc)
+            ip daddr @external_allowed tcp dport 443 accept
+
+            # Allow WinRM to local network (for Windows server management)
+            tcp dport 5985 accept
+            tcp dport 5986 accept
 
             # Log and drop everything else
             log prefix "compliance-agent-blocked: " level info drop

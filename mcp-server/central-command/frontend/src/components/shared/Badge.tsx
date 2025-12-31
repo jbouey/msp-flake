@@ -1,7 +1,7 @@
 import React from 'react';
 import type { HealthStatus, ResolutionLevel, Severity } from '../../types';
 
-type BadgeVariant = 'health' | 'level' | 'severity' | 'default';
+export type BadgeVariant = 'health' | 'level' | 'severity' | 'default' | 'success' | 'info' | 'warning' | 'error';
 
 interface BadgeProps {
   children: React.ReactNode;
@@ -47,6 +47,14 @@ export const Badge: React.FC<BadgeProps> = ({
     variantClasses = levelClasses[level];
   } else if (variant === 'severity' && severity) {
     variantClasses = severityClasses[severity];
+  } else if (variant === 'success') {
+    variantClasses = 'bg-green-100 text-health-healthy';
+  } else if (variant === 'info') {
+    variantClasses = 'bg-blue-100 text-ios-blue';
+  } else if (variant === 'warning') {
+    variantClasses = 'bg-orange-100 text-health-warning';
+  } else if (variant === 'error') {
+    variantClasses = 'bg-red-100 text-health-critical';
   }
 
   return (

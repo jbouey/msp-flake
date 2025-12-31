@@ -1,8 +1,8 @@
 # Standard Operating Procedures: Master Index
 
 **MSP HIPAA Compliance Platform**
-**Version:** 1.0
-**Last Updated:** 2025-10-31
+**Version:** 1.1
+**Last Updated:** 2025-12-31
 **Owner:** MSP Operations Team
 
 ---
@@ -43,6 +43,7 @@ This master index provides a complete reference to all Standard Operating Proced
 | SOP-012 | [Baseline Management](#sop-012-baseline-management) | Updating and deploying baselines | Quarterly |
 | SOP-013 | [Evidence Bundle Verification](#sop-013-evidence-bundle-verification) | Verifying evidence integrity | Monthly |
 | SOP-014 | [Runbook Management](#sop-014-runbook-management) | Creating and updating runbooks | Quarterly |
+| SOP-015 | [Sites & Appliance Management](#sop-015-sites-appliance-management) | Central Command dashboard operations | Monthly |
 
 ### Level 3: Operator Manuals (Reference Guides)
 
@@ -53,7 +54,7 @@ This master index provides a complete reference to all Standard Operating Proced
 | OP-001 | [MCP Server Operations](#op-001-mcp-server-operations) | MCP server management | Quarterly |
 | OP-002 | [Evidence Pipeline Operations](#op-002-evidence-pipeline-operations) | Evidence system management | Quarterly |
 | OP-003 | [WORM Storage Management](#op-003-worm-storage-management) | Immutable storage operations | Quarterly |
-| OP-004 | [Dashboard Administration](#op-004-dashboard-administration) | Grafana dashboard management | Quarterly |
+| OP-004 | [Dashboard Administration](OP-004_DASHBOARD_ADMINISTRATION.md) | Central Command dashboard operations | Quarterly |
 | OP-005 | [Cryptographic Key Management](#op-005-cryptographic-key-management) | Key rotation and backup | Quarterly |
 
 ### Level 4: Emergency Procedures (Crisis Response)
@@ -75,6 +76,9 @@ This master index provides a complete reference to all Standard Operating Proced
 
 **Deploy a new client**
 → See [SOP-010: Client Onboarding](SOP-010_CLIENT_ONBOARDING.md)
+
+**Manage sites in Central Command**
+→ See [SOP-015: Sites & Appliance Management](SOP-015_SITES_APPLIANCE_MANAGEMENT.md)
 
 **Handle an automated incident failure**
 → See [SOP-002: Incident Response](SOP-002_INCIDENT_RESPONSE.md)
@@ -102,6 +106,12 @@ This master index provides a complete reference to all Standard Operating Proced
 
 **Manage WORM storage**
 → See [OP-003: WORM Storage Management](OP-003_WORM_STORAGE.md)
+
+**Use Central Command dashboard**
+→ See [OP-004: Dashboard Administration](OP-004_DASHBOARD_ADMINISTRATION.md)
+
+**Add a new prospect to the pipeline**
+→ See [OP-004: Dashboard Administration](OP-004_DASHBOARD_ADMINISTRATION.md) - Section: Onboarding Page
 
 ---
 
@@ -371,7 +381,9 @@ These SOPs satisfy SOC 2 Trust Services Criteria:
 
 **Document Index Status:**
 - ✅ Master index complete
-- 🔄 Individual SOPs in progress (see files below)
+- ✅ SOP-015: Sites & Appliance Management (v1.0)
+- ✅ OP-004: Dashboard Administration (v1.0)
+- 🔄 Additional SOPs in progress
 - 📅 Review scheduled: 2026-01-31
 
 **For Questions:**
