@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2025-12-30
-**Current Phase:** Phase 9 Complete - Learning Loop + Central Command Dashboard
+**Last Updated:** 2025-12-31
+**Current Phase:** Phase 10 - Production Deployment + Appliance Imaging
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -182,6 +182,17 @@ Per Master Alignment Brief:
 - ✅ **Real Database Queries** - PostgreSQL integration on VPS
 - ✅ **Updated SOPs** - Learning Loop System section added
 
+### Phase 10 Deliverables (In Progress)
+
+- ✅ **Client Portal** - Magic-link authentication for client access
+- ✅ **Phone-Home Security** - Site ID + API key authentication
+- ✅ **Production Deployment** - VPS with Caddy auto-TLS (api/dashboard/msp.osiriscare.net)
+- ✅ **Appliance ISO Infrastructure** - `iso/` directory with NixOS build configs
+- ✅ **Site Provisioning Tools** - `generate-config.py` for mTLS cert generation
+- ✅ **Operations SOPs** - 7 SOPs added to Documentation page
+- 🟡 **ISO Build Verification** - Pending Linux system test
+- ⭕ **First Pilot Client** - Pending enrollment
+
 ---
 
 ## 🎯 CLAUDE.md Compliance Framework Alignment
@@ -336,14 +347,18 @@ Required fields per CLAUDE.md:
 
 ---
 
-## 🎯 Next Milestone
+## 🎯 Current Milestone
 
-**Phase 10: First Pilot Client**
+**Phase 10: Production Deployment + First Pilot Client**
 
 **Target:** Q1 2026
 
 **Definition of Done:**
-- [ ] Client site enrolled in Central Command dashboard
+- [x] Production VPS deployed with TLS (Caddy auto-cert)
+- [x] Appliance ISO infrastructure created
+- [x] Operations SOPs documented
+- [ ] ISO build verified on Linux
+- [ ] First client site enrolled in Central Command dashboard
 - [ ] Compliance agent deployed and checking in
 - [ ] L1 rules syncing to agent
 - [ ] Evidence bundles uploading to MinIO
@@ -352,10 +367,17 @@ Required fields per CLAUDE.md:
 
 **Infrastructure Ready:**
 - ✅ VPS: 178.156.162.116 (Hetzner)
-- ✅ Dashboard: http://178.156.162.116:3000
-- ✅ API: http://178.156.162.116:8000
-- ✅ MinIO: http://178.156.162.116:9001
+- ✅ Dashboard: https://dashboard.osiriscare.net
+- ✅ API: https://api.osiriscare.net
+- ✅ MSP Portal: https://msp.osiriscare.net
+- ✅ MinIO: (internal :9001)
+- ✅ Caddy: Auto-TLS for all domains
+
+**Appliance Infrastructure:**
+- ✅ ISO build config: `iso/appliance-image.nix`
+- ✅ Status page: `iso/local-status.nix`
+- ✅ Provisioning: `iso/provisioning/generate-config.py`
 
 ---
 
-**Status:** Phase 9 complete. Learning loop operational. Ready for first pilot client deployment.
+**Status:** Phase 10 in progress. Appliance infrastructure complete. Awaiting ISO build test and first pilot client.

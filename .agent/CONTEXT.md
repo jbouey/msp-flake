@@ -1,7 +1,7 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2025-12-30
-**Phase:** Phase 9 - Learning Loop + Central Command Dashboard
+**Last Updated:** 2025-12-31
+**Phase:** Phase 10 - Production Deployment + Appliance Imaging
 **Test Status:** 169 passed
 
 ---
@@ -88,15 +88,18 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ Ed25519 order signing
 - ✅ MinIO WORM evidence storage
 - ✅ Rate limiting (10 req/5min/site)
-- ✅ **Central Command Dashboard** (http://178.156.162.116:3000)
+- ✅ **Central Command Dashboard** (https://dashboard.osiriscare.net)
 - ✅ **Learning Loop Infrastructure** - PostgreSQL patterns table
 - ✅ **Agent Sync Endpoints** - `/agent/sync`, `/agent/checkin`
-- ✅ **Standards & Procedures** - Updated with Learning Loop section
+- ✅ **Client Portal** - Magic-link auth at /portal
+- ✅ **TLS via Caddy** - Auto-certs for all domains
+- ✅ **Appliance ISO Infrastructure** - `iso/` directory
+- ✅ **Operations SOPs** - 7 SOPs in Documentation page
 
 ### What's Pending
-- ⚠️ Configure TLS certificates for MCP server
+- ⚠️ Test ISO build on Linux system
 - ⚠️ Set up MinIO object lock retention policy
-- ⚠️ First pilot client deployment
+- ⚠️ First pilot client enrollment
 
 ### Current Compliance Score
 - Windows Server: 28.6% (2 pass, 5 fail, 1 warning)
@@ -127,15 +130,27 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 | What | Location |
 |------|----------|
 | Server IP | `178.156.162.116` |
-| Dashboard | `http://178.156.162.116:3000` |
-| API Endpoint | `http://178.156.162.116:8000` |
-| MinIO Console | `http://178.156.162.116:9001` |
+| SSH Access | `ssh root@178.156.162.116` (key auth) |
+| Dashboard | `https://dashboard.osiriscare.net` |
+| API Endpoint | `https://api.osiriscare.net` |
+| MSP Portal | `https://msp.osiriscare.net` |
+| MinIO Console | (internal :9001) |
 | Server Files | `/opt/mcp-server/` |
 | Frontend Files | `/opt/mcp-server/frontend/dist/` |
 | Docker Compose | `/opt/mcp-server/docker-compose.yml` |
 | Signing Key | `/opt/mcp-server/secrets/signing.key` |
 | Init SQL | `/opt/mcp-server/init.sql` |
-| SOPs PDF | `http://178.156.162.116:3000/STANDARDS_AND_PROCEDURES.pdf` |
+
+### Appliance ISO Infrastructure
+
+| What | Location |
+|------|----------|
+| ISO Config | `iso/appliance-image.nix` |
+| Base Config | `iso/configuration.nix` |
+| Status Page | `iso/local-status.nix` |
+| Provisioning | `iso/provisioning/generate-config.py` |
+| Config Template | `iso/provisioning/template-config.yaml` |
+| Flake Outputs | `flake-compliance.nix` (appliance-iso, build-iso, test-iso) |
 
 ### Source Module Structure
 
@@ -195,20 +210,26 @@ print(s.run_ps('whoami').std_out.decode())
 
 # Central Command (Production)
 ssh root@178.156.162.116                           # SSH to Hetzner VPS
-curl http://178.156.162.116:8000/health            # Health check
-curl http://178.156.162.116:8000/runbooks          # List runbooks
-curl http://178.156.162.116:8000/stats             # Server stats
-curl http://178.156.162.116:8000/learning/status   # Learning loop status
-curl http://178.156.162.116:8000/learning/candidates # Promotion candidates
+curl https://api.osiriscare.net/health             # Health check
+curl https://api.osiriscare.net/runbooks           # List runbooks
+curl https://api.osiriscare.net/stats              # Server stats
+curl https://api.osiriscare.net/learning/status    # Learning loop status
+curl https://api.osiriscare.net/learning/candidates # Promotion candidates
 
 # Dashboard (Production)
-open http://178.156.162.116:3000                   # Central Command Dashboard
+open https://dashboard.osiriscare.net              # Central Command Dashboard
+open https://msp.osiriscare.net                    # MSP Portal (alias)
 
 # Central Command Management (on Hetzner)
 cd /opt/mcp-server && docker compose logs -f mcp-server  # View API logs
 cd /opt/mcp-server && docker compose logs -f central-command  # View dashboard logs
 cd /opt/mcp-server && docker compose ps                   # Check status
 cd /opt/mcp-server && docker compose restart              # Restart all
+
+# Appliance ISO Build (requires Linux)
+nix build .#appliance-iso -o result-iso            # Build bootable ISO
+nix run .#test-iso                                 # Test in QEMU
+python iso/provisioning/generate-config.py --site-id "clinic-001" --site-name "Test Clinic"
 ```
 
 ---

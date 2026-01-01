@@ -1,0 +1,149 @@
+# MSP Compliance Appliance Configuration Template
+# Copy and customize for each site deployment
+#
+# Usage:
+#   python generate-config.py --site-id clinic-001 --site-name "Smith Family Practice"
+#
+# Files generated:
+#   - config.yaml     -> Copy to /var/lib/msp/config.yaml on appliance
+#   - certs/          -> Copy to /etc/msp/certs/ on appliance
+#   - registration.yaml -> Register site in Central Command
+
+# ==============================================================================
+# Site Identification (REQUIRED)
+# ==============================================================================
+site_id: "SITE_ID_HERE"
+site_name: "CLINIC_NAME_HERE"
+
+# ==============================================================================
+# Central Command Connection (REQUIRED)
+# ==============================================================================
+api_endpoint: "https://api.osiriscare.net"
+api_key: "API_KEY_HERE"
+
+# Portal access token (generated, for client dashboard access)
+portal_token: "PORTAL_TOKEN_HERE"
+
+# ==============================================================================
+# mTLS Certificates (paths on appliance filesystem)
+# ==============================================================================
+tls:
+  client_cert: "/etc/msp/certs/client.crt"
+  client_key: "/etc/msp/certs/client.key"
+  ca_cert: "/etc/msp/certs/ca.crt"
+
+# ==============================================================================
+# Agent Behavior
+# ==============================================================================
+agent:
+  # Phone-home interval in seconds
+  poll_interval: 60
+
+  # Local evidence retention
+  evidence_retention_days: 7
+
+  # Offline queue size limit
+  offline_queue_max_mb: 100
+
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  log_level: "INFO"
+
+# ==============================================================================
+# Local Status Page (served on port 80)
+# ==============================================================================
+local_status:
+  enabled: true
+  port: 80
+
+# ==============================================================================
+# Maintenance Window (for disruptive actions like reboots)
+# ==============================================================================
+maintenance_window:
+  enabled: true
+  start: "02:00"
+  end: "05:00"
+  timezone: "America/New_York"
+  days: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+# ==============================================================================
+# Windows Servers to Manage (populated after network discovery)
+# ==============================================================================
+# The appliance will auto-discover Windows servers and populate this section.
+# You can also manually add servers here.
+windows_targets: []
+# Example:
+# - hostname: "DC01"
+#   ip: "192.168.1.10"
+#   auth_method: "ntlm"
+#   credentials_ref: "vault:clinic-001/dc01"
+#   roles:
+#     - "domain_controller"
+#     - "dns_server"
+#
+# - hostname: "FILESERVER"
+#   ip: "192.168.1.20"
+#   auth_method: "kerberos"
+#   credentials_ref: "vault:clinic-001/fileserver"
+#   roles:
+#     - "file_server"
+#     - "print_server"
+
+# ==============================================================================
+# Network Discovery Settings
+# ==============================================================================
+discovery:
+  # Enable automatic network discovery
+  enabled: true
+
+  # Subnets to scan (auto-detected if empty)
+  subnets: []
+  # Example:
+  # - "192.168.1.0/24"
+  # - "10.0.0.0/24"
+
+  # IPs to exclude from discovery
+  exclude_ips: []
+  # Example:
+  # - "192.168.1.1"   # Router
+  # - "192.168.1.254" # Printer
+
+# ==============================================================================
+# HIPAA Compliance Settings
+# ==============================================================================
+compliance:
+  # Drift detection thresholds
+  patch_critical_max_age_hours: 72
+  patch_high_max_age_hours: 168
+
+  # Backup requirements
+  backup_max_age_hours: 24
+  backup_restore_test_max_age_days: 30
+
+  # Access review frequency
+  privileged_access_review_days: 90
+
+  # Evidence signing (Ed25519)
+  sign_evidence: true
+
+# ==============================================================================
+# Alerting (optional)
+# ==============================================================================
+alerting:
+  # Webhook for critical alerts
+  webhook_url: ""
+
+  # Email notifications
+  email:
+    enabled: false
+    recipients: []
+    # Example:
+    # - "admin@clinic.com"
+    # - "compliance@msp.com"
+
+# ==============================================================================
+# Generated Metadata (do not edit)
+# ==============================================================================
+_generated:
+  timestamp: ""
+  generator: "generate-config.py v1.0"
+  appliance_version: "1.0.0"

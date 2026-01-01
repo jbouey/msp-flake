@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2025-12-28
-**Sprint:** Phase 3 - Production MCP Server Deployed
+**Last Updated:** 2026-01-01
+**Sprint:** Phase 10 - Production Deployment + Lab Infrastructure
 
 ---
 
@@ -201,59 +201,76 @@
   - docs/diagrams/data-flow.mermaid
   - docs/diagrams/deployment-topology.mermaid
   - docs/diagrams/README.md
+- [x] **North Valley Clinic Lab Setup** - 2026-01-01
+  - Windows Server 2019 AD DC on iMac VirtualBox
+  - Domain: northvalley.local, Host: NVDC01
+  - IP: 192.168.88.250, WinRM: port 5985
+  - Updated .agent/NETWORK.md and TECH_STACK.md
+- [x] **North Valley Lab Environment Build** - 2026-01-01
+  - 9 phases executed and verified
+  - File Server: 5 SMB shares (PatientFiles, ClinicDocs, Backups$, Scans, Templates)
+  - AD Structure: 6 OUs, 7 security groups, 8 users
+  - Security: Audit logging, password policy, Defender, Firewall
+  - Verification: 8/8 checks passed
 
 ---
 
-## 🔴 Phase 3: Hardware Deployment (Current)
+## 🔴 Phase 10: Production Deployment + Lab Infrastructure (Current)
 
-### 16. Create nixosConfigurations Target
-**Status:** ⭕ PENDING
-**Why:** Need deployable configuration for physical hardware
-**Files:** `flake-compliance.nix`
+### 16. Create Appliance ISO Infrastructure
+**Status:** ✅ COMPLETE (2025-12-31)
+**Why:** Need bootable USB for HP T640 thin clients
+**Files:** `iso/`, `flake-compliance.nix`
 **Acceptance:**
-- [ ] Add `nixosConfigurations.compliance-appliance` target
-- [ ] Include hardware-configuration.nix template
-- [ ] Test with `nix build .#nixosConfigurations.compliance-appliance.config.system.build.toplevel`
+- [x] Created `iso/appliance-image.nix` - Main ISO config
+- [x] Created `iso/configuration.nix` - Base system config
+- [x] Created `iso/local-status.nix` - Nginx status page with Python API
+- [x] Created `iso/provisioning/generate-config.py` - Site provisioning
+- [x] Updated `flake-compliance.nix` with ISO outputs
 
-### 17. Copy Runbooks to NixOS Module
-**Status:** ✅ COMPLETE (2025-12-08)
-**Why:** MCP server needs runbook YAML files at runtime
-**Files:** `modules/compliance-agent.nix`, `mcp-server/runbooks/*.yaml`
+### 17. Add Operations SOPs to Documentation
+**Status:** ✅ COMPLETE (2025-12-31)
+**Why:** Need documented procedures for daily operations
+**Files:** `mcp-server/central-command/frontend/src/pages/Documentation.tsx`
 **Acceptance:**
-- [x] Bundle runbooks into /var/lib/mcp-server/runbooks on activation
-- [x] Include all 7 runbooks (BACKUP, CERT, DISK, SERVICE, DRIFT, RESTORE, CPU)
+- [x] SOP-OPS-001: Daily Operations Checklist
+- [x] SOP-OPS-002: Onboard New Clinic
+- [x] SOP-OPS-003: Image Compliance Appliance
+- [x] SOP-OPS-004: Provision Site Credentials
+- [x] SOP-OPS-005: Replace Failed Appliance
+- [x] SOP-OPS-006: Offboard Clinic
+- [x] SOP-OPS-007: L3 Incident Response
 
-### 18. Deploy Production MCP Server
-**Status:** ✅ COMPLETE (2025-12-28)
+### 18. Deploy Production VPS with TLS
+**Status:** ✅ COMPLETE (2025-12-31)
 **Server:** Hetzner VPS (178.156.162.116)
-**Files:** `/opt/mcp-server/` on remote server
+**URLs:** api.osiriscare.net, dashboard.osiriscare.net, msp.osiriscare.net
 **Acceptance:**
 - [x] Docker Compose stack running (FastAPI, PostgreSQL, Redis, MinIO)
-- [x] PostgreSQL schema with 8 tables initialized
-- [x] 6 default runbooks loaded
-- [x] Ed25519 signing key generated
-- [x] Health check returns `{"status": "ok"}`
-- [x] Test checkin and incident endpoints working
+- [x] Caddy reverse proxy with auto-TLS
+- [x] HTTPS for all endpoints
+- [x] Client portal at /portal with magic-link auth
+- [x] Frontend deployed with Operations SOPs
 
-### 19. Connect Compliance Agent to Production MCP
+### 19. Test ISO Build on Linux
 **Status:** ⭕ PENDING
-**Why:** Agents at client sites need to reach central server
-**Files:** `modules/compliance-agent.nix`, `mcp_client.py`
+**Why:** ISO build requires x86_64-linux
 **Acceptance:**
-- [ ] Update mcpUrl to `http://178.156.162.116:8000`
-- [ ] Test checkin from appliance to production server
-- [ ] Verify signed orders are received
-- [ ] Confirm evidence uploads to MinIO
+- [ ] Run `nix build .#appliance-iso` on Linux system
+- [ ] Verify ISO boots in QEMU
+- [ ] Test status page on :80
+- [ ] Test phone-home to api.osiriscare.net
 
-### 20. Configure TLS for MCP Server
+### 20. First Pilot Client Enrollment
 **Status:** ⭕ PENDING
-**Why:** HIPAA requires encryption in transit
-**Files:** `/opt/mcp-server/docker-compose.yml`, nginx/caddy config
+**Why:** Validate end-to-end deployment
 **Acceptance:**
-- [ ] Obtain TLS certificate (Let's Encrypt)
-- [ ] Configure HTTPS termination (Caddy or nginx)
-- [ ] Update mcpUrl to https://mcp.osiriscare.net
-- [ ] Test mTLS client certificates (optional)
+- [ ] Create site via API or dashboard
+- [ ] Provision config with generate-config.py
+- [ ] Flash ISO to USB, install on HP T640
+- [ ] Verify phone-home in Central Command
+- [ ] Confirm L1 rules syncing
+- [ ] Evidence bundles uploading to MinIO
 
 ### 21. MinIO Object Lock Configuration
 **Status:** ⭕ PENDING
@@ -263,6 +280,56 @@
 - [ ] Configure Object Lock with GOVERNANCE mode
 - [ ] Set 7-year retention for compliance tier
 - [ ] Test evidence cannot be deleted
+
+### 22. North Valley Clinic Lab Setup (DC)
+**Status:** ✅ COMPLETE (2026-01-01)
+**Why:** Need Windows AD DC for compliance agent testing
+**Location:** iMac (192.168.88.50) → VirtualBox → northvalley-dc
+**Acceptance:**
+- [x] VM created with VBoxManage (4GB RAM, 2 CPU, 60GB disk)
+- [x] Windows Server 2019 Standard installed
+- [x] Renamed to NVDC01, static IP 192.168.88.250
+- [x] AD DS installed and promoted to DC (northvalley.local)
+- [x] WinRM configured and accessible
+- [x] Ping and WinRM tested from MacBook
+- [x] Documentation updated (NETWORK.md, TECH_STACK.md)
+
+**Lab Environment Build (9 Phases) - COMPLETE:**
+- [x] Phase 1: File Server role + 5 SMB shares (PatientFiles, ClinicDocs, Backups$, Scans, Templates)
+- [x] Phase 2: Windows Server Backup feature installed
+- [x] Phase 3: AD Structure (6 OUs, 7 security groups, 8 users)
+- [x] Phase 4: Audit logging (Logon/Account Management/Object Access)
+- [x] Phase 5: Password policy (12 char min, 24 history, 90-day max, lockout after 5)
+- [x] Phase 6: Windows Defender (real-time protection enabled)
+- [x] Phase 7: Windows Firewall (all profiles enabled)
+- [x] Phase 8: Test data files created in shares
+- [x] Phase 9: Verification passed (8/8 checks)
+
+**AD Users Created:**
+| User | Role | Username |
+|------|------|----------|
+| Dr. Sarah Smith | Provider | ssmith |
+| Dr. Michael Chen | Provider | mchen |
+| Lisa Johnson | Nurse | ljohnson |
+| Maria Garcia | Front Desk | mgarcia |
+| Tom Wilson | Billing | twilson |
+| Admin IT | IT Admin | adminit |
+| SVC Backup | Service | svc.backup |
+| SVC Monitoring | Service | svc.monitoring |
+
+### 23. North Valley Clinic Workstation (Windows 10)
+**Status:** 🔄 IN PROGRESS
+**Why:** Test owner/end-user perspective of compliance platform
+**Location:** iMac (192.168.88.50) → VirtualBox → northvalley-ws01
+**Acceptance:**
+- [x] VM created with VBoxManage (4GB RAM, 2 CPU, 50GB disk)
+- [x] Bridged networking configured (will get 192.168.88.x IP)
+- [x] Windows 10 ISO attached and VM started
+- [ ] Windows 10 Pro installed (awaiting user GUI interaction)
+- [ ] Static IP configured (192.168.88.251)
+- [ ] Joined to northvalley.local domain
+- [ ] WinRM enabled for remote management
+- [ ] Domain user login tested
 
 ---
 
@@ -291,9 +358,38 @@ ssh -f -N -L 9080:192.168.56.103:8080 jrelly@174.178.63.139
 open http://localhost:9080
 ```
 
-**Windows VM WinRM tunnel:**
+**North Valley Lab (Windows DC + Workstation):**
 ```bash
-ssh -f -N -L 55987:127.0.0.1:55987 jrelly@174.178.63.139
-# Then run tests with:
-WIN_TEST_HOST="127.0.0.1:55987" WIN_TEST_USER="vagrant" WIN_TEST_PASS="vagrant" USE_REAL_VMS=1 python -m pytest tests/ -v
+# Access iMac lab host
+ssh jrelly@192.168.88.50
+
+# Ping Windows DC
+ping 192.168.88.250
+
+# WinRM test (DC)
+python3 -c "
+import winrm
+s = winrm.Session('http://192.168.88.250:5985/wsman',
+                  auth=('NORTHVALLEY\\\\Administrator', 'NorthValley2024!'),
+                  transport='ntlm')
+print(s.run_ps('hostname').std_out.decode())
+"
+
+# VM management
+ssh jrelly@192.168.88.50 '/Applications/VirtualBox.app/Contents/MacOS/VBoxManage list runningvms'
+ssh jrelly@192.168.88.50 '/Applications/VirtualBox.app/Contents/MacOS/VBoxManage startvm "northvalley-dc" --type headless'
+ssh jrelly@192.168.88.50 '/Applications/VirtualBox.app/Contents/MacOS/VBoxManage startvm "northvalley-ws01" --type headless'
+```
+
+**North Valley Lab VMs:**
+| VM | Hostname | IP | Role | Credentials |
+|----|----------|-----|------|-------------|
+| northvalley-dc | NVDC01 | 192.168.88.250 | AD Domain Controller | NORTHVALLEY\Administrator / NorthValley2024! |
+| northvalley-ws01 | NVWS01 | 192.168.88.251 | Windows 10 Workstation | (pending install) |
+
+**Central Command (Production):**
+```bash
+ssh root@178.156.162.116
+curl https://api.osiriscare.net/health
+open https://dashboard.osiriscare.net
 ```
