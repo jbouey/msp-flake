@@ -210,21 +210,16 @@
       # ========================================================================
 
       # Bootable ISO for direct boot/install
+      # Uses the full compliance-agent from iso/appliance-image.nix
       packages.x86_64-linux.appliance-iso = (nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
-          "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
-          leanApplianceModule
+          ./iso/appliance-image.nix
           ({ lib, pkgs, ... }: {
-            isoImage = {
-              isoName = lib.mkForce "osiriscare-appliance.iso";
-              makeEfiBootable = true;
-              makeUsbBootable = true;
-              squashfsCompression = "gzip";  # Use default gzip - zstd level 19 caused boot failures
-            };
-
-            # Auto-login for debugging (mkForce to override installation-device profile)
-            services.getty.autologinUser = lib.mkForce "root";
+            # SSH keys for testing (will be provisioned per-site in production)
+            users.users.root.openssh.authorizedKeys.keys = [
+              "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
+            ];
 
             # Disable nginx in ISO to save space (can enable post-install)
             services.nginx.enable = lib.mkForce false;
@@ -237,7 +232,7 @@
             xdg.sounds.enable = lib.mkDefault false;
 
             # More aggressive trimming for ISO size
-            security.auditd.enable = lib.mkForce false;  # Override compliance-agent module
+            security.auditd.enable = lib.mkForce false;
             security.polkit.enable = lib.mkDefault false;
             services.lvm.enable = lib.mkDefault false;
             programs.nano.enable = lib.mkForce false;
