@@ -21,6 +21,8 @@ python311Packages.buildPythonApplication rec {
     fastapi
     uvicorn
     jinja2
+    pywinrm
+    pyyaml
   ];
 
   buildInputs = [

@@ -97,11 +97,20 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **Operations SOPs** - 7 SOPs in Documentation page
 
 ### What's Pending
-- ⚠️ Deploy full compliance-agent to appliance (currently phone-home only)
-- ⚠️ L1 rules syncing to appliance
+- 🟡 Build ISO v9 with full agent (code complete, awaiting build on Hetzner)
+- 🟡 Deploy full compliance-agent to physical appliance
 - ⚠️ Evidence bundles uploading to MinIO
 - ⚠️ OpenTimestamps blockchain anchoring
 - ⚠️ Multi-NTP time verification
+
+### Appliance Agent v1.0.0 (2026-01-02)
+- ✅ Created `appliance_agent.py` - Standalone agent for appliance deployment
+- ✅ Created `appliance_config.py` - YAML-based config loader
+- ✅ Created `appliance_client.py` - Central Command API client (HTTPS + API key)
+- ✅ Simple drift checks: NixOS generation, NTP sync, services, disk, firewall
+- ✅ Updated `iso/appliance-image.nix` to use full agent package
+- ✅ Entry point: `compliance-agent-appliance`
+- ✅ 431 tests passing
 
 ### Physical Appliance Deployed (2026-01-02)
 - **Hardware:** HP T640 Thin Client

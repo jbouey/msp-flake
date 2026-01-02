@@ -399,15 +399,21 @@
 ## 🟡 Phase 11: Launch Readiness (Should Have)
 
 ### 24. Deploy Full Compliance Agent to Appliance
-**Status:** ⭕ PENDING
+**Status:** 🟡 IN PROGRESS (2026-01-02)
 **Why:** Physical appliance only runs phone-home, need full agent
 **Files:** `packages/compliance-agent/`, `iso/appliance-image.nix`
 **Acceptance:**
-- [ ] Package compliance-agent as Nix derivation
-- [ ] Update ISO to include full agent (not just phone-home.py)
-- [ ] L1 rules download from Central Command on startup
-- [ ] Evidence bundles upload to MinIO
-- [ ] Rebuild ISO v9 with full agent
+- [x] Created appliance-mode agent (`appliance_agent.py`, `appliance_config.py`, `appliance_client.py`)
+- [x] YAML config loader for standalone deployment
+- [x] HTTPS + API key auth (no mTLS required)
+- [x] Simple drift checks (NixOS generation, NTP sync, services, disk, firewall)
+- [x] Updated `default.nix` with pywinrm + pyyaml dependencies
+- [x] Updated `iso/appliance-image.nix` to use full agent package
+- [x] Entry point: `compliance-agent-appliance`
+- [x] 431 tests passing
+- [ ] Build ISO v9 on Hetzner VPS ← **NEXT**
+- [ ] Deploy to physical appliance
+- [ ] Verify evidence bundles uploading
 
 ### 25. OpenTimestamps Blockchain Anchoring
 **Status:** ⭕ PENDING
