@@ -23,15 +23,18 @@
     isNormalUser = true;
     description = "MSP Service Account";
     extraGroups = [ "wheel" "networkmanager" ];
-    # No password - SSH key only
+    # SSH key only
     openssh.authorizedKeys.keys = [
-      # Add deployment key here during provisioning
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
     ];
   };
 
   users.users.root = {
     # Root password disabled - use msp user + sudo
     hashedPassword = "!";
+    openssh.authorizedKeys.keys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
+    ];
   };
 
   # ============================================================================

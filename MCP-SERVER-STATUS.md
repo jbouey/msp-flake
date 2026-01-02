@@ -1,8 +1,8 @@
 # MCP Server Status
 
-**Last Updated:** 2025-11-21
-**Server Location:** mcp-server VM (port 4445)
-**API Endpoint:** http://localhost:8001 (from Mac host)
+**Last Updated:** 2026-01-02
+**Server Location:** Hetzner VPS (178.156.162.116)
+**API Endpoint:** https://api.osiriscare.net
 
 ---
 
@@ -10,156 +10,182 @@
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| MCP Server | Running | Manually started with nohup |
-| Redis | Running | Port 6379, default config |
-| API Health | Healthy | `/health` returns OK |
-| Runbooks | 5/7 Loaded | 2 have YAML parse errors |
+| MCP Server | Running | Docker container `mcp-server` |
+| PostgreSQL | Running | 16-alpine, persistent volume |
+| Redis | Running | Caching and queues |
+| MinIO | Running | WORM evidence storage |
+| Caddy | Running | Auto-TLS for all domains |
+| Frontend | Running | React dashboard |
 
 ---
 
-## Server Details
+## Production URLs
 
-### Access
+| Service | URL | Purpose |
+|---------|-----|---------|
+| API | https://api.osiriscare.net | REST API, phone-home |
+| Dashboard | https://dashboard.osiriscare.net | Central Command UI |
+| MSP Portal | https://msp.osiriscare.net | Dashboard alias |
+| Client Portal | https://dashboard.osiriscare.net/portal | Client login |
+
+---
+
+## Server Access
+
 ```bash
-# SSH to MCP server VM
-ssh -p 4445 root@localhost  # from Mac host
+# SSH to VPS
+ssh root@178.156.162.116
 
-# API health check
-curl http://localhost:8001/health
+# View container status
+docker ps
+
+# View logs
+docker logs -f mcp-server
+docker logs -f caddy
+
+# Restart services
+cd /opt/mcp-server && docker compose restart
 ```
-
-### Running Process
-```bash
-# Server running as:
-python3 /var/lib/mcp-server/server.py
-
-# Started with:
-cd /var/lib/mcp-server && nohup python3 server.py > server.log 2>&1 &
-```
-
-### Configuration
-- **Host:** 0.0.0.0
-- **Port:** 8000 (forwarded to Mac host port 8001)
-- **Redis Host:** 127.0.0.1
-- **Redis Port:** 6379
 
 ---
 
 ## API Endpoints
 
+### Core Endpoints
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Health check |
+| `/health` | GET | Health check (DB, Redis, MinIO status) |
+| `/api/sites` | GET/POST | Site management |
+| `/api/sites/{id}` | GET/PUT | Site details |
+| `/api/appliances/checkin` | POST | Appliance phone-home |
 | `/runbooks` | GET | List loaded runbooks |
-| `/execute` | POST | Execute a tool |
-| `/incident` | POST | Report an incident |
+| `/stats` | GET | Server statistics |
 
-### Health Check Response
-```json
-{
-  "status": "healthy",
-  "redis": "connected",
-  "runbooks_loaded": 5,
-  "uptime_seconds": 3600
-}
+### Evidence Endpoints
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/evidence/sites/{id}/submit` | POST | Submit evidence bundle (Ed25519 signed) |
+| `/api/evidence/sites/{id}/verify` | GET | Verify hash chain + signatures |
+| `/api/evidence/sites/{id}/bundles` | GET | List evidence bundles |
+| `/api/evidence/public-key` | GET | Get Ed25519 public key |
+
+### Provisioning Endpoints
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/provision/{mac}` | GET | Get config for MAC address |
+| `/api/provision` | POST | Register MAC for provisioning |
+| `/api/provision/{mac}` | DELETE | Remove provisioning entry |
+
+### Learning Loop Endpoints
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/learning/status` | GET | Learning loop status |
+| `/learning/candidates` | GET | Promotion candidates |
+| `/agent/sync` | GET | Get L1 rules for agent |
+| `/agent/checkin` | POST | Agent checkin |
+
+---
+
+## File Locations (on VPS)
+
+```
+/opt/mcp-server/
+├── docker-compose.yml     # Service definitions
+├── Caddyfile             # Reverse proxy config
+├── app/                  # FastAPI application
+│   ├── main.py
+│   └── dashboard_api/
+│       ├── sites.py
+│       ├── evidence_chain.py
+│       ├── provisioning.py
+│       └── ...
+├── frontend/dist/        # Built React app
+├── secrets/
+│   └── signing.key       # Ed25519 private key
+├── migrations/           # SQL migrations
+└── init.sql              # Database initialization
 ```
 
 ---
 
-## Runbooks Status
+## Database Schema (Key Tables)
 
-### Loaded Successfully (5)
-| Runbook ID | Name | Status |
-|------------|------|--------|
-| RB-SERVICE-001 | Service Restart | Loaded |
-| RB-CERT-001 | Certificate Renewal | Loaded |
-| RB-CPU-001 | CPU High Usage | Loaded |
-| RB-DRIFT-001 | Configuration Drift | Loaded |
-| RB-BACKUP-001 | Backup Failure | Loaded |
-
-### Failed to Load (2)
-| Runbook ID | Error | Issue |
-|------------|-------|-------|
-| RB-DISK-001 | YAML parse error (line 22) | Unknown escape character ';' |
-| RB-RESTORE-001 | YAML parse error (line 37) | Unknown escape character ';' |
-
-**Fix Required:** Edit these files to properly escape special characters or quote strings containing `;`.
+| Table | Purpose |
+|-------|---------|
+| `sites` | Registered client sites |
+| `compliance_bundles` | Evidence bundles with hash chain |
+| `patterns` | Learning loop patterns |
+| `appliance_provisioning` | MAC-based provisioning |
+| `incidents` | Incident tracking |
 
 ---
 
-## File Locations (on mcp-server VM)
+## Deployed Appliances
 
-```
-/var/lib/mcp-server/
-├── server.py           # Main FastAPI application
-├── server.log          # Application logs
-├── runbooks/
-│   ├── RB-SERVICE-001.yaml
-│   ├── RB-CERT-001.yaml
-│   ├── RB-CPU-001.yaml
-│   ├── RB-DISK-001.yaml      # YAML error
-│   ├── RB-DRIFT-001.yaml
-│   ├── RB-RESTORE-001.yaml   # YAML error
-│   └── RB-BACKUP-001.yaml
-└── evidence/           # Generated evidence bundles
-```
+| Site ID | Type | IP | Status |
+|---------|------|-----|--------|
+| physical-appliance-pilot-1aea78 | HP T640 | 192.168.88.246 | online |
+| test-appliance-lab-b3c40c | VM | 192.168.88.247 | online |
 
 ---
 
-## Dependencies Installed
+## Ed25519 Signing
 
-Python 3.11.10 with:
-- fastapi
-- uvicorn
-- pydantic
-- redis (async)
-- aiohttp
-- PyYAML
-
----
-
-## Known Issues
-
-### 1. Manual Start Required
-- NixOS read-only filesystem prevents systemd override
-- Server must be started manually after VM reboot
-- **Workaround:** Run `nohup python3 server.py &` after boot
-
-### 2. Two Runbooks Have YAML Errors
-- RB-DISK-001.yaml and RB-RESTORE-001.yaml fail to parse
-- Contains unescaped special characters
-- **Impact:** 5 of 7 runbooks functional
-
-### 3. Server Runs as Root
-- Currently runs in root context
-- Should be moved to dedicated service user
+| Property | Value |
+|----------|-------|
+| Algorithm | Ed25519 |
+| Key Location | `/opt/mcp-server/secrets/signing.key` |
+| Public Key | `904b211dba3786764c3a3ab3723db8640295f390c196b8f3bc47ae0a47a0b0db` |
+| Verify Endpoint | `GET /api/evidence/public-key` |
 
 ---
 
-## Restart Procedure
-
-If the MCP server needs to be restarted:
+## Quick Health Check
 
 ```bash
-# SSH to VM
-ssh -p 4445 root@localhost
+# API health
+curl https://api.osiriscare.net/health | jq .
 
-# Kill existing process
-pkill -f "python.*server.py"
+# Check sites
+curl https://api.osiriscare.net/api/sites | jq '.[] | {site_id, status}'
 
-# Start fresh
-cd /var/lib/mcp-server
-nohup python3 server.py > server.log 2>&1 &
+# Check physical appliance
+curl https://api.osiriscare.net/api/sites/physical-appliance-pilot-1aea78 | jq .
 
-# Verify
-curl http://localhost:8000/health
+# Verify evidence chain
+curl https://api.osiriscare.net/api/evidence/sites/test-appliance-lab-b3c40c/verify | jq .
+```
+
+---
+
+## Maintenance Commands
+
+```bash
+# SSH to VPS
+ssh root@178.156.162.116
+
+# View all logs
+cd /opt/mcp-server && docker compose logs -f
+
+# Restart all services
+cd /opt/mcp-server && docker compose restart
+
+# Rebuild and restart
+cd /opt/mcp-server && docker compose up -d --build
+
+# Database shell
+docker exec -it mcp-postgres psql -U mcp -d mcp
+
+# View evidence bundles
+docker exec -it mcp-postgres psql -U mcp -d mcp -c "SELECT bundle_id, site_id, created_at FROM compliance_bundles ORDER BY created_at DESC LIMIT 10"
 ```
 
 ---
 
 ## Next Steps
 
-1. **Fix YAML Runbooks** - Escape special characters in RB-DISK-001 and RB-RESTORE-001
-2. **Proper NixOS Integration** - Create proper NixOS configuration for auto-start
-3. **Add Authentication** - Currently no auth on API endpoints
-4. **Connect Client VM** - Wire test-client-001 to report to MCP server
+1. **Deploy full compliance-agent** - Replace phone-home with full agent on appliances
+2. **L1 rules syncing** - Agent downloads rules from Central Command
+3. **Evidence upload to MinIO** - Agent uploads bundles to WORM storage
+4. **OpenTimestamps** - Blockchain anchoring for enterprise tier
+5. **Multi-NTP verification** - Time source validation before signing

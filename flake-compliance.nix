@@ -28,16 +28,16 @@
         system.stateVersion = "24.05";
         networking.hostName = lib.mkDefault "osiriscare-appliance";
 
-        # Boot configuration
+        # Boot configuration (use mkDefault so ISO module can override)
         boot = {
           loader.grub = {
-            enable = true;
-            device = "nodev";
-            efiSupport = true;
-            efiInstallAsRemovable = true;
+            enable = lib.mkDefault true;
+            device = lib.mkDefault "nodev";
+            efiSupport = lib.mkDefault true;
+            efiInstallAsRemovable = lib.mkDefault true;
           };
-          loader.efi.canTouchEfiVariables = false;
-          loader.timeout = 3;
+          loader.efi.canTouchEfiVariables = lib.mkDefault false;
+          loader.timeout = lib.mkDefault 3;
           kernelParams = [ "console=tty1" "quiet" ];
           initrd.availableKernelModules = [
             "ahci" "xhci_pci" "ehci_pci" "usbhid" "usb_storage" "sd_mod"
@@ -64,21 +64,21 @@
         };
         time.timeZone = "UTC";
 
-        # SSH
+        # SSH (use mkDefault so installer profile can override)
         services.openssh = {
           enable = true;
           settings = {
-            PasswordAuthentication = false;
-            PermitRootLogin = "prohibit-password";
+            PasswordAuthentication = lib.mkDefault false;
+            PermitRootLogin = lib.mkDefault "prohibit-password";
           };
         };
 
         # Security
         security.auditd.enable = true;
 
-        # Minimal packages
+        # Minimal packages - slimmed for ISO size
         environment.systemPackages = with pkgs; [
-          vim curl htop iproute2 dnsutils jq
+          curl iproute2 jq
           python311 python311Packages.pywinrm python311Packages.aiohttp
           python311Packages.cryptography python311Packages.pydantic python311Packages.pyyaml
         ];
@@ -106,22 +106,44 @@
       };
 
       # Lean appliance config (connects to central MCP)
+      # QUICK FIX: Using embedded phone-home.py instead of placeholder module
       leanApplianceModule = { config, pkgs, lib, ... }: {
         imports = [ baseApplianceModule ];
 
-        services.compliance-agent = {
-          enable = true;
-          siteId = lib.mkDefault "unconfigured";
-          deploymentMode = "direct";
-          mcpServer.enable = false;  # No local MCP
-          redis.enable = false;      # No local Redis
-          mcpUrl = "https://api.osiriscare.net";
-          allowedHosts = [ "api.osiriscare.net" ];
-          pollInterval = 60;
-          maintenanceWindow = "02:00-05:00";
-          evidenceRetention = 168;
-          logLevel = "INFO";
-          webUI.enable = false;  # Use nginx status page
+        # Disable the placeholder compliance-agent module
+        services.compliance-agent.enable = lib.mkForce false;
+
+        # SSH keys for testing (will be provisioned per-site in production)
+        users.users.root.openssh.authorizedKeys.keys = [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
+        ];
+        users.users.msp = {
+          isNormalUser = true;
+          extraGroups = [ "wheel" ];
+          openssh.authorizedKeys.keys = [
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
+          ];
+        };
+        security.sudo.wheelNeedsPassword = false;
+
+        # Phone-home agent script embedded directly
+        environment.etc."msp/phone-home.py" = {
+          mode = "0755";
+          text = builtins.readFile ./iso/phone-home.py;
+        };
+
+        # Phone-home systemd service
+        systemd.services.osiriscare-agent = {
+          description = "OsirisCare Compliance Agent (Phone-Home)";
+          wantedBy = [ "multi-user.target" ];
+          after = [ "network-online.target" ];
+          wants = [ "network-online.target" ];
+          serviceConfig = {
+            Type = "simple";
+            ExecStart = "${pkgs.python311}/bin/python3 /etc/msp/phone-home.py";
+            Restart = "always";
+            RestartSec = "10s";
+          };
         };
       };
 
@@ -198,23 +220,31 @@
               isoName = lib.mkForce "osiriscare-appliance.iso";
               makeEfiBootable = true;
               makeUsbBootable = true;
-              squashfsCompression = "zstd -Xcompression-level 19";
+              squashfsCompression = "gzip";  # Use default gzip - zstd level 19 caused boot failures
             };
 
-            # Auto-login for debugging
-            services.getty.autologinUser = "root";
+            # Auto-login for debugging (mkForce to override installation-device profile)
+            services.getty.autologinUser = lib.mkForce "root";
 
-            # Include nginx status page
-            services.nginx = {
-              enable = true;
-              virtualHosts."_" = {
-                default = true;
-                locations."/" = {
-                  return = "200 '<html><body><h1>MSP Compliance Appliance</h1><p>Status: Online</p></body></html>'";
-                  extraConfig = "default_type text/html;";
-                };
-              };
-            };
+            # Disable nginx in ISO to save space (can enable post-install)
+            services.nginx.enable = lib.mkForce false;
+
+            # Additional size reductions for ISO
+            fonts.fontconfig.enable = lib.mkDefault false;
+            services.udisks2.enable = lib.mkDefault false;
+            xdg.icons.enable = lib.mkDefault false;
+            xdg.mime.enable = lib.mkDefault false;
+            xdg.sounds.enable = lib.mkDefault false;
+
+            # More aggressive trimming for ISO size
+            security.auditd.enable = lib.mkForce false;  # Override compliance-agent module
+            security.polkit.enable = lib.mkDefault false;
+            services.lvm.enable = lib.mkDefault false;
+            programs.nano.enable = lib.mkForce false;
+            programs.less.lessopen = null;
+
+            # Don't include installer-specific tools we don't need
+            system.disableInstallerTools = true;
           })
         ];
       }).config.system.build.isoImage;

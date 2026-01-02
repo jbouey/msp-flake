@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2025-12-31
-**Phase:** Phase 10 - Production Deployment + Appliance Imaging
-**Test Status:** 169 passed
+**Last Updated:** 2026-01-02 (Session 2)
+**Phase:** Phase 10 - Production Deployment + First Physical Appliance
+**Test Status:** 169 passed (compliance-agent tests)
 
 ---
 
@@ -97,9 +97,43 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **Operations SOPs** - 7 SOPs in Documentation page
 
 ### What's Pending
-- ⚠️ Test ISO build on Linux system
-- ⚠️ Set up MinIO object lock retention policy
-- ⚠️ First pilot client enrollment
+- ⚠️ Deploy full compliance-agent to appliance (currently phone-home only)
+- ⚠️ L1 rules syncing to appliance
+- ⚠️ Evidence bundles uploading to MinIO
+- ⚠️ OpenTimestamps blockchain anchoring
+- ⚠️ Multi-NTP time verification
+
+### Physical Appliance Deployed (2026-01-02)
+- **Hardware:** HP T640 Thin Client
+- **MAC:** `84:3A:5B:91:B6:61`
+- **IP:** 192.168.88.246
+- **Site:** `physical-appliance-pilot-1aea78`
+- **Status:** online (checking in every 60s)
+- **Agent:** phone-home v0.1.1-quickfix
+- **Config:** `/var/lib/msp/config.yaml`
+
+### Hash-Chain Evidence System (2026-01-02)
+- ✅ `compliance_bundles` table with SHA256 chain linking
+- ✅ WORM protection triggers (prevent UPDATE/DELETE)
+- ✅ API: `/api/evidence/sites/{site_id}/submit|verify|bundles|summary`
+- ✅ **Ed25519 signing** - bundles signed on submit, verified on chain check
+- ✅ `GET /api/evidence/public-key` - for external verification
+- ✅ Verification UI at `/portal/site/{siteId}/verify` with signature display
+
+### Auto-Provisioning (2026-01-02)
+- ✅ `msp-auto-provision` systemd service in ISO
+- ✅ Option 1: USB config detection (checks /config.yaml, /msp/config.yaml, etc.)
+- ✅ Option 4: MAC-based provisioning via API
+- ✅ API: `GET/POST/DELETE /api/provision/<mac>`
+- ✅ SOP added to Documentation page
+
+### Lab Appliance Status (2026-01-02)
+- **VM:** osiriscare-appliance on iMac (192.168.88.50)
+- **IP:** 192.168.88.247
+- **Site:** test-appliance-lab-b3c40c
+- **Status:** online (checking in every 60s)
+- **Agent:** phone-home v0.1.1-quickfix
+- **Config:** `/var/lib/msp/config.yaml` with site_id + api_key
 
 ### Current Compliance Score
 - Windows Server: 28.6% (2 pass, 5 fail, 1 warning)
@@ -230,6 +264,11 @@ cd /opt/mcp-server && docker compose restart              # Restart all
 nix build .#appliance-iso -o result-iso            # Build bootable ISO
 nix run .#test-iso                                 # Test in QEMU
 python iso/provisioning/generate-config.py --site-id "clinic-001" --site-name "Test Clinic"
+
+# Lab Appliance (VirtualBox on iMac)
+ssh root@192.168.88.247                            # SSH to appliance
+journalctl -u osiriscare-agent -f                  # Watch phone-home logs
+curl -s https://api.osiriscare.net/api/sites/test-appliance-lab-b3c40c | jq .  # Check site status
 ```
 
 ---

@@ -1,0 +1,47 @@
+site_id: physical-appliance-pilot-1aea78
+site_name: Physical Appliance Pilot
+appliance_id: app-93e2bc150f90aaff
+api_endpoint: https://api.osiriscare.net
+api_key: q5VihYAYhKMH-vtX-DXuzLrjqbhgM61S5KjgPM4UG4A
+portal_token: fz9BszBaB0o9KfaTbMOnRT--rlYgl7Zl1wjTPlLsULvwiWW5xyRX2YIBO373j0qG
+tls:
+  client_cert: /etc/msp/certs/client.crt
+  client_key: /etc/msp/certs/client.key
+  ca_cert: /etc/msp/certs/ca.crt
+agent:
+  poll_interval: 60
+  evidence_retention_days: 7
+  offline_queue_max_mb: 100
+  log_level: INFO
+local_status:
+  enabled: true
+  port: 80
+maintenance_window:
+  enabled: true
+  start: 02:00
+  end: 05:00
+  timezone: America/New_York
+  days:
+  - mon
+  - tue
+  - wed
+  - thu
+  - fri
+  - sat
+  - sun
+windows_targets: []
+discovery:
+  enabled: true
+  subnets: []
+  exclude_ips: []
+compliance:
+  patch_critical_max_age_hours: 72
+  patch_high_max_age_hours: 168
+  backup_max_age_hours: 24
+  backup_restore_test_max_age_days: 30
+  privileged_access_review_days: 90
+  sign_evidence: true
+_generated:
+  timestamp: '2026-01-02T14:35:40.867239+00:00'
+  generator: generate-config.py v1.0
+  appliance_version: 1.0.0

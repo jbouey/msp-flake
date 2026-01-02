@@ -1,0 +1,13 @@
+site_id: physical-appliance-pilot-1aea78
+site_name: Physical Appliance Pilot
+appliance_id: app-93e2bc150f90aaff
+api_key: sk-site-nAWtvfMp-RgREvBojY0Q_DBmMcj-iw4YmZ56c7VbOIg
+portal_token: fz9BszBaB0o9KfaTbMOnRT--rlYgl7Zl1wjTPlLsULvwiWW5xyRX2YIBO373j0qG
+portal_url: https://portal.osiriscare.net/site/physical-appliance-pilot-1aea78?token=fz9BszBaB0o9KfaTbMOnRT--rlYgl7Zl1wjTPlLsULvwiWW5xyRX2YIBO373j0qG
+registered_at: '2026-01-02T14:35:40.870667+00:00'
+instructions:
+  step_1: Add site to Central Command database
+  step_2: Register API key for authentication
+  step_3: Generate portal magic link for client
+  step_4: Copy config.yaml and certs/ to appliance
+  step_5: Ship appliance to clinic

@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2025-12-31
-**Current Phase:** Phase 10 - Production Deployment + Appliance Imaging
+**Last Updated:** 2026-01-02 (Session 2)
+**Current Phase:** Phase 10 - Production Deployment + First Physical Appliance
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -185,13 +185,18 @@ Per Master Alignment Brief:
 ### Phase 10 Deliverables (In Progress)
 
 - ✅ **Client Portal** - Magic-link authentication for client access
-- ✅ **Phone-Home Security** - Site ID + API key authentication
+- ✅ **Phone-Home Security** - Site ID + API key (Bearer token) authentication
 - ✅ **Production Deployment** - VPS with Caddy auto-TLS (api/dashboard/msp.osiriscare.net)
 - ✅ **Appliance ISO Infrastructure** - `iso/` directory with NixOS build configs
 - ✅ **Site Provisioning Tools** - `generate-config.py` for mTLS cert generation
 - ✅ **Operations SOPs** - 7 SOPs added to Documentation page
-- 🟡 **ISO Build Verification** - Pending Linux system test
-- ⭕ **First Pilot Client** - Pending enrollment
+- ✅ **ISO Build Verification** - Built on VPS, boots in VirtualBox, phone-home working
+- ✅ **Lab Test Enrollment** - test-appliance-lab-b3c40c site, status: online
+- ✅ **Physical Appliance Deployed** - HP T640 at 192.168.88.246 (2026-01-02)
+- ✅ **Auto-Provisioning API** - GET/POST/DELETE /api/provision/<mac>
+- ✅ **Ed25519 Evidence Signing** - Bundles signed on submit, verified on chain check
+- ✅ **mDNS Support** - osiriscare-appliance.local hostname resolution
+- 🟡 **First Pilot Client** - Physical appliance deployed, needs full agent
 
 ---
 
@@ -357,9 +362,13 @@ Required fields per CLAUDE.md:
 - [x] Production VPS deployed with TLS (Caddy auto-cert)
 - [x] Appliance ISO infrastructure created
 - [x] Operations SOPs documented
-- [ ] ISO build verified on Linux
-- [ ] First client site enrolled in Central Command dashboard
-- [ ] Compliance agent deployed and checking in
+- [x] ISO build verified on VPS (1.16GB, boots in VirtualBox)
+- [x] Lab test site enrolled (test-appliance-lab-b3c40c, status: online)
+- [x] Phone-home agent checking in every 60 seconds
+- [x] Physical appliance deployed (HP T640 at 192.168.88.246)
+- [x] Auto-provisioning API implemented
+- [x] Ed25519 evidence signing implemented
+- [ ] Full compliance-agent deployed (not just phone-home) ← **NEXT**
 - [ ] L1 rules syncing to agent
 - [ ] Evidence bundles uploading to MinIO
 - [ ] First compliance packet generated
@@ -377,7 +386,18 @@ Required fields per CLAUDE.md:
 - ✅ ISO build config: `iso/appliance-image.nix`
 - ✅ Status page: `iso/local-status.nix`
 - ✅ Provisioning: `iso/provisioning/generate-config.py`
+- ✅ Phone-home agent: `iso/phone-home.py` (v0.1.1 with API key auth)
+- ✅ Auto-provisioning: USB config detection + MAC-based API lookup
+- ✅ mDNS: `osiriscare-appliance.local` hostname resolution
+- ✅ Lab appliance VM: 192.168.88.247 (VirtualBox on iMac)
+- ✅ **Physical appliance: 192.168.88.246 (HP T640 Thin Client)**
+
+**Deployed Sites:**
+| Site ID | Type | IP | Status |
+|---------|------|-----|--------|
+| physical-appliance-pilot-1aea78 | HP T640 | 192.168.88.246 | online |
+| test-appliance-lab-b3c40c | VM | 192.168.88.247 | online |
 
 ---
 
-**Status:** Phase 10 in progress. Appliance infrastructure complete. Awaiting ISO build test and first pilot client.
+**Status:** Phase 10 in progress. Physical HP T640 appliance deployed and checking in. Next: deploy full compliance-agent (not just phone-home).

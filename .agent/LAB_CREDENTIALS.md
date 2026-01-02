@@ -1,7 +1,7 @@
 # Lab Credentials
 
-**Last Updated:** 2026-01-01
-**Environment:** North Valley Clinic Test Lab
+**Last Updated:** 2026-01-02
+**Environment:** North Valley Clinic Test Lab + Physical Appliance
 
 > **WARNING:** These are LAB/TEST credentials only. Never use in production.
 
@@ -18,6 +18,7 @@
 | Windows DC (local) | NVDC01 | 192.168.88.250 | .\Administrator | NorthValley2024! |
 | Windows DC (DSRM) | NVDC01 | 192.168.88.250 | (Safe Mode) | NorthValley2024! |
 | Windows Workstation | NVWS01 | 192.168.88.251 | localadmin | NorthValley2024! |
+| Windows Workstation | NVWS01 | 192.168.88.251 | NORTHVALLEY\adminit | ClinicAdmin2024! |
 
 ### Domain Information
 
@@ -44,8 +45,8 @@
 
 | Name | Username | Password | Purpose |
 |------|----------|----------|---------|
-| SVC Backup | svc.backup | SvcBackup2024! | Backup operations |
-| SVC Monitoring | svc.monitoring | SvcMonitor2024! | Compliance agent |
+| SVC Backup | svc.backup | SvcAccount2024! | Backup operations |
+| SVC Monitoring | svc.monitoring | SvcAccount2024! | Compliance agent |
 
 ### AD Security Groups
 
@@ -80,6 +81,32 @@
 
 ---
 
+## Appliances
+
+### Physical Appliance (HP T640)
+
+| Property | Value |
+|----------|-------|
+| Hostname | osiriscare-appliance |
+| mDNS | osiriscare-appliance.local |
+| IP | 192.168.88.246 |
+| MAC | 84:3A:5B:91:B6:61 |
+| SSH | root@192.168.88.246 (SSH key) |
+| Site ID | physical-appliance-pilot-1aea78 |
+| API Key | q5VihYAYhKMH-vtX-DXuzLrjqbhgM61S5KjgPM4UG4A |
+
+### Lab Appliance (VirtualBox VM)
+
+| Property | Value |
+|----------|-------|
+| Hostname | osiriscare-appliance |
+| IP | 192.168.88.247 |
+| MAC | 08:00:27:98:FD:84 |
+| SSH | root@192.168.88.247 (SSH key) |
+| Site ID | test-appliance-lab-b3c40c |
+
+---
+
 ## Production Central Command
 
 | System | URL/Host | Username | Password |
@@ -88,6 +115,21 @@
 | Dashboard | https://dashboard.osiriscare.net | operator | operator |
 | API | https://api.osiriscare.net | (API key auth) | - |
 | VPS SSH | root@178.156.162.116 | root | (SSH key) |
+
+### Registered Sites
+
+| Site ID | Clinic Name | API Key | Status |
+|---------|-------------|---------|--------|
+| physical-appliance-pilot-1aea78 | Physical Appliance Pilot | q5VihYAYhKMH-vtX-DXuzLrjqbhgM61S5KjgPM4UG4A | online |
+| test-appliance-lab-b3c40c | Test Appliance Lab | (in config.yaml on VM) | online |
+
+### Ed25519 Signing Key
+
+| Property | Value |
+|----------|-------|
+| Location | `/opt/mcp-server/secrets/signing.key` (on VPS) |
+| Public Key | `904b211dba3786764c3a3ab3723db8640295f390c196b8f3bc47ae0a47a0b0db` |
+| Endpoint | `GET https://api.osiriscare.net/api/evidence/public-key` |
 
 ---
 
@@ -156,6 +198,11 @@ ssh jrelly@192.168.88.50 '/Applications/VirtualBox.app/Contents/MacOS/VBoxManage
 192.168.88.0/24 - North Valley Lab Network
 ├── 192.168.88.1   - Gateway/Router
 ├── 192.168.88.50  - iMac (VirtualBox host)
+├── 192.168.88.246 - HP T640 Physical Appliance (physical-appliance-pilot-1aea78)
+├── 192.168.88.247 - Lab Appliance VM (test-appliance-lab-b3c40c)
 ├── 192.168.88.250 - NVDC01 (Windows Server 2019 DC)
 └── 192.168.88.251 - NVWS01 (Windows 10 Workstation)
+
+Production:
+└── 178.156.162.116 - Hetzner VPS (api/dashboard/msp.osiriscare.net)
 ```
