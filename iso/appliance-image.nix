@@ -5,14 +5,33 @@
 
 { config, pkgs, lib, ... }:
 
+let
+  # Build the compliance-agent package
+  compliance-agent = pkgs.python311Packages.buildPythonApplication {
+    pname = "compliance-agent";
+    version = "1.0.0";
+    src = ../packages/compliance-agent;
+
+    propagatedBuildInputs = with pkgs.python311Packages; [
+      aiohttp
+      cryptography
+      pydantic
+      pydantic-settings
+      fastapi
+      uvicorn
+      jinja2
+      pywinrm
+      pyyaml
+    ];
+
+    doCheck = false;
+  };
+in
 {
   imports = [
     <nixpkgs/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix>
     ./configuration.nix
     ./local-status.nix
-    # NOTE: Disabled compliance-agent.nix module - using embedded phone-home.py for quick testing
-    # Will re-enable once proper Nix package is built
-    # ../modules/compliance-agent.nix
   ];
 
   # System identification
@@ -40,37 +59,41 @@
     Status page: http://osiriscare-appliance.local
 
     Run 'ip addr' to see IP addresses
-    Run 'journalctl -u compliance-agent -f' to watch phone-home
+    Run 'journalctl -u compliance-agent -f' to watch agent
 
   '';
 
   # ============================================================================
-  # Phone-Home Agent - Quick Fix (will be replaced with proper Nix package)
+  # Full Compliance Agent
   # ============================================================================
 
-  # Embed the phone-home script
-  environment.etc."msp/phone-home.py" = {
-    source = ./phone-home.py;
-    mode = "0755";
-  };
-
-  # Phone-home systemd service
+  # Compliance agent systemd service
   systemd.services.compliance-agent = {
-    description = "OsirisCare Compliance Agent (Phone-Home)";
+    description = "OsirisCare Compliance Agent";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
+    after = [ "network-online.target" "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
 
     serviceConfig = {
       Type = "simple";
-      ExecStart = "${pkgs.python311}/bin/python3 /etc/msp/phone-home.py";
+      ExecStart = "${compliance-agent}/bin/compliance-agent-appliance";
       Restart = "always";
       RestartSec = "10s";
+
+      # Working directory for config
+      WorkingDirectory = "/var/lib/msp";
 
       # Logging
       StandardOutput = "journal";
       StandardError = "journal";
       SyslogIdentifier = "compliance-agent";
+
+      # Security hardening
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      ReadWritePaths = [ "/var/lib/msp" ];
+      NoNewPrivileges = true;
     };
   };
 
@@ -88,13 +111,8 @@
     iputils
     dnsutils
 
-    # For WinRM to Windows servers
-    python311
-    python311Packages.pywinrm
-    python311Packages.aiohttp
-    python311Packages.cryptography
-    python311Packages.pydantic
-    python311Packages.pyyaml
+    # Compliance agent (includes all Python dependencies)
+    compliance-agent
 
     # Config management
     jq
@@ -149,6 +167,7 @@
   system.activationScripts.mspDirs = ''
     mkdir -p /var/lib/msp/evidence
     mkdir -p /var/lib/msp/queue
+    mkdir -p /var/lib/msp/rules
     mkdir -p /etc/msp/certs
     chmod 700 /var/lib/msp /etc/msp/certs
   '';

@@ -21,6 +21,7 @@ setup(
         "uvicorn>=0.24.0",
         "jinja2>=3.1.0",
         "pywinrm>=0.4.3",
+        "pyyaml>=6.0.0",
     ],
     extras_require={
         "dev": [
@@ -32,6 +33,7 @@ setup(
     entry_points={
         "console_scripts": [
             "compliance-agent=compliance_agent.agent:main",
+            "compliance-agent-appliance=compliance_agent.appliance_agent:main",
             "compliance-web=compliance_agent.web_ui:main",
         ],
     },
