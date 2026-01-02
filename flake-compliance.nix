@@ -214,6 +214,7 @@
       packages.x86_64-linux.appliance-iso = (nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
+          "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
           ./iso/appliance-image.nix
           ({ lib, pkgs, ... }: {
             # SSH keys for testing (will be provisioned per-site in production)

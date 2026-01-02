@@ -28,8 +28,9 @@ let
   };
 in
 {
+  # Note: installation-cd-minimal.nix is imported from the flake, not here
+  # This allows pure flake evaluation
   imports = [
-    <nixpkgs/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix>
     ./configuration.nix
     ./local-status.nix
   ];
