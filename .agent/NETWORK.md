@@ -1,6 +1,6 @@
 # Network Topology & VM Inventory
 
-**Last Updated:** 2026-01-01
+**Last Updated:** 2026-01-02
 **Environment:** Production + Development/Test Lab
 
 ---
@@ -175,12 +175,85 @@ print(result.std_out.decode())
 
 ---
 
+### OsirisCare Compliance Appliance (Lab Test)
+
+| Property | Value |
+|----------|-------|
+| **VM Name** | osiriscare-appliance |
+| **Role** | NixOS Compliance Appliance (phone-home) |
+| **OS** | NixOS 24.05 |
+| **Hostname** | osiriscare-appliance |
+| **IP** | 192.168.88.247 (DHCP) |
+| **Site ID** | test-appliance-lab-b3c40c |
+| **RAM** | 12 GB |
+| **CPU** | 4 cores |
+| **ISO** | `/Users/jrelly/iso/osiriscare-appliance.iso` |
+| **Network** | Bridged (en1: Wi-Fi), MAC: 08:00:27:98:FD:84 |
+| **Status** | RUNNING, online in Central Command |
+
+**Agent:**
+- Version: 0.1.1-quickfix (phone-home only)
+- Checkin interval: 60 seconds
+- Config: `/var/lib/msp/config.yaml`
+
+**Access:**
+```bash
+ssh root@192.168.88.247                    # SSH access
+journalctl -u osiriscare-agent -f          # Watch agent logs
+```
+
+**Central Command:**
+- Dashboard: https://dashboard.osiriscare.net → Sites → test-appliance-lab-b3c40c
+- API: `curl -s https://api.osiriscare.net/api/sites/test-appliance-lab-b3c40c | jq .`
+
+---
+
+### OsirisCare Physical Appliance (HP T640)
+
+| Property | Value |
+|----------|-------|
+| **Hardware** | HP T640 Thin Client |
+| **Role** | Production Compliance Appliance |
+| **OS** | NixOS 24.05 (ISO v8) |
+| **Hostname** | osiriscare-appliance |
+| **mDNS** | osiriscare-appliance.local |
+| **IP** | 192.168.88.246 (DHCP) |
+| **MAC** | 84:3A:5B:91:B6:61 |
+| **Site ID** | physical-appliance-pilot-1aea78 |
+| **Status** | RUNNING, online in Central Command |
+
+**Agent:**
+- Version: 0.1.1-quickfix (phone-home only)
+- Checkin interval: 60 seconds
+- Config: `/var/lib/msp/config.yaml`
+
+**Access:**
+```bash
+ssh root@192.168.88.246                    # SSH access
+ssh root@osiriscare-appliance.local        # mDNS access
+journalctl -u compliance-agent -f          # Watch agent logs
+cat /var/lib/msp/config.yaml               # View config
+```
+
+**Central Command:**
+- Dashboard: https://dashboard.osiriscare.net → Sites → physical-appliance-pilot-1aea78
+- API: `curl -s https://api.osiriscare.net/api/sites/physical-appliance-pilot-1aea78 | jq .`
+
+**Provisioning:**
+- MAC registered in provisioning API for zero-touch deployment
+- Config generated via `generate-config.py`
+
+---
+
 ## Network Segments
 
 ### Local Network (192.168.88.0/24)
 - **Gateway:** 192.168.88.1 (router)
 - **iMac Lab Host:** 192.168.88.50
+- **Physical Appliance (HP T640):** 192.168.88.246
+- **Lab Appliance (VM):** 192.168.88.247
 - **NVDC01 (Windows DC):** 192.168.88.250
+- **NVWS01 (Windows 10):** 192.168.88.251
 - **Purpose:** Development/test environment
 - **External Access:** Via 174.178.63.139
 
@@ -243,6 +316,16 @@ ping 192.168.88.250
 | `/api/dashboard/fleet` | GET | Fleet overview for dashboard |
 | `/api/dashboard/incidents` | GET | Active incidents |
 | `/api/dashboard/learning` | GET | Learning loop status |
+| `/api/provision/{mac}` | GET | Get provisioning config for MAC |
+| `/api/provision` | POST | Register MAC for auto-provisioning |
+| `/api/provision/{mac}` | DELETE | Remove provisioning entry |
+| `/api/evidence/sites/{id}/submit` | POST | Submit evidence bundle (signed) |
+| `/api/evidence/sites/{id}/verify` | GET | Verify hash chain + signatures |
+| `/api/evidence/sites/{id}/bundles` | GET | List evidence bundles |
+| `/api/evidence/public-key` | GET | Get Ed25519 public key |
+| `/portal/login` | GET | Client portal login (magic link) |
+| `/portal/site/{id}/dashboard` | GET | Client compliance dashboard |
+| `/portal/site/{id}/verify` | GET | Client chain verification |
 
 ### Appliance Phone-Home
 

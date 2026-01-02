@@ -677,6 +677,159 @@ curl -X PATCH https://api.osiriscare.net/api/sites/{site_id} \\
         ),
       },
       {
+        id: 'auto-provision-sop',
+        title: 'SOP: Zero-Touch Appliance Provisioning',
+        content: (
+          <div className="space-y-4">
+            <div className="p-4 bg-accent-primary/10 border-l-4 border-accent-primary rounded-r-ios">
+              <p className="text-sm font-medium">Configure appliances to auto-provision on first boot with zero manual config.</p>
+              <p className="text-xs text-label-tertiary mt-1">New in v9 - Eliminates manual SSH config at client sites</p>
+            </div>
+
+            <h4 className="font-semibold">Two Provisioning Methods</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <h5 className="font-semibold text-accent-primary">Option 1: USB Config File</h5>
+                <p className="text-xs text-label-secondary mt-1">
+                  Place config.yaml on USB drive. Appliance reads it on boot.
+                </p>
+                <p className="text-xs text-label-tertiary mt-2">Best for: Pre-configured shipments</p>
+              </div>
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <h5 className="font-semibold text-accent-primary">Option 4: MAC-Based Lookup</h5>
+                <p className="text-xs text-label-secondary mt-1">
+                  Register MAC address in Central Command. Appliance fetches config via API.
+                </p>
+                <p className="text-xs text-label-tertiary mt-2">Best for: Pre-registered hardware</p>
+              </div>
+            </div>
+
+            <h4 className="font-semibold mt-6">Method 1: USB Configuration</h4>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# 1. Generate config for the site
+python iso/provisioning/generate-config.py \\
+  --site-id "clinic-smith-abc123" \\
+  --site-name "Smith Family Practice"
+
+# 2. Copy config to USB drive root
+# The appliance checks these locations on boot:
+#   /config.yaml
+#   /msp/config.yaml
+#   /osiriscare/config.yaml
+#   /MSP/config.yaml
+
+cp appliance-config/clinic-smith-abc123/config.yaml /Volumes/USB/config.yaml
+
+# 3. Insert USB into appliance before first boot
+# Config is copied to /var/lib/msp/config.yaml automatically`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">Method 4: MAC-Based Provisioning</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios mb-4">
+              <p className="text-sm text-label-secondary">
+                <strong>Workflow:</strong> Record the appliance MAC address → Register in Central Command →
+                Ship appliance → Client plugs in → Appliance auto-fetches config
+              </p>
+            </div>
+
+            <h5 className="font-semibold">Step 1: Get MAC Address</h5>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# From appliance boot screen or label on hardware
+# Example: 84:3A:5B:91:B6:61
+
+# Or via SSH if already booted:
+ip link show | grep -A1 "state UP" | grep ether`}</pre>
+            </div>
+
+            <h5 className="font-semibold mt-4">Step 2: Register MAC in Central Command</h5>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# Register MAC → Site mapping via API
+curl -X POST https://api.osiriscare.net/api/provision \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "mac_address": "84:3A:5B:91:B6:61",
+    "site_id": "clinic-smith-abc123",
+    "api_key": "q5VihYAYhKMH-vtX-DXuzLrjqbhgM61S5KjgPM4UG4A",
+    "notes": "HP T640 for Smith Family Practice"
+  }'
+
+# Response:
+{
+  "status": "registered",
+  "mac_address": "84:3A:5B:91:B6:61",
+  "site_id": "clinic-smith-abc123",
+  "message": "Appliance will auto-provision on first boot"
+}`}</pre>
+            </div>
+
+            <h5 className="font-semibold mt-4">Step 3: Verify Registration</h5>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# Test that MAC returns config (URL-encode the colons)
+curl https://api.osiriscare.net/api/provision/84%3A3A%3A5B%3A91%3AB6%3A61
+
+# Response:
+{
+  "site_id": "clinic-smith-abc123",
+  "site_name": "Smith Family Practice",
+  "api_endpoint": "https://api.osiriscare.net",
+  "api_key": "q5VihYAYhKMH-vtX-DXuzLrjqbhgM61S5KjgPM4UG4A"
+}`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">Boot Sequence</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios">
+              <ol className="list-decimal list-inside space-y-2 text-label-secondary text-sm">
+                <li><strong>Check for existing config</strong> - Skip if /var/lib/msp/config.yaml exists</li>
+                <li><strong>Scan USB drives</strong> - Look for config.yaml in standard locations</li>
+                <li><strong>MAC lookup</strong> - If no USB config, fetch from Central Command API</li>
+                <li><strong>Write config</strong> - Save to /var/lib/msp/config.yaml</li>
+                <li><strong>Start agent</strong> - Compliance agent begins phoning home</li>
+              </ol>
+            </div>
+
+            <h4 className="font-semibold mt-6">API Reference</h4>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-separator-light">
+                    <th className="text-left py-2 px-3">Endpoint</th>
+                    <th className="text-left py-2 px-3">Method</th>
+                    <th className="text-left py-2 px-3">Description</th>
+                  </tr>
+                </thead>
+                <tbody className="text-label-secondary">
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3 font-mono text-xs">/api/provision/&lt;mac&gt;</td>
+                    <td className="py-2 px-3">GET</td>
+                    <td className="py-2 px-3">Get config for MAC address (used by appliance)</td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3 font-mono text-xs">/api/provision</td>
+                    <td className="py-2 px-3">POST</td>
+                    <td className="py-2 px-3">Register MAC → Site mapping</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-3 font-mono text-xs">/api/provision/&lt;mac&gt;</td>
+                    <td className="py-2 px-3">DELETE</td>
+                    <td className="py-2 px-3">Remove MAC registration</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="p-4 bg-health-warning/10 border-l-4 border-health-warning rounded-r-ios mt-4">
+              <h4 className="font-semibold text-health-warning">Troubleshooting</h4>
+              <ul className="mt-2 text-sm text-label-secondary space-y-1">
+                <li><strong>No auto-provision:</strong> Check provision.log at /var/lib/msp/provision.log</li>
+                <li><strong>USB not detected:</strong> Ensure FAT32/ext4 format, try different USB port</li>
+                <li><strong>MAC not found:</strong> Verify MAC format (colons, uppercase), check registration</li>
+                <li><strong>Network timeout:</strong> Ensure outbound HTTPS to api.osiriscare.net</li>
+              </ul>
+            </div>
+          </div>
+        ),
+      },
+      {
         id: 'incident-response-sop',
         title: 'SOP: L3 Incident Response',
         content: (

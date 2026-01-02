@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams, useParams } from 'react-router-dom';
+import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import { KPICard, ControlGrid, IncidentList, EvidenceDownloads } from './components';
 
 interface PortalSite {
@@ -100,6 +100,7 @@ const ErrorState: React.FC<{ message: string }> = ({ message }) => (
 
 export const PortalDashboard: React.FC = () => {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { siteId } = useParams<{ siteId: string }>();
   const token = searchParams.get('token');
 
@@ -108,29 +109,49 @@ export const PortalDashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!token) {
-      setError('Missing portal access token. Please use the link provided by your administrator.');
-      setLoading(false);
-      return;
-    }
-
     if (!siteId) {
       setError('Invalid portal URL.');
       setLoading(false);
       return;
     }
 
-    fetch(`/api/portal/site/${siteId}?token=${token}`)
+    // Build URL - include token if present, otherwise rely on session cookie
+    const url = token
+      ? `/api/portal/site/${siteId}?token=${token}`
+      : `/api/portal/site/${siteId}`;
+
+    fetch(url, { credentials: 'include' })
       .then((r) => {
+        if (r.status === 403) {
+          // Not authenticated - redirect to login
+          navigate(`/portal/site/${siteId}/login`, { replace: true });
+          throw new Error('redirect');
+        }
         if (!r.ok) {
-          throw new Error('Invalid or expired portal link. Please request a new link from your administrator.');
+          throw new Error('Failed to load dashboard. Please try again.');
         }
         return r.json();
       })
       .then(setData)
-      .catch((e) => setError(e.message))
+      .catch((e) => {
+        if (e.message !== 'redirect') {
+          setError(e.message);
+        }
+      })
       .finally(() => setLoading(false));
-  }, [siteId, token]);
+  }, [siteId, token, navigate]);
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/portal/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch (e) {
+      // Ignore errors
+    }
+    navigate(`/portal/site/${siteId}/login`, { replace: true });
+  };
 
   if (loading) return <LoadingSkeleton />;
   if (error) return <ErrorState message={error} />;
@@ -166,6 +187,12 @@ export const PortalDashboard: React.FC = () => {
             >
               {data.site.status === 'online' ? '● Online' : '● Offline'}
             </span>
+            <button
+              onClick={handleLogout}
+              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+            >
+              Log out
+            </button>
           </div>
         </div>
       </header>
@@ -244,7 +271,23 @@ export const PortalDashboard: React.FC = () => {
 
           {/* Evidence Downloads */}
           <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Evidence & Reports</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-gray-900">Evidence & Reports</h2>
+              <button
+                onClick={() => {
+                  const url = token
+                    ? `/portal/site/${siteId}/verify?token=${token}`
+                    : `/portal/site/${siteId}/verify`;
+                  navigate(url);
+                }}
+                className="text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1"
+              >
+                <span>Verify Chain</span>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+              </button>
+            </div>
             <EvidenceDownloads
               bundles={data.evidence_bundles}
               siteId={siteId!}

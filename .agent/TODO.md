@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-01
-**Sprint:** Phase 10 - Production Deployment + Lab Infrastructure
+**Last Updated:** 2026-01-02
+**Sprint:** Phase 10 - Production Deployment + First Pilot Client
 
 ---
 
@@ -188,6 +188,16 @@
 - [x] Evidence batch processing (parallel uploads) - 2025-12-04
 - [x] Async Pattern Improvements complete - 2025-12-04
 - [x] NixOS module: Added local MCP server + Redis - 2025-12-08
+- [x] **Client Portal Complete** - 2026-01-01
+  - Magic link authentication with SendGrid email
+  - httpOnly cookie sessions (30-day expiry)
+  - PDF report generation with WeasyPrint
+  - HIPAA control mapping in reports
+  - Mobile-responsive dashboard
+- [x] **MinIO WORM Storage** - 2026-01-01
+  - evidence-worm bucket with Object Lock
+  - GOVERNANCE mode, 7-year retention
+  - Versioning enabled for audit trail
 - [x] NixOS module: Updated firewall for local loopback + WinRM - 2025-12-08
 - [x] NixOS module: Default mcpUrl now http://127.0.0.1:8000 - 2025-12-08
 - [x] **Production MCP Server deployed to Hetzner VPS** - 2025-12-28
@@ -212,10 +222,47 @@
   - AD Structure: 6 OUs, 7 security groups, 8 users
   - Security: Audit logging, password policy, Defender, Firewall
   - Verification: 8/8 checks passed
+- [x] **North Valley Workstation (NVWS01)** - 2026-01-01
+  - Windows 10 Pro domain-joined to northvalley.local
+  - IP: 192.168.88.251, WinRM enabled
+  - IT Admin remote management verified
+- [x] **Appliance ISO Boot Verified** - 2026-01-02
+  - Built on VPS: 1.16GB with phone-home service
+  - SHA256: e05bd758afc6584bdd47a0de62726a0db19a209f7974e9d5f5776b89cc755ed2
+  - Boots in VirtualBox (12GB RAM, 4 CPU)
+  - SSH access working at 192.168.88.247
+- [x] **Lab Appliance Test Enrollment** - 2026-01-02
+  - Site: test-appliance-lab-b3c40c
+  - Phone-home v0.1.1-quickfix with API key auth
+  - Checking in every 60 seconds
+  - Status: online in Central Command
+- [x] **Hash-Chain Evidence System** - 2026-01-02
+  - `compliance_bundles` table with SHA256 chain linking
+  - WORM protection triggers (prevent UPDATE/DELETE)
+  - API endpoints: submit, verify, bundles, summary
+  - Verification UI at `/portal/site/{siteId}/verify`
+- [x] **ISO v7 Built** - 2026-01-02
+  - Built on Hetzner VPS with fixed mkForce conflicts
+  - Available at `iso/osiriscare-appliance-v7.iso` (1.1GB)
+- [x] **Physical Appliance Deployed** - 2026-01-02
+  - HP T640 Thin Client flashed with ISO
+  - Site: physical-appliance-pilot-1aea78
+  - MAC: 84:3A:5B:91:B6:61, IP: 192.168.88.246
+  - Phone-home checking in every 60s
+- [x] **Auto-Provisioning System** - 2026-01-02
+  - API: GET/POST/DELETE /api/provision/<mac>
+  - msp-auto-provision systemd service in ISO
+  - USB config detection + MAC-based lookup
+  - SOP added to Documentation page
+- [x] **Ed25519 Evidence Signing (Central Command)** - 2026-01-02
+  - evidence_chain.py signs bundles on submit
+  - Signature verification in /verify endpoint
+  - GET /api/evidence/public-key for external verification
+  - PortalVerify.tsx shows signature status
 
 ---
 
-## 🔴 Phase 10: Production Deployment + Lab Infrastructure (Current)
+## 🔴 Phase 10: Production Deployment + First Pilot Client (Current)
 
 ### 16. Create Appliance ISO Infrastructure
 **Status:** ✅ COMPLETE (2025-12-31)
@@ -253,33 +300,48 @@
 - [x] Frontend deployed with Operations SOPs
 
 ### 19. Test ISO Build on Linux
-**Status:** ⭕ PENDING
+**Status:** ✅ COMPLETE (2026-01-02)
 **Why:** ISO build requires x86_64-linux
 **Acceptance:**
-- [ ] Run `nix build .#appliance-iso` on Linux system
-- [ ] Verify ISO boots in QEMU
-- [ ] Test status page on :80
-- [ ] Test phone-home to api.osiriscare.net
+- [x] Run `nix build .#appliance-iso` on Hetzner VPS (NixOS)
+- [x] ISO built successfully: 1.16GB with phone-home service
+- [x] SHA256: `e05bd758afc6584bdd47a0de62726a0db19a209f7974e9d5f5776b89cc755ed2`
+- [x] Verify ISO boots in VirtualBox (VM: osiriscare-appliance, 12GB RAM, 4 CPU)
+- [x] SSH access working (192.168.88.247)
+- [x] Phone-home to api.osiriscare.net working (60s interval, status: online)
 
-### 20. First Pilot Client Enrollment
-**Status:** ⭕ PENDING
-**Why:** Validate end-to-end deployment
+### 20. Lab Appliance Test Enrollment
+**Status:** ✅ COMPLETE (2026-01-02)
+**Why:** Validate phone-home flow before real client
 **Acceptance:**
-- [ ] Create site via API or dashboard
-- [ ] Provision config with generate-config.py
-- [ ] Flash ISO to USB, install on HP T640
-- [ ] Verify phone-home in Central Command
+- [x] Created test site: `test-appliance-lab-b3c40c` via API
+- [x] Updated phone-home.py with API key (Bearer token) authentication
+- [x] Configured appliance with site_id and api_key in `/var/lib/msp/config.yaml`
+- [x] Verified phone-home checkins (every 60s)
+- [x] Site status: "online", onboarding stage: "connectivity"
+- [x] Agent version reporting correctly: v0.1.1-quickfix
+
+### 21. First REAL Pilot Client Enrollment
+**Status:** 🟡 IN PROGRESS (Physical appliance deployed 2026-01-02)
+**Why:** Validate end-to-end deployment at actual healthcare site
+**Acceptance:**
+- [x] Identify pilot clinic (NEPA region) → physical-appliance-pilot-1aea78
+- [x] Create production site via dashboard
+- [x] Provision config with generate-config.py
+- [x] Flash ISO to USB, install on HP T640
+- [x] Verify phone-home in Central Command (checking in every 60s)
+- [ ] Deploy full compliance-agent (not just phone-home) ← **NEXT**
 - [ ] Confirm L1 rules syncing
 - [ ] Evidence bundles uploading to MinIO
 
-### 21. MinIO Object Lock Configuration
-**Status:** ⭕ PENDING
+### 22. MinIO Object Lock Configuration
+**Status:** ✅ COMPLETE (2026-01-01)
 **Why:** Evidence must be immutable per HIPAA §164.312(b)
 **Acceptance:**
-- [ ] Enable versioning on evidence bucket
-- [ ] Configure Object Lock with GOVERNANCE mode
-- [ ] Set 7-year retention for compliance tier
-- [ ] Test evidence cannot be deleted
+- [x] Enable versioning on evidence bucket
+- [x] Configure Object Lock with GOVERNANCE mode
+- [x] Set 7-year retention for compliance tier
+- [x] Test evidence cannot be deleted (delete creates marker, original retained)
 
 ### 22. North Valley Clinic Lab Setup (DC)
 **Status:** ✅ COMPLETE (2026-01-01)
@@ -318,18 +380,54 @@
 | SVC Monitoring | Service | svc.monitoring |
 
 ### 23. North Valley Clinic Workstation (Windows 10)
-**Status:** 🔄 IN PROGRESS
+**Status:** ✅ COMPLETE (2026-01-01)
 **Why:** Test owner/end-user perspective of compliance platform
 **Location:** iMac (192.168.88.50) → VirtualBox → northvalley-ws01
 **Acceptance:**
 - [x] VM created with VBoxManage (4GB RAM, 2 CPU, 50GB disk)
-- [x] Bridged networking configured (will get 192.168.88.x IP)
-- [x] Windows 10 ISO attached and VM started
-- [ ] Windows 10 Pro installed (awaiting user GUI interaction)
-- [ ] Static IP configured (192.168.88.251)
-- [ ] Joined to northvalley.local domain
-- [ ] WinRM enabled for remote management
-- [ ] Domain user login tested
+- [x] Bridged networking configured
+- [x] Windows 10 Pro installed
+- [x] Static IP configured (192.168.88.251)
+- [x] DNS pointing to DC (192.168.88.250)
+- [x] Joined to northvalley.local domain
+- [x] WinRM enabled for remote management
+- [x] IT Admin (adminit) remote access verified
+- [x] Domain secure channel verified (nltest)
+
+---
+
+## 🟡 Phase 11: Launch Readiness (Should Have)
+
+### 24. Deploy Full Compliance Agent to Appliance
+**Status:** ⭕ PENDING
+**Why:** Physical appliance only runs phone-home, need full agent
+**Files:** `packages/compliance-agent/`, `iso/appliance-image.nix`
+**Acceptance:**
+- [ ] Package compliance-agent as Nix derivation
+- [ ] Update ISO to include full agent (not just phone-home.py)
+- [ ] L1 rules download from Central Command on startup
+- [ ] Evidence bundles upload to MinIO
+- [ ] Rebuild ISO v9 with full agent
+
+### 25. OpenTimestamps Blockchain Anchoring
+**Status:** ⭕ PENDING
+**Why:** Enterprise tier feature, proves evidence existed at time T
+**Files:** TBD
+**Acceptance:**
+- [ ] Submit bundle hash to OpenTimestamps on bundle creation
+- [ ] Store OTS proof in `anchor_proof` column
+- [ ] Verify OTS proofs in verification endpoint
+- [ ] UI shows "Anchored" status with Bitcoin block info
+
+### 26. Multi-NTP Time Verification
+**Status:** ⭕ PENDING
+**Why:** Ensures timestamp integrity for evidence
+**Files:** TBD
+**Acceptance:**
+- [ ] Query 3+ NTP servers before signing bundle
+- [ ] Reject if time skew > 5 seconds between sources
+- [ ] Store NTP source + offset in bundle metadata
+- [ ] Alert if time verification fails
 
 ---
 
@@ -385,11 +483,35 @@ ssh jrelly@192.168.88.50 '/Applications/VirtualBox.app/Contents/MacOS/VBoxManage
 | VM | Hostname | IP | Role | Credentials |
 |----|----------|-----|------|-------------|
 | northvalley-dc | NVDC01 | 192.168.88.250 | AD Domain Controller | NORTHVALLEY\Administrator / NorthValley2024! |
-| northvalley-ws01 | NVWS01 | 192.168.88.251 | Windows 10 Workstation | (pending install) |
+| northvalley-ws01 | NVWS01 | 192.168.88.251 | Windows 10 Workstation | NORTHVALLEY\adminit / ClinicAdmin2024! |
+
+**Domain Users (for interactive login):**
+| User | Password | Role |
+|------|----------|------|
+| ssmith | ClinicUser2024! | Provider |
+| adminit | ClinicAdmin2024! | IT Admin (has local admin) |
 
 **Central Command (Production):**
 ```bash
 ssh root@178.156.162.116
 curl https://api.osiriscare.net/health
 open https://dashboard.osiriscare.net
+```
+
+**Physical Appliance (HP T640):**
+```bash
+ssh root@192.168.88.246                # SSH to physical appliance
+journalctl -u compliance-agent -f     # Watch agent logs
+curl -s https://api.osiriscare.net/api/sites/physical-appliance-pilot-1aea78 | jq .
+```
+
+**Provisioning API:**
+```bash
+# Register MAC for auto-provisioning
+curl -X POST https://api.osiriscare.net/api/provision \
+  -H "Content-Type: application/json" \
+  -d '{"mac_address":"XX:XX:XX:XX:XX:XX", "site_id":"...", "api_key":"..."}'
+
+# Check MAC config
+curl https://api.osiriscare.net/api/provision/XX%3AXX%3AXX%3AXX%3AXX%3AXX
 ```

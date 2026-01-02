@@ -10,7 +10,9 @@
     <nixpkgs/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix>
     ./configuration.nix
     ./local-status.nix
-    ../modules/compliance-agent.nix
+    # NOTE: Disabled compliance-agent.nix module - using embedded phone-home.py for quick testing
+    # Will re-enable once proper Nix package is built
+    # ../modules/compliance-agent.nix
   ];
 
   # System identification
@@ -19,52 +21,57 @@
 
   # Minimal boot - fast startup
   boot.kernelParams = [ "console=tty1" "quiet" ];
-  boot.loader.timeout = 3;
+  boot.loader.timeout = lib.mkForce 3;
 
   # No GUI - headless operation
   services.xserver.enable = false;
 
   # Auto-login to console (for debugging if needed)
-  services.getty.autologinUser = "root";
+  services.getty.autologinUser = lib.mkForce "root";
+
+  # Show IP address on login
+  environment.etc."motd".text = ''
+
+    ╔═══════════════════════════════════════════════════════════╗
+    ║           OsirisCare Compliance Appliance                 ║
+    ╚═══════════════════════════════════════════════════════════╝
+
+    Access via: ssh root@osiriscare-appliance.local
+    Status page: http://osiriscare-appliance.local
+
+    Run 'ip addr' to see IP addresses
+    Run 'journalctl -u compliance-agent -f' to watch phone-home
+
+  '';
 
   # ============================================================================
-  # Compliance Agent Configuration - LEAN MODE
-  # Uses existing module but configured for minimal resource usage
+  # Phone-Home Agent - Quick Fix (will be replaced with proper Nix package)
   # ============================================================================
-  services.compliance-agent = {
-    enable = true;
 
-    # Site ID loaded from config file at runtime
-    siteId = lib.mkDefault "unconfigured";
+  # Embed the phone-home script
+  environment.etc."msp/phone-home.py" = {
+    source = ./phone-home.py;
+    mode = "0755";
+  };
 
-    # LEAN MODE: No local MCP or Redis (runs on VPS)
-    mcpServer.enable = false;
-    redis.enable = false;
+  # Phone-home systemd service
+  systemd.services.compliance-agent = {
+    description = "OsirisCare Compliance Agent (Phone-Home)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
 
-    # Connect to Central Command
-    mcpUrl = lib.mkDefault "https://api.osiriscare.net";
-    allowedHosts = [
-      "api.osiriscare.net"
-      "portal.osiriscare.net"
-    ];
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${pkgs.python311}/bin/python3 /etc/msp/phone-home.py";
+      Restart = "always";
+      RestartSec = "10s";
 
-    # Direct deployment (not reseller)
-    deploymentMode = lib.mkDefault "direct";
-
-    # Timing
-    pollInterval = 60;           # Phone home every 60 seconds
-    orderTtl = 900;              # 15-minute order TTL
-    maintenanceWindow = "02:00-05:00";  # 2-5 AM for disruptive actions
-
-    # Evidence - keep 7 days locally
-    evidenceRetention = 168;     # ~7 days at hourly bundles
-    pruneRetentionDays = 7;
-
-    # Logging - INFO level to reduce disk I/O
-    logLevel = "INFO";
-
-    # Web UI disabled - using nginx status page instead
-    webUI.enable = false;
+      # Logging
+      StandardOutput = "journal";
+      StandardError = "journal";
+      SyslogIdentifier = "compliance-agent";
+    };
   };
 
   # ============================================================================
@@ -102,7 +109,19 @@
     firewall = {
       enable = true;
       allowedTCPPorts = [ 80 22 ];  # Status page + SSH
+      allowedUDPPorts = [ 5353 ];   # mDNS
       # No other inbound - pull-only architecture
+    };
+  };
+
+  # mDNS - allows access via osiriscare-appliance.local
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
+    publish = {
+      enable = true;
+      addresses = true;
+      workstation = true;
     };
   };
 
@@ -116,13 +135,15 @@
 
   # ============================================================================
   # Persistent storage for config and evidence
+  # NOTE: This mount is optional - only used when MSP-DATA partition exists
+  # For live ISO testing, we use tmpfs at /var/lib/msp instead
   # ============================================================================
-  fileSystems."/var/lib/msp" = {
-    device = "/dev/disk/by-label/MSP-DATA";
-    fsType = "ext4";
-    options = [ "defaults" "noatime" ];
-    neededForBoot = false;
-  };
+  # fileSystems."/var/lib/msp" = {
+  #   device = "/dev/disk/by-label/MSP-DATA";
+  #   fsType = "ext4";
+  #   options = [ "defaults" "noatime" ];
+  #   neededForBoot = false;
+  # };
 
   # Create directories on activation
   system.activationScripts.mspDirs = ''
@@ -138,9 +159,9 @@
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = "prohibit-password";
-      PasswordAuthentication = false;
-      KbdInteractiveAuthentication = false;
+      PermitRootLogin = lib.mkForce "prohibit-password";
+      PasswordAuthentication = lib.mkForce false;
+      KbdInteractiveAuthentication = lib.mkForce false;
     };
   };
 
@@ -159,12 +180,171 @@
   isoImage.makeUsbBootable = true;
 
   # ============================================================================
-  # First-boot setup script
+  # Auto-Provisioning Service (USB + MAC-based)
+  # ============================================================================
+  systemd.services.msp-auto-provision = {
+    description = "MSP Appliance Auto-Provisioning";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "local-fs.target" ];
+    wants = [ "network-online.target" ];
+    before = [ "compliance-agent.service" ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+
+    script = ''
+      set -e
+      CONFIG_PATH="/var/lib/msp/config.yaml"
+      LOG_FILE="/var/lib/msp/provision.log"
+      API_URL="https://api.osiriscare.net"
+
+      log() {
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
+      }
+
+      mkdir -p /var/lib/msp
+
+      # If config already exists, skip provisioning
+      if [ -f "$CONFIG_PATH" ]; then
+        log "Config already exists, skipping provisioning"
+        exit 0
+      fi
+
+      log "=== Starting Auto-Provisioning ==="
+
+      # ========================================
+      # OPTION 1: Check USB drives for config
+      # ========================================
+      log "Checking USB drives for config.yaml..."
+
+      USB_CONFIG_FOUND=false
+      for dev in /dev/sd[a-z][0-9] /dev/disk/by-label/*; do
+        [ -e "$dev" ] || continue
+
+        MOUNT_POINT="/tmp/msp-usb-$$"
+        mkdir -p "$MOUNT_POINT"
+
+        if mount -o ro "$dev" "$MOUNT_POINT" 2>/dev/null; then
+          # Check multiple possible locations
+          for cfg_path in \
+            "$MOUNT_POINT/config.yaml" \
+            "$MOUNT_POINT/msp/config.yaml" \
+            "$MOUNT_POINT/osiriscare/config.yaml" \
+            "$MOUNT_POINT/MSP/config.yaml"; do
+
+            if [ -f "$cfg_path" ]; then
+              log "Found config at $cfg_path"
+              cp "$cfg_path" "$CONFIG_PATH"
+              chmod 600 "$CONFIG_PATH"
+              USB_CONFIG_FOUND=true
+              log "Config copied from USB successfully"
+              break
+            fi
+          done
+          umount "$MOUNT_POINT" 2>/dev/null || true
+        fi
+        rmdir "$MOUNT_POINT" 2>/dev/null || true
+
+        [ "$USB_CONFIG_FOUND" = true ] && break
+      done
+
+      if [ "$USB_CONFIG_FOUND" = true ]; then
+        log "Provisioning complete via USB"
+        systemctl restart compliance-agent || true
+        exit 0
+      fi
+
+      log "No USB config found"
+
+      # ========================================
+      # OPTION 4: MAC-based provisioning
+      # ========================================
+      log "Attempting MAC-based provisioning..."
+
+      # Get primary MAC address
+      MAC_ADDR=""
+      for iface in /sys/class/net/*; do
+        IFACE_NAME=$(basename "$iface")
+        [ "$IFACE_NAME" = "lo" ] && continue
+        [ -f "$iface/address" ] || continue
+        MAC_ADDR=$(cat "$iface/address")
+        [ "$MAC_ADDR" != "00:00:00:00:00:00" ] && break
+      done
+
+      if [ -n "$MAC_ADDR" ]; then
+        log "MAC Address: $MAC_ADDR"
+
+        # URL-encode the MAC (replace : with %3A)
+        MAC_ENCODED=$(echo "$MAC_ADDR" | sed 's/:/%3A/g')
+
+        # Try to fetch config from Central Command
+        PROVISION_URL="$API_URL/api/provision/$MAC_ENCODED"
+        log "Fetching config from $PROVISION_URL"
+
+        HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
+          --connect-timeout 10 --max-time 30 \
+          "$PROVISION_URL" 2>/dev/null || echo "000")
+
+        if [ "$HTTP_CODE" = "200" ]; then
+          # Check if response contains valid config
+          if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
+            ${pkgs.jq}/bin/jq -r 'to_entries | map("\(.key): \(.value)") | .[]' /tmp/provision-response.json > "$CONFIG_PATH"
+            # Convert to proper YAML
+            ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
+            chmod 600 "$CONFIG_PATH"
+            log "Provisioning complete via MAC lookup"
+            rm -f /tmp/provision-response.json
+            systemctl restart compliance-agent || true
+            exit 0
+          fi
+        else
+          log "MAC provisioning returned HTTP $HTTP_CODE"
+        fi
+        rm -f /tmp/provision-response.json
+      else
+        log "Could not determine MAC address"
+      fi
+
+      # ========================================
+      # Neither method worked - show instructions
+      # ========================================
+      log "Auto-provisioning failed - manual config required"
+      log ""
+      log "To configure manually, create /var/lib/msp/config.yaml with:"
+      log "  site_id: <your-site-id>"
+      log "  api_key: <your-api-key>"
+      log "  api_endpoint: https://api.osiriscare.net"
+      log ""
+      log "Then run: systemctl restart compliance-agent"
+
+      # Write instructions to console
+      cat > /etc/issue.d/90-msp-provision.issue << 'ISSUE'
+
+  ╔═══════════════════════════════════════════════════════════════════╗
+  ║  PROVISIONING REQUIRED                                            ║
+  ╠═══════════════════════════════════════════════════════════════════╣
+  ║  No configuration found. Options:                                 ║
+  ║                                                                   ║
+  ║  1. Insert USB with config.yaml and reboot                        ║
+  ║  2. Pre-register MAC in Central Command dashboard                 ║
+  ║  3. Manually create /var/lib/msp/config.yaml                      ║
+  ║                                                                   ║
+  ║  See: https://docs.osiriscare.net/appliance-setup                 ║
+  ╚═══════════════════════════════════════════════════════════════════╝
+
+ISSUE
+    '';
+  };
+
+  # ============================================================================
+  # First-boot setup (runs after provisioning)
   # ============================================================================
   systemd.services.msp-first-boot = {
     description = "MSP Appliance First Boot Setup";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
+    after = [ "network-online.target" "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
 
     serviceConfig = {
@@ -174,42 +354,25 @@
 
     script = ''
       MARKER="/var/lib/msp/.initialized"
+      CONFIG_PATH="/var/lib/msp/config.yaml"
 
       if [ -f "$MARKER" ]; then
-        echo "Appliance already initialized"
         exit 0
       fi
 
       echo "=== MSP Compliance Appliance First Boot Setup ==="
       echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-      # Check for config file
-      if [ -f /var/lib/msp/config.yaml ]; then
-        echo "Found configuration file"
-        SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id' /var/lib/msp/config.yaml)
-        echo "Site ID: $SITE_ID"
-
-        # Update hostname to match site ID
-        if [ -n "$SITE_ID" ] && [ "$SITE_ID" != "null" ]; then
+      # Set hostname from config if available
+      if [ -f "$CONFIG_PATH" ]; then
+        SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH")
+        if [ -n "$SITE_ID" ]; then
           hostnamectl set-hostname "$SITE_ID"
           echo "Hostname set to: $SITE_ID"
         fi
-      else
-        echo "WARNING: No config.yaml found at /var/lib/msp/config.yaml"
-        echo "Appliance will run in unconfigured mode"
       fi
 
-      # Check for certificates
-      if [ -d /etc/msp/certs ] && [ -f /etc/msp/certs/client.crt ]; then
-        echo "mTLS certificates found"
-      else
-        echo "WARNING: No mTLS certificates found"
-      fi
-
-      # Mark as initialized
       touch "$MARKER"
-      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) - First boot complete" >> /var/lib/msp/setup.log
-
       echo "=== First Boot Setup Complete ==="
     '';
   };

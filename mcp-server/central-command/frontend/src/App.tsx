@@ -9,6 +9,8 @@ import { Dashboard, Runbooks, Learning, Onboarding, ClientDetail, Login, AuditLo
 import { useFleet, useRefreshFleet, useCommandPalette } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PortalDashboard } from './portal/PortalDashboard';
+import { PortalLogin } from './portal/PortalLogin';
+import { PortalVerify } from './portal/PortalVerify';
 
 // Create a client for React Query
 const queryClient = new QueryClient({
@@ -165,8 +167,11 @@ const App: React.FC = () => {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-            {/* Portal routes - no auth required */}
-            <Route path="/portal/site/:siteId" element={<PortalDashboard />} />
+            {/* Portal routes - token or session auth */}
+            <Route path="/portal/site/:siteId" element={<PortalLogin />} />
+            <Route path="/portal/site/:siteId/dashboard" element={<PortalDashboard />} />
+            <Route path="/portal/site/:siteId/verify" element={<PortalVerify />} />
+            <Route path="/portal/site/:siteId/login" element={<PortalLogin />} />
 
             {/* Admin routes - auth required */}
             <Route path="/*" element={<AuthenticatedApp />} />
