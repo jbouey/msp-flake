@@ -279,52 +279,84 @@ in
       log "No USB config found"
 
       # ========================================
-      # OPTION 4: MAC-based provisioning
+      # OPTION 2: MAC-based provisioning with retry
       # ========================================
       log "Attempting MAC-based provisioning..."
 
-      # Get primary MAC address
+      # Get primary MAC address (prefer ethernet over wireless)
       MAC_ADDR=""
-      for iface in /sys/class/net/*; do
+      for iface in /sys/class/net/eth* /sys/class/net/en* /sys/class/net/*; do
+        [ -e "$iface" ] || continue
         IFACE_NAME=$(basename "$iface")
         [ "$IFACE_NAME" = "lo" ] && continue
         [ -f "$iface/address" ] || continue
-        MAC_ADDR=$(cat "$iface/address")
-        [ "$MAC_ADDR" != "00:00:00:00:00:00" ] && break
+        CANDIDATE=$(cat "$iface/address")
+        [ "$CANDIDATE" = "00:00:00:00:00:00" ] && continue
+        MAC_ADDR="$CANDIDATE"
+        log "Using interface $IFACE_NAME with MAC $MAC_ADDR"
+        break
       done
 
-      if [ -n "$MAC_ADDR" ]; then
+      if [ -z "$MAC_ADDR" ]; then
+        log "ERROR: Could not determine MAC address"
+      else
         log "MAC Address: $MAC_ADDR"
 
         # URL-encode the MAC (replace : with %3A)
         MAC_ENCODED=$(echo "$MAC_ADDR" | sed 's/:/%3A/g')
-
-        # Try to fetch config from Central Command
         PROVISION_URL="$API_URL/api/provision/$MAC_ENCODED"
-        log "Fetching config from $PROVISION_URL"
 
-        HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
-          --connect-timeout 10 --max-time 30 \
-          "$PROVISION_URL" 2>/dev/null || echo "000")
+        # Wait for network connectivity with retries
+        MAX_RETRIES=6
+        RETRY_DELAY=10
+        PROVISIONED=false
 
-        if [ "$HTTP_CODE" = "200" ]; then
-          # Check if response contains valid config
-          if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
-            ${pkgs.jq}/bin/jq -r 'to_entries | map("\(.key): \(.value)") | .[]' /tmp/provision-response.json > "$CONFIG_PATH"
-            # Convert to proper YAML
-            ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
-            chmod 600 "$CONFIG_PATH"
-            log "Provisioning complete via MAC lookup"
-            rm -f /tmp/provision-response.json
-            systemctl restart compliance-agent || true
-            exit 0
+        for attempt in $(seq 1 $MAX_RETRIES); do
+          log "Attempt $attempt/$MAX_RETRIES: Checking network connectivity..."
+
+          # Test DNS resolution first
+          if ! ${pkgs.coreutils}/bin/timeout 5 ${pkgs.bash}/bin/bash -c "echo >/dev/tcp/1.1.1.1/53" 2>/dev/null; then
+            log "Network not ready (no DNS), waiting ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+            continue
           fi
-        else
-          log "MAC provisioning returned HTTP $HTTP_CODE"
+
+          log "Network ready, fetching config from $PROVISION_URL"
+
+          HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
+            --connect-timeout 15 --max-time 45 \
+            "$PROVISION_URL" 2>/dev/null || echo "000")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            # Check if response contains valid config
+            if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
+              ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
+              chmod 600 "$CONFIG_PATH"
+              log "SUCCESS: Provisioning complete via MAC lookup"
+              rm -f /tmp/provision-response.json
+              systemctl restart compliance-agent || true
+              PROVISIONED=true
+              exit 0
+            else
+              log "ERROR: Response missing site_id"
+            fi
+          elif [ "$HTTP_CODE" = "404" ]; then
+            log "MAC not registered in Central Command (HTTP 404)"
+            log "Register this MAC in the dashboard: $MAC_ADDR"
+            break
+          elif [ "$HTTP_CODE" = "000" ]; then
+            log "Connection failed (HTTP 000), retrying in ${RETRY_DELAY}s..."
+          else
+            log "Unexpected HTTP $HTTP_CODE, retrying in ${RETRY_DELAY}s..."
+          fi
+
+          rm -f /tmp/provision-response.json
+          sleep $RETRY_DELAY
+        done
+
+        if [ "$PROVISIONED" = false ]; then
+          log "MAC provisioning failed after $MAX_RETRIES attempts"
         fi
-        rm -f /tmp/provision-response.json
-      else
-        log "Could not determine MAC address"
       fi
 
       # ========================================

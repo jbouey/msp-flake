@@ -127,6 +127,7 @@ class CentralCommandClient:
         Returns:
             True if checkin successful
         """
+        # Use format expected by /api/appliances/checkin endpoint
         payload = {
             "site_id": self.config.site_id,
             "hostname": hostname,
@@ -136,9 +137,6 @@ class CentralCommandClient:
             "agent_version": agent_version,
             "nixos_version": nixos_version,
         }
-
-        if compliance_summary:
-            payload["compliance_summary"] = compliance_summary
 
         status, response = await self._request(
             'POST',
@@ -163,12 +161,23 @@ class CentralCommandClient:
         check_type: str,
         check_result: str,
         evidence_data: Dict[str, Any],
-        timestamp: Optional[datetime] = None
+        timestamp: Optional[datetime] = None,
+        host: Optional[str] = None,
+        hipaa_control: Optional[str] = None
     ) -> Optional[str]:
         """
         Submit evidence bundle to Central Command.
 
         The server will sign the bundle with Ed25519 and add to hash chain.
+
+        Args:
+            bundle_hash: SHA256 hash of evidence data (for local verification)
+            check_type: Type of check (e.g., "ntp_sync", "disk_usage")
+            check_result: Result status ("compliant", "non_compliant", "error")
+            evidence_data: Detailed check data
+            timestamp: When check was performed (defaults to now)
+            host: Hostname that was checked
+            hipaa_control: HIPAA control reference (e.g., "164.312(b)")
 
         Returns:
             Bundle ID if successful, None otherwise
@@ -176,12 +185,29 @@ class CentralCommandClient:
         if timestamp is None:
             timestamp = datetime.now(timezone.utc)
 
+        if host is None:
+            host = socket.gethostname()
+
+        # Build payload matching server's EvidenceBundleCreate model
         payload = {
-            "bundle_hash": bundle_hash,
-            "check_type": check_type,
-            "check_result": check_result,
-            "evidence_data": evidence_data,
-            "collected_at": timestamp.isoformat(),
+            "site_id": self.config.site_id,
+            "checked_at": timestamp.isoformat(),
+            "checks": [
+                {
+                    "check": check_type,
+                    "status": check_result,
+                    "host": host,
+                    "details": evidence_data,
+                    "hipaa_control": hipaa_control
+                }
+            ],
+            "summary": {
+                "total_checks": 1,
+                "compliant": 1 if check_result == "compliant" else 0,
+                "non_compliant": 1 if check_result == "non_compliant" else 0,
+                "errors": 1 if check_result == "error" else 0,
+                "local_hash": bundle_hash  # For client-side verification
+            }
         }
 
         status, response = await self._request(
@@ -275,6 +301,97 @@ class CentralCommandClient:
         return status == 200
 
     # =========================================================================
+    # Order Polling (for remote updates and commands)
+    # =========================================================================
+
+    async def fetch_pending_orders(self, appliance_id: str) -> List[Dict]:
+        """
+        Fetch pending orders for this appliance.
+
+        Returns:
+            List of pending order dictionaries
+        """
+        status, response = await self._request(
+            'GET',
+            f'/api/sites/{self.config.site_id}/appliances/{appliance_id}/orders/pending'
+        )
+
+        if status == 200:
+            orders = response if isinstance(response, list) else response.get('orders', [])
+            if orders:
+                logger.info(f"Fetched {len(orders)} pending orders")
+            return orders
+        else:
+            logger.debug(f"No pending orders or fetch failed: {status}")
+            return []
+
+    async def acknowledge_order(self, order_id: str) -> bool:
+        """
+        Acknowledge receipt of an order (mark as 'executing').
+
+        Returns:
+            True if acknowledged successfully
+        """
+        status, response = await self._request(
+            'POST',
+            f'/api/orders/{order_id}/acknowledge'
+        )
+        return status == 200
+
+    async def complete_order(
+        self,
+        order_id: str,
+        success: bool,
+        result: Optional[Dict] = None,
+        error_message: Optional[str] = None
+    ) -> bool:
+        """
+        Mark an order as completed or failed.
+
+        Returns:
+            True if completion recorded successfully
+        """
+        payload = {
+            "success": success,
+            "result": result or {},
+            "error_message": error_message,
+        }
+
+        status, response = await self._request(
+            'POST',
+            f'/api/orders/{order_id}/complete',
+            json_data=payload
+        )
+        return status == 200
+
+    async def download_file(self, url: str, dest_path: str) -> bool:
+        """
+        Download a file from a URL to local path.
+
+        Used for downloading agent update packages.
+
+        Returns:
+            True if download successful
+        """
+        try:
+            session = await self._get_session()
+            async with session.get(url) as response:
+                if response.status == 200:
+                    from pathlib import Path
+                    Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+                    with open(dest_path, 'wb') as f:
+                        while chunk := await response.content.read(8192):
+                            f.write(chunk)
+                    logger.info(f"Downloaded {url} to {dest_path}")
+                    return True
+                else:
+                    logger.error(f"Download failed: {response.status}")
+                    return False
+        except Exception as e:
+            logger.error(f"Download error: {e}")
+            return False
+
+    # =========================================================================
     # Context Manager
     # =========================================================================
 
@@ -299,16 +416,46 @@ def get_hostname() -> str:
 
 
 def get_mac_address() -> str:
-    """Get primary MAC address."""
+    """Get primary MAC address.
+
+    Prioritizes:
+    1. Ethernet interfaces (eth*, enp*, eno*) that are UP
+    2. Any interface that is UP with a valid MAC
+    3. Any interface with a valid MAC
+    """
     try:
+        candidates = []
         for iface in Path("/sys/class/net").iterdir():
             if iface.name in ("lo", "docker0", "virbr0"):
                 continue
+
+            # Check if interface is UP
+            operstate_file = iface / "operstate"
+            is_up = False
+            if operstate_file.exists():
+                state = operstate_file.read_text().strip().lower()
+                is_up = state in ("up", "unknown")  # "unknown" is common for some ethernet
+
             addr_file = iface / "address"
             if addr_file.exists():
-                mac = addr_file.read_text().strip()
+                mac = addr_file.read_text().strip().upper()
                 if mac and mac != "00:00:00:00:00:00":
-                    return mac
+                    # Prioritize ethernet interfaces
+                    is_ethernet = iface.name.startswith(("eth", "enp", "eno", "ens"))
+                    priority = 0
+                    if is_up and is_ethernet:
+                        priority = 3  # Best: active ethernet
+                    elif is_ethernet:
+                        priority = 2  # Second: any ethernet
+                    elif is_up:
+                        priority = 1  # Third: active non-ethernet
+                    # priority 0 = down non-ethernet (wireless)
+                    candidates.append((priority, iface.name, mac))
+
+        if candidates:
+            # Sort by priority (descending), then by interface name
+            candidates.sort(key=lambda x: (-x[0], x[1]))
+            return candidates[0][2]
     except Exception:
         pass
     return "00:00:00:00:00:00"
