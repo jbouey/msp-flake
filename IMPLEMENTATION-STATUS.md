@@ -295,13 +295,14 @@ Required fields per CLAUDE.md:
 - ✅ Runbook format: YAML structure implemented (7 runbooks, 5 loading)
 - ⭕ Evidence bundle storage: Local + remote, or remote-only after sync?
 
-### Infrastructure Status (2025-11-21)
-- ✅ Mac Host: 174.178.63.139 (SSH working)
-- ✅ MCP Server VM: Running (port 4445 SSH, port 8001 API)
-- ✅ Test Client VM: Running (port 4444 SSH)
-- ✅ Redis: Running on MCP server
+### Infrastructure Status (2026-01-03)
+- ✅ Hetzner VPS: 178.156.162.116 (SSH working, Central Command)
+- ✅ iMac Gateway: 192.168.88.50 (Lab network access)
+- ✅ Physical Appliance: 192.168.88.246 (HP T640, production pilot)
+- ✅ Central Command API: https://api.osiriscare.net
+- ✅ Dashboard: https://dashboard.osiriscare.net
 - ✅ Cachix: Configured locally and in CI
-- 🟡 2 Runbooks: YAML parse errors need fixing
+- ⬜ Legacy VirtualBox VMs: 174.178.63.139 (DEPRECATED)
 
 ---
 

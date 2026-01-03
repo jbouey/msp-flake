@@ -73,7 +73,7 @@ ssh root@178.156.162.116 "docker logs caddy"
 
 ---
 
-## Development/Test Lab (Local iMac)
+## NEPA Clinic Lab (Physical Pilot)
 
 ```
                          ┌─────────────────┐
@@ -81,9 +81,8 @@ ssh root@178.156.162.116 "docker logs caddy"
                          └────────┬────────┘
                                   │
                          ┌────────▼────────┐
-                         │  Router/Gateway │
-                         │ 174.178.63.139  │
-                         │ (External IP)   │
+                         │  MikroTik WiFi  │
+                         │ (Clinic Router) │
                          └────────┬────────┘
                                   │
                          ┌────────▼────────┐
@@ -93,11 +92,11 @@ ssh root@178.156.162.116 "docker logs caddy"
                                   │
             ┌─────────────────────┼─────────────────────┐
             │                     │                     │
-   ┌────────▼────────┐   ┌───────▼────────┐            │
-   │  MacBook Pro    │   │  iMac (Lab)    │            │
-   │  (Dev Machine)  │   │  192.168.88.50 │            │
-   │                 │   │  VirtualBox    │            │
-   └─────────────────┘   └───────┬────────┘            │
+   ┌────────▼────────┐   ┌───────▼────────┐   ┌───────▼────────┐
+   │  MacBook Pro    │   │  iMac Gateway  │   │ HP T640 Appliance│
+   │  (Dev Machine)  │   │  192.168.88.50 │   │  192.168.88.246  │
+   │                 │   │  (jrelly@)     │   │  (root@)         │
+   └─────────────────┘   └────────────────┘   └──────────────────┘
                                  │                     │
                          ┌───────▼────────┐            │
                          │  NVDC01        │            │
@@ -254,8 +253,8 @@ cat /var/lib/msp/config.yaml               # View config
 - **Lab Appliance (VM):** 192.168.88.247
 - **NVDC01 (Windows DC):** 192.168.88.250
 - **NVWS01 (Windows 10):** 192.168.88.251
-- **Purpose:** Development/test environment
-- **External Access:** Via 174.178.63.139
+- **Purpose:** Production pilot + development/test environment
+- **External Access:** Not exposed (local network only)
 
 ---
 

@@ -1,11 +1,24 @@
 # MSP Compliance Agent - Credentials & Access Reference
 
-**Last Updated:** 2025-11-23
-**Status:** Development/Testing Environment
+**Last Updated:** 2026-01-03
+**Status:** Production Pilot
 
 ---
 
-## Quick Reference
+> **NOTE:** The VirtualBox VM setup (174.178.63.139) is DEPRECATED.
+> Production uses physical appliances on the NEPA clinic network.
+
+## Quick Reference - Production (Current)
+
+| System | Host | Port | Username | Auth |
+|--------|------|------|----------|------|
+| Physical Appliance | 192.168.88.246 | 22 (SSH) | root | SSH key |
+| iMac Gateway | 192.168.88.50 | 22 (SSH) | jrelly | SSH key |
+| Hetzner VPS | 178.156.162.116 | 22 (SSH) | root | SSH key |
+| Central Command API | api.osiriscare.net | 443 | - | API key |
+| Dashboard | dashboard.osiriscare.net | 443 | - | - |
+
+## Quick Reference - Legacy (Deprecated)
 
 | System | Host | Port | Username | Password |
 |--------|------|------|----------|----------|
