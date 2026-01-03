@@ -272,7 +272,7 @@ in
 
       if [ "$USB_CONFIG_FOUND" = true ]; then
         log "Provisioning complete via USB"
-        systemctl restart compliance-agent || true
+        # Note: compliance-agent starts after this service via systemd ordering
         exit 0
       fi
 
@@ -334,7 +334,7 @@ in
               chmod 600 "$CONFIG_PATH"
               log "SUCCESS: Provisioning complete via MAC lookup"
               rm -f /tmp/provision-response.json
-              systemctl restart compliance-agent || true
+              # Note: compliance-agent starts after this service via systemd ordering
               PROVISIONED=true
               exit 0
             else
