@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-02 (Session 2)
+**Last Updated:** 2026-01-03 (Session 3)
 **Phase:** Phase 10 - Production Deployment + First Physical Appliance
-**Test Status:** 169 passed (compliance-agent tests)
+**Test Status:** 431 passed (compliance-agent tests)
 
 ---
 
@@ -97,8 +97,24 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **Operations SOPs** - 7 SOPs in Documentation page
 
 ### What's Pending
-- 🟡 Build ISO v9 with full agent (code complete, awaiting build on Hetzner)
-- 🟡 Deploy full compliance-agent to physical appliance
+- ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
+- ✅ **Admin Action Buttons Backend** - deployed to VPS (2026-01-03)
+  - POST `/api/sites/{site}/appliances/{app}/orders` - create order
+  - POST `/api/sites/{site}/orders/broadcast` - broadcast to all appliances
+  - POST `/api/sites/{site}/appliances/clear-stale` - clear stale appliances
+  - DELETE `/api/sites/{site}/appliances/{app}` - delete appliance
+  - Orders table: `admin_orders` with status tracking
+- ✅ **Remote Agent Update Mechanism** - deployed (2026-01-03)
+  - Agent order polling: `fetch_pending_orders`, `acknowledge_order`, `complete_order`
+  - VPS endpoints: `/api/sites/{site}/appliances/{app}/orders/pending`, `/api/orders/{id}/acknowledge|complete`
+  - Agent package hosting: `/agent-packages/` static files
+  - Packaging script: `scripts/package-agent.sh`
+  - Frontend: "Update Agent" button in SiteDetail
+- ✅ **L1 Rules Sync Endpoint** - `/agent/sync` returns 5 built-in NixOS rules (2026-01-03)
+- ✅ **Evidence Schema Fix** - client now matches server's EvidenceBundleCreate model (2026-01-03)
+- ✅ **HIPAA Control Mappings** - added to appliance drift checks (2026-01-03)
+- ✅ **SSH Hotfix Applied** - physical appliance now using ethernet MAC (2026-01-03)
+- 🟡 Deploy ISO v10 to physical appliance ← **NEXT (scheduled for tomorrow)**
 - ⚠️ Evidence bundles uploading to MinIO
 - ⚠️ OpenTimestamps blockchain anchoring
 - ⚠️ Multi-NTP time verification
@@ -118,8 +134,29 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **IP:** 192.168.88.246
 - **Site:** `physical-appliance-pilot-1aea78`
 - **Status:** online (checking in every 60s)
-- **Agent:** phone-home v0.1.1-quickfix
+- **Agent:** phone-home v0.1.1-quickfix (upgrading to full agent v1.0.0)
 - **Config:** `/var/lib/msp/config.yaml`
+
+### ISO v9 Built (2026-01-02)
+- **Location:** `root@178.156.162.116:/root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso`
+- **Size:** 1.1GB
+- **SHA256:** `726f0be6d5aef9d23c701be5cf474a91630ce6acec41015e8d800f1bbe5e6396`
+- **Agent:** Full compliance-agent v1.0.0 with appliance mode
+- **Entry point:** `compliance-agent-appliance`
+
+### ISO v10 Built (2026-01-03)
+- **Location:** `root@178.156.162.116:/root/msp-iso-build/result-iso-v10/iso/osiriscare-appliance.iso`
+- **Size:** 1.1GB
+- **SHA256:** `01fd11cb85109ea5c9969b7cfeaf20b92c401d079eca2613a17813989c55dac4`
+- **Fix:** MAC detection now prefers active ethernet interfaces over wireless
+- **Entry point:** `compliance-agent-appliance`
+
+### Agent Packages (Remote Updates)
+- **v1.0.1:** Initial remote update package (failed on NixOS read-only fs - expected)
+- **v1.0.2:** Evidence schema fix
+- **v1.0.3:** HIPAA control mappings + all fixes
+- **Package URL:** `https://api.osiriscare.net/agent-packages/compliance_agent-{version}.tar.gz`
+- **Packaging:** `./scripts/package-agent.sh {version}`
 
 ### Hash-Chain Evidence System (2026-01-02)
 - ✅ `compliance_bundles` table with SHA256 chain linking
@@ -237,12 +274,12 @@ source venv/bin/activate
 # Run tests (161 passing)
 python -m pytest tests/ -v --tb=short
 
-# SSH to compliance appliance
-ssh -p 4444 root@174.178.63.139
+# SSH to physical appliance (via iMac gateway)
+ssh root@192.168.88.246                                # Direct if on clinic network
+ssh jrelly@192.168.88.50 "ssh root@192.168.88.246"    # Via iMac gateway
 
-# Create tunnel for web UI
-ssh -f -N -L 9080:192.168.56.103:8080 jrelly@174.178.63.139
-# Then: open http://localhost:9080
+# iMac gateway (NEPA clinic network)
+ssh jrelly@192.168.88.50
 
 # Windows DC connection test
 python3 -c "

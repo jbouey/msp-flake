@@ -1,5 +1,28 @@
 # MSP Compliance Platform - VM Inventory
 
+> **⚠️ DEPRECATED:** This document describes the old VirtualBox development setup.
+> Production now uses physical appliances. See below for current access.
+
+## Production Environment (Current)
+
+### Physical Appliance (HP T640)
+```bash
+# Direct access (if on clinic network)
+ssh root@192.168.88.246
+
+# Via iMac gateway
+ssh jrelly@192.168.88.50 "ssh root@192.168.88.246"
+```
+
+### Central Command
+- **API:** https://api.osiriscare.net
+- **Dashboard:** https://dashboard.osiriscare.net
+- **VPS SSH:** `ssh root@178.156.162.116`
+
+---
+
+## Legacy Development Environment (Deprecated)
+
 ## Quick Access (from your Mac desktop)
 
 ### Compliance Dashboard
