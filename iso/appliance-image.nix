@@ -316,7 +316,7 @@ in
 
           # Test DNS resolution first
           if ! ${pkgs.coreutils}/bin/timeout 5 ${pkgs.bash}/bin/bash -c "echo >/dev/tcp/1.1.1.1/53" 2>/dev/null; then
-            log "Network not ready (no DNS), waiting ${RETRY_DELAY}s..."
+            log "Network not ready (no DNS), waiting ''${RETRY_DELAY}s..."
             sleep $RETRY_DELAY
             continue
           fi
@@ -345,9 +345,9 @@ in
             log "Register this MAC in the dashboard: $MAC_ADDR"
             break
           elif [ "$HTTP_CODE" = "000" ]; then
-            log "Connection failed (HTTP 000), retrying in ${RETRY_DELAY}s..."
+            log "Connection failed (HTTP 000), retrying in ''${RETRY_DELAY}s..."
           else
-            log "Unexpected HTTP $HTTP_CODE, retrying in ${RETRY_DELAY}s..."
+            log "Unexpected HTTP $HTTP_CODE, retrying in ''${RETRY_DELAY}s..."
           fi
 
           rm -f /tmp/provision-response.json
