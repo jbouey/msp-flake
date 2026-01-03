@@ -37,6 +37,7 @@ from .appliance_client import (
     get_uptime_seconds,
     get_nixos_version,
 )
+from .runbooks.windows.executor import WindowsTarget
 
 logger = logging.getLogger(__name__)
 
@@ -203,9 +204,28 @@ class ApplianceAgent:
         self.config = config
         self.client = CentralCommandClient(config)
         self.drift_checker: Optional[SimpleDriftChecker] = None
+        self.windows_targets: List[WindowsTarget] = []
         self.running = False
         self._last_rules_sync = datetime.min.replace(tzinfo=timezone.utc)
+        self._last_windows_scan = datetime.min.replace(tzinfo=timezone.utc)
         self._rules_sync_interval = 3600  # Sync rules every hour
+        self._windows_scan_interval = 300  # Scan Windows every 5 minutes
+
+        # Initialize Windows targets from config
+        for target_cfg in config.windows_targets:
+            try:
+                target = WindowsTarget(
+                    hostname=target_cfg.get('hostname', target_cfg.get('ip', '')),
+                    port=target_cfg.get('port', 5985),
+                    username=target_cfg.get('username', ''),
+                    password=target_cfg.get('password', ''),
+                    use_ssl=target_cfg.get('use_ssl', False),
+                    transport=target_cfg.get('transport', 'ntlm'),
+                )
+                self.windows_targets.append(target)
+                logger.info(f"Added Windows target: {target.hostname}")
+            except Exception as e:
+                logger.warning(f"Invalid Windows target config: {e}")
 
         # Setup logging
         logging.basicConfig(
@@ -291,6 +311,13 @@ class ApplianceAgent:
         if self.config.enable_l1_sync:
             await self._maybe_sync_rules()
 
+        # 4. Run Windows device scans (periodically)
+        if self.windows_targets:
+            await self._maybe_scan_windows()
+
+        # 5. Process pending orders (remote commands/updates)
+        await self._process_pending_orders()
+
     async def _get_compliance_summary(self) -> dict:
         """Get summary of compliance status for checkin."""
         if not self.drift_checker:
@@ -316,6 +343,15 @@ class ApplianceAgent:
             # Run all drift checks
             results = await self.drift_checker.run_all_checks()
 
+            # HIPAA control mappings for NixOS drift checks
+            hipaa_controls = {
+                "nixos_generation": "164.312(c)(1)",  # Integrity
+                "ntp_sync": "164.312(b)",             # Audit controls
+                "services_running": "164.312(a)(1)",  # Access controls
+                "disk_usage": "164.308(a)(7)",        # Contingency plan
+                "firewall_enabled": "164.312(e)(1)", # Transmission security
+            }
+
             for check_name, check_result in results.items():
                 if not self.config.enable_evidence_upload:
                     continue
@@ -339,7 +375,8 @@ class ApplianceAgent:
                     bundle_hash=bundle_hash,
                     check_type=check_name,
                     check_result=check_result.get("status", "unknown"),
-                    evidence_data=evidence_data
+                    evidence_data=evidence_data,
+                    hipaa_control=hipaa_controls.get(check_name)
                 )
 
                 if bundle_id:
@@ -394,6 +431,281 @@ class ApplianceAgent:
 
         except Exception as e:
             logger.warning(f"Rules sync failed: {e}")
+
+    async def _maybe_scan_windows(self):
+        """Scan Windows targets if enough time has passed."""
+        now = datetime.now(timezone.utc)
+        elapsed = (now - self._last_windows_scan).total_seconds()
+
+        if elapsed < self._windows_scan_interval:
+            return
+
+        logger.info(f"Scanning {len(self.windows_targets)} Windows targets...")
+
+        for target in self.windows_targets:
+            await self._scan_windows_target(target)
+
+        self._last_windows_scan = now
+
+    async def _scan_windows_target(self, target: WindowsTarget):
+        """Run compliance checks on a single Windows target."""
+        try:
+            import winrm
+
+            # Build WinRM endpoint
+            protocol = "https" if target.use_ssl else "http"
+            endpoint = f"{protocol}://{target.hostname}:{target.port}/wsman"
+
+            session = winrm.Session(
+                endpoint,
+                auth=(target.username, target.password),
+                transport=target.transport,
+                server_cert_validation='ignore' if not target.use_ssl else 'validate',
+            )
+
+            # Test connectivity
+            result = session.run_ps("$env:COMPUTERNAME")
+            if result.status_code != 0:
+                raise RuntimeError(f"WinRM failed: {result.std_err.decode()}")
+
+            computer_name = result.std_out.decode().strip()
+            logger.info(f"Connected to Windows: {computer_name}")
+
+            # Run basic compliance checks
+            checks = [
+                ("windows_defender", "$status = Get-MpComputerStatus; @{Enabled=$status.AntivirusEnabled;Updated=$status.AntivirusSignatureLastUpdated} | ConvertTo-Json"),
+                ("firewall_status", "Get-NetFirewallProfile | Select-Object Name,Enabled | ConvertTo-Json"),
+                ("password_policy", "net accounts | Select-String 'password|lockout'"),
+                ("bitlocker_status", "Get-BitLockerVolume -MountPoint C: -ErrorAction SilentlyContinue | Select-Object MountPoint,ProtectionStatus | ConvertTo-Json"),
+                ("audit_policy", "auditpol /get /category:* | Select-String 'Success|Failure' | Select-Object -First 10"),
+            ]
+
+            for check_name, ps_cmd in checks:
+                try:
+                    check_result = session.run_ps(ps_cmd)
+                    status = "pass" if check_result.status_code == 0 else "fail"
+                    output = check_result.std_out.decode().strip()
+
+                    # Submit as evidence
+                    evidence_data = {
+                        "check_name": check_name,
+                        "target": target.hostname,
+                        "computer_name": computer_name,
+                        "status": status,
+                        "output": output[:1000],  # Truncate large outputs
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+
+                    bundle_hash = hashlib.sha256(
+                        json.dumps(evidence_data, sort_keys=True).encode()
+                    ).hexdigest()
+
+                    await self.client.submit_evidence(
+                        bundle_hash=bundle_hash,
+                        check_type=f"windows_{check_name}",
+                        check_result=status,
+                        evidence_data=evidence_data,
+                        host=target.hostname,
+                        hipaa_control="164.312(b)"  # Audit controls
+                    )
+
+                    logger.debug(f"Windows check {check_name} on {target.hostname}: {status}")
+
+                except Exception as e:
+                    logger.warning(f"Windows check {check_name} failed on {target.hostname}: {e}")
+
+        except ImportError:
+            logger.error("pywinrm not installed - Windows scanning disabled")
+        except Exception as e:
+            logger.error(f"Failed to scan Windows target {target.hostname}: {e}")
+
+    # =========================================================================
+    # Order Processing (remote commands and updates)
+    # =========================================================================
+
+    async def _process_pending_orders(self):
+        """Fetch and process pending orders from Central Command."""
+        try:
+            # Build appliance ID (site_id-MAC)
+            mac = get_mac_address()
+            appliance_id = f"{self.config.site_id}-{mac}"
+
+            orders = await self.client.fetch_pending_orders(appliance_id)
+
+            for order in orders:
+                order_id = order.get('order_id')
+                order_type = order.get('order_type')
+
+                if not order_id or not order_type:
+                    continue
+
+                logger.info(f"Processing order {order_id}: {order_type}")
+
+                # Acknowledge order
+                await self.client.acknowledge_order(order_id)
+
+                # Execute order
+                try:
+                    result = await self._execute_order(order)
+                    await self.client.complete_order(
+                        order_id=order_id,
+                        success=True,
+                        result=result
+                    )
+                    logger.info(f"Order {order_id} completed successfully")
+                except Exception as e:
+                    logger.error(f"Order {order_id} failed: {e}")
+                    await self.client.complete_order(
+                        order_id=order_id,
+                        success=False,
+                        error_message=str(e)
+                    )
+
+        except Exception as e:
+            logger.debug(f"Order processing skipped: {e}")
+
+    async def _execute_order(self, order: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute an order based on its type."""
+        order_type = order.get('order_type')
+        parameters = order.get('parameters', {})
+
+        handlers = {
+            'force_checkin': self._handle_force_checkin,
+            'run_drift': self._handle_run_drift,
+            'sync_rules': self._handle_sync_rules,
+            'restart_agent': self._handle_restart_agent,
+            'update_agent': self._handle_update_agent,
+            'view_logs': self._handle_view_logs,
+        }
+
+        handler = handlers.get(order_type)
+        if handler:
+            return await handler(parameters)
+        else:
+            raise ValueError(f"Unknown order type: {order_type}")
+
+    async def _handle_force_checkin(self, params: Dict) -> Dict:
+        """Force an immediate checkin."""
+        await self.client.checkin(
+            hostname=get_hostname(),
+            mac_address=get_mac_address(),
+            ip_addresses=get_ip_addresses(),
+            uptime_seconds=get_uptime_seconds(),
+            agent_version=VERSION,
+            nixos_version=get_nixos_version(),
+        )
+        return {"status": "checkin_complete"}
+
+    async def _handle_run_drift(self, params: Dict) -> Dict:
+        """Run drift detection immediately."""
+        if self.drift_checker:
+            results = await self.drift_checker.run_all_checks()
+            return {"drift_results": results}
+        return {"error": "drift_checker not initialized"}
+
+    async def _handle_sync_rules(self, params: Dict) -> Dict:
+        """Force L1 rules sync."""
+        rules = await self.client.sync_rules()
+        if rules is not None:
+            rules_file = self.config.rules_dir / "l1_rules.json"
+            with open(rules_file, 'w') as f:
+                json.dump(rules, f, indent=2)
+            return {"rules_synced": len(rules)}
+        return {"error": "rules_sync_failed"}
+
+    async def _handle_restart_agent(self, params: Dict) -> Dict:
+        """Schedule agent restart."""
+        # Return success, then restart after a delay
+        logger.info("Agent restart requested, restarting in 5 seconds...")
+        asyncio.get_event_loop().call_later(5, self._do_restart)
+        return {"status": "restart_scheduled"}
+
+    def _do_restart(self):
+        """Execute agent restart via systemctl."""
+        import os
+        os.system("systemctl restart compliance-agent")
+
+    async def _handle_update_agent(self, params: Dict) -> Dict:
+        """
+        Download and apply agent update.
+
+        Parameters:
+            package_url: URL to download agent package tarball
+            version: Expected version string
+        """
+        package_url = params.get('package_url')
+        version = params.get('version', 'unknown')
+
+        if not package_url:
+            raise ValueError("package_url is required for update_agent")
+
+        logger.info(f"Updating agent to version {version} from {package_url}")
+
+        # Download package
+        update_dir = Path("/var/lib/msp/agent-updates")
+        update_dir.mkdir(parents=True, exist_ok=True)
+
+        tarball_path = update_dir / f"agent-{version}.tar.gz"
+        if not await self.client.download_file(package_url, str(tarball_path)):
+            raise RuntimeError("Failed to download update package")
+
+        # Extract to overlay directory
+        overlay_dir = Path("/var/lib/msp/agent-overlay")
+        overlay_dir.mkdir(parents=True, exist_ok=True)
+
+        # Clear old overlay
+        import shutil
+        if overlay_dir.exists():
+            shutil.rmtree(overlay_dir)
+        overlay_dir.mkdir(parents=True, exist_ok=True)
+
+        # Extract tarball
+        import tarfile
+        with tarfile.open(tarball_path, 'r:gz') as tar:
+            tar.extractall(overlay_dir)
+
+        logger.info(f"Agent update extracted to {overlay_dir}")
+
+        # Create/update systemd drop-in to set PYTHONPATH
+        dropin_dir = Path("/etc/systemd/system/compliance-agent.service.d")
+        try:
+            dropin_dir.mkdir(parents=True, exist_ok=True)
+            dropin_file = dropin_dir / "overlay.conf"
+            dropin_file.write_text(f'''[Service]
+Environment="PYTHONPATH={overlay_dir}"
+''')
+            logger.info("Created systemd PYTHONPATH override")
+        except PermissionError:
+            # NixOS read-only filesystem - use alternative approach
+            logger.warning("Cannot write systemd drop-in (read-only fs), update will apply on next ISO deploy")
+            return {
+                "status": "update_downloaded",
+                "version": version,
+                "note": "Filesystem read-only, manual restart with PYTHONPATH required"
+            }
+
+        # Reload systemd and schedule restart
+        import os
+        os.system("systemctl daemon-reload")
+        asyncio.get_event_loop().call_later(3, self._do_restart)
+
+        return {
+            "status": "update_applied",
+            "version": version,
+            "restart_scheduled": True
+        }
+
+    async def _handle_view_logs(self, params: Dict) -> Dict:
+        """Return recent agent logs."""
+        lines = params.get('lines', 50)
+        code, stdout, stderr = await run_command(
+            f"journalctl -u compliance-agent --no-pager -n {lines}",
+            timeout=10
+        )
+        return {
+            "logs": stdout if code == 0 else stderr,
+            "lines": lines
+        }
 
 
 def main():
