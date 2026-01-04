@@ -109,7 +109,7 @@ class HealthMetrics(BaseModel):
 
 class Appliance(BaseModel):
     """Individual appliance in the fleet."""
-    id: int
+    id: str
     site_id: str
     hostname: str
     ip_address: Optional[str] = None
@@ -149,7 +149,7 @@ class ClientDetail(BaseModel):
 
 class Incident(BaseModel):
     """Incident summary for lists."""
-    id: int
+    id: str
     site_id: str
     hostname: str
     check_type: CheckType
@@ -163,9 +163,9 @@ class Incident(BaseModel):
 
 class IncidentDetail(BaseModel):
     """Full incident detail including evidence."""
-    id: int
+    id: str
     site_id: str
-    appliance_id: int
+    appliance_id: str
     hostname: str
     check_type: CheckType
     severity: Severity
@@ -217,7 +217,7 @@ class RunbookDetail(BaseModel):
 
 class RunbookExecution(BaseModel):
     """Single runbook execution record."""
-    id: int
+    id: str
     runbook_id: str
     site_id: str
     hostname: str
@@ -259,7 +259,7 @@ class PromotionCandidate(BaseModel):
 
 class PromotionHistory(BaseModel):
     """Recently promoted L2→L1 rule."""
-    id: int
+    id: str
     pattern_signature: str
     rule_id: str
     promoted_at: datetime
@@ -283,7 +283,7 @@ class ComplianceChecks(BaseModel):
 
 class OnboardingClient(BaseModel):
     """Client in the onboarding pipeline."""
-    id: int
+    id: str
     name: str
     contact_name: Optional[str] = None
     contact_email: Optional[str] = None

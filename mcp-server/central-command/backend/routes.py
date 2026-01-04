@@ -9,9 +9,14 @@ to mock data for demo/development purposes.
 
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, Query, HTTPException, Request
+from fastapi import APIRouter, Query, HTTPException, Request, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
 from .models import (
+    HealthMetrics,
+    ConnectivityMetrics,
+    ComplianceMetrics,
     ClientOverview,
     ClientDetail,
     Appliance,
@@ -46,162 +51,344 @@ from .models import (
 )
 from .fleet import get_mock_fleet_overview, get_mock_client_detail
 from .metrics import calculate_health_from_raw
-
-# Try to import the database store
-try:
-    import sys
-    import os
-    # Add parent directory to path for database import
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    from database import get_store
-    HAS_DATABASE = True
-except ImportError:
-    HAS_DATABASE = False
-    get_store = None
-
-
-def _get_db():
-    """Get database store if available."""
-    if HAS_DATABASE and get_store:
-        try:
-            return get_store()
-        except Exception:
-            return None
-    return None
+from .db_queries import (
+    get_incidents_from_db,
+    get_learning_status_from_db,
+    get_promotion_candidates_from_db,
+    get_global_stats_from_db,
+    get_compliance_scores_for_site,
+    get_all_compliance_scores,
+)
 
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+# Database session dependency
+async def get_db():
+    from main import async_session
+    async with async_session() as session:
+        yield session
+
 
 
 # =============================================================================
 # FLEET ENDPOINTS
 # =============================================================================
 
-@router.get("/fleet", response_model=List[ClientOverview])
-async def get_fleet_overview():
-    """Get all clients with aggregated health scores.
+@router.get("/fleet")
+async def get_fleet_overview(db: AsyncSession = Depends(get_db)):
+    """Get all clients with aggregated health scores."""
+    # Get site data
+    query = text("""
+        SELECT
+            s.site_id,
+            s.clinic_name as name,
+            s.status,
+            COUNT(sa.id) as appliance_count,
+            COUNT(sa.id) FILTER (WHERE sa.status = 'online') as online_count,
+            MAX(sa.last_checkin) as last_checkin
+        FROM sites s
+        LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+        GROUP BY s.site_id, s.clinic_name, s.status
+        ORDER BY MAX(sa.last_checkin) DESC NULLS LAST
+    """)
 
-    Returns:
-        List of clients with health metrics.
-    """
-    store = _get_db()
-    if store:
-        clients = store.get_all_clients()
-        if clients:
-            return [
-                ClientOverview(
-                    site_id=c.site_id,
-                    name=c.name,
-                    appliance_count=len(store.get_client_appliances(c.site_id)),
-                    overall_health=c.overall_health,
-                    connectivity=c.connectivity_score,
-                    compliance=c.compliance_score,
-                    status=HealthStatus(c.health_status) if c.health_status else HealthStatus.HEALTHY,
-                    last_seen=c.last_seen,
-                )
-                for c in clients
-            ]
+    result = await db.execute(query)
+    rows = result.fetchall()
 
-    # No clients in database - return empty list (production mode)
-    return []
+    # Get compliance scores for all sites
+    all_compliance = await get_all_compliance_scores(db)
+
+    clients = []
+    for row in rows:
+        # Calculate connectivity score based on last checkin
+        checkin_freshness = 0
+        if row.last_checkin:
+            time_since = datetime.now(timezone.utc) - row.last_checkin
+            if time_since < timedelta(minutes=5):
+                checkin_freshness = 100
+            elif time_since < timedelta(minutes=15):
+                checkin_freshness = 80
+            elif time_since < timedelta(hours=1):
+                checkin_freshness = 50
+            else:
+                checkin_freshness = 20
+
+        connectivity_score = float(checkin_freshness)
+
+        # Get real compliance scores for this site
+        site_compliance = all_compliance.get(row.site_id, {})
+        if site_compliance.get("has_data"):
+            patching = site_compliance.get("patching") or 0
+            antivirus = site_compliance.get("antivirus") or 0
+            backup = site_compliance.get("backup") or 0
+            logging = site_compliance.get("logging") or 0
+            firewall = site_compliance.get("firewall") or 0
+            encryption = site_compliance.get("encryption") or 0
+            compliance_score = site_compliance.get("score") or 0.0
+        else:
+            # No compliance data yet - show as unknown/pending
+            patching = 0
+            antivirus = 0
+            backup = 0
+            logging = 0
+            firewall = 0
+            encryption = 0
+            compliance_score = 0.0
+
+        overall = connectivity_score * 0.4 + compliance_score * 0.6
+
+        # Determine status based on connectivity and compliance
+        if checkin_freshness >= 80 and compliance_score >= 70:
+            status = "healthy"
+        elif checkin_freshness >= 50 or compliance_score >= 50:
+            status = "warning"
+        else:
+            status = "critical"
+
+        clients.append(ClientOverview(
+            site_id=row.site_id,
+            name=row.name or row.site_id,
+            appliance_count=row.appliance_count or 0,
+            online_count=row.online_count or 0,
+            health=HealthMetrics(
+                connectivity=ConnectivityMetrics(
+                    checkin_freshness=checkin_freshness,
+                    healing_success_rate=95.0,
+                    order_execution_rate=98.0,
+                    score=connectivity_score
+                ),
+                compliance=ComplianceMetrics(
+                    patching=patching,
+                    antivirus=antivirus,
+                    backup=backup,
+                    logging=logging,
+                    firewall=firewall,
+                    encryption=encryption,
+                    score=compliance_score
+                ),
+                overall=overall,
+                status=HealthStatus(status)
+            ),
+            last_incident=None,
+            incidents_24h=0
+        ))
+
+    return clients
 
 
 @router.get("/fleet/{site_id}", response_model=ClientDetail)
-async def get_client_detail(site_id: str):
-    """Get detailed view of a single client.
+async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
+    """Get detailed view of a single client."""
+    # Get site info
+    site_result = await db.execute(
+        text("SELECT site_id, clinic_name, tier FROM sites WHERE site_id = :site_id"),
+        {"site_id": site_id}
+    )
+    site = site_result.fetchone()
 
-    Returns:
-        Client info, appliances, recent incidents, compliance breakdown.
-    """
-    store = _get_db()
-    if store:
-        client = store.get_client(site_id)
-        if client:
-            appliances = store.get_client_appliances(site_id)
-            incidents = store.get_incidents(site_id=site_id, limit=10)
+    if not site:
+        raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
 
-            return ClientDetail(
-                site_id=client.site_id,
-                name=client.name,
-                appliance_count=len(appliances),
-                overall_health=client.overall_health,
-                connectivity=client.connectivity_score,
-                compliance=client.compliance_score,
-                status=HealthStatus(client.health_status) if client.health_status else HealthStatus.HEALTHY,
-                last_seen=client.last_seen,
-                appliances=[
-                    Appliance(
-                        id=a.id,
-                        hostname=a.hostname,
-                        ip_address=a.ip_address or "",
-                        is_online=a.is_online,
-                        overall_health=a.overall_health,
-                        checkin_rate=a.checkin_rate,
-                        healing_rate=a.healing_rate,
-                        order_execution_rate=a.order_execution_rate,
-                        last_checkin=a.last_checkin,
-                        version=a.version or "1.0.0",
-                    )
-                    for a in appliances
-                ],
-                compliance_checks=ComplianceChecks(
-                    backup=True,
-                    patching=True,
-                    antivirus=True,
-                    firewall=True,
-                    encryption=True,
-                    logging=True,
+    # Get real compliance scores for this site
+    site_compliance = await get_compliance_scores_for_site(db, site_id)
+    if site_compliance.get("has_data"):
+        patching = site_compliance.get("patching") or 0
+        antivirus = site_compliance.get("antivirus") or 0
+        backup = site_compliance.get("backup") or 0
+        logging_score = site_compliance.get("logging") or 0
+        firewall = site_compliance.get("firewall") or 0
+        encryption = site_compliance.get("encryption") or 0
+        compliance_score = site_compliance.get("score") or 0.0
+    else:
+        patching = 0
+        antivirus = 0
+        backup = 0
+        logging_score = 0
+        firewall = 0
+        encryption = 0
+        compliance_score = 0.0
+
+    # Get appliances
+    appliances_result = await db.execute(
+        text("""
+            SELECT id, appliance_id, hostname, ip_addresses, agent_version,
+                   status, last_checkin, first_checkin
+            FROM site_appliances
+            WHERE site_id = :site_id
+        """),
+        {"site_id": site_id}
+    )
+    appliance_rows = appliances_result.fetchall()
+
+    appliances = []
+    for i, a in enumerate(appliance_rows):
+        is_online = a.status == 'online'
+        checkin_freshness = 0
+        if a.last_checkin:
+            time_since = datetime.now(timezone.utc) - a.last_checkin
+            if time_since < timedelta(minutes=5):
+                checkin_freshness = 100
+            elif time_since < timedelta(minutes=15):
+                checkin_freshness = 80
+            elif time_since < timedelta(hours=1):
+                checkin_freshness = 50
+
+        ip_addr = None
+        if a.ip_addresses:
+            try:
+                import json
+                ips = json.loads(a.ip_addresses) if isinstance(a.ip_addresses, str) else a.ip_addresses
+                ip_addr = ips[0] if ips else None
+            except:
+                pass
+
+        appliance_overall = float(checkin_freshness) * 0.4 + compliance_score * 0.6
+
+        appliances.append(Appliance(
+            id=str(a.appliance_id or i + 1),
+            site_id=site_id,
+            hostname=a.hostname or "unknown",
+            ip_address=ip_addr,
+            agent_version=a.agent_version,
+            tier=site.tier or "mid",
+            is_online=is_online,
+            last_checkin=a.last_checkin,
+            health=HealthMetrics(
+                connectivity=ConnectivityMetrics(
+                    checkin_freshness=checkin_freshness,
+                    healing_success_rate=95.0,
+                    order_execution_rate=98.0,
+                    score=float(checkin_freshness)
                 ),
-                incidents=[
-                    Incident(
-                        id=i.id,
-                        site_id=i.site_id,
-                        hostname=i.hostname,
-                        check_type=CheckType(i.check_type) if i.check_type else CheckType.BACKUP,
-                        severity=Severity(i.severity),
-                        resolution_level=ResolutionLevel(i.resolution_level) if i.resolution_level else None,
-                        resolved=i.resolved,
-                        resolved_at=i.resolved_at,
-                        hipaa_controls=i.hipaa_controls or [],
-                        created_at=i.created_at,
-                    )
-                    for i in incidents
-                ],
-            )
+                compliance=ComplianceMetrics(
+                    patching=patching, antivirus=antivirus, backup=backup,
+                    logging=logging_score, firewall=firewall, encryption=encryption,
+                    score=compliance_score
+                ),
+                overall=appliance_overall,
+                status=HealthStatus.HEALTHY if is_online and compliance_score >= 70 else HealthStatus.WARNING
+            ),
+            created_at=a.first_checkin or datetime.now(timezone.utc)
+        ))
 
-    # Client not found (production mode)
-    raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
+    # Calculate overall health
+    online_count = sum(1 for a in appliances if a.is_online)
+    connectivity_score = 100.0 if online_count else 0.0
+    overall = connectivity_score * 0.4 + compliance_score * 0.6
+
+    # Determine status
+    if online_count and compliance_score >= 70:
+        health_status = HealthStatus.HEALTHY
+    elif online_count or compliance_score >= 50:
+        health_status = HealthStatus.WARNING
+    else:
+        health_status = HealthStatus.CRITICAL
+
+    return ClientDetail(
+        site_id=site.site_id,
+        name=site.clinic_name or site_id,
+        tier=site.tier or "mid",
+        appliances=appliances,
+        health=HealthMetrics(
+            connectivity=ConnectivityMetrics(
+                checkin_freshness=100 if online_count else 0,
+                healing_success_rate=95.0,
+                order_execution_rate=98.0,
+                score=connectivity_score
+            ),
+            compliance=ComplianceMetrics(
+                patching=patching, antivirus=antivirus, backup=backup,
+                logging=logging_score, firewall=firewall, encryption=encryption,
+                score=compliance_score
+            ),
+            overall=overall,
+            status=health_status
+        ),
+        recent_incidents=[],
+        compliance_breakdown=ComplianceMetrics(
+            patching=patching, antivirus=antivirus, backup=backup,
+            logging=logging_score, firewall=firewall, encryption=encryption,
+            score=compliance_score
+        )
+    )
 
 
 @router.get("/fleet/{site_id}/appliances", response_model=List[Appliance])
-async def get_client_appliances(site_id: str):
-    """Get all appliances for a client.
+async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)):
+    """Get all appliances for a client."""
+    # Get real compliance scores for this site
+    site_compliance = await get_compliance_scores_for_site(db, site_id)
+    if site_compliance.get("has_data"):
+        patching = site_compliance.get("patching") or 0
+        antivirus = site_compliance.get("antivirus") or 0
+        backup = site_compliance.get("backup") or 0
+        logging_score = site_compliance.get("logging") or 0
+        firewall = site_compliance.get("firewall") or 0
+        encryption = site_compliance.get("encryption") or 0
+        compliance_score = site_compliance.get("score") or 0.0
+    else:
+        patching = 0
+        antivirus = 0
+        backup = 0
+        logging_score = 0
+        firewall = 0
+        encryption = 0
+        compliance_score = 0.0
 
-    Returns:
-        List of appliances with individual health scores.
-    """
-    store = _get_db()
-    if store:
-        appliances = store.get_client_appliances(site_id)
-        if appliances:
-            return [
-                Appliance(
-                    id=a.id,
-                    hostname=a.hostname,
-                    ip_address=a.ip_address or "",
-                    is_online=a.is_online,
-                    overall_health=a.overall_health,
-                    checkin_rate=a.checkin_rate,
-                    healing_rate=a.healing_rate,
-                    order_execution_rate=a.order_execution_rate,
-                    last_checkin=a.last_checkin,
-                    version=a.version or "1.0.0",
-                )
-                for a in appliances
-            ]
+    result = await db.execute(
+        text("""
+            SELECT id, appliance_id, hostname, ip_addresses, agent_version,
+                   status, last_checkin, first_checkin
+            FROM site_appliances WHERE site_id = :site_id
+        """),
+        {"site_id": site_id}
+    )
+    rows = result.fetchall()
 
-    # No appliances found (production mode)
-    return []
+    appliances = []
+    for i, a in enumerate(rows):
+        is_online = a.status == 'online'
+        checkin_freshness = 100 if is_online else 0
+
+        ip_addr = None
+        if a.ip_addresses:
+            try:
+                import json
+                ips = json.loads(a.ip_addresses) if isinstance(a.ip_addresses, str) else a.ip_addresses
+                ip_addr = ips[0] if ips else None
+            except: pass
+
+        appliance_overall = float(checkin_freshness) * 0.4 + compliance_score * 0.6
+
+        appliances.append(Appliance(
+            id=str(a.appliance_id or i + 1),
+            site_id=site_id,
+            hostname=a.hostname or "unknown",
+            ip_address=ip_addr,
+            agent_version=a.agent_version,
+            tier="mid",
+            is_online=is_online,
+            last_checkin=a.last_checkin,
+            health=HealthMetrics(
+                connectivity=ConnectivityMetrics(
+                    checkin_freshness=checkin_freshness,
+                    healing_success_rate=95.0,
+                    order_execution_rate=98.0,
+                    score=float(checkin_freshness)
+                ),
+                compliance=ComplianceMetrics(
+                    patching=patching, antivirus=antivirus, backup=backup,
+                    logging=logging_score, firewall=firewall, encryption=encryption,
+                    score=compliance_score
+                ),
+                overall=appliance_overall,
+                status=HealthStatus.HEALTHY if is_online and compliance_score >= 70 else HealthStatus.WARNING
+            ),
+            created_at=a.first_checkin or datetime.now(timezone.utc)
+        ))
+
+    return appliances
 
 
 # =============================================================================
@@ -214,6 +401,7 @@ async def get_incidents(
     limit: int = Query(default=50, le=200),
     level: Optional[str] = None,
     resolved: Optional[bool] = None,
+    db: AsyncSession = Depends(get_db),
 ):
     """Get recent incidents, optionally filtered.
 
@@ -226,62 +414,59 @@ async def get_incidents(
     Returns:
         List of incidents with resolution details.
     """
-    store = _get_db()
-    if store:
-        incidents = store.get_incidents(
-            site_id=site_id,
-            limit=limit,
-            level=level,
-            resolved=resolved,
+    incidents = await get_incidents_from_db(db, site_id=site_id, limit=limit, resolved=resolved)
+    return [
+        Incident(
+            id=str(i["id"]),
+            site_id=i["site_id"],
+            hostname=i.get("hostname", ""),
+            check_type=CheckType(i["check_type"]) if i.get("check_type") else CheckType.BACKUP,
+            severity=Severity(i["severity"]),
+            resolution_level=ResolutionLevel(i["resolution_level"]) if i.get("resolution_level") else None,
+            resolved=i["resolved"],
+            resolved_at=i.get("resolved_at"),
+            hipaa_controls=i.get("hipaa_controls", []),
+            created_at=i["created_at"],
         )
-        if incidents:
-            return [
-                Incident(
-                    id=i.id,
-                    site_id=i.site_id,
-                    hostname=i.hostname,
-                    check_type=CheckType(i.check_type) if i.check_type else CheckType.BACKUP,
-                    severity=Severity(i.severity),
-                    resolution_level=ResolutionLevel(i.resolution_level) if i.resolution_level else None,
-                    resolved=i.resolved,
-                    resolved_at=i.resolved_at,
-                    hipaa_controls=i.hipaa_controls or [],
-                    created_at=i.created_at,
-                )
-                for i in incidents
-            ]
-
-    # No incidents - return empty list (production mode)
-    return []
+        for i in incidents
+    ]
 
 
 @router.get("/incidents/{incident_id}", response_model=IncidentDetail)
-async def get_incident_detail(incident_id: int):
+async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_db)):
     """Get full incident detail including evidence bundle."""
-    store = _get_db()
-    if store:
-        incident = store.get_incident(incident_id)
-        if incident:
-            return IncidentDetail(
-                id=incident.id,
-                site_id=incident.site_id,
-                appliance_id=incident.appliance_id,
-                hostname=incident.hostname,
-                check_type=CheckType(incident.check_type) if incident.check_type else CheckType.BACKUP,
-                severity=Severity(incident.severity),
-                drift_data=incident.drift_data or {},
-                resolution_level=ResolutionLevel(incident.resolution_level) if incident.resolution_level else None,
-                resolved=incident.resolved,
-                resolved_at=incident.resolved_at,
-                hipaa_controls=incident.hipaa_controls or [],
-                evidence_bundle_id=incident.evidence_bundle_id,
-                evidence_hash=incident.evidence_hash,
-                runbook_executed=incident.runbook_executed,
-                execution_log=incident.execution_log,
-                created_at=incident.created_at,
-            )
+    result = await db.execute(
+        text("""
+            SELECT i.*, a.site_id, a.host_id as hostname
+            FROM incidents i
+            JOIN appliances a ON a.id = i.appliance_id
+            WHERE i.id = :incident_id
+        """),
+        {"incident_id": incident_id}
+    )
+    row = result.fetchone()
 
-    raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    return IncidentDetail(
+        id=str(row.id),
+        site_id=row.site_id,
+        appliance_id=str(row.appliance_id),
+        hostname=row.hostname or "",
+        check_type=CheckType(row.check_type) if row.check_type else CheckType.BACKUP,
+        severity=Severity(row.severity),
+        drift_data=row.details or {},
+        resolution_level=ResolutionLevel(row.resolution_tier) if row.resolution_tier else None,
+        resolved=row.status == "resolved",
+        resolved_at=row.resolved_at,
+        hipaa_controls=row.hipaa_controls or [],
+        evidence_bundle_id=None,
+        evidence_hash=None,
+        runbook_executed=None,
+        execution_log=None,
+        created_at=row.created_at,
+    )
 
 
 # =============================================================================
@@ -452,78 +637,81 @@ async def get_runbook_executions(
 # =============================================================================
 
 @router.get("/learning/status", response_model=LearningStatus)
-async def get_learning_status():
+async def get_learning_status(db: AsyncSession = Depends(get_db)):
     """Get current state of the L2->L1 learning loop.
 
     Returns:
         Total L1 rules, L2 decisions, patterns awaiting promotion, etc.
     """
-    store = _get_db()
-    if store:
-        status = store.get_learning_status()
-        stats = store.get_global_stats()
-        return LearningStatus(
-            total_l1_rules=status.get("total_l1_rules", 0),
-            total_l2_decisions_30d=status.get("total_l2_decisions_30d", 0),
-            patterns_awaiting_promotion=status.get("patterns_awaiting_promotion", 0),
-            recently_promoted_count=status.get("recently_promoted_count", 0),
-            promotion_success_rate=status.get("promotion_success_rate", 0.0),
-            l1_resolution_rate=stats.get("l1_resolution_rate", 0.0),
-            l2_resolution_rate=stats.get("l2_resolution_rate", 0.0),
-        )
-
-    # Fallback to mock data
+    status = await get_learning_status_from_db(db)
     return LearningStatus(
-        total_l1_rules=47,
-        total_l2_decisions_30d=234,
-        patterns_awaiting_promotion=3,
-        recently_promoted_count=5,
-        promotion_success_rate=94.0,
-        l1_resolution_rate=78.0,
-        l2_resolution_rate=18.0,
+        total_l1_rules=status.get("total_l1_rules", 0),
+        total_l2_decisions_30d=status.get("total_l2_decisions_30d", 0),
+        patterns_awaiting_promotion=status.get("patterns_awaiting_promotion", 0),
+        recently_promoted_count=status.get("recently_promoted_count", 0),
+        promotion_success_rate=status.get("promotion_success_rate", 0.0),
+        l1_resolution_rate=status.get("l1_resolution_rate", 0.0),
+        l2_resolution_rate=status.get("l2_resolution_rate", 0.0),
     )
 
 
 @router.get("/learning/candidates", response_model=List[PromotionCandidate])
-async def get_promotion_candidates():
+async def get_promotion_candidates(db: AsyncSession = Depends(get_db)):
     """Get patterns that are candidates for L1 promotion.
 
     Criteria: 5+ occurrences, 90%+ success rate.
     """
-    store = _get_db()
-    if store:
-        candidates = store.get_promotion_candidates()
-        if candidates:
-            return candidates
-
-    # No candidates - return empty list (production mode)
-    return []
+    candidates = await get_promotion_candidates_from_db(db)
+    return [
+        PromotionCandidate(
+            id=c["id"],
+            pattern_signature=c["pattern_signature"],
+            description=c.get("description", ""),
+            occurrences=c["occurrences"],
+            success_rate=c["success_rate"],
+            avg_resolution_time_ms=c.get("avg_resolution_time_ms", 0),
+            proposed_rule=c.get("proposed_rule"),
+            first_seen=c.get("first_seen"),
+            last_seen=c.get("last_seen"),
+        )
+        for c in candidates
+    ]
 
 
 @router.get("/learning/history", response_model=List[PromotionHistory])
-async def get_promotion_history(limit: int = Query(default=20, le=100)):
+async def get_promotion_history(limit: int = Query(default=20, le=100), db: AsyncSession = Depends(get_db)):
     """Get recently promoted L2->L1 rules."""
-    store = _get_db()
-    if store:
-        history = store.get_promotion_history(limit=limit)
-        if history:
-            return history
+    result = await db.execute(text("""
+        SELECT pattern_id, pattern_signature, description, promoted_to_rule_id, promoted_at
+        FROM patterns
+        WHERE status = 'promoted'
+        ORDER BY promoted_at DESC
+        LIMIT :limit
+    """), {"limit": limit})
 
-    # No history - return empty list (production mode)
-    return []
+    return [
+        PromotionHistory(
+            id=row.pattern_id,
+            pattern_signature=row.pattern_signature,
+            description=row.description or "",
+            promoted_to_rule_id=row.promoted_to_rule_id,
+            promoted_at=row.promoted_at,
+        )
+        for row in result.fetchall()
+    ]
 
 
 @router.post("/learning/promote/{pattern_id}")
-async def promote_pattern(pattern_id: str):
+async def promote_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
     """Manually trigger promotion of a pattern to L1.
 
     Requires: Human review confirmation.
     """
-    store = _get_db()
-    if store:
-        result = store.promote_pattern(pattern_id)
-        if result:
-            return result
+    from .db_queries import promote_pattern_in_db
+
+    rule_id = await promote_pattern_in_db(db, pattern_id)
+    if rule_id:
+        return {"status": "promoted", "pattern_id": pattern_id, "new_rule_id": rule_id}
 
     raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
 
@@ -654,55 +842,127 @@ async def test_l2_planner(request: L2TestRequest):
 # =============================================================================
 
 @router.get("/onboarding", response_model=List[OnboardingClient])
-async def get_onboarding_pipeline():
-    """Get all prospects in the onboarding pipeline.
+async def get_onboarding_pipeline(db: AsyncSession = Depends(get_db)):
+    """Get all prospects in the onboarding pipeline."""
+    query = text("""
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY created_at) as row_id,
+            site_id, clinic_name, contact_name, contact_email, contact_phone,
+            onboarding_stage, notes, blockers,
+            lead_at, discovery_at, proposal_at, contract_at, intake_at,
+            creds_at, shipped_at, received_at, connectivity_at,
+            scanning_at, baseline_at, active_at, created_at
+        FROM sites
+        WHERE onboarding_stage NOT IN ('active', 'compliant')
+        ORDER BY created_at DESC
+    """)
 
-    Returns:
-        List of clients with stage, progress, blockers.
-    """
-    store = _get_db()
-    if store:
-        prospects = store.get_onboarding_prospects()
-        if prospects:
-            return prospects
+    result = await db.execute(query)
+    rows = result.fetchall()
 
-    # No prospects in database - return empty list (production mode)
-    return []
+    
+    stage_progress = {
+        'lead': 10, 'discovery': 20, 'proposal': 30, 'contract': 40,
+        'intake': 50, 'creds': 60, 'shipped': 70, 'received': 80,
+        'connectivity': 85, 'scanning': 90, 'baseline': 95
+    }
+
+    prospects = []
+    for row in rows:
+        stage_val = row.onboarding_stage or 'lead'
+        stage_map = {
+            'pending': 'lead', 'intake_received': 'intake', 'credentials': 'creds'
+        }
+        stage_val = stage_map.get(stage_val, stage_val)
+
+        # Determine stage_entered_at
+        ts_map = {
+            'lead': row.lead_at, 'discovery': row.discovery_at,
+            'proposal': row.proposal_at, 'contract': row.contract_at,
+            'intake': row.intake_at, 'creds': row.creds_at,
+            'shipped': row.shipped_at, 'received': row.received_at,
+            'connectivity': row.connectivity_at, 'scanning': row.scanning_at,
+            'baseline': row.baseline_at
+        }
+        stage_entered = ts_map.get(stage_val) or row.created_at
+
+        days_in_stage = (datetime.now(timezone.utc) - stage_entered).days if stage_entered else 0
+
+        blockers = []
+        if row.blockers:
+            try:
+                import json
+                blockers = json.loads(row.blockers) if isinstance(row.blockers, str) else row.blockers
+            except: pass
+
+        prospects.append(OnboardingClient(
+            id=int(row.row_id),
+            name=row.clinic_name or row.site_id,
+            contact_name=row.contact_name,
+            contact_email=row.contact_email,
+            contact_phone=row.contact_phone,
+            stage=OnboardingStage(stage_val) if stage_val in [s.value for s in OnboardingStage] else OnboardingStage.LEAD,
+            stage_entered_at=stage_entered,
+            days_in_stage=days_in_stage,
+            blockers=blockers if isinstance(blockers, list) else [],
+            notes=row.notes,
+            lead_at=row.lead_at,
+            discovery_at=row.discovery_at,
+            proposal_at=row.proposal_at,
+            contract_at=row.contract_at,
+            intake_at=row.intake_at,
+            creds_at=row.creds_at,
+            shipped_at=row.shipped_at,
+            received_at=row.received_at,
+            connectivity_at=row.connectivity_at,
+            scanning_at=row.scanning_at,
+            baseline_at=row.baseline_at,
+            active_at=row.active_at,
+            created_at=row.created_at,
+            progress_percent=stage_progress.get(stage_val, 50),
+        ))
+
+    return prospects
 
 
 @router.get("/onboarding/metrics", response_model=OnboardingMetrics)
-async def get_onboarding_metrics():
+async def get_onboarding_metrics(db: AsyncSession = Depends(get_db)):
     """Get aggregate pipeline metrics.
 
     Returns:
         Counts by stage, avg time to deploy, at-risk clients.
     """
-    store = _get_db()
-    if store:
-        metrics = store.get_onboarding_metrics()
-        if metrics:
-            return OnboardingMetrics(**metrics)
+    # Count sites by onboarding stage
+    result = await db.execute(text("""
+        SELECT onboarding_stage, COUNT(*) as count FROM sites GROUP BY onboarding_stage
+    """))
+    stage_counts = {row.onboarding_stage: row.count for row in result.fetchall()}
 
-    # No data - return empty metrics (production mode)
+    # Map stages to acquisition/activation
+    acquisition = {
+        "lead": stage_counts.get("lead", 0),
+        "discovery": stage_counts.get("discovery", 0),
+        "proposal": stage_counts.get("proposal", 0),
+        "contract": stage_counts.get("contract", 0),
+        "intake": stage_counts.get("intake", 0) + stage_counts.get("intake_received", 0),
+        "creds": stage_counts.get("creds", 0) + stage_counts.get("credentials", 0),
+        "shipped": stage_counts.get("shipped", 0),
+    }
+    activation = {
+        "received": stage_counts.get("received", 0),
+        "connectivity": stage_counts.get("connectivity", 0),
+        "scanning": stage_counts.get("scanning", 0),
+        "baseline": stage_counts.get("baseline", 0),
+        "compliant": stage_counts.get("compliant", 0),
+        "active": stage_counts.get("active", 0),
+    }
+
+    total = sum(stage_counts.values())
+
     return OnboardingMetrics(
-        total_prospects=0,
-        acquisition={
-            "lead": 0,
-            "discovery": 0,
-            "proposal": 0,
-            "contract": 0,
-            "intake": 0,
-            "creds": 0,
-            "shipped": 0,
-        },
-        activation={
-            "received": 0,
-            "connectivity": 0,
-            "scanning": 0,
-            "baseline": 0,
-            "compliant": 0,
-            "active": 0,
-        },
+        total_prospects=total,
+        acquisition=acquisition,
+        activation=activation,
         avg_days_to_ship=0.0,
         avg_days_to_active=0.0,
         stalled_count=0,
@@ -737,7 +997,7 @@ async def create_prospect(prospect: ProspectCreate):
         days_in_stage=0,
         notes=prospect.notes,
         lead_at=now,
-        progress_percent=8,
+        progress_percent=stage_progress.get(stage_val, 50),
         phase=1,
         phase_progress=14,
         created_at=now,
@@ -780,92 +1040,71 @@ async def add_note(client_id: int, request: NoteAdd):
 # =============================================================================
 
 @router.get("/stats", response_model=GlobalStats)
-async def get_global_stats():
+async def get_global_stats(db: AsyncSession = Depends(get_db)):
     """Get aggregate statistics across all clients."""
-    store = _get_db()
-    if store:
-        stats = store.get_global_stats()
-        return GlobalStats(
-            total_clients=stats.get("total_clients", 0),
-            total_appliances=stats.get("total_appliances", 0),
-            online_appliances=stats.get("online_appliances", 0),
-            avg_compliance_score=stats.get("avg_compliance_score", 0.0),
-            avg_connectivity_score=stats.get("avg_connectivity_score", 0.0),
-            incidents_24h=stats.get("incidents_24h", 0),
-            incidents_7d=stats.get("incidents_7d", 0),
-            incidents_30d=stats.get("incidents_30d", 0),
-            l1_resolution_rate=stats.get("l1_resolution_rate", 0.0),
-            l2_resolution_rate=stats.get("l2_resolution_rate", 0.0),
-            l3_escalation_rate=stats.get("l3_escalation_rate", 0.0),
-        )
-
-    # Fallback to mock data
+    stats = await get_global_stats_from_db(db)
     return GlobalStats(
-        total_clients=3,
-        total_appliances=6,
-        online_appliances=5,
-        avg_compliance_score=82.0,
-        avg_connectivity_score=95.0,
-        incidents_24h=12,
-        incidents_7d=45,
-        incidents_30d=156,
-        l1_resolution_rate=78.0,
-        l2_resolution_rate=18.0,
-        l3_escalation_rate=4.0,
+        total_clients=stats.get("total_clients", 0),
+        total_appliances=stats.get("total_appliances", 0),
+        online_appliances=stats.get("online_appliances", 0),
+        avg_compliance_score=stats.get("avg_compliance_score", 0.0),
+        avg_connectivity_score=stats.get("avg_connectivity_score", 0.0),
+        incidents_24h=stats.get("incidents_24h", 0),
+        incidents_7d=stats.get("incidents_7d", 0),
+        incidents_30d=stats.get("incidents_30d", 0),
+        l1_resolution_rate=stats.get("l1_resolution_rate", 0.0),
+        l2_resolution_rate=stats.get("l2_resolution_rate", 0.0),
+        l3_escalation_rate=stats.get("l3_escalation_rate", 0.0),
     )
 
 
 @router.get("/stats/{site_id}", response_model=ClientStats)
-async def get_client_stats(site_id: str):
+async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db)):
     """Get statistics for a specific client."""
-    store = _get_db()
-    if store:
-        client = store.get_client(site_id)
-        if client:
-            appliances = store.get_client_appliances(site_id)
-            incidents = store.get_incidents(site_id=site_id)
+    # Check site exists
+    site_result = await db.execute(
+        text("SELECT site_id FROM sites WHERE site_id = :site_id"),
+        {"site_id": site_id}
+    )
+    if not site_result.fetchone():
+        raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
 
-            # Count by resolution level
-            l1_count = sum(1 for i in incidents if i.resolution_level == "L1")
-            l2_count = sum(1 for i in incidents if i.resolution_level == "L2")
-            l3_count = sum(1 for i in incidents if i.resolution_level == "L3")
+    # Get appliance counts
+    appliance_result = await db.execute(text("""
+        SELECT COUNT(*) as total,
+               COUNT(*) FILTER (WHERE status = 'online') as online
+        FROM site_appliances WHERE site_id = :site_id
+    """), {"site_id": site_id})
+    app_row = appliance_result.fetchone()
 
-            from datetime import timedelta
-            now = datetime.now(timezone.utc)
-            incidents_24h = sum(1 for i in incidents if i.created_at and i.created_at >= now - timedelta(hours=24))
-            incidents_7d = sum(1 for i in incidents if i.created_at and i.created_at >= now - timedelta(days=7))
+    # Get incident stats
+    incident_result = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE i.reported_at > NOW() - INTERVAL '24 hours') as day,
+            COUNT(*) FILTER (WHERE i.reported_at > NOW() - INTERVAL '7 days') as week,
+            COUNT(*) FILTER (WHERE i.reported_at > NOW() - INTERVAL '30 days') as month,
+            COUNT(*) FILTER (WHERE i.resolution_tier = 'L1') as l1,
+            COUNT(*) FILTER (WHERE i.resolution_tier = 'L2') as l2,
+            COUNT(*) FILTER (WHERE i.resolution_tier = 'L3') as l3
+        FROM incidents i
+        JOIN appliances a ON a.id = i.appliance_id
+        WHERE a.site_id = :site_id
+    """), {"site_id": site_id})
+    inc_row = incident_result.fetchone()
 
-            return ClientStats(
-                site_id=site_id,
-                appliance_count=len(appliances),
-                online_count=sum(1 for a in appliances if a.is_online),
-                compliance_score=client.compliance_score,
-                connectivity_score=client.connectivity_score,
-                incidents_24h=incidents_24h,
-                incidents_7d=incidents_7d,
-                incidents_30d=len(incidents),
-                l1_resolution_count=l1_count,
-                l2_resolution_count=l2_count,
-                l3_escalation_count=l3_count,
-            )
-
-    # Fallback to mock data for known clients
-    if site_id == "north-valley-family-practice":
-        return ClientStats(
-            site_id=site_id,
-            appliance_count=2,
-            online_count=2,
-            compliance_score=92.0,
-            connectivity_score=98.0,
-            incidents_24h=3,
-            incidents_7d=12,
-            incidents_30d=45,
-            l1_resolution_count=35,
-            l2_resolution_count=8,
-            l3_escalation_count=2,
-        )
-
-    raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
+    return ClientStats(
+        site_id=site_id,
+        appliance_count=app_row.total or 0,
+        online_count=app_row.online or 0,
+        compliance_score=85.0,  # TODO: calculate from evidence
+        connectivity_score=100.0 if app_row.online else 0.0,
+        incidents_24h=inc_row.day or 0,
+        incidents_7d=inc_row.week or 0,
+        incidents_30d=inc_row.month or 0,
+        l1_resolution_count=inc_row.l1 or 0,
+        l2_resolution_count=inc_row.l2 or 0,
+        l3_escalation_count=inc_row.l3 or 0,
+    )
 
 
 # =============================================================================
