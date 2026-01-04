@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-03 (Session 3)
-**Phase:** Phase 10 - Production Deployment + First Physical Appliance
-**Test Status:** 431 passed (compliance-agent tests)
+**Last Updated:** 2026-01-04 (Session 8 - Partner API Backend Complete)
+**Phase:** Phase 11 - Partner/Reseller Infrastructure (Backend Complete)
+**Test Status:** 450+ passed (compliance-agent tests including 22 provisioning tests)
 
 ---
 
@@ -95,6 +95,10 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **TLS via Caddy** - Auto-certs for all domains
 - ✅ **Appliance ISO Infrastructure** - `iso/` directory
 - ✅ **Operations SOPs** - 7 SOPs in Documentation page
+- ✅ **Partner/Reseller Infrastructure** - API, Dashboard, QR codes
+- ✅ **Partner Admin Page** - Partners.tsx with CRUD
+- ✅ **Provisioning CLI** - `compliance-provision` entry point
+- ✅ **ISO v15** - With provisioning code support (1.1GB, deployed to physical appliance)
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
@@ -114,7 +118,16 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **Evidence Schema Fix** - client now matches server's EvidenceBundleCreate model (2026-01-03)
 - ✅ **HIPAA Control Mappings** - added to appliance drift checks (2026-01-03)
 - ✅ **SSH Hotfix Applied** - physical appliance now using ethernet MAC (2026-01-03)
-- 🟡 Deploy ISO v10 to physical appliance ← **NEXT (scheduled for tomorrow)**
+- ✅ **Client Portal HIPAA Enhancement** - deployed (2026-01-03 Session 4)
+  - Backend: `portal.py` - Added plain English fields for all 8 HIPAA controls
+  - Fields: `plain_english`, `why_it_matters`, `consequence`, `what_we_check`, `hipaa_section`
+  - Frontend: `ControlTile.tsx` - Expandable cards with customer-friendly details
+  - Frontend: `KPICard.tsx` - Added description prop
+  - Frontend: `PortalDashboard.tsx` - Customer-friendly KPI labels
+- ✅ **IP Address Cleanup** - deprecated old Mac 174.178.63.139 references (2026-01-03)
+  - VPS is at 178.156.162.116 (msp.osiriscare.net)
+  - Added deprecation notices to VM-ACCESS-GUIDE.md, CREDENTIALS.md
+- 🟡 Deploy ISO v10 to physical appliance ← **NEXT**
 - ⚠️ Evidence bundles uploading to MinIO
 - ⚠️ OpenTimestamps blockchain anchoring
 - ⚠️ Multi-NTP time verification
@@ -144,19 +157,101 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
 
-### ISO v10 Built (2026-01-03)
-- **Location:** `root@178.156.162.116:/root/msp-iso-build/result-iso-v10/iso/osiriscare-appliance.iso`
+### ISO v13 Built (2026-01-03 Session 5)
+- **Location (iMac):** `~/Downloads/osiriscare-appliance-v13.iso`
+- **VPS Build:** `/nix/store/27n30qx67p8j13ffw9jkbswjx9qs0858-osiriscare-appliance.iso/`
 - **Size:** 1.1GB
-- **SHA256:** `01fd11cb85109ea5c9969b7cfeaf20b92c401d079eca2613a17813989c55dac4`
-- **Fix:** MAC detection now prefers active ethernet interfaces over wireless
+- **Agent:** compliance-agent v1.0.5 with **three-tier healing integration**
 - **Entry point:** `compliance-agent-appliance`
+- **Status:** Ready to flash to USB
+
+**Previous versions on iMac:**
+- v9: Jan 2 15:31
+- v10: Jan 3 07:03
+- v11: Jan 3 08:18
+- v12: Jan 3 10:16 (deployed to physical appliance)
 
 ### Agent Packages (Remote Updates)
 - **v1.0.1:** Initial remote update package (failed on NixOS read-only fs - expected)
 - **v1.0.2:** Evidence schema fix
 - **v1.0.3:** HIPAA control mappings + all fixes
+- **v1.0.5:** Three-tier healing integration (L1/L2/L3) - **in ISO v13**
 - **Package URL:** `https://api.osiriscare.net/agent-packages/compliance_agent-{version}.tar.gz`
 - **Packaging:** `./scripts/package-agent.sh {version}`
+- **Note:** Remote updates blocked by NixOS read-only fs; must use ISO reflash
+
+### Site Renaming (2026-01-03 Session 5)
+- `physical-appliance-pilot-1aea78` → **"North Valley Dental"**
+- `test-appliance-lab-b3c40c` → **"Main Street Virtualbox Medical"**
+
+### Dashboard Sites Fix (2026-01-04 Session 6)
+- ✅ Fixed `/api/sites` 404 error - added missing GET endpoints to `sites.py`
+- ✅ Endpoints added:
+  - `GET /api/sites` - list all sites with live status
+  - `GET /api/sites/{site_id}` - site detail with appliances
+  - `GET /api/sites/{site_id}/appliances` - appliances list
+  - `DELETE /api/sites/{site_id}/appliances/{appliance_id}` - delete stale appliances
+- ✅ Fail-safe status calculation based on `last_checkin`:
+  - `< 5 min` → online
+  - `< 1 hour` → stale
+  - `> 1 hour` → offline
+  - No checkin → pending
+- ✅ 60-second hello cadence auto-reconciles dashboard state on reconnect
+- ✅ ISO v14 deployed with `runbooks/__init__.py` and `regulatory/__init__.py` fixes
+
+### Partner/Reseller Infrastructure (2026-01-04 Sessions 6-8)
+- ✅ **Database Migration** - `003_partner_infrastructure.sql` + `004_discovery_and_credentials.sql`
+  - `partners` table - partner orgs with API keys, revenue share
+  - `partner_users` table - partner user accounts with magic link auth
+  - `appliance_provisions` table - QR/manual provision codes
+  - `partner_invoices` table - billing and payout tracking
+  - `discovered_assets` table - network discovery results
+  - `discovery_scans` table - scan history
+  - `site_credentials` table - encrypted credential storage
+  - Added `partner_id` column to `sites` table
+- ✅ **Partner API** - `mcp-server/central-command/backend/partners.py`
+  - `POST /api/partners` - create partner (admin)
+  - `GET /api/partners` - list all partners (admin)
+  - `GET /api/partners/me` - get current partner (API key auth)
+  - `GET /api/partners/me/sites` - list partner's sites
+  - `GET /api/partners/me/sites/{site_id}` - site detail with assets/credentials
+  - `GET /api/partners/me/provisions` - list provision codes
+  - `POST /api/partners/me/provisions` - create provision code
+  - `GET /api/partners/me/provisions/{id}/qr` - generate QR code image (authenticated)
+  - `DELETE /api/partners/me/provisions/{id}` - revoke provision code
+  - `POST /api/partners/me/sites/{site_id}/credentials` - add credentials
+  - `POST /api/partners/me/sites/{site_id}/credentials/{id}/validate` - validate credential
+  - `GET /api/partners/me/sites/{site_id}/assets` - list discovered assets
+  - `PATCH /api/partners/me/sites/{site_id}/assets/{id}` - update asset
+  - `POST /api/partners/me/sites/{site_id}/discovery/trigger` - trigger scan
+  - `POST /api/partners/claim` - claim provision code (public, appliance calls this)
+  - `GET /api/partners/provision/{code}/qr` - public QR code generation
+- ✅ **Discovery Module** - `mcp-server/central-command/backend/discovery.py` (NEW Session 8)
+  - `POST /api/discovery/report` - receive discovery results from appliance
+  - `POST /api/discovery/status` - update scan status
+  - `GET /api/discovery/pending/{site_id}` - get pending scans
+  - `GET /api/discovery/assets/{site_id}/summary` - asset summary
+  - Asset classification logic (domain_controller, sql_server, etc.)
+  - Port-to-service mapping (70+ ports)
+- ✅ **Provisioning API** - `mcp-server/central-command/backend/provisioning.py` (NEW Session 8)
+  - `POST /api/provision/claim` - claim provision code (appliance first boot)
+  - `GET /api/provision/validate/{code}` - validate before claiming
+  - `POST /api/provision/status` - update provisioning status
+  - `POST /api/provision/heartbeat` - provisioning mode heartbeat
+  - `GET /api/provision/config/{appliance_id}` - get appliance config
+- ✅ **Partner Dashboard Frontend** - `mcp-server/central-command/frontend/src/partner/`
+  - `PartnerContext.tsx` - API key auth context
+  - `PartnerLogin.tsx` - login page
+  - `PartnerDashboard.tsx` - sites, provisions, QR code generation
+- ✅ **Appliance Provisioning Module** - `packages/compliance-agent/src/compliance_agent/provisioning.py`
+  - `get_mac_address()` - detect appliance MAC
+  - `claim_provision_code()` - call /api/partners/claim
+  - `create_config()` - generate /var/lib/msp/config.yaml
+  - `run_provisioning_cli()` - interactive CLI mode
+  - `run_provisioning_auto()` - non-interactive mode
+- ✅ **Provisioning Tests** - 19 tests in `test_provisioning.py`
+- ✅ **Agent v1.0.6** - packaged with provisioning support
+- ✅ **QR Code Library** - qrcode + pillow installed in Docker (Session 8)
 
 ### Hash-Chain Evidence System (2026-01-02)
 - ✅ `compliance_bundles` table with SHA256 chain linking

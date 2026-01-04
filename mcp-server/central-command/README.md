@@ -1,6 +1,8 @@
 # Central Command Dashboard
 
-Web-based dashboard for Malachor MSP compliance platform. Provides fleet overview, incident tracking, runbook management, learning loop visibility, and onboarding pipeline.
+**Last Updated:** 2026-01-04 (Session 8)
+
+Web-based dashboard for OsirisCare MSP compliance platform. Provides fleet overview, incident tracking, runbook management, learning loop visibility, partner/reseller infrastructure, and onboarding pipeline.
 
 ## Design Language
 
@@ -22,7 +24,13 @@ central-command/
 │   ├── learning.py               # L2→L1 promotion status
 │   ├── onboarding.py             # Onboarding pipeline logic
 │   ├── chat.py                   # Command interface handler
-│   └── routes.py                 # FastAPI routes
+│   ├── routes.py                 # FastAPI routes
+│   ├── partners.py               # Partner/reseller API
+│   ├── discovery.py              # Network discovery API
+│   ├── provisioning.py           # Appliance provisioning API
+│   ├── portal.py                 # Client portal (magic link auth)
+│   ├── sites.py                  # Site management
+│   └── db_queries.py             # PostgreSQL queries
 │
 ├── frontend/
 │   ├── package.json
@@ -103,6 +111,33 @@ overall = (connectivity.score * 0.4) + (compliance.score * 0.6)
 ### Stats & Command
 - `GET /api/dashboard/stats` - Global statistics
 - `POST /api/dashboard/command` - Command interface
+
+### Partner/Reseller (X-API-Key auth)
+- `GET /api/partners/me` - Current partner info
+- `GET /api/partners/me/sites` - Partner's sites
+- `GET /api/partners/me/provisions` - List provision codes
+- `POST /api/partners/me/provisions` - Create provision code
+- `GET /api/partners/me/provisions/{id}/qr` - Generate QR code image
+- `POST /api/partners/me/sites/{site_id}/credentials` - Add site credentials
+- `POST /api/partners/me/sites/{site_id}/discovery/trigger` - Trigger network scan
+
+### Discovery
+- `POST /api/discovery/report` - Receive discovery results from appliance
+- `POST /api/discovery/status` - Update scan status
+- `GET /api/discovery/pending/{site_id}` - Get pending scans
+- `GET /api/discovery/assets/{site_id}/summary` - Asset summary
+
+### Provisioning
+- `POST /api/provision/claim` - Claim provision code
+- `GET /api/provision/validate/{code}` - Validate code
+- `POST /api/provision/status` - Update provisioning progress
+- `POST /api/provision/heartbeat` - Heartbeat from appliance
+- `GET /api/provision/config/{appliance_id}` - Get appliance config
+
+### Client Portal
+- `GET /api/portal/auth/validate` - Validate magic link token
+- `GET /api/portal/site/{site_id}` - Get site data for portal
+- `GET /api/portal/site/{site_id}/compliance` - Compliance status
 
 ## Development
 

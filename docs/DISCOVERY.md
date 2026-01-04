@@ -1,8 +1,43 @@
 # Network Discovery & Automated Enrollment
 
+**Last Updated:** 2026-01-04 (Session 8)
+
 ## Overview
 
 For efficient client onboarding and continuous compliance monitoring, the system automatically discovers, classifies, and enrolls devices on the healthcare network.
+
+## Central Command API
+
+The discovery system is backed by the Central Command API (`mcp-server/central-command/backend/discovery.py`).
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/discovery/report` | Receive discovery results from appliance |
+| POST | `/api/discovery/status` | Update scan status |
+| GET | `/api/discovery/pending/{site_id}` | Get pending scans for appliance |
+| GET | `/api/discovery/assets/{site_id}/summary` | Asset summary for dashboard |
+
+### Asset Classification (70+ port mappings)
+
+The backend classifies assets based on open ports and hostname patterns:
+
+| Asset Type | Detection Method | Confidence |
+|------------|------------------|------------|
+| Domain Controller | Ports 88, 389, 636, 3268 (3+ match) | 95% |
+| File Server | Ports 445, 139 | 80% |
+| Database Server | Ports 3306, 5432, 1433, 1521 | 85% |
+| Print Server | Ports 9100, 631, 515 | 80% |
+| Medical Device | Ports 104, 2761, 2762 (DICOM) | 90% |
+| Web Server | Ports 80, 443, 8080 | 75% |
+| Email Server | Ports 25, 587, 993, 995 | 85% |
+
+### Database Tables
+
+- `discovered_assets` - Stores discovered devices with classification
+- `discovery_scans` - Tracks scan history and status
+- `site_credentials` - Encrypted credentials for asset access
 
 ## Discovery Methods
 

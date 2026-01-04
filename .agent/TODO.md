@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-02
-**Sprint:** Phase 10 - Production Deployment + First Pilot Client
+**Last Updated:** 2026-01-04 (Session 8 - Partner API Backend Complete)
+**Sprint:** Phase 11 - Partner/Reseller Infrastructure (Backend Complete)
 
 ---
 
@@ -259,6 +259,161 @@
   - Signature verification in /verify endpoint
   - GET /api/evidence/public-key for external verification
   - PortalVerify.tsx shows signature status
+- [x] **Admin Action Buttons Backend** - 2026-01-03
+  - Order creation, broadcast, clear-stale endpoints
+  - `admin_orders` table with status tracking
+- [x] **Remote Agent Update Mechanism** - 2026-01-03
+  - Order-based update system (fetch, acknowledge, complete)
+  - Agent package hosting via StaticFiles
+  - `scripts/package-agent.sh` packaging script
+  - Frontend "Update Agent" button
+- [x] **ISO v10 Built** - 2026-01-03
+  - MAC detection fix (prioritize ethernet over wireless)
+  - SHA256: `01fd11cb85109ea5c9969b7cfeaf20b92c401d079eca2613a17813989c55dac4`
+- [x] **SSH Hotfix to Physical Appliance** - 2026-01-03
+  - Applied MAC detection fix via PYTHONPATH overlay
+  - Now using ethernet MAC (84:3A:5B:91:B6:61)
+- [x] **L1 Rules Sync Endpoint** - 2026-01-03
+  - `/agent/sync` returns 5 built-in NixOS rules
+  - Rules: NTP, service recovery, disk, firewall, generation drift
+- [x] **Evidence Schema Fix** - 2026-01-03
+  - `appliance_client.py` now matches server's EvidenceBundleCreate model
+  - Added HIPAA control mappings to drift checks
+- [x] **Agent Packages v1.0.1-v1.0.3** - 2026-01-03
+  - Uploaded to `https://api.osiriscare.net/agent-packages/`
+- [x] **Client Portal HIPAA Enhancement** - 2026-01-03 (Session 4)
+  - Backend: Added plain English fields to CONTROL_METADATA in portal.py
+  - Fields: plain_english, why_it_matters, consequence, what_we_check, hipaa_section
+  - Frontend: ControlTile.tsx, KPICard.tsx, PortalDashboard.tsx updated
+  - Deployed to VPS 178.156.162.116
+- [x] **IP Address Cleanup** - 2026-01-03 (Session 4)
+  - Deprecated old Mac IP 174.178.63.139 (no longer in use)
+  - VPS confirmed at 178.156.162.116 (msp.osiriscare.net)
+  - Added deprecation notices to VM-ACCESS-GUIDE.md, CREDENTIALS.md
+- [x] **VPS sites.py Import Fix** - 2026-01-03 (Session 5)
+  - Fixed ModuleNotFoundError in dashboard_api/sites.py
+  - Fixed asyncpg DSN format (stripped +asyncpg from SQLAlchemy DSN)
+- [x] **Site Renaming** - 2026-01-03 (Session 5)
+  - physical-appliance-pilot-1aea78 → "North Valley Dental"
+  - test-appliance-lab-b3c40c → "Main Street Virtualbox Medical"
+- [x] **Order System Implementation** - 2026-01-03 (Session 5)
+  - POST orders with jsonb handling (json.dumps + ::jsonb cast)
+  - Order acknowledgment and completion endpoints
+- [x] **ISO v13 with Three-Tier Healing** - 2026-01-03 (Session 5)
+  - Agent v1.0.5 with L1/L2/L3 auto-healing integration
+  - Built on VPS (1.1GB), transferred to iMac ~/Downloads/
+- [x] **Partner/Reseller Infrastructure** - 2026-01-04 (Session 6)
+  - Database migration (partners, partner_users, appliance_provisions, partner_invoices tables)
+  - Partner API backend (partners.py - 12 endpoints)
+  - Partner Dashboard frontend (PartnerContext, PartnerLogin, PartnerDashboard)
+  - QR code generation for provision codes (qrcode.react)
+  - Appliance provisioning module (provisioning.py)
+  - 22 provisioning tests added
+  - Agent v1.0.6 packaged with provisioning support
+- [x] **Partner Admin Management** - 2026-01-04 (Session 7)
+  - Partners.tsx admin page with CRUD operations
+  - Partner list with site/provision stats
+  - Create partner modal, detail modal
+  - Admin-only sidebar navigation
+- [x] **ISO v15 with Provisioning CLI** - 2026-01-04 (Session 7)
+  - `compliance-provision` entry point
+  - Interactive and auto provisioning modes
+  - Console instructions updated
+  - Built on VPS (1.1GB)
+- [x] **Partner QR Provisioning SOP** - 2026-01-04 (Session 7)
+  - Added to Documentation page
+  - Covers partner flow, code creation, tech steps
+- [x] **Partner API Backend Complete** - 2026-01-04 (Session 8)
+  - QR code generation endpoints (authenticated + public)
+  - Discovery module (`discovery.py`) - asset classification, scan reports
+  - Provisioning API module (`provisioning.py`) - claim, validate, config
+  - Database migration `004_discovery_and_credentials.sql`
+  - Fixed column name: `target_client_name` → `client_name`
+  - Installed qrcode + pillow in Docker container
+  - All endpoints tested and working on VPS
+- [x] **Documentation Consistency Update** - 2026-01-04 (Session 8 continuation)
+  - Updated `docs/DISCOVERY.md` - added Central Command API endpoints
+  - Updated `docs/partner/PROVISIONING.md` - added backend API endpoints
+  - Updated `mcp-server/central-command/README.md` - added Partner/Discovery/Provisioning APIs
+  - Updated `docs/ARCHITECTURE.md` - added partner infrastructure diagram
+  - Updated `packages/compliance-agent/README.md` - added provisioning module
+  - ISO v15 deployed to physical appliance
+
+---
+
+## 🟡 Phase 11: Partner/Reseller Infrastructure (Backend Complete)
+
+### 29. Partner API & Dashboard
+**Status:** ✅ COMPLETE (2026-01-04)
+**Why:** Datto-style white-label distribution model
+**Files:** `mcp-server/central-command/backend/partners.py`, `mcp-server/central-command/frontend/src/partner/`
+**Acceptance:**
+- [x] Database migration with partner tables (003_partner_infrastructure.sql)
+- [x] Partner API endpoints (create, list, provision codes, claim)
+- [x] API key authentication (X-API-Key header)
+- [x] Partner Dashboard frontend with branding support
+- [x] QR code generation for provision codes
+- [x] Revenue share tracking (40%/60% default split)
+
+### 30. Appliance Provisioning Module
+**Status:** ✅ COMPLETE (2026-01-04)
+**Why:** Enable QR code/manual provisioning on first boot
+**Files:** `packages/compliance-agent/src/compliance_agent/provisioning.py`
+**Acceptance:**
+- [x] MAC address detection (get_mac_address)
+- [x] Provision code claiming (/api/partners/claim)
+- [x] Config file generation (config.yaml)
+- [x] CLI and auto provisioning modes
+- [x] 19 unit tests passing
+- [x] Integration with appliance_agent.py main()
+
+### 31. Partner Admin Management
+**Status:** ✅ COMPLETE (2026-01-04)
+**Why:** OsirisCare admins need to manage partners
+**Files:** `mcp-server/central-command/frontend/src/pages/Partners.tsx`
+**Acceptance:**
+- [x] List all partners with revenue/site stats
+- [x] Create new partners with modal form
+- [x] View partner details modal with provisions count
+- [x] Filter partners by status (all/active/pending/suspended)
+- [x] Admin-only sidebar navigation item
+
+### 32. ISO v15 with Provisioning CLI
+**Status:** ✅ COMPLETE (2026-01-04)
+**Why:** Technicians need provision code entry on appliance boot
+**Files:** `iso/appliance-image.nix`, `packages/compliance-agent/src/compliance_agent/provisioning.py`
+**Acceptance:**
+- [x] `compliance-provision` CLI entry point
+- [x] Interactive mode prompts for 16-char provision code
+- [x] Auto mode with `--code` flag
+- [x] Console instructions updated for provision code flow
+- [x] ISO v15 built on VPS (1.1GB)
+
+### 33. Partner QR Code Provisioning SOP
+**Status:** ✅ COMPLETE (2026-01-04)
+**Why:** Document partner provisioning workflow for techs
+**Files:** `mcp-server/central-command/frontend/src/pages/Documentation.tsx`
+**Acceptance:**
+- [x] Added SOP-PROV-001 to Documentation page
+- [x] Covers partner flow, code creation, tech steps
+- [x] CLI examples and troubleshooting
+
+### 34. Partner API Backend - Discovery & Provisioning
+**Status:** ✅ COMPLETE (2026-01-04 Session 8)
+**Why:** Complete backend for partner infrastructure
+**Files:**
+- `mcp-server/central-command/backend/discovery.py` (NEW)
+- `mcp-server/central-command/backend/provisioning.py` (NEW)
+- `mcp-server/central-command/backend/partners.py` (UPDATED)
+- `mcp-server/central-command/backend/migrations/004_discovery_and_credentials.sql`
+**Acceptance:**
+- [x] QR code generation (2 endpoints: authenticated + public)
+- [x] Discovery module with asset classification (70+ port mappings)
+- [x] Provisioning API (claim, validate, status, heartbeat, config)
+- [x] Credential management endpoints (add, validate, delete)
+- [x] Asset management endpoints (list, update, trigger scan)
+- [x] Database migration for discovered_assets, discovery_scans, site_credentials
+- [x] All endpoints deployed and tested on VPS
 
 ---
 
@@ -322,7 +477,7 @@
 - [x] Agent version reporting correctly: v0.1.1-quickfix
 
 ### 21. First REAL Pilot Client Enrollment
-**Status:** 🟡 IN PROGRESS (Physical appliance deployed 2026-01-02)
+**Status:** 🟡 IN PROGRESS (Physical appliance deployed 2026-01-02, hotfixed 2026-01-03)
 **Why:** Validate end-to-end deployment at actual healthcare site
 **Acceptance:**
 - [x] Identify pilot clinic (NEPA region) → physical-appliance-pilot-1aea78
@@ -330,9 +485,14 @@
 - [x] Provision config with generate-config.py
 - [x] Flash ISO to USB, install on HP T640
 - [x] Verify phone-home in Central Command (checking in every 60s)
-- [ ] Deploy full compliance-agent (not just phone-home) ← **NEXT**
-- [ ] Confirm L1 rules syncing
-- [ ] Evidence bundles uploading to MinIO
+- [x] SSH hotfix applied - now using ethernet MAC (84:3A:5B:91:B6:61)
+- [x] Remote agent update mechanism deployed
+- [x] L1 rules sync endpoint `/agent/sync` created (5 rules)
+- [x] Evidence schema fix deployed (client matches server model)
+- [x] Deploy ISO v12 to physical appliance ✅ (2026-01-03)
+- [x] Confirm L1 rules syncing - 5 rules synced ✅
+- [x] Evidence bundles uploading - 1022+ bundles submitted ✅
+- [ ] Agent stopped unexpectedly - restarted manually (investigate why)
 
 ### 22. MinIO Object Lock Configuration
 **Status:** ✅ COMPLETE (2026-01-01)
@@ -399,8 +559,8 @@
 ## 🟡 Phase 11: Launch Readiness (Should Have)
 
 ### 24. Deploy Full Compliance Agent to Appliance
-**Status:** 🟡 IN PROGRESS (2026-01-02)
-**Why:** Physical appliance only runs phone-home, need full agent
+**Status:** 🟡 IN PROGRESS (2026-01-03 Session 5)
+**Why:** Physical appliance only runs phone-home, need full agent with healing
 **Files:** `packages/compliance-agent/`, `iso/appliance-image.nix`
 **Acceptance:**
 - [x] Created appliance-mode agent (`appliance_agent.py`, `appliance_config.py`, `appliance_client.py`)
@@ -411,9 +571,18 @@
 - [x] Updated `iso/appliance-image.nix` to use full agent package
 - [x] Entry point: `compliance-agent-appliance`
 - [x] 431 tests passing
-- [ ] Build ISO v9 on Hetzner VPS ← **NEXT**
-- [ ] Deploy to physical appliance
-- [ ] Verify evidence bundles uploading
+- [x] Built ISO v12 on Hetzner VPS
+- [x] Remote agent update mechanism (order-based)
+- [x] Agent packages v1.0.1-v1.0.3 uploaded to VPS
+- [x] L1 rules sync endpoint `/agent/sync` created
+- [x] Evidence submission schema fixed
+- [x] HIPAA control mappings added
+- [x] Deploy ISO v12 to physical appliance ✅ (2026-01-03)
+- [x] Verify evidence bundles uploading - 1022+ bundles ✅
+- [x] **Three-tier healing integration** (L1/L2/L3) - agent v1.0.5 ✅ (Session 5)
+- [x] **ISO v13 built** with healing agent (1.1GB) ✅ (Session 5)
+- [x] **ISO v13 transferred to iMac** (`~/Downloads/osiriscare-appliance-v13.iso`) ✅ (Session 5)
+- [ ] Flash ISO v13 to USB and deploy to physical appliance ← **NEXT**
 
 ### 25. OpenTimestamps Blockchain Anchoring
 **Status:** ⭕ PENDING
@@ -435,6 +604,29 @@
 - [ ] Store NTP source + offset in bundle metadata
 - [ ] Alert if time verification fails
 
+### 27. Fix Appliance IP Detection (0.0.0.0 bug)
+**Status:** ⭕ PENDING (Low Priority)
+**Why:** Physical appliance reports 0.0.0.0 instead of actual IP
+**Files:** `iso/phone-home.py` or `appliance_agent.py`
+**Acceptance:**
+- [ ] Investigate IP detection on physical appliance
+- [ ] Fix to report actual ethernet IP (192.168.88.246)
+- [ ] Verify in Central Command dashboard
+
+### 28. Smart Appliance Deduplication (UX Enhancement)
+**Status:** ⭕ PENDING (Low Priority)
+**Why:** Stale duplicate entries clutter dashboard when appliances reconnect after power/network issues
+**Files:** `mcp-server/central-command/backend/sites.py`, `main.py`
+**Scenarios:**
+- Same hostname, different MAC (NIC swap/hardware replacement)
+- Same MAC, different hostname (device renamed)
+- Same site, multiple ghost entries from power cycles
+**Acceptance:**
+- [ ] Auto-merge on checkin when hostname or MAC matches stale entry
+- [ ] Or: Add "consolidate duplicates" button in admin UI
+- [ ] Or: Background job to clean entries offline > 24h (extend existing `clear-stale`)
+- [ ] Consider hostname as secondary key for matching (current key is `{site_id}-{mac}`)
+
 ---
 
 ## Quick Reference
@@ -451,15 +643,16 @@ python -m pytest tests/ -v --tb=short
 python -m pytest tests/ 2>&1 | grep -c "DeprecationWarning"
 ```
 
-**SSH to appliance:**
+**SSH to VPS (Central Command):**
 ```bash
-ssh -p 4444 root@174.178.63.139
+ssh root@178.156.162.116
+# Or: ssh root@msp.osiriscare.net
 ```
 
-**Web UI tunnel:**
+**SSH to Physical Appliance (NEPA Lab):**
 ```bash
-ssh -f -N -L 9080:192.168.56.103:8080 jrelly@174.178.63.139
-open http://localhost:9080
+ssh root@192.168.88.246
+# Or via iMac gateway: ssh jrelly@192.168.88.50 "ssh root@192.168.88.246"
 ```
 
 **North Valley Lab (Windows DC + Workstation):**
@@ -509,6 +702,31 @@ open https://dashboard.osiriscare.net
 ssh root@192.168.88.246                # SSH to physical appliance
 journalctl -u compliance-agent -f     # Watch agent logs
 curl -s https://api.osiriscare.net/api/sites/physical-appliance-pilot-1aea78 | jq .
+
+# Check L1 rules sync
+curl -s https://api.osiriscare.net/agent/sync | jq '.count'
+
+# Check evidence bundles
+curl -s https://api.osiriscare.net/evidence/physical-appliance-pilot-1aea78 | jq '.count'
+
+# Send update order (URL encode MAC with %3A for colons)
+curl -X POST 'https://api.osiriscare.net/api/sites/physical-appliance-pilot-1aea78/appliances/physical-appliance-pilot-1aea78-84%3A3A%3A5B%3A91%3AB6%3A61/orders' \
+  -H 'Content-Type: application/json' \
+  -d '{"order_type":"update_agent","parameters":{"package_url":"https://api.osiriscare.net/agent-packages/compliance_agent-1.0.3.tar.gz","version":"1.0.3"}}'
+```
+
+**Agent Packaging:**
+```bash
+cd /Users/dad/Documents/Msp_Flakes/packages/compliance-agent
+
+# Package agent for remote updates
+./scripts/package-agent.sh 1.0.4
+
+# Upload to VPS
+scp scripts/compliance_agent-1.0.4.tar.gz root@178.156.162.116:/opt/mcp-server/agent-packages/
+
+# Verify available
+curl -sI https://api.osiriscare.net/agent-packages/compliance_agent-1.0.4.tar.gz | head -1
 ```
 
 **Provisioning API:**
