@@ -163,12 +163,14 @@ class CentralCommandClient:
         evidence_data: Dict[str, Any],
         timestamp: Optional[datetime] = None,
         host: Optional[str] = None,
-        hipaa_control: Optional[str] = None
+        hipaa_control: Optional[str] = None,
+        agent_signature: Optional[str] = None
     ) -> Optional[str]:
         """
         Submit evidence bundle to Central Command.
 
-        The server will sign the bundle with Ed25519 and add to hash chain.
+        The agent signs the bundle locally with Ed25519, then the server
+        also signs it and adds to the hash chain.
 
         Args:
             bundle_hash: SHA256 hash of evidence data (for local verification)
@@ -178,6 +180,7 @@ class CentralCommandClient:
             timestamp: When check was performed (defaults to now)
             host: Hostname that was checked
             hipaa_control: HIPAA control reference (e.g., "164.312(b)")
+            agent_signature: Hex-encoded Ed25519 signature from agent (optional)
 
         Returns:
             Bundle ID if successful, None otherwise
@@ -209,6 +212,10 @@ class CentralCommandClient:
                 "local_hash": bundle_hash  # For client-side verification
             }
         }
+
+        # Include agent signature if provided
+        if agent_signature:
+            payload["agent_signature"] = agent_signature
 
         status, response = await self._request(
             'POST',

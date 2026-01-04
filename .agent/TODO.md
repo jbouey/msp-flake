@@ -338,6 +338,11 @@
   - Updated `docs/ARCHITECTURE.md` - added partner infrastructure diagram
   - Updated `packages/compliance-agent/README.md` - added provisioning module
   - ISO v15 deployed to physical appliance
+- [x] **Agent-Side Evidence Signing** - 2026-01-04 (Session 8 continuation)
+  - Added Ed25519 signing key generation on appliance first boot
+  - Evidence bundles now signed locally before upload
+  - Server stores `agent_signature` column in compliance_bundles table
+  - Provides non-repudiation from source (appliance signs, server verifies)
 
 ---
 
