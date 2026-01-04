@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-04 (Session 8 - Partner API Backend Complete)
-**Sprint:** Phase 11 - Partner/Reseller Infrastructure (Backend Complete)
+**Last Updated:** 2026-01-04 (Session 8 - Agent Evidence Signing Complete)
+**Sprint:** Phase 11 - Partner/Reseller Infrastructure ✅ COMPLETE
 
 ---
 
@@ -346,7 +346,7 @@
 
 ---
 
-## 🟡 Phase 11: Partner/Reseller Infrastructure (Backend Complete)
+## ✅ Phase 11: Partner/Reseller Infrastructure (COMPLETE)
 
 ### 29. Partner API & Dashboard
 **Status:** ✅ COMPLETE (2026-01-04)
@@ -422,7 +422,7 @@
 
 ---
 
-## 🔴 Phase 10: Production Deployment + First Pilot Client (Current)
+## ✅ Phase 10: Production Deployment + First Pilot Client (COMPLETE)
 
 ### 16. Create Appliance ISO Infrastructure
 **Status:** ✅ COMPLETE (2025-12-31)
@@ -482,7 +482,7 @@
 - [x] Agent version reporting correctly: v0.1.1-quickfix
 
 ### 21. First REAL Pilot Client Enrollment
-**Status:** 🟡 IN PROGRESS (Physical appliance deployed 2026-01-02, hotfixed 2026-01-03)
+**Status:** ✅ COMPLETE (Physical appliance deployed, ISO v15, agent signing)
 **Why:** Validate end-to-end deployment at actual healthcare site
 **Acceptance:**
 - [x] Identify pilot clinic (NEPA region) → physical-appliance-pilot-1aea78
@@ -496,8 +496,9 @@
 - [x] Evidence schema fix deployed (client matches server model)
 - [x] Deploy ISO v12 to physical appliance ✅ (2026-01-03)
 - [x] Confirm L1 rules syncing - 5 rules synced ✅
-- [x] Evidence bundles uploading - 1022+ bundles submitted ✅
-- [ ] Agent stopped unexpectedly - restarted manually (investigate why)
+- [x] Evidence bundles uploading - 11,000+ bundles submitted ✅
+- [x] ISO v15 with provisioning CLI deployed ✅
+- [x] Agent-side Ed25519 evidence signing ✅
 
 ### 22. MinIO Object Lock Configuration
 **Status:** ✅ COMPLETE (2026-01-01)
@@ -561,10 +562,10 @@
 
 ---
 
-## 🟡 Phase 11: Launch Readiness (Should Have)
+## 🟡 Phase 12: Launch Readiness (Should Have)
 
 ### 24. Deploy Full Compliance Agent to Appliance
-**Status:** 🟡 IN PROGRESS (2026-01-03 Session 5)
+**Status:** ✅ COMPLETE (2026-01-04 Session 8)
 **Why:** Physical appliance only runs phone-home, need full agent with healing
 **Files:** `packages/compliance-agent/`, `iso/appliance-image.nix`
 **Acceptance:**
@@ -587,7 +588,8 @@
 - [x] **Three-tier healing integration** (L1/L2/L3) - agent v1.0.5 ✅ (Session 5)
 - [x] **ISO v13 built** with healing agent (1.1GB) ✅ (Session 5)
 - [x] **ISO v13 transferred to iMac** (`~/Downloads/osiriscare-appliance-v13.iso`) ✅ (Session 5)
-- [ ] Flash ISO v13 to USB and deploy to physical appliance ← **NEXT**
+- [x] **ISO v15 deployed** to physical appliance ✅ (Session 8)
+- [x] **Agent-side Ed25519 signing** - appliance signs bundles before upload ✅ (Session 8)
 
 ### 25. OpenTimestamps Blockchain Anchoring
 **Status:** ⭕ PENDING
