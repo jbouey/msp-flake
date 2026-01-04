@@ -104,6 +104,25 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Include routers from central-command backend
+import sys
+_backend_path = os.path.join(os.path.dirname(__file__), "central-command", "backend")
+if _backend_path not in sys.path:
+    sys.path.insert(0, _backend_path)
+
+try:
+    from routes import router as dashboard_router
+    from portal import router as portal_router
+    from sites import router as sites_router
+    from partners import router as partners_router
+    app.include_router(dashboard_router)
+    app.include_router(portal_router)
+    app.include_router(sites_router)
+    app.include_router(partners_router)
+    print("✓ Included central-command routers")
+except ImportError as e:
+    print(f"⚠ Could not import central-command routers: {e}")
+
 # Global Redis connection
 redis_client: Optional[redis.Redis] = None
 
@@ -685,6 +704,8 @@ async def agent_checkin(checkin: AgentCheckin):
 
     Agents call this periodically to report their status.
     This updates the dashboard's fleet view.
+
+    Returns pending orders for the appliance to execute.
     """
     if store:
         store.register_appliance(
@@ -696,9 +717,41 @@ async def agent_checkin(checkin: AgentCheckin):
         )
         store.appliance_checkin(checkin.appliance_id, checkin.health_metrics)
 
+    # Query for pending orders from PostgreSQL
+    pending_orders = []
+    try:
+        from fleet import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            # Get pending orders for this appliance (not expired)
+            rows = await conn.fetch("""
+                SELECT order_id, order_type, parameters, priority, created_at, expires_at
+                FROM admin_orders
+                WHERE appliance_id = $1
+                AND status = 'pending'
+                AND expires_at > NOW()
+                ORDER BY priority DESC, created_at ASC
+            """, checkin.appliance_id)
+
+            pending_orders = [
+                {
+                    "order_id": row["order_id"],
+                    "order_type": row["order_type"],
+                    "parameters": row["parameters"] or {},
+                    "priority": row["priority"],
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        # Log but don't fail the checkin if orders query fails
+        print(f"⚠ Failed to query orders for {checkin.appliance_id}: {e}")
+
     return {
         "status": "ok",
-        "server_time": datetime.now(timezone.utc).isoformat()
+        "server_time": datetime.now(timezone.utc).isoformat(),
+        "orders": pending_orders,
     }
 
 
@@ -715,6 +768,117 @@ async def get_global_stats():
         }
 
     return store.get_global_stats()
+
+
+# ============================================================================
+# Backup Status Endpoint
+# ============================================================================
+
+BACKUP_STATUS_FILE = Path("/opt/backups/status/latest.json")
+
+
+@app.get("/api/backup/status")
+async def get_backup_status():
+    """
+    Get current backup status for dashboard.
+
+    Returns latest backup information including:
+    - Last successful backup timestamp
+    - Repository health status
+    - Storage usage
+    - Recent backup history
+    """
+    if not BACKUP_STATUS_FILE.exists():
+        return {
+            "status": "unknown",
+            "message": "No backup status available",
+            "last_backup": None,
+            "storage_used_mb": 0,
+            "total_snapshots": 0,
+        }
+
+    try:
+        with open(BACKUP_STATUS_FILE, 'r') as f:
+            status_data = json.load(f)
+
+        return {
+            "status": status_data.get("status", "unknown"),
+            "last_backup": status_data.get("timestamp"),
+            "last_backup_duration_seconds": status_data.get("duration_seconds"),
+            "storage_used_mb": status_data.get("storage_used_mb", 0),
+            "total_snapshots": status_data.get("total_snapshots", 0),
+            "repository": status_data.get("repository"),
+            "retention": status_data.get("retention"),
+            "last_error": status_data.get("error"),
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to read backup status: {str(e)}",
+            "last_backup": None,
+        }
+
+
+@app.get("/api/backup/snapshots")
+async def list_backup_snapshots():
+    """
+    List available backup snapshots.
+
+    Returns list of snapshots from Restic repository.
+    """
+    import subprocess
+
+    try:
+        # Run restic snapshots command
+        result = subprocess.run(
+            [
+                "/root/.nix-profile/bin/restic",
+                "-r", "sftp:u526501@u526501.your-storagebox.de:backups",
+                "-o", "sftp.command=ssh storagebox -s sftp",
+                "--password-file", "/root/.restic-password",
+                "snapshots", "--json"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**os.environ, "HOME": "/root"}
+        )
+
+        if result.returncode != 0:
+            return {
+                "status": "error",
+                "message": f"Restic failed: {result.stderr}",
+                "snapshots": []
+            }
+
+        snapshots = json.loads(result.stdout) if result.stdout else []
+
+        return {
+            "status": "ok",
+            "total": len(snapshots),
+            "snapshots": [
+                {
+                    "id": s.get("short_id", s.get("id", "")[:8]),
+                    "time": s.get("time"),
+                    "hostname": s.get("hostname"),
+                    "tags": s.get("tags", []),
+                    "paths": s.get("paths", []),
+                }
+                for s in snapshots[-20:]  # Return last 20 snapshots
+            ]
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "error",
+            "message": "Restic command timed out",
+            "snapshots": []
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to list snapshots: {str(e)}",
+            "snapshots": []
+        }
 
 
 # ============================================================================

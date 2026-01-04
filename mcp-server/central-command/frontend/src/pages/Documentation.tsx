@@ -830,6 +830,191 @@ curl https://api.osiriscare.net/api/provision/84%3A3A%3A5B%3A91%3AB6%3A61
         ),
       },
       {
+        id: 'partner-qr-provision-sop',
+        title: 'SOP: Partner QR Code Provisioning',
+        content: (
+          <div className="space-y-4">
+            <div className="p-4 bg-accent-primary/10 border-l-4 border-accent-primary rounded-r-ios">
+              <p className="text-sm font-medium">Enable partners to onboard appliances using QR codes.</p>
+              <p className="text-xs text-label-tertiary mt-1">New in Partner Infrastructure - Datto-style white-label distribution</p>
+            </div>
+
+            <h4 className="font-semibold">Partner Provisioning Flow</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios">
+              <ol className="list-decimal list-inside space-y-2 text-label-secondary text-sm">
+                <li><strong>Partner logs into dashboard</strong> - /partner/login with API key</li>
+                <li><strong>Partner creates provision code</strong> - Enters target client name</li>
+                <li><strong>QR code generated</strong> - Contains claim URL with 16-char code</li>
+                <li><strong>Partner ships appliance</strong> - Includes QR code printout or sticker</li>
+                <li><strong>Client powers on appliance</strong> - Enters provisioning mode (no config)</li>
+                <li><strong>Technician scans QR</strong> - Or manually enters 16-character code</li>
+                <li><strong>Appliance calls /api/partners/claim</strong> - With code + MAC address</li>
+                <li><strong>Server creates site</strong> - Under partner's umbrella</li>
+                <li><strong>Appliance receives config</strong> - site_id, API key, partner branding</li>
+                <li><strong>Normal operation begins</strong> - Phone-home every 60 seconds</li>
+              </ol>
+            </div>
+
+            <h4 className="font-semibold mt-6">For Partners: Creating Provision Codes</h4>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# 1. Log into Partner Dashboard
+https://dashboard.osiriscare.net/partner/login
+
+# Enter your API key (provided by OsirisCare)
+
+# 2. Navigate to "Provision Codes" tab
+
+# 3. Click "New Provision Code"
+#    - Enter target client name (e.g., "Smith Family Practice")
+#    - Code expires in 30 days by default
+
+# 4. Click "QR" button to display the QR code
+#    - Print or screenshot for technician
+#    - Code displayed: XXXX-XXXX-XXXX-XXXX (16 chars)`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">For Partners: Via API</h4>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# Create provision code via API
+curl -X POST https://api.osiriscare.net/api/partners/me/provisions \\
+  -H "X-API-Key: YOUR_PARTNER_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "target_client_name": "Smith Family Practice",
+    "expires_days": 30
+  }'
+
+# Response:
+{
+  "id": "abc123...",
+  "provision_code": "ABCD1234EFGH5678",
+  "qr_content": "https://api.osiriscare.net/api/partners/claim?code=ABCD1234EFGH5678",
+  "status": "pending",
+  "expires_at": "2026-02-04T00:00:00Z"
+}`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">For Technicians: Provisioning an Appliance</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios">
+              <ol className="list-decimal list-inside space-y-2 text-label-secondary text-sm">
+                <li>Power on the appliance (no prior config)</li>
+                <li>Wait for NixOS to boot (2-3 minutes)</li>
+                <li>Provisioning screen appears automatically</li>
+                <li>Either:
+                  <ul className="ml-6 mt-1 list-disc list-inside">
+                    <li>Scan the QR code with a phone/tablet</li>
+                    <li>Or enter the 16-character code manually</li>
+                  </ul>
+                </li>
+                <li>Appliance shows "Provisioning..." then "Complete!"</li>
+                <li>Agent starts automatically, begins checking in</li>
+              </ol>
+            </div>
+
+            <h4 className="font-semibold mt-6">Appliance CLI Provisioning</h4>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# If appliance boots without config.yaml, it enters provisioning mode:
+
+============================================================
+  OsirisCare Appliance Provisioning
+============================================================
+
+MAC Address: 84:3A:5B:91:B6:61
+Hostname:    osiriscare-appliance
+
+Enter your provision code (from partner dashboard):
+Format: XXXXXXXXXXXXXXXX (16 characters)
+
+Provision Code: ABCD1234EFGH5678
+
+Provisioning...
+
+============================================================
+  Provisioning Complete!
+============================================================
+
+Site ID:     partner-clinic-abc123
+Partner:     NEPA IT Solutions
+Config:      /var/lib/msp/config.yaml
+
+The agent will now restart in normal operation mode.`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">Revenue Model</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <h5 className="font-semibold text-accent-primary">Default Split</h5>
+                <p className="text-2xl font-bold mt-2">40% / 60%</p>
+                <p className="text-xs text-label-tertiary mt-1">Partner gets 40%, OsirisCare 60%</p>
+              </div>
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <h5 className="font-semibold text-accent-primary">Custom Arrangements</h5>
+                <p className="text-sm text-label-secondary mt-2">
+                  Revenue share can be customized per partner (10-60% range).
+                  Contact OsirisCare sales for volume pricing.
+                </p>
+              </div>
+            </div>
+
+            <h4 className="font-semibold mt-6">API Reference</h4>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-separator-light">
+                    <th className="text-left py-2 px-3">Endpoint</th>
+                    <th className="text-left py-2 px-3">Method</th>
+                    <th className="text-left py-2 px-3">Auth</th>
+                    <th className="text-left py-2 px-3">Description</th>
+                  </tr>
+                </thead>
+                <tbody className="text-label-secondary">
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3 font-mono text-xs">/api/partners/me</td>
+                    <td className="py-2 px-3">GET</td>
+                    <td className="py-2 px-3">X-API-Key</td>
+                    <td className="py-2 px-3">Get partner info and stats</td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3 font-mono text-xs">/api/partners/me/provisions</td>
+                    <td className="py-2 px-3">GET</td>
+                    <td className="py-2 px-3">X-API-Key</td>
+                    <td className="py-2 px-3">List provision codes</td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3 font-mono text-xs">/api/partners/me/provisions</td>
+                    <td className="py-2 px-3">POST</td>
+                    <td className="py-2 px-3">X-API-Key</td>
+                    <td className="py-2 px-3">Create provision code</td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3 font-mono text-xs">/api/partners/me/sites</td>
+                    <td className="py-2 px-3">GET</td>
+                    <td className="py-2 px-3">X-API-Key</td>
+                    <td className="py-2 px-3">List partner's sites</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-3 font-mono text-xs">/api/partners/claim</td>
+                    <td className="py-2 px-3">POST</td>
+                    <td className="py-2 px-3">Public</td>
+                    <td className="py-2 px-3">Claim code (appliance calls)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="p-4 bg-health-warning/10 border-l-4 border-health-warning rounded-r-ios mt-4">
+              <h4 className="font-semibold text-health-warning">Troubleshooting</h4>
+              <ul className="mt-2 text-sm text-label-secondary space-y-1">
+                <li><strong>Code not found:</strong> Verify code is 16 characters, case-insensitive</li>
+                <li><strong>Code expired:</strong> Create a new provision code in partner dashboard</li>
+                <li><strong>Code already claimed:</strong> Each code can only be used once</li>
+                <li><strong>Network error:</strong> Ensure appliance has internet access to api.osiriscare.net</li>
+              </ul>
+            </div>
+          </div>
+        ),
+      },
+      {
         id: 'incident-response-sop',
         title: 'SOP: L3 Incident Response',
         content: (
@@ -936,6 +1121,122 @@ outcome: success
 evidence:
   - disk_usage_before
   - disk_usage_after`}</pre>
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: 'backup-sop',
+        title: 'SOP: Central Command Backup & Restore',
+        content: (
+          <div className="space-y-4">
+            <div className="p-4 bg-accent-primary/10 border-l-4 border-accent-primary rounded-r-ios">
+              <p className="text-sm font-medium">Automated encrypted backups to Hetzner Storage Box via Restic.</p>
+              <p className="text-xs text-label-tertiary mt-1">Hourly backups • 24 hourly, 7 daily, 4 weekly, 6 monthly retention</p>
+            </div>
+
+            <h4 className="font-semibold">What's Backed Up</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <h5 className="font-semibold text-accent-primary">PostgreSQL</h5>
+                <p className="text-xs text-label-secondary mt-1">
+                  Sites, appliances, incidents, evidence, portal tokens
+                </p>
+              </div>
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <h5 className="font-semibold text-accent-primary">MinIO</h5>
+                <p className="text-xs text-label-secondary mt-1">
+                  Evidence bundles, compliance reports, audit logs
+                </p>
+              </div>
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <h5 className="font-semibold text-accent-primary">Configs</h5>
+                <p className="text-xs text-label-secondary mt-1">
+                  Docker configs, environment files, SSL certs
+                </p>
+              </div>
+            </div>
+
+            <h4 className="font-semibold mt-6">Check Backup Status</h4>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# API endpoint for dashboard
+curl https://api.osiriscare.net/api/backup/status
+
+# List available snapshots
+curl https://api.osiriscare.net/api/backup/snapshots
+
+# Manual status check on VPS
+ssh root@178.156.162.116 "cat /opt/backups/status/latest.json"
+
+# View systemd timer status
+ssh root@178.156.162.116 "systemctl list-timers | grep osiris"`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">Manual Backup</h4>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# Run backup manually (e.g., before major changes)
+ssh root@178.156.162.116 "/opt/backups/scripts/backup.sh"
+
+# Check backup size and stats
+ssh root@178.156.162.116 "RESTIC_REPOSITORY='sftp:storagebox:/backups' \\
+  RESTIC_PASSWORD_FILE=/root/.restic-password \\
+  restic -o 'sftp.command=ssh storagebox -s sftp' stats"`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">Disaster Recovery Procedure</h4>
+            <div className="p-4 bg-health-critical/10 border-l-4 border-health-critical rounded-r-ios mb-4">
+              <p className="text-sm font-medium">Only use this procedure for full disaster recovery.</p>
+              <p className="text-xs text-label-tertiary mt-1">Will stop services and restore from backup snapshot</p>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-separator-light">
+                    <th className="text-left py-2 px-3 w-12">#</th>
+                    <th className="text-left py-2 px-3">Step</th>
+                    <th className="text-left py-2 px-3">Command / Action</th>
+                  </tr>
+                </thead>
+                <tbody className="text-label-secondary">
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3 font-mono">1</td>
+                    <td className="py-2 px-3 font-medium">SSH to VPS</td>
+                    <td className="py-2 px-3"><code className="text-xs">ssh root@178.156.162.116</code></td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3 font-mono">2</td>
+                    <td className="py-2 px-3 font-medium">List snapshots</td>
+                    <td className="py-2 px-3"><code className="text-xs">/opt/backups/scripts/restore.sh --list</code></td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3 font-mono">3</td>
+                    <td className="py-2 px-3 font-medium">Run restore</td>
+                    <td className="py-2 px-3"><code className="text-xs">/opt/backups/scripts/restore.sh --snapshot SNAPSHOT_ID</code></td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3 font-mono">4</td>
+                    <td className="py-2 px-3 font-medium">Verify services</td>
+                    <td className="py-2 px-3"><code className="text-xs">docker compose ps && curl localhost:8000/health</code></td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-3 font-mono">5</td>
+                    <td className="py-2 px-3 font-medium">Test dashboard</td>
+                    <td className="py-2 px-3">Login to Central Command, verify data</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h4 className="font-semibold mt-6">Backup Credentials (Secure Storage)</h4>
+            <div className="p-4 bg-health-warning/10 border-l-4 border-health-warning rounded-r-ios">
+              <p className="text-sm text-label-secondary">
+                <strong>Storage Box:</strong> u526501.your-storagebox.de:23<br />
+                <strong>Restic Password File:</strong> /root/.restic-password<br />
+                <strong>SSH Key:</strong> /root/.ssh/storagebox_backup<br />
+                <strong>Retention:</strong> 24 hourly, 7 daily, 4 weekly, 6 monthly<br />
+                <strong>Location:</strong> Hetzner FSN1 (Falkenstein, Germany)
+              </p>
             </div>
           </div>
         ),
@@ -1373,6 +1674,219 @@ journalctl -u compliance-agent -f
               <li>Evidence bundle downloads</li>
               <li>Monthly compliance packet (PDF)</li>
             </ul>
+          </div>
+        ),
+      },
+      {
+        id: 'client-access-sop',
+        title: 'SOP: Client Portal Access Guide',
+        content: (
+          <div className="space-y-6">
+            <div className="p-4 bg-accent-primary/10 border border-accent-primary rounded-ios">
+              <p className="text-sm">
+                <strong>Purpose:</strong> This SOP provides step-by-step instructions for administrators
+                to help clients access their HIPAA compliance portal. Use this guide when onboarding
+                new clients or when clients need assistance.
+              </p>
+            </div>
+
+            <h4 className="font-semibold text-lg">Step 1: Generate Portal Link</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios space-y-3">
+              <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+                <li>Log in to Central Command (msp.osiriscare.net)</li>
+                <li>Navigate to <strong>Sites</strong> in the sidebar</li>
+                <li>Click on the client's site name</li>
+                <li>Click the <strong>"Generate Portal Link"</strong> button</li>
+                <li>Copy the generated URL</li>
+              </ol>
+              <p className="text-xs text-label-tertiary mt-2">
+                Note: Links do not expire by default. Generate a new link if you suspect the old one was compromised.
+              </p>
+            </div>
+
+            <h4 className="font-semibold text-lg">Step 2: Send to Client</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios">
+              <p className="text-sm text-label-secondary mb-3">
+                Use the email template below. Copy and customize with client details:
+              </p>
+              <div className="p-4 bg-gray-900 rounded-ios text-gray-300 text-sm font-mono whitespace-pre-wrap">
+{`Subject: Your HIPAA Compliance Portal Access - [Practice Name]
+
+Hi [Contact Name],
+
+Your HIPAA compliance monitoring portal is now active. You can access your real-time compliance dashboard at any time using this secure link:
+
+[PASTE PORTAL LINK HERE]
+
+What You'll See:
+• Overall compliance health score
+• Status of all 8 HIPAA security controls
+• Recent automated remediation activity
+• Evidence bundle archive for audit purposes
+
+No login required - simply click the link to view your dashboard.
+
+Tips:
+• Bookmark this link for easy access
+• Share with your compliance officer or practice manager
+• The dashboard updates in real-time as our appliance monitors your systems
+
+Questions? Reply to this email or call us at [Support Number].
+
+Best regards,
+[Your Name]
+OsirisCare Compliance Team`}
+              </div>
+            </div>
+
+            <h4 className="font-semibold text-lg">Step 3: Walk Client Through Portal</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios">
+              <p className="text-sm text-label-secondary mb-3">
+                During initial setup, offer a brief walkthrough. Key sections to explain:
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                <div className="p-3 bg-background-primary rounded-ios">
+                  <h5 className="font-medium text-accent-primary">Health Score</h5>
+                  <p className="text-xs text-label-tertiary mt-1">
+                    Overall percentage showing compliance status. Green (90%+) = healthy,
+                    Yellow (70-89%) = attention needed, Red (&lt;70%) = critical issues.
+                  </p>
+                </div>
+                <div className="p-3 bg-background-primary rounded-ios">
+                  <h5 className="font-medium text-accent-primary">Control Tiles</h5>
+                  <p className="text-xs text-label-tertiary mt-1">
+                    8 tiles showing each HIPAA control status. Click any tile to see
+                    details and which HIPAA sections it addresses (e.g., 164.308, 164.312).
+                  </p>
+                </div>
+                <div className="p-3 bg-background-primary rounded-ios">
+                  <h5 className="font-medium text-accent-primary">Auto-Fix Log</h5>
+                  <p className="text-xs text-label-tertiary mt-1">
+                    Shows recent automated remediations. Clients can see what was fixed
+                    without needing to take action - demonstrates system value.
+                  </p>
+                </div>
+                <div className="p-3 bg-background-primary rounded-ios">
+                  <h5 className="font-medium text-accent-primary">Evidence Bundles</h5>
+                  <p className="text-xs text-label-tertiary mt-1">
+                    Cryptographically signed compliance checks. These serve as audit
+                    evidence for HIPAA compliance reviews.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <h4 className="font-semibold text-lg">Common Client Questions</h4>
+            <div className="space-y-3">
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <p className="font-medium">"Do I need to log in?"</p>
+                <p className="text-sm text-label-tertiary mt-1">
+                  No. The portal uses a secure magic link - just click the URL we sent.
+                  No username or password needed. The link itself contains your secure access token.
+                </p>
+              </div>
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <p className="font-medium">"Who can I share this link with?"</p>
+                <p className="text-sm text-label-tertiary mt-1">
+                  Share only with authorized personnel at your practice - compliance officers,
+                  practice managers, or administrators. Anyone with the link can view your
+                  compliance data. Contact us if you need the link revoked and regenerated.
+                </p>
+              </div>
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <p className="font-medium">"How often does this update?"</p>
+                <p className="text-sm text-label-tertiary mt-1">
+                  Real-time. The appliance at your site performs checks every 60 seconds
+                  and reports status continuously. What you see on the portal is current
+                  as of the page load.
+                </p>
+              </div>
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <p className="font-medium">"What do I do if something is red/failing?"</p>
+                <p className="text-sm text-label-tertiary mt-1">
+                  Nothing, usually! Our system automatically remediates most issues within
+                  seconds. If a control stays red, we're already alerted and working on it.
+                  You'll see it turn green once resolved.
+                </p>
+              </div>
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <p className="font-medium">"Can I download reports for auditors?"</p>
+                <p className="text-sm text-label-tertiary mt-1">
+                  Yes. Click "Download Monthly Report" to get a PDF compliance packet.
+                  For specific evidence bundles, use the "Evidence" section to download
+                  signed proof of compliance checks.
+                </p>
+              </div>
+            </div>
+
+            <h4 className="font-semibold text-lg">Troubleshooting Client Access</h4>
+            <div className="p-4 bg-health-warning/10 border-l-4 border-health-warning rounded-r-ios">
+              <h5 className="font-medium">If client reports "Page Not Found" or "Invalid Token":</h5>
+              <ol className="mt-2 list-decimal list-inside text-sm text-label-secondary space-y-1">
+                <li>Verify the URL wasn't truncated in email (check for "..." in link)</li>
+                <li>Generate a fresh portal link from Central Command</li>
+                <li>Send the new link directly (avoid copy-paste through multiple apps)</li>
+                <li>If issue persists, check site status in Central Command</li>
+              </ol>
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: 'portal-security',
+        title: 'Portal Security & Link Management',
+        content: (
+          <div className="space-y-4">
+            <p className="text-label-secondary">
+              Portal links use secure tokens that provide read-only access. Understanding
+              security implications helps you advise clients appropriately.
+            </p>
+
+            <h4 className="font-semibold">Token Security Model</h4>
+            <ul className="list-disc list-inside space-y-2 text-label-secondary">
+              <li><strong>Read-only access:</strong> Clients cannot modify settings or data</li>
+              <li><strong>Site-scoped:</strong> Each token only works for one specific site</li>
+              <li><strong>No expiration by default:</strong> Links remain valid until regenerated</li>
+              <li><strong>No authentication required:</strong> Anyone with the link can access</li>
+            </ul>
+
+            <h4 className="font-semibold mt-4">When to Regenerate Links</h4>
+            <div className="p-4 bg-health-critical/10 border-l-4 border-health-critical rounded-r-ios">
+              <ul className="space-y-2 text-sm text-label-secondary">
+                <li>• Employee with portal access leaves the practice</li>
+                <li>• Link was accidentally shared publicly</li>
+                <li>• Client suspects unauthorized access</li>
+                <li>• As part of regular security rotation (recommended quarterly)</li>
+              </ul>
+            </div>
+
+            <h4 className="font-semibold mt-4">Regenerating a Link</h4>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+              <li>Go to Sites → [Client Name] in Central Command</li>
+              <li>Click "Generate Portal Link" (this invalidates the old token)</li>
+              <li>Send the new link to authorized client contacts</li>
+              <li>Confirm with client that old bookmarks should be updated</li>
+            </ol>
+
+            <h4 className="font-semibold mt-4">Data Visible on Portal</h4>
+            <p className="text-sm text-label-secondary mb-2">
+              Clients can view (but not download raw data for):
+            </p>
+            <ul className="list-disc list-inside space-y-1 text-label-secondary text-sm">
+              <li>Compliance scores and health metrics</li>
+              <li>Control pass/fail status with HIPAA mappings</li>
+              <li>Incident history and auto-fix logs</li>
+              <li>Evidence bundle summaries (downloadable as signed bundles)</li>
+              <li>Monthly compliance reports (downloadable as PDF)</li>
+            </ul>
+
+            <div className="p-4 bg-accent-primary/10 rounded-ios mt-4">
+              <p className="text-sm">
+                <strong>Note:</strong> No PHI or sensitive system credentials are ever
+                exposed through the client portal. All evidence is scrubbed of personally
+                identifiable information before display.
+              </p>
+            </div>
           </div>
         ),
       },
