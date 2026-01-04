@@ -53,6 +53,11 @@ python -m compliance_agent.agent --config /path/to/config.yaml
 │  │           Windows Runbooks (WinRM)             │         │
 │  │     executor.py │ runbooks.py (7 runbooks)    │         │
 │  └───────────────────────────────────────────────┘         │
+│                          │                                   │
+│  ┌───────────────────────▼───────────────────────┐         │
+│  │           Provisioning (First Boot)            │         │
+│  │    provisioning.py │ QR code │ config.yaml    │         │
+│  └───────────────────────────────────────────────┘         │
 └─────────────────────────────────────────────────────────────┘
                            │
             ┌──────────────┼──────────────┐
@@ -122,6 +127,7 @@ The agent implements an intelligent three-tier incident resolution system:
 | `mcp_client.py` | MCP server communication (mTLS) |
 | `offline_queue.py` | SQLite WAL queue for offline operation |
 | `crypto.py` | Ed25519 signature verification |
+| `provisioning.py` | First-boot QR/code provisioning |
 | `config.py` | Configuration management (27 options) |
 | `models.py` | Pydantic data models |
 | `utils.py` | Utility functions |

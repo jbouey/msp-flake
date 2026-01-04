@@ -1,7 +1,7 @@
 # MSP HIPAA Compliance Platform - Documentation Index
 
-**Last Updated:** November 1, 2025
-**Platform Version:** Week 5 (Evidence Pipeline Implementation)
+**Last Updated:** 2026-01-04 (Session 8)
+**Platform Version:** Phase 11 (Partner/Reseller Infrastructure Complete)
 
 ---
 
@@ -10,6 +10,10 @@
 **For Operators:**
 - [📋 Manual Operations Checklist](operations/MANUAL_OPERATIONS_CHECKLIST.md) - **START HERE**
 - [⚡ Quick Reference Card](operations/OPERATOR_QUICK_REFERENCE.md) - Print and keep handy
+
+**For Partners/Resellers:**
+- [🤝 Partner Infrastructure](partner/README.md) - Partner API, provisioning, revenue model
+- [📱 Provisioning Module](partner/PROVISIONING.md) - Appliance first-boot setup
 
 **For Implementation:**
 - [📝 Implementation Progress](#implementation-progress)
@@ -20,31 +24,48 @@
 - [📊 HIPAA Control Mapping](#hipaa-compliance)
 - [🔐 Evidence Bundle Format](#evidence-bundles)
 
+**For Architecture:**
+- [🏗️ System Architecture](ARCHITECTURE.md) - Overall system design
+- [🔍 Network Discovery](DISCOVERY.md) - Asset discovery and classification
+- [📊 Dashboards](DASHBOARDS.md) - Dashboard components
+- [📐 Diagrams](diagrams/README.md) - Mermaid diagrams
+
 ---
 
 ## Implementation Progress
 
-### Week 5: Evidence Pipeline (Current)
+### Phase 11: Partner/Reseller Infrastructure (Current - Complete)
 
-| Day | Status | Documentation |
-|-----|--------|---------------|
-| Day 1 | ✅ Complete | [WEEK_5_DAY_1_COMPLETE.md](implementation/WEEK_5_DAY_1_COMPLETE.md) |
-| Day 2 | ✅ Complete | [WEEK_5_DAY_2_COMPLETE.md](implementation/WEEK_5_DAY_2_COMPLETE.md) |
-| Day 3 | ✅ Complete | [WEEK_5_DAY_3_COMPLETE.md](implementation/WEEK_5_DAY_3_COMPLETE.md) |
-| Day 4 | ✅ Complete | [WEEK_5_DAY_4_COMPLETE.md](implementation/WEEK_5_DAY_4_COMPLETE.md) |
-| Day 5 | 🔄 In Progress | End-to-End Testing |
+| Component | Status | Documentation |
+|-----------|--------|---------------|
+| Partner Database Schema | ✅ Complete | [Migration 003](../mcp-server/central-command/backend/migrations/003_partner_infrastructure.sql) |
+| Discovery Schema | ✅ Complete | [Migration 004](../mcp-server/central-command/backend/migrations/004_discovery_and_credentials.sql) |
+| Partner API | ✅ Complete | [partners.py](../mcp-server/central-command/backend/partners.py) |
+| Discovery API | ✅ Complete | [discovery.py](../mcp-server/central-command/backend/discovery.py) |
+| Provisioning API | ✅ Complete | [provisioning.py](../mcp-server/central-command/backend/provisioning.py) |
+| QR Code Generation | ✅ Complete | Integrated in partners.py |
+| Partner Dashboard | ✅ Complete | [frontend/src/partner/](../mcp-server/central-command/frontend/src/partner/) |
+| Agent Provisioning | ✅ Complete | [provisioning.py](../packages/compliance-agent/src/compliance_agent/provisioning.py) |
+| ISO v15 | ✅ Deployed | Physical appliance at 192.168.88.246 |
 
-**Completed Components:**
-- ✅ Evidence Bundler (`bundler.py`)
-- ✅ Cryptographic Signer (`signer.py`) with cosign v3
-- ✅ JSON Schema Validation (`evidence-bundle-v1.schema.json`)
-- ✅ Integration Pipeline (`pipeline.py`)
-- ✅ Configuration Management (`config.py`)
-- ✅ Integration Test Suite (`test_integration.py`) - 5/5 passing
-- ✅ WORM Storage Uploader (`uploader.py`) with S3 Object Lock
-- ✅ Terraform WORM Storage Module (`terraform/modules/worm-storage/`)
-- ✅ MCP Executor (`executor.py`) - Runbook execution engine
-- ✅ Core Runbook Library (6 runbooks)
+### Phase 10: Production Deployment (Complete)
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| VPS Deployment | ✅ Complete | 178.156.162.116 (Hetzner) |
+| TLS via Caddy | ✅ Complete | Auto-certs for all domains |
+| PostgreSQL | ✅ Complete | Running in Docker |
+| MinIO WORM | ✅ Complete | Evidence storage |
+| Client Portal | ✅ Complete | Magic-link auth |
+| Physical Appliance | ✅ Complete | HP T640, ISO v15 |
+
+### Earlier Phases (Complete)
+
+- ✅ Evidence Pipeline (Phase 5)
+- ✅ Learning Loop Infrastructure (Phase 9)
+- ✅ Three-Tier Auto-Healing (L1/L2/L3)
+- ✅ Windows Compliance Collection (7 runbooks)
+- ✅ Hash-Chain Evidence System
 
 ---
 

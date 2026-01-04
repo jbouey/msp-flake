@@ -1,6 +1,6 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2025-12-31
+**Last Updated:** 2026-01-04 (Session 8)
 
 ## Overview
 
@@ -107,6 +107,43 @@ MSP-PLATFORM/
 │   └── clients/
 └── docs/                    # This directory
 ```
+
+## Partner/Reseller Infrastructure
+
+Partners (MSPs) can white-label the platform and provision their own clients:
+
+```
+┌─────────────────┐     Create       ┌─────────────────┐
+│  Partner        │ ───────────────▶ │  Provision      │
+│  Dashboard      │   Provision Code │  Code + QR      │
+└─────────────────┘                  └────────┬────────┘
+                                              │
+                                              ▼
+┌─────────────────┐     Scan QR      ┌─────────────────┐
+│  Physical       │ ───────────────▶ │  POST           │
+│  Appliance      │   or enter code  │  /api/provision │
+│  (First Boot)   │                  │  /claim         │
+└─────────────────┘                  └────────┬────────┘
+                                              │
+                                              ▼
+                                     ┌─────────────────┐
+                                     │  Creates:       │
+                                     │  - Site record  │
+                                     │  - Appliance ID │
+                                     │  - config.yaml  │
+                                     └─────────────────┘
+```
+
+### Partner API Modules
+
+| Module | Purpose |
+|--------|---------|
+| `partners.py` | Partner management, QR code generation |
+| `discovery.py` | Network discovery, asset classification |
+| `provisioning.py` | Appliance first-boot provisioning |
+| `portal.py` | Client portal with magic link auth |
+
+See [Partner Documentation](partner/README.md) for complete API reference.
 
 ## Technical Stack
 
