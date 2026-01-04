@@ -1238,6 +1238,234 @@ ssh root@178.156.162.116 "RESTIC_REPOSITORY='sftp:storagebox:/backups' \\
                 <strong>Location:</strong> Hetzner FSN1 (Falkenstein, Germany)
               </p>
             </div>
+
+            <h4 className="font-semibold mt-6">Hetzner Cloud Snapshots</h4>
+            <div className="p-4 bg-accent-primary/10 border-l-4 border-accent-primary rounded-r-ios mb-4">
+              <p className="text-sm font-medium">Full server disk images for bare-metal recovery.</p>
+              <p className="text-xs text-label-tertiary mt-1">Weekly snapshots complement Restic backups for complete disaster recovery.</p>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <div className="p-3 bg-fill-secondary rounded-ios text-center">
+                <div className="text-accent-primary font-bold">Weekly</div>
+                <div className="text-xs text-label-tertiary">Frequency</div>
+              </div>
+              <div className="p-3 bg-fill-secondary rounded-ios text-center">
+                <div className="text-accent-primary font-bold">4</div>
+                <div className="text-xs text-label-tertiary">Retention</div>
+              </div>
+              <div className="p-3 bg-fill-secondary rounded-ios text-center">
+                <div className="text-accent-primary font-bold">~75 GB</div>
+                <div className="text-xs text-label-tertiary">Per Snapshot</div>
+              </div>
+              <div className="p-3 bg-fill-secondary rounded-ios text-center">
+                <div className="text-accent-primary font-bold">~$4/mo</div>
+                <div className="text-xs text-label-tertiary">Est. Cost</div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# Check snapshot status
+curl https://api.osiriscare.net/api/snapshot/status
+
+# Manual snapshot
+ssh root@178.156.162.116 "/opt/backups/scripts/hetzner-snapshot.sh"
+
+# List snapshots via hcloud
+ssh root@178.156.162.116 "export HCLOUD_TOKEN=\\$(cat /root/.hcloud-token) && hcloud image list --type snapshot"
+
+# Restore from snapshot (Hetzner Console)
+# Servers → mcp-osiriscare-net → Rebuild → Select snapshot`}</pre>
+            </div>
+
+            <div className="p-4 bg-fill-secondary rounded-ios mt-4">
+              <p className="text-sm text-label-secondary">
+                <strong>Schedule:</strong> Sundays 04:00 UTC (after Restic integrity check)<br />
+                <strong>Token:</strong> /root/.hcloud-token (600 permissions)<br />
+                <strong>Script:</strong> /opt/backups/scripts/hetzner-snapshot.sh
+              </p>
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: 'disaster-recovery-sop',
+        title: 'SOP: Disaster Recovery Runbook',
+        content: (
+          <div className="space-y-4">
+            <div className="p-4 bg-health-critical/10 border-l-4 border-health-critical rounded-r-ios">
+              <p className="text-sm font-medium">Complete VPS recovery procedure for Central Command.</p>
+              <p className="text-xs text-label-tertiary mt-1">Target RTO: 30 minutes | RPO: 1 hour (Restic) or 1 week (Snapshot)</p>
+            </div>
+
+            <h4 className="font-semibold">Phase 1: Assess (2 min)</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios">
+              <ul className="space-y-2 text-sm text-label-secondary">
+                <li className="flex items-start gap-2">
+                  <span className="text-accent-primary">1.</span>
+                  <span>Check if VPS is responding: <code className="bg-gray-900 px-1 rounded">ssh root@178.156.162.116</code></span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-accent-primary">2.</span>
+                  <span>Check Hetzner status: <a href="https://status.hetzner.com" className="text-accent-primary underline">status.hetzner.com</a></span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-accent-primary">3.</span>
+                  <span>Determine: Network issue? Server crash? Data corruption?</span>
+                </li>
+              </ul>
+            </div>
+
+            <h4 className="font-semibold mt-6">Phase 2: Decide Recovery Path</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <h5 className="font-semibold text-accent-primary">Option A: Restic Restore</h5>
+                <p className="text-xs text-label-secondary mt-1">Server alive, data corrupted</p>
+                <p className="text-xs text-label-tertiary mt-2">RPO: ~1 hour | Time: 10-15 min</p>
+              </div>
+              <div className="p-4 bg-fill-secondary rounded-ios">
+                <h5 className="font-semibold text-accent-primary">Option B: Snapshot Rebuild</h5>
+                <p className="text-xs text-label-secondary mt-1">Server dead, need new instance</p>
+                <p className="text-xs text-label-tertiary mt-2">RPO: ~1 week | Time: 15-20 min</p>
+              </div>
+            </div>
+
+            <h4 className="font-semibold mt-6">Option A: Restic Restore (Server Alive)</h4>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# SSH to the server
+ssh root@178.156.162.116
+
+# List available snapshots
+/opt/backups/scripts/restore.sh --list
+
+# Run interactive restore
+/opt/backups/scripts/restore.sh
+
+# Or specify snapshot ID directly
+/opt/backups/scripts/restore.sh latest
+
+# Verify services
+docker compose ps
+curl http://localhost:8000/health`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">Option B: Hetzner Snapshot Rebuild (Server Dead)</h4>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# Step 1: Create new server from snapshot
+# Hetzner Console → Servers → Create Server
+# - Location: ash-dc1 (or any available)
+# - Type: CPX31 (or better)
+# - Image: Snapshots → osiriscare-weekly-YYYY-MM-DD
+# - SSH Key: Select your key
+# - Create
+
+# Note the NEW IP address
+NEW_IP="xxx.xxx.xxx.xxx"
+
+# Step 2: SSH to new server
+ssh root@$NEW_IP
+
+# Step 3: Restore latest database from Restic
+/opt/backups/scripts/restore.sh latest
+
+# Step 4: Verify services
+docker compose ps
+curl http://localhost:8000/health`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">Phase 3: Update DNS (if IP changed)</h4>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# Cloudflare Dashboard (recommended)
+# 1. Login to Cloudflare
+# 2. Select osiriscare.net
+# 3. DNS → Update A records:
+#    - api.osiriscare.net → NEW_IP
+#    - dashboard.osiriscare.net → NEW_IP
+
+# Wait for propagation (usually 1-5 min with Cloudflare)
+
+# Verify DNS
+dig api.osiriscare.net +short`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">Phase 4: Verify & Monitor</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios">
+              <ul className="space-y-2 text-sm text-label-secondary">
+                <li className="flex items-center gap-2">
+                  <input type="checkbox" className="rounded" />
+                  <span>API responding: <code className="bg-gray-900 px-1 rounded">curl https://api.osiriscare.net/health</code></span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <input type="checkbox" className="rounded" />
+                  <span>Dashboard accessible: <code className="bg-gray-900 px-1 rounded">https://dashboard.osiriscare.net</code></span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <input type="checkbox" className="rounded" />
+                  <span>Appliances checking in: <code className="bg-gray-900 px-1 rounded">docker compose logs -f mcp-server | grep checkin</code></span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <input type="checkbox" className="rounded" />
+                  <span>Portal links working (test magic link login)</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <input type="checkbox" className="rounded" />
+                  <span>Backup timers running: <code className="bg-gray-900 px-1 rounded">systemctl list-timers | grep osiris</code></span>
+                </li>
+              </ul>
+            </div>
+
+            <h4 className="font-semibold mt-6">Credentials Reference</h4>
+            <div className="p-4 bg-health-warning/10 border-l-4 border-health-warning rounded-r-ios">
+              <p className="text-sm text-label-secondary">
+                <strong>VPS:</strong> root@178.156.162.116 (SSH key auth)<br />
+                <strong>Storage Box:</strong> u526501.your-storagebox.de:23<br />
+                <strong>Restic Password:</strong> /root/.restic-password<br />
+                <strong>Hetzner Token:</strong> /root/.hcloud-token<br />
+                <strong>Hetzner Console:</strong> console.hetzner.cloud (credentials in password manager)<br />
+                <strong>Cloudflare:</strong> dash.cloudflare.com (credentials in password manager)
+              </p>
+            </div>
+
+            <h4 className="font-semibold mt-6">Backup Schedule Summary</h4>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-separator-light">
+                    <th className="text-left py-2 px-3">Time (UTC)</th>
+                    <th className="text-left py-2 px-3">Day</th>
+                    <th className="text-left py-2 px-3">Task</th>
+                    <th className="text-left py-2 px-3">RPO</th>
+                  </tr>
+                </thead>
+                <tbody className="text-label-secondary">
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3">XX:01</td>
+                    <td className="py-2 px-3">Hourly</td>
+                    <td className="py-2 px-3">Restic backup to Storage Box</td>
+                    <td className="py-2 px-3 text-health-good">1 hour</td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3">03:00</td>
+                    <td className="py-2 px-3">Sunday</td>
+                    <td className="py-2 px-3">Restic integrity check</td>
+                    <td className="py-2 px-3">-</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-3">04:00</td>
+                    <td className="py-2 px-3">Sunday</td>
+                    <td className="py-2 px-3">Hetzner Cloud snapshot</td>
+                    <td className="py-2 px-3 text-health-warning">1 week</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="p-4 bg-fill-secondary rounded-ios mt-4">
+              <h5 className="font-semibold text-sm">Total Backup Cost</h5>
+              <p className="text-sm text-label-secondary mt-1">
+                Storage Box (1TB): ~$4/mo + Hetzner Snapshots (~300GB): ~$4/mo = <strong>~$8.50/mo</strong>
+              </p>
+            </div>
           </div>
         ),
       },
