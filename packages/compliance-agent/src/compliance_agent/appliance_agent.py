@@ -24,6 +24,7 @@ import logging
 import signal
 import subprocess
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -37,7 +38,16 @@ from .appliance_client import (
     get_uptime_seconds,
     get_nixos_version,
 )
+from .crypto import Ed25519Signer, ensure_signing_key
 from .runbooks.windows.executor import WindowsTarget
+
+# Three-tier healing imports
+from .incident_db import IncidentDatabase, Incident
+from .auto_healer import AutoHealer
+from .level1_deterministic import DeterministicEngine
+from .level2_llm import Level2Planner, LLMConfig, LLMMode
+from .level3_escalation import EscalationHandler, EscalationConfig
+from .learning_loop import SelfLearningSystem, PromotionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +221,16 @@ class ApplianceAgent:
         self._rules_sync_interval = 3600  # Sync rules every hour
         self._windows_scan_interval = 300  # Scan Windows every 5 minutes
 
+        # Three-tier healing components
+        self.auto_healer: Optional[AutoHealer] = None
+        self.incident_db: Optional[IncidentDatabase] = None
+        self._healing_enabled = getattr(config, 'healing_enabled', True)
+        self._healing_dry_run = getattr(config, 'healing_dry_run', True)
+
+        # Evidence signing
+        self.signer: Optional[Ed25519Signer] = None
+        self._signing_key_path = config.state_dir / "signing.key"
+
         # Initialize Windows targets from config
         for target_cfg in config.windows_targets:
             try:
@@ -249,6 +269,18 @@ class ApplianceAgent:
 
         self.running = True
 
+        # Initialize Ed25519 signing key (generate if not exists)
+        try:
+            was_generated, public_key_hex = ensure_signing_key(self._signing_key_path)
+            self.signer = Ed25519Signer(self._signing_key_path)
+            if was_generated:
+                logger.info(f"Generated new signing key, public key: {public_key_hex[:16]}...")
+            else:
+                logger.info(f"Loaded signing key, public key: {public_key_hex[:16]}...")
+        except Exception as e:
+            logger.warning(f"Failed to initialize signing key: {e}")
+            self.signer = None
+
         # Initialize drift checker if enabled
         if self.config.enable_drift_detection:
             try:
@@ -256,6 +288,16 @@ class ApplianceAgent:
                 logger.info("Drift detection enabled")
             except Exception as e:
                 logger.warning(f"Failed to initialize drift checker: {e}")
+
+        # Initialize three-tier healing system
+        if self._healing_enabled:
+            try:
+                await self._init_healing_system()
+                mode = "DRY-RUN" if self._healing_dry_run else "ACTIVE"
+                logger.info(f"Three-tier healing enabled ({mode})")
+            except Exception as e:
+                logger.warning(f"Failed to initialize healing system: {e}")
+                self.auto_healer = None
 
         # Initial delay to let network settle
         await asyncio.sleep(5)
@@ -353,6 +395,9 @@ class ApplianceAgent:
             }
 
             for check_name, check_result in results.items():
+                # Attempt healing if drift detected
+                healing_result = await self._handle_drift_healing(check_name, check_result)
+
                 if not self.config.enable_evidence_upload:
                     continue
 
@@ -366,9 +411,29 @@ class ApplianceAgent:
                     "agent_version": VERSION,
                 }
 
-                bundle_hash = hashlib.sha256(
-                    json.dumps(evidence_data, sort_keys=True).encode()
-                ).hexdigest()
+                # Add healing outcome to evidence if healing was attempted
+                if healing_result:
+                    evidence_data["healing"] = {
+                        "attempted": True,
+                        "incident_id": healing_result.get("incident_id"),
+                        "resolution_level": healing_result.get("resolution_level"),
+                        "action_taken": healing_result.get("action_taken"),
+                        "success": healing_result.get("success"),
+                        "dry_run": self._healing_dry_run,
+                    }
+
+                # Compute hash and sign the evidence data
+                evidence_json = json.dumps(evidence_data, sort_keys=True)
+                bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
+
+                # Sign the bundle if signer is available
+                agent_signature = None
+                if self.signer:
+                    try:
+                        signature_bytes = self.signer.sign(evidence_json)
+                        agent_signature = signature_bytes.hex()
+                    except Exception as e:
+                        logger.warning(f"Failed to sign evidence bundle: {e}")
 
                 # Upload to Central Command
                 bundle_id = await self.client.submit_evidence(
@@ -376,20 +441,26 @@ class ApplianceAgent:
                     check_type=check_name,
                     check_result=check_result.get("status", "unknown"),
                     evidence_data=evidence_data,
-                    hipaa_control=hipaa_controls.get(check_name)
+                    hipaa_control=hipaa_controls.get(check_name),
+                    agent_signature=agent_signature
                 )
 
                 if bundle_id:
-                    logger.debug(f"Evidence uploaded: {check_name} -> {bundle_id}")
+                    logger.debug(f"Evidence uploaded: {check_name} -> {bundle_id} (signed={agent_signature is not None})")
 
-                    # Store locally as well
-                    await self._store_local_evidence(bundle_id, evidence_data)
+                    # Store locally as well (with signature)
+                    await self._store_local_evidence(bundle_id, evidence_data, agent_signature)
 
         except Exception as e:
             logger.error(f"Drift detection failed: {e}")
 
-    async def _store_local_evidence(self, bundle_id: str, evidence_data: dict):
-        """Store evidence bundle locally."""
+    async def _store_local_evidence(
+        self,
+        bundle_id: str,
+        evidence_data: dict,
+        agent_signature: Optional[str] = None
+    ):
+        """Store evidence bundle locally with optional signature."""
         try:
             date = datetime.now(timezone.utc)
             bundle_dir = (
@@ -403,12 +474,336 @@ class ApplianceAgent:
 
             bundle_path = bundle_dir / "bundle.json"
             with open(bundle_path, 'w') as f:
-                json.dump(evidence_data, f, indent=2)
+                json.dump(evidence_data, f, indent=2, sort_keys=True)
 
-            logger.debug(f"Local evidence stored: {bundle_path}")
+            # Store signature if present
+            if agent_signature:
+                sig_path = bundle_dir / "bundle.sig"
+                sig_path.write_text(agent_signature)
+                logger.debug(f"Local evidence stored: {bundle_path} (with signature)")
+            else:
+                logger.debug(f"Local evidence stored: {bundle_path}")
 
         except Exception as e:
             logger.warning(f"Failed to store local evidence: {e}")
+
+    # =========================================================================
+    # Three-Tier Healing System
+    # =========================================================================
+
+    async def _init_healing_system(self):
+        """Initialize the three-tier auto-healing system."""
+        # Initialize incident database
+        incidents_db_path = self.config.state_dir / "incidents.db"
+        self.incident_db = IncidentDatabase(db_path=str(incidents_db_path))
+
+        # Initialize L1 deterministic engine
+        l1_engine = DeterministicEngine(
+            rules_dir=self.config.rules_dir,
+            incident_db=self.incident_db,
+            action_executor=self._execute_healing_action
+        )
+
+        # Initialize L2 planner (disabled by default - no API key)
+        l2_config = LLMConfig(
+            mode=LLMMode.HYBRID,
+            enabled=False  # Requires API key
+        )
+        l2_planner = Level2Planner(
+            config=l2_config,
+            incident_db=self.incident_db,
+            action_executor=self._execute_healing_action
+        )
+
+        # Initialize L3 escalation handler
+        l3_config = EscalationConfig(
+            webhook_enabled=True,
+            webhook_url=f"{self.config.api_endpoint}/api/escalations"
+        )
+        l3_handler = EscalationHandler(
+            config=l3_config,
+            incident_db=self.incident_db
+        )
+
+        # Initialize learning loop (data flywheel)
+        promotion_config = PromotionConfig(
+            auto_promote=False,  # Require human approval
+            min_occurrences=5,
+            min_success_rate=0.9
+        )
+        learning_loop = SelfLearningSystem(
+            incident_db=self.incident_db,
+            config=promotion_config
+        )
+
+        # Create AutoHealer orchestrator
+        self.auto_healer = AutoHealer(
+            incident_db=self.incident_db,
+            l1_engine=l1_engine,
+            l2_planner=l2_planner,
+            l3_handler=l3_handler,
+            learning_loop=learning_loop,
+            action_executor=self._execute_healing_action,
+            dry_run=self._healing_dry_run
+        )
+
+        logger.info(f"Healing system initialized (L1 rules from {self.config.rules_dir})")
+
+    async def _execute_healing_action(
+        self,
+        action: str,
+        params: Dict[str, Any],
+        incident: Optional[Incident] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a healing action.
+
+        This is the action executor passed to all healing tiers.
+        In dry-run mode, just logs the action without executing.
+        """
+        if self._healing_dry_run:
+            logger.info(f"[DRY-RUN] Would execute: {action} with params: {params}")
+            return {
+                "dry_run": True,
+                "action": action,
+                "params": params,
+                "status": "simulated_success"
+            }
+
+        # Map action types to handlers
+        action_handlers = {
+            "restart_service": self._heal_restart_service,
+            "run_command": self._heal_run_command,
+            "run_windows_runbook": self._heal_run_windows_runbook,
+            "escalate": self._heal_escalate,
+        }
+
+        handler = action_handlers.get(action)
+        if handler:
+            return await handler(params, incident)
+        else:
+            logger.warning(f"Unknown healing action: {action}")
+            return {"error": f"Unknown action: {action}"}
+
+    async def _heal_restart_service(
+        self, params: Dict[str, Any], incident: Optional[Incident]
+    ) -> Dict[str, Any]:
+        """Restart a systemd service."""
+        service_name = params.get("service_name")
+        if not service_name:
+            return {"error": "service_name required"}
+
+        code, stdout, stderr = await run_command(
+            f"systemctl restart {service_name}",
+            timeout=30
+        )
+
+        success = code == 0
+        logger.info(f"Restarted service {service_name}: {'OK' if success else 'FAILED'}")
+
+        return {
+            "action": "restart_service",
+            "service": service_name,
+            "success": success,
+            "stdout": stdout,
+            "stderr": stderr
+        }
+
+    async def _heal_run_command(
+        self, params: Dict[str, Any], incident: Optional[Incident]
+    ) -> Dict[str, Any]:
+        """Run a shell command for healing."""
+        command = params.get("command")
+        timeout = params.get("timeout", 30)
+
+        if not command:
+            return {"error": "command required"}
+
+        code, stdout, stderr = await run_command(command, timeout=timeout)
+        success = code == 0
+
+        return {
+            "action": "run_command",
+            "command": command,
+            "success": success,
+            "exit_code": code,
+            "stdout": stdout[:1000],  # Truncate
+            "stderr": stderr[:500]
+        }
+
+    async def _heal_run_windows_runbook(
+        self, params: Dict[str, Any], incident: Optional[Incident]
+    ) -> Dict[str, Any]:
+        """Execute a Windows runbook via WinRM."""
+        runbook_id = params.get("runbook_id")
+        target_host = params.get("target_host")
+        phases = params.get("phases", ["remediate", "verify"])
+
+        if not runbook_id:
+            return {"error": "runbook_id required"}
+
+        # Find target - use first Windows target if not specified
+        target = None
+        if target_host:
+            for t in self.windows_targets:
+                if t.hostname == target_host:
+                    target = t
+                    break
+        elif self.windows_targets:
+            target = self.windows_targets[0]
+
+        if not target:
+            return {"error": "No Windows target available"}
+
+        # Import and execute runbook
+        try:
+            from .runbooks.windows.executor import WindowsRunbookExecutor
+            from .runbooks.windows import runbooks as rb
+
+            # Get runbook definition
+            runbook_map = {
+                "RB-WIN-AV-001": rb.RUNBOOK_WIN_AV,
+                "RB-WIN-LOGGING-001": rb.RUNBOOK_WIN_LOGGING,
+                "RB-WIN-FIREWALL-001": rb.RUNBOOK_WIN_FIREWALL,
+                "RB-WIN-PATCH-001": rb.RUNBOOK_WIN_PATCH,
+                "RB-WIN-BACKUP-001": rb.RUNBOOK_WIN_BACKUP,
+                "RB-WIN-ENCRYPTION-001": rb.RUNBOOK_WIN_ENCRYPTION,
+                "RB-WIN-AD-001": rb.RUNBOOK_WIN_AD_HEALTH,
+            }
+
+            runbook = runbook_map.get(runbook_id)
+            if not runbook:
+                return {"error": f"Unknown runbook: {runbook_id}"}
+
+            executor = WindowsRunbookExecutor(target)
+            result = await executor.execute(runbook, phases=phases)
+
+            return {
+                "action": "run_windows_runbook",
+                "runbook_id": runbook_id,
+                "target": target.hostname,
+                "phases": phases,
+                "success": result.get("success", False),
+                "result": result
+            }
+
+        except ImportError as e:
+            return {"error": f"Windows executor not available: {e}"}
+        except Exception as e:
+            logger.error(f"Windows runbook execution failed: {e}")
+            return {"error": str(e)}
+
+    async def _heal_escalate(
+        self, params: Dict[str, Any], incident: Optional[Incident]
+    ) -> Dict[str, Any]:
+        """Escalate to L3 (human intervention)."""
+        reason = params.get("reason", "Escalation required")
+        urgency = params.get("urgency", "medium")
+
+        # Send to Central Command escalation endpoint
+        try:
+            escalation_data = {
+                "incident_id": incident.id if incident else "unknown",
+                "incident_type": incident.incident_type if incident else "unknown",
+                "reason": reason,
+                "urgency": urgency,
+                "site_id": self.config.site_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+
+            # Use the client to post escalation
+            await self.client._request(
+                "POST",
+                "/api/escalations",
+                json=escalation_data
+            )
+
+            logger.info(f"Escalated to L3: {reason}")
+            return {"action": "escalate", "success": True, "reason": reason}
+
+        except Exception as e:
+            logger.error(f"Escalation failed: {e}")
+            return {"action": "escalate", "success": False, "error": str(e)}
+
+    async def _handle_drift_healing(
+        self,
+        check_name: str,
+        check_result: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Convert drift detection result to incident and handle via AutoHealer.
+
+        Returns healing result if healing was attempted, None otherwise.
+        """
+        if not self.auto_healer:
+            return None
+
+        # Only heal on failures
+        status = check_result.get("status", "pass")
+        if status == "pass":
+            return None
+
+        # Determine severity based on status
+        severity_map = {
+            "fail": "high",
+            "warning": "medium",
+            "error": "critical"
+        }
+        severity = severity_map.get(status, "low")
+
+        # Create incident from drift
+        incident = Incident(
+            id=f"INC-{uuid.uuid4().hex[:12]}",
+            incident_type=check_name,
+            severity=severity,
+            site_id=self.config.site_id,
+            host_id=get_hostname(),
+            raw_data={
+                "check_type": check_name,
+                "drift_detected": True,
+                "status": status,
+                "platform": "nixos",  # or "windows" for Windows checks
+                **check_result.get("details", {})
+            },
+            created_at=datetime.now(timezone.utc).isoformat(),
+            pattern_signature=hashlib.sha256(
+                f"{check_name}:{status}:{json.dumps(check_result.get('details', {}), sort_keys=True)}".encode()
+            ).hexdigest()[:16]
+        )
+
+        # Record incident
+        self.incident_db.record_incident(incident)
+
+        # Handle through three-tier system
+        try:
+            result = await self.auto_healer.handle_incident(incident)
+
+            # Log the outcome
+            if result.success:
+                logger.info(
+                    f"Healing {check_name}: {result.resolution_level} → {result.action_taken} (SUCCESS)"
+                )
+            else:
+                logger.warning(
+                    f"Healing {check_name}: {result.resolution_level} → {result.action_taken} (FAILED: {result.error})"
+                )
+
+            return {
+                "incident_id": incident.id,
+                "resolution_level": result.resolution_level,
+                "action_taken": result.action_taken,
+                "success": result.success,
+                "duration_ms": result.duration_ms,
+                "error": result.error
+            }
+
+        except Exception as e:
+            logger.error(f"Healing failed for {check_name}: {e}")
+            return {
+                "incident_id": incident.id,
+                "error": str(e),
+                "success": False
+            }
 
     async def _maybe_sync_rules(self):
         """Sync L1 rules if enough time has passed."""
@@ -496,9 +891,17 @@ class ApplianceAgent:
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
 
-                    bundle_hash = hashlib.sha256(
-                        json.dumps(evidence_data, sort_keys=True).encode()
-                    ).hexdigest()
+                    evidence_json = json.dumps(evidence_data, sort_keys=True)
+                    bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
+
+                    # Sign if signer available
+                    agent_signature = None
+                    if self.signer:
+                        try:
+                            signature_bytes = self.signer.sign(evidence_json)
+                            agent_signature = signature_bytes.hex()
+                        except Exception as e:
+                            logger.warning(f"Failed to sign Windows evidence: {e}")
 
                     await self.client.submit_evidence(
                         bundle_hash=bundle_hash,
@@ -506,7 +909,8 @@ class ApplianceAgent:
                         check_result=status,
                         evidence_data=evidence_data,
                         host=target.hostname,
-                        hipaa_control="164.312(b)"  # Audit controls
+                        hipaa_control="164.312(b)",  # Audit controls
+                        agent_signature=agent_signature
                     )
 
                     logger.debug(f"Windows check {check_name} on {target.hostname}: {status}")
@@ -710,12 +1114,52 @@ Environment="PYTHONPATH={overlay_dir}"
 
 def main():
     """Main entry point for appliance agent."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="OsirisCare Compliance Agent")
+    parser.add_argument('--provision', metavar='CODE',
+                        help='Provision appliance with code')
+    parser.add_argument('--provision-interactive', action='store_true',
+                        help='Run interactive provisioning')
+    args = parser.parse_args()
+
+    # Check for provisioning mode
+    from .provisioning import needs_provisioning, run_provisioning_cli, run_provisioning_auto
+
+    # Handle explicit provisioning arguments
+    if args.provision:
+        if run_provisioning_auto(args.provision):
+            print("Provisioning complete. Restarting agent...")
+            import os
+            os.execv(sys.executable, [sys.executable] + sys.argv[:1])
+        else:
+            sys.exit(1)
+
+    if args.provision_interactive:
+        if run_provisioning_cli():
+            print("Provisioning complete. Restarting agent...")
+            import os
+            os.execv(sys.executable, [sys.executable] + sys.argv[:1])
+        else:
+            sys.exit(1)
+
+    # Auto-detect provisioning mode if config doesn't exist
+    if needs_provisioning():
+        print("\n" + "=" * 60)
+        print("  No configuration found - entering provisioning mode")
+        print("=" * 60 + "\n")
+        if run_provisioning_cli():
+            print("Provisioning complete. Starting agent...\n")
+        else:
+            print("Provisioning cancelled. Agent cannot start without config.")
+            sys.exit(1)
+
     # Load config
     try:
         config = load_appliance_config()
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
-        print("Create /var/lib/msp/config.yaml with site_id and api_key", file=sys.stderr)
+        print("Run with --provision-interactive to provision this appliance", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"ERROR: Invalid config: {e}", file=sys.stderr)

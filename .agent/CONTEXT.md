@@ -99,6 +99,7 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **Partner Admin Page** - Partners.tsx with CRUD
 - ✅ **Provisioning CLI** - `compliance-provision` entry point
 - ✅ **ISO v15** - With provisioning code support (1.1GB, deployed to physical appliance)
+- ✅ **Agent-Side Evidence Signing** - Ed25519 signing on appliance before upload
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
