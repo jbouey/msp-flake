@@ -1,6 +1,6 @@
 # Appliance Provisioning Module
 
-**Last Updated:** 2026-01-04 (Session 8)
+**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
 
 ## Locations
 
@@ -243,3 +243,81 @@ def main():
 | `/var/lib/msp/` | State directory |
 
 File permissions: `0600` (owner read/write only)
+
+## Credential-Pull Architecture
+
+**Added in Session 9 (2026-01-04)**
+
+After provisioning, appliances receive Windows target credentials via the check-in API rather than storing them locally. This follows the RMM industry pattern (Datto, ConnectWise, NinjaRMM).
+
+### How It Works
+
+1. **Partner adds credentials** via `/api/partners/me/sites/{site_id}/credentials`
+2. **Appliance checks in** every 60 seconds via `/api/appliances/checkin`
+3. **Server returns** `windows_targets` array in the check-in response
+4. **Agent updates** in-memory targets via `_update_windows_targets_from_response()`
+5. **Compliance checks** run using the freshly fetched credentials
+
+### Credential Storage
+
+Credentials are stored in the `site_credentials` table on Central Command:
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `site_id` | varchar | Site association |
+| `credential_type` | varchar | Type: `winrm`, `domain_admin`, `service_account`, `local_admin` |
+| `credential_name` | varchar | Display name |
+| `encrypted_data` | bytea | JSON with host, username, password, domain, use_ssl |
+| `created_at` | timestamp | Creation time |
+
+### Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| **No local storage** | Credentials never touch disk on appliance |
+| **Automatic rotation** | Changes propagate in ~60s (next check-in) |
+| **Stolen device safety** | Compromised appliance doesn't expose credentials |
+| **Audit trail** | All credential access logged server-side |
+
+### Agent-Side Implementation
+
+The `appliance_agent.py` receives and applies credentials each cycle:
+
+```python
+async def _update_windows_targets_from_response(self, response: Dict):
+    """Update Windows targets from server check-in response."""
+    windows_targets = response.get('windows_targets', [])
+
+    for target_cfg in windows_targets:
+        target = WindowsTarget(
+            hostname=target_cfg.get('hostname'),
+            username=target_cfg.get('username'),  # DOMAIN\\user format
+            password=target_cfg.get('password'),
+            use_ssl=target_cfg.get('use_ssl', False),
+            port=5986 if target_cfg.get('use_ssl') else 5985,
+            transport='ntlm',
+        )
+        new_targets.append(target)
+
+    self.windows_targets = new_targets  # Replace, don't cache
+```
+
+### Credential Lifecycle
+
+```
+Partner Dashboard                    Central Command                     Appliance
+      │                                    │                                 │
+      │ POST /api/partners/me/sites/       │                                 │
+      │      {site}/credentials            │                                 │
+      │───────────────────────────────────>│                                 │
+      │                                    │ Store in site_credentials       │
+      │                                    │                                 │
+      │                                    │<─────────────────────────────────│
+      │                                    │  POST /api/appliances/checkin   │
+      │                                    │                                 │
+      │                                    │──────────────────────────────────>
+      │                                    │  { windows_targets: [...] }     │
+      │                                    │                                 │
+      │                                    │                   Apply targets │
+      │                                    │                   Run WinRM     │
+```

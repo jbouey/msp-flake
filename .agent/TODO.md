@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-04 (Session 8 - Agent Evidence Signing Complete)
-**Sprint:** Phase 11 - Partner/Reseller Infrastructure ✅ COMPLETE
+**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
+**Sprint:** Phase 12 - Launch Readiness (Credential-Pull Complete)
 
 ---
 
@@ -343,6 +343,15 @@
   - Evidence bundles now signed locally before upload
   - Server stores `agent_signature` column in compliance_bundles table
   - Provides non-repudiation from source (appliance signs, server verifies)
+- [x] **Credential-Pull Architecture** - 2026-01-04 (Session 9)
+  - Implemented RMM-style credential pull (like Datto, ConnectWise, NinjaRMM)
+  - Server returns `windows_targets` in checkin response with credentials
+  - Agent `_update_windows_targets_from_response()` method in appliance_agent.py
+  - `appliance_client.py` checkin now returns Dict (not bool)
+  - No credentials cached on disk - fetched fresh each cycle
+  - Credential rotation picked up automatically
+  - ISO v16 built with agent v1.0.8 (credential-pull support)
+  - Windows DC (192.168.88.250) connectivity verified via credential-pull
 
 ---
 

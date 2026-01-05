@@ -120,12 +120,13 @@ class CentralCommandClient:
         agent_version: str = VERSION,
         nixos_version: str = "unknown",
         compliance_summary: Optional[Dict] = None
-    ) -> bool:
+    ) -> Optional[Dict]:
         """
         Send phone-home checkin to Central Command.
 
         Returns:
-            True if checkin successful
+            Response dict with orders, windows_targets, etc. if successful.
+            None if checkin failed.
         """
         # Use format expected by /api/appliances/checkin endpoint
         payload = {
@@ -146,10 +147,10 @@ class CentralCommandClient:
 
         if status == 200:
             logger.debug(f"Checkin successful: {self.config.site_id}")
-            return True
+            return response if isinstance(response, dict) else {}
         else:
             logger.warning(f"Checkin failed: {status} - {response}")
-            return False
+            return None
 
     # =========================================================================
     # Evidence Upload
