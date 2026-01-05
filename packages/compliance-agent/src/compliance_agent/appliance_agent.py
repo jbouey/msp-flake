@@ -330,7 +330,7 @@ class ApplianceAgent:
         if self.drift_checker and self.config.enable_drift_detection:
             compliance_summary = await self._get_compliance_summary()
 
-        checkin_ok = await self.client.checkin(
+        checkin_response = await self.client.checkin(
             hostname=get_hostname(),
             mac_address=get_mac_address(),
             ip_addresses=get_ip_addresses(),
@@ -340,8 +340,10 @@ class ApplianceAgent:
             compliance_summary=compliance_summary
         )
 
-        if checkin_ok:
+        if checkin_response is not None:
             logger.debug(f"[{timestamp}] Checkin OK")
+            # Update Windows targets from server response (credential pull)
+            await self._update_windows_targets_from_response(checkin_response)
         else:
             logger.warning(f"[{timestamp}] Checkin failed")
 
@@ -826,6 +828,47 @@ class ApplianceAgent:
 
         except Exception as e:
             logger.warning(f"Rules sync failed: {e}")
+
+    async def _update_windows_targets_from_response(self, response: Dict):
+        """
+        Update Windows targets from server check-in response.
+
+        This enables credential-pull architecture where credentials are fetched
+        fresh from Central Command on each check-in cycle, rather than stored
+        locally. Benefits:
+        - No cached credentials on disk
+        - Credential rotation picked up automatically
+        - Stolen appliance doesn't expose credentials
+        """
+        windows_targets = response.get('windows_targets', [])
+
+        if not windows_targets:
+            return
+
+        # Convert to WindowsTarget objects
+        new_targets = []
+        for target_cfg in windows_targets:
+            hostname = target_cfg.get('hostname')
+            if not hostname:
+                continue  # Skip targets that need discovery
+
+            try:
+                target = WindowsTarget(
+                    hostname=hostname,
+                    username=target_cfg.get('username', ''),
+                    password=target_cfg.get('password', ''),
+                    use_ssl=target_cfg.get('use_ssl', False),
+                    port=5986 if target_cfg.get('use_ssl') else 5985,
+                    transport='ntlm',
+                )
+                new_targets.append(target)
+            except Exception as e:
+                logger.warning(f"Invalid Windows target from server: {e}")
+
+        if new_targets:
+            # Replace targets with server-provided ones
+            self.windows_targets = new_targets
+            logger.info(f"Updated {len(new_targets)} Windows targets from Central Command")
 
     async def _maybe_scan_windows(self):
         """Scan Windows targets if enough time has passed."""

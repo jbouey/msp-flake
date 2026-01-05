@@ -1,6 +1,6 @@
 # Central Command Dashboard
 
-**Last Updated:** 2026-01-04 (Session 8)
+**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
 
 Web-based dashboard for OsirisCare MSP compliance platform. Provides fleet overview, incident tracking, runbook management, learning loop visibility, partner/reseller infrastructure, and onboarding pipeline.
 
@@ -138,6 +138,49 @@ overall = (connectivity.score * 0.4) + (compliance.score * 0.6)
 - `GET /api/portal/auth/validate` - Validate magic link token
 - `GET /api/portal/site/{site_id}` - Get site data for portal
 - `GET /api/portal/site/{site_id}/compliance` - Compliance status
+
+### Appliance Check-in (Credential-Pull)
+- `POST /api/appliances/checkin` - Phone-home with credential-pull
+
+The check-in endpoint implements **RMM-style credential-pull** (like Datto, ConnectWise, NinjaRMM). Appliances receive Windows target credentials on each check-in cycle, eliminating local credential storage.
+
+**Request:**
+```json
+{
+  "site_id": "physical-appliance-pilot-1aea78",
+  "hostname": "osiriscare-appliance",
+  "mac_address": "84:3A:5B:91:B6:61",
+  "ip_addresses": ["192.168.88.246"],
+  "uptime_seconds": 3600,
+  "agent_version": "1.0.8",
+  "nixos_version": "24.05"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "appliance_id": "physical-appliance-pilot-1aea78-84:3A:5B:91:B6:61",
+  "server_time": "2026-01-04T12:00:00Z",
+  "windows_targets": [
+    {
+      "hostname": "192.168.88.250",
+      "username": "NORTHVALLEY\\Administrator",
+      "password": "...",
+      "use_ssl": false
+    }
+  ]
+}
+```
+
+**Credential-Pull Benefits:**
+- **No local credential storage** - Credentials never touch disk on appliance
+- **Automatic rotation** - Credential changes propagate in ~60s (next check-in)
+- **Stolen device safety** - Compromised appliance doesn't expose credentials
+- **Consistent with industry pattern** - Same model as enterprise RMM tools
+
+**Credentials Source:** `site_credentials` table (types: `winrm`, `domain_admin`, `service_account`, `local_admin`)
 
 ## Development
 

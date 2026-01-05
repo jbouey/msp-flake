@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-02 (Session 2)
-**Current Phase:** Phase 10 - Production Deployment + First Physical Appliance
+**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
+**Current Phase:** Phase 12 - Launch Readiness (Credential-Pull Complete)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -198,6 +198,31 @@ Per Master Alignment Brief:
 - ✅ **mDNS Support** - osiriscare-appliance.local hostname resolution
 - 🟡 **First Pilot Client** - Physical appliance deployed, needs full agent
 
+### Phase 11 Deliverables (Complete)
+
+- ✅ **Partner Database Schema** - 7 tables (partners, partner_users, appliance_provisions, partner_invoices, discovered_assets, discovery_scans, site_credentials)
+- ✅ **Partner API Backend** - 20+ endpoints with X-API-Key auth
+- ✅ **Partner Dashboard** - React frontend with branding, sites, provisions
+- ✅ **QR Code Generation** - Provision codes with scannable QR (2 endpoints)
+- ✅ **Discovery Module** - Asset classification, scan management, 70+ port mappings
+- ✅ **Provisioning API** - Claim, validate, status, heartbeat, config endpoints
+- ✅ **Credential Management** - Add, validate, delete with encryption placeholder
+- ✅ **Appliance Provisioning Module** - First-boot config via QR/manual code
+- ✅ **Provisioning Tests** - 19 tests covering full flow
+- ✅ **Partner Documentation** - `docs/partner/` with README and PROVISIONING docs
+
+### Phase 12 Deliverables (In Progress)
+
+- ✅ **Credential-Pull Architecture** - RMM-style credential fetch on check-in (Session 9)
+  - Server `/api/appliances/checkin` returns `windows_targets` with credentials from `site_credentials` table
+  - Agent `_update_windows_targets_from_response()` replaces targets each cycle
+  - No credentials cached on disk - fetched fresh every 60s
+  - Credential rotation picked up automatically
+  - Benefits: stolen appliance doesn't expose credentials, consistent with RMM industry pattern
+- ✅ **ISO v16** - Built with agent v1.0.8 (credential-pull support)
+- ✅ **Windows DC Connectivity** - North Valley DC (192.168.88.250) connected via credential-pull
+- 🟡 **Documentation Updates** - Updating credential management docs for new architecture
+
 ---
 
 ## 🎯 CLAUDE.md Compliance Framework Alignment
@@ -302,7 +327,7 @@ Required fields per CLAUDE.md:
 - ✅ Central Command API: https://api.osiriscare.net
 - ✅ Dashboard: https://dashboard.osiriscare.net
 - ✅ Cachix: Configured locally and in CI
-- ⬜ Legacy VirtualBox VMs: 174.178.63.139 (DEPRECATED)
+- ⬜ Legacy VirtualBox VMs: REMOVED (was 174.178.63.139, no longer in use)
 
 ---
 
@@ -355,7 +380,7 @@ Required fields per CLAUDE.md:
 
 ## 🎯 Current Milestone
 
-**Phase 10: Production Deployment + First Pilot Client**
+**Phase 12: Launch Readiness**
 
 **Target:** Q1 2026
 
@@ -369,8 +394,13 @@ Required fields per CLAUDE.md:
 - [x] Physical appliance deployed (HP T640 at 192.168.88.246)
 - [x] Auto-provisioning API implemented
 - [x] Ed25519 evidence signing implemented
-- [ ] Full compliance-agent deployed (not just phone-home) ← **NEXT**
-- [ ] L1 rules syncing to agent
+- [x] Three-tier healing integration (L1/L2/L3) in agent v1.0.5
+- [x] ISO v13 built with healing agent (on iMac ~/Downloads/)
+- [x] Partner/Reseller infrastructure complete (Phase 11)
+- [x] Credential-pull architecture implemented (Session 9)
+- [x] ISO v16 built with agent v1.0.8 (credential-pull)
+- [x] Windows DC connectivity verified via credential-pull
+- [ ] Flash ISO v16 to USB and deploy to physical appliance ← **NEXT**
 - [ ] Evidence bundles uploading to MinIO
 - [ ] First compliance packet generated
 - [ ] 30-day monitoring period complete
@@ -394,11 +424,11 @@ Required fields per CLAUDE.md:
 - ✅ **Physical appliance: 192.168.88.246 (HP T640 Thin Client)**
 
 **Deployed Sites:**
-| Site ID | Type | IP | Status |
-|---------|------|-----|--------|
-| physical-appliance-pilot-1aea78 | HP T640 | 192.168.88.246 | online |
-| test-appliance-lab-b3c40c | VM | 192.168.88.247 | online |
+| Site ID | Name | Type | IP | Status |
+|---------|------|------|-----|--------|
+| physical-appliance-pilot-1aea78 | North Valley Dental | HP T640 | 192.168.88.246 | online |
+| test-appliance-lab-b3c40c | Main Street Virtualbox Medical | VM | 192.168.88.247 | online |
 
 ---
 
-**Status:** Phase 10 in progress. Physical HP T640 appliance deployed and checking in. Next: deploy full compliance-agent (not just phone-home).
+**Status:** Phase 12 in progress. ISO v16 with credential-pull architecture (agent v1.0.8) built and on iMac. Windows DC connected via credential-pull. Next: flash ISO v16 to USB and deploy to physical appliance (HP T640).

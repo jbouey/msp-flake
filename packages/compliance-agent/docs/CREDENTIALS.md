@@ -1,12 +1,86 @@
 # MSP Compliance Agent - Credentials & Access Reference
 
-**Last Updated:** 2026-01-03
+**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
 **Status:** Production Pilot
 
 ---
 
-> **NOTE:** The VirtualBox VM setup (174.178.63.139) is DEPRECATED.
-> Production uses physical appliances on the NEPA clinic network.
+> **⚠️ DEPRECATED:** The VirtualBox VM setup (174.178.63.139) has been DECOMMISSIONED.
+> That Mac no longer hosts any infrastructure. See sections below marked "DEPRECATED".
+>
+> **Current Production:** VPS at 178.156.162.116 + Physical appliances on clinic networks.
+
+## Credential-Pull Architecture (Session 9)
+
+**Appliances do NOT store Windows credentials locally.** Credentials are fetched from Central Command on each check-in cycle, following the RMM industry pattern (Datto, ConnectWise, NinjaRMM).
+
+### How Credential-Pull Works
+
+```
+Partner Dashboard                    Central Command (VPS)              Appliance
+      │                                    │                                 │
+      │ POST /api/partners/me/sites/       │                                 │
+      │      {site}/credentials            │                                 │
+      │───────────────────────────────────>│                                 │
+      │                                    │ Store in site_credentials       │
+      │                                    │ (encrypted_data bytea)          │
+      │                                    │                                 │
+      │                                    │<─────────────────────────────────│
+      │                                    │  POST /api/appliances/checkin   │
+      │                                    │                                 │
+      │                                    │──────────────────────────────────>
+      │                                    │  { windows_targets: [...] }     │
+      │                                    │                                 │
+      │                                    │              Apply to in-memory │
+      │                                    │              Run WinRM checks   │
+```
+
+### Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| **No local storage** | Credentials never touch disk on appliance |
+| **Automatic rotation** | Changes propagate in ~60s (next check-in) |
+| **Stolen device safety** | Compromised appliance doesn't expose credentials |
+| **Centralized audit** | All credential access logged server-side |
+
+### Where Credentials Are Stored
+
+| Location | Table | Purpose |
+|----------|-------|---------|
+| Central Command (VPS) | `site_credentials` | Master credential storage |
+| Appliance | *(in-memory only)* | Fetched fresh each cycle |
+
+### Adding Credentials
+
+Via Partner API:
+```bash
+curl -X POST "https://api.osiriscare.net/api/partners/me/sites/{site_id}/credentials" \
+  -H "X-API-Key: $PARTNER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "credential_type": "winrm",
+    "credential_name": "Domain Admin",
+    "host": "192.168.88.250",
+    "username": "Administrator",
+    "password": "...",
+    "domain": "NORTHVALLEY",
+    "use_ssl": false
+  }'
+```
+
+Or via direct SQL (admin):
+```sql
+INSERT INTO site_credentials (site_id, credential_type, credential_name, encrypted_data)
+VALUES (
+  'physical-appliance-pilot-1aea78',
+  'winrm',
+  'North Valley DC',
+  '{"host": "192.168.88.250", "username": "Administrator", "password": "...", "domain": "NORTHVALLEY", "use_ssl": false}'::bytea
+);
+```
+
+---
 
 ## Quick Reference - Production (Current)
 
@@ -17,6 +91,23 @@
 | Hetzner VPS | 178.156.162.116 | 22 (SSH) | root | SSH key |
 | Central Command API | api.osiriscare.net | 443 | - | API key |
 | Dashboard | dashboard.osiriscare.net | 443 | - | - |
+| North Valley DC | 192.168.88.250 | 5985 (WinRM) | NORTHVALLEY\\Administrator | *via credential-pull* |
+
+### North Valley Lab (Pilot Client)
+
+The North Valley DC credentials are stored in Central Command and delivered via credential-pull:
+
+| Property | Value |
+|----------|-------|
+| **Site ID** | physical-appliance-pilot-1aea78 |
+| **Windows DC IP** | 192.168.88.250 |
+| **Domain** | NORTHVALLEY |
+| **WinRM Port** | 5985 |
+| **Credential Type** | winrm |
+| **Storage** | `site_credentials` table on VPS |
+| **Delivery** | Returned in `/api/appliances/checkin` response |
+
+**Note:** Password stored server-side only. Appliance receives credentials each check-in cycle (~60s).
 
 ## Quick Reference - Legacy (Deprecated)
 

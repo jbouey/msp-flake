@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.0";
+    version = "1.0.8";  # Credential-pull from Central Command
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
@@ -360,16 +360,16 @@ in
       fi
 
       # ========================================
-      # Neither method worked - show instructions
+      # Neither method worked - offer provision code CLI
       # ========================================
-      log "Auto-provisioning failed - manual config required"
+      log "Auto-provisioning failed - provision code entry available"
       log ""
-      log "To configure manually, create /var/lib/msp/config.yaml with:"
-      log "  site_id: <your-site-id>"
-      log "  api_key: <your-api-key>"
-      log "  api_endpoint: https://api.osiriscare.net"
+      log "Options:"
+      log "  1. Run: compliance-provision (enter code from partner dashboard)"
+      log "  2. Insert USB with config.yaml and reboot"
+      log "  3. Pre-register MAC in Central Command dashboard"
       log ""
-      log "Then run: systemctl restart compliance-agent"
+      log "After provisioning: systemctl restart compliance-agent"
 
       # Write instructions to console
       cat > /etc/issue.d/90-msp-provision.issue << 'ISSUE'
@@ -379,10 +379,14 @@ in
   ╠═══════════════════════════════════════════════════════════════════╣
   ║  No configuration found. Options:                                 ║
   ║                                                                   ║
-  ║  1. Insert USB with config.yaml and reboot                        ║
-  ║  2. Pre-register MAC in Central Command dashboard                 ║
-  ║  3. Manually create /var/lib/msp/config.yaml                      ║
+  ║  1. Run: compliance-provision                                     ║
+  ║     Enter 16-character code from partner dashboard                ║
   ║                                                                   ║
+  ║  2. Insert USB with config.yaml and reboot                        ║
+  ║                                                                   ║
+  ║  3. Pre-register MAC in Central Command dashboard                 ║
+  ║                                                                   ║
+  ║  MAC: Run 'compliance-provision --mac' to display                 ║
   ║  See: https://docs.osiriscare.net/appliance-setup                 ║
   ╚═══════════════════════════════════════════════════════════════════╝
 

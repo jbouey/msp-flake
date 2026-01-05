@@ -1,7 +1,7 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-04 (Session 8 - Partner API Backend Complete)
-**Phase:** Phase 11 - Partner/Reseller Infrastructure (Backend Complete)
+**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
+**Phase:** Phase 12 - Launch Readiness (Credential-Pull Complete)
 **Test Status:** 450+ passed (compliance-agent tests including 22 provisioning tests)
 
 ---
@@ -100,6 +100,9 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **Provisioning CLI** - `compliance-provision` entry point
 - ✅ **ISO v15** - With provisioning code support (1.1GB, deployed to physical appliance)
 - ✅ **Agent-Side Evidence Signing** - Ed25519 signing on appliance before upload
+- ✅ **Credential-Pull Architecture** - RMM-style credential fetch on check-in (Session 9)
+- ✅ **ISO v16** - With agent v1.0.8, credential-pull support (transferred to ~/Downloads/)
+- ✅ **Windows DC Connectivity** - North Valley DC (192.168.88.250) connected via credential-pull
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
@@ -158,25 +161,29 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
 
-### ISO v13 Built (2026-01-03 Session 5)
-- **Location (iMac):** `~/Downloads/osiriscare-appliance-v13.iso`
-- **VPS Build:** `/nix/store/27n30qx67p8j13ffw9jkbswjx9qs0858-osiriscare-appliance.iso/`
+### ISO v16 Built (2026-01-04 Session 9)
+- **Location (iMac):** `~/Downloads/osiriscare-appliance-v16.iso`
 - **Size:** 1.1GB
-- **Agent:** compliance-agent v1.0.5 with **three-tier healing integration**
+- **Agent:** compliance-agent v1.0.8 with **credential-pull architecture**
 - **Entry point:** `compliance-agent-appliance`
-- **Status:** Ready to flash to USB
+- **Features:** RMM-style credential fetch from Central Command on check-in
 
 **Previous versions on iMac:**
 - v9: Jan 2 15:31
 - v10: Jan 3 07:03
 - v11: Jan 3 08:18
-- v12: Jan 3 10:16 (deployed to physical appliance)
+- v12: Jan 3 10:16
+- v13: Jan 3 (three-tier healing)
+- v15: Jan 4 (provisioning CLI, deployed to physical appliance)
+- v16: Jan 4 (credential-pull, agent v1.0.8)
 
 ### Agent Packages (Remote Updates)
 - **v1.0.1:** Initial remote update package (failed on NixOS read-only fs - expected)
 - **v1.0.2:** Evidence schema fix
 - **v1.0.3:** HIPAA control mappings + all fixes
 - **v1.0.5:** Three-tier healing integration (L1/L2/L3) - **in ISO v13**
+- **v1.0.6:** Provisioning module - **in ISO v15**
+- **v1.0.8:** Credential-pull architecture - **in ISO v16**
 - **Package URL:** `https://api.osiriscare.net/agent-packages/compliance_agent-{version}.tar.gz`
 - **Packaging:** `./scripts/package-agent.sh {version}`
 - **Note:** Remote updates blocked by NixOS read-only fs; must use ISO reflash
@@ -253,6 +260,23 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **Provisioning Tests** - 19 tests in `test_provisioning.py`
 - ✅ **Agent v1.0.6** - packaged with provisioning support
 - ✅ **QR Code Library** - qrcode + pillow installed in Docker (Session 8)
+
+### Credential-Pull Architecture (2026-01-04 Session 9)
+- ✅ **Server-Side Credential Return** - `/api/appliances/checkin` returns `windows_targets` with credentials
+  - Fetches from `site_credentials` table (credential_type IN winrm, domain_admin, service_account, local_admin)
+  - JSON stored as bytea, decoded on fetch
+  - Returns hostname, username (with domain prefix), password, use_ssl
+- ✅ **Agent-Side Credential Update** - `appliance_agent.py:_update_windows_targets_from_response()`
+  - Replaces `self.windows_targets` with server-provided list each cycle
+  - No credentials cached on disk - fetched fresh each check-in
+  - Credential rotation picked up automatically
+- ✅ **Client Return Type Change** - `appliance_client.py` checkin returns `Optional[Dict]` (not bool)
+- ✅ **Benefits:**
+  - Stolen appliance doesn't expose credentials (not stored locally)
+  - Credential changes propagate in ~60 seconds (next check-in)
+  - Consistent with RMM industry pattern (Datto, ConnectWise, NinjaRMM)
+- ✅ **ISO v16** - Built with agent v1.0.8 (credential-pull)
+- ✅ **Verified** - Windows DC (192.168.88.250) connected: "Updated 1 Windows targets from Central Command"
 
 ### Hash-Chain Evidence System (2026-01-02)
 - ✅ `compliance_bundles` table with SHA256 chain linking
