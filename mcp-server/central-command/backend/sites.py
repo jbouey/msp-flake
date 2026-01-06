@@ -15,7 +15,24 @@ from enum import Enum
 from .fleet import get_pool
 
 
+def parse_ip_addresses(raw_ips) -> list:
+    """Parse ip_addresses from database - could be JSON string or already a list."""
+    if not raw_ips:
+        return []
+    if isinstance(raw_ips, list):
+        return raw_ips
+    if isinstance(raw_ips, str):
+        try:
+            return json.loads(raw_ips)
+        except json.JSONDecodeError:
+            return [raw_ips]  # Single IP as string
+    return []
+
+
 router = APIRouter(prefix="/api/sites", tags=["sites"])
+
+# Separate router for order lifecycle endpoints (acknowledge/complete)
+orders_router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 
 # =============================================================================
@@ -358,7 +375,7 @@ async def get_site(site_id: str):
                 'appliance_id': row['appliance_id'],
                 'hostname': row['hostname'],
                 'mac_address': row['mac_address'],
-                'ip_addresses': row['ip_addresses'] or [],
+                'ip_addresses': parse_ip_addresses(row['ip_addresses']),
                 'agent_version': row['agent_version'],
                 'nixos_version': row['nixos_version'],
                 'status': row['status'] or 'pending',
@@ -370,7 +387,32 @@ async def get_site(site_id: str):
         
         # Determine overall site live status
         live_status = calculate_live_status(latest_checkin)
-        
+
+        # Fetch credentials (without exposing passwords)
+        cred_rows = await conn.fetch("""
+            SELECT id, credential_type, credential_name, encrypted_data, created_at
+            FROM site_credentials
+            WHERE site_id = $1
+            ORDER BY created_at DESC
+        """, site_id)
+
+        credentials = []
+        for cred in cred_rows:
+            try:
+                cred_data = json.loads(cred['encrypted_data']) if cred['encrypted_data'] else {}
+                credentials.append({
+                    'id': str(cred['id']),
+                    'credential_type': cred['credential_type'],
+                    'credential_name': cred['credential_name'],
+                    'host': cred_data.get('host', ''),
+                    'username': cred_data.get('username', ''),
+                    'domain': cred_data.get('domain', ''),
+                    'created_at': cred['created_at'].isoformat() if cred['created_at'] else None,
+                    # NOTE: password intentionally NOT returned
+                })
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         # Determine status from appliances
         statuses = [a['status'] for a in appliances]
         if 'online' in statuses:
@@ -419,8 +461,75 @@ async def get_site(site_id: str):
                 'active_at': earliest_checkin.isoformat() if earliest_checkin else None,
             },
             'appliances': appliances,
-            'credentials': [],
+            'credentials': credentials,
         }
+
+
+# =============================================================================
+# CREDENTIAL MANAGEMENT
+# =============================================================================
+
+class CredentialCreate(BaseModel):
+    credential_type: str  # domain_admin, local_admin, winrm, service_account
+    credential_name: str  # Human-readable name like "North Valley DC"
+    host: str             # Target hostname/IP
+    username: str
+    password: str
+    domain: Optional[str] = None
+    use_ssl: Optional[bool] = False
+
+
+@router.post("/{site_id}/credentials")
+async def add_credential(site_id: str, cred: CredentialCreate):
+    """Add a credential for a site. Appliances will pull this on next check-in."""
+    pool = await get_pool()
+
+    # Build credential data as JSON
+    cred_data = json.dumps({
+        'host': cred.host,
+        'username': cred.username,
+        'password': cred.password,
+        'domain': cred.domain or '',
+        'use_ssl': cred.use_ssl or False,
+    })
+
+    async with pool.acquire() as conn:
+        try:
+            row = await conn.fetchrow("""
+                INSERT INTO site_credentials (site_id, credential_type, credential_name, encrypted_data)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, created_at
+            """, site_id, cred.credential_type, cred.credential_name, cred_data.encode())
+
+            return {
+                'id': str(row['id']),
+                'credential_type': cred.credential_type,
+                'credential_name': cred.credential_name,
+                'host': cred.host,
+                'username': cred.username,
+                'domain': cred.domain or '',
+                'created_at': row['created_at'].isoformat(),
+                'message': 'Credential added. Appliances will receive it on next check-in.',
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{site_id}/credentials/{credential_id}")
+async def delete_credential(site_id: str, credential_id: str):
+    """Delete a credential. Appliances will stop receiving it on next check-in."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        result = await conn.execute("""
+            DELETE FROM site_credentials
+            WHERE site_id = $1 AND id = $2
+        """, site_id, credential_id)
+
+        if result == "DELETE 0":
+            raise HTTPException(status_code=404, detail="Credential not found")
+
+        return {'message': 'Credential deleted. Appliances will stop receiving it on next check-in.'}
 
 
 @router.get("/{site_id}/appliances")
@@ -448,7 +557,7 @@ async def get_site_appliances(site_id: str):
                 'appliance_id': row['appliance_id'],
                 'hostname': row['hostname'],
                 'mac_address': row['mac_address'],
-                'ip_addresses': row['ip_addresses'] or [],
+                'ip_addresses': parse_ip_addresses(row['ip_addresses']),
                 'agent_version': row['agent_version'],
                 'nixos_version': row['nixos_version'],
                 'status': row['status'] or 'pending',
@@ -469,21 +578,504 @@ async def get_site_appliances(site_id: str):
 async def delete_appliance(site_id: str, appliance_id: str):
     """Delete an appliance from a site."""
     pool = await get_pool()
-    
+
     async with pool.acquire() as conn:
         result = await conn.execute("""
             DELETE FROM site_appliances
             WHERE appliance_id = $1 AND site_id = $2
         """, appliance_id, site_id)
-        
+
         if result == "DELETE 0":
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail=f"Appliance {appliance_id} not found in site {site_id}"
             )
-        
+
         return {
             'status': 'deleted',
             'appliance_id': appliance_id,
             'site_id': site_id
         }
+
+
+class ClearStaleRequest(BaseModel):
+    """Request to clear stale appliances."""
+    stale_hours: int = 24
+
+
+@router.post("/{site_id}/appliances/clear-stale")
+async def clear_stale_appliances(site_id: str, request: ClearStaleRequest):
+    """Clear stale appliances that haven't checked in recently.
+
+    Deletes appliances from the site that haven't checked in for more than
+    the specified number of hours.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    pool = await get_pool()
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=request.stale_hours)
+
+    async with pool.acquire() as conn:
+        # Get count of stale appliances before deletion
+        stale_count = await conn.fetchval("""
+            SELECT COUNT(*) FROM site_appliances
+            WHERE site_id = $1
+            AND (last_checkin IS NULL OR last_checkin < $2)
+        """, site_id, cutoff)
+
+        # Delete stale appliances
+        result = await conn.execute("""
+            DELETE FROM site_appliances
+            WHERE site_id = $1
+            AND (last_checkin IS NULL OR last_checkin < $2)
+        """, site_id, cutoff)
+
+        return {
+            'status': 'cleared',
+            'site_id': site_id,
+            'stale_hours': request.stale_hours,
+            'deleted_count': stale_count or 0
+        }
+
+
+# =============================================================================
+# ORDER LIFECYCLE ENDPOINTS (acknowledge/complete)
+# =============================================================================
+
+class OrderCompleteRequest(BaseModel):
+    """Request body for completing an order."""
+    success: bool
+    result: Optional[dict] = None
+    error_message: Optional[str] = None
+
+
+@orders_router.post("/{order_id}/acknowledge")
+async def acknowledge_order(order_id: str):
+    """Acknowledge that an order has been received and is being executed.
+
+    Called by the appliance agent when it picks up a pending order.
+    Updates status from 'pending' to 'acknowledged'.
+    """
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+
+    async with pool.acquire() as conn:
+        # Update the order status
+        result = await conn.fetchrow("""
+            UPDATE admin_orders
+            SET status = 'acknowledged',
+                acknowledged_at = $1
+            WHERE order_id = $2
+            AND status = 'pending'
+            RETURNING order_id, appliance_id, site_id, order_type
+        """, now, order_id)
+
+        if not result:
+            # Check if order exists but is already acknowledged
+            existing = await conn.fetchrow("""
+                SELECT order_id, status FROM admin_orders WHERE order_id = $1
+            """, order_id)
+
+            if existing:
+                if existing['status'] == 'acknowledged':
+                    return {
+                        "status": "already_acknowledged",
+                        "order_id": order_id,
+                        "message": "Order was already acknowledged"
+                    }
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Order {order_id} is in status '{existing['status']}', cannot acknowledge"
+                    )
+            else:
+                raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+
+        return {
+            "status": "acknowledged",
+            "order_id": result['order_id'],
+            "appliance_id": result['appliance_id'],
+            "site_id": result['site_id'],
+            "order_type": result['order_type'],
+            "acknowledged_at": now.isoformat()
+        }
+
+
+@orders_router.post("/{order_id}/complete")
+async def complete_order(order_id: str, request: OrderCompleteRequest):
+    """Mark an order as completed (success or failure).
+
+    Called by the appliance agent after executing an order.
+    Updates status to 'completed' or 'failed' based on success flag.
+    """
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+
+    new_status = 'completed' if request.success else 'failed'
+    result_data = request.result or {}
+    if request.error_message:
+        result_data['error_message'] = request.error_message
+
+    async with pool.acquire() as conn:
+        # Update the order status
+        result = await conn.fetchrow("""
+            UPDATE admin_orders
+            SET status = $1,
+                completed_at = $2,
+                result = $3::jsonb
+            WHERE order_id = $4
+            AND status IN ('pending', 'acknowledged')
+            RETURNING order_id, appliance_id, site_id, order_type, acknowledged_at
+        """, new_status, now, json.dumps(result_data), order_id)
+
+        if not result:
+            # Check if order exists
+            existing = await conn.fetchrow("""
+                SELECT order_id, status FROM admin_orders WHERE order_id = $1
+            """, order_id)
+
+            if existing:
+                if existing['status'] in ('completed', 'failed'):
+                    return {
+                        "status": "already_completed",
+                        "order_id": order_id,
+                        "message": f"Order was already {existing['status']}"
+                    }
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Order {order_id} is in status '{existing['status']}', cannot complete"
+                    )
+            else:
+                raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+
+        # Calculate execution time if acknowledged
+        execution_time_ms = None
+        if result['acknowledged_at']:
+            execution_time_ms = int((now - result['acknowledged_at']).total_seconds() * 1000)
+
+        return {
+            "status": new_status,
+            "order_id": result['order_id'],
+            "appliance_id": result['appliance_id'],
+            "site_id": result['site_id'],
+            "order_type": result['order_type'],
+            "completed_at": now.isoformat(),
+            "execution_time_ms": execution_time_ms,
+            "success": request.success,
+            "result": result_data
+        }
+
+
+@orders_router.get("/{order_id}")
+async def get_order(order_id: str):
+    """Get order details by ID."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT order_id, appliance_id, site_id, order_type,
+                   parameters, priority, status, created_at,
+                   expires_at, acknowledged_at, completed_at, result
+            FROM admin_orders
+            WHERE order_id = $1
+        """, order_id)
+
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+
+        return {
+            "order_id": row['order_id'],
+            "appliance_id": row['appliance_id'],
+            "site_id": row['site_id'],
+            "order_type": row['order_type'],
+            "parameters": parse_parameters(row['parameters']),
+            "priority": row['priority'],
+            "status": row['status'],
+            "created_at": row['created_at'].isoformat() if row['created_at'] else None,
+            "expires_at": row['expires_at'].isoformat() if row['expires_at'] else None,
+            "acknowledged_at": row['acknowledged_at'].isoformat() if row['acknowledged_at'] else None,
+            "completed_at": row['completed_at'].isoformat() if row['completed_at'] else None,
+            "result": parse_parameters(row['result'])
+        }
+
+
+# =============================================================================
+# APPLIANCE CHECK-IN WITH SMART DEDUPLICATION
+# =============================================================================
+
+# Separate router for appliance check-in endpoint
+appliances_router = APIRouter(prefix="/api/appliances", tags=["appliances"])
+
+
+class ApplianceCheckin(BaseModel):
+    """Check-in request from appliance agent."""
+    site_id: str
+    hostname: str
+    mac_address: str
+    ip_addresses: list = []
+    uptime_seconds: Optional[int] = None
+    agent_version: Optional[str] = None
+    nixos_version: Optional[str] = None
+
+
+def normalize_mac(mac: str) -> str:
+    """Normalize MAC address to uppercase with colons (84:3A:5B:91:B6:61)."""
+    if not mac:
+        return ""
+    # Remove all separators, convert to uppercase
+    clean = mac.upper().replace(':', '').replace('-', '').replace('.', '')
+    # Re-insert colons every 2 chars
+    return ':'.join(clean[i:i+2] for i in range(0, len(clean), 2))
+
+
+@appliances_router.post("/checkin")
+async def appliance_checkin(checkin: ApplianceCheckin):
+    """Smart check-in with automatic deduplication.
+
+    This endpoint implements smart deduplication logic to prevent duplicate
+    appliance entries when:
+    - An appliance re-provisions with a new MAC (NIC change)
+    - An appliance re-provisions with a new hostname
+    - Case differences in MAC addresses
+
+    Deduplication rules (same site):
+    1. If MAC matches existing appliance → update that appliance
+    2. If hostname matches existing appliance (but different MAC) → merge entries
+    3. Otherwise → create new appliance entry
+
+    Returns pending orders and windows targets (credential-pull RMM pattern).
+    """
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+
+    # Normalize inputs
+    mac_normalized = normalize_mac(checkin.mac_address)
+    hostname_lower = checkin.hostname.lower().strip()
+
+    # Generate appliance_id from site_id + normalized MAC
+    mac_clean = mac_normalized.replace(':', '')
+    appliance_id = f"{checkin.site_id}-{mac_normalized}"
+
+    async with pool.acquire() as conn:
+        # === STEP 1: Find existing appliances with same MAC or hostname ===
+        existing = await conn.fetch("""
+            SELECT appliance_id, hostname, mac_address, first_checkin
+            FROM site_appliances
+            WHERE site_id = $1
+            AND (
+                UPPER(REPLACE(REPLACE(mac_address, ':', ''), '-', '')) = $2
+                OR LOWER(hostname) = $3
+            )
+            ORDER BY last_checkin DESC NULLS LAST
+        """, checkin.site_id, mac_clean.upper(), hostname_lower)
+
+        merge_from_ids = []
+        canonical_id = appliance_id
+        earliest_first_checkin = now
+
+        if existing:
+            # Find the "canonical" entry (oldest first_checkin) - this is the one we keep
+            for row in existing:
+                if row['first_checkin'] and row['first_checkin'] < earliest_first_checkin:
+                    earliest_first_checkin = row['first_checkin']
+                    canonical_id = row['appliance_id']
+
+            # All other entries are duplicates to merge
+            for row in existing:
+                if row['appliance_id'] != canonical_id:
+                    merge_from_ids.append(row['appliance_id'])
+
+        # === STEP 2: Delete duplicates (if any) ===
+        if merge_from_ids:
+            await conn.execute("""
+                DELETE FROM site_appliances
+                WHERE appliance_id = ANY($1)
+            """, merge_from_ids)
+
+        # === STEP 3: Upsert the canonical appliance entry ===
+        await conn.execute("""
+            INSERT INTO site_appliances (
+                site_id, appliance_id, hostname, mac_address, ip_addresses,
+                agent_version, nixos_version, status, uptime_seconds,
+                first_checkin, last_checkin
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, 'online', $8, $9, $10)
+            ON CONFLICT (appliance_id) DO UPDATE SET
+                hostname = EXCLUDED.hostname,
+                mac_address = EXCLUDED.mac_address,
+                ip_addresses = EXCLUDED.ip_addresses,
+                agent_version = EXCLUDED.agent_version,
+                nixos_version = EXCLUDED.nixos_version,
+                status = 'online',
+                uptime_seconds = EXCLUDED.uptime_seconds,
+                last_checkin = EXCLUDED.last_checkin
+        """,
+            checkin.site_id,
+            canonical_id,
+            checkin.hostname,
+            mac_normalized,
+            json.dumps(checkin.ip_addresses),
+            checkin.agent_version,
+            checkin.nixos_version,
+            checkin.uptime_seconds,
+            earliest_first_checkin,
+            now
+        )
+
+        # === STEP 4: Get pending orders for this appliance ===
+        order_rows = await conn.fetch("""
+            SELECT order_id, order_type, parameters, priority, created_at, expires_at
+            FROM admin_orders
+            WHERE appliance_id = $1
+            AND status = 'pending'
+            AND expires_at > NOW()
+            ORDER BY priority DESC, created_at ASC
+        """, canonical_id)
+
+        pending_orders = [
+            {
+                "order_id": row["order_id"],
+                "order_type": row["order_type"],
+                "parameters": parse_parameters(row["parameters"]),
+                "priority": row["priority"],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+            }
+            for row in order_rows
+        ]
+
+        # === STEP 5: Get windows targets (credential-pull) ===
+        windows_targets = []
+        try:
+            creds = await conn.fetch("""
+                SELECT credential_name, encrypted_data
+                FROM site_credentials
+                WHERE site_id = $1
+                AND credential_type IN ('winrm', 'domain_admin', 'local_admin')
+                ORDER BY created_at DESC
+            """, checkin.site_id)
+
+            for cred in creds:
+                if cred['encrypted_data']:
+                    try:
+                        cred_data = json.loads(cred['encrypted_data'])
+                        # Transform credentials to expected format
+                        hostname = cred_data.get('host') or cred_data.get('target_host')
+                        username = cred_data.get('username', '')
+                        password = cred_data.get('password', '')
+                        domain = cred_data.get('domain', '')
+                        use_ssl = cred_data.get('use_ssl', False)
+
+                        # Combine domain\username for NTLM auth
+                        full_username = f"{domain}\\{username}" if domain else username
+
+                        if hostname:
+                            windows_targets.append({
+                                "hostname": hostname,
+                                "username": full_username,
+                                "password": password,
+                                "use_ssl": use_ssl,
+                            })
+                    except json.JSONDecodeError:
+                        pass
+        except Exception:
+            pass  # Don't fail checkin if credentials lookup fails
+
+        # === STEP 6: Get enabled runbooks (runbook config pull) ===
+        enabled_runbooks = []
+        try:
+            # Get all runbooks with effective enabled status
+            # Hierarchy: appliance override > site config > default (enabled)
+            runbook_rows = await conn.fetch("""
+                SELECT
+                    r.runbook_id,
+                    COALESCE(
+                        arc.enabled,           -- Appliance override takes priority
+                        src.enabled,           -- Site config second
+                        true                   -- Default is enabled
+                    ) as enabled
+                FROM runbooks r
+                LEFT JOIN site_runbook_config src ON src.runbook_id = r.runbook_id AND src.site_id = $1
+                LEFT JOIN appliance_runbook_config arc ON arc.runbook_id = r.runbook_id AND arc.appliance_id = $2
+                ORDER BY r.runbook_id
+            """, checkin.site_id, canonical_id)
+
+            enabled_runbooks = [row['runbook_id'] for row in runbook_rows if row['enabled']]
+        except Exception:
+            pass  # Don't fail checkin if runbook lookup fails (table may not exist yet)
+
+    return {
+        "status": "ok",
+        "appliance_id": canonical_id,
+        "server_time": now.isoformat(),
+        "merged_duplicates": len(merge_from_ids),
+        "pending_orders": pending_orders,
+        "windows_targets": windows_targets,
+        "enabled_runbooks": enabled_runbooks,
+    }
+
+
+# =============================================================================
+# ALERTS API
+# =============================================================================
+
+alerts_router = APIRouter(prefix="/api/alerts", tags=["alerts"])
+
+
+class EmailAlertRequest(BaseModel):
+    """Request to send an email alert."""
+    site_id: Optional[str] = None
+    alert_type: str = "escalation"
+    severity: str = "high"
+    subject: str
+    body: str
+    incident_id: Optional[str] = None
+    recipient: Optional[str] = None  # Override default recipient
+
+
+@alerts_router.post("/email")
+async def send_email_alert(request: EmailAlertRequest):
+    """Send an email alert for L3 escalations or other critical events.
+
+    This endpoint allows agents and chaos probes to send email alerts
+    when incidents escalate to L3 (human intervention required).
+
+    Returns:
+        Success status and email details
+    """
+    from .email_alerts import send_critical_alert, is_email_configured, ALERT_EMAIL
+
+    if not is_email_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Email not configured. Set SMTP_USER and SMTP_PASSWORD environment variables."
+        )
+
+    # Build metadata for the email
+    metadata = {
+        "alert_type": request.alert_type,
+        "incident_id": request.incident_id,
+    }
+
+    # Send the email
+    success = send_critical_alert(
+        title=request.subject,
+        message=request.body,
+        site_id=request.site_id,
+        category=request.alert_type,
+        metadata=metadata
+    )
+
+    if success:
+        return {
+            "status": "sent",
+            "recipient": request.recipient or ALERT_EMAIL,
+            "subject": request.subject,
+            "alert_type": request.alert_type,
+            "incident_id": request.incident_id,
+        }
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send email alert. Check server logs for details."
+        )

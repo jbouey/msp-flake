@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-06 (Session 13 - Windows Runbook Expansion)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, RunbookConfig UI)
+**Last Updated:** 2026-01-06 (Session 14 - Credential Management API)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, Credential CRUD API)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -277,6 +277,16 @@ Per Master Alignment Brief:
   - Hooks: useSiteRunbookConfig, useSetSiteRunbook, useRunbookCategories
   - Agent: `is_runbook_enabled()` and `_update_enabled_runbooks_from_response()`
   - Tests: 20 tests in `test_runbook_filtering.py` (all passing)
+- ✅ **Credential Management API** - 2026-01-06 (Session 14)
+  - Fixed `sites.py` windows_targets transformation (was returning raw JSON instead of formatted credentials)
+  - Fixed runbook query column (r.id UUID → r.runbook_id VARCHAR)
+  - Created missing `appliance_runbook_config` table in database
+  - Fixed NULL check_type for 6 original runbooks (backup, cert, service, drift, firewall, patch)
+  - Site detail endpoint now queries `site_credentials` table (was hardcoded empty `[]`)
+  - Added `POST /api/sites/{site_id}/credentials` endpoint for creating credentials
+  - Added `DELETE /api/sites/{site_id}/credentials/{id}` endpoint for deleting credentials
+  - Verified both appliances using credential-pull architecture (no hardcoded credentials on disk)
+  - Credential changes propagate within 60 seconds (next check-in cycle)
 
 ---
 
@@ -486,4 +496,4 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 progressing well. Agent v1.0.19, 27 Windows runbooks (7 core + 20 new). Partner-configurable runbook enable/disable via RunbookConfig.tsx UI. Full runbook expansion complete with L1 rules, database schema, backend API, frontend UI, and 20 tests. Next: Deploy to VPS, OpenTimestamps blockchain anchoring (Task 25), or complete data flywheel integration (resolution tracking).
+**Status:** Phase 12 progressing well. Agent v1.0.19, 27 Windows runbooks (7 core + 20 new). Partner-configurable runbook enable/disable via RunbookConfig.tsx UI. Credential Management API complete with CRUD endpoints for site credentials via Central Command. Both appliances verified using credential-pull architecture (no hardcoded credentials). Next: OpenTimestamps blockchain anchoring (Task 25), or complete data flywheel integration (resolution tracking).
