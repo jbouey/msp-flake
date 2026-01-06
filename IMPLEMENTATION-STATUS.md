@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-06 (Session 12 continued - Chaos Probe, L3 Email Alerts, Data Flywheel)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, Chaos Probe to Central Command)
+**Last Updated:** 2026-01-06 (Session 13 - Windows Runbook Expansion)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, RunbookConfig UI)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -261,6 +261,22 @@ Per Master Alignment Brief:
   - Incidents appear in dashboard stats (incidents_24h: 3)
   - L3 probes send emails via `/api/alerts/email` endpoint
   - User confirmed receiving L3 escalation emails
+- ✅ **Windows Runbook Expansion (27 Total)** - 2026-01-06 (Session 13)
+  - 6 new runbook category files in `packages/compliance-agent/src/compliance_agent/runbooks/windows/`:
+    - `services.py` - 4 runbooks (DNS, DHCP, Print Spooler, Time Service)
+    - `security.py` - 6 runbooks (Firewall, Audit, Lockout, Password, BitLocker, Defender)
+    - `network.py` - 4 runbooks (DNS Client, NIC Reset, Profile, NetBIOS)
+    - `storage.py` - 3 runbooks (Disk Cleanup, Shadow Copy, Volume Health)
+    - `updates.py` - 2 runbooks (Windows Update, WSUS)
+    - `active_directory.py` - 1 runbook (Computer Account)
+  - Updated `__init__.py` with combined ALL_RUNBOOKS registry (27 runbooks)
+  - Created `windows_baseline.yaml` with 20+ L1 deterministic rules
+  - Database: `migrations/005_runbook_tables.sql` (runbooks, site_runbook_config tables)
+  - Backend: `runbook_config.py` with CRUD endpoints
+  - Frontend: `RunbookConfig.tsx` with site selector, category filters, toggle switches
+  - Hooks: useSiteRunbookConfig, useSetSiteRunbook, useRunbookCategories
+  - Agent: `is_runbook_enabled()` and `_update_enabled_runbooks_from_response()`
+  - Tests: 20 tests in `test_runbook_filtering.py` (all passing)
 
 ---
 
@@ -470,4 +486,4 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 progressing well. Agent v1.0.19 with Multi-NTP verification. Chaos probe now submits incidents to Central Command (incidents visible in dashboard stats). L3 email alerts working (user confirmed receipt). Next: OpenTimestamps blockchain anchoring (Task 25), or complete data flywheel integration (resolution tracking).
+**Status:** Phase 12 progressing well. Agent v1.0.19, 27 Windows runbooks (7 core + 20 new). Partner-configurable runbook enable/disable via RunbookConfig.tsx UI. Full runbook expansion complete with L1 rules, database schema, backend API, frontend UI, and 20 tests. Next: Deploy to VPS, OpenTimestamps blockchain anchoring (Task 25), or complete data flywheel integration (resolution tracking).

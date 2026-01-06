@@ -3,13 +3,13 @@
  */
 
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi } from '../utils/api';
-import type { Site, SiteDetail } from '../utils/api';
-import type { ClientOverview, ClientDetail, Incident, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics } from '../types';
+import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi } from '../utils/api';
+import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig } from '../utils/api';
+import type { ClientOverview, ClientDetail, Incident, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary } from '../types';
 
-// Polling interval in milliseconds (30 seconds)
-const POLLING_INTERVAL = 30_000;
-const STALE_TIME = 10_000; // Consider data fresh for 10 seconds
+// Polling interval in milliseconds (60 seconds - reduced from 30s to prevent flickering)
+const POLLING_INTERVAL = 60_000;
+const STALE_TIME = 30_000; // Consider data fresh for 30 seconds
 
 /**
  * Hook for fetching fleet overview data with polling
@@ -260,6 +260,264 @@ export function useAddCredential() {
       sitesApi.addCredential(siteId, data),
     onSuccess: (_, { siteId }) => {
       queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+    },
+  });
+}
+
+// =============================================================================
+// ORDER HOOKS
+// =============================================================================
+
+/**
+ * Hook for fetching orders for a site
+ */
+export function useOrders(siteId: string | null, status?: string) {
+  return useQuery<OrderResponse[]>({
+    queryKey: ['orders', siteId, status],
+    queryFn: () => ordersApi.getOrders(siteId!, status as any),
+    enabled: !!siteId,
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for creating an order for a specific appliance
+ */
+export function useCreateApplianceOrder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      siteId,
+      applianceId,
+      orderType,
+      parameters = {},
+      priority = 0,
+    }: {
+      siteId: string;
+      applianceId: string;
+      orderType: OrderType;
+      parameters?: Record<string, unknown>;
+      priority?: number;
+    }) =>
+      ordersApi.createApplianceOrder(siteId, applianceId, {
+        order_type: orderType,
+        parameters,
+        priority,
+      }),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['orders', siteId] });
+      queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+    },
+  });
+}
+
+/**
+ * Hook for broadcasting an order to all appliances in a site
+ */
+export function useBroadcastOrder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      siteId,
+      orderType,
+      parameters = {},
+    }: {
+      siteId: string;
+      orderType: OrderType;
+      parameters?: Record<string, unknown>;
+    }) =>
+      ordersApi.broadcastOrder(siteId, {
+        order_type: orderType,
+        parameters,
+      }),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['orders', siteId] });
+      queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+    },
+  });
+}
+
+/**
+ * Hook for deleting an appliance
+ */
+export function useDeleteAppliance() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, applianceId }: { siteId: string; applianceId: string }) =>
+      ordersApi.deleteAppliance(siteId, applianceId),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+      queryClient.invalidateQueries({ queryKey: ['sites'] });
+    },
+  });
+}
+
+/**
+ * Hook for clearing stale appliances from a site
+ */
+export function useClearStaleAppliances() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, staleHours = 24 }: { siteId: string; staleHours?: number }) =>
+      ordersApi.clearStaleAppliances(siteId, staleHours),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+      queryClient.invalidateQueries({ queryKey: ['sites'] });
+    },
+  });
+}
+
+// =============================================================================
+// NOTIFICATION HOOKS
+// =============================================================================
+
+/**
+ * Hook for fetching notifications
+ */
+export function useNotifications(params?: {
+  site_id?: string;
+  severity?: string;
+  unread_only?: boolean;
+  limit?: number;
+}) {
+  return useQuery<Notification[]>({
+    queryKey: ['notifications', params],
+    queryFn: () => notificationsApi.getNotifications(params),
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for fetching notification summary (counts)
+ */
+export function useNotificationSummary() {
+  return useQuery<NotificationSummary>({
+    queryKey: ['notifications', 'summary'],
+    queryFn: notificationsApi.getSummary,
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for marking a notification as read
+ */
+export function useMarkNotificationRead() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (notificationId: string) => notificationsApi.markRead(notificationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+}
+
+/**
+ * Hook for marking all notifications as read
+ */
+export function useMarkAllNotificationsRead() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => notificationsApi.markAllRead(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+}
+
+/**
+ * Hook for dismissing a notification
+ */
+export function useDismissNotification() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (notificationId: string) => notificationsApi.dismiss(notificationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+}
+
+/**
+ * Hook for creating a notification
+ */
+export function useCreateNotification() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (notification: {
+      severity: 'critical' | 'warning' | 'info' | 'success';
+      category: string;
+      title: string;
+      message: string;
+      site_id?: string;
+      appliance_id?: string;
+      metadata?: Record<string, unknown>;
+    }) => notificationsApi.create(notification),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+}
+
+// =============================================================================
+// RUNBOOK CONFIG HOOKS (Partner-configurable runbook enable/disable)
+// =============================================================================
+
+/**
+ * Hook for fetching all runbooks in the catalog
+ */
+export function useRunbookCatalog() {
+  return useQuery<RunbookCatalogItem[]>({
+    queryKey: ['runbookCatalog'],
+    queryFn: runbookConfigApi.getRunbooks,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for fetching runbook categories
+ */
+export function useRunbookCategories() {
+  return useQuery<string[]>({
+    queryKey: ['runbookCategories'],
+    queryFn: runbookConfigApi.getCategories,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for fetching a site's runbook configuration
+ */
+export function useSiteRunbookConfig(siteId: string | null) {
+  return useQuery<SiteRunbookConfig[]>({
+    queryKey: ['siteRunbooks', siteId],
+    queryFn: () => runbookConfigApi.getSiteRunbooks(siteId!),
+    enabled: !!siteId,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for enabling/disabling a runbook for a site
+ */
+export function useSetSiteRunbook() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, runbookId, enabled }: { siteId: string; runbookId: string; enabled: boolean }) =>
+      runbookConfigApi.setSiteRunbook(siteId, runbookId, enabled),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['siteRunbooks', siteId] });
     },
   });
 }

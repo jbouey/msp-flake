@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-06 (Session 12 continued - Chaos Probe, L3 Email Alerts)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.19, Chaos Probe submits to Central Command)
+**Last Updated:** 2026-01-06 (Session 13 - Windows Runbook Expansion)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, RunbookConfig UI)
 
 ---
 
@@ -413,6 +413,23 @@
   - Chaos probe incidents now appear in dashboard stats
   - L3 probes send emails via `/api/alerts/email` endpoint
   - User confirmed receiving L3 escalation emails
+- [x] **Windows Runbook Expansion (27 Total)** - 2026-01-06 (Session 13)
+  - Created 6 new runbook category files:
+    - `services.py` - 4 runbooks (DNS, DHCP, Print Spooler, Time Service)
+    - `security.py` - 6 runbooks (Firewall, Audit, Lockout, Password, BitLocker, Defender)
+    - `network.py` - 4 runbooks (DNS Client, NIC Reset, Profile, NetBIOS)
+    - `storage.py` - 3 runbooks (Disk Cleanup, Shadow Copy, Volume Health)
+    - `updates.py` - 2 runbooks (Windows Update, WSUS)
+    - `active_directory.py` - 1 runbook (Computer Account)
+  - Updated `runbooks/windows/__init__.py` with combined registry
+  - Created `windows_baseline.yaml` with 20+ L1 rules
+  - Created `migrations/005_runbook_tables.sql` database schema
+  - Created `runbook_config.py` backend API (CRUD endpoints)
+  - Updated `routes.py` with runbook config router
+  - Created `RunbookConfig.tsx` frontend page
+  - Added hooks for runbook configuration (useSiteRunbookConfig, etc.)
+  - Updated Sidebar.tsx with Runbook Config navigation
+  - Created `test_runbook_filtering.py` with 20 tests (all passing)
 
 ---
 

@@ -5,12 +5,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
-import { Dashboard, Runbooks, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, Documentation } from './pages';
+import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, Documentation, Partners, Notifications } from './pages';
 import { useFleet, useRefreshFleet, useCommandPalette } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PortalDashboard } from './portal/PortalDashboard';
 import { PortalLogin } from './portal/PortalLogin';
 import { PortalVerify } from './portal/PortalVerify';
+import { PartnerProvider, PartnerLogin, PartnerDashboard } from './partner';
 
 // Create a client for React Query
 const queryClient = new QueryClient({
@@ -26,8 +27,11 @@ const queryClient = new QueryClient({
 const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
   '/sites': 'Sites',
+  '/notifications': 'Notifications',
   '/onboarding': 'Onboarding Pipeline',
+  '/partners': 'Partners',
   '/runbooks': 'Runbook Library',
+  '/runbook-config': 'Runbook Configuration',
   '/learning': 'Learning Loop',
   '/reports': 'Reports',
   '/audit-logs': 'Audit Logs',
@@ -121,8 +125,11 @@ const AppLayout: React.FC = () => {
             <Route path="/" element={<Dashboard />} />
             <Route path="/sites" element={<Sites />} />
             <Route path="/sites/:siteId" element={<SiteDetail />} />
+            <Route path="/notifications" element={<Notifications />} />
             <Route path="/onboarding" element={<Onboarding />} />
+            <Route path="/partners" element={<Partners />} />
             <Route path="/runbooks" element={<Runbooks />} />
+            <Route path="/runbook-config" element={<RunbookConfig />} />
             <Route path="/learning" element={<Learning />} />
             <Route path="/audit-logs" element={<AuditLogs />} />
             <Route path="/docs" element={<Documentation />} />
@@ -172,6 +179,20 @@ const App: React.FC = () => {
             <Route path="/portal/site/:siteId/dashboard" element={<PortalDashboard />} />
             <Route path="/portal/site/:siteId/verify" element={<PortalVerify />} />
             <Route path="/portal/site/:siteId/login" element={<PortalLogin />} />
+
+            {/* Partner routes - API key auth */}
+            <Route
+              path="/partner/*"
+              element={
+                <PartnerProvider>
+                  <Routes>
+                    <Route path="login" element={<PartnerLogin />} />
+                    <Route path="dashboard" element={<PartnerDashboard />} />
+                    <Route path="*" element={<PartnerLogin />} />
+                  </Routes>
+                </PartnerProvider>
+              }
+            />
 
             {/* Admin routes - auth required */}
             <Route path="/*" element={<AuthenticatedApp />} />

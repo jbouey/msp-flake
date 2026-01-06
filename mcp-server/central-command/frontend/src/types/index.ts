@@ -311,3 +311,33 @@ export interface CommandResponse {
   message?: string;
   error?: string;
 }
+
+// =============================================================================
+// NOTIFICATIONS
+// =============================================================================
+
+export type NotificationSeverity = 'critical' | 'warning' | 'info' | 'success';
+
+export interface Notification {
+  id: string;
+  site_id?: string;
+  appliance_id?: string;
+  severity: NotificationSeverity;
+  category: string;
+  title: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  is_read: boolean;
+  is_dismissed: boolean;
+  created_at: string;
+  read_at?: string;
+}
+
+export interface NotificationSummary {
+  total: number;
+  unread: number;
+  critical: number;
+  warning: number;
+  info: number;
+  success: number;
+}

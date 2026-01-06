@@ -1,5 +1,6 @@
 export { Dashboard } from './Dashboard';
 export { Runbooks } from './Runbooks';
+export { RunbookConfig } from './RunbookConfig';
 export { Learning } from './Learning';
 export { Onboarding } from './Onboarding';
 export { ClientDetail } from './ClientDetail';
@@ -8,3 +9,5 @@ export { AuditLogs } from './AuditLogs';
 export { Sites } from './Sites';
 export { SiteDetail } from './SiteDetail';
 export { Documentation } from './Documentation';
+export { Partners } from './Partners';
+export { Notifications } from './Notifications';
