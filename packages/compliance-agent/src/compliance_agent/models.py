@@ -136,6 +136,11 @@ class EvidenceBundle(BaseModel):
         description="NTP offset in milliseconds at check time"
     )
 
+    ntp_verification: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Multi-source NTP verification result (servers, offsets, skew)"
+    )
+
     # ========================================================================
     # Check Information
     # ========================================================================

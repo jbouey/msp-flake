@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
-**Phase:** Phase 12 - Launch Readiness (Credential-Pull Complete)
-**Test Status:** 450+ passed (compliance-agent tests including 22 provisioning tests)
+**Last Updated:** 2026-01-06 (Session 12 continued - Chaos Probe, L3 Email Alerts)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, Chaos Probe to Central Command)
+**Test Status:** 503 passed (compliance-agent tests), agent v1.0.19, ISO v18 deployed
 
 ---
 
@@ -103,6 +103,29 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **Credential-Pull Architecture** - RMM-style credential fetch on check-in (Session 9)
 - ✅ **ISO v16** - With agent v1.0.8, credential-pull support (transferred to ~/Downloads/)
 - ✅ **Windows DC Connectivity** - North Valley DC (192.168.88.250) connected via credential-pull
+- ✅ **Healing System Integration Complete** - 2026-01-05 (Session 10)
+  - L1 deterministic healing with Windows runbooks verified working
+  - Windows firewall chaos test: auto-healed successfully
+  - Agent v1.0.18 with all healing fixes
+- ✅ **Email Alerts System** - 2026-01-05 (Session 12)
+  - SMTP via privateemail.com (mail.privateemail.com:587)
+  - POST /api/dashboard/notifications with email for critical severity
+  - Test Alert button + modal in Notifications page
+- ✅ **Push Agent Update UI** - 2026-01-05 (Session 12)
+  - Prominent animated button for outdated agents in site detail
+  - Version selection modal with package URL preview
+  - Dropdown z-index fix (z-[9999]) for proper layering
+- ✅ **Test VM Rebuilt with ISO v18** - 2026-01-05 (Session 12)
+  - Registered MAC 08:00:27:98:fd:84 for provisioning
+  - Detached old VDI, booted from ISO v18
+  - Now running agent v1.0.18 (was 0.1.1-quickfix)
+  - Both appliances on v1.0.18, checking in properly
+- ✅ **Chaos Probe Central Command Integration** - 2026-01-06 (Session 12 continued)
+  - `scripts/chaos_probe.py` POSTs to `/incidents` endpoint
+  - Incidents appear in dashboard stats (incidents_24h, incidents_7d, etc.)
+  - L3 probes send emails via `/api/alerts/email` endpoint
+  - Fixed routes.py safe_check_type() for unknown check types
+  - VPS appliances table updated with FK records
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
@@ -167,6 +190,12 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** compliance-agent v1.0.8 with **credential-pull architecture**
 - **Entry point:** `compliance-agent-appliance`
 - **Features:** RMM-style credential fetch from Central Command on check-in
+
+### Agent v1.0.18 (2026-01-05 Session 10)
+- Fixed L1 `execute()` to check action_executor success properly
+- Fixed `_handle_drift_healing()` to use `auto_healer.heal()` method
+- Fixed `_heal_run_windows_runbook()` to use correct `WindowsExecutor.run_runbook()`
+- **Note:** Hot-patched to appliance for testing, needs ISO v18 for permanent deployment
 
 **Previous versions on iMac:**
 - v9: Jan 2 15:31

@@ -58,7 +58,13 @@ from .db_queries import (
     get_global_stats_from_db,
     get_compliance_scores_for_site,
     get_all_compliance_scores,
+    get_runbooks_from_db,
+    get_runbook_detail_from_db,
+    get_runbook_executions_from_db,
+    get_healing_metrics_for_site,
+    get_global_healing_metrics,
 )
+from .email_alerts import send_critical_alert
 
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -99,8 +105,14 @@ async def get_fleet_overview(db: AsyncSession = Depends(get_db)):
     # Get compliance scores for all sites
     all_compliance = await get_all_compliance_scores(db)
 
+    # Pre-fetch healing metrics for performance (one query per site)
+    healing_metrics_cache = {}
+
     clients = []
     for row in rows:
+        # Get healing metrics for this site (cache to avoid repeated queries)
+        if row.site_id not in healing_metrics_cache:
+            healing_metrics_cache[row.site_id] = await get_healing_metrics_for_site(db, row.site_id)
         # Calculate connectivity score based on last checkin
         checkin_freshness = 0
         if row.last_checkin:
@@ -146,6 +158,9 @@ async def get_fleet_overview(db: AsyncSession = Depends(get_db)):
         else:
             status = "critical"
 
+        # Get healing metrics for this site
+        site_healing = healing_metrics_cache.get(row.site_id, {})
+
         clients.append(ClientOverview(
             site_id=row.site_id,
             name=row.name or row.site_id,
@@ -154,8 +169,8 @@ async def get_fleet_overview(db: AsyncSession = Depends(get_db)):
             health=HealthMetrics(
                 connectivity=ConnectivityMetrics(
                     checkin_freshness=checkin_freshness,
-                    healing_success_rate=95.0,
-                    order_execution_rate=98.0,
+                    healing_success_rate=site_healing.get("healing_success_rate", 100.0),
+                    order_execution_rate=site_healing.get("order_execution_rate", 100.0),
                     score=connectivity_score
                 ),
                 compliance=ComplianceMetrics(
@@ -170,8 +185,8 @@ async def get_fleet_overview(db: AsyncSession = Depends(get_db)):
                 overall=overall,
                 status=HealthStatus(status)
             ),
-            last_incident=None,
-            incidents_24h=0
+            last_incident=site_healing.get("last_incident"),
+            incidents_24h=site_healing.get("incidents_24h", 0)
         ))
 
     return clients
@@ -190,8 +205,10 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
     if not site:
         raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
 
-    # Get real compliance scores for this site
+    # Get real compliance scores and healing metrics for this site
     site_compliance = await get_compliance_scores_for_site(db, site_id)
+    site_healing = await get_healing_metrics_for_site(db, site_id)
+
     if site_compliance.get("has_data"):
         patching = site_compliance.get("patching") or 0
         antivirus = site_compliance.get("antivirus") or 0
@@ -257,8 +274,8 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
             health=HealthMetrics(
                 connectivity=ConnectivityMetrics(
                     checkin_freshness=checkin_freshness,
-                    healing_success_rate=95.0,
-                    order_execution_rate=98.0,
+                    healing_success_rate=site_healing.get("healing_success_rate", 100.0),
+                    order_execution_rate=site_healing.get("order_execution_rate", 100.0),
                     score=float(checkin_freshness)
                 ),
                 compliance=ComplianceMetrics(
@@ -293,8 +310,8 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
         health=HealthMetrics(
             connectivity=ConnectivityMetrics(
                 checkin_freshness=100 if online_count else 0,
-                healing_success_rate=95.0,
-                order_execution_rate=98.0,
+                healing_success_rate=site_healing.get("healing_success_rate", 100.0),
+                order_execution_rate=site_healing.get("order_execution_rate", 100.0),
                 score=connectivity_score
             ),
             compliance=ComplianceMetrics(
@@ -317,8 +334,10 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
 @router.get("/fleet/{site_id}/appliances", response_model=List[Appliance])
 async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)):
     """Get all appliances for a client."""
-    # Get real compliance scores for this site
+    # Get real compliance scores and healing metrics for this site
     site_compliance = await get_compliance_scores_for_site(db, site_id)
+    site_healing = await get_healing_metrics_for_site(db, site_id)
+
     if site_compliance.get("has_data"):
         patching = site_compliance.get("patching") or 0
         antivirus = site_compliance.get("antivirus") or 0
@@ -373,8 +392,8 @@ async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)
             health=HealthMetrics(
                 connectivity=ConnectivityMetrics(
                     checkin_freshness=checkin_freshness,
-                    healing_success_rate=95.0,
-                    order_execution_rate=98.0,
+                    healing_success_rate=site_healing.get("healing_success_rate", 100.0),
+                    order_execution_rate=site_healing.get("order_execution_rate", 100.0),
                     score=float(checkin_freshness)
                 ),
                 compliance=ComplianceMetrics(
@@ -415,12 +434,20 @@ async def get_incidents(
         List of incidents with resolution details.
     """
     incidents = await get_incidents_from_db(db, site_id=site_id, limit=limit, resolved=resolved)
+
+    def safe_check_type(ct: str) -> CheckType:
+        """Safely convert check type, defaulting to BACKUP for unknown types."""
+        try:
+            return CheckType(ct)
+        except ValueError:
+            return CheckType.BACKUP
+
     return [
         Incident(
             id=str(i["id"]),
             site_id=i["site_id"],
             hostname=i.get("hostname", ""),
-            check_type=CheckType(i["check_type"]) if i.get("check_type") else CheckType.BACKUP,
+            check_type=safe_check_type(i["check_type"]) if i.get("check_type") else CheckType.BACKUP,
             severity=Severity(i["severity"]),
             resolution_level=ResolutionLevel(i["resolution_level"]) if i.get("resolution_level") else None,
             resolved=i["resolved"],
@@ -474,162 +501,78 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
 # =============================================================================
 
 @router.get("/runbooks", response_model=List[Runbook])
-async def get_runbooks():
+async def get_runbooks(db: AsyncSession = Depends(get_db)):
     """Get all runbooks in the library.
 
     Returns:
-        List of runbooks with HIPAA mappings, execution stats.
+        List of runbooks with HIPAA mappings, execution stats from database.
     """
+    runbooks = await get_runbooks_from_db(db)
+
     return [
         Runbook(
-            id="RB-WIN-PATCH-001",
-            name="Windows Patch Compliance",
-            description="Verify and apply Windows security patches",
+            id=rb["id"],
+            name=rb["name"],
+            description=rb["description"],
             level=ResolutionLevel.L1,
-            hipaa_controls=["164.308(a)(5)(ii)(B)"],
-            is_disruptive=True,
-            execution_count=234,
-            success_rate=98.2,
-            avg_execution_time_ms=45000,
-        ),
-        Runbook(
-            id="RB-WIN-AV-001",
-            name="Windows Defender Health",
-            description="Verify Defender status and update signatures",
-            level=ResolutionLevel.L1,
-            hipaa_controls=["164.308(a)(5)(ii)(B)", "164.312(b)"],
-            is_disruptive=False,
-            execution_count=156,
-            success_rate=99.4,
-            avg_execution_time_ms=8000,
-        ),
-        Runbook(
-            id="RB-WIN-BACKUP-001",
-            name="Backup Status Verification",
-            description="Verify backup job completion and restore capability",
-            level=ResolutionLevel.L1,
-            hipaa_controls=["164.308(a)(7)", "164.308(a)(7)(ii)(A)"],
-            is_disruptive=False,
-            execution_count=312,
-            success_rate=95.8,
-            avg_execution_time_ms=12000,
-        ),
-        Runbook(
-            id="RB-WIN-LOGGING-001",
-            name="Audit Logging Compliance",
-            description="Verify Windows audit policy and log collection",
-            level=ResolutionLevel.L1,
-            hipaa_controls=["164.312(b)"],
-            is_disruptive=False,
-            execution_count=189,
-            success_rate=97.3,
-            avg_execution_time_ms=5000,
-        ),
-        Runbook(
-            id="RB-WIN-FIREWALL-001",
-            name="Windows Firewall Compliance",
-            description="Verify firewall status and rule compliance",
-            level=ResolutionLevel.L1,
-            hipaa_controls=["164.312(e)(1)"],
-            is_disruptive=False,
-            execution_count=145,
-            success_rate=99.1,
-            avg_execution_time_ms=3000,
-        ),
-        Runbook(
-            id="RB-WIN-ENCRYPTION-001",
-            name="BitLocker Encryption",
-            description="Verify BitLocker status and recovery key backup",
-            level=ResolutionLevel.L1,
-            hipaa_controls=["164.312(a)(2)(iv)", "164.312(e)(2)(ii)"],
-            is_disruptive=True,
-            execution_count=87,
-            success_rate=96.5,
-            avg_execution_time_ms=120000,
-        ),
-        Runbook(
-            id="RB-WIN-AD-001",
-            name="Active Directory Health",
-            description="Verify AD health, password policies, and account security",
-            level=ResolutionLevel.L1,
-            hipaa_controls=["164.312(a)(1)", "164.312(d)"],
-            is_disruptive=False,
-            execution_count=201,
-            success_rate=98.0,
-            avg_execution_time_ms=15000,
-        ),
+            hipaa_controls=rb["hipaa_controls"],
+            is_disruptive=rb["is_disruptive"],
+            execution_count=rb["execution_count"],
+            success_rate=rb["success_rate"],
+            avg_execution_time_ms=rb["avg_execution_time_ms"],
+        )
+        for rb in runbooks
     ]
 
 
 @router.get("/runbooks/{runbook_id}", response_model=RunbookDetail)
-async def get_runbook_detail(runbook_id: str):
+async def get_runbook_detail(runbook_id: str, db: AsyncSession = Depends(get_db)):
     """Get runbook detail including steps, params, execution history."""
-    now = datetime.now(timezone.utc)
+    rb = await get_runbook_detail_from_db(db, runbook_id)
 
-    if runbook_id == "RB-WIN-PATCH-001":
-        return RunbookDetail(
-            id="RB-WIN-PATCH-001",
-            name="Windows Patch Compliance",
-            description="Verify and apply Windows security patches",
-            level=ResolutionLevel.L1,
-            hipaa_controls=["164.308(a)(5)(ii)(B)"],
-            is_disruptive=True,
-            steps=[
-                {"order": 1, "action": "check_pending_patches", "timeout_seconds": 60},
-                {"order": 2, "action": "download_patches", "timeout_seconds": 300},
-                {"order": 3, "action": "install_patches", "timeout_seconds": 600},
-                {"order": 4, "action": "verify_installation", "timeout_seconds": 60},
-            ],
-            parameters={
-                "reboot_if_required": True,
-                "maintenance_window": "02:00-06:00",
-                "critical_only": False,
-            },
-            execution_count=234,
-            success_rate=98.2,
-            avg_execution_time_ms=45000,
-            created_at=now - timedelta(days=180),
-            updated_at=now - timedelta(days=7),
-        )
+    if not rb:
+        raise HTTPException(status_code=404, detail=f"Runbook {runbook_id} not found")
 
-    raise HTTPException(status_code=404, detail=f"Runbook {runbook_id} not found")
+    return RunbookDetail(
+        id=rb["id"],
+        name=rb["name"],
+        description=rb["description"],
+        level=ResolutionLevel.L1,
+        hipaa_controls=rb["hipaa_controls"],
+        is_disruptive=rb["is_disruptive"],
+        steps=rb["steps"],
+        parameters=rb["parameters"],
+        execution_count=rb["execution_count"],
+        success_rate=rb["success_rate"],
+        avg_execution_time_ms=rb["avg_execution_time_ms"],
+        created_at=rb["created_at"],
+        updated_at=rb["updated_at"],
+    )
 
 
 @router.get("/runbooks/{runbook_id}/executions", response_model=List[RunbookExecution])
 async def get_runbook_executions(
     runbook_id: str,
     limit: int = Query(default=20, le=100),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Get recent executions of a specific runbook."""
-    now = datetime.now(timezone.utc)
+    """Get recent executions of a specific runbook from orders table."""
+    executions = await get_runbook_executions_from_db(db, runbook_id, limit)
 
-    if runbook_id == "RB-WIN-PATCH-001":
-        return [
-            RunbookExecution(
-                id=5001,
-                runbook_id=runbook_id,
-                site_id="north-valley-family-practice",
-                hostname="NVFP-DC01",
-                incident_id=1001,
-                success=True,
-                execution_time_ms=42000,
-                output="Installed 3 patches successfully",
-                executed_at=now - timedelta(hours=4),
-            ),
-            RunbookExecution(
-                id=5002,
-                runbook_id=runbook_id,
-                site_id="cedar-medical-group",
-                hostname="CMG-DC01",
-                incident_id=1002,
-                success=True,
-                execution_time_ms=48000,
-                output="Installed 5 patches successfully",
-                executed_at=now - timedelta(hours=12),
-            ),
-        ][:limit]
-
-    return []
+    return [
+        RunbookExecution(
+            id=ex["id"],
+            runbook_id=ex["runbook_id"],
+            site_id=ex["site_id"],
+            hostname=ex["hostname"],
+            incident_id=ex["incident_id"],
+            success=ex["success"],
+            execution_time_ms=ex["execution_time_ms"],
+            output=ex["output"],
+            executed_at=ex["executed_at"],
+        )
+        for ex in executions
+    ]
 
 
 # =============================================================================
@@ -1096,7 +1039,7 @@ async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db)):
         site_id=site_id,
         appliance_count=app_row.total or 0,
         online_count=app_row.online or 0,
-        compliance_score=85.0,  # TODO: calculate from evidence
+        compliance_score=0.0,  # TODO: calculate from evidence bundles
         connectivity_score=100.0 if app_row.online else 0.0,
         incidents_24h=inc_row.day or 0,
         incidents_7d=inc_row.week or 0,
@@ -1204,4 +1147,219 @@ async def execute_command(request: CommandRequest):
         command_type="unknown",
         success=False,
         error="Unknown command. Try: status all, status <site_id>, incidents <site_id>, runbook <id>, learning status",
+    )
+
+
+# =============================================================================
+# NOTIFICATIONS
+# =============================================================================
+
+from pydantic import BaseModel
+from enum import Enum
+
+class NotificationSeverity(str, Enum):
+    CRITICAL = "critical"
+    WARNING = "warning"
+    INFO = "info"
+    SUCCESS = "success"
+
+class Notification(BaseModel):
+    id: str
+    site_id: Optional[str] = None
+    appliance_id: Optional[str] = None
+    severity: NotificationSeverity
+    category: str
+    title: str
+    message: str
+    metadata: dict = {}
+    is_read: bool = False
+    is_dismissed: bool = False
+    created_at: datetime
+    read_at: Optional[datetime] = None
+
+class NotificationSummary(BaseModel):
+    total: int
+    unread: int
+    critical: int
+    warning: int
+    info: int
+    success: int
+
+
+class NotificationCreate(BaseModel):
+    """Request model for creating a notification."""
+    severity: str
+    category: str
+    title: str
+    message: str
+    site_id: Optional[str] = None
+    appliance_id: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+@router.get("/notifications", response_model=List[Notification])
+async def get_notifications(
+    site_id: Optional[str] = None,
+    severity: Optional[str] = None,
+    unread_only: bool = False,
+    limit: int = Query(50, le=200),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get notifications with optional filters."""
+    try:
+        query = """
+            SELECT id, site_id, appliance_id, severity, category, title, message,
+                   metadata, is_read, is_dismissed, created_at, read_at
+            FROM notifications
+            WHERE is_dismissed = FALSE
+        """
+        params = {}
+
+        if site_id:
+            query += " AND (site_id = :site_id OR site_id IS NULL)"
+            params["site_id"] = site_id
+        if severity:
+            query += " AND severity = :severity"
+            params["severity"] = severity
+        if unread_only:
+            query += " AND is_read = FALSE"
+
+        query += " ORDER BY created_at DESC LIMIT :limit"
+        params["limit"] = limit
+
+        result = await db.execute(text(query), params)
+        rows = result.fetchall()
+
+        return [Notification(
+            id=str(row.id),
+            site_id=row.site_id,
+            appliance_id=row.appliance_id,
+            severity=row.severity,
+            category=row.category,
+            title=row.title,
+            message=row.message,
+            metadata=row.metadata or {},
+            is_read=row.is_read,
+            is_dismissed=row.is_dismissed,
+            created_at=row.created_at,
+            read_at=row.read_at,
+        ) for row in rows]
+    except Exception as e:
+        # Return empty list if table doesn't exist
+        return []
+
+
+@router.get("/notifications/summary", response_model=NotificationSummary)
+async def get_notification_summary(db: AsyncSession = Depends(get_db)):
+    """Get notification counts by severity."""
+    try:
+        result = await db.execute(text("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE is_read = FALSE) as unread,
+                COUNT(*) FILTER (WHERE severity = 'critical' AND is_read = FALSE) as critical,
+                COUNT(*) FILTER (WHERE severity = 'warning' AND is_read = FALSE) as warning,
+                COUNT(*) FILTER (WHERE severity = 'info' AND is_read = FALSE) as info,
+                COUNT(*) FILTER (WHERE severity = 'success' AND is_read = FALSE) as success
+            FROM notifications
+            WHERE is_dismissed = FALSE
+        """))
+        row = result.fetchone()
+        return NotificationSummary(
+            total=row.total or 0,
+            unread=row.unread or 0,
+            critical=row.critical or 0,
+            warning=row.warning or 0,
+            info=row.info or 0,
+            success=row.success or 0,
+        )
+    except Exception:
+        return NotificationSummary(total=0, unread=0, critical=0, warning=0, info=0, success=0)
+
+
+@router.post("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, db: AsyncSession = Depends(get_db)):
+    """Mark a notification as read."""
+    await db.execute(text("""
+        UPDATE notifications
+        SET is_read = TRUE, read_at = NOW()
+        WHERE id = :id
+    """), {"id": notification_id})
+    await db.commit()
+    return {"status": "ok", "notification_id": notification_id}
+
+
+@router.post("/notifications/read-all")
+async def mark_all_notifications_read(db: AsyncSession = Depends(get_db)):
+    """Mark all notifications as read."""
+    result = await db.execute(text("""
+        UPDATE notifications
+        SET is_read = TRUE, read_at = NOW()
+        WHERE is_read = FALSE
+    """))
+    await db.commit()
+    return {"status": "ok", "marked_count": result.rowcount}
+
+
+@router.post("/notifications/{notification_id}/dismiss")
+async def dismiss_notification(notification_id: str, db: AsyncSession = Depends(get_db)):
+    """Dismiss a notification (hide it)."""
+    await db.execute(text("""
+        UPDATE notifications
+        SET is_dismissed = TRUE
+        WHERE id = :id
+    """), {"id": notification_id})
+    await db.commit()
+    return {"status": "ok", "notification_id": notification_id}
+
+
+@router.post("/notifications", response_model=Notification)
+async def create_notification(
+    notification: NotificationCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new notification. Sends email for critical severity."""
+    import json
+
+    # Insert notification
+    result = await db.execute(text("""
+        INSERT INTO notifications (site_id, appliance_id, severity, category, title, message, metadata)
+        VALUES (:site_id, :appliance_id, :severity, :category, :title, :message, :metadata)
+        RETURNING id, site_id, appliance_id, severity, category, title, message, metadata, is_read, is_dismissed, created_at, read_at
+    """), {
+        "site_id": notification.site_id,
+        "appliance_id": notification.appliance_id,
+        "severity": notification.severity,
+        "category": notification.category,
+        "title": notification.title,
+        "message": notification.message,
+        "metadata": json.dumps(notification.metadata or {}),
+    })
+    await db.commit()
+
+    row = result.fetchone()
+
+    # Send email for critical alerts
+    if notification.severity == "critical":
+        send_critical_alert(
+            title=notification.title,
+            message=notification.message,
+            site_id=notification.site_id,
+            category=notification.category,
+            metadata=notification.metadata
+        )
+
+    return Notification(
+        id=str(row.id),
+        site_id=row.site_id,
+        appliance_id=row.appliance_id,
+        severity=row.severity,
+        category=row.category,
+        title=row.title,
+        message=row.message,
+        metadata=json.loads(row.metadata) if row.metadata else {},
+        is_read=row.is_read,
+        is_dismissed=row.is_dismissed,
+        created_at=row.created_at,
+        read_at=row.read_at
     )

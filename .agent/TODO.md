@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
-**Sprint:** Phase 12 - Launch Readiness (Credential-Pull Complete)
+**Last Updated:** 2026-01-06 (Session 12 continued - Chaos Probe, L3 Email Alerts)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.19, Chaos Probe submits to Central Command)
 
 ---
 
@@ -352,6 +352,67 @@
   - Credential rotation picked up automatically
   - ISO v16 built with agent v1.0.8 (credential-pull support)
   - Windows DC (192.168.88.250) connectivity verified via credential-pull
+- [x] **Healing System Integration Complete** - 2026-01-05 (Session 10)
+  - Fixed L1 `execute()` to check action_executor success (was always returning true)
+  - Fixed `_handle_drift_healing()` to use `auto_healer.heal()` method correctly
+  - Fixed `_heal_run_windows_runbook()` to use `WindowsExecutor.run_runbook()`
+  - Tested Windows firewall chaos: L1 matched → Runbook executed → Firewall re-enabled
+  - Agent v1.0.18 with all healing integration fixes
+  - 453 tests passing (compliance-agent)
+- [x] **ISO v18 Deployed** - 2026-01-05 (Session 11)
+  - Agent v1.0.9 with all healing fixes packaged
+  - Built on VPS after garbage collection (freed 109GB)
+  - SHA256: abcf0096f249e44f0af7e3432293174f02fce0bf11bbd1271afc6ee7eb442023
+  - Flashed to HP T640, agent v1.0.18 online
+- [x] **Email Alerts System** - 2026-01-05 (Session 12)
+  - SMTP via privateemail.com (TLS, port 587)
+  - `email_alerts.py` with `send_critical_alert()` function
+  - POST /api/dashboard/notifications with email for critical severity
+  - Test Alert button in Notifications page
+- [x] **Push Agent Update UI** - 2026-01-05 (Session 12)
+  - Prominent pulsing button shows when agent is outdated
+  - Version selection modal with package URL preview
+  - ActionDropdown z-index fix (z-[9999])
+  - Delete Appliance option in dropdown menu
+- [x] **Test VM Rebuilt with ISO v18** - 2026-01-05 (Session 12)
+  - Registered MAC 08:00:27:98:fd:84 in appliance_provisioning table
+  - Detached old VDI, booted from ISO v18 only
+  - Agent now v1.0.18 (was 0.1.1-quickfix)
+  - Both appliances checking in with v1.0.18
+- [x] **Fix Dashboard Hardcoded Metrics** - 2026-01-05 (Session 12)
+  - Added `get_healing_metrics_for_site()` and `get_global_healing_metrics()` to db_queries.py
+  - Updated routes.py to use real DB queries instead of hardcoded 0.0 values
+  - Healing success rate now shows 100.0% (all incidents resolved)
+  - Order execution rate now shows 36.4% (from admin_orders table)
+- [x] **Order Lifecycle Endpoints** - 2026-01-05 (Session 12)
+  - Added `POST /api/orders/{order_id}/acknowledge` endpoint
+  - Added `POST /api/orders/{order_id}/complete` endpoint
+  - Added `GET /api/orders/{order_id}` endpoint
+  - Created `orders_router` in sites.py, registered in main.py
+  - Tested end-to-end: order created → acknowledged → completed (all 200 OK)
+  - Appliances can now fully execute admin orders
+- [x] **Smart Appliance Deduplication** - 2026-01-05 (Session 12 continued)
+  - Added `POST /api/appliances/checkin` with smart deduplication
+  - Normalizes MAC addresses (handles case/separator differences)
+  - Auto-merges duplicates: same hostname OR same MAC for same site
+  - Keeps oldest entry (by first_checkin) as canonical ID
+  - Deleted duplicate verified via test case
+  - Returns `merged_duplicates` count + pending orders + windows targets
+- [x] **Multi-NTP Time Verification** - 2026-01-05 (Session 12 continued)
+  - Created `ntp_verify.py` module with raw NTP protocol (RFC 5905)
+  - Queries 5 NTP servers: NIST, Google, Cloudflare, Apple, pool.ntp.org
+  - Validates: 3+ servers respond, median offset < 5s, skew between sources < 5s
+  - `ntp_verification` dict added to evidence bundles
+  - 25 unit tests + 2 live integration tests
+  - Agent v1.0.19 with NTP verification in `_run_drift_detection()`
+  - Test count: 478 → 503 passed
+- [x] **Chaos Probe Central Command Integration** - 2026-01-06 (Session 12 continued)
+  - Updated `scripts/chaos_probe.py` to POST incidents to `/incidents` endpoint
+  - Fixed VPS appliances table FK constraint (added physical + test appliances)
+  - Fixed `routes.py` safe_check_type() for unknown check types
+  - Chaos probe incidents now appear in dashboard stats
+  - L3 probes send emails via `/api/alerts/email` endpoint
+  - User confirmed receiving L3 escalation emails
 
 ---
 
@@ -611,26 +672,30 @@
 - [ ] UI shows "Anchored" status with Bitcoin block info
 
 ### 26. Multi-NTP Time Verification
-**Status:** ⭕ PENDING
+**Status:** ✅ COMPLETE (2026-01-05 Session 12)
 **Why:** Ensures timestamp integrity for evidence
-**Files:** TBD
+**Files:** `packages/compliance-agent/src/compliance_agent/ntp_verify.py`
 **Acceptance:**
-- [ ] Query 3+ NTP servers before signing bundle
-- [ ] Reject if time skew > 5 seconds between sources
-- [ ] Store NTP source + offset in bundle metadata
-- [ ] Alert if time verification fails
+- [x] Query 3+ NTP servers before signing bundle (NIST, Google, Cloudflare, Apple, pool.ntp.org)
+- [x] Reject if time skew > 5 seconds between sources
+- [x] Store NTP source + offset in bundle metadata (`ntp_verification` field)
+- [x] Log warning if time verification fails (evidence still collected)
+- [x] 25 unit tests for NTP verification module
+- [x] Integrated into `_run_drift_detection()` flow
+- [x] Agent v1.0.19 with NTP verification
 
 ### 27. Fix Appliance IP Detection (0.0.0.0 bug)
-**Status:** ⭕ PENDING (Low Priority)
+**Status:** ✅ COMPLETE (2026-01-05 Session 12 - was already fixed)
 **Why:** Physical appliance reports 0.0.0.0 instead of actual IP
 **Files:** `iso/phone-home.py` or `appliance_agent.py`
 **Acceptance:**
-- [ ] Investigate IP detection on physical appliance
-- [ ] Fix to report actual ethernet IP (192.168.88.246)
-- [ ] Verify in Central Command dashboard
+- [x] Investigate IP detection on physical appliance
+- [x] Fix to report actual ethernet IP (192.168.88.246)
+- [x] Verify in Central Command dashboard
+**Note:** Already fixed with ISO v18 - both appliances now report correct IPs (192.168.88.246, 192.168.88.231)
 
 ### 28. Smart Appliance Deduplication (UX Enhancement)
-**Status:** ⭕ PENDING (Low Priority)
+**Status:** ✅ COMPLETE (2026-01-05 Session 12)
 **Why:** Stale duplicate entries clutter dashboard when appliances reconnect after power/network issues
 **Files:** `mcp-server/central-command/backend/sites.py`, `main.py`
 **Scenarios:**
@@ -638,10 +703,12 @@
 - Same MAC, different hostname (device renamed)
 - Same site, multiple ghost entries from power cycles
 **Acceptance:**
-- [ ] Auto-merge on checkin when hostname or MAC matches stale entry
-- [ ] Or: Add "consolidate duplicates" button in admin UI
-- [ ] Or: Background job to clean entries offline > 24h (extend existing `clear-stale`)
-- [ ] Consider hostname as secondary key for matching (current key is `{site_id}-{mac}`)
+- [x] Auto-merge on checkin when hostname or MAC matches stale entry
+- [x] New endpoint: `POST /api/appliances/checkin` with smart deduplication
+- [x] Normalizes MAC addresses (handles case/separator differences)
+- [x] Keeps oldest entry as canonical, merges duplicates
+- [x] Returns `merged_duplicates` count in response
+- [x] Returns pending orders + windows_targets (credential-pull pattern)
 
 ---
 

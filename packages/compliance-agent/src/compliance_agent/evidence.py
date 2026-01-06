@@ -105,6 +105,7 @@ class EvidenceGenerator:
         order_id: Optional[str] = None,
         runbook_id: Optional[str] = None,
         ntp_offset_ms: Optional[int] = None,
+        ntp_verification: Optional[Dict[str, Any]] = None,
         nixos_revision: Optional[str] = None,
         derivation_digest: Optional[str] = None,
         ruleset_hash: Optional[str] = None
@@ -127,6 +128,7 @@ class EvidenceGenerator:
             order_id: MCP order ID that triggered action
             runbook_id: Runbook ID executed
             ntp_offset_ms: NTP offset at check time
+            ntp_verification: Multi-source NTP verification result
             nixos_revision: NixOS flake revision
             derivation_digest: NixOS derivation hash
             ruleset_hash: Compliance ruleset hash
@@ -160,6 +162,7 @@ class EvidenceGenerator:
             nixos_revision=nixos_revision,
             derivation_digest=derivation_digest,
             ntp_offset_ms=ntp_offset_ms,
+            ntp_verification=ntp_verification,
 
             # Check
             check=check,
