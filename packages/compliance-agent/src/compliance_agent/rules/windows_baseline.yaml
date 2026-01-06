@@ -1,0 +1,752 @@
+# Windows Baseline L1 Rules for Auto-Healing
+# These rules are matched against incidents from drift detection.
+# When matched, the specified action is executed automatically.
+#
+# Rule format:
+#   id: Unique identifier
+#   name: Human-readable name
+#   conditions: List of field/operator/value checks (all must match)
+#   action: Action type to execute
+#   action_params: Parameters for the action
+#   hipaa_controls: List of HIPAA citation mappings
+#   priority: Lower = higher priority (checked first)
+#   cooldown_seconds: Minimum time between re-executions
+
+rules:
+  # =========================================================================
+  # Windows Defender (AV/EDR)
+  # =========================================================================
+  - id: L1-WIN-DEFENDER-001
+    name: Windows Defender Service Down
+    description: Restart Windows Defender if service stopped
+    conditions:
+      - field: check_type
+        operator: eq
+        value: windows_defender
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-AV-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(5)(ii)(B)"
+      - "164.312(b)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 300
+
+  # =========================================================================
+  # Windows Event Logging
+  # =========================================================================
+  - id: L1-WIN-EVENTLOG-001
+    name: Windows Event Log Service Down
+    description: Restart Windows Event Log service if not running
+    conditions:
+      - field: check_type
+        operator: eq
+        value: windows_eventlog
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-LOGGING-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(b)"
+      - "164.308(a)(1)(ii)(D)"
+    severity_filter:
+      - medium
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 300
+
+  # =========================================================================
+  # Windows Firewall
+  # =========================================================================
+  - id: L1-WIN-FIREWALL-001
+    name: Windows Firewall Disabled
+    description: Enable Windows Firewall if disabled
+    conditions:
+      - field: check_type
+        operator: eq
+        value: firewall_status
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-FIREWALL-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(e)(1)"
+      - "164.312(a)(1)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 10
+    cooldown_seconds: 600
+
+  # =========================================================================
+  # Windows Patching (Escalate - Requires Maintenance Window)
+  # =========================================================================
+  - id: L1-WIN-PATCH-CRITICAL-001
+    name: Critical Windows Update Missing
+    description: Escalate when critical patches are missing (requires maintenance window)
+    conditions:
+      - field: check_type
+        operator: eq
+        value: windows_updates
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: details.critical_missing
+        operator: gt
+        value: 0
+    action: escalate
+    action_params:
+      reason: "Critical Windows patches missing - requires maintenance window for reboot"
+      urgency: high
+      runbook_id: RB-WIN-PATCH-001
+    hipaa_controls:
+      - "164.308(a)(5)(ii)(B)"
+      - "164.312(c)(1)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 3
+    cooldown_seconds: 3600
+
+  # =========================================================================
+  # Windows Backup
+  # =========================================================================
+  - id: L1-WIN-BACKUP-AGE-001
+    name: Windows Backup Overdue
+    description: Trigger backup if last backup is more than 24 hours old
+    conditions:
+      - field: check_type
+        operator: eq
+        value: windows_backup
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: details.backup_age_hours
+        operator: gt
+        value: 24
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-BACKUP-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(7)(ii)(A)"
+      - "164.310(d)(2)(iv)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 15
+    cooldown_seconds: 1800
+
+  # =========================================================================
+  # BitLocker Encryption
+  # =========================================================================
+  - id: L1-WIN-BITLOCKER-001
+    name: BitLocker Not Enabled
+    description: Escalate when BitLocker is not protecting the system drive
+    conditions:
+      - field: check_type
+        operator: eq
+        value: bitlocker_status
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: details.ProtectionStatus
+        operator: ne
+        value: "On"
+    action: escalate
+    action_params:
+      reason: "BitLocker encryption not enabled on system drive - manual intervention required"
+      urgency: critical
+      runbook_id: RB-WIN-ENCRYPTION-001
+    hipaa_controls:
+      - "164.312(a)(2)(iv)"
+      - "164.312(e)(2)(ii)"
+    severity_filter:
+      - critical
+    enabled: true
+    priority: 2
+    cooldown_seconds: 86400  # Once per day
+
+  # =========================================================================
+  # NixOS Appliance Rules (for the appliance itself)
+  # =========================================================================
+  - id: L1-NIX-NTP-001
+    name: NTP Synchronization Failed
+    description: Restart chronyd if NTP sync fails
+    conditions:
+      - field: check_type
+        operator: eq
+        value: ntp_sync
+      - field: status
+        operator: eq
+        value: fail
+    action: restart_service
+    action_params:
+      service_name: chronyd
+    hipaa_controls:
+      - "164.312(b)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 20
+    cooldown_seconds: 300
+
+  - id: L1-NIX-SERVICES-001
+    name: Critical Service Down
+    description: Restart critical services if they stop
+    conditions:
+      - field: check_type
+        operator: eq
+        value: critical_services
+      - field: status
+        operator: eq
+        value: warning
+    action: run_command
+    action_params:
+      command: "systemctl restart sshd chronyd nscd"
+      timeout: 30
+    hipaa_controls:
+      - "164.312(a)(1)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 10
+    cooldown_seconds: 300
+
+  - id: L1-NIX-DISK-001
+    name: Disk Space Critical
+    description: Run garbage collection when disk space is critical
+    conditions:
+      - field: check_type
+        operator: eq
+        value: disk_space
+      - field: status
+        operator: eq
+        value: fail
+    action: run_command
+    action_params:
+      command: "nix-collect-garbage -d && journalctl --vacuum-time=7d"
+      timeout: 300
+    hipaa_controls:
+      - "164.308(a)(7)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 15
+    cooldown_seconds: 3600
+
+  # =========================================================================
+  # Windows Service Runbooks (RB-WIN-SVC-*)
+  # =========================================================================
+  - id: L1-WIN-SVC-DNS-001
+    name: DNS Server Service Recovery
+    description: Restart Windows DNS Server service if stopped
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_health
+      - field: details.service_name
+        operator: eq
+        value: DNS
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SVC-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(b)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 300
+
+  - id: L1-WIN-SVC-DHCP-001
+    name: DHCP Server Service Recovery
+    description: Restart Windows DHCP Server service if stopped
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_health
+      - field: details.service_name
+        operator: eq
+        value: DHCPServer
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SVC-002
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(b)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 10
+    cooldown_seconds: 300
+
+  - id: L1-WIN-SVC-SPOOLER-001
+    name: Print Spooler Security Check
+    description: Manage Print Spooler service for security (disable on DCs)
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_health
+      - field: details.service_name
+        operator: eq
+        value: Spooler
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SVC-003
+      phases: ["detect", "remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(5)(ii)(B)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 25
+    cooldown_seconds: 600
+
+  - id: L1-WIN-SVC-TIME-001
+    name: Windows Time Service Recovery
+    description: Restart W32Time service for NTP sync
+    conditions:
+      - field: check_type
+        operator: eq
+        value: ntp_sync
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: details.os_type
+        operator: eq
+        value: windows
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SVC-004
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(b)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 15
+    cooldown_seconds: 300
+
+  # =========================================================================
+  # Windows Security Runbooks (RB-WIN-SEC-*)
+  # =========================================================================
+  - id: L1-WIN-SEC-FIREWALL-001
+    name: Windows Firewall Re-enable
+    description: Re-enable Windows Firewall if disabled on any profile
+    conditions:
+      - field: check_type
+        operator: eq
+        value: firewall
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: details.disabled_profiles
+        operator: exists
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SEC-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+      - "164.312(e)(1)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 300
+
+  - id: L1-WIN-SEC-AUDIT-001
+    name: Audit Policy Remediation
+    description: Configure HIPAA-required audit policies
+    conditions:
+      - field: check_type
+        operator: eq
+        value: logging
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: details.missing_policies
+        operator: exists
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SEC-002
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(b)"
+      - "164.308(a)(1)(ii)(D)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 10
+    cooldown_seconds: 600
+
+  - id: L1-WIN-SEC-LOCKOUT-001
+    name: Account Lockout Policy Check
+    description: Configure account lockout thresholds per HIPAA
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_health
+      - field: details.check_name
+        operator: eq
+        value: account_lockout_policy
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SEC-003
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(a)(2)(i)"
+    severity_filter:
+      - medium
+    enabled: true
+    priority: 20
+    cooldown_seconds: 900
+
+  - id: L1-WIN-SEC-PASSWORD-001
+    name: Password Policy Enforcement
+    description: Verify password complexity and expiration policies
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_health
+      - field: details.check_name
+        operator: eq
+        value: password_policy
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SEC-004
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(d)"
+    severity_filter:
+      - high
+    enabled: true
+    priority: 10
+    cooldown_seconds: 900
+
+  - id: L1-WIN-SEC-BITLOCKER-001
+    name: BitLocker Status Recovery
+    description: Resume BitLocker protection if suspended
+    conditions:
+      - field: check_type
+        operator: eq
+        value: encryption
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: details.protection_suspended
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SEC-005
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(a)(2)(iv)"
+      - "164.312(e)(2)(ii)"
+    severity_filter:
+      - critical
+    enabled: true
+    priority: 3
+    cooldown_seconds: 600
+
+  - id: L1-WIN-SEC-DEFENDER-001
+    name: Windows Defender Real-time Protection
+    description: Enable Defender real-time protection and update signatures
+    conditions:
+      - field: check_type
+        operator: eq
+        value: windows_defender
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: details.realtime_disabled
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SEC-006
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(5)(ii)(B)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 3
+    cooldown_seconds: 300
+
+  # =========================================================================
+  # Windows Network Runbooks (RB-WIN-NET-*)
+  # =========================================================================
+  - id: L1-WIN-NET-DNS-001
+    name: DNS Client Configuration Reset
+    description: Reset DNS client settings to proper servers
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_health
+      - field: details.check_name
+        operator: eq
+        value: dns_client
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-NET-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(b)"
+    severity_filter:
+      - medium
+    enabled: true
+    priority: 25
+    cooldown_seconds: 600
+
+  - id: L1-WIN-NET-NIC-001
+    name: NIC Reset and Recovery
+    description: Reset network adapter if connectivity issues detected
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_health
+      - field: details.connectivity_failed
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-NET-002
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+    severity_filter:
+      - high
+    enabled: true
+    priority: 10
+    cooldown_seconds: 600
+
+  - id: L1-WIN-NET-PROFILE-001
+    name: Network Profile Remediation
+    description: Ensure proper network profile (Domain/Private)
+    conditions:
+      - field: check_type
+        operator: eq
+        value: firewall
+      - field: details.public_profile_active
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-NET-003
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(e)(1)"
+    severity_filter:
+      - medium
+    enabled: true
+    priority: 30
+    cooldown_seconds: 900
+
+  # =========================================================================
+  # Windows Storage Runbooks (RB-WIN-STG-*)
+  # =========================================================================
+  - id: L1-WIN-STG-DISK-001
+    name: Disk Space Cleanup
+    description: Clean temp files, old logs, and Windows Update cache
+    conditions:
+      - field: check_type
+        operator: eq
+        value: disk_space
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: details.free_percent
+        operator: lt
+        value: 10
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-STG-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(c)(1)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 10
+    cooldown_seconds: 3600
+
+  - id: L1-WIN-STG-VSS-001
+    name: Shadow Copy Recovery
+    description: Verify and restore Volume Shadow Copy service
+    conditions:
+      - field: check_type
+        operator: eq
+        value: backup
+      - field: details.vss_failed
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-STG-002
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(7)(ii)(A)"
+    severity_filter:
+      - medium
+    enabled: true
+    priority: 20
+    cooldown_seconds: 1800
+
+  - id: L1-WIN-STG-HEALTH-001
+    name: Volume Health Check
+    description: Check disk SMART status and volume integrity
+    conditions:
+      - field: check_type
+        operator: eq
+        value: disk_space
+      - field: details.disk_unhealthy
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-STG-003
+      phases: ["detect"]
+    hipaa_controls:
+      - "164.310(d)(2)(iv)"
+    severity_filter:
+      - critical
+    enabled: true
+    priority: 2
+    cooldown_seconds: 86400
+
+  # =========================================================================
+  # Windows Update Runbooks (RB-WIN-UPD-*)
+  # =========================================================================
+  - id: L1-WIN-UPD-RESET-001
+    name: Windows Update Service Reset
+    description: Reset Windows Update components when updates fail
+    conditions:
+      - field: check_type
+        operator: eq
+        value: patching
+      - field: details.update_errors
+        operator: gt
+        value: 5
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-UPD-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(5)(ii)(B)"
+    severity_filter:
+      - high
+    enabled: true
+    priority: 15
+    cooldown_seconds: 3600
+
+  - id: L1-WIN-UPD-WSUS-001
+    name: WSUS Client Registration Fix
+    description: Re-register with WSUS server if sync broken
+    conditions:
+      - field: check_type
+        operator: eq
+        value: patching
+      - field: details.wsus_sync_failed
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-UPD-002
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(5)(ii)(B)"
+    severity_filter:
+      - medium
+    enabled: true
+    priority: 20
+    cooldown_seconds: 1800
+
+  # =========================================================================
+  # Windows Active Directory Runbooks (RB-WIN-AD-*)
+  # =========================================================================
+  - id: L1-WIN-AD-TRUST-001
+    name: Computer Account Password Reset
+    description: Reset machine account password when domain trust broken
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_health
+      - field: details.domain_trust_broken
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-AD-002
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+      - "164.308(a)(4)(ii)(B)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 3600

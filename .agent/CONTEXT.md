@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-06 (Session 12 continued - Chaos Probe, L3 Email Alerts)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, Chaos Probe to Central Command)
-**Test Status:** 503 passed (compliance-agent tests), agent v1.0.19, ISO v18 deployed
+**Last Updated:** 2026-01-06 (Session 13 - Windows Runbook Expansion)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, RunbookConfig UI)
+**Test Status:** 523 passed (compliance-agent tests), agent v1.0.19, ISO v18 deployed, 27 runbooks
 
 ---
 
@@ -126,6 +126,13 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - L3 probes send emails via `/api/alerts/email` endpoint
   - Fixed routes.py safe_check_type() for unknown check types
   - VPS appliances table updated with FK records
+- ✅ **Windows Runbook Expansion (27 Total)** - 2026-01-06 (Session 13)
+  - 6 new category files: services.py, security.py, network.py, storage.py, updates.py, active_directory.py
+  - 20 new runbooks + 7 core = 27 total Windows runbooks
+  - Partner-configurable enable/disable via RunbookConfig.tsx
+  - Backend API: GET/PUT /api/sites/{site_id}/runbooks
+  - L1 rules in windows_baseline.yaml for automated remediation
+  - 20 runbook filtering tests in test_runbook_filtering.py
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)

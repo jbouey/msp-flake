@@ -338,4 +338,200 @@ export const sitesApi = {
     }),
 };
 
+// =============================================================================
+// ORDERS API
+// =============================================================================
+
+export type OrderType =
+  | 'force_checkin'
+  | 'run_drift'
+  | 'sync_rules'
+  | 'restart_agent'
+  | 'view_logs'
+  | 'collect_evidence'
+  | 'update_agent';
+
+export type OrderStatus =
+  | 'pending'
+  | 'acknowledged'
+  | 'executing'
+  | 'completed'
+  | 'failed'
+  | 'expired';
+
+export interface OrderCreate {
+  order_type: OrderType;
+  parameters?: Record<string, unknown>;
+  priority?: number;
+}
+
+export interface OrderResponse {
+  order_id: string;
+  appliance_id: string | null;
+  site_id: string;
+  order_type: OrderType;
+  parameters: Record<string, unknown>;
+  priority: number;
+  status: OrderStatus;
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+  acknowledged_at: string | null;
+  completed_at: string | null;
+  result: Record<string, unknown> | null;
+  error_message: string | null;
+}
+
+export interface ClearStaleRequest {
+  stale_hours?: number;
+}
+
+export interface ClearStaleResponse {
+  deleted_count: number;
+  deleted_appliances: string[];
+}
+
+export const ordersApi = {
+  // Create an order for a specific appliance
+  createApplianceOrder: (siteId: string, applianceId: string, order: OrderCreate) =>
+    fetchSitesApi<OrderResponse>(`/sites/${siteId}/appliances/${applianceId}/orders`, {
+      method: 'POST',
+      body: JSON.stringify(order),
+    }),
+
+  // Broadcast an order to all appliances in a site
+  broadcastOrder: (siteId: string, order: { order_type: OrderType; parameters?: Record<string, unknown> }) =>
+    fetchSitesApi<OrderResponse[]>(`/sites/${siteId}/orders/broadcast`, {
+      method: 'POST',
+      body: JSON.stringify(order),
+    }),
+
+  // Get orders for a site
+  getOrders: (siteId: string, status?: OrderStatus) => {
+    const query = status ? `?status=${status}` : '';
+    return fetchSitesApi<OrderResponse[]>(`/sites/${siteId}/orders${query}`);
+  },
+
+  // Delete an appliance
+  deleteAppliance: (siteId: string, applianceId: string) =>
+    fetchSitesApi<{ status: string; appliance_id: string; site_id: string }>(
+      `/sites/${siteId}/appliances/${applianceId}`,
+      { method: 'DELETE' }
+    ),
+
+  // Clear stale appliances
+  clearStaleAppliances: (siteId: string, staleHours: number = 24) =>
+    fetchSitesApi<ClearStaleResponse>(`/sites/${siteId}/appliances/clear-stale`, {
+      method: 'POST',
+      body: JSON.stringify({ stale_hours: staleHours }),
+    }),
+};
+
+// =============================================================================
+// NOTIFICATIONS API
+// =============================================================================
+
+import type { Notification, NotificationSummary } from '../types';
+
+export const notificationsApi = {
+  getNotifications: (params?: {
+    site_id?: string;
+    severity?: string;
+    unread_only?: boolean;
+    limit?: number;
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.site_id) searchParams.set('site_id', params.site_id);
+    if (params?.severity) searchParams.set('severity', params.severity);
+    if (params?.unread_only) searchParams.set('unread_only', 'true');
+    if (params?.limit) searchParams.set('limit', String(params.limit));
+
+    const query = searchParams.toString();
+    return fetchApi<Notification[]>(`/notifications${query ? `?${query}` : ''}`);
+  },
+
+  getSummary: () => fetchApi<NotificationSummary>('/notifications/summary'),
+
+  markRead: (notificationId: string) =>
+    fetchApi<{ status: string }>(`/notifications/${notificationId}/read`, {
+      method: 'POST',
+    }),
+
+  markAllRead: () =>
+    fetchApi<{ status: string; marked_count: number }>('/notifications/read-all', {
+      method: 'POST',
+    }),
+
+  dismiss: (notificationId: string) =>
+    fetchApi<{ status: string }>(`/notifications/${notificationId}/dismiss`, {
+      method: 'POST',
+    }),
+
+  create: (notification: {
+    severity: 'critical' | 'warning' | 'info' | 'success';
+    category: string;
+    title: string;
+    message: string;
+    site_id?: string;
+    appliance_id?: string;
+    metadata?: Record<string, unknown>;
+  }) =>
+    fetchApi<Notification>('/notifications', {
+      method: 'POST',
+      body: JSON.stringify(notification),
+    }),
+};
+
+// =============================================================================
+// RUNBOOK CONFIG API (Partner-configurable runbook enable/disable)
+// =============================================================================
+
+export interface RunbookCatalogItem {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  check_type: string;
+  severity: string;
+  is_disruptive: boolean;
+  requires_maintenance_window: boolean;
+  hipaa_controls: string[];
+  version: string;
+}
+
+export interface SiteRunbookConfig {
+  runbook_id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  severity: string;
+  is_disruptive: boolean;
+  enabled: boolean;
+  modified_by: string | null;
+  modified_at: string | null;
+}
+
+export const runbookConfigApi = {
+  // Get all runbooks in the catalog
+  getRunbooks: () => fetchSitesApi<RunbookCatalogItem[]>('/runbooks'),
+
+  // Get runbook categories
+  getCategories: () => fetchSitesApi<string[]>('/runbooks/categories'),
+
+  // Get site's runbook configuration
+  getSiteRunbooks: (siteId: string) =>
+    fetchSitesApi<SiteRunbookConfig[]>(`/sites/${siteId}/runbooks`),
+
+  // Enable/disable a runbook for a site
+  setSiteRunbook: (siteId: string, runbookId: string, enabled: boolean) =>
+    fetchSitesApi<{ status: string }>(`/sites/${siteId}/runbooks/${runbookId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    }),
+
+  // Get effective enabled runbooks for an appliance
+  getApplianceEffective: (applianceId: string) =>
+    fetchSitesApi<string[]>(`/appliances/${encodeURIComponent(applianceId)}/effective`),
+};
+
 export { ApiError };

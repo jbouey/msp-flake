@@ -216,6 +216,7 @@ class ApplianceAgent:
         self.client = CentralCommandClient(config)
         self.drift_checker: Optional[SimpleDriftChecker] = None
         self.windows_targets: List[WindowsTarget] = []
+        self.enabled_runbooks: List[str] = []  # Runbooks enabled for this appliance
         self.running = False
         self._last_rules_sync = datetime.min.replace(tzinfo=timezone.utc)
         self._last_windows_scan = datetime.min.replace(tzinfo=timezone.utc)
@@ -345,6 +346,8 @@ class ApplianceAgent:
             logger.debug(f"[{timestamp}] Checkin OK")
             # Update Windows targets from server response (credential pull)
             await self._update_windows_targets_from_response(checkin_response)
+            # Update enabled runbooks from server response (runbook config pull)
+            self._update_enabled_runbooks_from_response(checkin_response)
         else:
             logger.warning(f"[{timestamp}] Checkin failed")
 
@@ -873,6 +876,43 @@ class ApplianceAgent:
             # Replace targets with server-provided ones
             self.windows_targets = new_targets
             logger.info(f"Updated {len(new_targets)} Windows targets from Central Command")
+
+    def _update_enabled_runbooks_from_response(self, response: Dict):
+        """
+        Update enabled runbooks from server check-in response.
+
+        This enables runbook filtering where partners can enable/disable
+        specific runbooks per site or appliance. Benefits:
+        - Partners can customize remediation actions per client
+        - Disruptive runbooks can be disabled for specific sites
+        - New runbooks can be rolled out gradually
+
+        Empty list means use defaults (all enabled). Non-empty list is the
+        explicit set of enabled runbook IDs.
+        """
+        enabled_runbooks = response.get('enabled_runbooks', [])
+
+        if enabled_runbooks:
+            # Only log if the list actually changed
+            if set(enabled_runbooks) != set(self.enabled_runbooks):
+                self.enabled_runbooks = enabled_runbooks
+                logger.info(f"Updated enabled runbooks: {len(enabled_runbooks)} runbooks active")
+                logger.debug(f"Enabled runbooks: {', '.join(enabled_runbooks[:5])}{'...' if len(enabled_runbooks) > 5 else ''}")
+        else:
+            # Empty list = use defaults (don't clear)
+            pass
+
+    def is_runbook_enabled(self, runbook_id: str) -> bool:
+        """
+        Check if a runbook is enabled for this appliance.
+
+        Returns True if:
+        - enabled_runbooks is empty (use all runbooks by default)
+        - runbook_id is in the enabled_runbooks list
+        """
+        if not self.enabled_runbooks:
+            return True  # Default: all runbooks enabled
+        return runbook_id in self.enabled_runbooks
 
     async def _maybe_scan_windows(self):
         """Scan Windows targets if enough time has passed."""

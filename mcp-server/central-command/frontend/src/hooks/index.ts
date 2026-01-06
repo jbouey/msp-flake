@@ -19,6 +19,24 @@ export {
   useCreateSite,
   useUpdateSite,
   useAddCredential,
+  // Order hooks
+  useOrders,
+  useCreateApplianceOrder,
+  useBroadcastOrder,
+  useDeleteAppliance,
+  useClearStaleAppliances,
+  // Notification hooks
+  useNotifications,
+  useNotificationSummary,
+  useMarkNotificationRead,
+  useMarkAllNotificationsRead,
+  useDismissNotification,
+  useCreateNotification,
+  // Runbook config hooks
+  useRunbookCatalog,
+  useSiteRunbookConfig,
+  useSetSiteRunbook,
+  useRunbookCategories,
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';
