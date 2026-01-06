@@ -1,8 +1,8 @@
 # Three-Tier Auto-Healing Architecture
 
-**Last Updated:** 2025-11-23
-**Version:** 1.0.0
-**Tests:** 24 tests covering all levels
+**Last Updated:** 2026-01-06 (Session 12 - Chaos Probe Integration)
+**Version:** 1.0.19
+**Tests:** 503 tests passing (full compliance-agent suite)
 
 ---
 
@@ -48,6 +48,24 @@ The MSP Compliance Agent implements a three-tier auto-healing architecture desig
     │  Promotion    │  with 90%+ success
     └───────────────┘
 ```
+
+---
+
+## Production Verification (2026-01-05)
+
+The three-tier healing system has been verified working in production on a physical appliance (HP T640 at 192.168.88.246):
+
+| Scenario | Result | Details |
+|----------|--------|---------|
+| Windows Firewall Disabled | ✅ Auto-healed | L1-WIN-FIREWALL-001 matched, RB-WIN-FIREWALL-001 runbook executed (remediate + verify), firewall re-enabled |
+| Windows Defender Service | ✅ L1 Matched | L1-WIN-DEFENDER-001 rule triggers run_windows_runbook |
+| BitLocker Not Enabled | ✅ Escalated | Correctly escalates to L3 (requires manual intervention) |
+| NixOS Generation Drift | ✅ Escalated | Escalates to L3 as expected |
+
+**Key Fixes in v1.0.18:**
+- `level1_deterministic.py:execute()` now properly checks action_executor returned success
+- `appliance_agent.py:_handle_drift_healing()` uses `auto_healer.heal()` method correctly
+- `appliance_agent.py:_heal_run_windows_runbook()` uses correct `WindowsExecutor.run_runbook()`
 
 ---
 
@@ -473,6 +491,33 @@ python -m pytest tests/test_auto_healer.py::TestLevel1Deterministic -v
 python -m pytest tests/test_auto_healer.py::TestLevel3Escalation -v
 python -m pytest tests/test_auto_healer.py::TestLearningLoop -v
 ```
+
+### Chaos Probe Tool
+
+The `scripts/chaos_probe.py` tool tests the L1→L2→L3 escalation flow:
+
+```bash
+# Test L1 match (NTP sync - should resolve at L1)
+python scripts/chaos_probe.py --type l1 --site-id physical-appliance-pilot-1aea78
+
+# Test L2 escalation (certificate expiry - no L1 rule)
+ANTHROPIC_API_KEY="..." python scripts/chaos_probe.py --type l2 --site-id physical-appliance-pilot-1aea78
+
+# Test L3 escalation (database corruption - critical, sends email)
+ANTHROPIC_API_KEY="..." python scripts/chaos_probe.py --type l3 --site-id physical-appliance-pilot-1aea78
+
+# Local-only test (no Central Command submission)
+python scripts/chaos_probe.py --type l2 --no-central
+```
+
+**Predefined scenarios:**
+- `l1` - NTP sync failure (matches L1 rule)
+- `l2` - Certificate expiry (escalates to L2 LLM)
+- `l3` - Database corruption (escalates to L3 with email)
+- `memory` - Memory pressure (no L1 rule)
+- `service` - Windows Defender stopped (matches L1)
+
+**Requirements:** `ANTHROPIC_API_KEY` for L2 testing, valid `--site-id` for Central Command submission.
 
 ---
 

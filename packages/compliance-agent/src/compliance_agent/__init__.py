@@ -17,6 +17,19 @@ from .backup_restore_test import (
 )
 from .portal_controls import PortalControlChecker, ControlResult
 from .phone_home import PhoneHome
+from .provisioning import (
+    needs_provisioning,
+    run_provisioning_cli,
+    run_provisioning_auto,
+    claim_provision_code,
+)
+from .ntp_verify import (
+    NTPVerifier,
+    NTPVerificationResult,
+    NTPServerResult,
+    verify_time_for_evidence,
+    get_verified_timestamp,
+)
 
 __all__ = [
     # Version
@@ -67,4 +80,17 @@ __all__ = [
 
     # Phone Home
     "PhoneHome",
+
+    # Provisioning
+    "needs_provisioning",
+    "run_provisioning_cli",
+    "run_provisioning_auto",
+    "claim_provision_code",
+
+    # NTP Verification
+    "NTPVerifier",
+    "NTPVerificationResult",
+    "NTPServerResult",
+    "verify_time_for_evidence",
+    "get_verified_timestamp",
 ]

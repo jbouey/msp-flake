@@ -43,15 +43,16 @@ from .runbooks.windows.executor import WindowsTarget
 
 # Three-tier healing imports
 from .incident_db import IncidentDatabase, Incident
-from .auto_healer import AutoHealer
+from .auto_healer import AutoHealer, AutoHealerConfig
 from .level1_deterministic import DeterministicEngine
 from .level2_llm import Level2Planner, LLMConfig, LLMMode
 from .level3_escalation import EscalationHandler, EscalationConfig
 from .learning_loop import SelfLearningSystem, PromotionConfig
+from .ntp_verify import NTPVerifier, verify_time_for_evidence
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.0"
+VERSION = "1.0.19"
 
 
 async def run_command(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
@@ -383,6 +384,27 @@ class ApplianceAgent:
         if not self.drift_checker:
             return
 
+        # Perform multi-source NTP verification before signing evidence
+        ntp_verification = None
+        try:
+            ntp_result = await verify_time_for_evidence(
+                max_offset_ms=5000,  # 5 second threshold
+                max_skew_ms=5000,    # 5 second skew between sources
+                min_servers=3        # Need 3+ NTP servers to agree
+            )
+            if ntp_result.passed:
+                ntp_verification = ntp_result.to_dict()
+                logger.info(
+                    f"NTP verification passed: {ntp_result.servers_responded} servers, "
+                    f"median offset {ntp_result.median_offset_ms:.1f}ms"
+                )
+            else:
+                logger.warning(f"NTP verification failed: {ntp_result.error}")
+                # Still continue with evidence collection, but note the failure
+                ntp_verification = ntp_result.to_dict()
+        except Exception as e:
+            logger.warning(f"NTP verification error: {e}")
+
         try:
             # Run all drift checks
             results = await self.drift_checker.run_all_checks()
@@ -412,6 +434,10 @@ class ApplianceAgent:
                     "site_id": self.config.site_id,
                     "agent_version": VERSION,
                 }
+
+                # Add NTP verification to evidence for timestamp integrity
+                if ntp_verification:
+                    evidence_data["ntp_verification"] = ntp_verification
 
                 # Add healing outcome to evidence if healing was attempted
                 if healing_result:
@@ -495,59 +521,24 @@ class ApplianceAgent:
 
     async def _init_healing_system(self):
         """Initialize the three-tier auto-healing system."""
-        # Initialize incident database
-        incidents_db_path = self.config.state_dir / "incidents.db"
-        self.incident_db = IncidentDatabase(db_path=str(incidents_db_path))
-
-        # Initialize L1 deterministic engine
-        l1_engine = DeterministicEngine(
+        # Create config for AutoHealer
+        healer_config = AutoHealerConfig(
+            db_path=str(self.config.state_dir / "incidents.db"),
             rules_dir=self.config.rules_dir,
-            incident_db=self.incident_db,
-            action_executor=self._execute_healing_action
+            enable_level1=True,
+            enable_level2=False,  # No local LLM on appliance
+            enable_level3=True,
+            dry_run=self._healing_dry_run,
         )
 
-        # Initialize L2 planner (disabled by default - no API key)
-        l2_config = LLMConfig(
-            mode=LLMMode.HYBRID,
-            enabled=False  # Requires API key
-        )
-        l2_planner = Level2Planner(
-            config=l2_config,
-            incident_db=self.incident_db,
-            action_executor=self._execute_healing_action
-        )
-
-        # Initialize L3 escalation handler
-        l3_config = EscalationConfig(
-            webhook_enabled=True,
-            webhook_url=f"{self.config.api_endpoint}/api/escalations"
-        )
-        l3_handler = EscalationHandler(
-            config=l3_config,
-            incident_db=self.incident_db
-        )
-
-        # Initialize learning loop (data flywheel)
-        promotion_config = PromotionConfig(
-            auto_promote=False,  # Require human approval
-            min_occurrences=5,
-            min_success_rate=0.9
-        )
-        learning_loop = SelfLearningSystem(
-            incident_db=self.incident_db,
-            config=promotion_config
-        )
-
-        # Create AutoHealer orchestrator
+        # Create AutoHealer orchestrator (handles all initialization internally)
         self.auto_healer = AutoHealer(
-            incident_db=self.incident_db,
-            l1_engine=l1_engine,
-            l2_planner=l2_planner,
-            l3_handler=l3_handler,
-            learning_loop=learning_loop,
-            action_executor=self._execute_healing_action,
-            dry_run=self._healing_dry_run
+            config=healer_config,
+            action_executor=self._execute_healing_action
         )
+
+        # Keep reference to incident database for later use
+        self.incident_db = self.auto_healer.incident_db
 
         logger.info(f"Healing system initialized (L1 rules from {self.config.rules_dir})")
 
@@ -555,6 +546,8 @@ class ApplianceAgent:
         self,
         action: str,
         params: Dict[str, Any],
+        site_id: Optional[str] = None,
+        host_id: Optional[str] = None,
         incident: Optional[Incident] = None
     ) -> Dict[str, Any]:
         """
@@ -562,6 +555,13 @@ class ApplianceAgent:
 
         This is the action executor passed to all healing tiers.
         In dry-run mode, just logs the action without executing.
+
+        Args:
+            action: The action type to execute
+            params: Action parameters from the L1 rule
+            site_id: Site ID for context
+            host_id: Target host ID (for Windows runbooks)
+            incident: Optional incident object for context
         """
         if self._healing_dry_run:
             logger.info(f"[DRY-RUN] Would execute: {action} with params: {params}")
@@ -571,6 +571,10 @@ class ApplianceAgent:
                 "params": params,
                 "status": "simulated_success"
             }
+
+        # Add host_id to params so handlers can use it
+        if host_id:
+            params = {**params, "target_host": host_id}
 
         # Map action types to handlers
         action_handlers = {
@@ -659,41 +663,50 @@ class ApplianceAgent:
 
         # Import and execute runbook
         try:
-            from .runbooks.windows.executor import WindowsRunbookExecutor
-            from .runbooks.windows import runbooks as rb
+            from .runbooks.windows.executor import WindowsExecutor
 
-            # Get runbook definition
-            runbook_map = {
-                "RB-WIN-AV-001": rb.RUNBOOK_WIN_AV,
-                "RB-WIN-LOGGING-001": rb.RUNBOOK_WIN_LOGGING,
-                "RB-WIN-FIREWALL-001": rb.RUNBOOK_WIN_FIREWALL,
-                "RB-WIN-PATCH-001": rb.RUNBOOK_WIN_PATCH,
-                "RB-WIN-BACKUP-001": rb.RUNBOOK_WIN_BACKUP,
-                "RB-WIN-ENCRYPTION-001": rb.RUNBOOK_WIN_ENCRYPTION,
-                "RB-WIN-AD-001": rb.RUNBOOK_WIN_AD_HEALTH,
-            }
+            # Create executor and run the runbook
+            executor = WindowsExecutor(targets=[target])
+            results = await executor.run_runbook(
+                target=target,
+                runbook_id=runbook_id,
+                phases=phases,
+                collect_evidence=True
+            )
 
-            runbook = runbook_map.get(runbook_id)
-            if not runbook:
-                return {"error": f"Unknown runbook: {runbook_id}"}
+            # Check overall success - all phases must succeed
+            overall_success = all(r.success for r in results)
 
-            executor = WindowsRunbookExecutor(target)
-            result = await executor.execute(runbook, phases=phases)
+            # Build response with phase details
+            phase_details = []
+            for result in results:
+                phase_details.append({
+                    "phase": result.phase,
+                    "success": result.success,
+                    "output": result.output,
+                    "error": result.error,
+                    "duration_seconds": result.duration_seconds
+                })
+
+            logger.info(
+                f"Windows runbook {runbook_id} on {target.hostname}: "
+                f"{'SUCCESS' if overall_success else 'FAILED'} - {len(results)} phases"
+            )
 
             return {
                 "action": "run_windows_runbook",
                 "runbook_id": runbook_id,
                 "target": target.hostname,
                 "phases": phases,
-                "success": result.get("success", False),
-                "result": result
+                "success": overall_success,
+                "phase_details": phase_details
             }
 
         except ImportError as e:
-            return {"error": f"Windows executor not available: {e}"}
+            return {"error": f"Windows executor not available: {e}", "success": False}
         except Exception as e:
             logger.error(f"Windows runbook execution failed: {e}")
-            return {"error": str(e)}
+            return {"error": str(e), "success": False}
 
     async def _heal_escalate(
         self, params: Dict[str, Any], incident: Optional[Incident]
@@ -753,32 +766,24 @@ class ApplianceAgent:
         }
         severity = severity_map.get(status, "low")
 
-        # Create incident from drift
-        incident = Incident(
-            id=f"INC-{uuid.uuid4().hex[:12]}",
-            incident_type=check_name,
-            severity=severity,
-            site_id=self.config.site_id,
-            host_id=get_hostname(),
-            raw_data={
-                "check_type": check_name,
-                "drift_detected": True,
-                "status": status,
-                "platform": "nixos",  # or "windows" for Windows checks
-                **check_result.get("details", {})
-            },
-            created_at=datetime.now(timezone.utc).isoformat(),
-            pattern_signature=hashlib.sha256(
-                f"{check_name}:{status}:{json.dumps(check_result.get('details', {}), sort_keys=True)}".encode()
-            ).hexdigest()[:16]
-        )
+        # Build raw_data for healing (L1 rules check these fields)
+        raw_data = {
+            "check_type": check_name,
+            "drift_detected": True,
+            "status": status,
+            "platform": "nixos",
+            **check_result.get("details", {})
+        }
 
-        # Record incident
-        self.incident_db.record_incident(incident)
-
-        # Handle through three-tier system
+        # Handle through three-tier system (heal() creates incident internally)
         try:
-            result = await self.auto_healer.handle_incident(incident)
+            result = await self.auto_healer.heal(
+                site_id=self.config.site_id,
+                host_id=get_hostname(),
+                incident_type=check_name,
+                severity=severity,
+                raw_data=raw_data
+            )
 
             # Log the outcome
             if result.success:
@@ -791,18 +796,17 @@ class ApplianceAgent:
                 )
 
             return {
-                "incident_id": incident.id,
+                "incident_id": result.incident_id,
                 "resolution_level": result.resolution_level,
                 "action_taken": result.action_taken,
                 "success": result.success,
-                "duration_ms": result.duration_ms,
+                "duration_ms": result.resolution_time_ms,
                 "error": result.error
             }
 
         except Exception as e:
             logger.error(f"Healing failed for {check_name}: {e}")
             return {
-                "incident_id": incident.id,
                 "error": str(e),
                 "success": False
             }
@@ -911,18 +915,82 @@ class ApplianceAgent:
 
             # Run basic compliance checks
             checks = [
-                ("windows_defender", "$status = Get-MpComputerStatus; @{Enabled=$status.AntivirusEnabled;Updated=$status.AntivirusSignatureLastUpdated} | ConvertTo-Json"),
+                ("windows_defender", "$status = Get-MpComputerStatus; @{Enabled=$status.AntivirusEnabled;RealTimeEnabled=$status.RealTimeProtectionEnabled;Updated=$status.AntivirusSignatureLastUpdated} | ConvertTo-Json"),
                 ("firewall_status", "Get-NetFirewallProfile | Select-Object Name,Enabled | ConvertTo-Json"),
                 ("password_policy", "net accounts | Select-String 'password|lockout'"),
                 ("bitlocker_status", "Get-BitLockerVolume -MountPoint C: -ErrorAction SilentlyContinue | Select-Object MountPoint,ProtectionStatus | ConvertTo-Json"),
-                ("audit_policy", "auditpol /get /category:* | Select-String 'Success|Failure' | Select-Object -First 10"),
+                ("audit_policy", "auditpol /get /subcategory:'Logon'"),
             ]
 
             for check_name, ps_cmd in checks:
                 try:
                     check_result = session.run_ps(ps_cmd)
-                    status = "pass" if check_result.status_code == 0 else "fail"
                     output = check_result.std_out.decode().strip()
+
+                    # Default: pass if command succeeded
+                    status = "pass" if check_result.status_code == 0 else "fail"
+
+                    # For specific checks, validate the actual output
+                    if check_name == "firewall_status" and check_result.status_code == 0:
+                        # Check if all firewall profiles are enabled
+                        try:
+                            import json as json_module
+                            profiles = json_module.loads(output)
+                            if isinstance(profiles, list):
+                                all_enabled = all(p.get("Enabled", False) for p in profiles)
+                            else:
+                                all_enabled = profiles.get("Enabled", False)
+                            status = "pass" if all_enabled else "fail"
+                        except Exception:
+                            pass  # Keep original status if parsing fails
+
+                    elif check_name == "windows_defender" and check_result.status_code == 0:
+                        # Check if Windows Defender is enabled AND real-time protection is on
+                        try:
+                            import json as json_module
+                            defender = json_module.loads(output)
+                            is_enabled = defender.get("Enabled", False)
+                            realtime_enabled = defender.get("RealTimeEnabled", False)
+                            # Both must be true for pass
+                            status = "pass" if (is_enabled and realtime_enabled) else "fail"
+                        except Exception:
+                            # Fallback to string check for both
+                            output_lower = output.lower()
+                            status = "pass" if ('"enabled": true' in output_lower and '"realtimeenabled": true' in output_lower) else "fail"
+
+                    elif check_name == "bitlocker_status" and check_result.status_code == 0:
+                        # Check if BitLocker protection is on
+                        try:
+                            import json as json_module
+                            bitlocker = json_module.loads(output)
+                            # ProtectionStatus: 0=Off, 1=On, 2=Unknown
+                            protection = bitlocker.get("ProtectionStatus", 0)
+                            status = "pass" if protection == 1 else "fail"
+                        except Exception:
+                            # If no BitLocker volume found, that's a fail
+                            status = "fail" if not output.strip() else status
+
+                    elif check_name == "password_policy" and check_result.status_code == 0:
+                        # Check for minimum password requirements
+                        try:
+                            # Look for minimum password length >= 8
+                            import re
+                            match = re.search(r'Minimum password length:\s*(\d+)', output, re.IGNORECASE)
+                            if match:
+                                min_len = int(match.group(1))
+                                status = "pass" if min_len >= 8 else "fail"
+                        except Exception:
+                            pass
+
+                    elif check_name == "audit_policy" and check_result.status_code == 0:
+                        # Check that Logon auditing is enabled (Success and/or Failure)
+                        # The query is for subcategory:'Logon' specifically
+                        if "Success" in output or "Failure" in output:
+                            # Make sure it's not "No Auditing" which would not contain Success/Failure
+                            status = "pass"
+                        else:
+                            # "No Auditing" means Logon events are not being captured
+                            status = "fail"
 
                     # Submit as evidence
                     evidence_data = {
@@ -957,6 +1025,35 @@ class ApplianceAgent:
                     )
 
                     logger.debug(f"Windows check {check_name} on {target.hostname}: {status}")
+
+                    # If check failed and healing is enabled, attempt remediation
+                    # Note: AutoHealer respects dry_run mode internally
+                    if status == "fail" and self.auto_healer:
+                        try:
+                            # Build raw_data with fields that L1 rules expect
+                            raw_data = {
+                                "check_type": check_name,  # L1 rules check this
+                                "drift_detected": True,
+                                "status": status,
+                                "details": evidence_data,  # Nested evidence data
+                                "host": target.hostname,
+                                "output": output[:500],  # Include some output for context
+                            }
+                            logger.info(f"Windows check failed, attempting healing: {check_name} on {target.hostname}")
+                            # AutoHealer.heal() creates the incident internally
+                            heal_result = await self.auto_healer.heal(
+                                site_id=self.config.site_id,
+                                host_id=target.hostname,
+                                incident_type=check_name,
+                                severity="high",
+                                raw_data=raw_data,
+                            )
+                            if heal_result.success:
+                                logger.info(f"Healing succeeded: {heal_result.resolution_level} - {heal_result.action_taken}")
+                            else:
+                                logger.warning(f"Healing failed: {heal_result.error}")
+                        except Exception as heal_err:
+                            logger.warning(f"Healing attempt failed for {check_name}: {heal_err}")
 
                 except Exception as e:
                     logger.warning(f"Windows check {check_name} failed on {target.hostname}: {e}")

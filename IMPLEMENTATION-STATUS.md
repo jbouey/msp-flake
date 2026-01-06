@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
-**Current Phase:** Phase 12 - Launch Readiness (Credential-Pull Complete)
+**Last Updated:** 2026-01-06 (Session 12 continued - Chaos Probe, L3 Email Alerts, Data Flywheel)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, Chaos Probe to Central Command)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -221,7 +221,46 @@ Per Master Alignment Brief:
   - Benefits: stolen appliance doesn't expose credentials, consistent with RMM industry pattern
 - ✅ **ISO v16** - Built with agent v1.0.8 (credential-pull support)
 - ✅ **Windows DC Connectivity** - North Valley DC (192.168.88.250) connected via credential-pull
-- 🟡 **Documentation Updates** - Updating credential management docs for new architecture
+- ✅ **Healing System Integration Complete** - 2026-01-05 (Session 10)
+  - Fixed L1 `execute()` to check action_executor returned success (was always true)
+  - Fixed `_handle_drift_healing()` to use `auto_healer.heal()` method correctly
+  - Fixed `_heal_run_windows_runbook()` to use `WindowsExecutor.run_runbook()`
+  - Tested Windows firewall chaos: L1 matched → Runbook executed → Firewall re-enabled
+  - Agent v1.0.18 with all healing integration fixes
+  - 453 tests passing (compliance-agent)
+- ✅ **ISO v18 Built** - 2026-01-05 (Session 11)
+  - Agent v1.0.9 with all healing fixes packaged
+  - Built on VPS after nix-collect-garbage (freed 109GB)
+  - SHA256: abcf0096f249e44f0af7e3432293174f02fce0bf11bbd1271afc6ee7eb442023
+  - Size: 1.1GB, stored at `/mnt/build/osiriscare-appliance-v18.iso`
+- ✅ **ISO v18 Deployed** - 2026-01-05 (physical appliance flashed)
+- ✅ **Email Alerts System** - 2026-01-05 (Session 12)
+  - SMTP via privateemail.com (TLS, port 587)
+  - `email_alerts.py` module with HTML/plain text templates
+  - POST /api/dashboard/notifications with email for critical severity
+  - Test Alert button + modal in Notifications page
+- ✅ **Push Agent Update UI** - 2026-01-05 (Session 12)
+  - Prominent pulsing "Push Update" button for outdated agents
+  - Version selection modal with package URL preview
+  - ActionDropdown z-index fix (z-[9999]) for proper layering
+  - Delete Appliance option visible in dropdown menu
+- ✅ **Test VM Rebuilt with ISO v18** - 2026-01-05 (Session 12)
+  - Registered MAC 08:00:27:98:fd:84 in appliance_provisioning table
+  - Detached old VDI, booted fresh from ISO v18
+  - Agent upgraded from 0.1.1-quickfix to 1.0.18
+  - Both appliances (physical + VM) now on v1.0.18
+- ✅ **Multi-NTP Time Verification** - 2026-01-05 (Session 12)
+  - `ntp_verify.py` module with raw NTP protocol (RFC 5905)
+  - Queries 5 NTP servers: NIST, Google, Cloudflare, Apple, pool.ntp.org
+  - Agent v1.0.19 with NTP verification in drift detection
+  - 25 unit tests + 2 live integration tests (503 total)
+- ✅ **Chaos Probe Central Command Integration** - 2026-01-06 (Session 12 continued)
+  - `scripts/chaos_probe.py` POSTs incidents to `/incidents` endpoint
+  - Fixed VPS `appliances` table FK constraint
+  - Fixed `routes.py` safe_check_type() for unknown check types
+  - Incidents appear in dashboard stats (incidents_24h: 3)
+  - L3 probes send emails via `/api/alerts/email` endpoint
+  - User confirmed receiving L3 escalation emails
 
 ---
 
@@ -400,7 +439,7 @@ Required fields per CLAUDE.md:
 - [x] Credential-pull architecture implemented (Session 9)
 - [x] ISO v16 built with agent v1.0.8 (credential-pull)
 - [x] Windows DC connectivity verified via credential-pull
-- [ ] Flash ISO v16 to USB and deploy to physical appliance ← **NEXT**
+- [x] Flash ISO v18 to USB and deploy to physical appliance ✅
 - [ ] Evidence bundles uploading to MinIO
 - [ ] First compliance packet generated
 - [ ] 30-day monitoring period complete
@@ -431,4 +470,4 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 in progress. ISO v16 with credential-pull architecture (agent v1.0.8) built and on iMac. Windows DC connected via credential-pull. Next: flash ISO v16 to USB and deploy to physical appliance (HP T640).
+**Status:** Phase 12 progressing well. Agent v1.0.19 with Multi-NTP verification. Chaos probe now submits incidents to Central Command (incidents visible in dashboard stats). L3 email alerts working (user confirmed receipt). Next: OpenTimestamps blockchain anchoring (Task 25), or complete data flywheel integration (resolution tracking).
