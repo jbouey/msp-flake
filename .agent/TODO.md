@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-06 (Session 13 - Windows Runbook Expansion)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, RunbookConfig UI)
+**Last Updated:** 2026-01-06 (Session 14 - Credential Management API)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, Credential CRUD API)
 
 ---
 
@@ -430,6 +430,15 @@
   - Added hooks for runbook configuration (useSiteRunbookConfig, etc.)
   - Updated Sidebar.tsx with Runbook Config navigation
   - Created `test_runbook_filtering.py` with 20 tests (all passing)
+- [x] **Credential Management API** - 2026-01-06 (Session 14)
+  - Fixed `sites.py` windows_targets transformation (was returning raw JSON)
+  - Fixed runbook query (r.id UUID → r.runbook_id VARCHAR)
+  - Created missing `appliance_runbook_config` table
+  - Fixed NULL check_type for 6 original runbooks in database
+  - Added site detail credentials query (was hardcoded `[]`)
+  - Added `POST /api/sites/{site_id}/credentials` - Create credential
+  - Added `DELETE /api/sites/{site_id}/credentials/{id}` - Delete credential
+  - Verified both appliances using credential-pull properly (no hardcoded creds)
 
 ---
 

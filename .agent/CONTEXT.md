@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-06 (Session 13 - Windows Runbook Expansion)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, RunbookConfig UI)
-**Test Status:** 523 passed (compliance-agent tests), agent v1.0.19, ISO v18 deployed, 27 runbooks
+**Last Updated:** 2026-01-06 (Session 14 - Credential Management API)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, Credential CRUD API)
+**Test Status:** 523 passed (compliance-agent tests), agent v1.0.19, ISO v19 deployed, 27 runbooks
 
 ---
 
@@ -133,6 +133,15 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Backend API: GET/PUT /api/sites/{site_id}/runbooks
   - L1 rules in windows_baseline.yaml for automated remediation
   - 20 runbook filtering tests in test_runbook_filtering.py
+- ✅ **Credential Management API** - 2026-01-06 (Session 14)
+  - Fixed `sites.py` windows_targets transformation (was returning raw JSON)
+  - Fixed runbook query (r.id UUID → r.runbook_id VARCHAR)
+  - Created missing `appliance_runbook_config` table in database
+  - Fixed NULL check_type for 6 original runbooks
+  - Site detail now queries `site_credentials` table (was hardcoded `[]`)
+  - Added `POST /api/sites/{site_id}/credentials` endpoint (create credential)
+  - Added `DELETE /api/sites/{site_id}/credentials/{id}` endpoint (delete credential)
+  - Verified both appliances using credential-pull properly (no hardcoded creds on disk)
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
