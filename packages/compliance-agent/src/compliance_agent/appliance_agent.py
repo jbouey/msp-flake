@@ -50,6 +50,18 @@ from .level3_escalation import EscalationHandler, EscalationConfig
 from .learning_loop import SelfLearningSystem, PromotionConfig
 from .ntp_verify import NTPVerifier, verify_time_for_evidence
 
+# Sensor API for dual-mode architecture
+from .sensor_api import (
+    router as sensor_router,
+    configure_healing as configure_sensor_healing,
+    has_active_sensor,
+    get_polling_hosts,
+    get_sensor_hosts,
+    get_dual_mode_stats,
+    sensor_registry,
+    SENSOR_TIMEOUT,
+)
+
 logger = logging.getLogger(__name__)
 
 VERSION = "1.0.19"
@@ -229,6 +241,10 @@ class ApplianceAgent:
         self._healing_enabled = getattr(config, 'healing_enabled', True)
         self._healing_dry_run = getattr(config, 'healing_dry_run', True)
 
+        # Dual-mode sensor support
+        self._sensor_enabled = getattr(config, 'sensor_enabled', True)
+        self._sensor_port = getattr(config, 'sensor_port', 8080)
+
         # Evidence signing
         self.signer: Optional[Ed25519Signer] = None
         self._signing_key_path = config.state_dir / "signing.key"
@@ -297,6 +313,16 @@ class ApplianceAgent:
                 await self._init_healing_system()
                 mode = "DRY-RUN" if self._healing_dry_run else "ACTIVE"
                 logger.info(f"Three-tier healing enabled ({mode})")
+
+                # Configure sensor API with healing dependencies
+                if self._sensor_enabled:
+                    configure_sensor_healing(
+                        auto_healer=self.auto_healer,
+                        windows_targets=self.windows_targets,
+                        incident_db=self.incident_db,
+                        config=self.config
+                    )
+                    logger.info(f"Sensor API configured for dual-mode operation (port {self._sensor_port})")
             except Exception as e:
                 logger.warning(f"Failed to initialize healing system: {e}")
                 self.auto_healer = None
@@ -914,18 +940,65 @@ class ApplianceAgent:
             return True  # Default: all runbooks enabled
         return runbook_id in self.enabled_runbooks
 
+    def _get_targets_needing_poll(self) -> List[WindowsTarget]:
+        """
+        Return Windows targets that need WinRM polling (no active sensor).
+
+        Dual-mode architecture:
+        - Hosts with active sensors: Events pushed via /api/sensor/drift
+        - Hosts without sensors: Polled via WinRM
+        """
+        if not self._sensor_enabled:
+            return self.windows_targets
+
+        # Get hostnames with active sensors
+        sensor_hosts = get_sensor_hosts()
+
+        # Filter to targets without active sensors
+        targets_to_poll = []
+        for target in self.windows_targets:
+            hostname = target.hostname.lower()
+            # Check if any sensor matches this target
+            has_sensor = any(
+                sensor.lower() == hostname or
+                sensor.lower() in hostname or
+                hostname in sensor.lower()
+                for sensor in sensor_hosts
+            )
+            if not has_sensor:
+                targets_to_poll.append(target)
+
+        return targets_to_poll
+
     async def _maybe_scan_windows(self):
-        """Scan Windows targets if enough time has passed."""
+        """
+        Scan Windows targets if enough time has passed.
+
+        Uses dual-mode logic: skips hosts with active sensors,
+        only polls hosts without sensors.
+        """
         now = datetime.now(timezone.utc)
         elapsed = (now - self._last_windows_scan).total_seconds()
 
         if elapsed < self._windows_scan_interval:
             return
 
-        logger.info(f"Scanning {len(self.windows_targets)} Windows targets...")
+        # Dual-mode: only poll targets without active sensors
+        targets_to_poll = self._get_targets_needing_poll()
+        sensor_count = len(self.windows_targets) - len(targets_to_poll)
 
-        for target in self.windows_targets:
-            await self._scan_windows_target(target)
+        if self._sensor_enabled and sensor_count > 0:
+            logger.info(
+                f"Dual-mode: {sensor_count} sensors active, "
+                f"polling {len(targets_to_poll)} hosts via WinRM"
+            )
+
+        if targets_to_poll:
+            logger.info(f"Scanning {len(targets_to_poll)} Windows targets...")
+            for target in targets_to_poll:
+                await self._scan_windows_target(target)
+        elif self.windows_targets:
+            logger.debug("All Windows hosts have active sensors - skipping WinRM poll")
 
         self._last_windows_scan = now
 
@@ -1160,6 +1233,9 @@ class ApplianceAgent:
             'restart_agent': self._handle_restart_agent,
             'update_agent': self._handle_update_agent,
             'view_logs': self._handle_view_logs,
+            'deploy_sensor': self._handle_deploy_sensor,
+            'remove_sensor': self._handle_remove_sensor,
+            'sensor_status': self._handle_sensor_status,
         }
 
         handler = handlers.get(order_type)
@@ -1289,6 +1365,132 @@ Environment="PYTHONPATH={overlay_dir}"
         return {
             "logs": stdout if code == 0 else stderr,
             "lines": lines
+        }
+
+    async def _handle_deploy_sensor(self, params: Dict) -> Dict:
+        """
+        Deploy Windows sensor to a target host.
+
+        Parameters:
+            hostname: Target Windows hostname
+        """
+        hostname = params.get('hostname')
+        if not hostname:
+            return {"error": "hostname is required"}
+
+        # Find matching target with credentials
+        target = None
+        for t in self.windows_targets:
+            if (t.hostname.lower() == hostname.lower() or
+                hostname.lower() in t.hostname.lower()):
+                target = t
+                break
+
+        if not target:
+            return {"error": f"No credentials found for {hostname}"}
+
+        # Import deployment script
+        try:
+            from pathlib import Path
+            import sys
+
+            # Add windows directory to path
+            windows_dir = Path(__file__).parent.parent.parent / "windows"
+            if str(windows_dir) not in sys.path:
+                sys.path.insert(0, str(windows_dir))
+
+            from deploy_sensor import deploy_sensor
+
+            # Get appliance IP for sensor to report to
+            appliance_ip = get_ip_addresses()[0] if get_ip_addresses() else "127.0.0.1"
+
+            success = deploy_sensor(
+                target_host=target.hostname,
+                target_port=target.port,
+                username=target.username,
+                password=target.password,
+                appliance_ip=appliance_ip,
+                appliance_port=self._sensor_port,
+                use_ssl=target.use_ssl,
+            )
+
+            if success:
+                logger.info(f"Sensor deployed to {hostname}")
+                return {"status": "deployed", "hostname": hostname}
+            else:
+                return {"error": f"Deployment failed for {hostname}"}
+
+        except ImportError as e:
+            return {"error": f"Deployment module not available: {e}"}
+        except Exception as e:
+            logger.error(f"Sensor deployment failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_remove_sensor(self, params: Dict) -> Dict:
+        """
+        Remove Windows sensor from a target host.
+
+        Parameters:
+            hostname: Target Windows hostname
+        """
+        hostname = params.get('hostname')
+        if not hostname:
+            return {"error": "hostname is required"}
+
+        # Find matching target with credentials
+        target = None
+        for t in self.windows_targets:
+            if (t.hostname.lower() == hostname.lower() or
+                hostname.lower() in t.hostname.lower()):
+                target = t
+                break
+
+        if not target:
+            return {"error": f"No credentials found for {hostname}"}
+
+        try:
+            from pathlib import Path
+            import sys
+
+            windows_dir = Path(__file__).parent.parent.parent / "windows"
+            if str(windows_dir) not in sys.path:
+                sys.path.insert(0, str(windows_dir))
+
+            from deploy_sensor import remove_sensor
+
+            success = remove_sensor(
+                target_host=target.hostname,
+                target_port=target.port,
+                username=target.username,
+                password=target.password,
+                use_ssl=target.use_ssl,
+            )
+
+            if success:
+                logger.info(f"Sensor removed from {hostname}")
+                # Clear from sensor registry
+                hostname_lower = hostname.lower()
+                for key in list(sensor_registry.keys()):
+                    if key.lower() == hostname_lower:
+                        del sensor_registry[key]
+                return {"status": "removed", "hostname": hostname}
+            else:
+                return {"error": f"Removal failed for {hostname}"}
+
+        except ImportError as e:
+            return {"error": f"Deployment module not available: {e}"}
+        except Exception as e:
+            logger.error(f"Sensor removal failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_sensor_status(self, params: Dict) -> Dict:
+        """Return current sensor status."""
+        stats = get_dual_mode_stats()
+        return {
+            "sensors": stats,
+            "targets_with_sensors": len(stats["sensor_hostnames"]),
+            "targets_needing_poll": len(self._get_targets_needing_poll()),
+            "total_targets": len(self.windows_targets),
         }
 
 
