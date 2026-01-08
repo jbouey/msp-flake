@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Tuple
 
+from fastapi import Request, HTTPException, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -334,3 +335,59 @@ async def cleanup_expired_sessions(db: AsyncSession) -> int:
     )
     await db.commit()
     return result.rowcount
+
+
+# =============================================================================
+# AUTHENTICATION DEPENDENCY FOR ROUTE PROTECTION
+# =============================================================================
+
+async def require_auth(request: Request) -> Dict[str, Any]:
+    """FastAPI dependency that requires valid authentication.
+
+    Use as a dependency on routes that require authentication:
+
+        @router.get("/protected")
+        async def protected_route(user: dict = Depends(require_auth)):
+            return {"message": f"Hello {user['username']}"}
+
+    Raises:
+        HTTPException: 401 if no token or invalid token
+    """
+    auth_header = request.headers.get("authorization", "")
+
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = auth_header[7:]
+
+    # Get database session
+    from main import async_session
+    async with async_session() as db:
+        user = await validate_session(db, token)
+
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return user
+
+
+async def require_admin(user: Dict[str, Any] = Depends(require_auth)) -> Dict[str, Any]:
+    """Dependency that requires admin role.
+
+    Raises:
+        HTTPException: 403 if user is not admin
+    """
+    if user.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required",
+        )
+    return user
