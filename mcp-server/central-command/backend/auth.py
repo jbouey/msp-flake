@@ -1,0 +1,336 @@
+"""Authentication module for Central Command dashboard.
+
+Provides secure admin authentication with:
+- bcrypt password hashing
+- Session token management
+- Audit logging
+- Account lockout protection
+"""
+
+import hashlib
+import secrets
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Dict, Any, Tuple
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+# Configuration
+SESSION_DURATION_HOURS = 24
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_DURATION_MINUTES = 15
+
+# Try to import bcrypt, fall back to hashlib if not available
+try:
+    import bcrypt
+    HAS_BCRYPT = True
+except ImportError:
+    HAS_BCRYPT = False
+    logger.warning("bcrypt not installed, using SHA-256 fallback (less secure)")
+
+
+def hash_password(password: str) -> str:
+    """Hash a password for storage."""
+    if HAS_BCRYPT:
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    else:
+        # SHA-256 fallback with salt
+        salt = secrets.token_hex(16)
+        hash_val = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+        return f"sha256${salt}${hash_val}"
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against its hash."""
+    if HAS_BCRYPT and password_hash.startswith("$2"):
+        return bcrypt.checkpw(password.encode(), password_hash.encode())
+    elif password_hash.startswith("sha256$"):
+        parts = password_hash.split("$")
+        if len(parts) != 3:
+            return False
+        _, salt, stored_hash = parts
+        computed = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+        return secrets.compare_digest(computed, stored_hash)
+    return False
+
+
+def generate_session_token() -> str:
+    """Generate a secure session token."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_token(token: str) -> str:
+    """Hash a session token for storage."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+async def ensure_default_admin(db: AsyncSession) -> None:
+    """Ensure a default admin user exists.
+
+    Creates admin/admin if no admin users exist.
+    Should be called on startup.
+    """
+    result = await db.execute(text("SELECT COUNT(*) FROM admin_users"))
+    count = result.scalar()
+
+    if count == 0:
+        logger.info("Creating default admin user (username: admin, password: admin)")
+        password_hash = hash_password("admin")
+        await db.execute(
+            text("""
+                INSERT INTO admin_users (username, email, password_hash, display_name, role)
+                VALUES (:username, :email, :password_hash, :display_name, :role)
+            """),
+            {
+                "username": "admin",
+                "email": "admin@local",
+                "password_hash": password_hash,
+                "display_name": "Administrator",
+                "role": "admin",
+            }
+        )
+        await db.commit()
+        logger.warning("Default admin created - CHANGE PASSWORD IMMEDIATELY!")
+
+
+async def authenticate_user(
+    db: AsyncSession,
+    username: str,
+    password: str,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+    """Authenticate a user and create a session.
+
+    Returns:
+        (success, session_token, user_data) or (False, None, error_message)
+    """
+    # Get user
+    result = await db.execute(
+        text("""
+            SELECT id, username, password_hash, display_name, role, status,
+                   failed_login_attempts, locked_until
+            FROM admin_users
+            WHERE username = :username
+        """),
+        {"username": username}
+    )
+    row = result.fetchone()
+
+    if not row:
+        await _log_audit(db, None, username, "LOGIN_FAILED", "auth", {"reason": "invalid_username"}, ip_address)
+        return False, None, {"error": "Invalid username or password"}
+
+    user_id, _, password_hash, display_name, role, status, failed_attempts, locked_until = row
+
+    # Check if account is locked
+    if locked_until and locked_until > datetime.now(timezone.utc):
+        remaining = (locked_until - datetime.now(timezone.utc)).seconds // 60
+        await _log_audit(db, user_id, username, "LOGIN_BLOCKED", "auth", {"reason": "account_locked"}, ip_address)
+        return False, None, {"error": f"Account locked. Try again in {remaining} minutes."}
+
+    # Check if account is disabled
+    if status != "active":
+        await _log_audit(db, user_id, username, "LOGIN_BLOCKED", "auth", {"reason": "account_disabled"}, ip_address)
+        return False, None, {"error": "Account is disabled"}
+
+    # Verify password
+    if not verify_password(password, password_hash):
+        # Increment failed attempts
+        new_attempts = (failed_attempts or 0) + 1
+        locked_until_new = None
+
+        if new_attempts >= MAX_FAILED_ATTEMPTS:
+            locked_until_new = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+            logger.warning(f"Account {username} locked due to {new_attempts} failed attempts")
+
+        await db.execute(
+            text("""
+                UPDATE admin_users
+                SET failed_login_attempts = :attempts, locked_until = :locked
+                WHERE id = :id
+            """),
+            {"attempts": new_attempts, "locked": locked_until_new, "id": user_id}
+        )
+        await db.commit()
+
+        await _log_audit(db, user_id, username, "LOGIN_FAILED", "auth", {"reason": "invalid_password", "attempts": new_attempts}, ip_address)
+        return False, None, {"error": "Invalid username or password"}
+
+    # Success - create session
+    session_token = generate_session_token()
+    token_hash = hash_token(session_token)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=SESSION_DURATION_HOURS)
+
+    await db.execute(
+        text("""
+            INSERT INTO admin_sessions (user_id, token_hash, ip_address, user_agent, expires_at)
+            VALUES (:user_id, :token_hash, :ip, :ua, :expires)
+        """),
+        {
+            "user_id": user_id,
+            "token_hash": token_hash,
+            "ip": ip_address,
+            "ua": user_agent,
+            "expires": expires_at,
+        }
+    )
+
+    # Reset failed attempts and update last login
+    await db.execute(
+        text("""
+            UPDATE admin_users
+            SET failed_login_attempts = 0, locked_until = NULL, last_login = :now
+            WHERE id = :id
+        """),
+        {"now": datetime.now(timezone.utc), "id": user_id}
+    )
+    await db.commit()
+
+    await _log_audit(db, user_id, username, "LOGIN_SUCCESS", "auth", None, ip_address)
+
+    return True, session_token, {
+        "username": username,
+        "displayName": display_name,
+        "role": role,
+    }
+
+
+async def validate_session(
+    db: AsyncSession,
+    token: str,
+) -> Optional[Dict[str, Any]]:
+    """Validate a session token and return user data if valid."""
+    token_hash = hash_token(token)
+
+    result = await db.execute(
+        text("""
+            SELECT u.id, u.username, u.display_name, u.role, s.expires_at
+            FROM admin_sessions s
+            JOIN admin_users u ON u.id = s.user_id
+            WHERE s.token_hash = :token_hash
+              AND s.expires_at > :now
+              AND u.status = 'active'
+        """),
+        {"token_hash": token_hash, "now": datetime.now(timezone.utc)}
+    )
+    row = result.fetchone()
+
+    if not row:
+        return None
+
+    user_id, username, display_name, role, _ = row
+
+    return {
+        "id": str(user_id),
+        "username": username,
+        "displayName": display_name,
+        "role": role,
+    }
+
+
+async def logout(db: AsyncSession, token: str, ip_address: Optional[str] = None) -> bool:
+    """Invalidate a session token."""
+    token_hash = hash_token(token)
+
+    # Get user for audit log
+    result = await db.execute(
+        text("""
+            SELECT u.id, u.username
+            FROM admin_sessions s
+            JOIN admin_users u ON u.id = s.user_id
+            WHERE s.token_hash = :token_hash
+        """),
+        {"token_hash": token_hash}
+    )
+    row = result.fetchone()
+
+    if row:
+        user_id, username = row
+        await db.execute(
+            text("DELETE FROM admin_sessions WHERE token_hash = :token_hash"),
+            {"token_hash": token_hash}
+        )
+        await db.commit()
+        await _log_audit(db, user_id, username, "LOGOUT", "auth", None, ip_address)
+        return True
+
+    return False
+
+
+async def get_audit_logs(
+    db: AsyncSession,
+    limit: int = 100,
+    user_id: Optional[str] = None,
+) -> list:
+    """Get admin audit logs."""
+    query = """
+        SELECT id, username, action, target, details, ip_address, created_at
+        FROM admin_audit_log
+        WHERE 1=1
+    """
+    params: Dict[str, Any] = {}
+
+    if user_id:
+        query += " AND user_id = :user_id"
+        params["user_id"] = user_id
+
+    query += " ORDER BY created_at DESC LIMIT :limit"
+    params["limit"] = limit
+
+    result = await db.execute(text(query), params)
+    rows = result.fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "user": row[1],
+            "action": row[2],
+            "target": row[3],
+            "details": row[4],
+            "ip": row[5],
+            "timestamp": row[6].isoformat() if row[6] else None,
+        }
+        for row in rows
+    ]
+
+
+async def _log_audit(
+    db: AsyncSession,
+    user_id: Optional[str],
+    username: str,
+    action: str,
+    target: str,
+    details: Optional[Dict],
+    ip_address: Optional[str],
+) -> None:
+    """Log an audit event."""
+    import json
+    await db.execute(
+        text("""
+            INSERT INTO admin_audit_log (user_id, username, action, target, details, ip_address)
+            VALUES (:user_id, :username, :action, :target, :details, :ip)
+        """),
+        {
+            "user_id": user_id,
+            "username": username,
+            "action": action,
+            "target": target,
+            "details": json.dumps(details) if details else None,
+            "ip": ip_address,
+        }
+    )
+    # Don't commit here - let the caller handle transaction
+
+
+async def cleanup_expired_sessions(db: AsyncSession) -> int:
+    """Remove expired sessions. Returns count deleted."""
+    result = await db.execute(
+        text("DELETE FROM admin_sessions WHERE expires_at < :now"),
+        {"now": datetime.now(timezone.utc)}
+    )
+    await db.commit()
+    return result.rowcount

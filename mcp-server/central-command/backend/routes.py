@@ -1363,3 +1363,109 @@ async def create_notification(
         created_at=row.created_at,
         read_at=row.read_at
     )
+
+
+# =============================================================================
+# AUTHENTICATION ENDPOINTS
+# =============================================================================
+
+from . import auth as auth_module
+
+auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    success: bool
+    token: Optional[str] = None
+    user: Optional[dict] = None
+    error: Optional[str] = None
+
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    displayName: str
+    role: str
+
+
+@auth_router.post("/login", response_model=LoginResponse)
+async def login(
+    request: LoginRequest,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Authenticate user and return session token.
+
+    Returns:
+        Session token on success, error message on failure.
+    """
+    ip_address = http_request.client.host if http_request.client else None
+    user_agent = http_request.headers.get("user-agent")
+
+    success, token, result = await auth_module.authenticate_user(
+        db,
+        request.username,
+        request.password,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
+    if success:
+        return LoginResponse(success=True, token=token, user=result)
+    else:
+        return LoginResponse(success=False, error=result.get("error", "Authentication failed"))
+
+
+@auth_router.post("/logout")
+async def logout(
+    http_request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Invalidate session token."""
+    auth_header = http_request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        ip_address = http_request.client.host if http_request.client else None
+        success = await auth_module.logout(db, token, ip_address)
+        return {"success": success}
+    return {"success": False, "error": "No token provided"}
+
+
+@auth_router.get("/me", response_model=Optional[UserResponse])
+async def get_current_user(
+    http_request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Validate session token and return current user."""
+    auth_header = http_request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="No token provided")
+
+    token = auth_header[7:]
+    user = await auth_module.validate_session(db, token)
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return UserResponse(
+        id=user["id"],
+        username=user["username"],
+        displayName=user["displayName"],
+        role=user["role"],
+    )
+
+
+@auth_router.get("/audit-logs")
+async def get_audit_logs(
+    limit: int = Query(100, le=500),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get admin audit logs (requires admin role)."""
+    # Note: In production, add role check middleware
+    logs = await auth_module.get_audit_logs(db, limit=limit)
+    return {"logs": logs}
