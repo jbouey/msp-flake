@@ -40,9 +40,9 @@ OP_OPENAI="${OP_OPENAI:-OpenAI Key}"
 OP_SMTP="${OP_SMTP:-SMTP}"
 OP_ADMIN="${OP_ADMIN:-Admin Dashboard}"
 
-log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_info() { echo -e "${GREEN}[INFO]${NC} $1" >&2; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 check_op_cli() {
     if ! command -v op &> /dev/null; then
@@ -65,7 +65,32 @@ get_secret() {
     local item="$1"
     local field="${2:-password}"
 
-    op item get "$item" --vault "$OP_VAULT" --fields "$field" 2>/dev/null || echo ""
+    # Use --reveal to actually get the secret value (required by 1Password CLI)
+    local value
+    value=$(op item get "$item" --vault "$OP_VAULT" --field "$field" --reveal 2>/dev/null)
+
+    if [[ -n "$value" ]]; then
+        echo "$value"
+        return
+    fi
+
+    # Try common variations for specific field types
+    case "$field" in
+        credential)
+            for try_field in "credential" "api_key" "api key" "key" "password"; do
+                value=$(op item get "$item" --vault "$OP_VAULT" --field "$try_field" --reveal 2>/dev/null)
+                if [[ -n "$value" ]]; then echo "$value"; return; fi
+            done
+            ;;
+        server)
+            for try_field in "server" "host" "hostname" "url"; do
+                value=$(op item get "$item" --vault "$OP_VAULT" --field "$try_field" --reveal 2>/dev/null)
+                if [[ -n "$value" ]]; then echo "$value"; return; fi
+            done
+            ;;
+    esac
+
+    echo ""
 }
 
 get_secret_or_default() {
