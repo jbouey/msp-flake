@@ -1,0 +1,223 @@
+{
+  "bundle_id": "WSA-20260108-0001",
+  "audit_type": "website_security_audit",
+  "target": "https://api.osiriscare.net, https://dashboard.osiriscare.net",
+  "audit_date": "2026-01-08T16:45:00Z",
+  "auditor": "Claude Code Security Agent",
+  "scope": {
+    "domains": [
+      "api.osiriscare.net",
+      "dashboard.osiriscare.net",
+      "osiriscare.net"
+    ],
+    "ip_addresses": ["178.156.162.116"],
+    "exclusions": ["Internal network", "Physical appliance firmware"]
+  },
+  "findings": [
+    {
+      "id": "WSA-001",
+      "title": "Dashboard API Lacks Authentication",
+      "severity": "critical",
+      "cvss_score": 9.1,
+      "cwe_id": "CWE-306",
+      "description": "All /api/dashboard/* endpoints return sensitive data without requiring authentication.",
+      "evidence": "curl -s https://api.osiriscare.net/api/dashboard/stats returns data without auth",
+      "remediation": "Add authentication middleware to all dashboard routes. Require valid Bearer token.",
+      "hipaa_controls": ["164.312(d)"],
+      "owasp_category": "A01:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-002",
+      "title": "CORS Allows Any Origin with Credentials",
+      "severity": "critical",
+      "cvss_score": 8.8,
+      "cwe_id": "CWE-942",
+      "description": "API reflects ANY Origin header and allows credentials, enabling cross-site attacks.",
+      "evidence": "Origin: https://evil.com returns access-control-allow-origin: https://evil.com",
+      "remediation": "Configure explicit allowed origins list. Remove allow_credentials unless necessary.",
+      "hipaa_controls": ["164.312(e)(1)"],
+      "owasp_category": "A01:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-003",
+      "title": "API Documentation Publicly Accessible",
+      "severity": "critical",
+      "cvss_score": 7.5,
+      "cwe_id": "CWE-200",
+      "description": "Swagger UI and OpenAPI specification exposed at /docs, /redoc, /openapi.json",
+      "evidence": "https://api.osiriscare.net/docs returns 200 OK with full API documentation",
+      "remediation": "Disable docs_url, redoc_url, openapi_url in production FastAPI config",
+      "hipaa_controls": ["164.308(a)(1)(ii)(D)"],
+      "owasp_category": "A05:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-004",
+      "title": "Missing Strict-Transport-Security Header",
+      "severity": "high",
+      "cvss_score": 7.4,
+      "cwe_id": "CWE-319",
+      "description": "HSTS header not present, allowing SSL stripping attacks",
+      "evidence": "No Strict-Transport-Security header in response",
+      "remediation": "Add header: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload",
+      "hipaa_controls": ["164.312(e)(1)"],
+      "owasp_category": "A05:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-005",
+      "title": "Missing Content-Security-Policy Header",
+      "severity": "high",
+      "cvss_score": 6.1,
+      "cwe_id": "CWE-79",
+      "description": "No CSP header, increasing XSS attack surface",
+      "evidence": "No Content-Security-Policy header in response",
+      "remediation": "Add CSP header with restrictive policy",
+      "hipaa_controls": ["164.312(a)(1)"],
+      "owasp_category": "A05:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-006",
+      "title": "Missing X-Frame-Options Header",
+      "severity": "high",
+      "cvss_score": 4.3,
+      "cwe_id": "CWE-1021",
+      "description": "Dashboard can be embedded in iframes, enabling clickjacking",
+      "evidence": "No X-Frame-Options header in response",
+      "remediation": "Add header: X-Frame-Options: DENY",
+      "hipaa_controls": ["164.312(a)(1)"],
+      "owasp_category": "A05:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-007",
+      "title": "Server Version Disclosure",
+      "severity": "high",
+      "cvss_score": 5.3,
+      "cwe_id": "CWE-200",
+      "description": "Server headers expose nginx/1.29.4 and uvicorn versions",
+      "evidence": "server: nginx/1.29.4, server: uvicorn",
+      "remediation": "Disable server version tokens in nginx and uvicorn",
+      "hipaa_controls": [],
+      "owasp_category": "A05:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-008",
+      "title": "Missing X-Content-Type-Options Header",
+      "severity": "medium",
+      "cvss_score": 4.3,
+      "cwe_id": "CWE-693",
+      "description": "Missing nosniff header allows MIME type confusion attacks",
+      "evidence": "No X-Content-Type-Options header in response",
+      "remediation": "Add header: X-Content-Type-Options: nosniff",
+      "hipaa_controls": ["164.312(c)(1)"],
+      "owasp_category": "A05:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-009",
+      "title": "Missing Referrer-Policy Header",
+      "severity": "medium",
+      "cvss_score": 4.3,
+      "cwe_id": "CWE-200",
+      "description": "No referrer policy allows URL leakage",
+      "evidence": "No Referrer-Policy header in response",
+      "remediation": "Add header: Referrer-Policy: strict-origin-when-cross-origin",
+      "hipaa_controls": ["164.312(e)(1)"],
+      "owasp_category": "A05:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-010",
+      "title": "Health Endpoint Exposes Internal Services",
+      "severity": "medium",
+      "cvss_score": 5.3,
+      "cwe_id": "CWE-200",
+      "description": "/health endpoint reveals Redis, PostgreSQL, MinIO connection status",
+      "evidence": "{\"redis\":\"connected\",\"database\":\"connected\",\"minio\":\"connected\"}",
+      "remediation": "Return minimal status publicly, require auth for detailed health",
+      "hipaa_controls": [],
+      "owasp_category": "A05:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-011",
+      "title": "ISO Image Publicly Accessible",
+      "severity": "medium",
+      "cvss_score": 5.3,
+      "cwe_id": "CWE-552",
+      "description": "Appliance ISO (~1.2GB) downloadable without authentication",
+      "evidence": "https://dashboard.osiriscare.net/osiriscare-appliance-v9.iso returns 200 OK",
+      "remediation": "Move to authenticated storage or restrict by IP/token",
+      "hipaa_controls": [],
+      "owasp_category": "A05:2021",
+      "status": "open"
+    },
+    {
+      "id": "WSA-012",
+      "title": "Missing DMARC Record",
+      "severity": "low",
+      "cvss_score": 3.7,
+      "cwe_id": "CWE-290",
+      "description": "No DMARC DNS record for email authentication",
+      "evidence": "dig +short _dmarc.osiriscare.net TXT returns empty",
+      "remediation": "Add DNS TXT record: v=DMARC1; p=quarantine; rua=mailto:dmarc@osiriscare.net",
+      "hipaa_controls": [],
+      "owasp_category": null,
+      "status": "open"
+    }
+  ],
+  "executive_summary": {
+    "total_findings": 12,
+    "critical": 3,
+    "high": 4,
+    "medium": 4,
+    "low": 1,
+    "info": 0,
+    "compliance_score": 45.0,
+    "hipaa_compliance": {
+      "164.312(a)(1)": "FAIL",
+      "164.312(d)": "FAIL",
+      "164.312(e)(1)": "FAIL",
+      "164.312(e)(2)(ii)": "PASS",
+      "164.312(c)(1)": "WARN"
+    }
+  },
+  "positive_findings": [
+    "TLS 1.3 with TLS_AES_128_GCM_SHA256 cipher",
+    "Valid Let's Encrypt certificates",
+    "HTTP/2 enabled",
+    "Account lockout after 5 failed attempts",
+    "256-bit session token entropy",
+    "TRACE method blocked",
+    "Clean error responses",
+    "No SQL injection detected",
+    "Path traversal blocked"
+  ],
+  "recommendations": [
+    {
+      "priority": 1,
+      "action": "Add authentication to all /api/dashboard/* endpoints",
+      "effort": "2-4 hours"
+    },
+    {
+      "priority": 2,
+      "action": "Fix CORS to only allow specific origins",
+      "effort": "30 minutes"
+    },
+    {
+      "priority": 3,
+      "action": "Disable API docs in production",
+      "effort": "5 minutes"
+    },
+    {
+      "priority": 4,
+      "action": "Add all security headers via Caddy",
+      "effort": "1 hour"
+    }
+  ]
+}

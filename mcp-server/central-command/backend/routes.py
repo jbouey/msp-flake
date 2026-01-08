@@ -65,9 +65,15 @@ from .db_queries import (
     get_global_healing_metrics,
 )
 from .email_alerts import send_critical_alert
+from . import auth as auth_module
 
 
-router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+# Dashboard router - requires authentication for all routes
+router = APIRouter(
+    prefix="/api/dashboard",
+    tags=["dashboard"],
+    dependencies=[Depends(auth_module.require_auth)],
+)
 
 # Database session dependency
 async def get_db():
