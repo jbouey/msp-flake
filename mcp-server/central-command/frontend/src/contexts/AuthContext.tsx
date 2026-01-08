@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
 interface User {
+  id?: string;
   username: string;
-  role: 'admin' | 'operator';
+  role: 'admin' | 'operator' | 'readonly';
   displayName: string;
 }
 
@@ -19,99 +20,146 @@ interface AuditLog {
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
+  isLoading: boolean;
   login: (username: string, password: string) => Promise<boolean>;
-  logout: () => void;
+  logout: () => Promise<void>;
   auditLogs: AuditLog[];
-  addAuditLog: (action: string, target: string, details?: string) => void;
+  refreshAuditLogs: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Default admin user (in production, this would be from a database)
-const USERS: Record<string, { password: string; role: 'admin' | 'operator'; displayName: string }> = {
-  admin: { password: 'admin', role: 'admin', displayName: 'Administrator' },
-};
+// API base URL - uses relative path to work with proxy
+const API_BASE = '/api';
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+
+  // Get stored token
+  const getToken = (): string | null => {
+    return localStorage.getItem('auth_token');
+  };
+
+  // Set token
+  const setToken = (token: string | null) => {
+    if (token) {
+      localStorage.setItem('auth_token', token);
+    } else {
+      localStorage.removeItem('auth_token');
+    }
+  };
 
   // Check for existing session on mount
   useEffect(() => {
-    const savedUser = localStorage.getItem('auth_user');
-    if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch {
-        localStorage.removeItem('auth_user');
+    const validateSession = async () => {
+      const token = getToken();
+      if (!token) {
+        setIsLoading(false);
+        return;
       }
-    }
 
-    // Load audit logs
-    const savedLogs = localStorage.getItem('audit_logs');
-    if (savedLogs) {
       try {
-        setAuditLogs(JSON.parse(savedLogs));
-      } catch {
-        localStorage.removeItem('audit_logs');
-      }
-    }
-  }, []);
+        const response = await fetch(`${API_BASE}/auth/me`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
 
-  const addAuditLog = (action: string, target: string, details?: string) => {
-    const newLog: AuditLog = {
-      id: Date.now(),
-      timestamp: new Date().toISOString(),
-      user: user?.username || 'anonymous',
-      action,
-      target,
-      details,
+        if (response.ok) {
+          const userData = await response.json();
+          setUser({
+            id: userData.id,
+            username: userData.username,
+            role: userData.role,
+            displayName: userData.displayName,
+          });
+        } else {
+          // Invalid token - clear it
+          setToken(null);
+          setUser(null);
+        }
+      } catch (error) {
+        console.error('Session validation failed:', error);
+        // Don't clear token on network error - might be temporary
+      } finally {
+        setIsLoading(false);
+      }
     };
 
-    setAuditLogs((prev) => {
-      const updated = [newLog, ...prev].slice(0, 1000); // Keep last 1000 logs
-      localStorage.setItem('audit_logs', JSON.stringify(updated));
-      return updated;
-    });
+    validateSession();
+  }, []);
+
+  const refreshAuditLogs = async () => {
+    const token = getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_BASE}/auth/audit-logs?limit=100`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setAuditLogs(data.logs || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch audit logs:', error);
+    }
   };
 
   const login = async (username: string, password: string): Promise<boolean> => {
-    const userData = USERS[username];
-    if (userData && userData.password === password) {
-      const loggedInUser: User = {
-        username,
-        role: userData.role,
-        displayName: userData.displayName,
-      };
-      setUser(loggedInUser);
-      localStorage.setItem('auth_user', JSON.stringify(loggedInUser));
-
-      // Log the login
-      const loginLog: AuditLog = {
-        id: Date.now(),
-        timestamp: new Date().toISOString(),
-        user: username,
-        action: 'LOGIN',
-        target: 'Authentication',
-        details: 'User logged in successfully',
-      };
-      setAuditLogs((prev) => {
-        const updated = [loginLog, ...prev].slice(0, 1000);
-        localStorage.setItem('audit_logs', JSON.stringify(updated));
-        return updated;
+    try {
+      const response = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
       });
 
-      return true;
+      const data = await response.json();
+
+      if (data.success && data.token && data.user) {
+        setToken(data.token);
+        setUser({
+          id: data.user.id,
+          username: data.user.username,
+          role: data.user.role,
+          displayName: data.user.displayName,
+        });
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error('Login failed:', error);
+      return false;
     }
-    return false;
   };
 
-  const logout = () => {
-    if (user) {
-      addAuditLog('LOGOUT', 'Authentication', 'User logged out');
+  const logout = async () => {
+    const token = getToken();
+
+    if (token) {
+      try {
+        await fetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+      } catch (error) {
+        console.error('Logout request failed:', error);
+      }
     }
+
+    setToken(null);
     setUser(null);
-    localStorage.removeItem('auth_user');
+    setAuditLogs([]);
   };
 
   return (
@@ -119,10 +167,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       value={{
         user,
         isAuthenticated: !!user,
+        isLoading,
         login,
         logout,
         auditLogs,
-        addAuditLog,
+        refreshAuditLogs,
       }}
     >
       {children}

@@ -42,7 +42,7 @@ const pageTitles: Record<string, string> = {
 const AppLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout, addAuditLog } = useAuth();
+  const { user, logout } = useAuth();
 
   const [selectedClient, setSelectedClient] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState(new Date());
@@ -63,22 +63,14 @@ const AppLayout: React.FC = () => {
     }
   }, [dataUpdatedAt]);
 
-  // Log page views
-  useEffect(() => {
-    const pageName = pageTitles[location.pathname] || location.pathname;
-    addAuditLog('VIEW', pageName, `Viewed ${pageName}`);
-  }, [location.pathname]);
-
   const handleClientSelect = (siteId: string) => {
     setSelectedClient(siteId);
     navigate(`/client/${siteId}`);
-    addAuditLog('VIEW', 'Client Detail', `Viewed client: ${siteId}`);
   };
 
   const handleRefresh = async () => {
     setRefreshing(true);
     refreshFleet();
-    addAuditLog('REFRESH', 'Dashboard', 'Manually refreshed data');
     // Wait a bit for queries to refetch
     setTimeout(() => {
       setRefreshing(false);
@@ -86,8 +78,8 @@ const AppLayout: React.FC = () => {
     }, 1000);
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/');
   };
 
@@ -156,15 +148,22 @@ const ComingSoon: React.FC<{ title: string }> = ({ title }) => (
 );
 
 const AuthenticatedApp: React.FC = () => {
-  const { isAuthenticated } = useAuth();
-  const [showApp, setShowApp] = useState(false);
+  const { isAuthenticated, isLoading } = useAuth();
 
-  useEffect(() => {
-    setShowApp(isAuthenticated);
-  }, [isAuthenticated]);
+  // Show loading state while checking session
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background-primary flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-accent-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-label-tertiary">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
-  if (!showApp) {
-    return <Login onSuccess={() => setShowApp(true)} />;
+  if (!isAuthenticated) {
+    return <Login onSuccess={() => {}} />;
   }
 
   return <AppLayout />;

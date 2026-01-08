@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { GlassCard } from '../components/shared';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -17,6 +17,7 @@ const formatDateTime = (dateStr: string): string => {
 const getActionColor = (action: string): string => {
   switch (action) {
     case 'LOGIN':
+    case 'LOGIN_SUCCESS':
       return 'text-health-healthy bg-green-50';
     case 'LOGOUT':
       return 'text-label-secondary bg-gray-100';
@@ -24,6 +25,8 @@ const getActionColor = (action: string): string => {
     case 'UPDATE':
       return 'text-ios-blue bg-blue-50';
     case 'DELETE':
+    case 'LOGIN_FAILED':
+    case 'LOGIN_BLOCKED':
       return 'text-health-critical bg-red-50';
     case 'EXECUTE':
       return 'text-ios-purple bg-purple-50';
@@ -35,10 +38,15 @@ const getActionColor = (action: string): string => {
 };
 
 export const AuditLogs: React.FC = () => {
-  const { auditLogs, user } = useAuth();
+  const { auditLogs, user, refreshAuditLogs } = useAuth();
   const [filterAction, setFilterAction] = useState<string>('all');
   const [filterUser, setFilterUser] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Fetch audit logs on mount
+  useEffect(() => {
+    refreshAuditLogs();
+  }, []);
 
   // Get unique actions and users for filters
   const actions = Array.from(new Set(auditLogs.map((log) => log.action)));
@@ -255,7 +263,7 @@ export const AuditLogs: React.FC = () => {
       {/* Info */}
       <GlassCard padding="sm">
         <p className="text-xs text-label-tertiary text-center">
-          Audit logs are stored locally and retained for accountability. Export to CSV for permanent records.
+          Audit logs are stored server-side for HIPAA compliance. Export to CSV for external records.
         </p>
       </GlassCard>
     </div>

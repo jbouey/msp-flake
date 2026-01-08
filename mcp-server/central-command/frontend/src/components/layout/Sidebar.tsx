@@ -6,7 +6,7 @@ import { useNotificationSummary } from '../../hooks';
 
 interface User {
   username: string;
-  role: 'admin' | 'operator';
+  role: 'admin' | 'operator' | 'readonly';
   displayName: string;
 }
 
