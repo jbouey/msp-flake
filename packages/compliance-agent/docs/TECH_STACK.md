@@ -1,8 +1,10 @@
 # MSP Compliance Agent - Technology Stack
 
-**Last Updated:** 2025-11-23
-**Version:** Phase 2 Complete - Three-Tier Auto-Healing
-**Test Status:** 161 passed, 7 skipped
+**Last Updated:** 2026-01-05 (Session 11 - ISO v18 Deployed)
+**Version:** Phase 12 - Launch Readiness
+**Test Status:** 453 passed
+**Agent Version:** 1.0.9
+**Production Status:** HP T640 appliance deployed, 17,000+ evidence bundles
 
 ---
 
@@ -151,8 +153,10 @@ sqlite3 (stdlib)         # Offline queue persistence (WAL mode)
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| **MCP Server** | 8000 | Central control plane (FastAPI) |
-| **Redis** | 6379 | Event queue, rate limiting |
+| **Central Command** | 443 | FastAPI backend (api.osiriscare.net) |
+| **PostgreSQL** | 5432 | Production database (sites, appliances, compliance_bundles) |
+| **Redis** | 6379 | Session cache, rate limiting |
+| **MinIO** | 9000 | WORM evidence storage (7-year retention) |
 | **SQLite** | - | Local offline queue (WAL mode) |
 | **WinRM** | 5985 | Windows remote management |
 
@@ -176,12 +180,15 @@ sqlite3 (stdlib)         # Offline queue persistence (WAL mode)
 | Module | Description |
 |--------|-------------|
 | `agent.py` | Main orchestration loop with graceful shutdown |
+| `appliance_agent.py` | Production appliance agent with credential-pull |
+| `appliance_client.py` | Central Command API client |
 | `healing.py` | Self-healing engine with 6 remediation actions |
 | `drift.py` | Drift detection (6 compliance checks) |
 | `evidence.py` | Evidence bundle generation & signing |
-| `mcp_client.py` | MCP server communication (mTLS) |
+| `mcp_client.py` | MCP server communication |
 | `offline_queue.py` | SQLite WAL queue for offline operation |
 | `crypto.py` | Ed25519 signature verification |
+| `provisioning.py` | First-boot QR code provisioning |
 | `config.py` | Configuration management (27 options) |
 | `models.py` | Pydantic data models |
 | `utils.py` | Utility functions |
@@ -256,38 +263,41 @@ sqlite3 (stdlib)         # Offline queue persistence (WAL mode)
 
 ```
 tests/
-├── test_agent.py                  # 15 tests - Agent lifecycle
-├── test_auto_healer.py            # 24 tests - Three-tier auto-healer
-├── test_auto_healer_integration.py # 12 tests - Multi-VM scenarios
-├── test_healing.py                # 22 tests - Self-healing
-├── test_drift.py                  # 25 tests - Drift detection
-├── test_queue.py                  # 20 tests - Offline queue
-├── test_crypto.py                 # 8 tests - Cryptography
-├── test_evidence.py               # 11 tests - Evidence bundles
-├── test_mcp_client.py             # 12 tests - MCP communication
-├── test_utils.py                  # 9 tests - Utilities
-├── test_windows_integration.py    # 3 tests - Windows runbooks (live VM)
+├── test_agent.py                  # Agent lifecycle
+├── test_auto_healer.py            # Three-tier auto-healer
+├── test_auto_healer_integration.py # Multi-VM scenarios
+├── test_healing.py                # Self-healing engine
+├── test_drift.py                  # Drift detection
+├── test_queue.py                  # Offline queue
+├── test_crypto.py                 # Cryptography
+├── test_evidence.py               # Evidence bundles
+├── test_mcp_client.py             # MCP communication
+├── test_provisioning.py           # First-boot provisioning
+├── test_utils.py                  # Utilities
+├── test_windows_integration.py    # Windows runbooks (live VM)
 └── conftest.py                    # Shared fixtures
 ```
 
-**Total: 161 passed, 7 skipped**
+**Total: 453 tests passing**
 
 ### Test Categories
 
 | Category | Tests | Description |
 |----------|-------|-------------|
-| **Auto-Healer** | 24 | L1/L2/L3 resolution, incident DB, learning loop |
-| **Integration** | 12 | Multi-VM scenarios, data flywheel, pattern tracking |
-| **Core** | 122 | Agent, drift, healing, queue, crypto, evidence |
-| **Windows** | 3 | Live WinRM tests against Windows Server VM |
+| **Auto-Healer** | 36 | L1/L2/L3 resolution, incident DB, learning loop |
+| **Integration** | 24 | Multi-VM scenarios, data flywheel, pattern tracking |
+| **Provisioning** | 22 | First-boot provisioning, QR code, config setup |
+| **Core** | ~350 | Agent, drift, healing, queue, crypto, evidence |
+| **Windows** | 12+ | Live WinRM tests against Windows Server |
 
 ### Test Environment
 
 | Component | Details |
 |-----------|---------|
-| **Windows VM** | VirtualBox, Windows Server 2016, via SSH tunnel |
-| **NixOS VMs** | 2 NixOS VMs on remote Mac |
-| **Python** | 3.13.3 via Homebrew |
+| **Physical Appliance** | HP T640 at 192.168.88.246 (North Valley Dental) |
+| **Windows DC** | NVDC01 at 192.168.88.250 (Windows Server 2019) |
+| **Windows Workstation** | NVWS01 at 192.168.88.251 (Windows 10) |
+| **Python** | 3.13 via virtualenv |
 | **Test Runner** | pytest with pytest-asyncio |
 
 ---
@@ -357,13 +367,14 @@ pip install pytest pytest-asyncio pytest-cov
 
 ## Communication Protocols
 
-### Agent → MCP Server
+### Agent → Central Command
 
 ```
-Protocol: HTTPS with mTLS
-Port: 443 (production) / 8000 (dev)
-Auth: Client certificate + Ed25519 order signatures
+Protocol: HTTPS
+Endpoint: api.osiriscare.net/api/appliances/checkin
+Auth: Site ID + MAC address authentication
 Direction: Pull-only (agent initiates all connections)
+Features: Credential-pull architecture (Windows targets returned each cycle)
 ```
 
 ### Agent → Windows Servers
@@ -410,8 +421,8 @@ Durability: PRAGMA synchronous=FULL
 | Location | Purpose | Retention |
 |----------|---------|-----------|
 | Local SQLite | Offline queue | Until uploaded |
-| MCP Server | Central collection | 90 days |
-| WORM Storage | Audit archive | 2+ years |
+| PostgreSQL | Central database | Hot storage |
+| MinIO WORM | Audit archive | 7 years (HIPAA) |
 
 ---
 
@@ -430,11 +441,23 @@ Durability: PRAGMA synchronous=FULL
 ## Related Documentation
 
 - [AUTO_HEALING.md](./AUTO_HEALING.md) - Three-tier auto-healing architecture
-- [DATA_FLYWHEEL.md](./DATA_FLYWHEEL.md) - Self-learning system documentation
-- [CREDENTIALS.md](./CREDENTIALS.md) - Access credentials
+- [CREDENTIALS.md](./CREDENTIALS.md) - Credential-pull architecture
+- [VM_INVENTORY.md](./VM_INVENTORY.md) - Production infrastructure inventory
 - [TESTING.md](./TESTING.md) - Test guide
-- [WINDOWS_TEST_SETUP.md](./WINDOWS_TEST_SETUP.md) - Windows VM setup
-- [CLAUDE.md](../../../CLAUDE.md) - Master plan & architecture
+- [PROVISIONING.md](./PROVISIONING.md) - QR code & first-boot provisioning
+- [../../CLAUDE.md](../../../CLAUDE.md) - Master plan & architecture
+
+---
+
+## Production Deployment (2026-01-05)
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| **Central Command** | ✅ Live | api.osiriscare.net, dashboard.osiriscare.net |
+| **Physical Appliance** | ✅ Live | HP T640, ISO v18, checking in every 60s |
+| **Evidence Bundles** | ✅ 17,000+ | Ed25519 signed, hash-chained |
+| **North Valley Lab** | ✅ Active | Windows DC + Workstation for testing |
+| **Three-Tier Healing** | ✅ Verified | Windows firewall chaos test passed |
 
 ---
 

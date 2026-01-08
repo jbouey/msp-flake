@@ -2,9 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies for WeasyPrint
 RUN apt-get update && apt-get install -y \
     curl \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libcairo2 \
+    libgdk-pixbuf2.0-0 \
+    libffi-dev \
+    shared-mime-info \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements if you have them, or install directly
@@ -12,7 +19,7 @@ RUN pip install --no-cache-dir \
     fastapi \
     uvicorn[standard] \
     redis \
-    pydantic \
+    pydantic[email] \
     pyyaml \
     requests \
     python-multipart \
@@ -24,7 +31,9 @@ RUN pip install --no-cache-dir \
     sqlalchemy \
     aiohttp \
     httpx \
-    structlog
+    structlog \
+    weasyprint \
+    sendgrid
 
 # Copy application code
 COPY . /app

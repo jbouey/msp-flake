@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { GlassCard, Spinner, Badge } from '../components/shared';
-import { useSite, useAddCredential } from '../hooks';
-import type { SiteDetail as SiteDetailType, SiteAppliance } from '../utils/api';
+import { GlassCard, Spinner, Badge, ActionDropdown } from '../components/shared';
+import type { ActionItem } from '../components/shared';
+import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances } from '../hooks';
+import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
 
 /**
  * Format relative time
@@ -41,15 +42,54 @@ function formatUptime(seconds: number | null): string {
 }
 
 /**
- * Appliance card component
+ * Appliance card component with action buttons
  */
-const ApplianceCard: React.FC<{ appliance: SiteAppliance }> = ({ appliance }) => {
+// Current latest agent version - update this when releasing new versions
+const LATEST_AGENT_VERSION = '1.0.18';
+const AGENT_PACKAGE_BASE_URL = 'https://api.osiriscare.net/agent-packages';
+
+const ApplianceCard: React.FC<{
+  appliance: SiteAppliance;
+  onCreateOrder: (applianceId: string, orderType: OrderType, parameters?: Record<string, unknown>) => void;
+  onDelete: (applianceId: string) => void;
+  isLoading?: boolean;
+}> = ({ appliance, onCreateOrder, onDelete, isLoading }) => {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+
+  // Check if agent is outdated
+  const isOutdated = appliance.agent_version && appliance.agent_version !== LATEST_AGENT_VERSION;
+
   const statusColors = {
     online: 'bg-health-healthy',
     stale: 'bg-health-warning',
     offline: 'bg-health-critical',
     pending: 'bg-gray-400',
   };
+
+  const moreActions: ActionItem[] = [
+    {
+      label: 'View Logs',
+      icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
+      onClick: () => onCreateOrder(appliance.appliance_id, 'view_logs'),
+    },
+    {
+      label: 'Restart Agent',
+      icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
+      onClick: () => onCreateOrder(appliance.appliance_id, 'restart_agent'),
+    },
+    {
+      label: 'Update Agent',
+      icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>,
+      onClick: () => setShowUpdateModal(true),
+    },
+    {
+      label: 'Delete Appliance',
+      icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
+      onClick: () => setShowDeleteConfirm(true),
+      danger: true,
+    },
+  ];
 
   return (
     <GlassCard className="p-4">
@@ -93,6 +133,127 @@ const ApplianceCard: React.FC<{ appliance: SiteAppliance }> = ({ appliance }) =>
           <p className="text-label-secondary">{formatUptime(appliance.uptime_seconds)}</p>
         </div>
       </div>
+
+      {/* Action Buttons */}
+      <div className="mt-4 pt-4 border-t border-separator-light flex items-center justify-between">
+        <div className="flex gap-2">
+          <button
+            onClick={() => onCreateOrder(appliance.appliance_id, 'force_checkin')}
+            disabled={isLoading}
+            className="px-3 py-1.5 text-xs rounded-ios bg-accent-primary/10 text-accent-primary hover:bg-accent-primary/20 disabled:opacity-50 transition-colors"
+          >
+            Force Checkin
+          </button>
+          <button
+            onClick={() => onCreateOrder(appliance.appliance_id, 'run_drift')}
+            disabled={isLoading}
+            className="px-3 py-1.5 text-xs rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary disabled:opacity-50 transition-colors"
+          >
+            Run Drift
+          </button>
+          <button
+            onClick={() => onCreateOrder(appliance.appliance_id, 'sync_rules')}
+            disabled={isLoading}
+            className="px-3 py-1.5 text-xs rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary disabled:opacity-50 transition-colors"
+          >
+            Sync Rules
+          </button>
+          {/* Prominent Push Update button for outdated agents */}
+          {isOutdated && (
+            <button
+              onClick={() => setShowUpdateModal(true)}
+              disabled={isLoading}
+              className="px-3 py-1.5 text-xs rounded-ios bg-gradient-to-r from-blue-600 to-purple-500 hover:from-blue-700 hover:to-purple-600 text-white font-medium disabled:opacity-50 transition-all shadow-sm animate-pulse"
+            >
+              Push Update ({appliance.agent_version} &rarr; {LATEST_AGENT_VERSION})
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Show prominent delete for offline appliances */}
+          {appliance.live_status === 'offline' && (
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={isLoading}
+              className="px-3 py-1.5 text-xs rounded-ios bg-gradient-to-r from-red-600 to-orange-500 hover:from-red-700 hover:to-orange-600 text-white font-medium disabled:opacity-50 transition-all shadow-sm"
+            >
+              🗑️ Delete Stale
+            </button>
+          )}
+          <ActionDropdown actions={moreActions} label="" disabled={isLoading} />
+        </div>
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <GlassCard className="w-full max-w-sm">
+            <h2 className="text-lg font-semibold text-label-primary mb-2">Delete Appliance?</h2>
+            <p className="text-label-secondary text-sm mb-4">
+              Are you sure you want to delete <strong>{appliance.hostname || appliance.appliance_id}</strong>?
+              This will remove it from the site and cancel any pending orders.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 px-4 py-2 rounded-ios bg-fill-secondary text-label-primary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onDelete(appliance.appliance_id);
+                  setShowDeleteConfirm(false);
+                }}
+                className="flex-1 px-4 py-2 rounded-ios bg-gradient-to-r from-red-600 to-orange-500 hover:from-red-700 hover:to-orange-600 text-white font-semibold shadow-md transition-all"
+              >
+                Delete Forever
+              </button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {/* Agent Update Modal */}
+      {showUpdateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <GlassCard className="w-full max-w-md">
+            <h2 className="text-lg font-semibold text-label-primary mb-2">Push Agent Update</h2>
+            <p className="text-label-secondary text-sm mb-4">
+              Update <strong>{appliance.hostname || appliance.appliance_id}</strong> from version{' '}
+              <code className="bg-fill-secondary px-1 rounded">{appliance.agent_version || 'unknown'}</code> to{' '}
+              <code className="bg-fill-secondary px-1 rounded">{LATEST_AGENT_VERSION}</code>
+            </p>
+            <div className="bg-fill-secondary rounded-ios p-3 mb-4 text-sm">
+              <p className="text-label-tertiary mb-1">Package URL:</p>
+              <p className="text-label-primary font-mono text-xs break-all">
+                {AGENT_PACKAGE_BASE_URL}/compliance_agent-{LATEST_AGENT_VERSION}.tar.gz
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowUpdateModal(false)}
+                className="flex-1 px-4 py-2 rounded-ios bg-fill-secondary text-label-primary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onCreateOrder(appliance.appliance_id, 'update_agent', {
+                    package_url: `${AGENT_PACKAGE_BASE_URL}/compliance_agent-${LATEST_AGENT_VERSION}.tar.gz`,
+                    version: LATEST_AGENT_VERSION,
+                  });
+                  setShowUpdateModal(false);
+                }}
+                disabled={isLoading}
+                className="flex-1 px-4 py-2 rounded-ios bg-gradient-to-r from-blue-600 to-purple-500 hover:from-blue-700 hover:to-purple-600 text-white font-semibold shadow-md transition-all disabled:opacity-50"
+              >
+                Push Update
+              </button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
     </GlassCard>
   );
 };
@@ -260,15 +421,145 @@ const AddCredentialModal: React.FC<{
 };
 
 /**
+ * Site action toolbar for bulk operations
+ */
+const SiteActionToolbar: React.FC<{
+  applianceCount: number;
+  onBroadcast: (orderType: OrderType) => void;
+  onClearStale: () => void;
+  isLoading: boolean;
+}> = ({ applianceCount, onBroadcast, onClearStale, isLoading }) => {
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  if (applianceCount === 0) return null;
+
+  return (
+    <>
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-label-tertiary text-sm mr-2">Site Actions:</span>
+        <button
+          onClick={() => onBroadcast('force_checkin')}
+          disabled={isLoading}
+          className="px-3 py-1.5 text-xs rounded-ios bg-accent-primary text-white hover:bg-accent-primary/90 disabled:opacity-50 transition-colors"
+        >
+          Force All Checkin
+        </button>
+        <button
+          onClick={() => onBroadcast('sync_rules')}
+          disabled={isLoading}
+          className="px-3 py-1.5 text-xs rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary disabled:opacity-50 transition-colors"
+        >
+          Sync All Rules
+        </button>
+        <button
+          onClick={() => setShowClearConfirm(true)}
+          disabled={isLoading}
+          className="px-3 py-1.5 text-xs rounded-ios bg-health-warning/10 text-health-warning hover:bg-health-warning/20 disabled:opacity-50 transition-colors"
+        >
+          Clear Stale
+        </button>
+      </div>
+
+      {/* Clear Stale Confirmation Modal */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <GlassCard className="w-full max-w-sm">
+            <h2 className="text-lg font-semibold text-label-primary mb-2">Clear Stale Appliances?</h2>
+            <p className="text-label-secondary text-sm mb-4">
+              This will remove all appliances that haven't checked in for more than 24 hours.
+              This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="flex-1 px-4 py-2 rounded-ios bg-fill-secondary text-label-primary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onClearStale();
+                  setShowClearConfirm(false);
+                }}
+                className="flex-1 px-4 py-2 rounded-ios bg-health-warning text-white"
+              >
+                Clear Stale
+              </button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+    </>
+  );
+};
+
+/**
  * Site detail page
  */
 export const SiteDetail: React.FC = () => {
   const { siteId } = useParams<{ siteId: string }>();
   const navigate = useNavigate();
   const [showCredModal, setShowCredModal] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const { data: site, isLoading, error } = useSite(siteId || null);
   const addCredential = useAddCredential();
+  const createOrder = useCreateApplianceOrder();
+  const broadcastOrder = useBroadcastOrder();
+  const deleteAppliance = useDeleteAppliance();
+  const clearStale = useClearStaleAppliances();
+
+  const isOrderLoading = createOrder.isPending || broadcastOrder.isPending || deleteAppliance.isPending || clearStale.isPending;
+
+  // Show toast notification
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  // Handle creating an order for a specific appliance
+  const handleCreateOrder = async (applianceId: string, orderType: OrderType, parameters?: Record<string, unknown>) => {
+    if (!siteId) return;
+    try {
+      await createOrder.mutateAsync({ siteId, applianceId, orderType, parameters });
+      showToast(`Order "${orderType}" sent to appliance`, 'success');
+    } catch (error) {
+      showToast(`Failed to create order: ${error}`, 'error');
+    }
+  };
+
+  // Handle broadcasting an order to all appliances
+  const handleBroadcast = async (orderType: OrderType) => {
+    if (!siteId) return;
+    try {
+      const result = await broadcastOrder.mutateAsync({ siteId, orderType });
+      showToast(`Order "${orderType}" broadcast to ${result.length} appliances`, 'success');
+    } catch (error) {
+      showToast(`Failed to broadcast order: ${error}`, 'error');
+    }
+  };
+
+  // Handle deleting an appliance
+  const handleDeleteAppliance = async (applianceId: string) => {
+    if (!siteId) return;
+    try {
+      await deleteAppliance.mutateAsync({ siteId, applianceId });
+      showToast('Appliance deleted', 'success');
+    } catch (error) {
+      showToast(`Failed to delete appliance: ${error}`, 'error');
+    }
+  };
+
+  // Handle clearing stale appliances
+  const handleClearStale = async () => {
+    if (!siteId) return;
+    try {
+      const result = await clearStale.mutateAsync({ siteId, staleHours: 24 });
+      showToast(`Cleared ${result.deleted_count} stale appliances`, 'success');
+    } catch (error) {
+      showToast(`Failed to clear stale appliances: ${error}`, 'error');
+    }
+  };
 
   if (isLoading) {
     return (
@@ -359,6 +650,12 @@ export const SiteDetail: React.FC = () => {
             <h2 className="text-lg font-semibold mb-4">
               Appliances ({site.appliances.length})
             </h2>
+            <SiteActionToolbar
+              applianceCount={site.appliances.length}
+              onBroadcast={handleBroadcast}
+              onClearStale={handleClearStale}
+              isLoading={isOrderLoading}
+            />
             {site.appliances.length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-label-tertiary">No appliances connected yet.</p>
@@ -369,7 +666,13 @@ export const SiteDetail: React.FC = () => {
             ) : (
               <div className="space-y-4">
                 {site.appliances.map((appliance) => (
-                  <ApplianceCard key={appliance.appliance_id} appliance={appliance} />
+                  <ApplianceCard
+                    key={appliance.appliance_id}
+                    appliance={appliance}
+                    onCreateOrder={handleCreateOrder}
+                    onDelete={handleDeleteAppliance}
+                    isLoading={isOrderLoading}
+                  />
                 ))}
               </div>
             )}
@@ -463,6 +766,17 @@ export const SiteDetail: React.FC = () => {
         onSubmit={handleAddCredential}
         isLoading={addCredential.isPending}
       />
+
+      {/* Toast Notification */}
+      {toast && (
+        <div
+          className={`fixed bottom-4 right-4 px-4 py-3 rounded-ios shadow-lg z-50 ${
+            toast.type === 'success' ? 'bg-health-healthy text-white' : 'bg-health-critical text-white'
+          }`}
+        >
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 };

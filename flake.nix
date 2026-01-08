@@ -165,6 +165,15 @@
         default = logWatcherModule;
       };
 
+      # OsirisCare Appliance ISO
+      nixosConfigurations.osiriscare-appliance = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
+          ./iso/appliance-image.nix
+        ];
+      };
+
       # Example NixOS host (VM/container) using the module
       nixosConfigurations.log-watcher-test = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";

@@ -437,6 +437,95 @@ class MCPClient:
             logger.error(f"Failed to upload evidence: {e}")
             return False
 
+    async def poll_commands(self) -> list:
+        """
+        Poll for pending commands from the server.
+
+        Returns:
+            List of command dictionaries, each containing:
+            - id: Command ID
+            - type: Command type (run_check, remediate, phone_home, etc.)
+            - params: Command parameters
+            - created_at: When command was created
+
+        Raises:
+            MCPConnectionError: If connection fails
+        """
+        try:
+            status, response = await self._request_with_retry(
+                'GET',
+                '/api/commands/pending'
+            )
+
+            if status == 200:
+                commands = response.get('commands', [])
+                if commands:
+                    logger.debug(f"Received {len(commands)} pending command(s)")
+                return commands
+
+            elif status == 204:
+                # No pending commands
+                return []
+
+            else:
+                error_msg = response.get('error', 'Unknown error')
+                logger.warning(f"Command poll failed: {status} - {error_msg}")
+                return []
+
+        except (MCPConnectionError, MCPAuthenticationError) as e:
+            logger.error(f"Failed to poll commands: {e}")
+            raise
+
+    async def acknowledge_command(
+        self,
+        command_id: str,
+        status: str,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None
+    ) -> bool:
+        """
+        Acknowledge command execution to server.
+
+        Args:
+            command_id: ID of the command being acknowledged
+            status: Execution status ('completed', 'failed', 'rejected')
+            result: Execution result (if successful)
+            error: Error message (if failed)
+
+        Returns:
+            True if acknowledgment was successful
+        """
+        try:
+            payload = {
+                "command_id": command_id,
+                "status": status,
+                "acknowledged_at": datetime.now(timezone.utc).isoformat()
+            }
+
+            if result is not None:
+                payload["result"] = result
+
+            if error is not None:
+                payload["error"] = error
+
+            resp_status, response = await self._request_with_retry(
+                'POST',
+                f'/api/commands/{command_id}/acknowledge',
+                json=payload
+            )
+
+            if resp_status == 200:
+                logger.debug(f"Command {command_id} acknowledged")
+                return True
+            else:
+                error_msg = response.get('error', 'Unknown error')
+                logger.warning(f"Command ack failed: {resp_status} - {error_msg}")
+                return False
+
+        except (MCPConnectionError, MCPAuthenticationError) as e:
+            logger.error(f"Failed to acknowledge command {command_id}: {e}")
+            return False
+
     async def __aenter__(self):
         """Async context manager entry."""
         await self._get_session()

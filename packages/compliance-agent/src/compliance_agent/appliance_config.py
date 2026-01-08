@@ -57,6 +57,17 @@ class ApplianceConfig(BaseModel):
         description="Sync L1 rules from Central Command"
     )
 
+    # Auto-Healing (Three-Tier System)
+    healing_enabled: bool = Field(
+        default=True,
+        description="Enable three-tier auto-healing system"
+    )
+
+    healing_dry_run: bool = Field(
+        default=True,
+        description="Dry-run mode: log healing actions without executing"
+    )
+
     # Paths
     state_dir: Path = Field(
         default=Path("/var/lib/msp"),

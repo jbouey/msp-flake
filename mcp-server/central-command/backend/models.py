@@ -44,6 +44,14 @@ class CheckType(str, Enum):
     LOGGING = "logging"
     FIREWALL = "firewall"
     ENCRYPTION = "encryption"
+    # Extended check types for chaos probes and advanced monitoring
+    NTP_SYNC = "ntp_sync"
+    CERTIFICATE_EXPIRY = "certificate_expiry"
+    DATABASE_CORRUPTION = "database_corruption"
+    MEMORY_PRESSURE = "memory_pressure"
+    WINDOWS_DEFENDER = "windows_defender"
+    DISK_SPACE = "disk_space"
+    SERVICE_HEALTH = "service_health"
 
 
 class OnboardingStage(str, Enum):

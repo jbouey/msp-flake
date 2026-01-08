@@ -13,6 +13,12 @@ interface Control {
   fix_duration_sec?: number;
   exception_applied: boolean;
   exception_reason?: string;
+  // Customer-friendly HIPAA explanations
+  plain_english?: string;
+  why_it_matters?: string;
+  consequence?: string;
+  what_we_check?: string;
+  hipaa_section?: string;
 }
 
 interface ControlGridProps {

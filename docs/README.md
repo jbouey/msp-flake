@@ -1,7 +1,7 @@
 # MSP HIPAA Compliance Platform - Documentation Index
 
-**Last Updated:** 2026-01-04 (Session 8)
-**Platform Version:** Phase 11 (Partner/Reseller Infrastructure Complete)
+**Last Updated:** 2026-01-05 (Session 12)
+**Platform Version:** Phase 12 (Both Appliances on v1.0.18)
 
 ---
 
@@ -34,7 +34,21 @@
 
 ## Implementation Progress
 
-### Phase 11: Partner/Reseller Infrastructure (Current - Complete)
+### Phase 12: Launch Readiness (Current - In Progress)
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Credential-Pull Architecture | ✅ Complete | RMM-style credential fetch (Session 9) |
+| Healing System Integration | ✅ Complete | L1 runbooks verified working (Session 10) |
+| Agent v1.0.18 | ✅ Complete | All healing integration fixes |
+| Windows Firewall Healing | ✅ Tested | Chaos test → auto-healed |
+| ISO v18 | ✅ Deployed | Physical + VM appliances (Session 12) |
+| Email Alerts | ✅ Complete | SMTP via privateemail.com (Session 12) |
+| Push Agent Update UI | ✅ Complete | Button + modal in site detail (Session 12) |
+| Delete Appliance Button | ✅ Complete | In dropdown menu (Session 12) |
+| Test VM Rebuild | ✅ Complete | Now on v1.0.18 (Session 12) |
+
+### Phase 11: Partner/Reseller Infrastructure (Complete)
 
 | Component | Status | Documentation |
 |-----------|--------|---------------|

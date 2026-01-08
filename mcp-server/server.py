@@ -113,13 +113,22 @@ if _backend_path not in sys.path:
 try:
     from routes import router as dashboard_router
     from portal import router as portal_router
-    from sites import router as sites_router
+    from sites import router as sites_router, orders_router, appliances_router, alerts_router
     from partners import router as partners_router
+    from discovery import router as discovery_router
+    from provisioning import router as provisioning_router
+    from runbook_config import router as runbook_config_router
     app.include_router(dashboard_router)
     app.include_router(portal_router)
     app.include_router(sites_router)
+    app.include_router(orders_router)  # Order lifecycle (acknowledge/complete)
+    app.include_router(appliances_router)  # Smart appliance checkin with deduplication
+    app.include_router(alerts_router)  # Email alerts for L3 escalations
     app.include_router(partners_router)
-    print("✓ Included central-command routers")
+    app.include_router(discovery_router)
+    app.include_router(provisioning_router)
+    app.include_router(runbook_config_router)  # Runbook enable/disable config
+    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config)")
 except ImportError as e:
     print(f"⚠ Could not import central-command routers: {e}")
 
@@ -748,10 +757,83 @@ async def agent_checkin(checkin: AgentCheckin):
         # Log but don't fail the checkin if orders query fails
         print(f"⚠ Failed to query orders for {checkin.appliance_id}: {e}")
 
+    # Fetch Windows targets with credentials for this site
+    windows_targets = []
+    try:
+        import json as json_module
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            # Get WinRM credentials for this site (stored as JSON in encrypted_data)
+            creds = await conn.fetch("""
+                SELECT credential_type, credential_name, encrypted_data
+                FROM site_credentials
+                WHERE site_id = $1
+                AND credential_type IN ('winrm', 'domain_admin', 'service_account', 'local_admin')
+                ORDER BY created_at DESC
+            """, checkin.site_id)
+
+            # Get site internal ID for discovered assets query
+            site = await conn.fetchrow("""
+                SELECT id FROM sites WHERE site_id = $1
+            """, checkin.site_id)
+
+            assets = []
+            if site:
+                # Get discovered assets with WinRM ports
+                assets = await conn.fetch("""
+                    SELECT ip_address, hostname, open_ports
+                    FROM discovered_assets
+                    WHERE site_id = $1
+                    AND (
+                        5985 = ANY(open_ports) OR
+                        5986 = ANY(open_ports) OR
+                        asset_type IN ('domain_controller', 'windows_server', 'windows_workstation')
+                    )
+                    AND monitoring_status = 'monitored'
+                """, site['id'])
+
+            # Build windows_targets list
+            for cred in creds:
+                try:
+                    # Decrypt credential data (stored as JSON in encrypted_data)
+                    cred_data = json_module.loads(bytes(cred['encrypted_data']).decode())
+                    hostname = cred_data.get('host') or cred_data.get('target_host')
+                    username = cred_data.get('username', '')
+                    password = cred_data.get('password', '')
+                    domain = cred_data.get('domain', '')
+                    use_ssl = cred_data.get('use_ssl', False)
+
+                    full_username = f"{domain}\\{username}" if domain else username
+
+                    if hostname:
+                        # Credential specifies target host
+                        windows_targets.append({
+                            "hostname": hostname,
+                            "username": full_username,
+                            "password": password,
+                            "use_ssl": use_ssl,
+                        })
+                    elif assets:
+                        # Use discovered assets with this credential
+                        for asset in assets:
+                            asset_ssl = 5986 in (asset['open_ports'] or [])
+                            windows_targets.append({
+                                "hostname": str(asset['ip_address']),
+                                "username": full_username,
+                                "password": password,
+                                "use_ssl": asset_ssl,
+                            })
+                except Exception as e:
+                    print(f"⚠ Failed to parse credential: {e}")
+                    continue
+    except Exception as e:
+        print(f"⚠ Failed to fetch Windows targets for {checkin.site_id}: {e}")
+
     return {
         "status": "ok",
         "server_time": datetime.now(timezone.utc).isoformat(),
         "orders": pending_orders,
+        "windows_targets": windows_targets,
     }
 
 

@@ -2,9 +2,14 @@
 
 **Pull-Only Autonomous Compliance Agent for Healthcare SMBs**
 
-[![Tests](https://img.shields.io/badge/tests-161%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-453%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.13-blue)]()
 [![HIPAA](https://img.shields.io/badge/HIPAA-compliant-green)]()
+[![ISO](https://img.shields.io/badge/ISO-v18-blue)]()
+
+**Last Updated:** 2026-01-05 (Session 11)
+**Agent Version:** 1.0.9
+**Production Status:** HP T640 appliance deployed, 17,000+ evidence bundles
 
 ## Overview
 
@@ -246,12 +251,36 @@ Proprietary - MSP Compliance Platform
 
 ## Status
 
-**Phase 2 Active** - Three-Tier Auto-Healing Implemented, 161 tests passing
+**Phase 12 - Launch Readiness** - Production pilot deployed, 453 tests passing
 
-### Recent Updates (2025-11-23)
-- Implemented three-tier auto-healing architecture (L1/L2/L3)
-- Added incident database with pattern tracking
-- Created self-learning loop for L2→L1 rule promotion
-- Added 24 new auto-healer tests
-- Added 12 VM integration tests for 3-VM scenarios (2 NixOS + 1 Windows)
-- Data flywheel tests for pattern tracking and promotion eligibility
+### Current (2026-01-05)
+- **ISO v18** deployed to HP T640 physical appliance
+- **Agent v1.0.9** with all healing fixes integrated
+- **17,000+ evidence bundles** collected with Ed25519 signatures
+- **Credential-pull architecture** - no credentials stored on appliance
+- **Three-tier healing verified** - Windows firewall chaos test passed
+- **North Valley Lab** - Windows DC + Workstation for compliance testing
+
+### Session 11 (2026-01-05)
+- Built ISO v18 with healing integration fixes
+- VPS garbage collection freed 109GB
+- Transferred ISO to iMac for deployment
+- Physical appliance checking in every 60s
+
+### Session 10 (2026-01-05)
+- Fixed L1 `execute()` to properly check action success
+- Fixed `_handle_drift_healing()` to use `auto_healer.heal()` correctly
+- Fixed `_heal_run_windows_runbook()` to use `WindowsExecutor.run_runbook()`
+- Verified Windows firewall auto-healing on physical appliance
+
+### Session 9 (2026-01-04)
+- Implemented credential-pull architecture (RMM pattern)
+- Credentials fetched from Central Command each check-in cycle
+- No credentials stored on disk - stolen device safety
+
+### Earlier Milestones
+- Partner/reseller infrastructure (Phase 11)
+- QR code provisioning for appliances
+- Ed25519 evidence signing (agent + server)
+- MinIO WORM storage with 7-year retention
+- Client portal with magic-link auth

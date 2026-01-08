@@ -83,26 +83,26 @@ async def list_all_runbooks(
     """List all available runbooks from the catalog."""
     if category:
         query = text("""
-            SELECT id, name, description, category, check_type, severity,
+            SELECT runbook_id, name, description, category, check_type, severity,
                    is_disruptive, requires_maintenance_window, hipaa_controls, version
             FROM runbooks
             WHERE category = :category
-            ORDER BY id
+            ORDER BY runbook_id
         """)
         result = await db.execute(query, {"category": category})
     else:
         query = text("""
-            SELECT id, name, description, category, check_type, severity,
+            SELECT runbook_id, name, description, category, check_type, severity,
                    is_disruptive, requires_maintenance_window, hipaa_controls, version
             FROM runbooks
-            ORDER BY category, id
+            ORDER BY category, runbook_id
         """)
         result = await db.execute(query)
 
     rows = result.fetchall()
     return [
         RunbookInfo(
-            id=row.id,
+            id=row.runbook_id,
             name=row.name,
             description=row.description,
             category=row.category,
@@ -136,10 +136,10 @@ async def list_runbook_categories(db: AsyncSession = Depends(get_db)):
 async def get_runbook_detail(runbook_id: str, db: AsyncSession = Depends(get_db)):
     """Get details for a specific runbook."""
     query = text("""
-        SELECT id, name, description, category, check_type, severity,
+        SELECT runbook_id, name, description, category, check_type, severity,
                is_disruptive, requires_maintenance_window, hipaa_controls, version
         FROM runbooks
-        WHERE id = :runbook_id
+        WHERE runbook_id = :runbook_id
     """)
     result = await db.execute(query, {"runbook_id": runbook_id})
     row = result.fetchone()
@@ -148,7 +148,7 @@ async def get_runbook_detail(runbook_id: str, db: AsyncSession = Depends(get_db)
         raise HTTPException(status_code=404, detail=f"Runbook {runbook_id} not found")
 
     return RunbookInfo(
-        id=row.id,
+        id=row.runbook_id,
         name=row.name,
         description=row.description,
         category=row.category,
@@ -211,7 +211,7 @@ async def update_site_runbook_config(
 ):
     """Enable or disable a runbook for a site."""
     # Verify runbook exists
-    check_query = text("SELECT id FROM runbooks WHERE id = :runbook_id")
+    check_query = text("SELECT runbook_id FROM runbooks WHERE runbook_id = :runbook_id")
     result = await db.execute(check_query, {"runbook_id": runbook_id})
     if not result.fetchone():
         raise HTTPException(status_code=404, detail=f"Runbook {runbook_id} not found")
@@ -287,9 +287,9 @@ async def toggle_category_for_site(
 ):
     """Enable or disable all runbooks in a category for a site."""
     # Get runbooks in category
-    query = text("SELECT id FROM runbooks WHERE category = :category")
+    query = text("SELECT runbook_id FROM runbooks WHERE category = :category")
     result = await db.execute(query, {"category": category})
-    runbook_ids = [row.id for row in result.fetchall()]
+    runbook_ids = [row.runbook_id for row in result.fetchall()]
 
     if not runbook_ids:
         raise HTTPException(status_code=404, detail=f"No runbooks in category '{category}'")
@@ -362,7 +362,7 @@ async def update_appliance_runbook_config(
 ):
     """Set appliance-level override for a runbook."""
     # Verify runbook exists
-    check_query = text("SELECT id FROM runbooks WHERE id = :runbook_id")
+    check_query = text("SELECT runbook_id FROM runbooks WHERE runbook_id = :runbook_id")
     result = await db.execute(check_query, {"runbook_id": runbook_id})
     if not result.fetchone():
         raise HTTPException(status_code=404, detail=f"Runbook {runbook_id} not found")

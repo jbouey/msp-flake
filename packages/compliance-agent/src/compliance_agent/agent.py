@@ -26,6 +26,7 @@ from .healing import HealingEngine
 from .evidence import EvidenceGenerator
 from .offline_queue import OfflineQueue
 from .mcp_client import MCPClient
+from .phone_home import PhoneHome
 from .models import DriftResult, RemediationResult, EvidenceBundle
 from .utils import apply_jitter
 
@@ -80,7 +81,20 @@ class ComplianceAgent:
                 client_cert_file=config.client_cert_file,
                 client_key_file=config.client_key_file
             )
-        
+
+        # Phone home client for check-ins with central server
+        self.phone_home: Optional[PhoneHome] = None
+        if config.mcp_url:
+            self.phone_home = PhoneHome(
+                config=config,
+                drift_detector=self.drift_detector,
+                portal_url=None  # Will derive from mcp_url
+            )
+
+        # Background tasks
+        self._phone_home_task: Optional[asyncio.Task] = None
+        self._command_poll_task: Optional[asyncio.Task] = None
+
         # Statistics
         self.stats = {
             "loops_completed": 0,
@@ -89,7 +103,10 @@ class ComplianceAgent:
             "remediations_successful": 0,
             "evidence_generated": 0,
             "evidence_uploaded": 0,
-            "evidence_queued": 0
+            "evidence_queued": 0,
+            "phone_home_sent": 0,
+            "commands_received": 0,
+            "commands_executed": 0
         }
         
         logger.info(f"ComplianceAgent initialized for site_id={config.site_id}, host_id={config.host_id}")
@@ -137,38 +154,45 @@ class ComplianceAgent:
     async def _run_loop(self):
         """Main event loop."""
         logger.info(f"Starting main loop (poll interval: {self.config.mcp_poll_interval_sec}s)")
-        
-        while self.running and not self.shutdown_event.is_set():
-            try:
-                # Run one iteration
-                await self._run_iteration()
-                
-                self.stats["loops_completed"] += 1
-                
-                # Wait for next iteration (with jitter to prevent thundering herd)
-                wait_time = apply_jitter(
-                    float(self.config.mcp_poll_interval_sec),
-                    jitter_pct=10.0
-                )
-                
-                logger.debug(f"Waiting {wait_time:.1f}s until next iteration")
-                
-                # Wait with shutdown event check
+
+        # Start background tasks
+        await self._start_background_tasks()
+
+        try:
+            while self.running and not self.shutdown_event.is_set():
                 try:
-                    await asyncio.wait_for(
-                        self.shutdown_event.wait(),
-                        timeout=wait_time
+                    # Run one iteration
+                    await self._run_iteration()
+
+                    self.stats["loops_completed"] += 1
+
+                    # Wait for next iteration (with jitter to prevent thundering herd)
+                    wait_time = apply_jitter(
+                        float(self.config.mcp_poll_interval_sec),
+                        jitter_pct=10.0
                     )
-                    # If we get here, shutdown was signaled
-                    break
-                except asyncio.TimeoutError:
-                    # Normal - timeout means continue to next iteration
-                    continue
-            
-            except Exception as e:
-                logger.error(f"Error in main loop iteration: {e}", exc_info=True)
-                # Continue running despite errors
-                await asyncio.sleep(60)  # Back off for 1 minute on error
+
+                    logger.debug(f"Waiting {wait_time:.1f}s until next iteration")
+
+                    # Wait with shutdown event check
+                    try:
+                        await asyncio.wait_for(
+                            self.shutdown_event.wait(),
+                            timeout=wait_time
+                        )
+                        # If we get here, shutdown was signaled
+                        break
+                    except asyncio.TimeoutError:
+                        # Normal - timeout means continue to next iteration
+                        continue
+
+                except Exception as e:
+                    logger.error(f"Error in main loop iteration: {e}", exc_info=True)
+                    # Continue running despite errors
+                    await asyncio.sleep(60)  # Back off for 1 minute on error
+        finally:
+            # Stop background tasks on exit
+            await self._stop_background_tasks()
     
     async def _run_iteration(self):
         """
@@ -390,17 +414,196 @@ class ComplianceAgent:
                     error=str(e)
                 )
     
+    async def _start_background_tasks(self):
+        """Start background tasks for phone-home and command polling."""
+        # Start phone-home task (check-in with central server)
+        if self.phone_home:
+            phone_home_interval = getattr(self.config, 'phone_home_interval_sec', 300)
+            logger.info(f"Starting phone-home task (interval: {phone_home_interval}s)")
+            self._phone_home_task = asyncio.create_task(
+                self._phone_home_loop(phone_home_interval)
+            )
+
+        # Start command polling task
+        if self.mcp_client:
+            command_poll_interval = getattr(self.config, 'command_poll_interval_sec', 60)
+            logger.info(f"Starting command poll task (interval: {command_poll_interval}s)")
+            self._command_poll_task = asyncio.create_task(
+                self._command_poll_loop(command_poll_interval)
+            )
+
+    async def _stop_background_tasks(self):
+        """Stop background tasks gracefully."""
+        tasks = []
+
+        if self._phone_home_task and not self._phone_home_task.done():
+            self._phone_home_task.cancel()
+            tasks.append(self._phone_home_task)
+
+        if self._command_poll_task and not self._command_poll_task.done():
+            self._command_poll_task.cancel()
+            tasks.append(self._command_poll_task)
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            logger.info("Background tasks stopped")
+
+    async def _phone_home_loop(self, interval_sec: int):
+        """Background task for phone-home check-ins."""
+        logger.info("Phone-home loop started")
+
+        while self.running and not self.shutdown_event.is_set():
+            try:
+                if self.phone_home:
+                    success = await self.phone_home.send_snapshot()
+                    if success:
+                        self.stats["phone_home_sent"] += 1
+                        logger.debug("Phone-home snapshot sent")
+                    else:
+                        logger.warning("Phone-home snapshot failed")
+            except Exception as e:
+                logger.error(f"Phone-home error: {e}")
+
+            # Wait for next iteration
+            try:
+                await asyncio.wait_for(
+                    self.shutdown_event.wait(),
+                    timeout=interval_sec
+                )
+                break  # Shutdown signaled
+            except asyncio.TimeoutError:
+                continue
+
+        logger.info("Phone-home loop stopped")
+
+    async def _command_poll_loop(self, interval_sec: int):
+        """Background task for polling and executing commands from server."""
+        logger.info("Command poll loop started")
+
+        while self.running and not self.shutdown_event.is_set():
+            try:
+                await self._poll_and_execute_commands()
+            except Exception as e:
+                logger.error(f"Command poll error: {e}")
+
+            # Wait for next iteration
+            try:
+                await asyncio.wait_for(
+                    self.shutdown_event.wait(),
+                    timeout=interval_sec
+                )
+                break  # Shutdown signaled
+            except asyncio.TimeoutError:
+                continue
+
+        logger.info("Command poll loop stopped")
+
+    async def _poll_and_execute_commands(self):
+        """Poll for pending commands and execute them."""
+        if not self.mcp_client:
+            return
+
+        try:
+            # Poll for pending commands
+            commands = await self.mcp_client.poll_commands()
+
+            if not commands:
+                return
+
+            logger.info(f"Received {len(commands)} command(s) from server")
+            self.stats["commands_received"] += len(commands)
+
+            for cmd in commands:
+                await self._execute_command(cmd)
+
+        except Exception as e:
+            logger.error(f"Failed to poll commands: {e}")
+
+    async def _execute_command(self, command: dict):
+        """
+        Execute a command received from the server.
+
+        Supported command types:
+        - run_check: Run a specific compliance check
+        - remediate: Force remediation of a check
+        - update_config: Update agent configuration
+        - restart_agent: Restart the agent
+        - phone_home: Force immediate phone-home
+        """
+        cmd_id = command.get("id", "unknown")
+        cmd_type = command.get("type")
+        cmd_params = command.get("params", {})
+
+        logger.info(f"Executing command {cmd_id}: {cmd_type}")
+
+        try:
+            result = None
+
+            if cmd_type == "run_check":
+                # Run a specific check
+                check_name = cmd_params.get("check")
+                if check_name:
+                    results = await self.drift_detector.check_specific(check_name)
+                    result = {"check": check_name, "results": [r.model_dump() for r in results]}
+
+            elif cmd_type == "remediate":
+                # Force remediation
+                check_name = cmd_params.get("check")
+                if check_name:
+                    drift = await self.drift_detector.check_specific(check_name)
+                    if drift and drift[0].drifted:
+                        await self._remediate_and_record(drift[0])
+                        result = {"check": check_name, "remediated": True}
+                    else:
+                        result = {"check": check_name, "remediated": False, "reason": "no drift"}
+
+            elif cmd_type == "phone_home":
+                # Force immediate phone-home
+                if self.phone_home:
+                    success = await self.phone_home.send_snapshot()
+                    result = {"success": success}
+
+            elif cmd_type == "health_check":
+                # Return health status
+                result = await self.health_check()
+
+            else:
+                logger.warning(f"Unknown command type: {cmd_type}")
+                result = {"error": f"Unknown command type: {cmd_type}"}
+
+            # Acknowledge command completion
+            if self.mcp_client:
+                await self.mcp_client.acknowledge_command(
+                    cmd_id,
+                    status="completed",
+                    result=result
+                )
+
+            self.stats["commands_executed"] += 1
+            logger.info(f"Command {cmd_id} executed successfully")
+
+        except Exception as e:
+            logger.error(f"Command {cmd_id} failed: {e}")
+
+            # Report failure
+            if self.mcp_client:
+                await self.mcp_client.acknowledge_command(
+                    cmd_id,
+                    status="failed",
+                    error=str(e)
+                )
+
     def _setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown."""
         def signal_handler(signum, frame):
             logger.info(f"Received signal {signum}, initiating shutdown...")
             self.running = False
             self.shutdown_event.set()
-        
+
         # Register handlers for SIGTERM and SIGINT
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
-        
+
         logger.info("Signal handlers registered (SIGTERM, SIGINT)")
     
     async def _shutdown(self):
