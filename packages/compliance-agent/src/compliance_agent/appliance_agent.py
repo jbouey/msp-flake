@@ -29,6 +29,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+from fastapi import FastAPI
+import uvicorn
+
 from .appliance_config import load_appliance_config, ApplianceConfig
 from .appliance_client import (
     CentralCommandClient,
@@ -244,6 +247,8 @@ class ApplianceAgent:
         # Dual-mode sensor support
         self._sensor_enabled = getattr(config, 'sensor_enabled', True)
         self._sensor_port = getattr(config, 'sensor_port', 8080)
+        self._sensor_server: Optional[uvicorn.Server] = None
+        self._sensor_server_task: Optional[asyncio.Task] = None
 
         # Evidence signing
         self.signer: Optional[Ed25519Signer] = None
@@ -327,6 +332,10 @@ class ApplianceAgent:
                 logger.warning(f"Failed to initialize healing system: {e}")
                 self.auto_healer = None
 
+        # Start sensor API web server for dual-mode architecture
+        if self._sensor_enabled:
+            await self._start_sensor_server()
+
         # Initial delay to let network settle
         await asyncio.sleep(5)
 
@@ -348,6 +357,64 @@ class ApplianceAgent:
         """Stop the agent gracefully."""
         logger.info("Stopping agent...")
         self.running = False
+
+        # Stop sensor web server
+        if self._sensor_server:
+            self._sensor_server.should_exit = True
+            if self._sensor_server_task:
+                try:
+                    self._sensor_server_task.cancel()
+                    await asyncio.wait_for(self._sensor_server_task, timeout=5)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+            logger.info("Sensor API server stopped")
+
+    async def _start_sensor_server(self):
+        """
+        Start the sensor API web server for dual-mode architecture.
+
+        Windows sensors push drift events to this endpoint instead of
+        the appliance polling via WinRM.
+        """
+        try:
+            # Create FastAPI app for sensor endpoints
+            sensor_app = FastAPI(
+                title="OsirisCare Sensor API",
+                description="Receives drift events from Windows sensors",
+                version=VERSION
+            )
+
+            # Include sensor router
+            sensor_app.include_router(sensor_router)
+
+            # Health check endpoint
+            @sensor_app.get("/health")
+            async def health():
+                return {"status": "ok", "version": VERSION}
+
+            # Configure uvicorn
+            config = uvicorn.Config(
+                sensor_app,
+                host="0.0.0.0",
+                port=self._sensor_port,
+                log_level="warning",  # Reduce noise
+                access_log=False
+            )
+            self._sensor_server = uvicorn.Server(config)
+
+            # Start server in background task
+            async def serve():
+                try:
+                    await self._sensor_server.serve()
+                except asyncio.CancelledError:
+                    pass
+
+            self._sensor_server_task = asyncio.create_task(serve())
+            logger.info(f"Sensor API server started on port {self._sensor_port}")
+
+        except Exception as e:
+            logger.warning(f"Failed to start sensor API server: {e}")
+            self._sensor_enabled = False
 
     async def _run_cycle(self):
         """Run one cycle of the agent loop."""

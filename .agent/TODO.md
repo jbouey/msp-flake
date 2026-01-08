@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-06 (Session 14 - Credential Management API)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, Credential CRUD API)
+**Last Updated:** 2026-01-08 (Session 15 - Windows Sensor & Dual-Mode Architecture)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.20, 27 Runbooks, Windows Sensors)
 
 ---
 
@@ -439,6 +439,20 @@
   - Added `POST /api/sites/{site_id}/credentials` - Create credential
   - Added `DELETE /api/sites/{site_id}/credentials/{id}` - Delete credential
   - Verified both appliances using credential-pull properly (no hardcoded creds)
+- [x] **Windows Sensor & Dual-Mode Architecture** - 2026-01-08 (Session 15)
+  - Created `OsirisSensor.ps1` - PowerShell sensor with 12 compliance checks
+  - Created `sensor_api.py` - FastAPI router for appliance sensor endpoints
+  - Created `deploy_sensor.py` - CLI tool for sensor deployment/removal via WinRM
+  - Created `sensors.py` - Central Command backend for sensor management
+  - Created `006_sensor_registry.sql` - Database migration for sensor tables
+  - Created `SensorStatus.tsx` - Dashboard component for sensor status
+  - Added 25 integration tests in `test_sensor_integration.py`
+  - Modified `appliance_agent.py`:
+    - Added FastAPI/uvicorn web server for sensor API (port 8080)
+    - Added dual-mode logic (`_get_targets_needing_poll()`)
+    - Added order handlers for deploy_sensor, remove_sensor, sensor_status
+  - Registered `sensors_router` in VPS server.py
+  - All 523 tests passing
 
 ---
 
