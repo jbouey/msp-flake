@@ -158,7 +158,7 @@ export const PortalLogin: React.FC = () => {
         {/* Logo */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900">OsirisCare</h1>
-          <p className="text-gray-600 mt-2">HIPAA Compliance Portal</p>
+          <p className="text-gray-600 mt-2">HIPAA Monitoring Portal</p>
         </div>
 
         {/* Login Card */}
@@ -213,6 +213,9 @@ export const PortalLogin: React.FC = () => {
           <a href="mailto:support@osiriscare.net" className="text-blue-600 hover:underline">
             Contact Support
           </a>
+        </p>
+        <p className="mt-4 text-center text-xs text-gray-300 max-w-sm mx-auto">
+          This portal provides monitoring data only. OsirisCare does not certify compliance.
         </p>
       </div>
     </div>

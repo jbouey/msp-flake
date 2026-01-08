@@ -37,7 +37,7 @@ export const Dashboard: React.FC = () => {
         <GlassCard padding="md">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-label-tertiary text-sm">Avg Compliance</p>
+              <p className="text-label-tertiary text-sm">Control Coverage</p>
               <p className="text-2xl font-semibold text-health-healthy">
                 {statsLoading ? '...' : `${stats?.avg_compliance_score ?? 0}%`}
               </p>
@@ -115,7 +115,7 @@ export const Dashboard: React.FC = () => {
           <h2 className="text-lg font-semibold mb-4">System Health</h2>
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-label-secondary">Avg Compliance</span>
+              <span className="text-label-secondary">Control Coverage</span>
               <span className="font-medium">
                 {statsLoading ? '...' : `${stats?.avg_compliance_score ?? 0}%`}
               </span>

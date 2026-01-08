@@ -35,13 +35,15 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# EMAIL CONFIGURATION (from environment or settings)
+# EMAIL CONFIGURATION (from environment)
 # =============================================================================
 
-SMTP_HOST = "mail.privateemail.com"
-SMTP_PORT = 587
-SMTP_USER = "alerts@osiriscare.net"
-SMTP_PASS = None  # Set from environment
+import os
+
+SMTP_HOST = os.getenv("SMTP_HOST", "mail.privateemail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASS = os.getenv("SMTP_PASSWORD", "")
 
 
 # =============================================================================

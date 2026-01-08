@@ -749,7 +749,7 @@ curl -X POST https://api.osiriscare.net/api/provision \\
   -d '{
     "mac_address": "84:3A:5B:91:B6:61",
     "site_id": "clinic-smith-abc123",
-    "api_key": "q5VihYAYhKMH-vtX-DXuzLrjqbhgM61S5KjgPM4UG4A",
+    "api_key": "YOUR_SITE_API_KEY",
     "notes": "HP T640 for Smith Family Practice"
   }'
 

@@ -1,0 +1,184 @@
+{
+  "audit_id": "LLA-20260108-0001",
+  "audit_type": "linguistic_liability_audit",
+  "target": "OsirisCare Central Command & Portal",
+  "audit_date": "2026-01-08T20:30:00Z",
+  "auditor": "Claude Code Security Agent",
+  "scope": {
+    "frontend_files": [
+      "mcp-server/central-command/frontend/src/portal/PortalDashboard.tsx",
+      "mcp-server/central-command/frontend/src/portal/PortalLogin.tsx",
+      "mcp-server/central-command/frontend/src/portal/components/KPICard.tsx",
+      "mcp-server/central-command/frontend/src/portal/components/ControlTile.tsx",
+      "mcp-server/central-command/frontend/src/pages/Dashboard.tsx",
+      "mcp-server/central-command/frontend/src/pages/AuditLogs.tsx"
+    ],
+    "backend_files": [
+      "mcp-server/central-command/backend/email_alerts.py"
+    ]
+  },
+  "responsibility_layers": {
+    "L1_OBSERVATION": "Safe - Reports sensor readings without interpretation",
+    "L2_ENFORCEMENT": "Caution - States policy being enforced, not outcome",
+    "L3_ESCALATION": "Review - Routing decisions, not compliance judgments",
+    "L4_PROHIBITED": "HIGH RISK - Implies compliance certification or guarantees"
+  },
+  "findings": [
+    {
+      "id": "LLA-001",
+      "file": "PortalDashboard.tsx",
+      "line": 180,
+      "current_text": "HIPAA Compliance Dashboard",
+      "layer": "L4_PROHIBITED",
+      "risk": "HIGH",
+      "issue": "Implies the dashboard certifies HIPAA compliance",
+      "recommended_text": "HIPAA Monitoring Dashboard",
+      "rationale": "Dashboard observes and reports; it does not certify compliance"
+    },
+    {
+      "id": "LLA-002",
+      "file": "PortalDashboard.tsx",
+      "line": 214,
+      "current_text": "How well your systems meet HIPAA requirements",
+      "layer": "L4_PROHIBITED",
+      "risk": "HIGH",
+      "issue": "Implies OsirisCare judges HIPAA compliance status",
+      "recommended_text": "Percentage of monitored controls in expected state",
+      "rationale": "Describes what we measure, not what we certify"
+    },
+    {
+      "id": "LLA-003",
+      "file": "PortalDashboard.tsx",
+      "line": 228,
+      "current_text": "Accounts protected with MFA",
+      "layer": "L2_ENFORCEMENT",
+      "risk": "MEDIUM",
+      "issue": "Implies guaranteed protection",
+      "recommended_text": "Accounts with MFA enabled",
+      "rationale": "States configuration fact, not security guarantee"
+    },
+    {
+      "id": "LLA-004",
+      "file": "PortalDashboard.tsx",
+      "line": 235,
+      "current_text": "Problems automatically resolved in last 24h",
+      "layer": "L4_PROHIBITED",
+      "risk": "HIGH",
+      "issue": "Guarantees automatic resolution",
+      "recommended_text": "Automated remediation actions attempted in last 24h",
+      "rationale": "States what system did, not outcome guarantee"
+    },
+    {
+      "id": "LLA-005",
+      "file": "PortalDashboard.tsx",
+      "line": 210,
+      "current_text": "Overall Compliance",
+      "layer": "L4_PROHIBITED",
+      "risk": "HIGH",
+      "issue": "Implies certified compliance score",
+      "recommended_text": "Control Coverage",
+      "rationale": "Describes measurement scope, not compliance certification"
+    },
+    {
+      "id": "LLA-006",
+      "file": "KPICard.tsx",
+      "line": 27,
+      "current_text": "Action required",
+      "layer": "L3_ESCALATION",
+      "risk": "MEDIUM",
+      "issue": "Prescribes action, shifts responsibility",
+      "recommended_text": "Attention recommended",
+      "rationale": "Suggests review without mandating action"
+    },
+    {
+      "id": "LLA-007",
+      "file": "ControlTile.tsx",
+      "line": 34,
+      "current_text": "PASSING",
+      "layer": "L4_PROHIBITED",
+      "risk": "HIGH",
+      "issue": "Implies compliance certification",
+      "recommended_text": "EXPECTED",
+      "rationale": "States observed state matches expected state"
+    },
+    {
+      "id": "LLA-008",
+      "file": "ControlTile.tsx",
+      "line": 51,
+      "current_text": "FAILING",
+      "layer": "L4_PROHIBITED",
+      "risk": "HIGH",
+      "issue": "Implies compliance failure judgment",
+      "recommended_text": "DRIFT DETECTED",
+      "rationale": "States observation of deviation from baseline"
+    },
+    {
+      "id": "LLA-009",
+      "file": "ControlTile.tsx",
+      "line": 130,
+      "current_text": "Auto-fixed in Xs",
+      "layer": "L4_PROHIBITED",
+      "risk": "HIGH",
+      "issue": "Guarantees fix was successful",
+      "recommended_text": "Remediation attempted (Xs)",
+      "rationale": "States action taken, not guaranteed outcome"
+    },
+    {
+      "id": "LLA-010",
+      "file": "PortalLogin.tsx",
+      "line": 161,
+      "current_text": "HIPAA Compliance Portal",
+      "layer": "L4_PROHIBITED",
+      "risk": "HIGH",
+      "issue": "Implies portal certifies compliance",
+      "recommended_text": "HIPAA Monitoring Portal",
+      "rationale": "Portal monitors; it does not certify"
+    },
+    {
+      "id": "LLA-011",
+      "file": "Dashboard.tsx",
+      "line": 40,
+      "current_text": "Avg Compliance",
+      "layer": "L4_PROHIBITED",
+      "risk": "HIGH",
+      "issue": "Implies certified compliance measurement",
+      "recommended_text": "Avg Control Coverage",
+      "rationale": "Describes what is measured, not certified"
+    },
+    {
+      "id": "LLA-012",
+      "file": "AuditLogs.tsx",
+      "line": 82,
+      "current_text": "Track all user actions and system changes for accountability",
+      "layer": "L1_OBSERVATION",
+      "risk": "LOW",
+      "issue": "None - appropriate observation language",
+      "recommended_text": null,
+      "rationale": "Correctly describes logging function"
+    }
+  ],
+  "summary": {
+    "total_findings": 12,
+    "high_risk": 9,
+    "medium_risk": 2,
+    "low_risk": 1,
+    "layer_distribution": {
+      "L4_PROHIBITED": 9,
+      "L3_ESCALATION": 1,
+      "L2_ENFORCEMENT": 1,
+      "L1_OBSERVATION": 1
+    }
+  },
+  "required_disclaimers": [
+    {
+      "location": "Portal footer",
+      "current": "Questions? support@osiriscare.net",
+      "required": "This system monitors configuration states and reports observations. OsirisCare does not certify HIPAA compliance. Compliance determinations require qualified assessment. Contact your compliance officer for official guidance."
+    },
+    {
+      "location": "Dashboard footer",
+      "current": null,
+      "required": "Monitoring data reflects system observations only. Not a compliance certification."
+    }
+  ]
+}

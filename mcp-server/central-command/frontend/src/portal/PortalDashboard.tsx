@@ -177,7 +177,7 @@ export const PortalDashboard: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{data.site.name}</h1>
             <p className="text-sm text-gray-500">
-              HIPAA Compliance Dashboard • Last updated:{' '}
+              HIPAA Monitoring Dashboard • Last updated:{' '}
               {data.site.last_checkin
                 ? new Date(data.site.last_checkin).toLocaleString()
                 : 'Never'}
@@ -207,11 +207,11 @@ export const PortalDashboard: React.FC = () => {
         {/* KPI Section */}
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <KPICard
-            label="Overall Compliance"
+            label="Control Coverage"
             value={data.kpis.compliance_pct ?? 0}
             unit="%"
             status={getKPIStatus(data.kpis.compliance_pct ?? 0, { pass: 95, warn: 80 })}
-            description="How well your systems meet HIPAA requirements"
+            description="Percentage of monitored controls in expected state"
           />
           <KPICard
             label="Security Update Speed"
@@ -225,14 +225,14 @@ export const PortalDashboard: React.FC = () => {
             value={data.kpis.mfa_coverage_pct ?? 0}
             unit="%"
             status={(data.kpis.mfa_coverage_pct ?? 0) === 100 ? 'pass' : 'warn'}
-            description="Accounts protected with MFA"
+            description="Accounts with MFA enabled"
           />
           <KPICard
-            label="Auto-Fixed Issues"
+            label="Remediation Actions"
             value={data.kpis.auto_fixes_24h ?? 0}
             unit=""
             status="pass"
-            description="Problems automatically resolved in last 24h"
+            description="Automated remediation actions attempted in last 24h"
           />
         </section>
 
@@ -310,8 +310,17 @@ export const PortalDashboard: React.FC = () => {
         <footer className="mt-12 pt-8 border-t border-gray-200 text-center">
           <p className="text-sm text-gray-500 max-w-2xl mx-auto">
             This report contains system metadata only. No Protected Health Information (PHI)
-            is processed, stored, or transmitted by the compliance monitoring system.
+            is processed, stored, or transmitted by the monitoring system.
           </p>
+          {/* Liability Disclaimer */}
+          <div className="mt-4 p-4 bg-gray-100 rounded-lg max-w-2xl mx-auto">
+            <p className="text-xs text-gray-500 leading-relaxed">
+              <strong>Important:</strong> This system monitors configuration states and reports observations.
+              OsirisCare does not certify HIPAA compliance. Compliance determinations require qualified
+              assessment by authorized personnel. Contact your compliance officer for official guidance.
+              All metrics represent point-in-time observations, not guarantees of security or compliance status.
+            </p>
+          </div>
           <p className="mt-4 text-sm text-gray-400">
             Questions?{' '}
             <a

@@ -31,7 +31,7 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
       bg: 'bg-green-50',
       icon: '✓',
       iconColor: 'text-green-600',
-      label: 'PASSING',
+      label: 'EXPECTED',
       labelBg: 'bg-green-100 text-green-800'
     },
     warn: {
@@ -39,7 +39,7 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
       bg: 'bg-orange-50',
       icon: '⚠',
       iconColor: 'text-orange-600',
-      label: 'WARNING',
+      label: 'REVIEW',
       labelBg: 'bg-orange-100 text-orange-800'
     },
     fail: {
@@ -47,7 +47,7 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
       bg: 'bg-red-50',
       icon: '✗',
       iconColor: 'text-red-600',
-      label: 'FAILING',
+      label: 'DRIFT DETECTED',
       labelBg: 'bg-red-100 text-red-800'
     }
   };
@@ -127,7 +127,7 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
       {control.auto_fix_triggered && (
         <div className="mt-3 text-xs text-green-700 bg-green-100 rounded-lg px-2 py-1.5 flex items-center gap-1">
           <span>✓</span>
-          <span>Auto-fixed in {control.fix_duration_sec ?? 0}s</span>
+          <span>Remediation attempted ({control.fix_duration_sec ?? 0}s)</span>
         </div>
       )}
 

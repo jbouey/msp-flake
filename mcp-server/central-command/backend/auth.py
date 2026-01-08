@@ -71,15 +71,25 @@ def hash_token(token: str) -> str:
 async def ensure_default_admin(db: AsyncSession) -> None:
     """Ensure a default admin user exists.
 
-    Creates admin/admin if no admin users exist.
+    Creates admin user on first startup. Password from ADMIN_INITIAL_PASSWORD env var.
     Should be called on startup.
     """
+    import os
+
     result = await db.execute(text("SELECT COUNT(*) FROM admin_users"))
     count = result.scalar()
 
     if count == 0:
-        logger.info("Creating default admin user (username: admin, password: admin)")
-        password_hash = hash_password("admin")
+        # Get initial password from environment, fall back to random if not set
+        initial_password = os.getenv("ADMIN_INITIAL_PASSWORD")
+        if not initial_password:
+            initial_password = secrets.token_urlsafe(16)
+            logger.warning(f"ADMIN_INITIAL_PASSWORD not set. Generated random password: {initial_password}")
+            logger.warning("Set ADMIN_INITIAL_PASSWORD env var to use a known password on first boot")
+        else:
+            logger.info("Creating admin user with password from ADMIN_INITIAL_PASSWORD env var")
+
+        password_hash = hash_password(initial_password)
         await db.execute(
             text("""
                 INSERT INTO admin_users (username, email, password_hash, display_name, role)
@@ -94,7 +104,7 @@ async def ensure_default_admin(db: AsyncSession) -> None:
             }
         )
         await db.commit()
-        logger.warning("Default admin created - CHANGE PASSWORD IMMEDIATELY!")
+        logger.warning("Default admin created - CHANGE PASSWORD AFTER FIRST LOGIN!")
 
 
 async def authenticate_user(
