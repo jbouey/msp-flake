@@ -1,8 +1,8 @@
 # Central Command Dashboard
 
-**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
+**Last Updated:** 2026-01-08 (Session 16 - Partner L3 Escalations)
 
-Web-based dashboard for OsirisCare MSP compliance platform. Provides fleet overview, incident tracking, runbook management, learning loop visibility, partner/reseller infrastructure, and onboarding pipeline.
+Web-based dashboard for OsirisCare MSP compliance platform. Provides fleet overview, incident tracking, runbook management, learning loop visibility, partner/reseller infrastructure, L3 escalation routing, and onboarding pipeline.
 
 ## Design Language
 
@@ -30,6 +30,9 @@ central-command/
 │   ├── provisioning.py           # Appliance provisioning API
 │   ├── portal.py                 # Client portal (magic link auth)
 │   ├── sites.py                  # Site management
+│   ├── notifications.py          # Partner notification settings API
+│   ├── escalation_engine.py      # L3 escalation routing engine
+│   ├── sensors.py                # Windows sensor management
 │   └── db_queries.py             # PostgreSQL queries
 │
 ├── frontend/
@@ -138,6 +141,22 @@ overall = (connectivity.score * 0.4) + (compliance.score * 0.6)
 - `GET /api/portal/auth/validate` - Validate magic link token
 - `GET /api/portal/site/{site_id}` - Get site data for portal
 - `GET /api/portal/site/{site_id}/compliance` - Compliance status
+
+### Partner Notifications
+- `GET /api/partners/me/notifications/settings` - Get notification channel settings
+- `PUT /api/partners/me/notifications/settings` - Update notification settings
+- `POST /api/partners/me/notifications/settings/test` - Test notification channel
+- `GET /api/partners/me/notifications/sites/{site_id}/overrides` - Get site overrides
+- `PUT /api/partners/me/notifications/sites/{site_id}/overrides` - Set site overrides
+- `GET /api/partners/me/escalations` - List escalation tickets
+- `POST /api/partners/me/escalations/{id}/acknowledge` - Acknowledge ticket
+- `POST /api/partners/me/escalations/{id}/resolve` - Resolve ticket
+- `GET /api/partners/me/sla/metrics` - Get SLA metrics
+
+### L3 Escalations (Agent)
+- `POST /api/escalations` - Create L3 escalation from agent
+
+Routes L3 incidents from appliances to partner notification channels with HMAC-signed webhooks, priority-based routing (critical=all, high=PD+Slack, medium=Slack+Email, low=Email), and SLA tracking.
 
 ### Appliance Check-in (Credential-Pull)
 - `POST /api/appliances/checkin` - Phone-home with credential-pull
