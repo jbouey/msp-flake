@@ -1,7 +1,7 @@
 # Partner/Reseller Infrastructure
 
-**Last Updated:** 2026-01-04 (Session 8)
-**Status:** Complete (Phase 11 - Backend Complete)
+**Last Updated:** 2026-01-08 (Session 16)
+**Status:** Complete (Phase 11 Backend + Phase 12 Partner L3 Escalations)
 
 ## Overview
 
@@ -58,6 +58,11 @@ See migrations:
 | `discovered_assets` | Network discovery results |
 | `discovery_scans` | Scan history and status |
 | `site_credentials` | Encrypted credential storage |
+| `partner_notification_settings` | Partner notification channels (Slack, PagerDuty, Email, Teams, Webhook) |
+| `site_notification_overrides` | Site-level notification routing overrides |
+| `escalation_tickets` | L3 escalation tickets from appliances |
+| `notification_deliveries` | Delivery logs for notifications |
+| `sla_definitions` | SLA response/resolution times by priority |
 
 ### Key Relationships
 
@@ -100,6 +105,28 @@ See migrations:
 | GET | `/api/partners/me/sites/{site_id}/assets` | List discovered assets |
 | PATCH | `/api/partners/me/sites/{site_id}/assets/{id}` | Update asset status |
 | POST | `/api/partners/me/sites/{site_id}/discovery/trigger` | Trigger network scan |
+
+### Partner Notification Endpoints (API Key auth)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/partners/me/notifications/settings` | Get notification channel settings |
+| PUT | `/api/partners/me/notifications/settings` | Update notification settings |
+| POST | `/api/partners/me/notifications/settings/test` | Test notification channel |
+| GET | `/api/partners/me/notifications/sites/{site_id}/overrides` | Get site overrides |
+| PUT | `/api/partners/me/notifications/sites/{site_id}/overrides` | Set site overrides |
+| GET | `/api/partners/me/escalations` | List escalation tickets |
+| POST | `/api/partners/me/escalations/{id}/acknowledge` | Acknowledge ticket |
+| POST | `/api/partners/me/escalations/{id}/resolve` | Resolve ticket |
+| GET | `/api/partners/me/sla/metrics` | Get SLA metrics |
+| GET | `/api/partners/me/sla/definitions` | Get SLA definitions |
+| PUT | `/api/partners/me/sla/definitions` | Update SLA definitions |
+
+### Escalation Endpoints (Agent L3)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/escalations` | Create L3 escalation from agent |
 
 ### Public Endpoints
 
@@ -163,7 +190,12 @@ Configurable per partner in the `revenue_share_percent` field.
 | Agent Provisioning | `packages/compliance-agent/src/compliance_agent/provisioning.py` |
 | Migration 003 | `mcp-server/central-command/backend/migrations/003_partner_infrastructure.sql` |
 | Migration 004 | `mcp-server/central-command/backend/migrations/004_discovery_and_credentials.sql` |
+| Migration 007 | `mcp-server/central-command/backend/migrations/007_partner_escalation.sql` |
+| Notifications API | `mcp-server/central-command/backend/notifications.py` |
+| Escalation Engine | `mcp-server/central-command/backend/escalation_engine.py` |
+| Notification Settings UI | `mcp-server/central-command/frontend/src/pages/NotificationSettings.tsx` |
 | Provisioning Tests | `packages/compliance-agent/tests/test_provisioning.py` |
+| Partner API Tests | `packages/compliance-agent/tests/test_partner_api.py` |
 
 ## Related Documentation
 
