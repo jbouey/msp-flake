@@ -118,6 +118,7 @@ try:
     from discovery import router as discovery_router
     from provisioning import router as provisioning_router
     from runbook_config import router as runbook_config_router
+    from sensors import router as sensors_router
     app.include_router(dashboard_router)
     app.include_router(portal_router)
     app.include_router(sites_router)
@@ -128,7 +129,8 @@ try:
     app.include_router(discovery_router)
     app.include_router(provisioning_router)
     app.include_router(runbook_config_router)  # Runbook enable/disable config
-    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config)")
+    app.include_router(sensors_router)  # Sensor management for dual-mode architecture
+    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors)")
 except ImportError as e:
     print(f"⚠ Could not import central-command routers: {e}")
 

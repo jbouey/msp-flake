@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-06 (Session 14 - Credential Management API)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, Credential CRUD API)
-**Test Status:** 523 passed (compliance-agent tests), agent v1.0.19, ISO v19 deployed, 27 runbooks
+**Last Updated:** 2026-01-08 (Session 15 - Windows Sensor & Dual-Mode Architecture)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.20, 27 Runbooks, Windows Sensors)
+**Test Status:** 523 passed (compliance-agent tests), agent v1.0.20, ISO v19 deployed, 27 runbooks, dual-mode sensors
 
 ---
 
@@ -142,6 +142,18 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Added `POST /api/sites/{site_id}/credentials` endpoint (create credential)
   - Added `DELETE /api/sites/{site_id}/credentials/{id}` endpoint (delete credential)
   - Verified both appliances using credential-pull properly (no hardcoded creds on disk)
+- ✅ **Windows Sensor & Dual-Mode Architecture** - 2026-01-08 (Session 15)
+  - Created `OsirisSensor.ps1` - PowerShell sensor with 12 compliance checks
+  - Sensor pushes drift events to appliance (port 8080) for instant detection
+  - Dual-mode: Hosts with sensors skip WinRM polling, others still polled
+  - Created `sensor_api.py` - FastAPI router for appliance sensor endpoints
+  - Created `deploy_sensor.py` - CLI for remote sensor deployment via WinRM
+  - Created `sensors.py` - Central Command backend for sensor management
+  - Created `SensorStatus.tsx` - Dashboard UI for sensor status
+  - Created `006_sensor_registry.sql` - Database migration
+  - Added uvicorn web server to `appliance_agent.py` for sensor API
+  - Order handlers: deploy_sensor, remove_sensor, sensor_status
+  - 25 new tests in `test_sensor_integration.py`
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
