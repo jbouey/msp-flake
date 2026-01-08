@@ -9,7 +9,7 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS partner_notification_settings (
     id SERIAL PRIMARY KEY,
-    partner_id TEXT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+    partner_id UUID NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
 
     -- Email
     email_enabled BOOLEAN DEFAULT true,
@@ -52,8 +52,8 @@ CREATE TABLE IF NOT EXISTS partner_notification_settings (
 -- Site-level overrides (optional)
 CREATE TABLE IF NOT EXISTS site_notification_overrides (
     id SERIAL PRIMARY KEY,
-    site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-    partner_id TEXT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+    site_id UUID NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    partner_id UUID NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
 
     -- Override specific channels for this site
     email_recipients TEXT[],
@@ -78,8 +78,8 @@ CREATE TABLE IF NOT EXISTS escalation_tickets (
     id TEXT PRIMARY KEY,
 
     -- Ownership
-    partner_id TEXT NOT NULL REFERENCES partners(id),
-    site_id TEXT NOT NULL REFERENCES sites(id),
+    partner_id UUID NOT NULL REFERENCES partners(id),
+    site_id UUID NOT NULL REFERENCES sites(id),
 
     -- Incident details
     incident_id TEXT NOT NULL,
@@ -162,7 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_notification_deliveries_retry ON notification_del
 
 CREATE TABLE IF NOT EXISTS sla_definitions (
     id SERIAL PRIMARY KEY,
-    partner_id TEXT REFERENCES partners(id) ON DELETE CASCADE,
+    partner_id UUID REFERENCES partners(id) ON DELETE CASCADE,
 
     priority TEXT NOT NULL,
     response_time_minutes INTEGER NOT NULL,
