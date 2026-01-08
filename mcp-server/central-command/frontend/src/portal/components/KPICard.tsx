@@ -22,9 +22,9 @@ export const KPICard: React.FC<KPICardProps> = ({ label, value, unit, status, de
   };
 
   const statusLabels = {
-    pass: 'Good',
-    warn: 'Needs attention',
-    fail: 'Action required'
+    pass: 'On target',
+    warn: 'Review suggested',
+    fail: 'Attention recommended'
   };
 
   return (
