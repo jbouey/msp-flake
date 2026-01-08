@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-08 (Session 15 - Windows Sensor & Dual-Mode Architecture)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.20, 27 Runbooks, Windows Sensors)
+**Last Updated:** 2026-01-08 (Session 16 - Partner Dashboard Testing & L3 Escalation)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.20, 27 Runbooks, Windows Sensors, Partner Escalations)
 
 ---
 
@@ -453,6 +453,36 @@
     - Added order handlers for deploy_sensor, remove_sensor, sensor_status
   - Registered `sensors_router` in VPS server.py
   - All 523 tests passing
+- [x] **Partner Dashboard Testing & L3 Escalation Activation** - 2026-01-08 (Session 16)
+  - Created `007_partner_escalation.sql` - Database migration for partner notifications
+    - Tables: partner_notification_settings, site_notification_overrides, escalation_tickets, notification_deliveries, sla_definitions
+    - Default SLAs: critical (15min), high (1hr), medium (4hr), low (8hr)
+  - Created `notifications.py` - Partner notification settings API
+    - Settings CRUD endpoints for Slack, PagerDuty, Email, Teams, Webhook
+    - Site-level overrides for notification routing
+    - Escalation ticket management (list, acknowledge, resolve)
+    - SLA metrics and definitions endpoints
+    - Test notification endpoint for channel verification
+  - Created `escalation_engine.py` - L3 Escalation Engine
+    - Routes incidents from appliances to partner notification channels
+    - HMAC signing for webhook security
+    - Priority-based channel routing (critical=all, high=PD+Slack, medium=Slack+Email, low=Email)
+    - Delivery tracking and logging
+    - SLA breach detection
+  - Modified `level3_escalation.py` - Central Command integration
+    - Added central_command_enabled, central_command_url, site_id, api_key config
+    - Added _escalate_to_central_command() method
+    - Falls back to local notifications if Central Command fails
+  - Created `NotificationSettings.tsx` - Partner notification settings UI
+    - Channel configuration cards (Email, Slack, PagerDuty, Teams, Webhook)
+    - Test notification buttons for each channel
+    - Escalation behavior settings (timeout, auto-acknowledge, include raw data)
+  - Created `test_partner_api.py` - 27 comprehensive tests
+    - Notification settings, site overrides, escalation tickets
+    - Channel routing, SLA tracking, error handling
+    - All 27 tests passing
+  - Wired routers in server.py (notifications_router, escalations_router)
+  - All 550 tests passing
 
 ---
 

@@ -119,6 +119,7 @@ try:
     from provisioning import router as provisioning_router
     from runbook_config import router as runbook_config_router
     from sensors import router as sensors_router
+    from notifications import router as notifications_router, escalations_router
     app.include_router(dashboard_router)
     app.include_router(portal_router)
     app.include_router(sites_router)
@@ -130,7 +131,9 @@ try:
     app.include_router(provisioning_router)
     app.include_router(runbook_config_router)  # Runbook enable/disable config
     app.include_router(sensors_router)  # Sensor management for dual-mode architecture
-    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors)")
+    app.include_router(notifications_router)  # Partner notification settings
+    app.include_router(escalations_router)  # Agent L3 escalations to partners
+    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations)")
 except ImportError as e:
     print(f"⚠ Could not import central-command routers: {e}")
 

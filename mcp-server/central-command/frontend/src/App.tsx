@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
-import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, Documentation, Partners, Notifications } from './pages';
+import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, Documentation, Partners, Notifications, NotificationSettings } from './pages';
 import { useFleet, useRefreshFleet, useCommandPalette } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PortalDashboard } from './portal/PortalDashboard';
@@ -28,6 +28,7 @@ const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
   '/sites': 'Sites',
   '/notifications': 'Notifications',
+  '/notification-settings': 'Notification Settings',
   '/onboarding': 'Onboarding Pipeline',
   '/partners': 'Partners',
   '/runbooks': 'Runbook Library',
@@ -126,6 +127,7 @@ const AppLayout: React.FC = () => {
             <Route path="/sites" element={<Sites />} />
             <Route path="/sites/:siteId" element={<SiteDetail />} />
             <Route path="/notifications" element={<Notifications />} />
+            <Route path="/notification-settings" element={<NotificationSettings />} />
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/partners" element={<Partners />} />
             <Route path="/runbooks" element={<Runbooks />} />

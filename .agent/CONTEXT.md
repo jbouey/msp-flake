@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-08 (Session 15 - Windows Sensor & Dual-Mode Architecture)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.20, 27 Runbooks, Windows Sensors)
-**Test Status:** 523 passed (compliance-agent tests), agent v1.0.20, ISO v19 deployed, 27 runbooks, dual-mode sensors
+**Last Updated:** 2026-01-08 (Session 16 - Partner Dashboard Testing & L3 Escalation)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.20, 27 Runbooks, Windows Sensors, Partner Escalations)
+**Test Status:** 550 passed (compliance-agent tests), agent v1.0.20, ISO v19 deployed, 27 runbooks, dual-mode sensors, partner L3 escalations
 
 ---
 
@@ -154,6 +154,27 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Added uvicorn web server to `appliance_agent.py` for sensor API
   - Order handlers: deploy_sensor, remove_sensor, sensor_status
   - 25 new tests in `test_sensor_integration.py`
+- ✅ **Partner Dashboard Testing & L3 Escalation Activation** - 2026-01-08 (Session 16)
+  - Created `007_partner_escalation.sql` - Database migration for partner notifications
+    - Tables: partner_notification_settings, site_notification_overrides, escalation_tickets, notification_deliveries, sla_definitions
+    - Default SLAs: critical (15min), high (1hr), medium (4hr), low (8hr)
+  - Created `notifications.py` - Partner notification API
+    - Settings CRUD for Slack, PagerDuty, Email, Teams, Webhook
+    - Site-level overrides for routing
+    - Escalation ticket management (list, acknowledge, resolve)
+    - SLA metrics and test notification endpoints
+  - Created `escalation_engine.py` - L3 Escalation Engine
+    - Routes incidents to partner notification channels
+    - HMAC signing for webhooks
+    - Priority-based routing (critical=all, high=PD+Slack, medium=Slack+Email, low=Email)
+    - Delivery tracking and SLA breach detection
+  - Modified `level3_escalation.py` for Central Command integration
+    - Added central_command_enabled config
+    - Falls back to local notifications if CC fails
+  - Created `NotificationSettings.tsx` - Partner notification settings UI
+  - Created `test_partner_api.py` - 27 comprehensive tests (all passing)
+  - Wired routers in server.py (notifications_router, escalations_router)
+  - 550 total tests passing
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
