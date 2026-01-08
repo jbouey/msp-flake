@@ -11,3 +11,4 @@ export { SiteDetail } from './SiteDetail';
 export { Documentation } from './Documentation';
 export { Partners } from './Partners';
 export { Notifications } from './Notifications';
+export { NotificationSettings } from './NotificationSettings';

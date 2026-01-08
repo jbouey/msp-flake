@@ -4,6 +4,7 @@ Level 3: Human Escalation Handler.
 Handles 5-10% of incidents that require human intervention:
 - Rich ticket generation with full context
 - Multiple notification channels (email, Slack, PagerDuty)
+- Central Command integration for partner routing
 - Feedback collection for learning loop
 - Approval workflow for sensitive actions
 """
@@ -14,6 +15,8 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass, field
 from enum import Enum
+
+import aiohttp
 
 from .incident_db import (
     IncidentDatabase, Incident,
@@ -44,7 +47,13 @@ class EscalationPriority(str, Enum):
 @dataclass
 class EscalationConfig:
     """Configuration for escalation handler."""
-    # Notification settings
+    # Central Command integration (preferred)
+    central_command_enabled: bool = False
+    central_command_url: Optional[str] = None  # e.g. "https://api.osiriscare.net"
+    site_id: Optional[str] = None
+    api_key: Optional[str] = None
+
+    # Local notification settings (fallback if Central Command disabled)
     email_enabled: bool = True
     email_recipients: List[str] = field(default_factory=list)
     email_smtp_server: Optional[str] = None
@@ -150,8 +159,8 @@ class EscalationHandler:
         """
         Create an escalation ticket for human intervention.
 
-        Generates a rich ticket with full context and sends
-        notifications to appropriate channels.
+        If Central Command is enabled, routes to the partner's configured
+        notification channels. Otherwise, uses local notification handlers.
         """
         # Determine priority if not specified
         if priority is None:
@@ -182,11 +191,21 @@ class EscalationHandler:
             assigned_to=self.config.default_assignee if self.config.auto_assign else None
         )
 
-        # Store ticket
+        # Store ticket locally
         self.tickets[ticket_id] = ticket
 
-        # Send notifications
-        await self._send_notifications(ticket)
+        # Try Central Command first if enabled
+        if self.config.central_command_enabled:
+            cc_result = await self._escalate_to_central_command(ticket, attempted_actions)
+            if cc_result.get("success"):
+                ticket.id = cc_result.get("ticket_id", ticket_id)  # Use CC ticket ID
+                logger.info(f"Escalated to Central Command: {ticket.id}")
+            else:
+                logger.warning(f"Central Command escalation failed: {cc_result.get('error')}, using local notifications")
+                await self._send_notifications(ticket)
+        else:
+            # Use local notification handlers
+            await self._send_notifications(ticket)
 
         # Update incident database
         self.incident_db.resolve_incident(
@@ -200,6 +219,73 @@ class EscalationHandler:
         logger.info(f"Created escalation ticket {ticket_id} for incident {incident.id}")
 
         return ticket
+
+    async def _escalate_to_central_command(
+        self,
+        ticket: 'EscalationTicket',
+        attempted_actions: List[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Send escalation to Central Command for partner routing.
+
+        Central Command will:
+        1. Look up the partner for this site
+        2. Get their notification settings
+        3. Send to configured channels (Slack, PagerDuty, etc.)
+        4. Create and track the ticket
+        """
+        if not self.config.central_command_url or not self.config.site_id:
+            return {"success": False, "error": "Central Command not configured"}
+
+        url = f"{self.config.central_command_url.rstrip('/')}/api/escalations"
+
+        # Format attempted actions as strings
+        actions_list = []
+        if attempted_actions:
+            for action in attempted_actions:
+                if isinstance(action, dict):
+                    actions_list.append(action.get('action', str(action)))
+                else:
+                    actions_list.append(str(action))
+
+        payload = {
+            "site_id": self.config.site_id,
+            "incident": {
+                "id": ticket.incident_id,
+                "type": ticket.incident_type,
+                "severity": ticket.severity,
+                "host": ticket.host_id,
+                "description": ticket.escalation_reason,
+                "raw_data": ticket.raw_data
+            },
+            "attempted_actions": actions_list,
+            "recommended_action": ticket.recommended_action,
+            "priority": ticket.priority.value if isinstance(ticket.priority, EscalationPriority) else ticket.priority
+        }
+
+        headers = {
+            "Content-Type": "application/json"
+        }
+        if self.config.api_key:
+            headers["X-API-Key"] = self.config.api_key
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers, timeout=30) as resp:
+                    if resp.status in (200, 201):
+                        result = await resp.json()
+                        return {
+                            "success": True,
+                            "ticket_id": result.get("ticket_id"),
+                            "notifications": result.get("notifications", [])
+                        }
+                    else:
+                        text = await resp.text()
+                        return {"success": False, "error": f"HTTP {resp.status}: {text[:200]}"}
+        except aiohttp.ClientError as e:
+            return {"success": False, "error": f"Connection error: {str(e)}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     def _determine_priority(self, incident: Incident, reason: str) -> EscalationPriority:
         """Determine escalation priority based on incident details."""

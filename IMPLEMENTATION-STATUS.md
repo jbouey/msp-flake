@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-06 (Session 14 - Credential Management API)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.19, 27 Runbooks, Credential CRUD API)
+**Last Updated:** 2026-01-08 (Session 16 - Partner Dashboard Testing & L3 Escalation Activation)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.20, 27 Runbooks, Windows Sensors, Partner L3 Escalations)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -287,6 +287,43 @@ Per Master Alignment Brief:
   - Added `DELETE /api/sites/{site_id}/credentials/{id}` endpoint for deleting credentials
   - Verified both appliances using credential-pull architecture (no hardcoded credentials on disk)
   - Credential changes propagate within 60 seconds (next check-in cycle)
+- ✅ **Windows Sensor & Dual-Mode Architecture** - 2026-01-08 (Session 15)
+  - Created `OsirisSensor.ps1` - PowerShell sensor with 12 compliance checks
+  - Sensor pushes drift events to appliance (port 8080) for instant detection (<30s vs 60s polling)
+  - Dual-mode: Hosts with active sensors skip WinRM polling, others still polled
+  - Created `sensor_api.py` - FastAPI router for appliance sensor endpoints
+  - Created `deploy_sensor.py` - CLI tool for remote sensor deployment via WinRM
+  - Created `sensors.py` - Central Command backend for sensor management
+  - Created `SensorStatus.tsx` - Dashboard UI component for sensor status
+  - Created `006_sensor_registry.sql` - Database migration for sensor tables
+  - Added uvicorn web server to `appliance_agent.py` for sensor API
+  - Order handlers: deploy_sensor, remove_sensor, sensor_status
+  - 25 new tests in `test_sensor_integration.py`
+  - Performance expectations: 100+ servers per appliance (vs ~15 with polling)
+- ✅ **Partner Dashboard Testing & L3 Escalation Activation** - 2026-01-08 (Session 16)
+  - Created `007_partner_escalation.sql` - Database migration for partner notifications
+    - Tables: partner_notification_settings, site_notification_overrides, escalation_tickets, notification_deliveries, sla_definitions
+    - Default SLAs: critical (15min response), high (1hr), medium (4hr), low (8hr)
+  - Created `notifications.py` - Partner notification settings API
+    - Settings CRUD for Slack, PagerDuty, Email, Teams, Webhook
+    - Site-level overrides for notification routing
+    - Escalation ticket management (list, acknowledge, resolve)
+    - SLA metrics and test notification endpoints
+  - Created `escalation_engine.py` - L3 Escalation Engine
+    - Routes incidents from appliances to partner notification channels
+    - HMAC signing for webhook security (X-OsirisCare-Signature header)
+    - Priority-based routing (critical=all, high=PD+Slack, medium=Slack+Email, low=Email)
+    - Delivery tracking and SLA breach detection
+  - Modified `level3_escalation.py` for Central Command integration
+    - Added central_command_enabled, central_command_url, site_id, api_key config
+    - Falls back to local notifications if Central Command fails
+  - Created `NotificationSettings.tsx` - Partner notification settings UI
+    - Channel configuration cards (Email, Slack, PagerDuty, Teams, Webhook)
+    - Test notification buttons per channel
+    - Escalation behavior settings
+  - Created `test_partner_api.py` - 27 comprehensive tests (all passing)
+  - Wired routers in server.py (notifications_router, escalations_router)
+  - 550 total tests passing
 
 ---
 
@@ -496,4 +533,10 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 progressing well. Agent v1.0.19, 27 Windows runbooks (7 core + 20 new). Partner-configurable runbook enable/disable via RunbookConfig.tsx UI. Credential Management API complete with CRUD endpoints for site credentials via Central Command. Both appliances verified using credential-pull architecture (no hardcoded credentials). Next: OpenTimestamps blockchain anchoring (Task 25), or complete data flywheel integration (resolution tracking).
+**Status:** Phase 12 nearing completion. Agent v1.0.20, 27 Windows runbooks, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete.
+
+**Session 15 (Windows Sensors):** Lightweight PowerShell sensor pushes drift events to appliance for instant detection (<30s vs 60s polling). Dual-mode routes sensor-enabled hosts to push model, others to WinRM polling. Scales to 100+ servers per appliance.
+
+**Session 16 (Partner L3 Escalation):** Complete partner notification infrastructure with Slack, PagerDuty, Email, Teams, and Webhook channels. HMAC-signed webhooks, priority-based routing, SLA tracking with breach detection. 27 new tests, 550 total tests passing.
+
+**Next:** OpenTimestamps blockchain anchoring (Task 25), or first pilot client 30-day monitoring completion.
