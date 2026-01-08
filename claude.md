@@ -79,7 +79,8 @@ from compliance_agent._types import (
 
 - Run tests before AND after changes
 - Update `.agent/CONTEXT.md` with session changes
-- Mac host for VMs: `174.178.63.139`
+- iMac gateway (NEPA clinic): `192.168.88.50` (jrelly@)
+- Physical appliance: `192.168.88.246` (root@)
 - Use `now_utc()` not `datetime.utcnow()` (deprecated)
 
 ## Session Handoff

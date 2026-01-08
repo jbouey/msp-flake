@@ -32,6 +32,12 @@ interface PortalControl {
   fix_duration_sec?: number;
   exception_applied: boolean;
   exception_reason?: string;
+  // Customer-friendly HIPAA explanations
+  plain_english?: string;
+  why_it_matters?: string;
+  consequence?: string;
+  what_we_check?: string;
+  hipaa_section?: string;
 }
 
 interface PortalIncident {
@@ -201,28 +207,32 @@ export const PortalDashboard: React.FC = () => {
         {/* KPI Section */}
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <KPICard
-            label="Compliance Score"
+            label="Overall Compliance"
             value={data.kpis.compliance_pct ?? 0}
             unit="%"
             status={getKPIStatus(data.kpis.compliance_pct ?? 0, { pass: 95, warn: 80 })}
+            description="How well your systems meet HIPAA requirements"
           />
           <KPICard
-            label="Patch MTTR"
+            label="Security Update Speed"
             value={data.kpis.patch_mttr_hours ?? 0}
             unit=" hrs"
             status={(data.kpis.patch_mttr_hours ?? 0) < 24 ? 'pass' : (data.kpis.patch_mttr_hours ?? 0) < 72 ? 'warn' : 'fail'}
+            description="Average time to apply critical security patches"
           />
           <KPICard
-            label="MFA Coverage"
+            label="Two-Factor Auth"
             value={data.kpis.mfa_coverage_pct ?? 0}
             unit="%"
             status={(data.kpis.mfa_coverage_pct ?? 0) === 100 ? 'pass' : 'warn'}
+            description="Accounts protected with MFA"
           />
           <KPICard
-            label="Auto-Fixes (24h)"
+            label="Auto-Fixed Issues"
             value={data.kpis.auto_fixes_24h ?? 0}
             unit=""
             status="pass"
+            description="Problems automatically resolved in last 24h"
           />
         </section>
 

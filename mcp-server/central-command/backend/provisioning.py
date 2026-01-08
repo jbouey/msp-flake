@@ -353,6 +353,50 @@ async def provisioning_heartbeat(heartbeat: HeartbeatRequest, request: Request):
             }
 
 
+@router.get("/{mac_address}")
+async def get_provision_by_mac(mac_address: str):
+    """Get provisioning config by MAC address.
+
+    Called by appliance on boot to auto-provision without a code.
+    Returns config.yaml contents if MAC is registered in appliance_provisioning table.
+
+    The MAC can be URL-encoded (84%3A3A%3A5B) or plain (84:3A:5B).
+    """
+    from urllib.parse import unquote
+
+    pool = await get_pool()
+    # Decode URL-encoded MAC and normalize
+    mac = unquote(mac_address).upper().replace('-', ':')
+
+    async with pool.acquire() as conn:
+        # Check the appliance_provisioning table for MAC-based auto-provision
+        provision = await conn.fetchrow("""
+            SELECT site_id, api_key
+            FROM appliance_provisioning
+            WHERE UPPER(mac_address) = $1
+        """, mac)
+
+        if provision:
+            # Mark as provisioned if not already
+            await conn.execute("""
+                UPDATE appliance_provisioning
+                SET provisioned_at = COALESCE(provisioned_at, NOW())
+                WHERE UPPER(mac_address) = $1
+            """, mac)
+
+            return {
+                "site_id": provision['site_id'],
+                "api_key": provision['api_key'],
+                "api_endpoint": "https://api.osiriscare.net"
+            }
+
+        # MAC not found
+        raise HTTPException(
+            status_code=404,
+            detail=f"MAC address {mac} not registered. Use provision code or register in dashboard."
+        )
+
+
 @router.get("/config/{appliance_id}")
 async def get_appliance_config(appliance_id: str):
     """Get current configuration for an appliance.

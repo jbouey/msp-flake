@@ -228,6 +228,55 @@ class AgentConfig(BaseModel):
     )
 
     # ========================================================================
+    # Auto-Healing (Three-Tier System)
+    # ========================================================================
+
+    healing_enabled: bool = Field(
+        default=True,
+        description="Enable auto-healing system"
+    )
+
+    healing_dry_run: bool = Field(
+        default=True,
+        description="Dry-run mode: log actions without executing"
+    )
+
+    l1_rules_dir: Path = Field(
+        default=Path("/etc/msp/rules"),
+        description="Directory containing L1 YAML rules"
+    )
+
+    l2_enabled: bool = Field(
+        default=False,
+        description="Enable L2 LLM planner (requires API key)"
+    )
+
+    l2_api_key_file: Optional[Path] = Field(
+        default=None,
+        description="Path to OpenAI/Anthropic API key file"
+    )
+
+    l2_mode: str = Field(
+        default="hybrid",
+        description="L2 mode: openai, ollama, or hybrid"
+    )
+
+    l3_escalation_webhook: Optional[str] = Field(
+        default=None,
+        description="Webhook URL for L3 escalations"
+    )
+
+    learning_loop_enabled: bool = Field(
+        default=True,
+        description="Enable data flywheel (L2→L1 promotion)"
+    )
+
+    learning_auto_promote: bool = Field(
+        default=False,
+        description="Auto-promote patterns without human approval"
+    )
+
+    # ========================================================================
     # Validators
     # ========================================================================
 
@@ -281,6 +330,13 @@ class AgentConfig(BaseModel):
             raise ValueError('worm_s3_bucket required when worm_mode=direct')
         return v
 
+    @field_validator('l2_mode')
+    @classmethod
+    def validate_l2_mode(cls, v):
+        if v not in ['openai', 'ollama', 'hybrid']:
+            raise ValueError('l2_mode must be openai, ollama, or hybrid')
+        return v
+
     # ========================================================================
     # Parsed Properties
     # ========================================================================
@@ -308,6 +364,11 @@ class AgentConfig(BaseModel):
     def queue_db_path(self) -> Path:
         """SQLite queue database path."""
         return self.state_dir / 'queue.db'
+
+    @property
+    def incidents_db_path(self) -> Path:
+        """SQLite incidents database path for healing system."""
+        return self.state_dir / 'incidents.db'
 
     @property
     def mcp_poll_interval_sec(self) -> int:
@@ -390,6 +451,17 @@ def load_config() -> AgentConfig:
 
         # Logging
         'log_level': os.environ.get('LOG_LEVEL', 'INFO'),
+
+        # Auto-Healing
+        'healing_enabled': os.environ.get('HEALING_ENABLED', 'true').lower() == 'true',
+        'healing_dry_run': os.environ.get('HEALING_DRY_RUN', 'true').lower() == 'true',
+        'l1_rules_dir': Path(os.environ.get('L1_RULES_DIR', '/etc/msp/rules')),
+        'l2_enabled': os.environ.get('L2_ENABLED', 'false').lower() == 'true',
+        'l2_api_key_file': Path(os.environ['L2_API_KEY_FILE']) if os.environ.get('L2_API_KEY_FILE') else None,
+        'l2_mode': os.environ.get('L2_MODE', 'hybrid'),
+        'l3_escalation_webhook': os.environ.get('L3_ESCALATION_WEBHOOK') or None,
+        'learning_loop_enabled': os.environ.get('LEARNING_LOOP_ENABLED', 'true').lower() == 'true',
+        'learning_auto_promote': os.environ.get('LEARNING_AUTO_PROMOTE', 'false').lower() == 'true',
     }
 
     return AgentConfig(**config_dict)

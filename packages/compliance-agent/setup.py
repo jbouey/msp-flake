@@ -8,7 +8,7 @@ setup(
     package_data={
         "compliance_agent": [
             "web_templates/*.html",
-            "runbooks/*.yaml",
+            "rules/*.yaml",
         ],
     },
     include_package_data=True,
@@ -35,6 +35,7 @@ setup(
             "compliance-agent=compliance_agent.agent:main",
             "compliance-agent-appliance=compliance_agent.appliance_agent:main",
             "compliance-web=compliance_agent.web_ui:main",
+            "compliance-provision=compliance_agent.provisioning:main",
         ],
     },
     python_requires=">=3.11",

@@ -1,7 +1,15 @@
 # VM Access Guide
 
-**Last Updated:** 2025-11-21
-**Environment:** Mac Host (174.178.63.139) + VirtualBox VMs
+> **⚠️ DEPRECATED:** This document describes the OLD VirtualBox-based development
+> environment on a local Mac (174.178.63.139). That infrastructure has been decommissioned.
+>
+> **Current Infrastructure:**
+> - **VPS:** `ssh root@178.156.162.116` (msp.osiriscare.net)
+> - **Physical Appliance:** `ssh root@192.168.88.246`
+> - **North Valley Lab:** See `.agent/NETWORK.md`
+
+**Last Updated:** 2025-11-21 (DEPRECATED)
+**Environment:** Mac Host (174.178.63.139) + VirtualBox VMs - **NO LONGER IN USE**
 
 ---
 

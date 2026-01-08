@@ -22,7 +22,7 @@ from .appliance_config import ApplianceConfig
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.0"
+VERSION = "1.0.16"
 
 
 class CentralCommandClient:
@@ -474,8 +474,11 @@ def get_ip_addresses() -> List[str]:
     ips = []
     try:
         import subprocess
+        import shutil
+        # Find ip command - may not be in PATH for systemd services
+        ip_cmd = shutil.which("ip") or "/run/current-system/sw/bin/ip" or "/sbin/ip"
         result = subprocess.run(
-            ["ip", "-4", "-o", "addr", "show"],
+            [ip_cmd, "-4", "-o", "addr", "show"],
             capture_output=True, text=True, timeout=5
         )
         for line in result.stdout.splitlines():

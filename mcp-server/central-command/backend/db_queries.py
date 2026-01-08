@@ -157,7 +157,7 @@ async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
         "total_l2_decisions_30d": tier_counts.get("L2", 0),
         "patterns_awaiting_promotion": pending_patterns,
         "recently_promoted_count": recently_promoted,
-        "promotion_success_rate": 95.0,  # Would need more data to calculate
+        "promotion_success_rate": 0.0,  # TODO: Calculate from actual promotion outcomes
         "l1_resolution_rate": round(l1_rate, 1),
         "l2_resolution_rate": round(l2_rate, 1),
     }
@@ -200,12 +200,18 @@ async def get_promotion_candidates_from_db(db: AsyncSession) -> List[Dict[str, A
 
 async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
     """Get global statistics."""
-    # Count appliances
+    # Count sites (clients)
+    site_result = await db.execute(text("""
+        SELECT COUNT(*) as total FROM sites
+    """))
+    site_row = site_result.fetchone()
+
+    # Count appliances from site_appliances table
     appliance_result = await db.execute(text("""
-        SELECT 
+        SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '1 hour') as online
-        FROM appliances WHERE status = 'active'
+            COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online
+        FROM site_appliances
     """))
     appliance_row = appliance_result.fetchone()
     
@@ -227,11 +233,11 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
     total_resolved = inc_row.total_resolved or 1
     
     return {
-        "total_clients": appliance_row.total or 0,
+        "total_clients": site_row.total or 0,
         "total_appliances": appliance_row.total or 0,
         "online_appliances": appliance_row.online or 0,
-        "avg_compliance_score": 85.0,  # Would calculate from evidence
-        "avg_connectivity_score": 95.0,
+        "avg_compliance_score": 0.0,  # TODO: Calculate from evidence bundles
+        "avg_connectivity_score": 0.0,  # TODO: Calculate from checkin data
         "incidents_24h": inc_row.day or 0,
         "incidents_7d": inc_row.week or 0,
         "incidents_30d": inc_row.month or 0,
@@ -897,3 +903,257 @@ async def get_control_results_for_site(
             data["pass_rate"] = None
 
     return check_results
+
+
+# =============================================================================
+# RUNBOOK QUERIES
+# =============================================================================
+
+async def get_runbooks_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
+    """Get all runbooks with execution statistics.
+
+    Calculates execution_count, success_rate, avg_execution_time from orders table.
+    """
+    # Get runbooks with stats from orders table
+    result = await db.execute(text("""
+        SELECT
+            r.runbook_id,
+            r.name,
+            r.description,
+            r.category,
+            r.severity,
+            r.hipaa_controls,
+            r.steps,
+            r.enabled,
+            r.created_at,
+            r.updated_at,
+            COUNT(o.id) FILTER (WHERE o.status IN ('completed', 'failed')) as execution_count,
+            COUNT(o.id) FILTER (WHERE o.status = 'completed') as success_count,
+            AVG(EXTRACT(EPOCH FROM (o.completed_at - o.acknowledged_at)) * 1000)
+                FILTER (WHERE o.status = 'completed' AND o.completed_at IS NOT NULL AND o.acknowledged_at IS NOT NULL)
+                as avg_execution_time_ms
+        FROM runbooks r
+        LEFT JOIN orders o ON o.runbook_id = r.runbook_id
+        WHERE r.enabled = true
+        GROUP BY r.id
+        ORDER BY r.category, r.name
+    """))
+
+    rows = result.fetchall()
+
+    runbooks = []
+    for row in rows:
+        exec_count = row.execution_count or 0
+        success_count = row.success_count or 0
+        success_rate = (success_count / exec_count * 100) if exec_count > 0 else 0.0
+
+        # Map severity to level (all are L1 deterministic)
+        level = "L1"
+
+        # Determine if disruptive based on category or severity
+        disruptive_categories = ["patching", "encryption", "drift"]
+        is_disruptive = row.category in disruptive_categories or row.severity in ("critical", "high")
+
+        runbooks.append({
+            "id": row.runbook_id,
+            "name": row.name,
+            "description": row.description or "",
+            "level": level,
+            "hipaa_controls": row.hipaa_controls or [],
+            "is_disruptive": is_disruptive,
+            "execution_count": exec_count,
+            "success_rate": round(success_rate, 1),
+            "avg_execution_time_ms": int(row.avg_execution_time_ms or 0),
+            "category": row.category,
+            "steps": row.steps or [],
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        })
+
+    return runbooks
+
+
+async def get_runbook_detail_from_db(db: AsyncSession, runbook_id: str) -> Optional[Dict[str, Any]]:
+    """Get detailed runbook information including steps and parameters."""
+    result = await db.execute(text("""
+        SELECT
+            r.runbook_id,
+            r.name,
+            r.description,
+            r.category,
+            r.severity,
+            r.hipaa_controls,
+            r.steps,
+            r.parameters_schema,
+            r.enabled,
+            r.version,
+            r.created_at,
+            r.updated_at,
+            COUNT(o.id) FILTER (WHERE o.status IN ('completed', 'failed')) as execution_count,
+            COUNT(o.id) FILTER (WHERE o.status = 'completed') as success_count,
+            AVG(EXTRACT(EPOCH FROM (o.completed_at - o.acknowledged_at)) * 1000)
+                FILTER (WHERE o.status = 'completed' AND o.completed_at IS NOT NULL AND o.acknowledged_at IS NOT NULL)
+                as avg_execution_time_ms
+        FROM runbooks r
+        LEFT JOIN orders o ON o.runbook_id = r.runbook_id
+        WHERE r.runbook_id = :runbook_id
+        GROUP BY r.id
+    """), {"runbook_id": runbook_id})
+
+    row = result.fetchone()
+
+    if not row:
+        return None
+
+    exec_count = row.execution_count or 0
+    success_count = row.success_count or 0
+    success_rate = (success_count / exec_count * 100) if exec_count > 0 else 0.0
+
+    disruptive_categories = ["patching", "encryption", "drift"]
+    is_disruptive = row.category in disruptive_categories or row.severity in ("critical", "high")
+
+    return {
+        "id": row.runbook_id,
+        "name": row.name,
+        "description": row.description or "",
+        "level": "L1",
+        "hipaa_controls": row.hipaa_controls or [],
+        "is_disruptive": is_disruptive,
+        "steps": row.steps or [],
+        "parameters": row.parameters_schema or {},
+        "execution_count": exec_count,
+        "success_rate": round(success_rate, 1),
+        "avg_execution_time_ms": int(row.avg_execution_time_ms or 0),
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+async def get_healing_metrics_for_site(db: AsyncSession, site_id: str) -> Dict[str, Any]:
+    """Calculate healing success rate and order execution rate for a site.
+
+    Returns:
+        healing_success_rate: % of incidents resolved vs total
+        order_execution_rate: % of orders completed vs total
+        incidents_24h: count of incidents in last 24 hours
+        last_incident: most recent incident timestamp
+    """
+    # Get healing success rate from incidents (via site_appliances -> appliances join)
+    # First try to get incidents linked to appliances registered for this site
+    incident_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE i.status = 'resolved') as resolved,
+            COUNT(*) FILTER (WHERE i.reported_at > NOW() - INTERVAL '24 hours') as last_24h,
+            MAX(i.reported_at) as last_incident
+        FROM incidents i
+        JOIN appliances a ON a.id = i.appliance_id
+        WHERE a.site_id = :site_id
+    """), {"site_id": site_id})
+    inc_row = incident_result.fetchone()
+
+    # Get order execution rate from admin_orders
+    order_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE status = 'completed') as completed
+        FROM admin_orders
+        WHERE site_id = :site_id
+    """), {"site_id": site_id})
+    ord_row = order_result.fetchone()
+
+    # Calculate rates
+    total_incidents = inc_row.total if inc_row else 0
+    resolved_incidents = inc_row.resolved if inc_row else 0
+    healing_rate = (resolved_incidents / total_incidents * 100) if total_incidents > 0 else 100.0
+
+    total_orders = ord_row.total if ord_row else 0
+    completed_orders = ord_row.completed if ord_row else 0
+    order_rate = (completed_orders / total_orders * 100) if total_orders > 0 else 100.0
+
+    return {
+        "healing_success_rate": round(healing_rate, 1),
+        "order_execution_rate": round(order_rate, 1),
+        "incidents_24h": inc_row.last_24h if inc_row else 0,
+        "last_incident": inc_row.last_incident if inc_row else None,
+    }
+
+
+async def get_global_healing_metrics(db: AsyncSession) -> Dict[str, Any]:
+    """Calculate global healing metrics across all sites."""
+    # Get overall incident stats
+    incident_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE status = 'resolved') as resolved,
+            COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '24 hours') as last_24h
+        FROM incidents
+    """))
+    inc_row = incident_result.fetchone()
+
+    # Get overall order stats
+    order_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE status = 'completed') as completed
+        FROM admin_orders
+    """))
+    ord_row = order_result.fetchone()
+
+    total_incidents = inc_row.total if inc_row else 0
+    resolved_incidents = inc_row.resolved if inc_row else 0
+    healing_rate = (resolved_incidents / total_incidents * 100) if total_incidents > 0 else 100.0
+
+    total_orders = ord_row.total if ord_row else 0
+    completed_orders = ord_row.completed if ord_row else 0
+    order_rate = (completed_orders / total_orders * 100) if total_orders > 0 else 100.0
+
+    return {
+        "healing_success_rate": round(healing_rate, 1),
+        "order_execution_rate": round(order_rate, 1),
+        "incidents_24h": inc_row.last_24h if inc_row else 0,
+        "total_incidents": total_incidents,
+        "total_orders": total_orders,
+    }
+
+
+async def get_runbook_executions_from_db(
+    db: AsyncSession,
+    runbook_id: str,
+    limit: int = 20
+) -> List[Dict[str, Any]]:
+    """Get recent executions of a specific runbook from orders table."""
+    result = await db.execute(text("""
+        SELECT
+            o.id,
+            o.order_id,
+            o.runbook_id,
+            a.site_id,
+            a.host_id as hostname,
+            o.status,
+            o.result,
+            o.issued_at,
+            o.acknowledged_at,
+            o.completed_at,
+            EXTRACT(EPOCH FROM (o.completed_at - o.acknowledged_at)) * 1000 as execution_time_ms
+        FROM orders o
+        JOIN appliances a ON a.id = o.appliance_id
+        WHERE o.runbook_id = :runbook_id
+        AND o.status IN ('completed', 'failed')
+        ORDER BY o.completed_at DESC NULLS LAST
+        LIMIT :limit
+    """), {"runbook_id": runbook_id, "limit": limit})
+
+    rows = result.fetchall()
+
+    return [{
+        "id": str(row.id),
+        "runbook_id": row.runbook_id,
+        "site_id": row.site_id,
+        "hostname": row.hostname or "",
+        "incident_id": None,  # Orders aren't always linked to incidents
+        "success": row.status == "completed",
+        "execution_time_ms": int(row.execution_time_ms) if row.execution_time_ms else 0,
+        "output": row.result.get("message", "") if row.result else "",
+        "executed_at": row.completed_at or row.issued_at,
+    } for row in rows]

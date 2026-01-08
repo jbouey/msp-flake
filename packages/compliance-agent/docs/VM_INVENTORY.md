@@ -1,27 +1,169 @@
-# MSP Compliance Platform - VM Inventory
+# MSP Compliance Platform - Infrastructure Inventory
 
-> **⚠️ DEPRECATED:** This document describes the old VirtualBox development setup.
-> Production now uses physical appliances. See below for current access.
+**Last Updated:** 2026-01-05 (Session 11 - ISO v18 Deployed)
+**Status:** Production + North Valley Lab
 
-## Production Environment (Current)
+---
+
+## Production Environment
+
+### Central Command (Hetzner VPS)
+| Property | Value |
+|----------|-------|
+| **IP** | 178.156.162.116 |
+| **SSH** | `ssh root@178.156.162.116` |
+| **API** | https://api.osiriscare.net |
+| **Dashboard** | https://dashboard.osiriscare.net |
+| **Portal** | https://msp.osiriscare.net |
+| **Stack** | Docker: FastAPI + PostgreSQL + Redis + MinIO |
 
 ### Physical Appliance (HP T640)
-```bash
-# Direct access (if on clinic network)
-ssh root@192.168.88.246
+| Property | Value |
+|----------|-------|
+| **Site ID** | physical-appliance-pilot-1aea78 |
+| **Name** | North Valley Dental |
+| **IP** | 192.168.88.246 |
+| **MAC** | 84:3A:5B:91:B6:61 |
+| **ISO Version** | v18 (with healing fixes) |
+| **Agent Version** | 1.0.9 |
+| **Check-in** | Every 60s |
+| **Evidence Bundles** | 17,000+ |
 
-# Via iMac gateway
+```bash
+# SSH access requires key setup after ISO flash
+# Via iMac gateway:
 ssh jrelly@192.168.88.50 "ssh root@192.168.88.246"
 ```
 
-### Central Command
-- **API:** https://api.osiriscare.net
-- **Dashboard:** https://dashboard.osiriscare.net
-- **VPS SSH:** `ssh root@178.156.162.116`
+### iMac Gateway (Lab Network Access)
+| Property | Value |
+|----------|-------|
+| **IP** | 192.168.88.50 |
+| **User** | jrelly (SSH key auth) |
+| **Role** | VirtualBox host for North Valley lab |
+
+---
+
+## North Valley Lab (Pilot Client)
+
+### Windows Server 2019 DC (NVDC01)
+| Property | Value |
+|----------|-------|
+| **Hostname** | NVDC01 |
+| **Domain** | northvalley.local |
+| **IP** | 192.168.88.250 |
+| **WinRM Port** | 5985 |
+| **Credentials** | *via credential-pull from Central Command* |
+| **VM Host** | iMac VirtualBox |
+
+**Domain Users:**
+| User | Role | Password |
+|------|------|----------|
+| NORTHVALLEY\\Administrator | Domain Admin | *stored in site_credentials* |
+| NORTHVALLEY\\adminit | IT Admin | ClinicAdmin2024! |
+| NORTHVALLEY\\ssmith | Provider | ClinicUser2024! |
+
+### Windows 10 Workstation (NVWS01)
+| Property | Value |
+|----------|-------|
+| **Hostname** | NVWS01 |
+| **IP** | 192.168.88.251 |
+| **Domain** | northvalley.local |
+| **WinRM Port** | 5985 |
+
+---
+
+## Database Stats (Production)
+
+| Table | Count | Notes |
+|-------|-------|-------|
+| sites | 2 | North Valley Dental, Main Street Medical |
+| appliances | 1 | HP T640 physical |
+| compliance_bundles | 17,165+ | Ed25519 signed, hash-chained |
+| incidents | 1 | Test incident |
+| runbooks | 6 | Loaded from DB |
+| partners | 3 | Partner infrastructure |
+| admin_orders | 12 | Various order types |
+| site_credentials | 1 | North Valley DC |
+
+---
+
+## Network Topology
+
+```
+                    Internet
+                        │
+                        ▼
+            ┌───────────────────────┐
+            │  Hetzner VPS          │
+            │  178.156.162.116      │
+            │  - Central Command    │
+            │  - PostgreSQL         │
+            │  - MinIO (WORM)       │
+            └───────────────────────┘
+                        │
+                        │ HTTPS (pull-only)
+                        │
+        ┌───────────────┼───────────────┐
+        │               │               │
+        ▼               ▼               ▼
+┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+│ HP T640     │ │ VirtualBox  │ │ Future      │
+│ Appliance   │ │ VM Appliance│ │ Clients     │
+│ 192.168.88  │ │ 192.168.88  │ │             │
+│ .246        │ │ .247        │ │             │
+└─────────────┘ └─────────────┘ └─────────────┘
+        │
+        │ WinRM (credential-pull)
+        ▼
+┌─────────────────────────────┐
+│ North Valley Lab            │
+│ ┌─────────┐  ┌─────────┐   │
+│ │ NVDC01  │  │ NVWS01  │   │
+│ │ .250    │  │ .251    │   │
+│ │ DC/FS   │  │ Win10   │   │
+│ └─────────┘  └─────────┘   │
+└─────────────────────────────┘
+```
+
+---
+
+## Quick Commands
+
+```bash
+# VPS
+ssh root@178.156.162.116
+docker ps  # Check services
+docker logs mcp-server -f  # Server logs
+
+# iMac Gateway
+ssh jrelly@192.168.88.50
+VBoxManage list runningvms
+
+# Start North Valley VMs
+ssh jrelly@192.168.88.50 '/Applications/VirtualBox.app/Contents/MacOS/VBoxManage startvm "northvalley-dc" --type headless'
+
+# Physical Appliance (after key setup)
+ssh root@192.168.88.246
+journalctl -u compliance-agent -f
+
+# WinRM to DC (from appliance - credentials pulled automatically)
+# Or manually test:
+python3 -c "
+import winrm
+s = winrm.Session('http://192.168.88.250:5985/wsman',
+                  auth=('NORTHVALLEY\\\\Administrator', '...'),
+                  transport='ntlm')
+print(s.run_ps('hostname').std_out.decode())
+"
+```
 
 ---
 
 ## Legacy Development Environment (Deprecated)
+
+> **⚠️ DEPRECATED:** The VirtualBox setup on Mac 174.178.63.139 has been decommissioned.
+> All development now uses the VPS and physical appliances.
 
 ## Quick Access (from your Mac desktop)
 

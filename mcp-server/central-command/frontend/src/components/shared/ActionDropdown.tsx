@@ -85,7 +85,7 @@ export const ActionDropdown: React.FC<ActionDropdownProps> = ({
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-1 w-48 bg-fill-primary rounded-ios shadow-lg border border-separator-light z-50">
+        <div className="absolute right-0 mt-1 w-48 bg-fill-primary rounded-ios shadow-lg border border-separator-light z-[9999]">
           <div className="py-1">
             {actions.map((action, index) => (
               <button

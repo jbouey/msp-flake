@@ -182,6 +182,54 @@ The check-in endpoint implements **RMM-style credential-pull** (like Datto, Conn
 
 **Credentials Source:** `site_credentials` table (types: `winrm`, `domain_admin`, `service_account`, `local_admin`)
 
+## Production Deployment
+
+**IMPORTANT:** The VPS has two separate code locations. Only `/opt/mcp-server/` is production:
+
+| Path | Purpose | Docker Mount |
+|------|---------|--------------|
+| `/opt/mcp-server/` | **PRODUCTION** - Docker container mounts this | Yes - volume mount |
+| `/root/msp-iso-build/mcp-server/` | Build source - NOT used at runtime | No |
+
+### Production File Structure (VPS)
+```
+/opt/mcp-server/
+├── docker-compose.yml          # Production docker-compose
+├── Caddyfile                   # Reverse proxy config
+├── .env                        # Environment variables
+├── app/
+│   ├── main.py                 # Main FastAPI app (container entrypoint)
+│   └── dashboard_api/          # API routes (mapped from central-command/backend)
+│       ├── routes.py
+│       ├── models.py
+│       ├── sites.py
+│       ├── portal.py
+│       ├── partners.py
+│       ├── discovery.py
+│       ├── provisioning.py
+│       └── ...
+├── agent-packages/             # Agent tarballs for OTA updates
+├── runbooks/                   # YAML runbooks
+└── secrets/                    # Signing keys
+```
+
+### Syncing Backend Changes
+```bash
+# From local machine - sync to /opt/mcp-server/app/dashboard_api/
+rsync -avz mcp-server/central-command/backend/*.py root@VPS:/opt/mcp-server/app/dashboard_api/
+
+# Fix permissions (container runs as uid 1000)
+ssh root@VPS "chmod 644 /opt/mcp-server/app/dashboard_api/*.py && chown -R 1000:1000 /opt/mcp-server/app/dashboard_api/"
+
+# Restart container
+ssh root@VPS "cd /opt/mcp-server && docker-compose restart mcp-server"
+```
+
+### Common Mistakes
+- **DO NOT** sync to `/root/msp-iso-build/` - that's for ISO builds only
+- **DO NOT** create .bak files in production - they cause import errors
+- **ALWAYS** fix permissions after rsync (container runs as non-root)
+
 ## Development
 
 ```bash

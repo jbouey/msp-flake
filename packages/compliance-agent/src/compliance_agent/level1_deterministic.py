@@ -515,7 +515,12 @@ class DeterministicEngine:
                     host_id=host_id
                 )
                 result["output"] = output
-                result["success"] = True
+                # Check if action_executor returned success status
+                if isinstance(output, dict):
+                    result["success"] = output.get("success", False)
+                    result["error"] = output.get("error")
+                else:
+                    result["success"] = True  # Legacy: assume success if no dict returned
             else:
                 # No executor configured - dry run
                 logger.warning(f"No action executor configured, dry run: {match.action}")
