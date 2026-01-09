@@ -1,7 +1,7 @@
 # MSP HIPAA Compliance Platform - Documentation Index
 
-**Last Updated:** 2026-01-05 (Session 12)
-**Platform Version:** Phase 12 (Both Appliances on v1.0.18)
+**Last Updated:** 2026-01-09 (Session 22)
+**Platform Version:** Phase 12 (Agent v1.0.22, ISO v20, 43 Runbooks, OTS Blockchain Anchoring, Linux+Windows Support, Partner L3 Escalations, RBAC User Management)
 
 ---
 
@@ -14,6 +14,12 @@
 **For Partners/Resellers:**
 - [🤝 Partner Infrastructure](partner/README.md) - Partner API, provisioning, revenue model
 - [📱 Provisioning Module](partner/PROVISIONING.md) - Appliance first-boot setup
+
+**For Security/Credentials:**
+- [🔐 Secrets Inventory](security/SECRETS_INVENTORY.md) - **All credentials documented here**
+- [🔑 1Password Setup](security/1PASSWORD_SETUP.md) - 1Password CLI integration
+- [🛡️ Security Audit](security/WSA-20260108-0001.md) - Website security audit
+- [📝 Linguistic Audit](security/LLA-20260108-0001.md) - Compliance language review
 
 **For Implementation:**
 - [📝 Implementation Progress](#implementation-progress)
@@ -40,13 +46,22 @@
 |-----------|--------|-------|
 | Credential-Pull Architecture | ✅ Complete | RMM-style credential fetch (Session 9) |
 | Healing System Integration | ✅ Complete | L1 runbooks verified working (Session 10) |
-| Agent v1.0.18 | ✅ Complete | All healing integration fixes |
+| Agent v1.0.22 | ✅ Complete | Linux support + NetworkPostureDetector |
 | Windows Firewall Healing | ✅ Tested | Chaos test → auto-healed |
 | ISO v18 | ✅ Deployed | Physical + VM appliances (Session 12) |
 | Email Alerts | ✅ Complete | SMTP via privateemail.com (Session 12) |
 | Push Agent Update UI | ✅ Complete | Button + modal in site detail (Session 12) |
 | Delete Appliance Button | ✅ Complete | In dropdown menu (Session 12) |
 | Test VM Rebuild | ✅ Complete | Now on v1.0.18 (Session 12) |
+| Windows Sensors | ✅ Complete | Push-based drift detection (Session 15) |
+| Partner L3 Escalations | ✅ Complete | Slack/PagerDuty/Teams/Webhook (Session 16) |
+| 1Password Integration | ✅ Complete | Secrets management (Session 17) |
+| Linux Drift Healing | ✅ Complete | 16 runbooks, SSH-based execution (Session 18) |
+| RBAC User Management | ✅ Complete | 3-tier roles, email invites (Session 19) |
+| OpenTimestamps Anchoring | ✅ Complete | Blockchain evidence proofs (Session 21) |
+| ISO v20 | ✅ Built | Agent v1.0.22, OTS, asyncssh (Session 22) |
+| Physical Appliance v20 | ✅ Deployed | Online with L1 auto-healing (Session 22) |
+| VM Appliance v20 | 🟡 Pending | ISO ready, awaiting transfer (Session 22) |
 
 ### Phase 11: Partner/Reseller Infrastructure (Complete)
 

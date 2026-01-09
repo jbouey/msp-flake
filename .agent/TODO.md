@@ -1,7 +1,57 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-08 (Session 16 - Partner Dashboard Testing & L3 Escalation)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.20, 27 Runbooks, Windows Sensors, Partner Escalations)
+**Last Updated:** 2026-01-09 (Session 22 - ISO v20 Build + Physical Appliance Update)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.22, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC)
+
+---
+
+## ✅ Session 22 Completed (2026-01-09)
+
+### Admin Auth Fix + Physical Appliance Update
+**Status:** ✅ COMPLETE
+**Root Cause:** Admin password hash corrupted, Physical appliance had old agent v1.0.0 (not v1.0.22)
+**Resolution:**
+- [x] Reset admin password with SHA256 hash for `admin` / `Admin123`
+- [x] Diagnosed physical appliance crash: `ModuleNotFoundError: No module named 'compliance_agent.provisioning'`
+- [x] Updated `iso/appliance-image.nix` to agent v1.0.22
+- [x] Added `asyncssh` dependency for Linux SSH support
+- [x] Added iMac SSH key to `iso/configuration.nix` for appliance access
+- [x] Built ISO v20 on VPS (1.1GB) with agent v1.0.22
+- [x] Downloaded ISO v20 to local Mac: `/tmp/osiriscare-appliance-v20.iso`
+- [x] Physical appliance reflashed with ISO v20 - now online, L1 auto-healing working
+- [ ] VM appliance update pending (user away from home network)
+
+**ISO v20 Features:**
+- Agent v1.0.22 with OpenTimestamps blockchain anchoring
+- Linux drift detection with asyncssh
+- NetworkPostureDetector
+- All 43 runbooks (27 Windows + 16 Linux)
+
+---
+
+## ✅ Session 21 Completed (2026-01-09)
+
+### OpenTimestamps Blockchain Anchoring
+**Status:** ✅ COMPLETE
+**Details:** See Session 21 section below
+
+---
+
+## ✅ Session 20 Completed (2026-01-09)
+
+### Auth Fix & Credential Model Documentation
+**Status:** ✅ COMPLETE
+**Root Cause:** Admin password hash was manually corrupted during debug session
+**Resolution:**
+- [x] Deleted admin user and restarted server to trigger `ensure_default_admin()`
+- [x] Admin now uses `ADMIN_INITIAL_PASSWORD` env var value ("Admin")
+- [x] Verified all protected endpoints work with Bearer token auth
+- [x] Documented that `ADMIN_INITIAL_PASSWORD` is BOOTSTRAP-ONLY
+
+**Key Learnings:**
+- `ensure_default_admin()` only creates user when `admin_users` table is EMPTY
+- Changing `ADMIN_INITIAL_PASSWORD` env var does NOT update existing users
+- To reset admin: DELETE user + restart server (or direct DB update)
 
 ---
 
@@ -166,6 +216,51 @@
 
 ## ✅ Recently Completed
 
+- [x] **OpenTimestamps Blockchain Anchoring** - 2026-01-09 (Session 21)
+  - Created `opentimestamps.py` module with OTS client (submits to calendar servers)
+  - Created `evidence_chain.py` backend API (hash-chain + OTS endpoints)
+  - Created `011_ots_blockchain.sql` migration (ots_proofs, compliance_bundles OTS columns)
+  - Integrated OTS into `evidence.py` store_evidence() - submits hash after signing
+  - Added OTS config options to config.py (OTS_ENABLED, OTS_CALENDARS, OTS_TIMEOUT)
+  - Background task upgrades pending proofs when Bitcoin confirmation arrives
+  - 24 new OTS tests, 656 total tests passing (was 632)
+- [x] **RBAC User Management for Central Command** - 2026-01-08 (Session 19)
+  - Database migration: `009_user_invites.sql` (admin_user_invites table)
+  - Role-based decorators: `require_admin`, `require_operator`, `require_role(*roles)`
+  - Email service: `email_service.py` with SMTP invite/password reset emails
+  - Users API: `users.py` with 12 endpoints (list, invite, resend, revoke, update, delete, me, password)
+  - Frontend: `Users.tsx` admin page with invite modal, edit modal, password reset
+  - Frontend: `SetPassword.tsx` public page for invite acceptance
+  - Updated `Sidebar.tsx` with Users nav item (adminOnly: true)
+  - Updated `App.tsx` with `/users` and `/set-password` routes
+  - Three-tier permissions: Admin (full), Operator (view+actions), Readonly (view only)
+  - Fixed postgres password issue (removed special char `*` from password)
+  - Fixed `main.py` import paths (was using `server.py` pattern, needed `dashboard_api.users`)
+  - Fixed relative imports in `users.py` (`.auth`, `.email_service`)
+  - Reset admin password to `sha256$salt$hash` format
+  - Agent v1.0.22 with NetworkPostureDetector wired into run cycle
+- [x] **Dashboard Auth Fix + 1Password Secrets Management** - 2026-01-08 (Session 17)
+  - Fixed 401 errors on dashboard - Added auth token to frontend API requests (api.ts)
+  - Created 1Password CLI integration (`scripts/load-secrets.sh`)
+  - Created `.env.template` with all environment variables
+  - Created `docs/security/SECRETS_INVENTORY.md` - All credentials documented
+  - Created `docs/security/1PASSWORD_SETUP.md` - 1Password setup guide
+  - Fixed hardcoded admin password in auth.py (now uses ADMIN_INITIAL_PASSWORD env var)
+  - Fixed hardcoded SMTP settings in escalation_engine.py (now uses SMTP_* env vars)
+  - Fixed example API keys in Documentation.tsx (now uses placeholders)
+  - Backend authentication implemented (Session 17 continuation from Session 16)
+- [x] **Linux Drift Healing Module** - 2026-01-08 (Session 18)
+  - LinuxExecutor with asyncssh for SSH-based execution (runbooks/linux/executor.py, 655 lines)
+  - 16 Linux runbooks across 9 HIPAA categories (runbooks/linux/runbooks.py, 709 lines)
+  - LinuxDriftDetector class (linux_drift.py, 551 lines)
+  - NetworkPostureDetector for Linux/Windows (network_posture.py, 591 lines)
+  - HIPAA Linux baseline configuration (baselines/linux_baseline.yaml)
+  - Network posture baseline (baselines/network_posture.yaml)
+  - Added `linux_targets` to Central Command checkin response (server.py)
+  - Added `_update_linux_targets_from_response()` to appliance agent
+  - Added `_maybe_scan_linux()` to appliance agent run cycle
+  - Credential-pull: Linux creds from site_credentials (ssh_password, ssh_key)
+  - 632 tests passing (was 550)
 - [x] Three-tier auto-healing (L1/L2/L3)
 - [x] Data flywheel (L2→L1 promotion)
 - [x] PHI scrubber module
@@ -732,14 +827,22 @@
 - [x] **Agent-side Ed25519 signing** - appliance signs bundles before upload ✅ (Session 8)
 
 ### 25. OpenTimestamps Blockchain Anchoring
-**Status:** ⭕ PENDING
+**Status:** ✅ COMPLETE (2026-01-09 Session 21)
 **Why:** Enterprise tier feature, proves evidence existed at time T
-**Files:** TBD
+**Files:**
+- `packages/compliance-agent/src/compliance_agent/opentimestamps.py` (NEW - OTS client)
+- `packages/compliance-agent/src/compliance_agent/evidence.py` (UPDATED - OTS integration)
+- `packages/compliance-agent/src/compliance_agent/config.py` (UPDATED - OTS config options)
+- `mcp-server/central-command/backend/evidence_chain.py` (NEW - backend API)
+- `mcp-server/central-command/backend/migrations/011_ots_blockchain.sql` (NEW - DB migration)
+- `packages/compliance-agent/tests/test_opentimestamps.py` (NEW - 24 tests)
 **Acceptance:**
-- [ ] Submit bundle hash to OpenTimestamps on bundle creation
-- [ ] Store OTS proof in `anchor_proof` column
-- [ ] Verify OTS proofs in verification endpoint
-- [ ] UI shows "Anchored" status with Bitcoin block info
+- [x] Submit bundle hash to OpenTimestamps on bundle creation
+- [x] Store OTS proof in `bundle.ots.json` file + database column
+- [x] Verify OTS proofs in verification endpoint (`/api/evidence/sites/{site_id}/verify/{bundle_id}`)
+- [x] Background task for upgrading pending proofs to anchored
+- [x] OTS status summary endpoint (`/api/evidence/ots/status/{site_id}`)
+- [x] 656 tests passing (was 632)
 
 ### 26. Multi-NTP Time Verification
 **Status:** ✅ COMPLETE (2026-01-05 Session 12)
