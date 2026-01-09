@@ -9,11 +9,12 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.10";  # Windows check validation fix
+    version = "1.0.22";  # Session 21 - OTS blockchain anchoring
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
       aiohttp
+      asyncssh
       cryptography
       pydantic
       pydantic-settings

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="compliance-agent",
-    version="0.1.0",
+    version="1.0.22",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     package_data={
@@ -14,6 +14,7 @@ setup(
     include_package_data=True,
     install_requires=[
         "aiohttp>=3.9.0",
+        "asyncssh>=2.14.0",
         "cryptography>=41.0.0",
         "pydantic>=2.5.0",
         "pydantic-settings>=2.1.0",
