@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-08 (Session 16 - Partner Dashboard Testing & L3 Escalation Activation)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.20, 27 Runbooks, Windows Sensors, Partner L3 Escalations)
+**Last Updated:** 2026-01-09 (Session 22 - ISO v20 Build + Physical Appliance Update)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.22, ISO v20, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, 656 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,10 +533,26 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.20, 27 Windows runbooks, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete.
+**Status:** Phase 12 nearing completion. Agent v1.0.22, ISO v20, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete.
 
 **Session 15 (Windows Sensors):** Lightweight PowerShell sensor pushes drift events to appliance for instant detection (<30s vs 60s polling). Dual-mode routes sensor-enabled hosts to push model, others to WinRM polling. Scales to 100+ servers per appliance.
 
 **Session 16 (Partner L3 Escalation):** Complete partner notification infrastructure with Slack, PagerDuty, Email, Teams, and Webhook channels. HMAC-signed webhooks, priority-based routing, SLA tracking with breach detection. 27 new tests, 550 total tests passing.
 
-**Next:** OpenTimestamps blockchain anchoring (Task 25), or first pilot client 30-day monitoring completion.
+**Session 17 (Dashboard Auth + Secrets Management):** Fixed 401 errors by adding Bearer token auth to frontend. Created 1Password CLI integration for secrets management. Moved all hardcoded credentials to environment variables (auth.py, escalation_engine.py, Documentation.tsx).
+
+**Session 21 (OpenTimestamps Blockchain Anchoring):** Enterprise-tier feature for proving evidence existed at timestamp T via Bitcoin blockchain. Created opentimestamps.py client, evidence_chain.py backend API, 011_ots_blockchain.sql migration. 24 new tests, 656 total tests passing.
+
+**Session 22 (ISO v20 Build + Physical Appliance Update):** Fixed admin password hash issue, diagnosed physical appliance crash (old agent v1.0.0 missing provisioning module). Built ISO v20 with agent v1.0.22, asyncssh for Linux support. Physical appliance (192.168.88.246) reflashed and online with L1 auto-healing working. VM appliance update pending (user away from home network).
+
+**ISO v20 Ready:**
+- **VPS:** `/root/msp-iso-build/result-iso-v20/iso/osiriscare-appliance.iso` (1.1GB)
+- **Local:** `/tmp/osiriscare-appliance-v20.iso` (1.1GB)
+- **Physical appliance:** ✅ Updated and online (192.168.88.246)
+- **VM appliance:** 🟡 Pending transfer when home
+
+**Next Steps:**
+1. Transfer ISO v20 to iMac and update VM appliance (192.168.88.247)
+2. Evidence bundles uploading to MinIO verification
+3. First compliance packet generated
+4. 30-day monitoring period completion

@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-08 (Session 16 - Partner Dashboard Testing & L3 Escalation)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.20, 27 Runbooks, Windows Sensors, Partner Escalations)
-**Test Status:** 550 passed (compliance-agent tests), agent v1.0.20, ISO v19 deployed, 27 runbooks, dual-mode sensors, partner L3 escalations
+**Last Updated:** 2026-01-09 (Session 22 - ISO v20 Build + Physical Appliance Update)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.22, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC)
+**Test Status:** 656 passed (compliance-agent tests), agent v1.0.22, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management
 
 ---
 
@@ -175,6 +175,74 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Created `test_partner_api.py` - 27 comprehensive tests (all passing)
   - Wired routers in server.py (notifications_router, escalations_router)
   - 550 total tests passing
+- ✅ **Dashboard Auth Fix + 1Password Secrets Management** - 2026-01-08 (Session 17)
+  - Fixed 401 errors - Added Bearer token auth to frontend API requests (api.ts)
+  - Created `scripts/load-secrets.sh` - 1Password CLI integration
+  - Created `.env.template` - Environment variable template
+  - Created `docs/security/SECRETS_INVENTORY.md` - Complete credentials inventory
+  - Created `docs/security/1PASSWORD_SETUP.md` - 1Password setup guide
+  - Fixed `auth.py` - Use ADMIN_INITIAL_PASSWORD env var (no more hardcoded password)
+  - Fixed `escalation_engine.py` - Use SMTP_* env vars
+  - Fixed `Documentation.tsx` - Placeholder API keys instead of real examples
+  - User's 1Password vault: "Central Command" with "Anthropic Key" item
+- ✅ **Linux Drift Healing Module** - 2026-01-08 (Session 18)
+  - Created `runbooks/linux/executor.py` - LinuxTarget, LinuxExecutor with asyncssh (655 lines)
+  - Created `runbooks/linux/runbooks.py` - 16 Linux runbooks across 9 categories (709 lines)
+  - Created `linux_drift.py` - LinuxDriftDetector class (551 lines)
+  - Created `network_posture.py` - NetworkPostureDetector for Linux/Windows (591 lines)
+  - Created `baselines/linux_baseline.yaml` - HIPAA Linux baseline config
+  - Created `baselines/network_posture.yaml` - Network posture baseline
+  - Added `linux_targets` to Central Command checkin response (server.py)
+  - Added `_update_linux_targets_from_response()` to appliance agent
+  - Added `_maybe_scan_linux()` to appliance agent run cycle
+  - Credential-pull architecture: Linux credentials fetched from `site_credentials` (credential_type: ssh_password, ssh_key)
+  - 16 Linux runbooks: SSH hardening, firewall, audit, services, patching, encryption, accounts, permissions, SELinux/AppArmor
+  - 632 tests passing (was 550)
+- ✅ **RBAC User Management** - 2026-01-08 (Session 19)
+  - Database migration: `009_user_invites.sql` (admin_user_invites table)
+  - Backend API: `users.py` with 12 endpoints for user management
+  - Role-based decorators: `require_admin`, `require_operator`, `require_role(*roles)` in auth.py
+  - Email service: `email_service.py` for invite and password reset emails
+  - Frontend: `Users.tsx` admin page with invite/edit modals
+  - Frontend: `SetPassword.tsx` public page for invite acceptance
+  - Three-tier permissions: Admin (full access), Operator (view+actions), Readonly (view only)
+  - Updated `main.py` with dashboard_api.users import
+  - Agent v1.0.22 with NetworkPostureDetector wired into run cycle
+  - VPS: Postgres password changed to `McpSecure2727` (removed special char)
+- ✅ **Auth Fix & Comprehensive System Audit** - 2026-01-09 (Session 20)
+  - Fixed admin login (password hash was corrupted during debug)
+  - Admin credentials: `admin` / `Admin` (from ADMIN_INITIAL_PASSWORD env var)
+  - Documented: `ADMIN_INITIAL_PASSWORD` is BOOTSTRAP-ONLY (only used when admin_users table is empty)
+  - **Comprehensive Audit Completed:**
+    - Infrastructure: 6/6 Docker containers healthy
+    - Database: 34 tables, 72,294 compliance bundles
+    - Sites: 2 online (physical-appliance-pilot-1aea78, test-appliance-lab-b3c40c)
+    - Authentication: Working with Bearer tokens
+    - API: All endpoints verified (fleet, stats, runbooks, users, sites, learning)
+    - Frontend: Serving at https://dashboard.osiriscare.net
+  - **Linux Runbooks Migration (010_linux_runbooks.sql):**
+    - Added 17 Linux runbooks to database
+    - **43 total runbooks** now (26 Windows + 17 Linux)
+    - Categories: SSH (3), Firewall (1), Services (4), Audit (2), Patching (1), Permissions (3), Accounts (2), MAC (1)
+  - **ISO v19 Ready:** `/Users/jrelly/Downloads/osiriscare-appliance-v19.iso` on iMac (192.168.88.50)
+- ✅ **OpenTimestamps Blockchain Anchoring** - 2026-01-09 (Session 21)
+  - Created `opentimestamps.py` - OTS client with calendar server submission
+  - Created `evidence_chain.py` - Central Command backend API for hash-chain + OTS
+  - Created `011_ots_blockchain.sql` - Database migration (ots_proofs table, compliance_bundles OTS columns)
+  - Integrated OTS into `evidence.py` store_evidence() - submits hash after Ed25519 signing
+  - Added OTS config options: OTS_ENABLED, OTS_CALENDARS, OTS_TIMEOUT, OTS_AUTO_UPGRADE
+  - Background task upgrades pending proofs when Bitcoin confirmation arrives (1-24 hours)
+  - Enterprise tier feature: Proves evidence existed at timestamp T via Bitcoin blockchain
+  - 24 new tests in `test_opentimestamps.py`, 656 total tests passing (was 632)
+- ✅ **ISO v20 Build + Physical Appliance Update** - 2026-01-09 (Session 22)
+  - Fixed admin password hash (SHA256 format for `admin` / `Admin123`)
+  - Diagnosed physical appliance: had old agent v1.0.0 (missing provisioning module)
+  - Updated `iso/appliance-image.nix` to v1.0.22 with asyncssh dependency
+  - Added iMac SSH key to `iso/configuration.nix` for appliance access
+  - Built ISO v20 on VPS (1.1GB) at `/root/msp-iso-build/result-iso-v20/iso/osiriscare-appliance.iso`
+  - Downloaded to local Mac: `/tmp/osiriscare-appliance-v20.iso`
+  - Physical appliance (192.168.88.246) reflashed, now online with v1.0.19, L1 auto-healing working
+  - VM appliance (192.168.88.247) update pending - user away from home network
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
@@ -203,10 +271,10 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **IP Address Cleanup** - deprecated old Mac 174.178.63.139 references (2026-01-03)
   - VPS is at 178.156.162.116 (msp.osiriscare.net)
   - Added deprecation notices to VM-ACCESS-GUIDE.md, CREDENTIALS.md
-- 🟡 Deploy ISO v10 to physical appliance ← **NEXT**
+- 🟡 Deploy ISO v19 to physical appliance ← **NEXT** (ready at ~/Downloads/ on iMac)
 - ⚠️ Evidence bundles uploading to MinIO
-- ⚠️ OpenTimestamps blockchain anchoring
-- ⚠️ Multi-NTP time verification
+- ✅ OpenTimestamps blockchain anchoring (Session 21)
+- ✅ Multi-NTP time verification (Session 12)
 
 ### Appliance Agent v1.0.0 (2026-01-02)
 - ✅ Created `appliance_agent.py` - Standalone agent for appliance deployment
@@ -232,6 +300,15 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **SHA256:** `726f0be6d5aef9d23c701be5cf474a91630ce6acec41015e8d800f1bbe5e6396`
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
+
+### ISO v20 Built (2026-01-09 Session 22)
+- **Location (VPS):** `/root/msp-iso-build/result-iso-v20/iso/osiriscare-appliance.iso`
+- **Location (Local):** `/tmp/osiriscare-appliance-v20.iso`
+- **Size:** 1.1GB
+- **Agent:** compliance-agent v1.0.22 with **OpenTimestamps, Linux support, asyncssh**
+- **Entry point:** `compliance-agent-appliance`
+- **Features:** OTS blockchain anchoring, Linux drift detection, NetworkPostureDetector, 43 runbooks
+- **Status:** Physical appliance (192.168.88.246) updated and online, VM pending
 
 ### ISO v16 Built (2026-01-04 Session 9)
 - **Location (iMac):** `~/Downloads/osiriscare-appliance-v16.iso`
@@ -454,10 +531,18 @@ src/compliance_agent/
 ├── web_ui.py             # FastAPI dashboard
 ├── phi_scrubber.py       # PHI pattern removal
 ├── windows_collector.py  # Windows compliance collection
+├── linux_drift.py        # Linux drift detection
+├── network_posture.py    # Network posture detection
+├── baselines/
+│   ├── linux_baseline.yaml   # HIPAA Linux baseline
+│   └── network_posture.yaml  # Network posture baseline
 └── runbooks/
-    └── windows/
-        ├── executor.py   # WinRM execution
-        └── runbooks.py   # 7 HIPAA runbooks
+    ├── windows/
+    │   ├── executor.py   # WinRM execution
+    │   └── runbooks.py   # 27 HIPAA runbooks
+    └── linux/
+        ├── executor.py   # SSH/asyncssh execution
+        └── runbooks.py   # 16 HIPAA runbooks
 ```
 
 ---
@@ -530,12 +615,14 @@ curl -s https://api.osiriscare.net/api/sites/test-appliance-lab-b3c40c | jq .  #
 
 | Control | Citation | Implementation |
 |---------|----------|----------------|
-| Audit Controls | §164.312(b) | Evidence bundles, hash chain |
-| Access Control | §164.312(a)(1) | Firewall checks, AD monitoring |
-| Encryption | §164.312(a)(2)(iv) | BitLocker verification |
+| Audit Controls | §164.312(b) | Evidence bundles, hash chain, auditd (Linux) |
+| Access Control | §164.312(a)(1) | Firewall checks, AD monitoring, SSH hardening |
+| Encryption | §164.312(a)(2)(iv) | BitLocker (Windows), LUKS (Linux) |
 | Backup | §164.308(a)(7) | Backup status, recovery key backup |
-| Malware Protection | §164.308(a)(5)(ii)(B) | Windows Defender health |
-| Patch Management | §164.308(a)(5)(ii)(B) | Patch compliance checks |
+| Malware Protection | §164.308(a)(5)(ii)(B) | Windows Defender, ClamAV (Linux) |
+| Patch Management | §164.308(a)(5)(ii)(B) | Windows/Linux patch compliance |
+| MAC (Mandatory Access) | §164.312(d) | SELinux/AppArmor status (Linux) |
+| Service Hardening | §164.312(e)(1) | Prohibited services detection |
 
 ---
 
