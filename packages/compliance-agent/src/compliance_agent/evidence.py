@@ -34,6 +34,7 @@ class EvidenceGenerator:
     Each bundle includes:
     - bundle.json: Full evidence data
     - bundle.sig: Ed25519 detached signature
+    - bundle.ots: OpenTimestamps proof (if OTS enabled)
 
     Optionally uploads to WORM storage for immutable backup.
     """
@@ -54,6 +55,11 @@ class EvidenceGenerator:
         self._worm_uploader = None
         if config.worm_enabled:
             self._init_worm_uploader()
+
+        # Initialize OTS client if enabled
+        self._ots_client = None
+        if config.ots_enabled:
+            self._init_ots_client()
 
     def _init_worm_uploader(self):
         """Initialize WORM uploader with config."""
@@ -88,6 +94,26 @@ class EvidenceGenerator:
         except Exception as e:
             logger.error(f"Failed to initialize WORM uploader: {e}")
             self._worm_uploader = None
+
+    def _init_ots_client(self):
+        """Initialize OpenTimestamps client with config."""
+        try:
+            from .opentimestamps import OTSClient, OTSConfig
+
+            ots_config = OTSConfig(
+                enabled=self.config.ots_enabled,
+                calendars=self.config.ots_calendars,
+                timeout_seconds=self.config.ots_timeout_seconds,
+                proof_dir=self.evidence_dir / "ots_proofs",
+                auto_upgrade=self.config.ots_auto_upgrade,
+            )
+
+            self._ots_client = OTSClient(ots_config)
+            logger.info("OTS client initialized")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize OTS client: {e}")
+            self._ots_client = None
 
     async def create_evidence(
         self,
@@ -200,8 +226,9 @@ class EvidenceGenerator:
         bundles: List[EvidenceBundle],
         sign: bool = True,
         upload_to_worm: bool = True,
+        submit_to_ots: bool = True,
         max_concurrency: int = 5
-    ) -> List[tuple[Path, Optional[Path], Optional[str]]]:
+    ) -> List[tuple[Path, Optional[Path], Optional[str], Optional[str]]]:
         """
         Store multiple evidence bundles concurrently.
 
@@ -212,10 +239,11 @@ class EvidenceGenerator:
             bundles: List of evidence bundles to store
             sign: Whether to sign each bundle (default: True)
             upload_to_worm: Whether to upload to WORM storage (default: True)
+            submit_to_ots: Whether to submit hashes to OTS (default: True)
             max_concurrency: Maximum concurrent uploads (default: 5)
 
         Returns:
-            List of tuples: (bundle_path, signature_path, worm_uri) for each bundle
+            List of tuples: (bundle_path, signature_path, worm_uri, ots_status) for each bundle
         """
         if not bundles:
             return []
@@ -228,7 +256,9 @@ class EvidenceGenerator:
 
             # Create coroutines for each bundle
             tasks = [
-                self.store_evidence(bundle, sign=sign, upload_to_worm=upload_to_worm)
+                self.store_evidence(
+                    bundle, sign=sign, upload_to_worm=upload_to_worm, submit_to_ots=submit_to_ots
+                )
                 for bundle in batch
             ]
 
@@ -241,7 +271,7 @@ class EvidenceGenerator:
                         f"Failed to store evidence bundle {batch[j].bundle_id}: {result}"
                     )
                     # Return empty tuple for failed bundles
-                    results.append((None, None, None))
+                    results.append((None, None, None, None))
                 else:
                     results.append(result)
 
@@ -255,23 +285,26 @@ class EvidenceGenerator:
         self,
         bundle: EvidenceBundle,
         sign: bool = True,
-        upload_to_worm: bool = True
-    ) -> tuple[Path, Optional[Path], Optional[str]]:
+        upload_to_worm: bool = True,
+        submit_to_ots: bool = True
+    ) -> tuple[Path, Optional[Path], Optional[str], Optional[str]]:
         """
         Store evidence bundle to disk and optionally upload to WORM storage.
 
         Storage structure:
         /var/lib/compliance-agent/evidence/YYYY/MM/DD/<bundle_id>/
         ├── bundle.json
-        └── bundle.sig (if signed)
+        ├── bundle.sig (if signed)
+        └── bundle.ots (if OTS enabled)
 
         Args:
             bundle: Evidence bundle to store
             sign: Whether to sign the bundle (default: True)
             upload_to_worm: Whether to upload to WORM storage (default: True)
+            submit_to_ots: Whether to submit hash to OTS (default: True)
 
         Returns:
-            Tuple of (bundle_path, signature_path, worm_uri)
+            Tuple of (bundle_path, signature_path, worm_uri, ots_status)
         """
         # Create date-based directory structure
         date = bundle.timestamp_start
@@ -304,6 +337,35 @@ class EvidenceGenerator:
 
             logger.debug(f"Wrote signature to {signature_path}")
 
+        # Submit to OpenTimestamps
+        ots_status = None
+        if submit_to_ots and self._ots_client and self.config.ots_enabled:
+            try:
+                from .opentimestamps import compute_bundle_hash
+
+                bundle_hash = compute_bundle_hash(bundle_json)
+                ots_proof = await self._ots_client.submit_hash(
+                    bundle_hash, bundle.bundle_id
+                )
+
+                if ots_proof:
+                    # Save OTS proof to bundle directory
+                    ots_path = bundle_dir / "bundle.ots.json"
+                    with open(ots_path, 'w') as f:
+                        json.dump(ots_proof.to_dict(), f, indent=2)
+
+                    ots_status = ots_proof.status
+                    logger.info(
+                        f"OTS submitted for {bundle.bundle_id}: {ots_status}"
+                    )
+                else:
+                    ots_status = "failed"
+                    logger.warning(f"OTS submission failed for {bundle.bundle_id}")
+
+            except Exception as e:
+                ots_status = "error"
+                logger.error(f"OTS error for {bundle.bundle_id}: {e}")
+
         logger.info(
             f"Stored evidence bundle {bundle.bundle_id} at {bundle_dir}"
         )
@@ -323,7 +385,7 @@ class EvidenceGenerator:
             except Exception as e:
                 logger.error(f"WORM upload error: {e}")
 
-        return bundle_path, signature_path, worm_uri
+        return bundle_path, signature_path, worm_uri, ots_status
 
     async def load_evidence(self, bundle_id: str) -> Optional[EvidenceBundle]:
         """

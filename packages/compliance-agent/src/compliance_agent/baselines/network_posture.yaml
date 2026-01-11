@@ -1,0 +1,321 @@
+# Network Posture Baseline for HIPAA Compliance
+# Version: 1.0
+# Last Updated: 2026-01-08
+#
+# Host-centric network exposure detection and baseline alignment.
+# Detects listening ports, external bindings, and prohibited services.
+
+version: "1.0"
+description: "HIPAA Network Posture Baseline"
+
+# =============================================================================
+# ALLOWED EXTERNAL PORTS
+# =============================================================================
+# Ports that may legitimately be exposed to the network
+allowed_external_ports:
+  - port: 22
+    protocol: tcp
+    description: "SSH (Linux management)"
+    os: [linux]
+    requires_justification: false
+
+  - port: 3389
+    protocol: tcp
+    description: "RDP (Windows Remote Desktop)"
+    os: [windows]
+    requires_justification: true  # Must document business need
+
+  - port: 443
+    protocol: tcp
+    description: "HTTPS"
+    os: [linux, windows]
+    requires_justification: false
+
+  - port: 80
+    protocol: tcp
+    description: "HTTP (should redirect to HTTPS)"
+    os: [linux, windows]
+    requires_justification: true
+
+  - port: 5985
+    protocol: tcp
+    description: "WinRM HTTP (internal management only)"
+    os: [windows]
+    requires_justification: false
+    internal_only: true
+
+  - port: 5986
+    protocol: tcp
+    description: "WinRM HTTPS"
+    os: [windows]
+    requires_justification: false
+
+# =============================================================================
+# PROHIBITED PORTS
+# =============================================================================
+# Ports that should NEVER be listening (indicates security risk)
+prohibited_ports:
+  # Legacy insecure protocols
+  - port: 21
+    protocol: tcp
+    description: "FTP - use SFTP/SCP instead"
+    severity: high
+    hipaa_control: "164.312(e)(1)"
+
+  - port: 23
+    protocol: tcp
+    description: "Telnet - insecure clear-text"
+    severity: critical
+    hipaa_control: "164.312(e)(1)"
+
+  - port: 25
+    protocol: tcp
+    description: "SMTP - open relay risk"
+    severity: high
+    hipaa_control: "164.312(e)(1)"
+    exception: "Mail servers only"
+
+  - port: 69
+    protocol: udp
+    description: "TFTP - insecure, no authentication"
+    severity: high
+    hipaa_control: "164.312(e)(1)"
+
+  - port: 111
+    protocol: tcp
+    description: "RPC Portmapper - attack vector"
+    severity: high
+    hipaa_control: "164.312(e)(1)"
+
+  - port: 135
+    protocol: tcp
+    description: "RPC Endpoint Mapper (Windows)"
+    severity: medium
+    hipaa_control: "164.312(e)(1)"
+    internal_only: true
+
+  - port: 139
+    protocol: tcp
+    description: "NetBIOS Session - SMBv1 risk"
+    severity: high
+    hipaa_control: "164.312(e)(1)"
+
+  - port: 445
+    protocol: tcp
+    description: "SMB - ransomware vector"
+    severity: critical
+    hipaa_control: "164.312(e)(1)"
+    exception: "File servers with justification"
+    internal_only: true
+
+  # Legacy remote access
+  - port: 512
+    protocol: tcp
+    description: "rexec - insecure"
+    severity: critical
+    hipaa_control: "164.312(e)(1)"
+
+  - port: 513
+    protocol: tcp
+    description: "rlogin - insecure"
+    severity: critical
+    hipaa_control: "164.312(e)(1)"
+
+  - port: 514
+    protocol: tcp
+    description: "rsh - insecure"
+    severity: critical
+    hipaa_control: "164.312(e)(1)"
+
+  # Databases (should never be external)
+  - port: 1433
+    protocol: tcp
+    description: "SQL Server - must be internal only"
+    severity: critical
+    hipaa_control: "164.312(a)(1)"
+    internal_only: true
+
+  - port: 1434
+    protocol: udp
+    description: "SQL Server Browser"
+    severity: high
+    hipaa_control: "164.312(a)(1)"
+    internal_only: true
+
+  - port: 3306
+    protocol: tcp
+    description: "MySQL - must be internal only"
+    severity: critical
+    hipaa_control: "164.312(a)(1)"
+    internal_only: true
+
+  - port: 5432
+    protocol: tcp
+    description: "PostgreSQL - must be internal only"
+    severity: critical
+    hipaa_control: "164.312(a)(1)"
+    internal_only: true
+
+  - port: 27017
+    protocol: tcp
+    description: "MongoDB - must be internal only"
+    severity: critical
+    hipaa_control: "164.312(a)(1)"
+    internal_only: true
+
+  - port: 6379
+    protocol: tcp
+    description: "Redis - must be internal only"
+    severity: critical
+    hipaa_control: "164.312(a)(1)"
+    internal_only: true
+
+  - port: 9200
+    protocol: tcp
+    description: "Elasticsearch - must be internal only"
+    severity: critical
+    hipaa_control: "164.312(a)(1)"
+    internal_only: true
+
+# =============================================================================
+# DNS RESOLVER POLICY
+# =============================================================================
+dns_resolvers:
+  # Allowed public DNS providers
+  allowed:
+    - ip: "1.1.1.1"
+      provider: "Cloudflare"
+
+    - ip: "1.0.0.1"
+      provider: "Cloudflare Secondary"
+
+    - ip: "8.8.8.8"
+      provider: "Google"
+
+    - ip: "8.8.4.4"
+      provider: "Google Secondary"
+
+    - ip: "9.9.9.9"
+      provider: "Quad9"
+
+    - ip: "149.112.112.112"
+      provider: "Quad9 Secondary"
+
+    - ip: "208.67.222.222"
+      provider: "OpenDNS"
+
+    - ip: "208.67.220.220"
+      provider: "OpenDNS Secondary"
+
+  # Internal DNS patterns (allowed)
+  internal_patterns:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+
+  # Prohibited
+  prohibited:
+    - ip: "0.0.0.0"
+      reason: "Invalid resolver"
+
+# =============================================================================
+# REACHABILITY ASSERTIONS
+# =============================================================================
+# Endpoints that MUST be reachable for proper operation
+reachability_assertions:
+  - target: "api.osiriscare.net"
+    port: 443
+    protocol: tcp
+    required: true
+    description: "Central Command API"
+    failure_severity: critical
+
+  - target: "8.8.8.8"
+    port: 53
+    protocol: udp
+    required: true
+    description: "DNS resolution"
+    failure_severity: high
+
+  - target: "time.google.com"
+    port: 123
+    protocol: udp
+    required: false
+    description: "NTP time sync"
+    failure_severity: medium
+
+# =============================================================================
+# EXTERNAL BINDING POLICY
+# =============================================================================
+# Services that should NEVER bind to 0.0.0.0 or public IPs
+external_binding_policy:
+  never_external:
+    - process_pattern: "postgres"
+      description: "PostgreSQL"
+
+    - process_pattern: "mysql"
+      description: "MySQL"
+
+    - process_pattern: "redis"
+      description: "Redis"
+
+    - process_pattern: "mongo"
+      description: "MongoDB"
+
+    - process_pattern: "elastic"
+      description: "Elasticsearch"
+
+    - process_pattern: "memcache"
+      description: "Memcached"
+
+    - process_pattern: "rabbitmq"
+      description: "RabbitMQ"
+
+    - process_pattern: "kafka"
+      description: "Kafka"
+
+# =============================================================================
+# HIPAA CONTROL MAPPINGS
+# =============================================================================
+hipaa_controls:
+  "164.312(e)(1)":
+    name: "Transmission Security"
+    description: "Implement technical security measures to guard against unauthorized access to ePHI transmitted over network"
+
+  "164.312(a)(1)":
+    name: "Access Control"
+    description: "Implement technical policies and procedures for electronic information systems that maintain ePHI"
+
+  "164.312(c)(1)":
+    name: "Integrity"
+    description: "Implement policies and procedures to protect ePHI from improper alteration or destruction"
+
+# =============================================================================
+# AUTO-HEAL SETTINGS
+# =============================================================================
+auto_heal:
+  # L1: Can be auto-healed (add firewall rule)
+  l1_actions:
+    - type: "prohibited_port"
+      action: "block_with_firewall"
+      description: "Block prohibited port with firewall rule"
+
+    - type: "dns_resolver"
+      action: "update_resolv_conf"
+      description: "Update DNS resolvers to approved list"
+
+  # L2: Requires LLM analysis
+  l2_actions:
+    - type: "external_database_binding"
+      description: "Database bound to external interface"
+
+    - type: "unexpected_service"
+      description: "Unknown service listening on port"
+
+  # L3: Always escalate to human
+  l3_actions:
+    - type: "reachability_failure"
+      description: "Cannot reach required endpoints"
+
+    - type: "multiple_violations"
+      description: "More than 5 posture violations detected"

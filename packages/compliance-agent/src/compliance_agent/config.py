@@ -7,7 +7,7 @@ Validates all required settings and provides typed access.
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from datetime import time
 
@@ -181,6 +181,35 @@ class AgentConfig(BaseModel):
     worm_auto_upload: bool = Field(
         default=True,
         description="Auto-upload evidence on creation"
+    )
+
+    # ========================================================================
+    # OpenTimestamps (Blockchain Anchoring)
+    # ========================================================================
+
+    ots_enabled: bool = Field(
+        default=False,
+        description="Enable OpenTimestamps blockchain anchoring (Enterprise tier)"
+    )
+
+    ots_calendars: List[str] = Field(
+        default_factory=lambda: [
+            "https://a.pool.opentimestamps.org",
+            "https://b.pool.opentimestamps.org",
+        ],
+        description="OTS calendar server URLs"
+    )
+
+    ots_timeout_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        description="OTS submission timeout in seconds"
+    )
+
+    ots_auto_upgrade: bool = Field(
+        default=True,
+        description="Auto-upgrade pending OTS proofs on startup"
     )
 
     # ========================================================================
@@ -438,6 +467,12 @@ def load_config() -> AgentConfig:
         'worm_s3_region': os.environ.get('WORM_S3_REGION', 'us-east-1'),
         'worm_retention_days': int(os.environ.get('WORM_RETENTION_DAYS', '90')),
         'worm_auto_upload': os.environ.get('WORM_AUTO_UPLOAD', 'true').lower() == 'true',
+
+        # OpenTimestamps
+        'ots_enabled': os.environ.get('OTS_ENABLED', 'false').lower() == 'true',
+        'ots_calendars': os.environ.get('OTS_CALENDARS', 'https://a.pool.opentimestamps.org,https://b.pool.opentimestamps.org').split(','),
+        'ots_timeout_seconds': int(os.environ.get('OTS_TIMEOUT', '30')),
+        'ots_auto_upgrade': os.environ.get('OTS_AUTO_UPGRADE', 'true').lower() == 'true',
 
         # Clock
         'ntp_max_skew_ms': int(os.environ.get('NTP_MAX_SKEW_MS', '5000')),
