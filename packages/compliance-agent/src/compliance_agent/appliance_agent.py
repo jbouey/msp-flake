@@ -42,7 +42,10 @@ from .appliance_client import (
     get_nixos_version,
 )
 from .crypto import Ed25519Signer, ensure_signing_key
-from .runbooks.windows.executor import WindowsTarget
+from .runbooks.windows.executor import WindowsTarget, WindowsExecutor
+from .runbooks.linux.executor import LinuxTarget, LinuxExecutor
+from .linux_drift import LinuxDriftDetector
+from .network_posture import NetworkPostureDetector
 
 # Three-tier healing imports
 from .incident_db import IncidentDatabase, Incident
@@ -53,7 +56,7 @@ from .level3_escalation import EscalationHandler, EscalationConfig
 from .learning_loop import SelfLearningSystem, PromotionConfig
 from .ntp_verify import NTPVerifier, verify_time_for_evidence
 
-# Sensor API for dual-mode architecture
+# Sensor API for dual-mode architecture (Windows)
 from .sensor_api import (
     router as sensor_router,
     configure_healing as configure_sensor_healing,
@@ -65,9 +68,21 @@ from .sensor_api import (
     SENSOR_TIMEOUT,
 )
 
+# Linux Sensor API for dual-mode architecture
+from .sensor_linux import (
+    router as linux_sensor_router,
+    configure_linux_healing,
+    has_active_linux_sensor,
+    get_linux_sensor_hosts,
+    get_linux_polling_hosts,
+    get_linux_dual_mode_stats,
+    get_combined_sensor_stats,
+    set_sensor_scripts_dir,
+)
+
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.19"
+VERSION = "1.0.22"
 
 
 async def run_command(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
@@ -231,11 +246,20 @@ class ApplianceAgent:
         self.client = CentralCommandClient(config)
         self.drift_checker: Optional[SimpleDriftChecker] = None
         self.windows_targets: List[WindowsTarget] = []
+        self.linux_targets: List[LinuxTarget] = []
+        self.linux_executor: Optional[LinuxExecutor] = None
+        self.linux_drift_detector: Optional[LinuxDriftDetector] = None
+        self.network_posture_detector: Optional[NetworkPostureDetector] = None
+        self.windows_executor: Optional[WindowsExecutor] = None
         self.enabled_runbooks: List[str] = []  # Runbooks enabled for this appliance
         self.running = False
         self._last_rules_sync = datetime.min.replace(tzinfo=timezone.utc)
         self._last_windows_scan = datetime.min.replace(tzinfo=timezone.utc)
+        self._last_linux_scan = datetime.min.replace(tzinfo=timezone.utc)
+        self._last_network_posture_scan = datetime.min.replace(tzinfo=timezone.utc)
         self._rules_sync_interval = 3600  # Sync rules every hour
+        self._linux_scan_interval = 300  # Scan Linux targets every 5 minutes
+        self._network_posture_interval = 600  # Network posture scan every 10 minutes
         self._windows_scan_interval = 300  # Scan Windows every 5 minutes
 
         # Three-tier healing components
@@ -321,9 +345,17 @@ class ApplianceAgent:
 
                 # Configure sensor API with healing dependencies
                 if self._sensor_enabled:
+                    # Configure Windows sensor healing
                     configure_sensor_healing(
                         auto_healer=self.auto_healer,
                         windows_targets=self.windows_targets,
+                        incident_db=self.incident_db,
+                        config=self.config
+                    )
+                    # Configure Linux sensor healing
+                    configure_linux_healing(
+                        linux_healer=self.auto_healer,
+                        linux_targets=self.linux_targets,
                         incident_db=self.incident_db,
                         config=self.config
                     )
@@ -373,19 +405,26 @@ class ApplianceAgent:
         """
         Start the sensor API web server for dual-mode architecture.
 
-        Windows sensors push drift events to this endpoint instead of
-        the appliance polling via WinRM.
+        Windows sensors push drift events to /api/sensor/* endpoints.
+        Linux sensors push drift events to /sensor/* endpoints.
         """
         try:
+            # Set Linux sensor scripts directory
+            sensor_scripts_dir = Path(__file__).parent.parent.parent / "sensor" / "linux"
+            set_sensor_scripts_dir(sensor_scripts_dir)
+
             # Create FastAPI app for sensor endpoints
             sensor_app = FastAPI(
                 title="OsirisCare Sensor API",
-                description="Receives drift events from Windows sensors",
+                description="Receives drift events from Windows and Linux sensors",
                 version=VERSION
             )
 
-            # Include sensor router
+            # Include Windows sensor router (prefix: /api/sensor)
             sensor_app.include_router(sensor_router)
+
+            # Include Linux sensor router (prefix: /sensor)
+            sensor_app.include_router(linux_sensor_router)
 
             # Health check endpoint
             @sensor_app.get("/health")
@@ -439,6 +478,8 @@ class ApplianceAgent:
             logger.debug(f"[{timestamp}] Checkin OK")
             # Update Windows targets from server response (credential pull)
             await self._update_windows_targets_from_response(checkin_response)
+            # Update Linux targets from server response (credential pull)
+            await self._update_linux_targets_from_response(checkin_response)
             # Update enabled runbooks from server response (runbook config pull)
             self._update_enabled_runbooks_from_response(checkin_response)
         else:
@@ -456,7 +497,14 @@ class ApplianceAgent:
         if self.windows_targets:
             await self._maybe_scan_windows()
 
-        # 5. Process pending orders (remote commands/updates)
+        # 5. Run Linux device scans (periodically)
+        if self.linux_targets:
+            await self._maybe_scan_linux()
+
+        # 6. Run network posture scan (periodically)
+        await self._maybe_scan_network_posture()
+
+        # 7. Process pending orders (remote commands/updates)
         await self._process_pending_orders()
 
     async def _get_compliance_summary(self) -> dict:
@@ -617,14 +665,21 @@ class ApplianceAgent:
 
     async def _init_healing_system(self):
         """Initialize the three-tier auto-healing system."""
+        # Check if L2 is enabled and has an API key
+        l2_enabled = getattr(self.config, 'l2_enabled', False) and bool(getattr(self.config, 'l2_api_key', ''))
+
         # Create config for AutoHealer
         healer_config = AutoHealerConfig(
             db_path=str(self.config.state_dir / "incidents.db"),
             rules_dir=self.config.rules_dir,
             enable_level1=True,
-            enable_level2=False,  # No local LLM on appliance
+            enable_level2=l2_enabled,
             enable_level3=True,
             dry_run=self._healing_dry_run,
+            # L2 LLM settings
+            api_provider=getattr(self.config, 'l2_api_provider', 'anthropic'),
+            api_model=getattr(self.config, 'l2_api_model', 'claude-3-5-haiku-latest'),
+            api_key=getattr(self.config, 'l2_api_key', None),
         )
 
         # Create AutoHealer orchestrator (handles all initialization internally)
@@ -970,6 +1025,51 @@ class ApplianceAgent:
             self.windows_targets = new_targets
             logger.info(f"Updated {len(new_targets)} Windows targets from Central Command")
 
+    async def _update_linux_targets_from_response(self, response: Dict):
+        """
+        Update Linux targets from server check-in response.
+
+        Uses credential-pull architecture just like Windows targets.
+        Linux credentials can be SSH password or SSH key based.
+        """
+        linux_targets = response.get('linux_targets', [])
+
+        if not linux_targets:
+            return
+
+        # Convert to LinuxTarget objects
+        new_targets = []
+        for target_cfg in linux_targets:
+            hostname = target_cfg.get('hostname')
+            if not hostname:
+                continue
+
+            try:
+                target = LinuxTarget(
+                    hostname=hostname,
+                    port=target_cfg.get('port', 22),
+                    username=target_cfg.get('username', 'root'),
+                    password=target_cfg.get('password'),
+                    private_key=target_cfg.get('private_key'),
+                    distro=target_cfg.get('distro'),
+                )
+                new_targets.append(target)
+            except Exception as e:
+                logger.warning(f"Invalid Linux target from server: {e}")
+
+        if new_targets:
+            # Replace targets with server-provided ones
+            self.linux_targets = new_targets
+
+            # Recreate executor and drift detector with new targets
+            self.linux_executor = LinuxExecutor(self.linux_targets)
+            self.linux_drift_detector = LinuxDriftDetector(
+                targets=self.linux_targets,
+                executor=self.linux_executor
+            )
+
+            logger.info(f"Updated {len(new_targets)} Linux targets from Central Command")
+
     def _update_enabled_runbooks_from_response(self, response: Dict):
         """
         Update enabled runbooks from server check-in response.
@@ -1244,6 +1344,228 @@ class ApplianceAgent:
             logger.error(f"Failed to scan Windows target {target.hostname}: {e}")
 
     # =========================================================================
+    # Linux Scanning (SSH-based)
+    # =========================================================================
+
+    async def _maybe_scan_linux(self):
+        """
+        Scan Linux targets if enough time has passed.
+
+        Uses LinuxDriftDetector with SSH via asyncssh for Linux/Unix servers.
+        """
+        now = datetime.now(timezone.utc)
+        elapsed = (now - self._last_linux_scan).total_seconds()
+
+        if elapsed < self._linux_scan_interval:
+            return
+
+        if not self.linux_targets:
+            return
+
+        if not self.linux_drift_detector:
+            # Initialize detector if not already done
+            self.linux_executor = LinuxExecutor(self.linux_targets)
+            self.linux_drift_detector = LinuxDriftDetector(
+                targets=self.linux_targets,
+                executor=self.linux_executor
+            )
+
+        logger.info(f"Scanning {len(self.linux_targets)} Linux targets...")
+
+        try:
+            # Run drift detection on all targets
+            drift_results = await self.linux_drift_detector.detect_all()
+
+            # Submit evidence for each result
+            for drift in drift_results:
+                evidence_data = drift.to_dict()
+                evidence_json = json.dumps(evidence_data, sort_keys=True)
+                bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
+
+                # Sign if signer available
+                agent_signature = None
+                if self.signer:
+                    try:
+                        signature_bytes = self.signer.sign(evidence_json)
+                        agent_signature = signature_bytes.hex()
+                    except Exception as e:
+                        logger.warning(f"Failed to sign Linux evidence: {e}")
+
+                await self.client.submit_evidence(
+                    bundle_hash=bundle_hash,
+                    check_type=f"linux_{drift.check_type}",
+                    check_result="pass" if drift.compliant else "fail",
+                    evidence_data=evidence_data,
+                    host=drift.target,
+                    hipaa_control=drift.hipaa_controls[0] if drift.hipaa_controls else "164.312(b)",
+                    agent_signature=agent_signature
+                )
+
+                logger.debug(f"Linux {drift.runbook_id} on {drift.target}: {'pass' if drift.compliant else 'fail'}")
+
+                # If drift detected and L1-eligible, attempt auto-remediation
+                if not drift.compliant and drift.l1_eligible and self.auto_healer:
+                    try:
+                        raw_data = {
+                            "check_type": drift.check_type,
+                            "drift_detected": True,
+                            "status": "fail",
+                            "details": evidence_data,
+                            "host": drift.target,
+                            "runbook_id": drift.runbook_id,
+                            "distro": drift.distro,
+                        }
+                        logger.info(f"Linux drift detected, attempting healing: {drift.runbook_id} on {drift.target}")
+                        heal_result = await self.auto_healer.heal(
+                            site_id=self.config.site_id,
+                            host_id=drift.target,
+                            incident_type=drift.check_type,
+                            severity=drift.severity,
+                            raw_data=raw_data,
+                        )
+                        if heal_result.success:
+                            logger.info(f"Linux healing succeeded: {heal_result.resolution_level} - {heal_result.action_taken}")
+                        else:
+                            logger.warning(f"Linux healing failed: {heal_result.error}")
+                    except Exception as heal_err:
+                        logger.warning(f"Linux healing attempt failed for {drift.runbook_id}: {heal_err}")
+
+            # Log summary
+            compliant_count = sum(1 for d in drift_results if d.compliant)
+            drift_count = sum(1 for d in drift_results if not d.compliant)
+            logger.info(f"Linux scan complete: {compliant_count} compliant, {drift_count} drifted")
+
+        except Exception as e:
+            logger.error(f"Linux drift detection failed: {e}")
+
+        self._last_linux_scan = now
+
+    # =========================================================================
+    # Network Posture Scanning (Linux + Windows)
+    # =========================================================================
+
+    async def _maybe_scan_network_posture(self):
+        """
+        Scan network posture if enough time has passed.
+
+        Checks listening ports, prohibited services, external bindings,
+        and DNS resolvers on both Linux and Windows targets.
+        """
+        now = datetime.now(timezone.utc)
+        elapsed = (now - self._last_network_posture_scan).total_seconds()
+
+        if elapsed < self._network_posture_interval:
+            return
+
+        # Need at least one target type
+        if not self.linux_targets and not self.windows_targets:
+            return
+
+        # Initialize detector if needed
+        if not self.network_posture_detector:
+            self.network_posture_detector = NetworkPostureDetector()
+
+        logger.info("Starting network posture scan...")
+
+        results = []
+
+        # Scan Linux targets
+        if self.linux_targets and self.linux_executor:
+            for target in self.linux_targets:
+                try:
+                    result = await self.network_posture_detector.detect_linux(
+                        self.linux_executor, target
+                    )
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Network posture scan failed for Linux {target.hostname}: {e}")
+
+        # Scan Windows targets
+        if self.windows_targets:
+            # Initialize Windows executor if needed
+            if not self.windows_executor:
+                self.windows_executor = WindowsExecutor(self.windows_targets)
+
+            for target in self.windows_targets:
+                try:
+                    result = await self.network_posture_detector.detect_windows(
+                        self.windows_executor, target
+                    )
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Network posture scan failed for Windows {target.hostname}: {e}")
+
+        # Submit evidence for each result
+        for result in results:
+            try:
+                evidence_data = result.to_dict()
+                evidence_json = json.dumps(evidence_data, sort_keys=True)
+                bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
+
+                # Sign if signer available
+                agent_signature = None
+                if self.signer:
+                    try:
+                        signature_bytes = self.signer.sign(evidence_json)
+                        agent_signature = signature_bytes.hex()
+                    except Exception as e:
+                        logger.warning(f"Failed to sign network posture evidence: {e}")
+
+                await self.client.submit_evidence(
+                    bundle_hash=bundle_hash,
+                    check_type=f"network_posture_{result.os_type}",
+                    check_result="pass" if result.compliant else "fail",
+                    evidence_data=evidence_data,
+                    host=result.target,
+                    hipaa_control=result.hipaa_controls[0] if result.hipaa_controls else "164.312(e)(1)",
+                    agent_signature=agent_signature
+                )
+
+                status = "compliant" if result.compliant else f"drifted ({len(result.drift_items)} issues)"
+                logger.debug(f"Network posture {result.target}: {status}")
+
+                # If non-compliant and healing enabled, attempt remediation for prohibited ports
+                if not result.compliant and result.prohibited_ports and self.auto_healer:
+                    for prohibited in result.prohibited_ports:
+                        try:
+                            raw_data = {
+                                "check_type": "network_posture",
+                                "drift_detected": True,
+                                "status": "fail",
+                                "details": {
+                                    "port": prohibited.get("port"),
+                                    "process": prohibited.get("process"),
+                                    "description": prohibited.get("description"),
+                                },
+                                "host": result.target,
+                                "os_type": result.os_type,
+                            }
+                            logger.info(f"Prohibited port detected, attempting healing: port {prohibited.get('port')} on {result.target}")
+                            heal_result = await self.auto_healer.heal(
+                                site_id=self.config.site_id,
+                                host_id=result.target,
+                                incident_type="prohibited_port",
+                                severity="high",
+                                raw_data=raw_data,
+                            )
+                            if heal_result.success:
+                                logger.info(f"Network posture healing succeeded: {heal_result.action_taken}")
+                            else:
+                                logger.warning(f"Network posture healing failed: {heal_result.error}")
+                        except Exception as heal_err:
+                            logger.warning(f"Network posture healing attempt failed: {heal_err}")
+
+            except Exception as e:
+                logger.error(f"Failed to submit network posture evidence for {result.target}: {e}")
+
+        # Log summary
+        compliant_count = sum(1 for r in results if r.compliant)
+        drift_count = sum(1 for r in results if not r.compliant)
+        logger.info(f"Network posture scan complete: {compliant_count} compliant, {drift_count} with issues")
+
+        self._last_network_posture_scan = now
+
+    # =========================================================================
     # Order Processing (remote commands and updates)
     # =========================================================================
 
@@ -1302,6 +1624,8 @@ class ApplianceAgent:
             'view_logs': self._handle_view_logs,
             'deploy_sensor': self._handle_deploy_sensor,
             'remove_sensor': self._handle_remove_sensor,
+            'deploy_linux_sensor': self._handle_deploy_linux_sensor,
+            'remove_linux_sensor': self._handle_remove_linux_sensor,
             'sensor_status': self._handle_sensor_status,
         }
 
@@ -1550,14 +1874,140 @@ Environment="PYTHONPATH={overlay_dir}"
             logger.error(f"Sensor removal failed: {e}")
             return {"error": str(e)}
 
+    async def _handle_deploy_linux_sensor(self, params: Dict) -> Dict:
+        """
+        Deploy Linux sensor to a target host via SSH.
+
+        Parameters:
+            hostname: Target Linux hostname
+        """
+        hostname = params.get('hostname')
+        if not hostname:
+            return {"error": "hostname is required"}
+
+        # Find matching target with credentials
+        target = None
+        for t in self.linux_targets:
+            if (t.hostname.lower() == hostname.lower() or
+                hostname.lower() in t.hostname.lower()):
+                target = t
+                break
+
+        if not target:
+            return {"error": f"No SSH credentials found for {hostname}"}
+
+        try:
+            # Get appliance IP for sensor to report to
+            appliance_ip = get_ip_addresses()[0] if get_ip_addresses() else "127.0.0.1"
+            appliance_url = f"https://{appliance_ip}:{self._sensor_port}"
+
+            # Generate sensor credentials
+            from .sensor_linux import generate_sensor_credentials
+            sensor_id, api_key = generate_sensor_credentials()
+
+            # Build install command
+            install_cmd = (
+                f"curl -sSL --insecure {appliance_url}/sensor/install.sh | "
+                f"bash -s -- --sensor-id {sensor_id} --api-key {api_key} "
+                f"--appliance-url {appliance_url}"
+            )
+
+            # Execute via SSH
+            result = await self.linux_executor.run_command(target, install_cmd)
+
+            if result.exit_code == 0:
+                logger.info(f"Linux sensor deployed to {hostname} (sensor_id: {sensor_id})")
+                return {
+                    "status": "deployed",
+                    "hostname": hostname,
+                    "sensor_id": sensor_id
+                }
+            else:
+                return {
+                    "error": f"Deployment failed: {result.stderr}",
+                    "stdout": result.stdout
+                }
+
+        except Exception as e:
+            logger.error(f"Linux sensor deployment failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_remove_linux_sensor(self, params: Dict) -> Dict:
+        """
+        Remove Linux sensor from a target host via SSH.
+
+        Parameters:
+            hostname: Target Linux hostname
+        """
+        hostname = params.get('hostname')
+        if not hostname:
+            return {"error": "hostname is required"}
+
+        # Find matching target with credentials
+        target = None
+        for t in self.linux_targets:
+            if (t.hostname.lower() == hostname.lower() or
+                hostname.lower() in t.hostname.lower()):
+                target = t
+                break
+
+        if not target:
+            return {"error": f"No SSH credentials found for {hostname}"}
+
+        try:
+            # Get appliance URL
+            appliance_ip = get_ip_addresses()[0] if get_ip_addresses() else "127.0.0.1"
+            appliance_url = f"https://{appliance_ip}:{self._sensor_port}"
+
+            # Build uninstall command (non-interactive)
+            uninstall_cmd = (
+                f"curl -sSL --insecure {appliance_url}/sensor/uninstall.sh | "
+                f"bash -s -- --force"
+            )
+
+            # Execute via SSH
+            result = await self.linux_executor.run_command(target, uninstall_cmd)
+
+            if result.exit_code == 0:
+                logger.info(f"Linux sensor removed from {hostname}")
+                # Clear from sensor registry
+                from .sensor_linux import linux_sensor_registry
+                for sensor_id in list(linux_sensor_registry.keys()):
+                    if linux_sensor_registry[sensor_id].hostname.lower() == hostname.lower():
+                        del linux_sensor_registry[sensor_id]
+                        break
+                return {"status": "removed", "hostname": hostname}
+            else:
+                return {
+                    "error": f"Removal failed: {result.stderr}",
+                    "stdout": result.stdout
+                }
+
+        except Exception as e:
+            logger.error(f"Linux sensor removal failed: {e}")
+            return {"error": str(e)}
+
     async def _handle_sensor_status(self, params: Dict) -> Dict:
-        """Return current sensor status."""
-        stats = get_dual_mode_stats()
+        """Return current sensor status for both Windows and Linux."""
+        combined_stats = get_combined_sensor_stats()
+        windows_stats = combined_stats.get("windows", {})
+        linux_stats = combined_stats.get("linux", {})
+
         return {
-            "sensors": stats,
-            "targets_with_sensors": len(stats["sensor_hostnames"]),
-            "targets_needing_poll": len(self._get_targets_needing_poll()),
-            "total_targets": len(self.windows_targets),
+            "windows": {
+                "sensors": windows_stats,
+                "targets_with_sensors": len(windows_stats.get("sensor_hostnames", [])),
+                "targets_needing_poll": len(self._get_targets_needing_poll()),
+                "total_targets": len(self.windows_targets),
+            },
+            "linux": {
+                "sensors": linux_stats,
+                "targets_with_sensors": len(linux_stats.get("sensor_hostnames", [])),
+                "targets_needing_poll": len(get_linux_polling_hosts([t.hostname for t in self.linux_targets])),
+                "total_targets": len(self.linux_targets),
+            },
+            "total_active_sensors": combined_stats.get("total_active_sensors", 0),
+            "all_sensor_hostnames": combined_stats.get("all_sensor_hostnames", []),
         }
 
 
