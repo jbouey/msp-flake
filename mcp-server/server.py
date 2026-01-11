@@ -106,12 +106,18 @@ app = FastAPI(
 
 # Include routers from central-command backend
 import sys
-_backend_path = os.path.join(os.path.dirname(__file__), "central-command", "backend")
-if _backend_path not in sys.path:
-    sys.path.insert(0, _backend_path)
+# Try both possible paths (local dev and container deployment)
+_backend_paths = [
+    os.path.join(os.path.dirname(__file__), "central-command", "backend"),
+    os.path.join(os.path.dirname(__file__), "dashboard_api"),
+]
+for _backend_path in _backend_paths:
+    if os.path.isdir(_backend_path) and _backend_path not in sys.path:
+        sys.path.insert(0, _backend_path)
+        break
 
 try:
-    from routes import router as dashboard_router
+    from routes import router as dashboard_router, auth_router
     from portal import router as portal_router
     from sites import router as sites_router, orders_router, appliances_router, alerts_router
     from partners import router as partners_router
@@ -120,7 +126,10 @@ try:
     from runbook_config import router as runbook_config_router
     from sensors import router as sensors_router
     from notifications import router as notifications_router, escalations_router
+    from users import router as users_router
     app.include_router(dashboard_router)
+    app.include_router(auth_router)  # Admin authentication endpoints
+    app.include_router(users_router)  # User management (RBAC)
     app.include_router(portal_router)
     app.include_router(sites_router)
     app.include_router(orders_router)  # Order lifecycle (acknowledge/complete)
@@ -133,7 +142,7 @@ try:
     app.include_router(sensors_router)  # Sensor management for dual-mode architecture
     app.include_router(notifications_router)  # Partner notification settings
     app.include_router(escalations_router)  # Agent L3 escalations to partners
-    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations)")
+    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users)")
 except ImportError as e:
     print(f"⚠ Could not import central-command routers: {e}")
 
@@ -834,11 +843,84 @@ async def agent_checkin(checkin: AgentCheckin):
     except Exception as e:
         print(f"⚠ Failed to fetch Windows targets for {checkin.site_id}: {e}")
 
+    # Fetch Linux targets with SSH credentials for this site
+    linux_targets = []
+    try:
+        import json as json_module
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            # Get SSH credentials for this site
+            linux_creds = await conn.fetch("""
+                SELECT credential_type, credential_name, encrypted_data
+                FROM site_credentials
+                WHERE site_id = $1
+                AND credential_type IN ('ssh_password', 'ssh_key')
+                ORDER BY created_at DESC
+            """, checkin.site_id)
+
+            # Get site internal ID for discovered assets query
+            site = await conn.fetchrow("""
+                SELECT id FROM sites WHERE site_id = $1
+            """, checkin.site_id)
+
+            linux_assets = []
+            if site:
+                # Get discovered assets with SSH port or linux asset type
+                linux_assets = await conn.fetch("""
+                    SELECT ip_address, hostname, open_ports
+                    FROM discovered_assets
+                    WHERE site_id = $1
+                    AND (
+                        22 = ANY(open_ports) OR
+                        asset_type IN ('linux_server', 'unix_server', 'appliance')
+                    )
+                    AND monitoring_status = 'monitored'
+                """, site['id'])
+
+            # Build linux_targets list
+            for cred in linux_creds:
+                try:
+                    cred_data = json_module.loads(bytes(cred['encrypted_data']).decode())
+                    hostname = cred_data.get('host') or cred_data.get('target_host')
+                    port = cred_data.get('port', 22)
+                    username = cred_data.get('username', 'root')
+                    password = cred_data.get('password')
+                    private_key = cred_data.get('private_key')
+                    distro = cred_data.get('distro')
+
+                    target_entry = {
+                        "hostname": hostname,
+                        "port": port,
+                        "username": username,
+                    }
+                    if password:
+                        target_entry["password"] = password
+                    if private_key:
+                        target_entry["private_key"] = private_key
+                    if distro:
+                        target_entry["distro"] = distro
+
+                    if hostname:
+                        linux_targets.append(target_entry)
+                    elif linux_assets:
+                        # Use discovered assets with this credential
+                        for asset in linux_assets:
+                            linux_targets.append({
+                                **target_entry,
+                                "hostname": str(asset['ip_address']),
+                            })
+                except Exception as e:
+                    print(f"⚠ Failed to parse Linux credential: {e}")
+                    continue
+    except Exception as e:
+        print(f"⚠ Failed to fetch Linux targets for {checkin.site_id}: {e}")
+
     return {
         "status": "ok",
         "server_time": datetime.now(timezone.utc).isoformat(),
         "orders": pending_orders,
         "windows_targets": windows_targets,
+        "linux_targets": linux_targets,
     }
 
 

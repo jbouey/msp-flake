@@ -77,7 +77,16 @@ router = APIRouter(
 
 # Database session dependency
 async def get_db():
-    from main import async_session
+    # Try multiple import paths for flexibility
+    try:
+        from main import async_session
+    except ImportError:
+        import sys
+        if 'server' in sys.modules and hasattr(sys.modules['server'], 'async_session'):
+            async_session = sys.modules['server'].async_session
+        else:
+            raise RuntimeError("Database session not configured")
+
     async with async_session() as session:
         yield session
 

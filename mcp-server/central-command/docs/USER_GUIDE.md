@@ -2,8 +2,8 @@
 
 ## Malachor MSP Compliance Platform
 
-**Version:** 1.0.0
-**Last Updated:** December 30, 2025
+**Version:** 1.1.0
+**Last Updated:** January 8, 2026
 
 ---
 
@@ -34,9 +34,9 @@ Central Command is accessed via web browser at your organization's designated UR
 
 **Default Administrator Account:**
 - Username: `admin`
-- Password: `admin`
+- Password: Set via environment variable `ADMIN_INITIAL_PASSWORD` or `admin123` for development
 
-> **Important:** Change the default password immediately after first login.
+> **Important:** Change the default password immediately after first login. Use the Users page to invite additional administrators with secure email-based password setup.
 
 ### Dashboard Layout
 
@@ -196,10 +196,64 @@ Administrators can export logs to CSV:
 
 ### User Roles
 
-| Role | Permissions |
-|------|-------------|
-| Admin | Full access including audit logs, user management |
-| Operator | Standard access to dashboard, clients, runbooks |
+Central Command uses a three-tier Role-Based Access Control (RBAC) system:
+
+| Role | View | Execute Actions | Manage Users | Audit Logs |
+|------|------|-----------------|--------------|------------|
+| Admin | ✅ All | ✅ All | ✅ Yes | ✅ Yes |
+| Operator | ✅ All | ✅ Yes | ❌ No | ❌ No |
+| Readonly | ✅ All | ❌ No | ❌ No | ❌ No |
+
+**Admin:** Full access to all features including user management, partners, and audit logs.
+
+**Operator:** Can view dashboards, execute runbooks, acknowledge alerts, but cannot manage users or view audit logs.
+
+**Readonly:** Can only view dashboards and data. Cannot execute any actions.
+
+### Managing Users (Admin Only)
+
+Navigate to **Users** in the sidebar to access user management.
+
+#### Inviting New Users
+
+1. Click the "Invite User" button
+2. Enter the user's email address
+3. Enter their display name
+4. Select their role (Admin, Operator, or Readonly)
+5. Click "Send Invite"
+
+The user will receive an email with a link to set their password.
+
+#### Pending Invites
+
+The "Pending Invites" tab shows all outstanding invitations with options to:
+- **Resend:** Send the invite email again
+- **Revoke:** Cancel the invitation
+
+#### Managing Existing Users
+
+Click any user row to:
+- Change their role
+- Activate/deactivate their account
+- Send a password reset email
+
+### Password Management
+
+#### Changing Your Password
+
+1. Navigate to Users page
+2. Find your account
+3. Click "Reset Password"
+4. You'll receive an email with a password reset link
+
+#### Setting Password (New Users)
+
+When you receive an invite email:
+1. Click the link in the email
+2. Enter your new password (minimum 8 characters)
+3. Confirm your password
+4. Click "Create Account"
+5. You'll be redirected to log in
 
 ### Signing Out
 
@@ -209,8 +263,8 @@ Administrators can export logs to CSV:
 ### Session Management
 
 - Sessions persist across browser refreshes
-- Sessions are stored locally in the browser
-- Closing all browser windows does not automatically log you out
+- Sessions are stored in the database (not browser-only)
+- Session tokens expire after 7 days of inactivity
 
 ---
 

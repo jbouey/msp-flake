@@ -374,8 +374,20 @@ async def require_auth(request: Request) -> Dict[str, Any]:
 
     token = auth_header[7:]
 
-    # Get database session
-    from main import async_session
+    # Get database session - try multiple import paths for flexibility
+    try:
+        from main import async_session
+    except ImportError:
+        # Fallback: try importing from the server module's globals
+        import sys
+        if 'server' in sys.modules and hasattr(sys.modules['server'], 'async_session'):
+            async_session = sys.modules['server'].async_session
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Database session not configured",
+            )
+
     async with async_session() as db:
         user = await validate_session(db, token)
 
@@ -401,3 +413,43 @@ async def require_admin(user: Dict[str, Any] = Depends(require_auth)) -> Dict[st
             detail="Admin access required",
         )
     return user
+
+
+async def require_operator(user: Dict[str, Any] = Depends(require_auth)) -> Dict[str, Any]:
+    """Dependency that requires operator or admin role.
+
+    Operators can execute actions but cannot manage users/partners.
+
+    Raises:
+        HTTPException: 403 if user is readonly
+    """
+    if user.get("role") not in ("admin", "operator"):
+        raise HTTPException(
+            status_code=403,
+            detail="Operator access required",
+        )
+    return user
+
+
+def require_role(*allowed_roles: str):
+    """Factory for creating role-based dependencies.
+
+    Usage:
+        @router.get("/endpoint")
+        async def protected_route(user: dict = Depends(require_role("admin", "operator"))):
+            ...
+
+    Args:
+        *allowed_roles: Role names that are allowed to access the route
+
+    Returns:
+        FastAPI dependency that validates user role
+    """
+    async def role_dependency(user: Dict[str, Any] = Depends(require_auth)) -> Dict[str, Any]:
+        if user.get("role") not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access requires one of: {', '.join(allowed_roles)}",
+            )
+        return user
+    return role_dependency
