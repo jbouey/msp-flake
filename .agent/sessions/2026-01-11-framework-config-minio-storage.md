@@ -105,7 +105,13 @@ curl -s https://api.osiriscare.net/api/frameworks/metadata | jq .
 **VMs Running:** Yes (both appliances online)
 **Tests Passing:** 656/656
 **Web UI Status:** Working
-**Last Commit:** Pending (this session's changes)
+**Last Commit:** ef1b074 (pushed to main)
+
+## ISO v21 Built
+- **Location (VPS):** `/root/msp-iso-build/result-iso-v21/iso/osiriscare-appliance.iso`
+- **Size:** 1.1GB
+- **SHA256:** `a705e25d06a7f86becf1afc207d06da0342d1747f7ab4c1740290b91a072e0e9`
+- **Agent Version:** v1.0.23
 
 ---
 
