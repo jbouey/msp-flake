@@ -926,6 +926,22 @@ class ApplianceAgent:
             **check_result.get("details", {})
         }
 
+        # Report incident to Central Command so it appears in dashboard
+        try:
+            await self.client.report_incident(
+                incident_type=check_name,
+                severity=severity,
+                check_type=check_name,
+                details={
+                    "message": f"Drift detected: {check_name}",
+                    "status": status,
+                    **check_result.get("details", {})
+                },
+                pre_state=check_result.get("details", {}),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to report incident to Central Command: {e}")
+
         # Handle through three-tier system (heal() creates incident internally)
         try:
             result = await self.auto_healer.heal(

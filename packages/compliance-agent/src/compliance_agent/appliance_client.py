@@ -317,6 +317,64 @@ class CentralCommandClient:
         return status == 200
 
     # =========================================================================
+    # Incident Reporting
+    # =========================================================================
+
+    async def report_incident(
+        self,
+        incident_type: str,
+        severity: str,
+        check_type: str,
+        details: Dict[str, Any],
+        pre_state: Optional[Dict[str, Any]] = None,
+        hipaa_controls: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Report an incident to Central Command.
+
+        This creates an incident record in the dashboard and may trigger
+        a remediation order if a matching runbook is found.
+
+        Args:
+            incident_type: Type of incident (e.g., "ntp_sync", "firewall")
+            severity: Severity level ("low", "medium", "high", "critical")
+            check_type: The check that detected the issue
+            details: Additional details about the incident
+            pre_state: State before the incident
+            hipaa_controls: List of HIPAA controls affected
+
+        Returns:
+            Response dict with incident_id, resolution_level, etc.
+            or None if the request failed.
+        """
+        payload = {
+            "site_id": self.config.site_id,
+            "host_id": get_hostname(),
+            "incident_type": incident_type,
+            "severity": severity,
+            "check_type": check_type,
+            "details": details,
+            "pre_state": pre_state or {},
+            "hipaa_controls": hipaa_controls or ["164.308(a)(1)(i)"],
+        }
+
+        status, response = await self._request(
+            'POST',
+            '/incidents',
+            json_data=payload
+        )
+
+        if status == 200 and response:
+            logger.info(f"Incident reported: {response.get('incident_id', 'N/A')}")
+            return response
+        elif status == 429:
+            logger.warning("Incident reporting rate limited")
+            return None
+        else:
+            logger.warning(f"Failed to report incident: {status}")
+            return None
+
+    # =========================================================================
     # Health Check
     # =========================================================================
 

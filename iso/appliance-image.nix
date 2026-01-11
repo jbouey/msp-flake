@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.22";  # Session 21 - OTS blockchain anchoring
+    version = "1.0.23";  # Session 24 - Dashboard events + incident reporting
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
@@ -128,7 +128,7 @@ in
     useDHCP = true;
     firewall = {
       enable = true;
-      allowedTCPPorts = [ 80 22 ];  # Status page + SSH
+      allowedTCPPorts = [ 80 22 8080 ];  # Status page + SSH + Sensor API
       allowedUDPPorts = [ 5353 ];   # mDNS
       # No other inbound - pull-only architecture
     };

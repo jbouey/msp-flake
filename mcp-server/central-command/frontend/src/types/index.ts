@@ -123,6 +123,26 @@ export interface IncidentDetail extends Incident {
 }
 
 // =============================================================================
+// EVENT MODELS (Compliance Bundles)
+// =============================================================================
+
+export interface ComplianceEvent {
+  id: string;
+  site_id: string;
+  hostname: string;
+  check_type: string;
+  check_name?: string;
+  outcome: string;
+  severity: Severity;
+  resolution_level?: string;
+  resolved: boolean;
+  resolved_at?: string;
+  hipaa_controls: string[];
+  created_at: string;
+  source: 'compliance_bundle';
+}
+
+// =============================================================================
 // RUNBOOK MODELS
 // =============================================================================
 

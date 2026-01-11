@@ -121,6 +121,76 @@ async def get_incidents_from_db(
     } for row in rows]
 
 
+async def get_events_from_db(
+    db: AsyncSession,
+    site_id: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """
+    Get recent events from compliance_bundles.
+
+    This includes drift detections and other compliance checks.
+    Provides visibility into appliance activity when no incidents exist.
+    """
+    query_str = """
+        SELECT
+            cb.bundle_id as id,
+            cb.site_id,
+            cb.check_type,
+            cb.check_name,
+            cb.outcome,
+            cb.hipaa_controls,
+            cb.healing_result,
+            cb.created_at
+        FROM compliance_bundles cb
+        WHERE 1=1
+    """
+
+    params = {}
+    if site_id:
+        query_str += " AND cb.site_id = :site_id"
+        params["site_id"] = site_id
+
+    query_str += " ORDER BY cb.created_at DESC LIMIT :limit"
+    params["limit"] = limit
+
+    result = await db.execute(text(query_str), params)
+    rows = result.fetchall()
+
+    events = []
+    for row in rows:
+        # Determine severity from outcome and healing result
+        outcome = row.outcome or "unknown"
+        healing = row.healing_result or {}
+
+        if outcome == "fail" or outcome == "warning":
+            severity = "medium"
+            if isinstance(healing, dict) and healing.get("success") is False:
+                severity = "high"
+        elif outcome == "error":
+            severity = "critical"
+        else:
+            severity = "low"
+
+        events.append({
+            "id": row.id,
+            "site_id": row.site_id,
+            "hostname": "",
+            "check_type": row.check_type or row.check_name or "drift",
+            "check_name": row.check_name,
+            "outcome": outcome,
+            "severity": severity,
+            "resolution_level": healing.get("resolution_level") if isinstance(healing, dict) else None,
+            "resolved": outcome == "pass",
+            "resolved_at": row.created_at if outcome == "pass" else None,
+            "hipaa_controls": row.hipaa_controls or [],
+            "created_at": row.created_at,
+            "source": "compliance_bundle",
+        })
+
+    return events
+
+
 async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
     """Get learning loop statistics."""
     # Count L1 rules

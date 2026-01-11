@@ -3,14 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '../components/shared';
 import { FleetOverview, HealthGauge } from '../components/fleet';
 import { IncidentFeed } from '../components/incidents';
-import { useFleet, useIncidents, useGlobalStats, useLearningStatus } from '../hooks';
+import { EventFeed } from '../components/events';
+import { useFleet, useIncidents, useEvents, useGlobalStats, useLearningStatus } from '../hooks';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
 
-  // Fetch data with 30-second polling
+  // Fetch data with 60-second polling
   const { data: clients = [], isLoading: fleetLoading, error: fleetError } = useFleet();
   const { data: incidents = [], isLoading: incidentsLoading, error: incidentsError } = useIncidents({ limit: 10 });
+  const { data: events = [], isLoading: eventsLoading, error: eventsError } = useEvents({ limit: 10 });
   const { data: stats, isLoading: statsLoading } = useGlobalStats();
   const { data: learning, isLoading: learningLoading } = useLearningStatus();
 
@@ -98,16 +100,26 @@ export const Dashboard: React.FC = () => {
         />
       </GlassCard>
 
-      {/* Incidents */}
-      <IncidentFeed
-        incidents={incidents}
-        isLoading={incidentsLoading}
-        error={incidentsError as Error | null}
-        title="Recent Incidents"
-        showViewAll={true}
-        limit={5}
-        compact={true}
-      />
+      {/* Incidents and Events */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <IncidentFeed
+          incidents={incidents}
+          isLoading={incidentsLoading}
+          error={incidentsError as Error | null}
+          title="Incidents"
+          showViewAll={true}
+          limit={5}
+          compact={true}
+        />
+        <EventFeed
+          events={events}
+          isLoading={eventsLoading}
+          error={eventsError as Error | null}
+          title="Recent Activity"
+          limit={5}
+          compact={true}
+        />
+      </div>
 
       {/* Bottom row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

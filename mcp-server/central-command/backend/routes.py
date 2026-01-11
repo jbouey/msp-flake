@@ -53,6 +53,7 @@ from .fleet import get_mock_fleet_overview, get_mock_client_detail
 from .metrics import calculate_health_from_raw
 from .db_queries import (
     get_incidents_from_db,
+    get_events_from_db,
     get_learning_status_from_db,
     get_promotion_candidates_from_db,
     get_global_stats_from_db,
@@ -509,6 +510,33 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
         execution_log=None,
         created_at=row.created_at,
     )
+
+
+# =============================================================================
+# EVENTS ENDPOINTS (Compliance Bundles)
+# =============================================================================
+
+@router.get("/events")
+async def get_events(
+    site_id: Optional[str] = None,
+    limit: int = Query(default=50, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get recent events from compliance bundles.
+
+    This shows drift detections and compliance checks from appliances.
+    Unlike incidents which require explicit reporting, events are automatically
+    created for every compliance check run by the appliance.
+
+    Args:
+        site_id: Filter by client site
+        limit: Maximum number of results
+
+    Returns:
+        List of recent events with check results.
+    """
+    events = await get_events_from_db(db, site_id=site_id, limit=limit)
+    return events
 
 
 # =============================================================================
