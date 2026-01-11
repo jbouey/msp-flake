@@ -6,6 +6,8 @@ import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
 import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, Documentation, Partners, Notifications, NotificationSettings } from './pages';
+import Users from './pages/Users';
+import SetPassword from './pages/SetPassword';
 import { useFleet, useRefreshFleet, useCommandPalette } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PortalDashboard } from './portal/PortalDashboard';
@@ -31,6 +33,7 @@ const pageTitles: Record<string, string> = {
   '/notification-settings': 'Notification Settings',
   '/onboarding': 'Onboarding Pipeline',
   '/partners': 'Partners',
+  '/users': 'User Management',
   '/runbooks': 'Runbook Library',
   '/runbook-config': 'Runbook Configuration',
   '/learning': 'Learning Loop',
@@ -122,6 +125,7 @@ const AppLayout: React.FC = () => {
             <Route path="/notification-settings" element={<NotificationSettings />} />
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/partners" element={<Partners />} />
+            <Route path="/users" element={<Users />} />
             <Route path="/runbooks" element={<Runbooks />} />
             <Route path="/runbook-config" element={<RunbookConfig />} />
             <Route path="/learning" element={<Learning />} />
@@ -175,6 +179,9 @@ const App: React.FC = () => {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
+            {/* Public routes - no auth required */}
+            <Route path="/set-password" element={<SetPassword />} />
+
             {/* Portal routes - token or session auth */}
             <Route path="/portal/site/:siteId" element={<PortalLogin />} />
             <Route path="/portal/site/:siteId/dashboard" element={<PortalDashboard />} />
