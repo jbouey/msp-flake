@@ -3,7 +3,7 @@
 **Date:** 2026-01-11
 **Phase:** Phase 12 - Launch Readiness
 **Session:** 24 Continued - Dashboard Events + Migration 012 + ISO v21
-**Status:** Events display fixed, migration applied, ISO build pending
+**Status:** All complete - ISO v21 built (1.1GB, agent v1.0.23)
 
 ---
 
@@ -30,6 +30,24 @@ HIPAA compliance automation platform for healthcare SMBs. NixOS appliances phone
 ---
 
 ## Today's Session (2026-01-10 Session 24)
+
+### Part 0: Dashboard Events + ISO v21 (Session 24 Continued)
+
+**Dashboard Events Display Fix:**
+- Dashboard was showing old `incidents` table data instead of recent `compliance_bundles`
+- Added `report_incident()` to `appliance_client.py`
+- Added `/api/dashboard/events` endpoint sourcing from `compliance_bundles`
+- Created `EventFeed.tsx` component with real-time events
+- Dashboard now shows both Incidents and Events side-by-side
+
+**ISO v21 Built:**
+- Agent v1.0.23 with incident reporting + sensor API
+- Fixed VPS flake configuration (copied `flake-compliance.nix` → `flake.nix`)
+- Size: 1.1GB
+- SHA256: `a705e25d06a7f86becf1afc207d06da0342d1747f7ab4c1740290b91a072e0e9`
+- Location: `/root/msp-iso-build/result-iso-v21/iso/osiriscare-appliance.iso`
+
+---
 
 ### Part 1: Linux Sensor Dual-Mode Architecture
 
@@ -110,11 +128,16 @@ b8eb124 feat: Linux Sensor Dual-Mode Architecture (Session 24)
 
 ## What's Pending
 
+### ✅ Completed (Session 24 Continued)
+1. ~~Run migration 012~~ - Applied Linux sensor schema on VPS
+2. ~~Deploy VPS changes~~ - Docker rebuild with new backend code
+3. ~~Test Linux sensor~~ - End-to-end on real Linux host (endpoints now in v1.0.23)
+4. ~~Build ISO v21~~ - Agent v1.0.23, 1.1GB, ready for deployment
+
 ### Immediate (Next Session)
-1. **Run migration 012** - Apply Linux sensor schema on VPS
-2. **Deploy VPS changes** - Docker rebuild with new backend code
-3. **Test Linux sensor** - End-to-end on real Linux host
-4. **Build ISO v21** - Include sensor scripts + TLS hardening
+1. **Transfer ISO v21 to iMac** - `scp root@178.156.162.116:/root/msp-iso-build/result-iso-v21/iso/osiriscare-appliance.iso ~/Downloads/`
+2. **Flash ISO v21 to physical appliance** - North Valley Dental (192.168.88.246)
+3. **Update VM appliance** - Main Street Virtualbox Medical (192.168.88.247)
 
 ### Short-term
 - First compliance packet generation
