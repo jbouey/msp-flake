@@ -19,6 +19,8 @@ SERVICE_NAME="osiriscare-sensor"
 SENSOR_ID=""
 API_KEY=""
 APPLIANCE_URL=""
+SKIP_VERIFY=0
+CA_CERT=""
 
 usage() {
     cat <<EOF
@@ -30,10 +32,17 @@ Options:
     --sensor-id <id>       Unique sensor identifier (required)
     --api-key <key>        API key for appliance authentication (required)
     --appliance-url <url>  Appliance API URL (required)
+    --ca-cert <path>       Path to CA certificate for appliance verification
+    --skip-verify          Skip TLS verification (INSECURE - lab use only)
     --help                 Show this help message
 
+Security:
+    By default, TLS certificate verification is ENABLED.
+    Use --ca-cert to specify the appliance's CA certificate.
+    Use --skip-verify only in isolated lab environments.
+
 Example:
-    $0 --sensor-id srv-001 --api-key abc123 --appliance-url https://192.168.88.246:8443
+    $0 --sensor-id srv-001 --api-key abc123 --appliance-url https://192.168.88.246:8443 --ca-cert /etc/ssl/appliance-ca.pem
 
 EOF
     exit 1
@@ -52,6 +61,14 @@ while [[ $# -gt 0 ]]; do
         --appliance-url)
             APPLIANCE_URL="$2"
             shift 2
+            ;;
+        --ca-cert)
+            CA_CERT="$2"
+            shift 2
+            ;;
+        --skip-verify)
+            SKIP_VERIFY=1
+            shift
             ;;
         --help)
             usage
@@ -92,7 +109,22 @@ mkdir -p "$STATE_DIR"
 echo "[2/5] Installing sensor script..."
 SENSOR_URL="${APPLIANCE_URL}/sensor/osiriscare-sensor.sh"
 
-if curl -sSL --insecure -o "$INSTALL_DIR/osiriscare-sensor.sh" "$SENSOR_URL" 2>/dev/null; then
+# Build curl options for TLS verification
+CURL_OPTS="-sSL"
+if [[ "$SKIP_VERIFY" == "1" ]]; then
+    echo "    WARNING: TLS verification DISABLED - insecure connection"
+    CURL_OPTS="$CURL_OPTS --insecure"
+elif [[ -n "$CA_CERT" ]]; then
+    if [[ -f "$CA_CERT" ]]; then
+        CURL_OPTS="$CURL_OPTS --cacert $CA_CERT"
+        echo "    Using CA certificate: $CA_CERT"
+    else
+        echo "    ERROR: CA certificate not found: $CA_CERT"
+        exit 1
+    fi
+fi
+
+if curl $CURL_OPTS -o "$INSTALL_DIR/osiriscare-sensor.sh" "$SENSOR_URL" 2>/dev/null; then
     echo "    Downloaded from appliance"
 else
     echo "    Warning: Could not download from appliance, using embedded version"

@@ -242,11 +242,15 @@ class WormUploader:
         if sig_hash:
             headers["X-Signature-Hash"] = f"sha256:{sig_hash}"
 
-        # Setup SSL context for mTLS
-        ssl_context = None
+        # Setup hardened SSL context (TLS 1.2+ required)
+        import ssl
+        ssl_context = ssl.create_default_context()
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        ssl_context.check_hostname = True
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+
+        # Add client certificate for mTLS if configured
         if self.client_cert and self.client_key:
-            import ssl
-            ssl_context = ssl.create_default_context()
             ssl_context.load_cert_chain(self.client_cert, self.client_key)
 
         # Upload with retry
