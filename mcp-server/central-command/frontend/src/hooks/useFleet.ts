@@ -5,7 +5,7 @@
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi } from '../utils/api';
 import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig } from '../utils/api';
-import type { ClientOverview, ClientDetail, Incident, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary } from '../types';
+import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary } from '../types';
 
 // Polling interval in milliseconds (60 seconds - reduced from 30s to prevent flickering)
 const POLLING_INTERVAL = 60_000;
@@ -48,6 +48,21 @@ export function useIncidents(params?: {
   return useQuery<Incident[]>({
     queryKey: ['incidents', params],
     queryFn: () => incidentApi.getIncidents(params),
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for fetching compliance events (drift detections from compliance bundles)
+ */
+export function useEvents(params?: {
+  site_id?: string;
+  limit?: number;
+}) {
+  return useQuery<ComplianceEvent[]>({
+    queryKey: ['events', params],
+    queryFn: () => incidentApi.getEvents(params),
     refetchInterval: POLLING_INTERVAL,
     staleTime: STALE_TIME,
   });

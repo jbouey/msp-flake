@@ -67,7 +67,7 @@ export const fleetApi = {
 // INCIDENT API
 // =============================================================================
 
-import type { Incident, IncidentDetail } from '../types';
+import type { Incident, IncidentDetail, ComplianceEvent } from '../types';
 
 export const incidentApi = {
   getIncidents: (params?: {
@@ -87,6 +87,18 @@ export const incidentApi = {
   },
 
   getIncident: (id: number) => fetchApi<IncidentDetail>(`/incidents/${id}`),
+
+  getEvents: (params?: {
+    site_id?: string;
+    limit?: number;
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.site_id) searchParams.set('site_id', params.site_id);
+    if (params?.limit) searchParams.set('limit', String(params.limit));
+
+    const query = searchParams.toString();
+    return fetchApi<ComplianceEvent[]>(`/events${query ? `?${query}` : ''}`);
+  },
 };
 
 // =============================================================================

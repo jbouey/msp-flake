@@ -2,6 +2,7 @@ export {
   useFleet,
   useClient,
   useIncidents,
+  useEvents,
   useGlobalStats,
   useLearningStatus,
   useRefreshFleet,

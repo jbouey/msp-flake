@@ -5,6 +5,52 @@
 
 ---
 
+## ✅ Session 24 Continued (2026-01-11)
+
+### Dashboard Events Display + Migration + ISO Build
+**Status:** 🟡 IN PROGRESS (ISO build pending)
+**Details:**
+
+#### Dashboard Events Display Fix
+- [x] Diagnosed: Dashboard shows `incidents` table (old chaos probe data), but drift detections create `compliance_bundles`
+- [x] Added `report_incident()` method to `appliance_client.py`
+- [x] Added incident reporting in `_handle_drift_healing()` in `appliance_agent.py`
+- [x] Added `get_events_from_db()` function to `db_queries.py`
+- [x] Added `/api/dashboard/events` endpoint to `routes.py`
+- [x] Created `EventFeed.tsx` component
+- [x] Added `ComplianceEvent` interface to `types/index.ts`
+- [x] Added `getEvents` to `api.ts`
+- [x] Added `useEvents` hook to `useFleet.ts`
+- [x] Updated `Dashboard.tsx` to show both Incidents and Events side-by-side
+
+#### Migration 012 Applied
+- [x] Ran migration 012 on VPS PostgreSQL (Linux sensor schema)
+- [x] Added `platform` column to `sensor_registry` and `sensor_commands` tables
+- [x] Added `sensor_id` column to `sensor_registry` table
+
+#### ISO v21 Build
+- [x] Backend deployed to VPS with Docker rebuild
+- [x] Tested Linux sensor - endpoints not in v1.0.22, requires new ISO
+- [ ] Fix flake configuration for ISO build (appliance-iso in flake-compliance.nix, not flake.nix)
+- [ ] Build ISO v21 with updated agent code
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/appliance_client.py` | Added report_incident() |
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Added incident reporting |
+| `mcp-server/central-command/backend/db_queries.py` | Added get_events_from_db() |
+| `mcp-server/central-command/backend/routes.py` | Added /api/dashboard/events |
+| `mcp-server/central-command/frontend/src/types/index.ts` | Added ComplianceEvent |
+| `mcp-server/central-command/frontend/src/utils/api.ts` | Added getEvents |
+| `mcp-server/central-command/frontend/src/hooks/useFleet.ts` | Added useEvents |
+| `mcp-server/central-command/frontend/src/hooks/index.ts` | Export useEvents |
+| `mcp-server/central-command/frontend/src/components/events/EventFeed.tsx` | New component |
+| `mcp-server/central-command/frontend/src/components/events/index.ts` | New export |
+| `mcp-server/central-command/frontend/src/pages/Dashboard.tsx` | Events display |
+
+---
+
 ## ✅ Session 23 Continued (2026-01-10)
 
 ### Runbook Config Page Fix + Learning Flywheel Seeding
