@@ -1,0 +1,762 @@
+# Multi-Framework Control Mapping Registry
+# Maps infrastructure checks to controls across all supported frameworks
+#
+# Design: Each infrastructure check maps to equivalent controls in each framework.
+# This enables "one check, many reports" - the same backup verification
+# satisfies HIPAA, SOC 2, PCI DSS, and NIST CSF requirements simultaneously.
+#
+# Version: 1.0
+# Last Updated: 2026-01-11
+# Author: OsirisCare Engineering
+
+version: "1.0"
+last_updated: "2026-01-11"
+
+# =============================================================================
+# INFRASTRUCTURE CHECKS → FRAMEWORK CONTROL MAPPINGS
+# =============================================================================
+
+checks:
+
+  # ---------------------------------------------------------------------------
+  # BACKUP AND RECOVERY
+  # ---------------------------------------------------------------------------
+  backup_status:
+    name: "Backup Completion Status"
+    description: "Verifies backup jobs completed successfully with valid checksums"
+    check_type: "windows"
+    runbook_id: "RB-WIN-BACKUP-001"
+    evidence_type: "backup_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.308(a)(7)(ii)(A)"
+          control_name: "Data Backup Plan"
+          category: "Administrative Safeguards"
+          subcategory: "Contingency Plan"
+          required: true
+        - control_id: "164.310(d)(2)(iv)"
+          control_name: "Data Backup and Storage"
+          category: "Physical Safeguards"
+          required: true
+
+      soc2:
+        - control_id: "A1.2"
+          control_name: "System Backup"
+          category: "Availability"
+          required: true
+        - control_id: "A1.3"
+          control_name: "Recovery Procedures"
+          category: "Availability"
+          required: true
+
+      pci_dss:
+        - control_id: "12.10.1"
+          control_name: "Incident Response Plan - Data Recovery"
+          category: "Maintain Information Security Policy"
+          required: true
+
+      nist_csf:
+        - control_id: "PR.IP-4"
+          control_name: "Backups of information are conducted"
+          category: "Protect"
+          subcategory: "Information Protection"
+          required: true
+        - control_id: "RC.RP-1"
+          control_name: "Recovery plan is executed during/after incident"
+          category: "Recover"
+          subcategory: "Recovery Planning"
+          required: true
+
+      cis:
+        - control_id: "CIS.11.1"
+          control_name: "Establish and Maintain a Data Recovery Process"
+          category: "Data Recovery"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # ENCRYPTION AT REST
+  # ---------------------------------------------------------------------------
+  encryption_at_rest:
+    name: "Disk Encryption Status"
+    description: "Verifies BitLocker/LUKS encryption is enabled on all data volumes"
+    check_type: "windows"
+    runbook_id: "RB-WIN-ENCRYPTION-001"
+    evidence_type: "encryption_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(a)(2)(iv)"
+          control_name: "Encryption and Decryption"
+          category: "Technical Safeguards"
+          subcategory: "Access Control"
+          required: true  # REQUIRED in 2025 NPRM
+
+      soc2:
+        - control_id: "CC6.1"
+          control_name: "Logical and Physical Access Controls"
+          category: "Security"
+          required: true
+        - control_id: "CC6.7"
+          control_name: "Data Encryption"
+          category: "Security"
+          required: true
+
+      pci_dss:
+        - control_id: "3.4"
+          control_name: "Render PAN unreadable anywhere it is stored"
+          category: "Protect Stored Cardholder Data"
+          required: true
+        - control_id: "3.5"
+          control_name: "Protect keys used to secure cardholder data"
+          category: "Protect Stored Cardholder Data"
+          required: true
+
+      nist_csf:
+        - control_id: "PR.DS-1"
+          control_name: "Data-at-rest is protected"
+          category: "Protect"
+          subcategory: "Data Security"
+          required: true
+
+      cis:
+        - control_id: "CIS.3.11"
+          control_name: "Encrypt Sensitive Data at Rest"
+          category: "Data Protection"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # FIREWALL
+  # ---------------------------------------------------------------------------
+  firewall_enabled:
+    name: "Firewall Status"
+    description: "Verifies host firewall is enabled with proper egress/ingress rules"
+    check_type: "windows"
+    runbook_id: "RB-WIN-FIREWALL-001"
+    evidence_type: "firewall_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(e)(1)"
+          control_name: "Transmission Security"
+          category: "Technical Safeguards"
+          required: true
+
+      soc2:
+        - control_id: "CC6.1"
+          control_name: "Logical and Physical Access Controls"
+          category: "Security"
+          required: true
+        - control_id: "CC6.6"
+          control_name: "Boundary Protection"
+          category: "Security"
+          required: true
+
+      pci_dss:
+        - control_id: "1.1"
+          control_name: "Install and maintain network security controls"
+          category: "Build and Maintain Secure Network"
+          required: true
+        - control_id: "1.2"
+          control_name: "Network security controls configuration"
+          category: "Build and Maintain Secure Network"
+          required: true
+
+      nist_csf:
+        - control_id: "PR.AC-5"
+          control_name: "Network integrity is protected"
+          category: "Protect"
+          subcategory: "Identity Management and Access Control"
+          required: true
+        - control_id: "PR.PT-4"
+          control_name: "Communications and control networks are protected"
+          category: "Protect"
+          subcategory: "Protective Technology"
+          required: true
+
+      cis:
+        - control_id: "CIS.13.1"
+          control_name: "Centralize Security Event Alerting"
+          category: "Network Monitoring and Defense"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # ANTIVIRUS / ANTI-MALWARE
+  # ---------------------------------------------------------------------------
+  antivirus_status:
+    name: "Antivirus Protection Status"
+    description: "Verifies Windows Defender/AV is enabled with current definitions"
+    check_type: "windows"
+    runbook_id: "RB-WIN-AV-001"
+    evidence_type: "antivirus_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.308(a)(5)(ii)(B)"
+          control_name: "Protection from Malicious Software"
+          category: "Administrative Safeguards"
+          subcategory: "Security Awareness and Training"
+          required: true  # REQUIRED in 2025 NPRM
+
+      soc2:
+        - control_id: "CC6.8"
+          control_name: "Malicious Software Prevention"
+          category: "Security"
+          required: true
+
+      pci_dss:
+        - control_id: "5.1"
+          control_name: "Anti-malware solution deployed on all systems"
+          category: "Protect Systems Against Malware"
+          required: true
+        - control_id: "5.2"
+          control_name: "Anti-malware mechanisms and definitions current"
+          category: "Protect Systems Against Malware"
+          required: true
+
+      nist_csf:
+        - control_id: "DE.CM-4"
+          control_name: "Malicious code is detected"
+          category: "Detect"
+          subcategory: "Security Continuous Monitoring"
+          required: true
+        - control_id: "PR.DS-6"
+          control_name: "Integrity checking mechanisms"
+          category: "Protect"
+          subcategory: "Data Security"
+          required: true
+
+      cis:
+        - control_id: "CIS.10.1"
+          control_name: "Deploy and Maintain Anti-Malware Software"
+          category: "Malware Defenses"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # PATCH MANAGEMENT
+  # ---------------------------------------------------------------------------
+  patch_status:
+    name: "Patch Management Status"
+    description: "Verifies OS and critical patches are applied within policy timeframe"
+    check_type: "windows"
+    runbook_id: "RB-WIN-PATCH-001"
+    evidence_type: "patch_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.308(a)(5)(ii)(B)"
+          control_name: "Patch Management"
+          category: "Administrative Safeguards"
+          required: true  # NEW in 2025 NPRM
+
+      soc2:
+        - control_id: "CC6.1"
+          control_name: "Security Configuration Management"
+          category: "Security"
+          required: true
+        - control_id: "CC7.1"
+          control_name: "System Monitoring"
+          category: "Security"
+          required: true
+
+      pci_dss:
+        - control_id: "6.3"
+          control_name: "Security patches installed promptly"
+          category: "Develop Secure Systems"
+          required: true
+        - control_id: "6.3.3"
+          control_name: "Critical patches installed within one month"
+          category: "Develop Secure Systems"
+          required: true
+
+      nist_csf:
+        - control_id: "PR.IP-1"
+          control_name: "Baseline configuration is created and maintained"
+          category: "Protect"
+          subcategory: "Information Protection"
+          required: true
+        - control_id: "PR.IP-12"
+          control_name: "Vulnerability management plan developed and implemented"
+          category: "Protect"
+          required: true
+
+      cis:
+        - control_id: "CIS.7.1"
+          control_name: "Establish and Maintain Vulnerability Management Process"
+          category: "Continuous Vulnerability Management"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # AUDIT LOGGING
+  # ---------------------------------------------------------------------------
+  audit_logging:
+    name: "Audit Log Status"
+    description: "Verifies audit logging is enabled, logs are collected and protected"
+    check_type: "windows"
+    runbook_id: "RB-WIN-LOGGING-001"
+    evidence_type: "audit_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.308(a)(1)(ii)(D)"
+          control_name: "Information System Activity Review"
+          category: "Administrative Safeguards"
+          subcategory: "Security Management Process"
+          required: true
+        - control_id: "164.312(b)"
+          control_name: "Audit Controls"
+          category: "Technical Safeguards"
+          required: true
+
+      soc2:
+        - control_id: "CC7.2"
+          control_name: "System Monitoring - Anomaly Detection"
+          category: "Security"
+          required: true
+        - control_id: "CC7.3"
+          control_name: "Evaluation and Communication of Anomalies"
+          category: "Security"
+          required: true
+
+      pci_dss:
+        - control_id: "10.1"
+          control_name: "Audit trails established for system components"
+          category: "Track and Monitor Access"
+          required: true
+        - control_id: "10.2"
+          control_name: "Implement automated audit trails"
+          category: "Track and Monitor Access"
+          required: true
+        - control_id: "10.7"
+          control_name: "Retain audit trail history for at least one year"
+          category: "Track and Monitor Access"
+          required: true
+
+      nist_csf:
+        - control_id: "DE.AE-3"
+          control_name: "Event data aggregated and correlated"
+          category: "Detect"
+          subcategory: "Anomalies and Events"
+          required: true
+        - control_id: "PR.PT-1"
+          control_name: "Audit/log records determined, documented"
+          category: "Protect"
+          subcategory: "Protective Technology"
+          required: true
+
+      cis:
+        - control_id: "CIS.8.2"
+          control_name: "Collect Audit Logs"
+          category: "Audit Log Management"
+          required: true
+        - control_id: "CIS.8.5"
+          control_name: "Collect Detailed Audit Logs"
+          category: "Audit Log Management"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # ACCESS CONTROL
+  # ---------------------------------------------------------------------------
+  access_control:
+    name: "Access Control Status"
+    description: "Verifies access controls, MFA, and account management policies"
+    check_type: "windows"
+    runbook_id: "RB-WIN-ACCESS-001"
+    evidence_type: "access_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(d)"
+          control_name: "Person or Entity Authentication"
+          category: "Technical Safeguards"
+          required: true
+        - control_id: "164.312(a)(1)"
+          control_name: "Access Control - Unique User Identification"
+          category: "Technical Safeguards"
+          required: true
+        - control_id: "164.312(a)(2)(i)"
+          control_name: "Unique User Identification"
+          category: "Technical Safeguards"
+          required: true
+
+      soc2:
+        - control_id: "CC6.1"
+          control_name: "Logical Access Security Software"
+          category: "Security"
+          required: true
+        - control_id: "CC6.2"
+          control_name: "Prior to Access"
+          category: "Security"
+          required: true
+        - control_id: "CC6.3"
+          control_name: "Removal of Access"
+          category: "Security"
+          required: true
+
+      pci_dss:
+        - control_id: "8.2"
+          control_name: "User identification and authentication"
+          category: "Identify Users and Authenticate Access"
+          required: true
+        - control_id: "8.3"
+          control_name: "Multi-factor authentication"
+          category: "Identify Users and Authenticate Access"
+          required: true
+        - control_id: "7.1"
+          control_name: "Restrict access by business need to know"
+          category: "Restrict Access to Cardholder Data"
+          required: true
+
+      nist_csf:
+        - control_id: "PR.AC-1"
+          control_name: "Identities and credentials managed"
+          category: "Protect"
+          subcategory: "Identity Management"
+          required: true
+        - control_id: "PR.AC-7"
+          control_name: "Users, devices, assets authenticated"
+          category: "Protect"
+          required: true
+
+      cis:
+        - control_id: "CIS.5.1"
+          control_name: "Establish and Maintain Account Inventory"
+          category: "Account Management"
+          required: true
+        - control_id: "CIS.6.3"
+          control_name: "Require MFA for Externally-Exposed Applications"
+          category: "Access Control Management"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # NETWORK SECURITY
+  # ---------------------------------------------------------------------------
+  network_security:
+    name: "Network Security Posture"
+    description: "Verifies network segmentation, monitoring, and security controls"
+    check_type: "network"
+    runbook_id: "RB-NET-SECURITY-001"
+    evidence_type: "network_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(e)(1)"
+          control_name: "Transmission Security - Network Controls"
+          category: "Technical Safeguards"
+          required: true
+        - control_id: "164.312(e)(2)(ii)"
+          control_name: "Encryption in Transit"
+          category: "Technical Safeguards"
+          required: true
+
+      soc2:
+        - control_id: "CC6.6"
+          control_name: "Boundary Protection"
+          category: "Security"
+          required: true
+        - control_id: "CC6.7"
+          control_name: "Transmission Encryption"
+          category: "Security"
+          required: true
+
+      pci_dss:
+        - control_id: "1.3"
+          control_name: "Network access to CDE is restricted"
+          category: "Build and Maintain Secure Network"
+          required: true
+        - control_id: "4.1"
+          control_name: "Strong cryptography for transmission"
+          category: "Protect Cardholder Data"
+          required: true
+
+      nist_csf:
+        - control_id: "PR.DS-2"
+          control_name: "Data-in-transit is protected"
+          category: "Protect"
+          required: true
+        - control_id: "DE.CM-1"
+          control_name: "Network is monitored for potential events"
+          category: "Detect"
+          required: true
+
+      cis:
+        - control_id: "CIS.12.1"
+          control_name: "Ensure Network Infrastructure is Up-to-Date"
+          category: "Network Infrastructure Management"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # TIME SYNCHRONIZATION
+  # ---------------------------------------------------------------------------
+  time_sync:
+    name: "Time Synchronization Status"
+    description: "Verifies NTP sync with authoritative time sources"
+    check_type: "linux"
+    runbook_id: "RB-LIN-NTP-001"
+    evidence_type: "time_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(b)"
+          control_name: "Audit Controls - Time Synchronization"
+          category: "Technical Safeguards"
+          required: true
+
+      soc2:
+        - control_id: "CC7.2"
+          control_name: "Accurate Time Stamps"
+          category: "Security"
+          required: true
+
+      pci_dss:
+        - control_id: "10.4"
+          control_name: "Synchronize all critical system clocks"
+          category: "Track and Monitor Access"
+          required: true
+
+      nist_csf:
+        - control_id: "PR.PT-1"
+          control_name: "Audit Records - Time Synchronization"
+          category: "Protect"
+          required: true
+
+      cis:
+        - control_id: "CIS.8.4"
+          control_name: "Standardize Time Synchronization"
+          category: "Audit Log Management"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # INTEGRITY CONTROLS
+  # ---------------------------------------------------------------------------
+  integrity_monitoring:
+    name: "System Integrity Monitoring"
+    description: "Verifies file integrity monitoring and configuration management"
+    check_type: "linux"
+    runbook_id: "RB-LIN-INTEGRITY-001"
+    evidence_type: "integrity_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(c)(1)"
+          control_name: "Integrity"
+          category: "Technical Safeguards"
+          required: true
+        - control_id: "164.312(c)(2)"
+          control_name: "Mechanism to Authenticate ePHI"
+          category: "Technical Safeguards"
+          required: true
+
+      soc2:
+        - control_id: "CC7.1"
+          control_name: "Configuration Management"
+          category: "Security"
+          required: true
+        - control_id: "PI1.2"
+          control_name: "Data Integrity"
+          category: "Processing Integrity"
+          required: true
+
+      pci_dss:
+        - control_id: "11.5"
+          control_name: "Deploy change-detection mechanism"
+          category: "Regularly Test Security"
+          required: true
+
+      nist_csf:
+        - control_id: "PR.DS-6"
+          control_name: "Integrity checking mechanisms"
+          category: "Protect"
+          required: true
+        - control_id: "DE.CM-6"
+          control_name: "External service provider activity monitored"
+          category: "Detect"
+          required: true
+
+      cis:
+        - control_id: "CIS.4.1"
+          control_name: "Establish and Maintain Secure Configuration Process"
+          category: "Secure Configuration"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # INCIDENT RESPONSE
+  # ---------------------------------------------------------------------------
+  incident_response:
+    name: "Incident Response Readiness"
+    description: "Verifies incident response procedures and readiness"
+    check_type: "application"
+    runbook_id: "RB-IR-001"
+    evidence_type: "incident_response_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.308(a)(6)"
+          control_name: "Security Incident Procedures"
+          category: "Administrative Safeguards"
+          required: true
+        - control_id: "164.308(a)(6)(ii)"
+          control_name: "Response and Reporting"
+          category: "Administrative Safeguards"
+          required: true
+
+      soc2:
+        - control_id: "CC7.4"
+          control_name: "Incident Response"
+          category: "Security"
+          required: true
+        - control_id: "CC7.5"
+          control_name: "Incident Recovery"
+          category: "Security"
+          required: true
+
+      pci_dss:
+        - control_id: "12.10"
+          control_name: "Incident response plan"
+          category: "Maintain Information Security Policy"
+          required: true
+        - control_id: "12.10.2"
+          control_name: "Review and test incident response plan"
+          category: "Maintain Information Security Policy"
+          required: true
+
+      nist_csf:
+        - control_id: "RS.RP-1"
+          control_name: "Response plan is executed during/after incident"
+          category: "Respond"
+          required: true
+        - control_id: "RS.CO-3"
+          control_name: "Information shared consistent with response plans"
+          category: "Respond"
+          required: true
+
+      cis:
+        - control_id: "CIS.17.1"
+          control_name: "Designate Personnel to Manage Incident Handling"
+          category: "Incident Response Management"
+          required: true
+
+
+# =============================================================================
+# FRAMEWORK METADATA
+# =============================================================================
+
+frameworks:
+  hipaa:
+    name: "HIPAA Security Rule"
+    version: "2013 (with 2025 NPRM updates)"
+    description: "Health Insurance Portability and Accountability Act Security Rule"
+    regulatory_body: "HHS/OCR"
+    industry: "healthcare"
+    documentation_url: "https://www.hhs.gov/hipaa/for-professionals/security/index.html"
+    categories:
+      - "Administrative Safeguards"
+      - "Physical Safeguards"
+      - "Technical Safeguards"
+      - "Organizational Requirements"
+      - "Policies and Procedures"
+
+  soc2:
+    name: "SOC 2 Type II"
+    version: "2017 (Trust Services Criteria)"
+    description: "Service Organization Control 2 - Trust Services Criteria"
+    regulatory_body: "AICPA"
+    industry: "technology"
+    documentation_url: "https://www.aicpa.org/interestareas/frc/assuranceadvisoryservices/sorhome"
+    categories:
+      - "Security (CC)"
+      - "Availability (A)"
+      - "Processing Integrity (PI)"
+      - "Confidentiality (C)"
+      - "Privacy (P)"
+
+  pci_dss:
+    name: "PCI DSS"
+    version: "4.0.1"
+    description: "Payment Card Industry Data Security Standard"
+    regulatory_body: "PCI SSC"
+    industry: "retail"
+    documentation_url: "https://www.pcisecuritystandards.org/"
+    categories:
+      - "Build and Maintain Secure Network"
+      - "Protect Cardholder Data"
+      - "Maintain Vulnerability Management Program"
+      - "Implement Strong Access Control Measures"
+      - "Regularly Monitor and Test Networks"
+      - "Maintain Information Security Policy"
+
+  nist_csf:
+    name: "NIST Cybersecurity Framework"
+    version: "2.0"
+    description: "National Institute of Standards and Technology Cybersecurity Framework"
+    regulatory_body: "NIST"
+    industry: "general"
+    documentation_url: "https://www.nist.gov/cyberframework"
+    categories:
+      - "Govern (GV)"
+      - "Identify (ID)"
+      - "Protect (PR)"
+      - "Detect (DE)"
+      - "Respond (RS)"
+      - "Recover (RC)"
+
+  cis:
+    name: "CIS Critical Security Controls"
+    version: "8.0"
+    description: "Center for Internet Security Critical Security Controls"
+    regulatory_body: "CIS"
+    industry: "general"
+    documentation_url: "https://www.cisecurity.org/controls"
+    categories:
+      - "Basic Controls (IG1)"
+      - "Foundational Controls (IG2)"
+      - "Organizational Controls (IG3)"
+
+
+# =============================================================================
+# INDUSTRY RECOMMENDATIONS
+# =============================================================================
+
+industry_recommendations:
+  healthcare:
+    primary: "hipaa"
+    recommended:
+      - "hipaa"
+      - "nist_csf"
+    description: "Medical clinics, hospitals, health tech, covered entities"
+
+  technology:
+    primary: "soc2"
+    recommended:
+      - "soc2"
+      - "nist_csf"
+    description: "SaaS, software companies, IT service providers"
+
+  retail:
+    primary: "pci_dss"
+    recommended:
+      - "pci_dss"
+      - "soc2"
+    description: "Stores, e-commerce, payment processing"
+
+  finance:
+    primary: "soc2"
+    recommended:
+      - "soc2"
+      - "pci_dss"
+      - "nist_csf"
+    description: "RIAs, financial services, banking, fintech"
+
+  government:
+    primary: "nist_csf"
+    recommended:
+      - "nist_csf"
+      - "cis"
+    description: "Federal, state, local government agencies"
+
+  general:
+    primary: "nist_csf"
+    recommended:
+      - "nist_csf"
+      - "cis"
+    description: "General business cybersecurity baseline"
