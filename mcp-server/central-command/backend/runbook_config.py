@@ -42,6 +42,19 @@ class RunbookConfigStatus(BaseModel):
     notes: Optional[str] = None
 
 
+class SiteRunbookConfigItem(BaseModel):
+    """Runbook config with full details for frontend display."""
+    runbook_id: str
+    name: str
+    description: Optional[str] = None
+    category: str
+    severity: str = "medium"
+    is_disruptive: bool = False
+    enabled: bool
+    modified_by: Optional[str] = None
+    modified_at: Optional[datetime] = None
+
+
 class RunbookConfigUpdate(BaseModel):
     """Request to update runbook configuration."""
     enabled: bool
@@ -66,7 +79,16 @@ class EnabledRunbooksResponse(BaseModel):
 # =============================================================================
 
 async def get_db():
-    from main import async_session
+    # Try multiple import paths for flexibility
+    try:
+        from main import async_session
+    except ImportError:
+        import sys
+        if 'server' in sys.modules and hasattr(sys.modules['server'], 'async_session'):
+            async_session = sys.modules['server'].async_session
+        else:
+            raise RuntimeError("Database session not configured")
+
     async with async_session() as session:
         yield session
 
@@ -165,41 +187,46 @@ async def get_runbook_detail(runbook_id: str, db: AsyncSession = Depends(get_db)
 # Site-Level Configuration Endpoints
 # =============================================================================
 
-@router.get("/sites/{site_id}", response_model=SiteRunbookConfig)
+@router.get("/sites/{site_id}", response_model=List[SiteRunbookConfigItem])
 async def get_site_runbook_config(site_id: str, db: AsyncSession = Depends(get_db)):
     """Get runbook configuration for a site.
 
-    Returns all runbooks with their enabled/disabled status.
+    Returns all runbooks with their enabled/disabled status and full details.
     Runbooks not in site_runbook_config are enabled by default.
     """
-    # Get all runbooks with site-specific overrides
+    # Get all runbooks with site-specific overrides and full details
     query = text("""
         SELECT
-            r.id as runbook_id,
+            r.runbook_id,
+            r.name,
+            r.description,
+            r.category,
+            r.severity,
+            r.is_disruptive,
             COALESCE(src.enabled, true) as enabled,
             src.modified_by,
-            src.modified_at,
-            src.notes
+            src.modified_at
         FROM runbooks r
-        LEFT JOIN site_runbook_config src ON src.runbook_id = r.id AND src.site_id = :site_id
-        ORDER BY r.category, r.id
+        LEFT JOIN site_runbook_config src ON src.runbook_id = r.runbook_id AND src.site_id = :site_id
+        ORDER BY r.category, r.runbook_id
     """)
     result = await db.execute(query, {"site_id": site_id})
     rows = result.fetchall()
 
-    return SiteRunbookConfig(
-        site_id=site_id,
-        runbooks=[
-            RunbookConfigStatus(
-                runbook_id=row.runbook_id,
-                enabled=row.enabled,
-                modified_by=row.modified_by,
-                modified_at=row.modified_at,
-                notes=row.notes
-            )
-            for row in rows
-        ]
-    )
+    return [
+        SiteRunbookConfigItem(
+            runbook_id=row.runbook_id,
+            name=row.name,
+            description=row.description,
+            category=row.category,
+            severity=row.severity or "medium",
+            is_disruptive=row.is_disruptive or False,
+            enabled=row.enabled,
+            modified_by=row.modified_by,
+            modified_at=row.modified_at
+        )
+        for row in rows
+    ]
 
 
 @router.put("/sites/{site_id}/{runbook_id}")

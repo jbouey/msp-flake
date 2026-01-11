@@ -540,23 +540,138 @@ export const runbookConfigApi = {
   // Get all runbooks in the catalog
   getRunbooks: () => fetchSitesApi<RunbookCatalogItem[]>('/runbooks'),
 
-  // Get runbook categories
-  getCategories: () => fetchSitesApi<string[]>('/runbooks/categories'),
+  // Get runbook categories - returns [{category, count}, ...], extract just categories
+  getCategories: async () => {
+    const data = await fetchSitesApi<Array<{ category: string; count: number }>>('/runbooks/categories');
+    return data.map((item) => item.category);
+  },
 
   // Get site's runbook configuration
   getSiteRunbooks: (siteId: string) =>
-    fetchSitesApi<SiteRunbookConfig[]>(`/sites/${siteId}/runbooks`),
+    fetchSitesApi<SiteRunbookConfig[]>(`/runbooks/sites/${siteId}`),
 
   // Enable/disable a runbook for a site
   setSiteRunbook: (siteId: string, runbookId: string, enabled: boolean) =>
-    fetchSitesApi<{ status: string }>(`/sites/${siteId}/runbooks/${runbookId}`, {
+    fetchSitesApi<{ status: string }>(`/runbooks/sites/${siteId}/${runbookId}`, {
       method: 'PUT',
       body: JSON.stringify({ enabled }),
     }),
 
   // Get effective enabled runbooks for an appliance
   getApplianceEffective: (applianceId: string) =>
-    fetchSitesApi<string[]>(`/appliances/${encodeURIComponent(applianceId)}/effective`),
+    fetchSitesApi<string[]>(`/runbooks/appliances/${encodeURIComponent(applianceId)}/effective`),
+};
+
+// =============================================================================
+// USERS API (RBAC User Management)
+// =============================================================================
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  email: string | null;
+  display_name: string | null;
+  role: 'admin' | 'operator' | 'readonly';
+  status: 'active' | 'disabled';
+  last_login: string | null;
+  created_at: string;
+}
+
+export interface UserInvite {
+  id: string;
+  email: string;
+  role: string;
+  display_name: string | null;
+  status: 'pending' | 'accepted' | 'expired' | 'revoked';
+  invited_by: string | null;
+  invited_by_name: string | null;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface InviteValidation {
+  valid: boolean;
+  email?: string;
+  role?: string;
+  display_name?: string;
+  error?: string;
+}
+
+export const usersApi = {
+  // Get all users (admin only)
+  getUsers: () => fetchSitesApi<AdminUser[]>('/users'),
+
+  // Get pending invites (admin only)
+  getInvites: () => fetchSitesApi<UserInvite[]>('/users/invites'),
+
+  // Invite a new user (admin only)
+  inviteUser: (data: { email: string; role: string; display_name?: string }) =>
+    fetchSitesApi<UserInvite>('/users/invite', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // Resend invite email (admin only)
+  resendInvite: (inviteId: string) =>
+    fetchSitesApi<{ status: string }>(`/users/invite/${inviteId}/resend`, {
+      method: 'POST',
+    }),
+
+  // Revoke pending invite (admin only)
+  revokeInvite: (inviteId: string) =>
+    fetchSitesApi<{ status: string }>(`/users/invite/${inviteId}`, {
+      method: 'DELETE',
+    }),
+
+  // Update user (admin only)
+  updateUser: (userId: string, data: { role?: string; status?: string; display_name?: string }) =>
+    fetchSitesApi<AdminUser>(`/users/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  // Delete user (admin only)
+  deleteUser: (userId: string) =>
+    fetchSitesApi<{ status: string }>(`/users/${userId}`, {
+      method: 'DELETE',
+    }),
+
+  // Admin reset user password
+  adminResetPassword: (userId: string, newPassword: string) =>
+    fetchSitesApi<{ status: string }>(`/users/${userId}/password`, {
+      method: 'PUT',
+      body: JSON.stringify({ new_password: newPassword }),
+    }),
+
+  // Get current user profile
+  getProfile: () => fetchSitesApi<AdminUser>('/users/me'),
+
+  // Change own password
+  changePassword: (data: { current_password: string; new_password: string; confirm_password: string }) =>
+    fetchSitesApi<{ status: string }>('/users/me/password', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  // Validate invite token (public - no auth)
+  validateInvite: async (token: string): Promise<InviteValidation> => {
+    const response = await fetch(`/api/users/invite/validate/${token}`);
+    return response.json();
+  },
+
+  // Accept invite and set password (public - no auth)
+  acceptInvite: async (data: { token: string; password: string; confirm_password: string }) => {
+    const response = await fetch('/api/users/invite/accept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
+    }
+    return response.json();
+  },
 };
 
 export { ApiError };
