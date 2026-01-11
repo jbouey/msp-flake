@@ -117,19 +117,21 @@ for _backend_path in _backend_paths:
         break
 
 try:
-    from routes import router as dashboard_router, auth_router
-    from portal import router as portal_router
-    from sites import router as sites_router, orders_router, appliances_router, alerts_router
-    from partners import router as partners_router
-    from discovery import router as discovery_router
-    from provisioning import router as provisioning_router
-    from runbook_config import router as runbook_config_router
-    from sensors import router as sensors_router
-    from notifications import router as notifications_router, escalations_router
-    from users import router as users_router
+    from dashboard_api.routes import router as dashboard_router, auth_router
+    from dashboard_api.portal import router as portal_router
+    from dashboard_api.sites import router as sites_router, orders_router, appliances_router, alerts_router
+    from dashboard_api.partners import router as partners_router
+    from dashboard_api.discovery import router as discovery_router
+    from dashboard_api.provisioning import router as provisioning_router
+    from dashboard_api.runbook_config import router as runbook_config_router
+    from dashboard_api.sensors import router as sensors_router
+    from dashboard_api.notifications import router as notifications_router, escalations_router
+    from dashboard_api.users import router as users_router
+    from dashboard_api.frameworks import router as frameworks_router
     app.include_router(dashboard_router)
     app.include_router(auth_router)  # Admin authentication endpoints
     app.include_router(users_router)  # User management (RBAC)
+    app.include_router(frameworks_router)  # Multi-framework compliance
     app.include_router(portal_router)
     app.include_router(sites_router)
     app.include_router(orders_router)  # Order lifecycle (acknowledge/complete)
@@ -142,7 +144,7 @@ try:
     app.include_router(sensors_router)  # Sensor management for dual-mode architecture
     app.include_router(notifications_router)  # Partner notification settings
     app.include_router(escalations_router)  # Agent L3 escalations to partners
-    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users)")
+    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users, frameworks)")
 except ImportError as e:
     print(f"⚠ Could not import central-command routers: {e}")
 
