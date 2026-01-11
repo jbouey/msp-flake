@@ -1,0 +1,24 @@
+[Unit]
+Description=OsirisCare Linux Sensor
+Documentation=https://docs.osiriscare.net/sensor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/osiriscare/osiriscare-sensor.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=osiriscare-sensor
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log /var/lib/osiriscare
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
