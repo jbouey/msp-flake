@@ -13,6 +13,7 @@ import aiohttp
 import asyncio
 import json
 import socket
+import ssl
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -21,6 +22,22 @@ from datetime import datetime, timezone
 from .appliance_config import ApplianceConfig
 
 logger = logging.getLogger(__name__)
+
+
+def create_secure_ssl_context() -> ssl.SSLContext:
+    """
+    Create a hardened SSL context for Central Command connections.
+
+    Security settings:
+    - TLS 1.2 minimum (TLS 1.0/1.1 disabled)
+    - Certificate verification enabled
+    - Hostname checking enabled
+    """
+    ctx = ssl.create_default_context()
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.check_hostname = True
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    return ctx
 
 VERSION = "1.0.16"
 
@@ -53,9 +70,14 @@ class CentralCommandClient:
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session."""
+        """Get or create aiohttp session with TLS 1.2+ enforcement."""
         if self._session is None or self._session.closed:
+            # Create hardened SSL connector
+            ssl_context = create_secure_ssl_context()
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+
             self._session = aiohttp.ClientSession(
+                connector=connector,
                 timeout=self.timeout,
                 headers={
                     'User-Agent': f'osiriscare-appliance/{VERSION}',

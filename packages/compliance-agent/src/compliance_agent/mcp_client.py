@@ -89,12 +89,20 @@ class MCPClient:
 
     def _create_ssl_context(self) -> ssl.SSLContext:
         """
-        Create SSL context for mTLS.
+        Create hardened SSL context for mTLS.
+
+        Security settings:
+        - TLS 1.2 minimum (TLS 1.0/1.1 disabled)
+        - Certificate verification required
+        - Hostname checking enabled
 
         Returns:
-            SSL context configured with client certificates
+            SSL context configured with client certificates and TLS hardening
         """
         ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+
+        # Enforce TLS 1.2 or higher
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
 
         # Load client certificate and key
         ssl_context.load_cert_chain(
@@ -106,7 +114,7 @@ class MCPClient:
         ssl_context.check_hostname = True
         ssl_context.verify_mode = ssl.CERT_REQUIRED
 
-        logger.debug("Created SSL context for mTLS")
+        logger.debug("Created hardened SSL context for mTLS (TLS 1.2+)")
 
         return ssl_context
 

@@ -28,13 +28,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class WindowsTarget:
-    """Windows server target configuration."""
+    """Windows server target configuration.
+
+    Security: Defaults to HTTPS (port 5986) with certificate validation.
+    HTTP (port 5985) should only be used in isolated lab environments.
+    """
     hostname: str
-    port: int = 5985  # WinRM HTTP (5986 for HTTPS)
+    port: int = 5986  # WinRM HTTPS (secure default)
     username: str = ""
-    password: str = ""  # Or use Kerberos/certificate auth
-    use_ssl: bool = False
-    verify_ssl: bool = True
+    password: str = ""  # Prefer Kerberos/certificate auth over passwords
+    use_ssl: bool = True  # HTTPS by default - credentials encrypted in transit
+    verify_ssl: bool = True  # Always validate server certificates
     transport: str = "ntlm"  # ntlm, kerberos, certificate
 
 
@@ -158,6 +162,18 @@ class WindowsExecutor:
         if force_new or cache_key not in self._session_cache:
             protocol = "https" if target.use_ssl else "http"
             endpoint = f"{protocol}://{target.hostname}:{target.port}/wsman"
+
+            # Security warnings for insecure configurations
+            if not target.use_ssl:
+                logger.warning(
+                    f"SECURITY: WinRM connection to {target.hostname} using HTTP - "
+                    "credentials transmitted in PLAINTEXT. Use HTTPS (port 5986) in production."
+                )
+            if target.use_ssl and not target.verify_ssl:
+                logger.warning(
+                    f"SECURITY: SSL certificate validation DISABLED for {target.hostname} - "
+                    "vulnerable to man-in-the-middle attacks."
+                )
 
             logger.debug(f"Creating new WinRM session to {endpoint}")
 
