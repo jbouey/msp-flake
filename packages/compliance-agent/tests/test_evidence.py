@@ -146,7 +146,7 @@ async def test_store_evidence(test_config, test_signer):
         post_state={"last_backup": "2025-11-06"}
     )
 
-    bundle_path, sig_path, worm_uri = await generator.store_evidence(bundle, sign=True)
+    bundle_path, sig_path, worm_uri, ots_status = await generator.store_evidence(bundle, sign=True)
 
     # Check files exist
     assert bundle_path.exists()
@@ -154,6 +154,8 @@ async def test_store_evidence(test_config, test_signer):
 
     # WORM is disabled by default, so URI should be None
     assert worm_uri is None
+    # OTS is disabled by default
+    assert ots_status is None
 
     # Check directory structure
     date = bundle.timestamp_start
@@ -185,7 +187,7 @@ async def test_store_and_verify_evidence(test_config, test_signer):
         post_state={"ruleset_hash": "def456"}
     )
 
-    bundle_path, sig_path, _ = await generator.store_evidence(bundle, sign=True)
+    bundle_path, sig_path, _, _ = await generator.store_evidence(bundle, sign=True)
 
     # Verify signature
     is_valid = await generator.verify_evidence(bundle_path, sig_path)
@@ -706,7 +708,7 @@ async def test_store_evidence_batch_without_sign(test_config, test_signer):
 
     assert len(results) == 3
     for result in results:
-        bundle_path, sig_path, _ = result
+        bundle_path, sig_path, _, _ = result
         assert bundle_path is not None
         assert bundle_path.exists()
         # sig_path should be None when sign=False
