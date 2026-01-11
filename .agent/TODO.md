@@ -8,7 +8,7 @@
 ## ✅ Session 24 Continued (2026-01-11)
 
 ### Dashboard Events Display + Migration + ISO Build
-**Status:** 🟡 IN PROGRESS (ISO build pending)
+**Status:** ✅ COMPLETE
 **Details:**
 
 #### Dashboard Events Display Fix
@@ -31,8 +31,10 @@
 #### ISO v21 Build
 - [x] Backend deployed to VPS with Docker rebuild
 - [x] Tested Linux sensor - endpoints not in v1.0.22, requires new ISO
-- [ ] Fix flake configuration for ISO build (appliance-iso in flake-compliance.nix, not flake.nix)
-- [ ] Build ISO v21 with updated agent code
+- [x] Fixed flake configuration (copied flake-compliance.nix → flake.nix)
+- [x] Built ISO v21 (1.1GB, agent v1.0.23)
+- **SHA256:** `a705e25d06a7f86becf1afc207d06da0342d1747f7ab4c1740290b91a072e0e9`
+- **Location:** `/root/msp-iso-build/result-iso-v21/iso/osiriscare-appliance.iso`
 
 **Files Modified:**
 | File | Change |
