@@ -20,8 +20,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from io import BytesIO
+import sys
 
-from .database import get_db
 from .db_queries import (
     get_site_info,
     get_compliance_scores_for_site,
@@ -35,6 +35,24 @@ from .db_queries import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# DATABASE SESSION
+# =============================================================================
+
+async def get_db():
+    """Get database session."""
+    try:
+        from main import async_session
+    except ImportError:
+        if 'server' in sys.modules and hasattr(sys.modules['server'], 'async_session'):
+            async_session = sys.modules['server'].async_session
+        else:
+            raise HTTPException(status_code=500, detail="Database session not configured")
+    async with async_session() as session:
+        yield session
+
 
 # Session configuration
 SESSION_EXPIRY_DAYS = 30
