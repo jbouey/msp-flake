@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-10 (Session 23 - Runbook Config Fix + Flywheel Seeding)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.22, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC)
-**Test Status:** 656 passed (compliance-agent tests), agent v1.0.22, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel seeded with L2 data
+**Last Updated:** 2026-01-11 (Session 26 - Framework Config Deployment + MinIO Storage Box Migration)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.23, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance)
+**Test Status:** 656 passed (compliance-agent tests), agent v1.0.23, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel seeded with L2 data, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls)
 
 ---
 
@@ -253,6 +253,27 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Added `SiteRunbookConfigItem` model with full runbook details
   - Created `dashboard_api` symlink for main.py imports
   - Commit `f94f04c` pushed to production
+- ✅ **Multi-Framework Compliance System** - 2026-01-11 (Sessions 25-26)
+  - Agent v1.0.23 with multi-framework evidence generation
+  - Supports HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls
+  - One infrastructure check maps to controls across multiple frameworks
+  - Per-appliance framework selection and industry presets
+  - Database: migration 013 (appliance_framework_configs, evidence_framework_mappings, compliance_scores)
+  - Backend: `/api/frameworks/*` endpoints for config, scores, metadata
+  - Frontend: FrameworkConfig.tsx page at `/sites/{siteId}/frameworks`
+  - 37 unit tests for framework service
+- ✅ **MinIO Storage Migrated to Hetzner Storage Box** - 2026-01-11 (Session 26)
+  - Storage Box: BX11 #509266 (`u526501.your-storagebox.de`), 1TB, $4/mo
+  - Mounted via SSHFS at `/mnt/storagebox` on VPS
+  - NixOS systemd service `storagebox-mount` for persistent mounting
+  - MinIO container uses Storage Box for evidence storage
+  - Frees up VPS disk space for other uses
+- ✅ **Infrastructure Fixes** - 2026-01-11 (Session 26)
+  - Fixed Docker networking (caddy → msp-server routing)
+  - Fixed API prefix (`/api/frameworks` instead of `/frameworks`)
+  - Fixed database connectivity (correct password, asyncpg driver)
+  - Fixed health endpoint for HEAD method (monitoring compatibility)
+  - Added async_session to server.py for SQLAlchemy dependency injection
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)

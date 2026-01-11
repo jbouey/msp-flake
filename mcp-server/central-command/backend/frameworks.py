@@ -31,7 +31,7 @@ except ImportError:
     logger.warning("Framework service not available - using stub implementation")
 
 
-router = APIRouter(prefix="/frameworks", tags=["frameworks"])
+router = APIRouter(prefix="/api/frameworks", tags=["frameworks"])
 
 
 # =============================================================================
@@ -107,9 +107,19 @@ class IndustryRecommendation(BaseModel):
 # =============================================================================
 
 async def get_db():
-    """Dependency to get database session - will be injected"""
-    # This will be replaced by actual dependency injection
-    raise NotImplementedError("Database dependency must be injected")
+    """Dependency to get database session"""
+    # Try multiple import paths for flexibility
+    try:
+        from main import async_session
+    except ImportError:
+        import sys
+        if 'server' in sys.modules and hasattr(sys.modules['server'], 'async_session'):
+            async_session = sys.modules['server'].async_session
+        else:
+            raise RuntimeError("Database session not configured")
+
+    async with async_session() as session:
+        yield session
 
 
 async def get_appliance_framework_config(

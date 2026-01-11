@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-10 (Session 23 - Runbook Config Fix + Flywheel Seeding)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.22, ISO v20, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Learning Flywheel Seeded, 656 tests)
+**Last Updated:** 2026-01-11 (Session 26 - Framework Config Deployment + MinIO Storage Box Migration)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.23, ISO v20, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, 656 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,7 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.22, ISO v20, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete.
+**Status:** Phase 12 nearing completion. Agent v1.0.23, ISO v20, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box.
 
 **Session 15 (Windows Sensors):** Lightweight PowerShell sensor pushes drift events to appliance for instant detection (<30s vs 60s polling). Dual-mode routes sensor-enabled hosts to push model, others to WinRM polling. Scales to 100+ servers per appliance.
 
@@ -546,6 +546,17 @@ Required fields per CLAUDE.md:
 **Session 22 (ISO v20 Build + Physical Appliance Update):** Fixed admin password hash issue, diagnosed physical appliance crash (old agent v1.0.0 missing provisioning module). Built ISO v20 with agent v1.0.22, asyncssh for Linux support. Physical appliance (192.168.88.246) reflashed and online with L1 auto-healing working. VM appliance update pending (user away from home network).
 
 **Session 23 (Runbook Config Fix + Flywheel Seeding):** Fixed Runbook Config page API path mismatch between frontend (`/api/sites/{id}/runbooks`) and backend (`/api/runbooks/sites/{id}`). Added `SiteRunbookConfigItem` model with full runbook details. Seeded learning flywheel with 40 L2 resolutions across 8 patterns - all patterns now meet promotion criteria. Created `dashboard_api` symlink for main.py imports. Commit `f94f04c` pushed to production.
+
+**Sessions 25-26 (Multi-Framework Compliance + MinIO Storage Box):**
+- Agent v1.0.23 with multi-framework evidence generation (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls)
+- Framework Config frontend deployed at `/sites/{siteId}/frameworks`
+- Backend API at `/api/frameworks/*` for config, scores, metadata, industry recommendations
+- Database migration 013 (appliance_framework_configs, evidence_framework_mappings, compliance_scores)
+- MinIO storage migrated to Hetzner Storage Box (BX11, 1TB, $4/mo) via SSHFS mount
+- NixOS systemd service `storagebox-mount` for persistent Storage Box mounting
+- Fixed Docker networking (caddy → msp-server routing)
+- Fixed database connectivity (correct password, asyncpg driver)
+- Fixed health endpoint for HEAD method (monitoring compatibility)
 
 **ISO v20 Ready:**
 - **VPS:** `/root/msp-iso-build/result-iso-v20/iso/osiriscare-appliance.iso` (1.1GB)

@@ -686,4 +686,57 @@ export const usersApi = {
   },
 };
 
+// =============================================================================
+// FRAMEWORKS API (Multi-Framework Compliance)
+// =============================================================================
+
+import type {
+  ComplianceFramework,
+  FrameworkConfig,
+  FrameworkScore,
+  FrameworkMetadata,
+  IndustryRecommendation,
+} from '../types';
+
+export const frameworksApi = {
+  // Get framework configuration for an appliance
+  getConfig: (applianceId: string) =>
+    fetchSitesApi<FrameworkConfig>(`/frameworks/appliances/${encodeURIComponent(applianceId)}/config`),
+
+  // Update framework configuration
+  updateConfig: (applianceId: string, config: {
+    enabled_frameworks: ComplianceFramework[];
+    primary_framework: ComplianceFramework;
+    industry?: string;
+    framework_metadata?: Record<string, Record<string, unknown>>;
+  }) =>
+    fetchSitesApi<FrameworkConfig>(`/frameworks/appliances/${encodeURIComponent(applianceId)}/config`, {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    }),
+
+  // Get compliance scores for all enabled frameworks
+  getScores: (applianceId: string) =>
+    fetchSitesApi<FrameworkScore[]>(`/frameworks/appliances/${encodeURIComponent(applianceId)}/scores`),
+
+  // Get control status for a specific framework
+  getControls: (applianceId: string, framework: ComplianceFramework) =>
+    fetchSitesApi<Record<string, string>>(
+      `/frameworks/appliances/${encodeURIComponent(applianceId)}/controls/${framework}`
+    ),
+
+  // Refresh compliance scores
+  refreshScores: (applianceId: string) =>
+    fetchSitesApi<{ status: string; scores: FrameworkScore[] }>(
+      `/frameworks/appliances/${encodeURIComponent(applianceId)}/scores/refresh`,
+      { method: 'POST' }
+    ),
+
+  // Get metadata for all frameworks
+  getMetadata: () => fetchSitesApi<Record<ComplianceFramework, FrameworkMetadata>>('/frameworks/metadata'),
+
+  // Get industry recommendations
+  getIndustries: () => fetchSitesApi<Record<string, IndustryRecommendation>>('/frameworks/industries'),
+};
+
 export { ApiError };

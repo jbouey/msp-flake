@@ -15,8 +15,8 @@ This module defines the data models for:
 
 from enum import Enum
 from typing import List, Dict, Optional, Any
-from pydantic import BaseModel, Field
-from datetime import datetime
+from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime, timezone
 
 
 class ComplianceFramework(str, Enum):
@@ -52,6 +52,8 @@ class FrameworkControl(BaseModel):
     - PCI DSS: 12.10.1 - Incident Response Plan
     - NIST CSF: PR.IP-4 - Backups of information
     """
+    model_config = ConfigDict(use_enum_values=True)
+
     framework: ComplianceFramework
     control_id: str  # e.g., "164.308(a)(7)(ii)(A)", "CC6.1", "PR.IP-4"
     control_name: str
@@ -60,9 +62,6 @@ class FrameworkControl(BaseModel):
     subcategory: Optional[str] = None
     required: bool = True  # False for addressable/optional controls
     evidence_requirements: List[str] = Field(default_factory=list)
-
-    class Config:
-        use_enum_values = True
 
 
 class InfrastructureCheck(BaseModel):
@@ -78,6 +77,8 @@ class InfrastructureCheck(BaseModel):
     - PCI DSS: 12.10.1
     - NIST CSF: PR.IP-4, RC.RP-1
     """
+    model_config = ConfigDict(use_enum_values=True)
+
     check_id: str  # e.g., "backup_status", "encryption_at_rest"
     check_name: str
     description: str
@@ -93,9 +94,6 @@ class InfrastructureCheck(BaseModel):
     # Evidence configuration
     evidence_type: str = "compliance_check"
     evidence_retention_days: int = 365
-
-    class Config:
-        use_enum_values = True
 
     def get_controls_for_framework(
         self,
@@ -117,6 +115,8 @@ class ApplianceFrameworkConfig(BaseModel):
     A healthcare clinic uses HIPAA, a SaaS company uses SOC 2,
     a retailer uses PCI DSS - all from the same appliance software.
     """
+    model_config = ConfigDict(use_enum_values=True)
+
     appliance_id: str
     site_id: str
     enabled_frameworks: List[ComplianceFramework] = Field(
@@ -131,11 +131,8 @@ class ApplianceFrameworkConfig(BaseModel):
     # e.g., {"pci_dss": {"merchant_level": 4, "saq_type": "A"}}
     framework_metadata: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-    class Config:
-        use_enum_values = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def is_framework_enabled(self, framework: ComplianceFramework) -> bool:
         """Check if a framework is enabled for this appliance"""
@@ -150,12 +147,14 @@ class MultiFrameworkEvidence(BaseModel):
     One backup verification evidence bundle satisfies requirements
     across HIPAA, SOC 2, PCI DSS, and NIST CSF.
     """
+    model_config = ConfigDict(use_enum_values=True)
+
     bundle_id: str
     appliance_id: str
     site_id: str
     check_id: str
     check_type: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     outcome: str  # "pass", "fail", "remediated", "escalated"
 
     # Multi-framework tagging
@@ -173,9 +172,6 @@ class MultiFrameworkEvidence(BaseModel):
 
     # OpenTimestamps proof (if enabled)
     ots_proof: Optional[str] = None
-
-    class Config:
-        use_enum_values = True
 
     def get_controls_for_framework(
         self,
@@ -200,6 +196,8 @@ class ComplianceScore(BaseModel):
     Calculated by aggregating evidence outcomes across all
     controls mapped to the framework.
     """
+    model_config = ConfigDict(use_enum_values=True)
+
     framework: ComplianceFramework
     framework_name: str
     framework_version: str = ""
@@ -217,11 +215,8 @@ class ComplianceScore(BaseModel):
     control_status: Dict[str, ControlStatus] = Field(default_factory=dict)
 
     # Metadata
-    calculated_at: datetime = Field(default_factory=datetime.utcnow)
+    calculated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     evidence_window_days: int = 30
-
-    class Config:
-        use_enum_values = True
 
     @property
     def is_compliant(self) -> bool:
@@ -240,6 +235,8 @@ class FrameworkMetadata(BaseModel):
 
     Used for display, reporting, and industry recommendations.
     """
+    model_config = ConfigDict(use_enum_values=True)
+
     framework: ComplianceFramework
     name: str
     version: str
@@ -250,9 +247,6 @@ class FrameworkMetadata(BaseModel):
 
     # URLs for reference
     documentation_url: Optional[str] = None
-
-    class Config:
-        use_enum_values = True
 
 
 # Industry to framework recommendations mapping
