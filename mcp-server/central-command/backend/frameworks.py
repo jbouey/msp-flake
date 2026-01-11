@@ -8,6 +8,7 @@ Provides endpoints for:
 - Control-level compliance status
 """
 
+import json
 import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -168,7 +169,7 @@ async def upsert_appliance_framework_config(
             industry, framework_metadata, created_at, updated_at
         ) VALUES (
             :appliance_id, :site_id, :enabled_frameworks, :primary_framework,
-            :industry, :framework_metadata, NOW(), NOW()
+            :industry, CAST(:framework_metadata AS jsonb), NOW(), NOW()
         )
         ON CONFLICT (appliance_id) DO UPDATE SET
             enabled_frameworks = EXCLUDED.enabled_frameworks,
@@ -186,7 +187,7 @@ async def upsert_appliance_framework_config(
         "enabled_frameworks": enabled_frameworks,
         "primary_framework": primary_framework,
         "industry": industry,
-        "framework_metadata": framework_metadata,
+        "framework_metadata": json.dumps(framework_metadata),
     })
     await db.commit()
     row = result.fetchone()
@@ -331,15 +332,16 @@ async def update_appliance_frameworks(
             detail="Primary framework must be in enabled frameworks list"
         )
 
-    # Get site_id from appliance
-    site_query = text("SELECT site_id FROM appliances WHERE id = :appliance_id")
+    # Get site_id from appliance (appliance_id is actually site_id in our schema)
+    site_query = text("SELECT site_id FROM appliances WHERE site_id = :appliance_id")
     result = await db.execute(site_query, {"appliance_id": appliance_id})
     row = result.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Appliance not found")
-
-    site_id = row.site_id
+        # Appliance not registered yet - use appliance_id as site_id
+        site_id = appliance_id
+    else:
+        site_id = row.site_id
 
     # Upsert config
     config = await upsert_appliance_framework_config(
