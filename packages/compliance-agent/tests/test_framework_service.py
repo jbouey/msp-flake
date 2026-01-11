@@ -10,7 +10,7 @@ Tests cover:
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from compliance_agent.frameworks.schema import (
@@ -48,7 +48,7 @@ def sample_evidence_pass():
         site_id="test-site-001",
         check_id="backup_status",
         check_type="windows",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         outcome="pass",
         framework_mappings={
             ComplianceFramework.HIPAA: ["164.308(a)(7)(ii)(A)", "164.310(d)(2)(iv)"],
@@ -72,7 +72,7 @@ def sample_evidence_fail():
         site_id="test-site-001",
         check_id="encryption_at_rest",
         check_type="windows",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         outcome="fail",
         framework_mappings={
             ComplianceFramework.HIPAA: ["164.312(a)(2)(iv)"],
@@ -287,7 +287,7 @@ class TestComplianceScoring:
             site_id="site-001",
             check_id="backup_status",
             check_type="windows",
-            timestamp=datetime.utcnow() - timedelta(hours=2),
+            timestamp=datetime.now(timezone.utc) - timedelta(hours=2),
             outcome="fail",
             framework_mappings={
                 ComplianceFramework.HIPAA: ["164.308(a)(7)(ii)(A)"]
@@ -302,7 +302,7 @@ class TestComplianceScoring:
             site_id="site-001",
             check_id="backup_status",
             check_type="windows",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             outcome="pass",
             framework_mappings={
                 ComplianceFramework.HIPAA: ["164.308(a)(7)(ii)(A)"]
@@ -327,7 +327,7 @@ class TestComplianceScoring:
             site_id="site-001",
             check_id="backup_status",
             check_type="windows",
-            timestamp=datetime.utcnow() - timedelta(days=60),
+            timestamp=datetime.now(timezone.utc) - timedelta(days=60),
             outcome="pass",
             framework_mappings={
                 ComplianceFramework.HIPAA: ["164.308(a)(7)(ii)(A)"]

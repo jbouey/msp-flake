@@ -361,3 +361,66 @@ export interface NotificationSummary {
   info: number;
   success: number;
 }
+
+// =============================================================================
+// MULTI-FRAMEWORK COMPLIANCE
+// =============================================================================
+
+export type ComplianceFramework = 'hipaa' | 'soc2' | 'pci_dss' | 'nist_csf' | 'cis';
+
+export interface FrameworkConfig {
+  appliance_id: string;
+  site_id: string;
+  enabled_frameworks: ComplianceFramework[];
+  primary_framework: ComplianceFramework;
+  industry: string;
+  framework_metadata: Record<string, Record<string, unknown>>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FrameworkScore {
+  framework: ComplianceFramework;
+  framework_name: string;
+  total_controls: number;
+  passing_controls: number;
+  failing_controls: number;
+  unknown_controls: number;
+  score_percentage: number;
+  is_compliant: boolean;
+  at_risk: boolean;
+  calculated_at: string;
+}
+
+export interface FrameworkMetadata {
+  framework: ComplianceFramework;
+  name: string;
+  version: string;
+  description: string;
+  regulatory_body: string;
+  industry: string;
+  categories: string[];
+}
+
+export interface IndustryRecommendation {
+  industry: string;
+  primary: ComplianceFramework;
+  recommended: ComplianceFramework[];
+  description: string;
+}
+
+export const FRAMEWORK_LABELS: Record<ComplianceFramework, string> = {
+  hipaa: 'HIPAA',
+  soc2: 'SOC 2',
+  pci_dss: 'PCI DSS',
+  nist_csf: 'NIST CSF',
+  cis: 'CIS Controls',
+};
+
+export const FRAMEWORK_COLORS: Record<ComplianceFramework, string> = {
+  hipaa: 'blue',
+  soc2: 'purple',
+  pci_dss: 'green',
+  nist_csf: 'orange',
+  cis: 'teal',
+};

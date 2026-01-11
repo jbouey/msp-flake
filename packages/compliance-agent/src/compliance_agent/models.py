@@ -152,7 +152,12 @@ class EvidenceBundle(BaseModel):
 
     hipaa_controls: Optional[List[str]] = Field(
         default=None,
-        description="HIPAA Security Rule control citations"
+        description="HIPAA Security Rule control citations (legacy, use framework_mappings)"
+    )
+
+    framework_mappings: Optional[Dict[str, List[str]]] = Field(
+        default=None,
+        description="Multi-framework control mappings: {framework: [control_ids]}"
     )
 
     # ========================================================================

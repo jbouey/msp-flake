@@ -24,6 +24,16 @@ from .models import EvidenceBundle, ActionTaken
 from .crypto import Ed25519Signer
 from .config import AgentConfig
 
+# Optional multi-framework support
+try:
+    from .frameworks import FrameworkService, ComplianceFramework, get_framework_service
+    FRAMEWORKS_AVAILABLE = True
+except ImportError:
+    FRAMEWORKS_AVAILABLE = False
+    FrameworkService = None
+    ComplianceFramework = None
+    get_framework_service = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,6 +70,15 @@ class EvidenceGenerator:
         self._ots_client = None
         if config.ots_enabled:
             self._init_ots_client()
+
+        # Initialize framework service if available
+        self._framework_service = None
+        if FRAMEWORKS_AVAILABLE:
+            try:
+                self._framework_service = get_framework_service()
+                logger.info("Framework service initialized for multi-framework evidence")
+            except Exception as e:
+                logger.warning(f"Failed to initialize framework service: {e}")
 
     def _init_worm_uploader(self):
         """Initialize WORM uploader with config."""
@@ -134,7 +153,9 @@ class EvidenceGenerator:
         ntp_verification: Optional[Dict[str, Any]] = None,
         nixos_revision: Optional[str] = None,
         derivation_digest: Optional[str] = None,
-        ruleset_hash: Optional[str] = None
+        ruleset_hash: Optional[str] = None,
+        enabled_frameworks: Optional[List[str]] = None,
+        check_id: Optional[str] = None
     ) -> EvidenceBundle:
         """
         Create an evidence bundle.
@@ -148,7 +169,7 @@ class EvidenceGenerator:
             error: Error message if outcome != success
             timestamp_start: Action start time (default: now)
             timestamp_end: Action end time (default: now)
-            hipaa_controls: HIPAA control citations
+            hipaa_controls: HIPAA control citations (legacy, auto-populated from framework_mappings)
             rollback_available: Whether rollback is possible
             rollback_generation: NixOS generation to rollback to
             order_id: MCP order ID that triggered action
@@ -158,6 +179,8 @@ class EvidenceGenerator:
             nixos_revision: NixOS flake revision
             derivation_digest: NixOS derivation hash
             ruleset_hash: Compliance ruleset hash
+            enabled_frameworks: List of framework IDs to tag (e.g., ["hipaa", "soc2"])
+            check_id: Infrastructure check ID for framework mapping lookup
 
         Returns:
             EvidenceBundle ready for signing and storage
@@ -170,6 +193,45 @@ class EvidenceGenerator:
             post_state = {}
         if actions is None:
             actions = []
+
+        # Build framework mappings if service available
+        framework_mappings = None
+        if self._framework_service and (check_id or check):
+            lookup_id = check_id or self._map_check_to_check_id(check)
+            if lookup_id:
+                try:
+                    # Convert enabled_frameworks to ComplianceFramework enum if provided
+                    fw_filter = None
+                    if enabled_frameworks and FRAMEWORKS_AVAILABLE:
+                        fw_filter = []
+                        for fw_name in enabled_frameworks:
+                            try:
+                                fw_filter.append(ComplianceFramework(fw_name))
+                            except ValueError:
+                                logger.warning(f"Unknown framework: {fw_name}")
+
+                    # Get control mappings from framework service
+                    controls = self._framework_service.get_controls_for_check(
+                        lookup_id, frameworks=fw_filter
+                    )
+
+                    if controls:
+                        # Convert to serializable dict (framework.value -> control_ids)
+                        framework_mappings = {
+                            fw.value: ctrl_list
+                            for fw, ctrl_list in controls.items()
+                        }
+
+                        # Extract HIPAA controls for backward compatibility
+                        if FRAMEWORKS_AVAILABLE and ComplianceFramework.HIPAA in controls:
+                            hipaa_controls = controls[ComplianceFramework.HIPAA]
+
+                        logger.debug(
+                            f"Mapped check {lookup_id} to {len(framework_mappings)} frameworks"
+                        )
+
+                except Exception as e:
+                    logger.warning(f"Failed to get framework mappings: {e}")
 
         bundle = EvidenceBundle(
             # Metadata
@@ -193,6 +255,7 @@ class EvidenceGenerator:
             # Check
             check=check,
             hipaa_controls=hipaa_controls,
+            framework_mappings=framework_mappings,
 
             # State
             pre_state=pre_state,
@@ -217,9 +280,32 @@ class EvidenceGenerator:
         logger.info(
             f"Created evidence bundle {bundle.bundle_id} "
             f"for check={check}, outcome={outcome}"
+            f"{f', frameworks={list(framework_mappings.keys())}' if framework_mappings else ''}"
         )
 
         return bundle
+
+    def _map_check_to_check_id(self, check: str) -> Optional[str]:
+        """
+        Map legacy check types to infrastructure check IDs.
+
+        Args:
+            check: Legacy check type (patching, backup, etc.)
+
+        Returns:
+            Infrastructure check ID for framework mapping lookup
+        """
+        # Mapping from evidence check types to framework check IDs
+        check_mapping = {
+            "patching": "patch_status",
+            "backup": "backup_status",
+            "av_health": "antivirus_status",
+            "firewall": "firewall_enabled",
+            "encryption": "encryption_at_rest",
+            "logging": "audit_logging",
+            "time_sync": "time_sync",
+        }
+        return check_mapping.get(check)
 
     async def store_evidence_batch(
         self,

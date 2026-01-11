@@ -7,6 +7,7 @@ import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
 import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, Documentation, Partners, Notifications, NotificationSettings } from './pages';
 import Users from './pages/Users';
+import FrameworkConfig from './pages/FrameworkConfig';
 import SetPassword from './pages/SetPassword';
 import { useFleet, useRefreshFleet, useCommandPalette } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -121,6 +122,7 @@ const AppLayout: React.FC = () => {
             <Route path="/" element={<Dashboard />} />
             <Route path="/sites" element={<Sites />} />
             <Route path="/sites/:siteId" element={<SiteDetail />} />
+            <Route path="/sites/:siteId/frameworks" element={<FrameworkConfig />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/notification-settings" element={<NotificationSettings />} />
             <Route path="/onboarding" element={<Onboarding />} />

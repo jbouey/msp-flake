@@ -19,7 +19,7 @@ from .schema import (
     ComplianceScore,
 )
 
-from .framework_service import FrameworkService
+from .framework_service import FrameworkService, get_framework_service
 
 __all__ = [
     "ComplianceFramework",
@@ -30,4 +30,5 @@ __all__ = [
     "ControlStatus",
     "ComplianceScore",
     "FrameworkService",
+    "get_framework_service",
 ]

@@ -1,7 +1,122 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-10 (Session 23 Continued - Runbook Config Fix + Flywheel Seeding)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.22, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC)
+**Last Updated:** 2026-01-11 (Session 26 - Framework Config Deployment + MinIO Storage Box Migration)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.23, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework)
+
+---
+
+## ✅ Session 26 (2026-01-11)
+
+### Multi-Framework Compliance UI + MinIO Storage Migration
+**Status:** ✅ COMPLETE
+**Details:** Deployed Framework Config frontend, migrated MinIO to Hetzner Storage Box, fixed multiple infrastructure issues.
+
+#### Framework Config Frontend Deployment
+- [x] Fixed FrameworkConfig.tsx TypeScript error (removed unused React import)
+- [x] Rebuilt frontend and restarted Docker container
+- [x] Fixed API prefix mismatch: `/frameworks` → `/api/frameworks`
+- [x] Framework Config page now accessible at `/sites/{siteId}/frameworks`
+
+#### Backend API Fixes
+- [x] Updated `frameworks.py` router prefix from `/frameworks` to `/api/frameworks`
+- [x] Fixed `get_db()` dependency injection - imports `async_session` from server module
+- [x] Added `async_session` to `server.py` for SQLAlchemy async database support
+- [x] Fixed health endpoint for HEAD method (monitoring compatibility)
+
+#### Database Connectivity Fixes
+- [x] Fixed database password: `mcp-secure-password` → `McpSecure2727`
+- [x] Fixed asyncpg driver loading: added `+asyncpg` to DATABASE_URL
+- [x] Fixed `fleet.py` hardcoded credentials to use correct password and host
+- [x] Added DATABASE_URL environment variable to docker-compose.yml
+
+#### MinIO Storage Box Migration
+- [x] Migrated MinIO data storage from VPS partition to Hetzner Storage Box
+- [x] Storage Box: BX11 #509266 (`u526501.your-storagebox.de`), 1TB, $4/mo
+- [x] Created `minio-data` directory on Storage Box via SFTP
+- [x] Installed sshfs on NixOS VPS
+- [x] Mounted Storage Box via SSHFS at `/mnt/storagebox`
+- [x] Updated docker-compose.yml to use mounted storage for MinIO
+- [x] Created NixOS systemd service `storagebox-mount` for persistent mounting
+- [x] Rebuilt NixOS configuration with `nixos-rebuild switch`
+
+#### Docker Networking Fixes
+- [x] Connected caddy to `msp-iso-build_msp-network`
+- [x] Updated Caddyfile to proxy to `msp-server:8000` (was `mcp-server:8000`)
+- [x] Reloaded Caddy configuration
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/frameworks.py` | Changed prefix to `/api/frameworks`, fixed get_db() |
+| `mcp-server/central-command/frontend/src/pages/FrameworkConfig.tsx` | Removed unused React import |
+| VPS `/root/msp-iso-build/mcp-server/server.py` | Added async_session for SQLAlchemy |
+| VPS `/root/msp-iso-build/mcp-server/dashboard_api/fleet.py` | Fixed database credentials |
+| VPS `/root/msp-iso-build/docker-compose.yml` | Added DATABASE_URL env var |
+| VPS `/opt/mcp-server/docker-compose.yml` | MinIO volume → Storage Box mount |
+| VPS `/etc/nixos/configuration.nix` | Added sshfs, storagebox-mount systemd service |
+| VPS `/opt/mcp-server/Caddyfile` | Changed proxy target to msp-server:8000 |
+
+---
+
+## ✅ Session 25 (2026-01-11)
+
+### Multi-Framework Compliance System
+**Status:** ✅ COMPLETE
+**Details:** Enables OsirisCare to report against HIPAA, SOC 2, PCI DSS, NIST CSF, and CIS from the same infrastructure checks with per-appliance framework selection.
+
+#### Core Implementation
+- [x] Created `packages/compliance-agent/src/compliance_agent/frameworks/` package
+  - `schema.py` - Data models (ComplianceFramework enum, FrameworkControl, InfrastructureCheck, MultiFrameworkEvidence, ComplianceScore)
+  - `framework_service.py` - Core service with control mapping, scoring, industry recommendations
+  - `mappings/control_mappings.yaml` - 11 checks × 5 frameworks central registry
+  - `__init__.py` - Package exports
+
+#### Database Migration
+- [x] Created `mcp-server/central-command/backend/migrations/013_multi_framework.sql`
+  - `appliance_framework_configs` table - Per-appliance framework selection
+  - `evidence_framework_mappings` table - Links bundles to framework controls
+  - `compliance_scores` table - Pre-computed scores per appliance/framework
+  - Views: `v_control_status`, `v_compliance_dashboard`
+  - Functions: `calculate_compliance_score()`, `refresh_compliance_score()`
+- [x] Ran migration 013 on VPS PostgreSQL
+
+#### Backend API
+- [x] Created `mcp-server/central-command/backend/frameworks.py`
+  - `GET/PUT /frameworks/appliances/{id}/config` - Framework configuration
+  - `GET /frameworks/appliances/{id}/scores` - Compliance scores
+  - `GET /frameworks/appliances/{id}/controls/{framework}` - Control status
+  - `GET /frameworks/metadata` - Framework metadata
+  - `GET /frameworks/industries` - Industry recommendations
+  - `POST /frameworks/appliances/{id}/scores/refresh` - Refresh scores
+- [x] Wired framework router to `server.py`
+
+#### Agent Integration
+- [x] Updated `evidence.py` with multi-framework support
+  - Added `enabled_frameworks` and `check_id` parameters to `create_evidence()`
+  - Automatic framework mapping lookup based on check type
+  - Backward compatibility with legacy `hipaa_controls`
+- [x] Updated `models.py` - Added `framework_mappings` field to EvidenceBundle
+- [x] Fixed Pydantic deprecation warnings (ConfigDict instead of class Config)
+- [x] Fixed datetime.utcnow() deprecation warnings
+
+#### Testing
+- [x] Created `tests/test_framework_service.py` - 37 unit tests
+- [x] All 82 tests passing (evidence + framework + agent tests)
+
+**Files Created/Modified:**
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/frameworks/__init__.py` | Package exports |
+| `packages/compliance-agent/src/compliance_agent/frameworks/schema.py` | Data models |
+| `packages/compliance-agent/src/compliance_agent/frameworks/framework_service.py` | Core service |
+| `packages/compliance-agent/src/compliance_agent/frameworks/mappings/__init__.py` | Mappings package |
+| `packages/compliance-agent/src/compliance_agent/frameworks/mappings/control_mappings.yaml` | 11×5 control mappings |
+| `packages/compliance-agent/src/compliance_agent/evidence.py` | Multi-framework evidence |
+| `packages/compliance-agent/src/compliance_agent/models.py` | framework_mappings field |
+| `packages/compliance-agent/tests/test_framework_service.py` | 37 unit tests |
+| `mcp-server/central-command/backend/frameworks.py` | API endpoints |
+| `mcp-server/central-command/backend/migrations/013_multi_framework.sql` | DB migration |
+| `mcp-server/server.py` | Added frameworks router |
 
 ---
 

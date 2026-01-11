@@ -16,7 +16,7 @@ import yaml
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Set, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .schema import (
     ComplianceFramework,
@@ -322,7 +322,7 @@ class FrameworkService:
             site_id=site_id,
             check_id=check_id,
             check_type=check_type,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             outcome=outcome,
             framework_mappings=framework_mappings,
             hipaa_controls=hipaa_controls,
@@ -358,7 +358,7 @@ class FrameworkService:
         }
 
         # Filter to recent evidence
-        cutoff = datetime.utcnow() - timedelta(days=evidence_window_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=evidence_window_days)
         recent_evidence = [
             e for e in evidence_bundles
             if e.timestamp >= cutoff
