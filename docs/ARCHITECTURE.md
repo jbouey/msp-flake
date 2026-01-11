@@ -1,6 +1,6 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-01-04 (Session 8)
+**Last Updated:** 2026-01-10 (Session 23)
 
 ## Overview
 
@@ -144,6 +144,50 @@ Partners (MSPs) can white-label the platform and provision their own clients:
 | `portal.py` | Client portal with magic link auth |
 
 See [Partner Documentation](partner/README.md) for complete API reference.
+
+## Role-Based Access Control (RBAC)
+
+Central Command uses a three-tier permission system:
+
+| Role | Dashboard | Execute Actions | Manage Users | Audit Logs |
+|------|-----------|-----------------|--------------|------------|
+| Admin | Full | Full | Yes | Yes |
+| Operator | Full | Yes | No | No |
+| Readonly | Full | No | No | No |
+
+### User Management Flow
+
+```
+┌─────────────────┐     Send Invite     ┌─────────────────┐
+│  Admin          │ ────────────────▶   │  Email Service  │
+│  (Users Page)   │                     │  (SMTP)         │
+└─────────────────┘                     └────────┬────────┘
+                                                 │
+                                                 ▼
+┌─────────────────┐     Click Link      ┌─────────────────┐
+│  New User       │ ◀────────────────── │  Invite Email   │
+│  (SetPassword)  │                     │  with Token     │
+└────────┬────────┘                     └─────────────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Set Password   │ ──▶ Account Created
+│  Page           │
+└─────────────────┘
+```
+
+### User Management API
+
+| Endpoint | Method | Access | Description |
+|----------|--------|--------|-------------|
+| `/api/users` | GET | Admin | List all users |
+| `/api/users/invite` | POST | Admin | Send invite email |
+| `/api/users/invites` | GET | Admin | List pending invites |
+| `/api/users/{id}` | PUT | Admin | Update user role/status |
+| `/api/users/me` | GET | Any | Get current user profile |
+| `/api/users/me/password` | POST | Any | Change own password |
+| `/api/users/invite/validate/{token}` | GET | Public | Validate invite token |
+| `/api/users/invite/accept` | POST | Public | Accept invite + set password |
 
 ## Technical Stack
 

@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-09 (Session 22 - ISO v20 Build + Physical Appliance Update)
+**Last Updated:** 2026-01-10 (Session 23 - Runbook Config Fix + Flywheel Seeding)
 **Phase:** Phase 12 - Launch Readiness (Agent v1.0.22, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC)
-**Test Status:** 656 passed (compliance-agent tests), agent v1.0.22, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management
+**Test Status:** 656 passed (compliance-agent tests), agent v1.0.22, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel seeded with L2 data
 
 ---
 
@@ -243,6 +243,16 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Downloaded to local Mac: `/tmp/osiriscare-appliance-v20.iso`
   - Physical appliance (192.168.88.246) reflashed, now online with v1.0.19, L1 auto-healing working
   - VM appliance (192.168.88.247) update pending - user away from home network
+- ✅ **Learning Flywheel Seeded + Runbook Config Fix** - 2026-01-10 (Session 23)
+  - Learning infrastructure was complete but had no L2 data (all incidents going to L3)
+  - Created `/var/lib/msp/flywheel_generator.py` on appliance to seed L2 resolutions
+  - Disabled DRY-RUN mode: `healing_dry_run: false`
+  - Seeded 8 patterns with 5 L2 resolutions each (40 total incidents)
+  - All patterns meet promotion criteria (5 occurrences, 100% success rate)
+  - Fixed Runbook Config page API path mismatch (frontend/backend)
+  - Added `SiteRunbookConfigItem` model with full runbook details
+  - Created `dashboard_api` symlink for main.py imports
+  - Commit `f94f04c` pushed to production
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)

@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-09 (Session 22 - ISO v20 Build + Physical Appliance Update)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.22, ISO v20, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, 656 tests)
+**Last Updated:** 2026-01-10 (Session 23 - Runbook Config Fix + Flywheel Seeding)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.22, ISO v20, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Learning Flywheel Seeded, 656 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -544,6 +544,8 @@ Required fields per CLAUDE.md:
 **Session 21 (OpenTimestamps Blockchain Anchoring):** Enterprise-tier feature for proving evidence existed at timestamp T via Bitcoin blockchain. Created opentimestamps.py client, evidence_chain.py backend API, 011_ots_blockchain.sql migration. 24 new tests, 656 total tests passing.
 
 **Session 22 (ISO v20 Build + Physical Appliance Update):** Fixed admin password hash issue, diagnosed physical appliance crash (old agent v1.0.0 missing provisioning module). Built ISO v20 with agent v1.0.22, asyncssh for Linux support. Physical appliance (192.168.88.246) reflashed and online with L1 auto-healing working. VM appliance update pending (user away from home network).
+
+**Session 23 (Runbook Config Fix + Flywheel Seeding):** Fixed Runbook Config page API path mismatch between frontend (`/api/sites/{id}/runbooks`) and backend (`/api/runbooks/sites/{id}`). Added `SiteRunbookConfigItem` model with full runbook details. Seeded learning flywheel with 40 L2 resolutions across 8 patterns - all patterns now meet promotion criteria. Created `dashboard_api` symlink for main.py imports. Commit `f94f04c` pushed to production.
 
 **ISO v20 Ready:**
 - **VPS:** `/root/msp-iso-build/result-iso-v20/iso/osiriscare-appliance.iso` (1.1GB)

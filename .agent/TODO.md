@@ -1,7 +1,73 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-09 (Session 22 - ISO v20 Build + Physical Appliance Update)
+**Last Updated:** 2026-01-10 (Session 23 Continued - Runbook Config Fix + Flywheel Seeding)
 **Sprint:** Phase 12 - Launch Readiness (Agent v1.0.22, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC)
+
+---
+
+## ✅ Session 23 Continued (2026-01-10)
+
+### Runbook Config Page Fix + Learning Flywheel Seeding
+**Status:** ✅ COMPLETE
+**Details:**
+
+#### Learning Flywheel Data Seeding
+- [x] Discovered learning infrastructure was complete but had no L2 data (all L3 escalations)
+- [x] Created `/var/lib/msp/flywheel_generator.py` on physical appliance
+- [x] Disabled DRY-RUN mode: `healing_dry_run: false` in config.yaml
+- [x] Seeded 8 patterns with 5 L2 resolutions each (40 total incidents)
+- [x] All patterns now meet promotion criteria (5 occurrences, 100% success rate)
+
+#### Runbook Config Page API Fix
+- [x] Diagnosed: Frontend called `/api/sites/{siteId}/runbooks`, backend expected `/api/runbooks/sites/{site_id}`
+- [x] Fixed `mcp-server/central-command/frontend/src/utils/api.ts` - corrected API paths
+- [x] Added `SiteRunbookConfigItem` model to `runbook_config.py` with full runbook details
+- [x] Updated endpoint to return array with runbook metadata (name, description, category, severity)
+
+#### MCP Server Import Fix
+- [x] Created `dashboard_api` symlink → `central-command/backend/`
+- [x] Made `/agent-packages` static mount conditional on directory existence
+- [x] Enables `main.py` to run locally for development
+
+#### Git Push to Production
+- [x] Committed: `f94f04c` - fix: Runbook config page API paths and backend response format
+- [x] Changes pushed to main branch
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/frontend/src/utils/api.ts` | Fixed API paths |
+| `mcp-server/central-command/backend/runbook_config.py` | Added SiteRunbookConfigItem model |
+| `mcp-server/main.py` | Conditional agent-packages mount |
+| `mcp-server/dashboard_api` | New symlink to backend |
+| `SESSION_HANDOFF.md` | Updated with session state |
+
+---
+
+## ✅ Session 23 Earlier (2026-01-10)
+
+### OTS Migration & WORM Storage Verification
+**Status:** ✅ COMPLETE
+**Details:**
+- [x] Ran `011_ots_blockchain.sql` migration on VPS PostgreSQL
+- [x] Created `ots_proofs` table, `ots_batch_jobs` table, views, triggers
+- [x] Fixed datetime timezone issue in `evidence_chain.py` (asyncpg requires timezone-naive for TIMESTAMP columns)
+- [x] OTS proofs now being stored: 21 proofs (11 test-appliance, 10 physical-appliance)
+- [x] MinIO WORM storage verified: 80 objects, 196 KiB
+- [x] Both appliances uploading evidence to MinIO with Object Lock
+
+**Evidence Flow (End-to-End):**
+```
+Appliance → POST /api/evidence/sites/{site_id}/submit
+         → PostgreSQL (compliance_bundles table with hash chain)
+         → Background: OTS submission (ots_proofs table)
+         → Background: MinIO WORM upload (evidence-worm bucket)
+```
+
+**Stats as of Session End:**
+- compliance_bundles: 100K+ entries
+- ots_proofs: 21 pending (awaiting Bitcoin confirmation)
+- MinIO WORM: 80 objects, 196 KiB
 
 ---
 
