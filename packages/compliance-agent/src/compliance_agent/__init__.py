@@ -31,6 +31,29 @@ from .ntp_verify import (
     get_verified_timestamp,
 )
 
+# Linux Drift Detection
+from .linux_drift import (
+    LinuxDriftDetector,
+    DriftResult,
+    RemediationResult,
+)
+from .runbooks.linux.executor import (
+    LinuxTarget,
+    LinuxExecutor,
+    LinuxExecutionResult,
+)
+from .runbooks.linux.runbooks import (
+    LinuxRunbook,
+    RUNBOOKS as LINUX_RUNBOOKS,
+)
+
+# Network Posture Detection
+from .network_posture import (
+    NetworkPostureDetector,
+    NetworkPostureResult,
+    ListeningPort,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -93,4 +116,19 @@ __all__ = [
     "NTPServerResult",
     "verify_time_for_evidence",
     "get_verified_timestamp",
+
+    # Linux Drift Detection
+    "LinuxDriftDetector",
+    "DriftResult",
+    "RemediationResult",
+    "LinuxTarget",
+    "LinuxExecutor",
+    "LinuxExecutionResult",
+    "LinuxRunbook",
+    "LINUX_RUNBOOKS",
+
+    # Network Posture Detection
+    "NetworkPostureDetector",
+    "NetworkPostureResult",
+    "ListeningPort",
 ]

@@ -358,7 +358,38 @@ class APILLMPlanner(BaseLLMPlanner):
     ) -> LLMDecision:
         """Parse LLM response into decision."""
         try:
-            data = json.loads(response)
+            # Try to extract JSON from the response
+            # LLM might wrap it in markdown code blocks or add extra text
+            json_text = response.strip()
+
+            # Try to find JSON in markdown code block
+            if "```json" in json_text:
+                start = json_text.find("```json") + 7
+                end = json_text.find("```", start)
+                if end > start:
+                    json_text = json_text[start:end].strip()
+            elif "```" in json_text:
+                start = json_text.find("```") + 3
+                end = json_text.find("```", start)
+                if end > start:
+                    json_text = json_text[start:end].strip()
+
+            # Try to find JSON object boundaries
+            if not json_text.startswith("{"):
+                start = json_text.find("{")
+                if start >= 0:
+                    # Find matching closing brace
+                    depth = 0
+                    for i, c in enumerate(json_text[start:]):
+                        if c == "{":
+                            depth += 1
+                        elif c == "}":
+                            depth -= 1
+                            if depth == 0:
+                                json_text = json_text[start:start+i+1]
+                                break
+
+            data = json.loads(json_text)
 
             return LLMDecision(
                 incident_id=incident_id,

@@ -1,0 +1,317 @@
+# Linux Server Baseline for HIPAA Compliance
+# Version: 1.0
+# Last Updated: 2026-01-08
+#
+# This baseline defines the expected secure state for Linux servers
+# (Ubuntu 20.04+, RHEL 8+, CentOS 8+) in HIPAA-covered environments.
+
+version: "1.0"
+description: "HIPAA Linux Server Baseline"
+supported_distros:
+  - ubuntu
+  - debian
+  - rhel
+  - centos
+  - rocky
+  - almalinux
+
+# =============================================================================
+# SSH CONFIGURATION
+# =============================================================================
+ssh_config:
+  enabled: true
+  file_path: "/etc/ssh/sshd_config"
+  settings:
+    PermitRootLogin: "no"
+    PasswordAuthentication: "no"
+    X11Forwarding: "no"
+    MaxAuthTries: 3
+    PermitEmptyPasswords: "no"
+    ClientAliveInterval: 300
+    ClientAliveCountMax: 2
+    LoginGraceTime: 60
+    Protocol: 2
+  hipaa_controls:
+    - "164.312(a)(1)"  # Access Control
+    - "164.312(d)"     # Authentication
+  severity: high
+
+# =============================================================================
+# FIREWALL
+# =============================================================================
+firewall:
+  enabled: true
+  required: true
+  allowed_tools:
+    - ufw         # Ubuntu/Debian
+    - firewalld   # RHEL/CentOS
+    - iptables    # Fallback
+  default_policy:
+    incoming: deny
+    outgoing: allow
+  required_open_ports:
+    - port: 22
+      protocol: tcp
+      description: "SSH"
+  hipaa_controls:
+    - "164.312(e)(1)"  # Transmission Security
+  severity: critical
+
+# =============================================================================
+# SERVICES
+# =============================================================================
+services:
+  enabled: true
+
+  required_running:
+    - name: sshd
+      alternative: ssh  # Ubuntu uses 'ssh', RHEL uses 'sshd'
+      description: "SSH daemon"
+    - name: auditd
+      description: "Audit daemon for logging"
+    - name: rsyslog
+      description: "System logging"
+
+  prohibited:
+    - name: telnet
+      description: "Insecure remote access"
+    - name: rsh
+      description: "Insecure remote shell"
+    - name: rlogin
+      description: "Insecure remote login"
+    - name: rexec
+      description: "Insecure remote execution"
+    - name: vsftpd
+      description: "FTP - use SFTP instead"
+      exception_allowed: true
+
+  hipaa_controls:
+    - "164.312(a)(1)"  # Access Control
+    - "164.312(b)"     # Audit Controls
+  severity: high
+
+# =============================================================================
+# AUDIT LOGGING
+# =============================================================================
+audit:
+  enabled: true
+  auditd_required: true
+
+  rules_required:
+    # Identity file changes
+    - rule: "-w /etc/passwd -p wa -k identity"
+      description: "Audit password file changes"
+    - rule: "-w /etc/shadow -p wa -k identity"
+      description: "Audit shadow file changes"
+    - rule: "-w /etc/group -p wa -k identity"
+      description: "Audit group file changes"
+
+    # Authentication logs
+    - rule: "-w /var/log/auth.log -p wa -k auth"
+      distros: [ubuntu, debian]
+      description: "Audit auth.log access"
+    - rule: "-w /var/log/secure -p wa -k auth"
+      distros: [rhel, centos, rocky]
+      description: "Audit secure log access"
+
+    # Sudo usage
+    - rule: "-w /etc/sudoers -p wa -k sudo"
+      description: "Audit sudoers changes"
+    - rule: "-w /etc/sudoers.d/ -p wa -k sudo"
+      description: "Audit sudoers.d changes"
+
+  log_retention_days: 90
+
+  hipaa_controls:
+    - "164.312(b)"     # Audit Controls
+    - "164.308(a)(1)(ii)(D)"  # Information System Activity Review
+  severity: high
+
+# =============================================================================
+# PATCHING
+# =============================================================================
+patching:
+  enabled: true
+  max_age_days: 30
+  security_updates_required: true
+  reboot_if_required: false  # Requires human approval
+
+  check_commands:
+    ubuntu: "apt-get -s upgrade 2>/dev/null | grep -i security"
+    rhel: "yum check-update --security"
+
+  hipaa_controls:
+    - "164.308(a)(5)(ii)(B)"  # Protection from Malicious Software
+  severity: high
+
+# =============================================================================
+# ENCRYPTION
+# =============================================================================
+encryption:
+  enabled: true
+  require_luks: false  # Disk encryption - may not apply to cloud VMs
+  require_ssh_keys: true
+
+  tls_minimum_version: "1.2"
+
+  weak_ciphers_prohibited:
+    - "3DES"
+    - "RC4"
+    - "MD5"
+    - "SHA1"
+
+  hipaa_controls:
+    - "164.312(a)(2)(iv)"  # Encryption
+    - "164.312(e)(2)(ii)"  # Encryption in Transit
+  severity: high
+
+# =============================================================================
+# ACCOUNTS
+# =============================================================================
+accounts:
+  enabled: true
+
+  password_policy:
+    max_days: 90
+    min_days: 1
+    warn_days: 7
+    min_length: 12
+    require_uppercase: true
+    require_lowercase: true
+    require_digit: true
+    require_special: true
+
+  inactive_lock_days: 90
+
+  prohibited:
+    - username: "guest"
+    - username: "test"
+    - username: "admin"
+      exception: "if renamed or disabled"
+
+  uid_0_only_root: true
+
+  hipaa_controls:
+    - "164.312(a)(1)"  # Access Control
+    - "164.308(a)(5)(ii)(D)"  # Password Management
+  severity: high
+
+# =============================================================================
+# FILE PERMISSIONS
+# =============================================================================
+permissions:
+  enabled: true
+
+  sensitive_files:
+    - path: "/etc/shadow"
+      mode: "0640"
+      owner: "root"
+      group: "shadow"
+      group_fallback: "root"
+
+    - path: "/etc/passwd"
+      mode: "0644"
+      owner: "root"
+      group: "root"
+
+    - path: "/etc/ssh/sshd_config"
+      mode: "0600"
+      owner: "root"
+      group: "root"
+
+    - path: "/etc/sudoers"
+      mode: "0440"
+      owner: "root"
+      group: "root"
+
+    - path: "/var/log/auth.log"
+      mode: "0640"
+      owner: "syslog"
+      owner_fallback: "root"
+      distros: [ubuntu, debian]
+
+    - path: "/var/log/secure"
+      mode: "0600"
+      owner: "root"
+      distros: [rhel, centos, rocky]
+
+  no_world_writable_in:
+    - "/etc"
+    - "/usr"
+    - "/bin"
+    - "/sbin"
+
+  hipaa_controls:
+    - "164.312(a)(1)"  # Access Control
+    - "164.312(c)(1)"  # Integrity
+  severity: high
+
+# =============================================================================
+# MANDATORY ACCESS CONTROL (MAC)
+# =============================================================================
+mac:
+  enabled: true
+  require_enforcing: true
+
+  selinux:  # RHEL/CentOS
+    mode: "enforcing"
+    policy: "targeted"
+
+  apparmor:  # Ubuntu/Debian
+    enabled: true
+    profiles_loaded: true
+
+  hipaa_controls:
+    - "164.312(a)(1)"  # Access Control
+    - "164.312(c)(1)"  # Integrity
+  severity: high
+
+# =============================================================================
+# NETWORK
+# =============================================================================
+network:
+  enabled: true
+
+  sysctl_settings:
+    # Disable IP forwarding
+    net.ipv4.ip_forward: 0
+
+    # Disable ICMP redirects
+    net.ipv4.conf.all.accept_redirects: 0
+    net.ipv4.conf.default.accept_redirects: 0
+
+    # Enable SYN cookies
+    net.ipv4.tcp_syncookies: 1
+
+    # Log martian packets
+    net.ipv4.conf.all.log_martians: 1
+
+    # Disable source routing
+    net.ipv4.conf.all.accept_source_route: 0
+
+  hipaa_controls:
+    - "164.312(e)(1)"  # Transmission Security
+  severity: medium
+
+# =============================================================================
+# AUTO-HEAL SETTINGS
+# =============================================================================
+auto_heal:
+  # L1 categories that can be auto-healed
+  l1_enabled:
+    - ssh_config
+    - firewall
+    - services
+    - audit
+    - permissions
+
+  # L2 categories requiring LLM analysis
+  l2_enabled:
+    - patching
+    - accounts
+    - mac
+
+  # Never auto-heal (always L3 escalation)
+  l3_only:
+    - encryption  # Disk encryption changes
+    - network     # Sysctl changes can break connectivity

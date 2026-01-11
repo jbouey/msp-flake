@@ -68,6 +68,27 @@ class ApplianceConfig(BaseModel):
         description="Dry-run mode: log healing actions without executing"
     )
 
+    # L2 LLM Planner (for incidents not matched by L1 rules)
+    l2_enabled: bool = Field(
+        default=False,
+        description="Enable L2 LLM planner for complex incidents"
+    )
+
+    l2_api_provider: str = Field(
+        default="anthropic",
+        description="LLM API provider: anthropic, openai"
+    )
+
+    l2_api_key: str = Field(
+        default="",
+        description="API key for LLM provider"
+    )
+
+    l2_api_model: str = Field(
+        default="claude-3-5-haiku-latest",
+        description="LLM model to use for L2 planning"
+    )
+
     # Paths
     state_dir: Path = Field(
         default=Path("/var/lib/msp"),
@@ -84,6 +105,28 @@ class ApplianceConfig(BaseModel):
     windows_targets: list[dict] = Field(
         default_factory=list,
         description="Windows servers to manage via WinRM"
+    )
+
+    # WORM Storage (Immutable Evidence Archive)
+    worm_enabled: bool = Field(
+        default=False,
+        description="Enable WORM storage upload for evidence bundles"
+    )
+
+    worm_mode: str = Field(
+        default="proxy",
+        description="WORM upload mode: proxy (via MCP) or direct (S3)"
+    )
+
+    worm_retention_days: int = Field(
+        default=90,
+        ge=90,
+        description="WORM retention period (minimum 90 days for HIPAA)"
+    )
+
+    worm_auto_upload: bool = Field(
+        default=True,
+        description="Auto-upload evidence bundles to WORM storage on creation"
     )
 
     @field_validator('log_level')
