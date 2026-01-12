@@ -41,3 +41,19 @@ export {
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';
+
+// Integrations hooks
+export {
+  useIntegrations,
+  useIntegration,
+  useCreateIntegration,
+  useDeleteIntegration,
+  useIntegrationResources,
+  useTriggerSync,
+  useSyncJob,
+  useIntegrationsHealth,
+  useAWSSetupInstructions,
+  useGenerateAWSExternalId,
+  useRefreshIntegrations,
+  useRefreshResources,
+} from './useIntegrations';

@@ -128,6 +128,7 @@ try:
     from dashboard_api.notifications import router as notifications_router, escalations_router
     from dashboard_api.users import router as users_router
     from dashboard_api.frameworks import router as frameworks_router
+    from dashboard_api.integrations.api import router as integrations_router
     app.include_router(dashboard_router)
     app.include_router(auth_router)  # Admin authentication endpoints
     app.include_router(users_router)  # User management (RBAC)
@@ -144,7 +145,8 @@ try:
     app.include_router(sensors_router)  # Sensor management for dual-mode architecture
     app.include_router(notifications_router)  # Partner notification settings
     app.include_router(escalations_router)  # Agent L3 escalations to partners
-    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users, frameworks)")
+    app.include_router(integrations_router)  # Cloud integrations (AWS, Google, Okta, Azure)
+    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users, frameworks, integrations)")
 except ImportError as e:
     print(f"⚠ Could not import central-command routers: {e}")
 

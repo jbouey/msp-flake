@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-11 (Session 26 - Framework Config Deployment + MinIO Storage Box Migration)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.23, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance)
-**Test Status:** 656 passed (compliance-agent tests), agent v1.0.23, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel seeded with L2 data, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls)
+**Last Updated:** 2026-01-12 (Session 27 - Cloud Integration System Deployment)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.23, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations)
+**Test Status:** 656 passed (compliance-agent tests), agent v1.0.23, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel seeded with L2 data, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD)
 
 ---
 
@@ -274,6 +274,13 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Fixed database connectivity (correct password, asyncpg driver)
   - Fixed health endpoint for HEAD method (monitoring compatibility)
   - Added async_session to server.py for SQLAlchemy dependency injection
+- ✅ **Cloud Integration System** - 2026-01-12 (Session 27)
+  - Secure cloud connectors for AWS, Google Workspace, Okta, Azure AD
+  - Database: migration 015 (integrations, integration_resources, integration_audit_log, integration_sync_jobs)
+  - Backend: `/api/integrations/*` endpoints for connection management
+  - Frontend: Integrations.tsx, IntegrationSetup.tsx, IntegrationResources.tsx
+  - Security: Per-integration HKDF keys, single-use OAuth state tokens, tenant isolation
+  - HIPAA Controls: 164.312(a)(1) Access, 164.312(b) Audit, 164.312(c)(1) Integrity, 164.312(d) Auth
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)

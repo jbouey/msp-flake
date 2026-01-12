@@ -8,6 +8,9 @@ import { CommandBar } from './components/command';
 import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, Documentation, Partners, Notifications, NotificationSettings } from './pages';
 import Users from './pages/Users';
 import FrameworkConfig from './pages/FrameworkConfig';
+import Integrations from './pages/Integrations';
+import IntegrationSetup from './pages/IntegrationSetup';
+import IntegrationResources from './pages/IntegrationResources';
 import SetPassword from './pages/SetPassword';
 import { useFleet, useRefreshFleet, useCommandPalette } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -123,6 +126,9 @@ const AppLayout: React.FC = () => {
             <Route path="/sites" element={<Sites />} />
             <Route path="/sites/:siteId" element={<SiteDetail />} />
             <Route path="/sites/:siteId/frameworks" element={<FrameworkConfig />} />
+            <Route path="/sites/:siteId/integrations" element={<Integrations />} />
+            <Route path="/sites/:siteId/integrations/setup" element={<IntegrationSetup />} />
+            <Route path="/sites/:siteId/integrations/:integrationId" element={<IntegrationResources />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/notification-settings" element={<NotificationSettings />} />
             <Route path="/onboarding" element={<Onboarding />} />
