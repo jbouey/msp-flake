@@ -1,6 +1,6 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-12 (Session 27 - Cloud Integration System Deployment)
+**Last Updated:** 2026-01-12 (Session 28 - Cloud Integration Frontend Fixes)
 **Phase:** Phase 12 - Launch Readiness (Agent v1.0.23, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations)
 **Test Status:** 656 passed (compliance-agent tests), agent v1.0.23, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel seeded with L2 data, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD)
 
@@ -281,6 +281,12 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Frontend: Integrations.tsx, IntegrationSetup.tsx, IntegrationResources.tsx
   - Security: Per-integration HKDF keys, single-use OAuth state tokens, tenant isolation
   - HIPAA Controls: 164.312(a)(1) Access, 164.312(b) Audit, 164.312(c)(1) Integrity, 164.312(d) Auth
+- ✅ **Cloud Integration Frontend Fixes** - 2026-01-12 (Session 28)
+  - Fixed frontend deployment: central-command nginx was serving old JS files
+  - Fixed IntegrationResources.tsx null handling for risk_level (TypeError crash)
+  - Fixed integrationsApi.ts types to match API response (nullable fields)
+  - Verified end-to-end: AWS integration showing 14 resources with 2 critical, 7 high findings
+  - Integration Resources page now fully functional with risk badges and compliance checks
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)

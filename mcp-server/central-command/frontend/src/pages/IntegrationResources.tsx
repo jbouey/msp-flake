@@ -27,8 +27,9 @@ import {
 } from '../utils/integrationsApi';
 
 // Risk level badge
-function RiskBadge({ level }: { level: RiskLevel }) {
-  const config = RISK_LEVEL_CONFIG[level];
+function RiskBadge({ level }: { level: RiskLevel | null | undefined }) {
+  const effectiveLevel = level || 'unknown';
+  const config = RISK_LEVEL_CONFIG[effectiveLevel] || RISK_LEVEL_CONFIG.unknown;
   return (
     <span
       className="px-2 py-0.5 text-xs font-medium rounded"
@@ -57,7 +58,7 @@ function CheckStatusIcon({ status }: { status: string }) {
 function ResourceCard({ resource }: { resource: IntegrationResource }) {
   const [expanded, setExpanded] = useState(false);
   const typeLabel = RESOURCE_TYPE_LABELS[resource.resource_type] || resource.resource_type;
-  const checks = Object.values(resource.compliance_checks);
+  const checks = resource.compliance_checks || [];
   const failingChecks = checks.filter((c) => c.status === 'fail' || c.status === 'critical');
   const warningChecks = checks.filter((c) => c.status === 'warning');
 
@@ -346,7 +347,8 @@ export default function IntegrationResources() {
     unknown: 0,
   };
   resources.forEach((r) => {
-    byRisk[r.risk_level] = (byRisk[r.risk_level] || 0) + 1;
+    const level = r.risk_level || 'unknown';
+    byRisk[level] = (byRisk[level] || 0) + 1;
   });
 
   // Get unique resource types
