@@ -47,6 +47,7 @@ from dashboard_api.partners import router as partners_router
 from dashboard_api.discovery import router as discovery_router
 from dashboard_api.runbook_config import router as runbook_config_router
 from dashboard_api.users import router as users_router
+from dashboard_api.integrations.api import router as integrations_router
 
 # ============================================================================
 # Configuration
@@ -404,6 +405,7 @@ app.include_router(partners_router)
 app.include_router(discovery_router)
 app.include_router(runbook_config_router)
 app.include_router(users_router)
+app.include_router(integrations_router)
 
 # Serve agent update packages (only if directory exists)
 _agent_packages_dir = Path("/opt/mcp-server/agent-packages")

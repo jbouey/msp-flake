@@ -1,7 +1,52 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-11 (Session 26 - Framework Config Deployment + MinIO Storage Box Migration)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.23, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework)
+**Last Updated:** 2026-01-12 (Session 27 - Cloud Integration System Deployment)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.23, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations)
+
+---
+
+## ✅ Session 27 (2026-01-12)
+
+### Cloud Integration System Deployment
+**Status:** ✅ COMPLETE
+**Details:** Deployed secure cloud integration system connecting AWS, Google Workspace, Okta, and Azure AD for compliance evidence collection.
+
+#### Database Migration (015_cloud_integrations.sql)
+- [x] Applied migration to VPS PostgreSQL
+- [x] Fixed type mismatch: `site_id VARCHAR(64)` → `site_id UUID` (to match sites.id)
+- [x] Created 4 tables: integrations, integration_resources, integration_audit_log, integration_sync_jobs
+- [x] Views: v_integration_health for dashboard status
+
+#### Frontend TypeScript Fixes
+- [x] Fixed `useIntegrations.ts` - removed unused IntegrationResource import, fixed refetchInterval callback signature
+- [x] Fixed `IntegrationResources.tsx` - removed unused ComplianceCheck import, fixed SyncBanner props
+- [x] Fixed `Integrations.tsx` - removed unused RISK_LEVEL_CONFIG, useNavigate imports
+- [x] Fixed `IntegrationSetup.tsx` - removed unused useEffect import, loadingInstructions variable
+- [x] Frontend built successfully
+
+#### Backend Deployment
+- [x] Deployed integrations backend module to VPS
+- [x] Discovered container uses `main.py` (not `server.py`) as entry point
+- [x] Updated `main.py` to import `integrations_router`
+- [x] Restarted container
+- [x] Verified routes working (HTTP 401 = auth working)
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/migrations/015_cloud_integrations.sql` | Fixed site_id type from VARCHAR to UUID |
+| `mcp-server/central-command/frontend/src/hooks/useIntegrations.ts` | TypeScript fixes |
+| `mcp-server/central-command/frontend/src/pages/Integrations.tsx` | TypeScript fixes |
+| `mcp-server/central-command/frontend/src/pages/IntegrationSetup.tsx` | TypeScript fixes |
+| `mcp-server/central-command/frontend/src/pages/IntegrationResources.tsx` | TypeScript fixes |
+| `mcp-server/main.py` | Added integrations_router import |
+
+**Security Features Deployed:**
+- Per-integration HKDF key derivation (no shared encryption keys)
+- Single-use OAuth state tokens with 10-minute TTL
+- Tenant isolation with ownership verification (404 not 403)
+- SecureCredentials wrapper prevents log exposure
+- Resource limits (5000 per type, 5-minute sync timeout)
 
 ---
 
