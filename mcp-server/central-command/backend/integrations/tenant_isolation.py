@@ -46,7 +46,32 @@ class TenantIsolation:
     Static methods for verifying tenant ownership chains.
 
     All methods return 404 on failure to prevent enumeration.
+
+    Note: The sites table has two ID columns:
+    - id: UUID (primary key, used in foreign keys)
+    - site_id: VARCHAR (human-readable identifier like "physical-appliance-pilot-1aea78")
+
+    The API uses site_id (human-readable), but integrations table references sites.id (UUID).
     """
+
+    @staticmethod
+    async def get_site_uuid(db: AsyncSession, site_id: str) -> Optional[str]:
+        """
+        Get the UUID of a site from its human-readable site_id.
+
+        Args:
+            db: Database session
+            site_id: Human-readable site identifier
+
+        Returns:
+            UUID string or None if not found
+        """
+        result = await db.execute(
+            text("SELECT id FROM sites WHERE site_id = :site_id"),
+            {"site_id": site_id}
+        )
+        row = result.fetchone()
+        return str(row[0]) if row else None
 
     @staticmethod
     async def get_user_accessible_sites(
@@ -119,9 +144,9 @@ class TenantIsolation:
         """
         # Admins can access everything
         if user_role == "admin":
-            # But verify site exists
+            # But verify site exists (site_id is the human-readable identifier, not the UUID id)
             result = await db.execute(
-                text("SELECT 1 FROM sites WHERE id = :site_id"),
+                text("SELECT 1 FROM sites WHERE site_id = :site_id"),
                 {"site_id": site_id}
             )
             return result.fetchone() is not None
@@ -131,7 +156,7 @@ class TenantIsolation:
             result = await db.execute(
                 text("""
                     SELECT 1 FROM sites s
-                    WHERE s.id = :site_id AND s.partner_id = :partner_id
+                    WHERE s.site_id = :site_id AND s.partner_id = :partner_id
                 """),
                 {"site_id": site_id, "partner_id": partner_id}
             )
@@ -141,11 +166,11 @@ class TenantIsolation:
         result = await db.execute(
             text("""
                 SELECT 1 FROM sites
-                WHERE id = :site_id AND (
+                WHERE site_id = :site_id AND (
                     created_by = :user_id
-                    OR id IN (
-                        SELECT site_id FROM user_site_access
-                        WHERE user_id = :user_id
+                    OR site_id IN (
+                        SELECT usa.site_id FROM user_site_access usa
+                        WHERE usa.user_id = :user_id
                     )
                 )
             """),
@@ -176,7 +201,12 @@ class TenantIsolation:
         Returns:
             True if access is allowed
         """
-        # First verify integration belongs to the site
+        # Get the site UUID from the human-readable site_id
+        site_uuid = await TenantIsolation.get_site_uuid(db, site_id)
+        if not site_uuid:
+            return False
+
+        # Verify integration belongs to the site (using UUID)
         result = await db.execute(
             text("""
                 SELECT site_id FROM integrations
@@ -189,11 +219,11 @@ class TenantIsolation:
         if not row:
             return False
 
-        if row[0] != site_id:
+        if str(row[0]) != site_uuid:
             # Integration doesn't belong to claimed site
             logger.warning(
                 f"Integration site mismatch: integration={integration_id} "
-                f"claimed_site={site_id} actual_site={row[0]}"
+                f"claimed_site={site_id} (uuid={site_uuid}) actual_site={row[0]}"
             )
             return False
 

@@ -78,10 +78,10 @@ export interface IntegrationResource {
   id: string;
   resource_type: string;
   resource_id: string;
-  name: string;
-  compliance_checks: Record<string, ComplianceCheck>;
-  risk_level: RiskLevel;
-  last_synced: string;
+  name: string | null;
+  compliance_checks: ComplianceCheck[];
+  risk_level: RiskLevel | null;
+  last_synced: string | null;
 }
 
 export interface ComplianceCheck {

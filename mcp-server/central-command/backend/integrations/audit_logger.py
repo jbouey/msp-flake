@@ -199,6 +199,32 @@ class IntegrationAuditLogger:
         """
         self.db = db
 
+    async def _get_site_uuid(self, site_id: str) -> Optional[str]:
+        """
+        Convert human-readable site_id to UUID.
+
+        Args:
+            site_id: Human-readable site ID (e.g., "physical-appliance-pilot-1aea78")
+
+        Returns:
+            UUID string or None if not found
+        """
+        # Check if it's already a UUID format
+        try:
+            import uuid as uuid_module
+            uuid_module.UUID(site_id)
+            return site_id  # Already a UUID
+        except ValueError:
+            pass
+
+        # Look up the UUID from the sites table
+        result = await self.db.execute(
+            text("SELECT id FROM sites WHERE site_id = :site_id"),
+            {"site_id": site_id}
+        )
+        row = result.fetchone()
+        return str(row[0]) if row else None
+
     async def _log(self, entry: AuditEntry) -> int:
         """
         Write an audit entry to the database.
@@ -209,6 +235,12 @@ class IntegrationAuditLogger:
         Returns:
             ID of the created audit log entry
         """
+        # Convert human-readable site_id to UUID
+        site_uuid = await self._get_site_uuid(entry.site_id)
+        if not site_uuid:
+            logger.warning(f"Site not found for audit log: {entry.site_id}")
+            return 0
+
         result = await self.db.execute(
             text("""
                 INSERT INTO integration_audit_log (
@@ -227,7 +259,7 @@ class IntegrationAuditLogger:
                     resource_count
                 ) VALUES (
                     :integration_id,
-                    :site_id,
+                    CAST(:site_id AS uuid),
                     :event_type,
                     :event_category,
                     :event_data,
@@ -244,7 +276,7 @@ class IntegrationAuditLogger:
             """),
             {
                 "integration_id": entry.integration_id,
-                "site_id": entry.site_id,
+                "site_id": site_uuid,
                 "event_type": entry.event_type.value,
                 "event_category": entry.event_category.value,
                 "event_data": json.dumps(entry.event_data) if entry.event_data else None,

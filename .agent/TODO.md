@@ -1,7 +1,51 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-12 (Session 27 - Cloud Integration System Deployment)
+**Last Updated:** 2026-01-12 (Session 28 - Cloud Integration Frontend Fixes)
 **Sprint:** Phase 12 - Launch Readiness (Agent v1.0.23, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations)
+
+---
+
+## ✅ Session 28 (2026-01-12)
+
+### Cloud Integration Frontend Fixes & Verification
+**Status:** ✅ COMPLETE
+**Details:** Browser-based audit of OsirisCare dashboard, fixed frontend deployment issues, and resolved React component crashes.
+
+#### Browser Audit Findings
+- [x] Navigated to https://dashboard.osiriscare.net successfully
+- [x] Logged in as Administrator, verified Sites page showing 2 sites
+- [x] Discovered correct route: `/sites/{siteId}/integrations` (not `/integrations`)
+- [x] Found AWS Production integration with 14 resources, 2 critical, 7 high findings
+
+#### Frontend Deployment Issue Fix
+- [x] Discovered `central-command` nginx container serving OLD JavaScript files (index-nnrX9KFW.js)
+- [x] Fixed by copying new build to container: `docker cp /opt/mcp-server/app/frontend/. central-command:/usr/share/nginx/html/`
+- [x] Cloud Integrations page now loading correctly
+
+#### IntegrationResources.tsx Fixes
+- [x] Fixed TypeError: Cannot read properties of undefined (reading 'color')
+- [x] Root cause: `risk_level` can be null from API, RiskBadge component didn't handle null
+- [x] Added null handling: `const effectiveLevel = level || 'unknown';`
+- [x] Fixed risk level counting to handle null values
+- [x] Fixed `compliance_checks` handling - is array, not object
+
+#### integrationsApi.ts Type Fixes
+- [x] Changed `name` from `string` to `string | null`
+- [x] Changed `compliance_checks` from `Record<string, ComplianceCheck>` to `ComplianceCheck[]`
+- [x] Changed `risk_level` from `RiskLevel` to `RiskLevel | null`
+- [x] Changed `last_synced` from `string` to `string | null`
+
+#### Verification
+- [x] Frontend rebuilt and deployed to VPS
+- [x] Integration Resources page showing 14 resources correctly
+- [x] Risk breakdown: 2 Critical, 7 High, 1 Medium, 0 Low
+- [x] Compliance checks visible (CloudTrail critical, launch-wizard-1 critical SSH open)
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/frontend/src/pages/IntegrationResources.tsx` | Fixed null handling for risk_level |
+| `mcp-server/central-command/frontend/src/utils/integrationsApi.ts` | Updated types to match API response |
 
 ---
 

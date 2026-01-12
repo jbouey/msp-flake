@@ -24,6 +24,7 @@ Usage:
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
@@ -140,6 +141,7 @@ class SyncEngine:
             SyncResult with sync outcome
         """
         start_time = datetime.now(timezone.utc)
+        print(f"SYNC_ENGINE: sync_integration starting for {integration_id}", flush=True)
 
         # Get integration details
         result = await self.db.execute(
@@ -147,11 +149,12 @@ class SyncEngine:
                 SELECT id, site_id, provider, name, credentials_encrypted,
                        aws_role_arn, aws_external_id, aws_regions
                 FROM integrations
-                WHERE id = :id AND status = 'active'
+                WHERE id = :id AND status = 'connected'
             """),
             {"id": integration_id}
         )
         row = result.fetchone()
+        print(f"SYNC_ENGINE: Got integration row: {row is not None}", flush=True)
 
         if not row:
             return SyncResult(
@@ -162,13 +165,17 @@ class SyncEngine:
 
         site_id = str(row.site_id)
         provider = row.provider
+        print(f"SYNC_ENGINE: provider={provider}, site_id={site_id}", flush=True)
 
         # Log sync start
-        await self.audit.log_sync_start(
+        print(f"SYNC_ENGINE: logging sync start", flush=True)
+        await self.audit.log_sync_started(
             site_id=site_id,
             integration_id=integration_id,
-            triggered_by=triggered_by
+            resource_types=["all"],
+            triggered_by=triggered_by or "system"
         )
+        print(f"SYNC_ENGINE: logged, starting _run_sync with {SYNC_TIMEOUT_SECONDS}s timeout", flush=True)
 
         try:
             # Run sync with timeout
@@ -205,13 +212,20 @@ class SyncEngine:
             await self._update_job_status(job_id, sync_result)
 
         # Log sync completion
-        await self.audit.log_sync_complete(
-            site_id=site_id,
-            integration_id=integration_id,
-            resources_synced=sync_result.resources_synced,
-            success=sync_result.status in (SyncStatus.COMPLETED, SyncStatus.PARTIAL),
-            error=sync_result.errors[0] if sync_result.errors else None
-        )
+        if sync_result.status in (SyncStatus.COMPLETED, SyncStatus.PARTIAL):
+            await self.audit.log_sync_completed(
+                site_id=site_id,
+                integration_id=integration_id,
+                resources_collected=sync_result.resources_synced,
+                duration_seconds=int(sync_result.duration_seconds)
+            )
+        else:
+            await self.audit.log_sync_failed(
+                site_id=site_id,
+                integration_id=integration_id,
+                error=sync_result.errors[0] if sync_result.errors else "Unknown error",
+                duration_seconds=int(sync_result.duration_seconds)
+            )
 
         return sync_result
 
@@ -219,15 +233,28 @@ class SyncEngine:
         """Execute the actual sync for an integration."""
         integration_id = str(integration_row.id)
         provider = integration_row.provider
+        print(f"SYNC_ENGINE: _run_sync started for {provider}", flush=True)
 
-        # Decrypt credentials
-        credentials = await self.vault.decrypt_credentials(
-            integration_id,
-            integration_row.credentials_encrypted
-        )
+        # AWS uses STS AssumeRole and doesn't need encrypted credentials
+        # Only OAuth providers need credential decryption
+        credentials = {}
+        if provider != "aws" and integration_row.credentials_encrypted:
+            print(f"SYNC_ENGINE: decrypting credentials for OAuth provider", flush=True)
+            try:
+                credentials = self.vault.decrypt_credentials(
+                    integration_id,
+                    integration_row.credentials_encrypted
+                )
+                print(f"SYNC_ENGINE: credentials decrypted, keys={list(credentials.keys()) if credentials else 'None'}", flush=True)
+            except Exception as e:
+                logger.error(f"Failed to decrypt credentials: {e}")
+                raise
+        else:
+            print(f"SYNC_ENGINE: AWS provider - using role ARN, no credential decryption needed", flush=True)
 
         # Create appropriate connector and collect resources
         if provider == "aws":
+            print(f"SYNC_ENGINE: calling _sync_aws", flush=True)
             resources = await self._sync_aws(
                 integration_id=integration_id,
                 site_id=str(integration_row.site_id),
@@ -280,21 +307,61 @@ class SyncEngine:
     ) -> List[Dict[str, Any]]:
         """Sync AWS resources."""
         from .aws.connector import AWSConnector
+        print(f"SYNC_ENGINE: _sync_aws: creating connector role_arn={role_arn}, external_id={external_id}", flush=True)
 
         connector = AWSConnector(
             integration_id=integration_id,
             site_id=site_id,
             role_arn=role_arn,
             external_id=external_id,
-            regions=regions,
-            audit_logger=self.audit
+            db=self.db,
+            vault=self.vault,
+            regions=regions
         )
+        print(f"SYNC_ENGINE: _sync_aws: connector created, calling collect_all_resources", flush=True)
 
-        try:
-            resources = await connector.collect_all_resources()
-            return [self._resource_to_dict(r) for r in resources]
-        finally:
-            await connector.close()
+        # collect_all_resources returns Dict[str, CollectionResult]
+        results = await connector.collect_all_resources()
+        print(f"SYNC_ENGINE: _sync_aws: got results for {len(results)} resource types", flush=True)
+
+        # Extract all resources from the collection results
+        all_resources = []
+        for resource_type, collection_result in results.items():
+            print(f"SYNC_ENGINE: _sync_aws: processing {resource_type} with {len(collection_result.resources)} resources", flush=True)
+            for resource in collection_result.resources:
+                all_resources.append(self._aws_resource_to_dict(resource))
+
+        print(f"SYNC_ENGINE: _sync_aws: total resources={len(all_resources)}", flush=True)
+        return all_resources
+
+    def _aws_resource_to_dict(self, resource) -> Dict[str, Any]:
+        """Convert AWSResource object to dict for storage."""
+        # Convert ComplianceCheck objects to dicts
+        checks = []
+        for check in resource.compliance_checks:
+            checks.append({
+                "check_id": check.check_id,
+                "check_name": check.check_name,
+                "status": check.status,
+                "severity": check.severity,
+                "details": check.details,
+                "remediation": check.remediation,
+                "hipaa_controls": check.hipaa_controls
+            })
+
+        # Map risk_level to valid values (critical, high, medium, low, or NULL)
+        risk_level = resource.risk_level
+        if risk_level and risk_level not in ("critical", "high", "medium", "low"):
+            risk_level = None  # Invalid values become NULL
+
+        return {
+            "resource_type": resource.resource_type,
+            "resource_id": resource.resource_id,
+            "name": resource.resource_name or resource.resource_id,
+            "raw_data": resource.raw_data,
+            "compliance_checks": checks,
+            "risk_level": risk_level
+        }
 
     async def _sync_google(
         self,
@@ -342,11 +409,8 @@ class SyncEngine:
             })
         )
 
-        try:
-            resources = await connector.collect_resources()
-            return [self._resource_to_dict(r) for r in resources]
-        finally:
-            await connector.close()
+        resources = await connector.collect_resources()
+        return [self._resource_to_dict(r) for r in resources]
 
     async def _sync_okta(
         self,
@@ -393,11 +457,8 @@ class SyncEngine:
             })
         )
 
-        try:
-            resources = await connector.collect_resources()
-            return [self._resource_to_dict(r) for r in resources]
-        finally:
-            await connector.close()
+        resources = await connector.collect_resources()
+        return [self._resource_to_dict(r) for r in resources]
 
     async def _sync_azure(
         self,
@@ -444,11 +505,8 @@ class SyncEngine:
             })
         )
 
-        try:
-            resources = await connector.collect_resources()
-            return [self._resource_to_dict(r) for r in resources]
-        finally:
-            await connector.close()
+        resources = await connector.collect_resources()
+        return [self._resource_to_dict(r) for r in resources]
 
     def _resource_to_dict(self, resource) -> Dict[str, Any]:
         """Convert resource object to dict for storage."""
@@ -510,27 +568,27 @@ class SyncEngine:
                     await self.db.execute(
                         text("""
                             UPDATE integration_resources
-                            SET name = :name,
+                            SET resource_name = :resource_name,
                                 raw_data = :raw_data,
                                 compliance_checks = :compliance_checks,
                                 risk_level = :risk_level,
-                                last_synced = :last_synced
+                                last_seen_at = :last_seen_at
                             WHERE id = :id
                         """),
                         {
                             "id": old["id"],
-                            "name": resource["name"],
-                            "raw_data": resource["raw_data"],
-                            "compliance_checks": resource["compliance_checks"],
+                            "resource_name": resource["name"],
+                            "raw_data": json.dumps(resource["raw_data"]) if resource["raw_data"] else None,
+                            "compliance_checks": json.dumps(resource["compliance_checks"]) if resource["compliance_checks"] else "[]",
                             "risk_level": resource["risk_level"],
-                            "last_synced": now
+                            "last_seen_at": now
                         }
                     )
                     changes["updated"] += 1
                 else:
-                    # Just update last_synced
+                    # Just update last_seen_at
                     await self.db.execute(
-                        text("UPDATE integration_resources SET last_synced = :now WHERE id = :id"),
+                        text("UPDATE integration_resources SET last_seen_at = :now WHERE id = :id"),
                         {"id": old["id"], "now": now}
                     )
             else:
@@ -538,22 +596,22 @@ class SyncEngine:
                 await self.db.execute(
                     text("""
                         INSERT INTO integration_resources (
-                            integration_id, resource_type, resource_id, name,
-                            raw_data, compliance_checks, risk_level, last_synced
+                            integration_id, resource_type, resource_id, resource_name,
+                            raw_data, compliance_checks, risk_level, last_seen_at
                         ) VALUES (
-                            :integration_id, :resource_type, :resource_id, :name,
-                            :raw_data, :compliance_checks, :risk_level, :last_synced
+                            :integration_id, :resource_type, :resource_id, :resource_name,
+                            :raw_data, :compliance_checks, :risk_level, :last_seen_at
                         )
                     """),
                     {
                         "integration_id": integration_id,
                         "resource_type": resource["resource_type"],
                         "resource_id": resource["resource_id"],
-                        "name": resource["name"],
-                        "raw_data": resource["raw_data"],
-                        "compliance_checks": resource["compliance_checks"],
+                        "resource_name": resource["name"],
+                        "raw_data": json.dumps(resource["raw_data"]) if resource["raw_data"] else None,
+                        "compliance_checks": json.dumps(resource["compliance_checks"]) if resource["compliance_checks"] else "[]",
                         "risk_level": resource["risk_level"],
-                        "last_synced": now
+                        "last_seen_at": now
                     }
                 )
                 changes["created"] += 1
@@ -583,33 +641,37 @@ class SyncEngine:
         result: SyncResult
     ) -> None:
         """Update integration record after sync."""
-        next_sync = datetime.now(timezone.utc) + timedelta(minutes=DEFAULT_SYNC_INTERVAL_MINUTES)
-
-        status = "active"
-        last_error = None
+        status = "connected"
+        health_status = "healthy"
+        error_message = None
 
         if result.status == SyncStatus.FAILED:
             status = "error"
-            last_error = result.errors[0] if result.errors else "Unknown error"
+            health_status = "unhealthy"
+            error_message = result.errors[0] if result.errors else "Unknown error"
         elif result.status == SyncStatus.TIMEOUT:
             status = "error"
-            last_error = "Sync timeout"
+            health_status = "unhealthy"
+            error_message = "Sync timeout"
 
         await self.db.execute(
             text("""
                 UPDATE integrations
                 SET last_sync_at = :last_sync,
-                    next_sync_at = :next_sync,
+                    last_sync_success_at = CASE WHEN :status = 'connected' THEN :last_sync ELSE last_sync_success_at END,
                     status = :status,
-                    last_error = :last_error
+                    health_status = :health_status,
+                    error_message = :error_message,
+                    total_resources = :total_resources
                 WHERE id = :id
             """),
             {
                 "id": integration_id,
                 "last_sync": result.completed_at,
-                "next_sync": next_sync,
                 "status": status,
-                "last_error": last_error
+                "health_status": health_status,
+                "error_message": error_message,
+                "total_resources": result.resources_synced
             }
         )
         await self.db.commit()
@@ -625,7 +687,11 @@ class SyncEngine:
                 UPDATE integration_sync_jobs
                 SET status = :status,
                     completed_at = :completed_at,
-                    resources_synced = :resources_synced,
+                    duration_seconds = :duration_seconds,
+                    resources_found = :resources_found,
+                    resources_created = :resources_created,
+                    resources_updated = :resources_updated,
+                    resources_deleted = :resources_deleted,
                     error_message = :error
                 WHERE id = :id
             """),
@@ -633,7 +699,11 @@ class SyncEngine:
                 "id": job_id,
                 "status": result.status.value,
                 "completed_at": result.completed_at,
-                "resources_synced": result.resources_synced,
+                "duration_seconds": int(result.duration_seconds),
+                "resources_found": result.resources_synced,
+                "resources_created": result.resources_created,
+                "resources_updated": result.resources_updated,
+                "resources_deleted": result.resources_deleted,
                 "error": result.errors[0] if result.errors else None
             }
         )
@@ -658,7 +728,7 @@ class SyncEngine:
         result = await self.db.execute(
             text("""
                 SELECT id FROM integrations
-                WHERE site_id = :site_id AND status = 'active'
+                WHERE site_id = :site_id AND status = 'connected'
             """),
             {"site_id": site_id}
         )
@@ -743,14 +813,16 @@ class SyncEngine:
         await self.sync_integration(integration_id, job_id)
 
     async def get_pending_syncs(self) -> List[Dict[str, Any]]:
-        """Get integrations due for sync."""
+        """Get integrations due for sync (not synced in last sync_interval_minutes)."""
         result = await self.db.execute(
             text("""
-                SELECT id, site_id, provider, name, next_sync_at
+                SELECT id, site_id, provider, name, last_sync_at, sync_interval_minutes
                 FROM integrations
-                WHERE status = 'active'
-                  AND next_sync_at <= :now
-                ORDER BY next_sync_at ASC
+                WHERE status = 'connected'
+                  AND sync_enabled = true
+                  AND (last_sync_at IS NULL
+                       OR last_sync_at < :now - (sync_interval_minutes || ' minutes')::interval)
+                ORDER BY last_sync_at ASC NULLS FIRST
                 LIMIT 100
             """),
             {"now": datetime.now(timezone.utc)}
@@ -762,7 +834,7 @@ class SyncEngine:
                 "site_id": str(row.site_id),
                 "provider": row.provider,
                 "name": row.name,
-                "next_sync_at": row.next_sync_at
+                "last_sync_at": row.last_sync_at
             }
             for row in result.fetchall()
         ]
