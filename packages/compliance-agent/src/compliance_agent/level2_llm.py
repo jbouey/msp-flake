@@ -374,20 +374,20 @@ class APILLMPlanner(BaseLLMPlanner):
                 if end > start:
                     json_text = json_text[start:end].strip()
 
-            # Try to find JSON object boundaries
-            if not json_text.startswith("{"):
-                start = json_text.find("{")
-                if start >= 0:
-                    # Find matching closing brace
-                    depth = 0
-                    for i, c in enumerate(json_text[start:]):
-                        if c == "{":
-                            depth += 1
-                        elif c == "}":
-                            depth -= 1
-                            if depth == 0:
-                                json_text = json_text[start:start+i+1]
-                                break
+            # Try to find JSON object boundaries - always extract just the JSON object
+            # even if there's extra text after it
+            start = json_text.find("{")
+            if start >= 0:
+                # Find matching closing brace
+                depth = 0
+                for i, c in enumerate(json_text[start:]):
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            json_text = json_text[start:start+i+1]
+                            break
 
             data = json.loads(json_text)
 

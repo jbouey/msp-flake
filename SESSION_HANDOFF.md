@@ -1,9 +1,9 @@
 # Session Handoff - MSP Compliance Platform
 
-**Date:** 2026-01-12
+**Date:** 2026-01-13
 **Phase:** Phase 12 - Launch Readiness
-**Session:** 28 - Cloud Integration Frontend Fixes
-**Status:** All complete - Cloud Integrations fully verified and working
+**Session:** 29 - L1/L2/L3 Auto-Healing Fixes + Frontend Fixes
+**Status:** Agent v1.0.26, L2 LLM enabled, ISO v24 ready
 
 ---
 
@@ -19,8 +19,8 @@ HIPAA compliance automation platform for healthcare SMBs. NixOS appliances phone
 **Deployed Appliances:**
 | Site | Type | IP | Agent | Status |
 |------|------|-----|-------|--------|
-| North Valley Dental (physical-appliance-pilot-1aea78) | HP T640 | 192.168.88.246 | v1.0.22 | online |
-| Main Street Virtualbox Medical (test-appliance-lab-b3c40c) | VM | 192.168.88.247 | v1.0.22 | online |
+| North Valley Dental (physical-appliance-pilot-1aea78) | HP T640 | 192.168.88.246 | v1.0.23 (L2 enabled) | online |
+| Main Street Virtualbox Medical (test-appliance-lab-b3c40c) | VM | 192.168.88.247 | v1.0.22 | pending update |
 
 **Lab Environment:**
 - DC: 192.168.88.250 (NVDC01.northvalley.local)
@@ -29,46 +29,78 @@ HIPAA compliance automation platform for healthcare SMBs. NixOS appliances phone
 
 ---
 
-## Today's Session (2026-01-12 Session 28)
+## Today's Session (2026-01-13 Session 29)
 
-### Cloud Integration Frontend Fixes & Verification
+### L1/L2/L3 Auto-Healing Fixes + Frontend Fixes
 
-Browser-based audit of OsirisCare dashboard, fixed frontend deployment and React component crashes.
+Fixed critical issues with auto-healing escalation system and frontend pages.
 
-**Browser Audit Findings:**
-- Dashboard accessible at https://dashboard.osiriscare.net
-- Sites page showing 2 sites correctly
-- Correct route for integrations: `/sites/{siteId}/integrations`
-- AWS Production integration: 14 resources, 2 critical, 7 high findings
+**L1 Rule Fixes (VPS main.py):**
+- **Status mismatch:** Rules checked for `"non_compliant"` but SimpleDriftChecker returns `"pass"`, `"warning"`, `"fail"`, `"error"`
+- Fix: Changed `"operator": "eq", "value": "non_compliant"` to `"operator": "in", "value": ["warning", "fail", "error"]`
+- **Check type mismatch:** Rules had wrong names (e.g., `firewall_enabled` to `firewall`)
+- Affected rules: NTP sync, critical services, disk space, firewall, NixOS generation
 
-**Frontend Deployment Fix:**
-- Problem: Blank page at integration routes
-- Cause: `central-command` nginx container serving old JS files (index-nnrX9KFW.js)
-- Fix: `docker cp /opt/mcp-server/app/frontend/. central-command:/usr/share/nginx/html/`
+**L3 Notification Deduplication Fix (VPS main.py:885-930):**
+- Problem: L3 escalation notifications blocked by older incident notifications
+- Root cause: Dedup query matched across categories (incident vs escalation)
+- Fix: Added `category` filter to dedup query - now checks same category only
 
-**IntegrationResources.tsx Fixes:**
-- Fixed `TypeError: Cannot read properties of undefined (reading 'color')`
-- Root cause: `risk_level` null from API, RiskBadge didn't handle null
-- Added null handling: `const effectiveLevel = level || 'unknown';`
-- Fixed risk counting and compliance_checks (array not object)
+**Windows Backup Check (appliance_agent.py:1247-1364):**
+- Added `backup_status` check using `Get-WBSummary` PowerShell
+- Status logic: pass (<24h), warning (<72h or not installed), fail (>72h or no policy)
 
-**integrationsApi.ts Type Fixes:**
-- `name`: `string` → `string | null`
-- `compliance_checks`: `Record<string, ComplianceCheck>` → `ComplianceCheck[]`
-- `risk_level`: `RiskLevel` → `RiskLevel | null`
-- `last_synced`: `string` → `string | null`
+**Learning Page Fix (VPS db_queries.py:205-215):**
+- Problem: Page showing zeros/untethered from real data
+- Root cause: Query filtered by `status = 'resolved'` but incidents have `resolving`/`escalated`
+- Fix: Changed to `resolution_tier IS NOT NULL`
 
-**Verification:**
-- Integration Resources page showing 14 resources correctly
-- Risk breakdown: 2 Critical, 7 High, 1 Medium, 0 Low
-- Compliance checks visible (CloudTrail critical, SSH open critical)
+**Admin Login Fix:**
+- Reset password hash for admin user (admin / Admin123)
+- Verified login working
+
+**L2 LLM Configuration:**
+- Enabled L2 on physical appliance with Anthropic API key
+- Config added to `/var/lib/msp/config.yaml`:
+  ```yaml
+  l2_enabled: true
+  l2_api_key: sk-ant-api03-...
+  l2_api_provider: anthropic
+  l2_api_model: claude-3-5-haiku-latest
+  ```
+- L2 now initializing: "L1=True, L2=True, L3=True"
+
+**L2 JSON Parsing Fix (level2_llm.py:374-390):**
+- Problem: "Failed to parse LLM response: Extra data: line 14 column 1"
+- Root cause: Code skipped brace-matching when text started with `{`, but Claude returns JSON followed by explanation
+- Fix: Always extract JSON object using brace-matching (removed `if not json_text.startswith("{"):` condition)
+- **Note:** Fix is in local code, needs commit+push+ISO rebuild to deploy
+
+**Frameworks API Fix (main.py):**
+- Problem: `/api/frameworks/metadata` returning 404
+- Root cause: `frameworks_router` not imported or mounted in main.py
+- Fix: Added import and `app.include_router(frameworks_router)`
+- **Deployed to VPS** - frameworks API now working
+
+**Incidents Page Fix (Frontend):**
+- Problem: "View All" incidents link led to blank page
+- Root cause: No `/incidents` route defined in App.tsx
+- Fix: Created `Incidents.tsx` page with all/active/resolved filters
+- Added route and export
+- **Deployed to VPS** - incidents page now working
+
+**ISO v24 Built:**
+- Location: `/root/msp-iso-build/result-iso-v24/iso/osiriscare-appliance.iso`
+- Size: 1.1GB
+- **Note:** Uses cached agent 1.0.23, L2 JSON fix NOT included (needs code push)
 
 ---
 
 ## What's Complete
 
 ### Phase 12 - Launch Readiness
-- Agent v1.0.23 with OpenTimestamps, Linux support, asyncssh
+- Agent v1.0.26 with L2 JSON parsing fix (local code)
+- L2 LLM enabled on physical appliance (Claude 3.5 Haiku)
 - 43 total runbooks (27 Windows + 16 Linux)
 - Learning flywheel infrastructure seeded and ready
 - Partner-configurable runbook enable/disable
@@ -82,22 +114,39 @@ Browser-based audit of OsirisCare dashboard, fixed frontend deployment and React
 - HTTPS default for Windows WinRM
 - Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS)
 - MinIO Storage Box migration (Hetzner, 1TB, $4/mo)
-- **Cloud Integrations (AWS, Google Workspace, Okta, Azure AD) - VERIFIED WORKING**
+- Cloud Integrations (AWS, Google, Okta, Azure AD) - VERIFIED WORKING
+- Frameworks API working
+- Incidents page working
 
 ---
 
 ## What's Pending
 
 ### Immediate (Next Session)
-1. **Connect additional cloud providers** - Google Workspace, Okta, Azure AD
-2. **Transfer ISO v21 to iMac** - `scp root@178.156.162.116:/root/msp-iso-build/result-iso-v21/iso/osiriscare-appliance.iso ~/Downloads/`
-3. **Flash ISO v21 to physical appliance** - North Valley Dental (192.168.88.246)
+1. **Commit & Push L2 JSON Fix**
+   - `git add packages/compliance-agent/src/compliance_agent/level2_llm.py`
+   - `git add packages/compliance-agent/setup.py`
+   - `git commit && git push`
+
+2. **Rebuild ISO v25 with L2 Fix**
+   - SSH to VPS: `ssh root@178.156.162.116`
+   - Pull: `cd /root/msp-iso-build && git pull`
+   - Build: `nix build .#appliance-iso -o result-iso-v25`
+
+3. **Flash ISO to Physical Appliance**
+   - Transfer to iMac: `scp root@178.156.162.116:/root/msp-iso-build/result-iso-v25/iso/*.iso ~/Downloads/`
+   - Flash and reboot appliance
+
+4. **Verify L2 Working**
+   - Check appliance logs: `journalctl -u compliance-agent | grep "L2"`
+   - Confirm incidents being resolved via L2 (not all L3)
+   - Check Learning page for L2 count > 0
 
 ### Short-term
+- Connect additional cloud providers (Google Workspace, Okta, Azure AD)
 - First compliance packet generation
 - 30-day monitoring period
 - Evidence bundle verification in MinIO
-- Test framework scoring with real appliance data
 
 ---
 
@@ -114,7 +163,7 @@ Browser-based audit of OsirisCare dashboard, fixed frontend deployment and React
 | Appliance ISO | `iso/` directory |
 | Compliance agent | `packages/compliance-agent/` |
 | Backend API | `mcp-server/central-command/backend/` |
-| **Cloud Integrations** | `mcp-server/central-command/backend/integrations/` |
+| Cloud Integrations | `mcp-server/central-command/backend/integrations/` |
 | Frontend | `mcp-server/central-command/frontend/` |
 
 ---
@@ -134,14 +183,14 @@ ssh root@192.168.88.247   # VM (Main Street)
 ssh root@178.156.162.116
 cd /opt/mcp-server && docker compose logs -f mcp-server
 
-# Test Cloud Integrations API
-curl -s https://api.osiriscare.net/api/integrations/health -H "Authorization: Bearer <token>"
+# Check L2 status on appliance
+ssh root@192.168.88.246 'journalctl -u compliance-agent | grep -i "l2\|llm" | tail -20'
+
+# Test Frameworks API
+curl -s https://api.osiriscare.net/api/frameworks/metadata | jq '.frameworks | keys[]'
 
 # Check Storage Box mount
 ssh root@178.156.162.116 'df -h /mnt/storagebox'
-
-# Test Framework API
-curl -s https://api.osiriscare.net/api/frameworks/metadata | jq .
 
 # Frontend deployment (when updating)
 cd mcp-server/central-command/frontend && npm run build
@@ -155,6 +204,7 @@ ssh root@178.156.162.116 'docker cp /opt/mcp-server/app/frontend/. central-comma
 
 | Date | Session | Focus | Status |
 |------|---------|-------|--------|
+| 2026-01-13 | 29 | L1/L2/L3 Fixes + Frontend Fixes | Complete |
 | 2026-01-12 | 28 | Cloud Integration Frontend Fixes | Complete |
 | 2026-01-12 | 27 | Cloud Integration System Deployment | Complete |
 | 2026-01-11 | 26 | Framework Config + MinIO Storage Box | Complete |
@@ -171,33 +221,40 @@ ssh root@178.156.162.116 'docker cp /opt/mcp-server/app/frontend/. central-comma
 
 ```
 Central Command (VPS 178.156.162.116)
-├── FastAPI Backend (:8000)
-│   ├── /api/appliances/checkin - Credentials + runbooks (TLS 1.2+)
-│   ├── /api/sensors/... - Windows + Linux sensor management
-│   ├── /api/evidence/... - OTS anchoring + hash chains
-│   ├── /api/frameworks/... - Multi-framework compliance
-│   ├── /api/integrations/... - Cloud integrations (AWS, Google, Okta, Azure)
-│   ├── /api/users/... - RBAC (Admin/Operator/Readonly)
-│   └── All connections require TLS 1.2+
-├── React Frontend (:3000) - served by central-command nginx
-├── PostgreSQL (16-alpine)
-├── MinIO (WORM storage → Storage Box)
-└── Caddy (auto-TLS)
++-- FastAPI Backend (:8000)
+|   +-- /api/appliances/checkin - Credentials + runbooks (TLS 1.2+)
+|   +-- /api/sensors/... - Windows + Linux sensor management
+|   +-- /api/evidence/... - OTS anchoring + hash chains
+|   +-- /api/frameworks/... - Multi-framework compliance
+|   +-- /api/integrations/... - Cloud integrations (AWS, Google, Okta, Azure)
+|   +-- /api/users/... - RBAC (Admin/Operator/Readonly)
+|   +-- All connections require TLS 1.2+
++-- React Frontend (:3000) - served by central-command nginx
++-- PostgreSQL (16-alpine)
++-- MinIO (WORM storage -> Storage Box)
++-- Caddy (auto-TLS)
 
 Appliances (NixOS)
-├── compliance-agent-appliance (systemd)
-│   ├── Check-in every 60s (TLS 1.2+ enforced)
-│   ├── L1/L2/L3 auto-healing
-│   ├── Ed25519 signed + OTS anchored evidence
-│   └── Sensor API (:8080) for Windows + Linux
-└── config.yaml (site_id + api_key only)
++-- compliance-agent-appliance (systemd)
+|   +-- Check-in every 60s (TLS 1.2+ enforced)
+|   +-- L1 deterministic rules (70-80%)
+|   +-- L2 LLM planner (Claude 3.5 Haiku) - ENABLED
+|   +-- L3 human escalation
+|   +-- Ed25519 signed + OTS anchored evidence
+|   +-- Sensor API (:8080) for Windows + Linux
++-- config.yaml (site_id + api_key + L2 config)
+
+L2 LLM Configuration (Physical Appliance):
+- Provider: anthropic
+- Model: claude-3-5-haiku-latest
+- Status: ENABLED (but JSON parsing fix pending ISO deployment)
 
 Cloud Integrations (VERIFIED WORKING)
-├── AWS - STS AssumeRole + ExternalId, 14 resources synced
-│   └── Findings: 2 critical (CloudTrail, SSH), 7 high
-├── Google Workspace - OAuth2 + PKCE (users, groups, MFA)
-├── Okta - OAuth2 (users, MFA, policies)
-└── Azure AD - OAuth2 (users, conditional access)
++-- AWS - STS AssumeRole + ExternalId, 14 resources synced
+|   +-- Findings: 2 critical (CloudTrail, SSH), 7 high
++-- Google Workspace - OAuth2 + PKCE (users, groups, MFA)
++-- Okta - OAuth2 (users, MFA, policies)
++-- Azure AD - OAuth2 (users, conditional access)
 ```
 
 ---
@@ -207,6 +264,7 @@ Cloud Integrations (VERIFIED WORKING)
 1. Read this file + `.agent/CONTEXT.md`
 2. Check `.agent/TODO.md` for priorities
 3. Priority tasks:
-   - Connect Google Workspace / Okta / Azure AD integrations
-   - Deploy ISO v21 to appliances
-   - Generate first compliance packet
+   - Commit & push L2 JSON fix
+   - Rebuild ISO with fix
+   - Deploy to appliances
+   - Verify L2 resolutions working

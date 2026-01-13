@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
-import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, Documentation, Partners, Notifications, NotificationSettings } from './pages';
+import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, Documentation, Partners, Notifications, NotificationSettings, Incidents } from './pages';
 import Users from './pages/Users';
 import FrameworkConfig from './pages/FrameworkConfig';
 import Integrations from './pages/Integrations';
@@ -35,6 +35,7 @@ const pageTitles: Record<string, string> = {
   '/sites': 'Sites',
   '/notifications': 'Notifications',
   '/notification-settings': 'Notification Settings',
+  '/incidents': 'Incidents',
   '/onboarding': 'Onboarding Pipeline',
   '/partners': 'Partners',
   '/users': 'User Management',
@@ -130,6 +131,7 @@ const AppLayout: React.FC = () => {
             <Route path="/sites/:siteId/integrations/setup" element={<IntegrationSetup />} />
             <Route path="/sites/:siteId/integrations/:integrationId" element={<IntegrationResources />} />
             <Route path="/notifications" element={<Notifications />} />
+            <Route path="/incidents" element={<Incidents />} />
             <Route path="/notification-settings" element={<NotificationSettings />} />
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/partners" element={<Partners />} />
