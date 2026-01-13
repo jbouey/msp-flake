@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-12 (Session 28 - Cloud Integration Frontend Fixes)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.23, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations)
-**Test Status:** 656 passed (compliance-agent tests), agent v1.0.23, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel seeded with L2 data, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD)
+**Last Updated:** 2026-01-13 (Session 29 - L1/L2/L3 Fixes + Frontend Fixes)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.26, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, L2 LLM Active)
+**Test Status:** 656 passed (compliance-agent tests), agent v1.0.26, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel seeded with L2 data, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), **L2 LLM enabled on physical appliance with Claude 3.5 Haiku**
 
 ---
 
@@ -287,6 +287,17 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Fixed integrationsApi.ts types to match API response (nullable fields)
   - Verified end-to-end: AWS integration showing 14 resources with 2 critical, 7 high findings
   - Integration Resources page now fully functional with risk badges and compliance checks
+- ✅ **L1/L2/L3 Auto-Healing Fixes** - 2026-01-13 (Session 29)
+  - L1 rule status mismatch fixed (was checking "non_compliant", now checks ["warning", "fail", "error"])
+  - L3 notification deduplication fix (added category filter)
+  - Windows backup check added (`backup_status` using Get-WBSummary)
+  - Learning page query fix (`resolution_tier IS NOT NULL`)
+  - Admin login restored
+  - **L2 LLM enabled** on physical appliance with Anthropic API key (Claude 3.5 Haiku)
+  - L2 JSON parsing fix (always extract JSON object with brace-matching)
+- ✅ **Frontend Fixes** - 2026-01-13 (Session 29)
+  - Frameworks API now mounted (`/api/frameworks/*` endpoints working)
+  - Incidents page created (`/incidents` route with all/active/resolved filters)
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)

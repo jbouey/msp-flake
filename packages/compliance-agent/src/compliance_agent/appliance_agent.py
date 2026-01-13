@@ -1244,6 +1244,26 @@ class ApplianceAgent:
                 ("password_policy", "net accounts | Select-String 'password|lockout'"),
                 ("bitlocker_status", "Get-BitLockerVolume -MountPoint C: -ErrorAction SilentlyContinue | Select-Object MountPoint,ProtectionStatus | ConvertTo-Json"),
                 ("audit_policy", "auditpol /get /subcategory:'Logon'"),
+                # Windows Server Backup check (requires Windows Server Backup feature)
+                ("backup_status", """
+try {
+    $wsb = Get-WBSummary -ErrorAction Stop
+    if ($wsb.LastSuccessfulBackupTime) {
+        $age = (Get-Date) - $wsb.LastSuccessfulBackupTime
+        @{
+            BackupType = 'WindowsServerBackup'
+            LastBackup = $wsb.LastSuccessfulBackupTime.ToString('o')
+            BackupAgeHours = [math]::Round($age.TotalHours, 1)
+            LastResult = $wsb.LastBackupResultHR
+            NextBackup = $wsb.NextBackupTime
+        } | ConvertTo-Json
+    } else {
+        @{BackupType = 'WindowsServerBackup'; Error = 'NoBackupConfigured'} | ConvertTo-Json
+    }
+} catch {
+    @{BackupType = 'NotInstalled'; Error = $_.Exception.Message} | ConvertTo-Json
+}
+"""),
             ]
 
             for check_name, ps_cmd in checks:
@@ -1315,6 +1335,33 @@ class ApplianceAgent:
                         else:
                             # "No Auditing" means Logon events are not being captured
                             status = "fail"
+
+                    elif check_name == "backup_status":
+                        # Check Windows Server Backup status
+                        try:
+                            import json as json_module
+                            backup_data = json_module.loads(output)
+                            backup_type = backup_data.get("BackupType", "Unknown")
+
+                            if backup_type == "NotInstalled":
+                                # Windows Server Backup feature not installed
+                                status = "warning"
+                            elif "Error" in backup_data and backup_data.get("Error") == "NoBackupConfigured":
+                                # Feature installed but no backup policy configured
+                                status = "fail"
+                            elif "LastBackup" in backup_data:
+                                # Check if backup is recent (within 24 hours)
+                                backup_age = backup_data.get("BackupAgeHours", 999)
+                                if backup_age <= 24:
+                                    status = "pass"
+                                elif backup_age <= 72:
+                                    status = "warning"
+                                else:
+                                    status = "fail"
+                            else:
+                                status = "fail"
+                        except Exception:
+                            status = "fail" if check_result.status_code != 0 else status
 
                     # Submit as evidence
                     evidence_data = {

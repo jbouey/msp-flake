@@ -48,6 +48,7 @@ from dashboard_api.discovery import router as discovery_router
 from dashboard_api.runbook_config import router as runbook_config_router
 from dashboard_api.users import router as users_router
 from dashboard_api.integrations.api import router as integrations_router
+from dashboard_api.frameworks import router as frameworks_router
 from dashboard_api.email_alerts import create_notification_with_email
 
 # ============================================================================
@@ -407,6 +408,7 @@ app.include_router(discovery_router)
 app.include_router(runbook_config_router)
 app.include_router(users_router)
 app.include_router(integrations_router)
+app.include_router(frameworks_router)
 
 # Serve agent update packages (only if directory exists)
 _agent_packages_dir = Path("/opt/mcp-server/agent-packages")
@@ -885,29 +887,36 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     if should_notify:
         try:
             # Deduplication: 1 hour for critical/high, 24 hours for L3 escalations
+            # Check same category to avoid L3 escalations being blocked by older incident notifications
             dedup_hours = 24 if resolution_tier == "L3" else 1
+            notification_category = "escalation" if resolution_tier == "L3" else "incident"
 
             dedup_check = await db.execute(
                 text(f"""
                     SELECT id FROM notifications
                     WHERE site_id = :site_id
+                    AND category = :category
                     AND title LIKE :title_pattern
                     AND created_at > NOW() - INTERVAL '{dedup_hours} hours'
                     LIMIT 1
                 """),
-                {"site_id": incident.site_id, "title_pattern": f"%{incident.incident_type}%"}
+                {
+                    "site_id": incident.site_id,
+                    "category": notification_category,
+                    "title_pattern": f"%{incident.incident_type}%"
+                }
             )
             existing = dedup_check.fetchone()
 
             if not existing:
-                # L3 escalations get "warning" severity to trigger email
+                # L3 escalations get "critical" severity to trigger email
                 if resolution_tier == "L3":
-                    notification_severity = "critical"  # Ensure L3 sends email
+                    notification_severity = "critical"
 
                 await create_notification_with_email(
                     db=db,
                     severity=notification_severity,
-                    category="incident" if resolution_tier != "L3" else "escalation",
+                    category=notification_category,
                     title=f"[L3] {incident.incident_type}" if resolution_tier == "L3" else f"{incident.severity.upper()}: {incident.incident_type}",
                     message=f"L3 Escalation: {incident.incident_type} on {incident.site_id} requires human review." if resolution_tier == "L3" else f"Incident {incident.incident_type} on {incident.site_id}. Resolution: {resolution_tier}",
                     site_id=incident.site_id,
@@ -1562,6 +1571,8 @@ async def agent_sync_rules(db: AsyncSession = Depends(get_db)):
     Returns built-in rules plus any custom/promoted rules from database.
     """
     # Built-in L1 rules for NixOS appliances
+    # Note: status values from SimpleDriftChecker are: "pass", "warning", "fail", "error"
+    # Use "in" operator to match non-passing statuses
     builtin_rules = [
         {
             "id": "L1-NTP-001",
@@ -1569,7 +1580,7 @@ async def agent_sync_rules(db: AsyncSession = Depends(get_db)):
             "description": "Restart chronyd when NTP sync drifts",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "ntp_sync"},
-                {"field": "status", "operator": "eq", "value": "non_compliant"}
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
             ],
             "actions": ["restart_service:chronyd"],
             "severity": "medium",
@@ -1580,12 +1591,12 @@ async def agent_sync_rules(db: AsyncSession = Depends(get_db)):
         {
             "id": "L1-SERVICE-001",
             "name": "Critical Service Recovery",
-            "description": "Restart failed compliance-agent service",
+            "description": "Restart failed critical services",
             "conditions": [
-                {"field": "check_type", "operator": "eq", "value": "services_running"},
-                {"field": "status", "operator": "eq", "value": "non_compliant"}
+                {"field": "check_type", "operator": "eq", "value": "critical_services"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
             ],
-            "actions": ["restart_service:compliance-agent"],
+            "actions": ["restart_service:sshd", "restart_service:chronyd"],
             "severity": "high",
             "cooldown_seconds": 600,
             "max_retries": 3,
@@ -1596,8 +1607,8 @@ async def agent_sync_rules(db: AsyncSession = Depends(get_db)):
             "name": "Disk Space Alert",
             "description": "Alert when disk usage exceeds threshold",
             "conditions": [
-                {"field": "check_type", "operator": "eq", "value": "disk_usage"},
-                {"field": "status", "operator": "eq", "value": "non_compliant"}
+                {"field": "check_type", "operator": "eq", "value": "disk_space"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
             ],
             "actions": ["alert:disk_space_critical"],
             "severity": "high",
@@ -1608,12 +1619,12 @@ async def agent_sync_rules(db: AsyncSession = Depends(get_db)):
         {
             "id": "L1-FIREWALL-001",
             "name": "Firewall Drift",
-            "description": "Alert when firewall is disabled",
+            "description": "Alert when firewall is not active (expected: iptables or nftables)",
             "conditions": [
-                {"field": "check_type", "operator": "eq", "value": "firewall_enabled"},
-                {"field": "status", "operator": "eq", "value": "non_compliant"}
+                {"field": "check_type", "operator": "eq", "value": "firewall"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
             ],
-            "actions": ["alert:firewall_disabled", "enable_firewall"],
+            "actions": ["alert:firewall_disabled"],
             "severity": "critical",
             "cooldown_seconds": 300,
             "max_retries": 1,
@@ -1622,10 +1633,10 @@ async def agent_sync_rules(db: AsyncSession = Depends(get_db)):
         {
             "id": "L1-GENERATION-001",
             "name": "NixOS Generation Drift",
-            "description": "Alert when NixOS generation changes unexpectedly",
+            "description": "Alert when NixOS generation is invalid or unknown",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "nixos_generation"},
-                {"field": "status", "operator": "eq", "value": "non_compliant"}
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
             ],
             "actions": ["alert:generation_drift"],
             "severity": "medium",
