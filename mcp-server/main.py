@@ -710,7 +710,32 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     
     appliance_id = str(appliance[0])
     now = datetime.now(timezone.utc)
-    
+
+    # Deduplicate: Check for existing open/escalated incident of same type (last hour)
+    existing_check = await db.execute(
+        text("""
+            SELECT id FROM incidents
+            WHERE appliance_id = :appliance_id
+            AND incident_type = :incident_type
+            AND status IN ('open', 'resolving', 'escalated')
+            AND created_at > NOW() - INTERVAL '1 hour'
+            LIMIT 1
+        """),
+        {"appliance_id": appliance_id, "incident_type": incident.incident_type}
+    )
+    existing_incident = existing_check.fetchone()
+
+    if existing_incident:
+        # Return existing incident instead of creating duplicate
+        return {
+            "status": "deduplicated",
+            "incident_id": str(existing_incident[0]),
+            "resolution_tier": None,
+            "order_id": None,
+            "runbook_id": None,
+            "timestamp": now.isoformat()
+        }
+
     # Create incident record
     incident_id = str(uuid.uuid4())
     await db.execute(
@@ -849,21 +874,25 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
 
     await db.commit()
 
-    # Create notification for critical/high severity incidents (with deduplication)
+    # Create notification for critical/high severity OR L3 escalations (with deduplication)
     # Map incident severity to notification severity (critical, warning, info, success)
-    severity_map = {"critical": "critical", "high": "warning", "medium": "info", "low": "info"}
+    severity_map = {"critical": "critical", "high": "warning", "medium": "warning", "low": "info"}
     notification_severity = severity_map.get(incident.severity, "info")
 
-    # Only notify for critical/high (medium creates too much noise)
-    if incident.severity in ("critical", "high"):
+    # Notify for: critical/high severity OR L3 escalations (no runbook found)
+    should_notify = incident.severity in ("critical", "high") or resolution_tier == "L3"
+
+    if should_notify:
         try:
-            # Check for recent duplicate notification (same site + incident_type in last hour)
+            # Deduplication: 1 hour for critical/high, 24 hours for L3 escalations
+            dedup_hours = 24 if resolution_tier == "L3" else 1
+
             dedup_check = await db.execute(
-                text("""
+                text(f"""
                     SELECT id FROM notifications
                     WHERE site_id = :site_id
                     AND title LIKE :title_pattern
-                    AND created_at > NOW() - INTERVAL '1 hour'
+                    AND created_at > NOW() - INTERVAL '{dedup_hours} hours'
                     LIMIT 1
                 """),
                 {"site_id": incident.site_id, "title_pattern": f"%{incident.incident_type}%"}
@@ -871,12 +900,16 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             existing = dedup_check.fetchone()
 
             if not existing:
+                # L3 escalations get "warning" severity to trigger email
+                if resolution_tier == "L3":
+                    notification_severity = "critical"  # Ensure L3 sends email
+
                 await create_notification_with_email(
                     db=db,
                     severity=notification_severity,
-                    category="incident",
-                    title=f"{incident.severity.upper()}: {incident.incident_type}",
-                    message=f"Incident {incident.incident_type} on {incident.site_id}. Resolution: {resolution_tier}",
+                    category="incident" if resolution_tier != "L3" else "escalation",
+                    title=f"[L3] {incident.incident_type}" if resolution_tier == "L3" else f"{incident.severity.upper()}: {incident.incident_type}",
+                    message=f"L3 Escalation: {incident.incident_type} on {incident.site_id} requires human review." if resolution_tier == "L3" else f"Incident {incident.incident_type} on {incident.site_id}. Resolution: {resolution_tier}",
                     site_id=incident.site_id,
                     appliance_id=appliance_id,
                     metadata={
