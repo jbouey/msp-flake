@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="compliance-agent",
-    version="1.0.22",
+    version="1.0.24",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     package_data={
