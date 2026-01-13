@@ -142,14 +142,29 @@ class SimpleDriftChecker:
         code, stdout, _ = await run_command("readlink /run/current-system", timeout=5)
         current_system = stdout.strip() if code == 0 else "unknown"
 
+        # Try to get generation number (may not work on minimal systems)
+        current_gen = "unknown"
+        # Method 1: nixos-rebuild list-generations (if available)
         code, stdout, _ = await run_command(
             "nixos-rebuild list-generations 2>/dev/null | tail -1 | awk '{print $1}'",
             timeout=10
         )
-        current_gen = stdout.strip() if code == 0 else "unknown"
+        if code == 0 and stdout.strip().isdigit():
+            current_gen = stdout.strip()
+        else:
+            # Method 2: Parse from /nix/var/nix/profiles/system symlink
+            code, stdout, _ = await run_command(
+                "readlink /nix/var/nix/profiles/system 2>/dev/null | grep -oE '[0-9]+' | tail -1",
+                timeout=5
+            )
+            if code == 0 and stdout.strip():
+                current_gen = stdout.strip()
+
+        # Pass if current-system exists and points to valid nix store path
+        is_valid = current_system != "unknown" and "/nix/store/" in current_system
 
         return {
-            "status": "pass" if current_gen != "unknown" else "warning",
+            "status": "pass" if is_valid else "warning",
             "details": {
                 "current_system": current_system,
                 "current_generation": current_gen,
@@ -217,15 +232,28 @@ class SimpleDriftChecker:
         }
 
     async def _check_firewall(self) -> Dict[str, Any]:
-        """Check firewall status."""
+        """Check firewall status (supports both nftables and legacy iptables)."""
+        # Try nftables first
         code, stdout, _ = await run_command("nft list tables 2>/dev/null | head -5", timeout=5)
+        has_nft_rules = bool(stdout.strip()) if code == 0 else False
 
-        has_rules = bool(stdout.strip()) if code == 0 else False
+        # Fallback to iptables (NixOS often uses legacy iptables)
+        has_iptables_rules = False
+        if not has_nft_rules:
+            code, stdout, _ = await run_command("iptables -L -n 2>/dev/null | grep -c Chain", timeout=5)
+            try:
+                chain_count = int(stdout.strip()) if code == 0 else 0
+                has_iptables_rules = chain_count > 3  # More than default chains means rules exist
+            except ValueError:
+                has_iptables_rules = False
+
+        has_rules = has_nft_rules or has_iptables_rules
 
         return {
             "status": "pass" if has_rules else "warning",
             "details": {
                 "firewall_active": has_rules,
+                "backend": "nftables" if has_nft_rules else ("iptables" if has_iptables_rules else "none"),
             }
         }
 

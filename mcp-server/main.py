@@ -849,28 +849,43 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
 
     await db.commit()
 
-    # Create notification for critical/high/medium severity incidents
+    # Create notification for critical/high severity incidents (with deduplication)
     # Map incident severity to notification severity (critical, warning, info, success)
     severity_map = {"critical": "critical", "high": "warning", "medium": "info", "low": "info"}
     notification_severity = severity_map.get(incident.severity, "info")
 
-    if incident.severity in ("critical", "high", "medium"):
+    # Only notify for critical/high (medium creates too much noise)
+    if incident.severity in ("critical", "high"):
         try:
-            await create_notification_with_email(
-                db=db,
-                severity=notification_severity,
-                category="incident",
-                title=f"{incident.severity.upper()}: {incident.incident_type}",
-                message=f"Incident {incident.incident_type} on {incident.site_id}. Resolution: {resolution_tier}",
-                site_id=incident.site_id,
-                appliance_id=appliance_id,
-                metadata={
-                    "incident_id": incident_id,
-                    "check_type": incident.check_type,
-                    "resolution_tier": resolution_tier,
-                    "order_id": order_id
-                }
+            # Check for recent duplicate notification (same site + incident_type in last hour)
+            dedup_check = await db.execute(
+                text("""
+                    SELECT id FROM notifications
+                    WHERE site_id = :site_id
+                    AND title LIKE :title_pattern
+                    AND created_at > NOW() - INTERVAL '1 hour'
+                    LIMIT 1
+                """),
+                {"site_id": incident.site_id, "title_pattern": f"%{incident.incident_type}%"}
             )
+            existing = dedup_check.fetchone()
+
+            if not existing:
+                await create_notification_with_email(
+                    db=db,
+                    severity=notification_severity,
+                    category="incident",
+                    title=f"{incident.severity.upper()}: {incident.incident_type}",
+                    message=f"Incident {incident.incident_type} on {incident.site_id}. Resolution: {resolution_tier}",
+                    site_id=incident.site_id,
+                    appliance_id=appliance_id,
+                    metadata={
+                        "incident_id": incident_id,
+                        "check_type": incident.check_type,
+                        "resolution_tier": resolution_tier,
+                        "order_id": order_id
+                    }
+                )
         except Exception as e:
             logger.error(f"Failed to create notification: {e}")
 
