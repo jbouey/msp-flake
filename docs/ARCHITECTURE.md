@@ -1,6 +1,6 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-01-10 (Session 23)
+**Last Updated:** 2026-01-13 (Session 29 Continued)
 
 ## Overview
 
@@ -240,8 +240,9 @@ Incident Flow:
        ▼
 ┌─────────────────────────────────────────┐
 │ Data Flywheel                           │
-│ • Tracks L2 patterns                    │
-│ • Promotes to L1 rules                  │
+│ • Tracks L2 patterns via /agent/patterns│
+│ • Promotes to L1 rules (5+ occurrences) │
+│ • Success rate tracking (90%+ required) │
 │ • Continuous improvement                │
 └─────────────────────────────────────────┘
 ```

@@ -501,6 +501,9 @@ export const SiteDetail: React.FC = () => {
   const navigate = useNavigate();
   const [showCredModal, setShowCredModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [showPortalLinkModal, setShowPortalLinkModal] = useState(false);
+  const [portalLink, setPortalLink] = useState<{ url: string; token: string } | null>(null);
+  const [isGeneratingLink, setIsGeneratingLink] = useState(false);
 
   const { data: site, isLoading, error } = useSite(siteId || null);
   const addCredential = useAddCredential();
@@ -515,6 +518,28 @@ export const SiteDetail: React.FC = () => {
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  // Generate portal link for client access
+  const handleGeneratePortalLink = async () => {
+    if (!siteId) return;
+    setIsGeneratingLink(true);
+    try {
+      const response = await fetch(`/api/portal/sites/${siteId}/generate-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        throw new Error('Failed to generate portal link');
+      }
+      const data = await response.json();
+      setPortalLink({ url: data.portal_url, token: data.token });
+      setShowPortalLinkModal(true);
+    } catch (error) {
+      showToast(`Failed to generate portal link: ${error}`, 'error');
+    } finally {
+      setIsGeneratingLink(false);
+    }
   };
 
   // Handle creating an order for a specific appliance
@@ -607,6 +632,16 @@ export const SiteDetail: React.FC = () => {
           <p className="text-label-tertiary text-sm">{site.site_id}</p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleGeneratePortalLink}
+            disabled={isGeneratingLink}
+            className="px-3 py-1.5 text-sm bg-accent-primary hover:bg-accent-primary/90 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
+            {isGeneratingLink ? 'Generating...' : 'Generate Portal Link'}
+          </button>
           <Link
             to={`/sites/${siteId}/frameworks`}
             className="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors flex items-center gap-2"
@@ -777,6 +812,65 @@ export const SiteDetail: React.FC = () => {
         onSubmit={handleAddCredential}
         isLoading={addCredential.isPending}
       />
+
+      {/* Portal Link Modal */}
+      {showPortalLinkModal && portalLink && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <GlassCard className="w-full max-w-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-label-primary">Client Portal Link</h2>
+              <button
+                onClick={() => setShowPortalLinkModal(false)}
+                className="p-2 hover:bg-fill-secondary rounded-ios transition-colors"
+              >
+                <svg className="w-5 h-5 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-label-secondary text-sm mb-4">
+              Share this link with your client to give them access to their compliance dashboard.
+              The link does not expire.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-label-tertiary mb-1">Portal URL</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={portalLink.url}
+                    readOnly
+                    className="flex-1 px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light font-mono text-sm"
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(portalLink.url);
+                      showToast('Portal URL copied to clipboard', 'success');
+                    }}
+                    className="px-4 py-2 rounded-ios bg-accent-primary text-white hover:bg-accent-primary/90 transition-colors"
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+              <div className="pt-2 border-t border-separator-light">
+                <p className="text-xs text-label-tertiary">
+                  <strong>Security note:</strong> This link provides read-only access to compliance reports and evidence.
+                  Generate a new link if you need to revoke access.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end mt-6">
+              <button
+                onClick={() => setShowPortalLinkModal(false)}
+                className="px-4 py-2 rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
 
       {/* Toast Notification */}
       {toast && (
