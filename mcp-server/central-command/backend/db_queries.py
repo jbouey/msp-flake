@@ -137,10 +137,8 @@ async def get_events_from_db(
             cb.bundle_id as id,
             cb.site_id,
             cb.check_type,
-            cb.check_name,
-            cb.outcome,
-            cb.hipaa_controls,
-            cb.healing_result,
+            cb.check_result,
+            cb.summary,
             cb.created_at
         FROM compliance_bundles cb
         WHERE 1=1
@@ -159,14 +157,12 @@ async def get_events_from_db(
 
     events = []
     for row in rows:
-        # Determine severity from outcome and healing result
-        outcome = row.outcome or "unknown"
-        healing = row.healing_result or {}
+        # Determine severity from check_result
+        outcome = row.check_result or "unknown"
+        summary = row.summary or {}
 
-        if outcome == "fail" or outcome == "warning":
+        if outcome == "fail" or outcome == "warn":
             severity = "medium"
-            if isinstance(healing, dict) and healing.get("success") is False:
-                severity = "high"
         elif outcome == "error":
             severity = "critical"
         else:
@@ -176,14 +172,14 @@ async def get_events_from_db(
             "id": row.id,
             "site_id": row.site_id,
             "hostname": "",
-            "check_type": row.check_type or row.check_name or "drift",
-            "check_name": row.check_name,
+            "check_type": row.check_type or "drift",
+            "check_name": row.check_type,
             "outcome": outcome,
             "severity": severity,
-            "resolution_level": healing.get("resolution_level") if isinstance(healing, dict) else None,
+            "resolution_level": None,
             "resolved": outcome == "pass",
             "resolved_at": row.created_at if outcome == "pass" else None,
-            "hipaa_controls": row.hipaa_controls or [],
+            "hipaa_controls": [],
             "created_at": row.created_at,
             "source": "compliance_bundle",
         })
