@@ -985,6 +985,19 @@ class ApplianceAgent:
                 logger.info(
                     f"Healing {check_name}: {result.resolution_level} → {result.action_taken} (SUCCESS)"
                 )
+                # Report pattern to learning flywheel for L1/L2 promotions
+                if result.action_taken:
+                    try:
+                        await self.client.report_pattern(
+                            check_type=check_name,
+                            issue_signature=f"{check_name}:{get_hostname()}",
+                            resolution_steps=[result.action_taken],
+                            success=True,
+                            execution_time_ms=result.resolution_time_ms,
+                        )
+                        logger.debug(f"Reported pattern for {check_name} to learning loop")
+                    except Exception as e:
+                        logger.debug(f"Pattern report failed (non-critical): {e}")
             else:
                 logger.warning(
                     f"Healing {check_name}: {result.resolution_level} → {result.action_taken} (FAILED: {result.error})"
@@ -1420,7 +1433,20 @@ try {
                                 raw_data=raw_data,
                             )
                             if heal_result.success:
-                                logger.info(f"Healing succeeded: {heal_result.resolution_level} - {heal_result.action_taken}")
+                                logger.info(f"Healing {check_name}: {heal_result.resolution_level} → {heal_result.action_taken} (SUCCESS)")
+                                # Report pattern to learning flywheel for L1/L2 promotions
+                                if heal_result.action_taken:
+                                    try:
+                                        await self.client.report_pattern(
+                                            check_type=check_name,
+                                            issue_signature=f"{check_name}:{target.hostname}",
+                                            resolution_steps=[heal_result.action_taken],
+                                            success=True,
+                                            execution_time_ms=heal_result.resolution_time_ms,
+                                        )
+                                        logger.debug(f"Reported pattern for {check_name} to learning loop")
+                                    except Exception as e:
+                                        logger.debug(f"Pattern report failed (non-critical): {e}")
                             else:
                                 logger.warning(f"Healing failed: {heal_result.error}")
                         except Exception as heal_err:
@@ -1515,7 +1541,20 @@ try {
                             raw_data=raw_data,
                         )
                         if heal_result.success:
-                            logger.info(f"Linux healing succeeded: {heal_result.resolution_level} - {heal_result.action_taken}")
+                            logger.info(f"Linux healing {drift.check_type}: {heal_result.resolution_level} → {heal_result.action_taken} (SUCCESS)")
+                            # Report pattern to learning flywheel for L1/L2 promotions
+                            if heal_result.action_taken:
+                                try:
+                                    await self.client.report_pattern(
+                                        check_type=drift.check_type,
+                                        issue_signature=f"{drift.check_type}:{drift.target}",
+                                        resolution_steps=[heal_result.action_taken],
+                                        success=True,
+                                        execution_time_ms=heal_result.resolution_time_ms,
+                                    )
+                                    logger.debug(f"Reported pattern for {drift.check_type} to learning loop")
+                                except Exception as e:
+                                    logger.debug(f"Pattern report failed (non-critical): {e}")
                         else:
                             logger.warning(f"Linux healing failed: {heal_result.error}")
                     except Exception as heal_err:
@@ -1640,7 +1679,20 @@ try {
                                 raw_data=raw_data,
                             )
                             if heal_result.success:
-                                logger.info(f"Network posture healing succeeded: {heal_result.action_taken}")
+                                logger.info(f"Network healing prohibited_port: {heal_result.resolution_level} → {heal_result.action_taken} (SUCCESS)")
+                                # Report pattern to learning flywheel for L1/L2 promotions
+                                if heal_result.action_taken:
+                                    try:
+                                        await self.client.report_pattern(
+                                            check_type="prohibited_port",
+                                            issue_signature=f"prohibited_port:{result.target}:{prohibited.get('port')}",
+                                            resolution_steps=[heal_result.action_taken],
+                                            success=True,
+                                            execution_time_ms=heal_result.resolution_time_ms,
+                                        )
+                                        logger.debug(f"Reported pattern for prohibited_port to learning loop")
+                                    except Exception as e:
+                                        logger.debug(f"Pattern report failed (non-critical): {e}")
                             else:
                                 logger.warning(f"Network posture healing failed: {heal_result.error}")
                         except Exception as heal_err:

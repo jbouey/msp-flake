@@ -1,11 +1,59 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-13 (Session 29 - L1/L2/L3 Fixes + Frontend Fixes)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.26, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations)
+**Last Updated:** 2026-01-13 (Session 29 Continued - Learning Flywheel + Portal Link)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.26, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, **Pattern Reporting**)
 
 ---
 
-## Session 29 (2026-01-13)
+## Session 29 Continued (2026-01-13) - Learning Flywheel Pattern Reporting
+
+### 1. Learning Flywheel Pattern Reporting
+**Status:** COMPLETE
+**Details:** Implemented full pipeline for L2→L1 pattern promotion.
+
+#### Agent-side Changes (appliance_agent.py)
+- [x] Added `report_pattern()` calls after successful L1/L2 healing
+- [x] Four locations updated: local drift, Windows healing, Linux healing, network posture
+- [x] Patterns include: check_type, issue_signature, resolution_steps, success, execution_time_ms
+
+#### Server-side Endpoint (main.py on VPS)
+- [x] Added `/agent/patterns` POST endpoint
+- [x] Creates new patterns or updates existing (increments occurrences, tracks success_rate)
+- [x] Uses generated `success_rate` column (calculated from occurrences/success_count)
+- [x] Pattern ID generated from SHA256(pattern_signature)[:16]
+
+#### Client-side Changes (appliance_client.py)
+- [x] Updated `report_pattern()` to use `/agent/patterns` endpoint
+- [x] Non-critical failures logged at debug level
+
+#### Verified Working
+```bash
+curl -X POST 'http://178.156.162.116:8000/agent/patterns' \
+  -H 'Content-Type: application/json' \
+  -d '{"site_id":"test-site","check_type":"firewall",...}'
+# Response: {"pattern_id":"cd070e6eb7f1c476","status":"created","occurrences":1,"success_rate":100.0}
+```
+
+### 2. Generate Portal Link Button
+**Status:** COMPLETE
+**Details:** Added button to SiteDetail page for generating client portal links.
+
+- [x] Button in SiteDetail header calls `POST /api/portal/sites/{site_id}/generate-token`
+- [x] Modal displays portal URL with copy-to-clipboard functionality
+- [x] Security note about read-only access and regeneration
+- [x] Deployed to VPS
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Added `report_pattern()` calls |
+| `packages/compliance-agent/src/compliance_agent/appliance_client.py` | Updated `report_pattern()` function |
+| `mcp-server/main.py` (VPS) | Added `/agent/patterns` endpoint |
+| `mcp-server/central-command/frontend/src/pages/SiteDetail.tsx` | Added Generate Portal Link button |
+
+---
+
+## Session 29 (2026-01-13) - Earlier
 
 ### L1/L2/L3 Auto-Healing Fixes + Frontend Fixes
 **Status:** COMPLETE
@@ -70,22 +118,52 @@
 
 ---
 
+## Session 29 Continued - ISO v26 Deployment
+
+### 1. Build ISO v26 with L2 JSON Fix
+**Status:** COMPLETE
+**Details:**
+- Updated version in appliance-image.nix from 1.0.23 to 1.0.26
+- Built ISO v26 on VPS: `/root/msp-iso-build/result-iso-v26/`
+- Verified fix is in nix store: `compliance-agent-1.0.26`
+
+### 2. Deploy to VM Appliance
+**Status:** COMPLETE
+**Details:**
+- Transferred ISO to iMac gateway
+- Attached ISO v26 to VirtualBox VM
+- Booted VM with new ISO
+- Configured L2 API key in `/var/lib/msp/config.yaml`
+
+### 3. Verify L2 Working
+**Status:** COMPLETE - L2 VERIFIED WORKING
+**Details:**
+- L2 successfully parsing Claude responses (no more "Extra data" errors)
+- Observed L2 decisions with confidence scores:
+  ```
+  bitlocker_status → L2 decision: escalate (confidence: 0.90) → L3
+  backup_status → L2 decision: run_backup_job (confidence: 0.80)
+  ```
+- L2 LLM planner making intelligent routing decisions
+
+---
+
 ## Immediate (Next Session)
 
-### 1. Deploy L2 JSON Fix to Appliances
+### 1. Build ISO v27 with Pattern Reporting
 **Status:** PENDING
 **Details:**
-- ISO v24 is built but uses cached agent 1.0.23
-- L2 JSON fix is in local `level2_llm.py` but not in ISO
-- Need to: Commit, push, pull on VPS, rebuild ISO with updated source
-- Then flash to appliances
+- Agent code updated with `report_pattern()` calls
+- Server-side endpoint already deployed and working
+- Build new ISO to include pattern reporting in agent
+- Version bump to 1.0.27 needed
 
-### 2. Verify L2 Resolutions Working
+### 2. Deploy ISO v27 to Appliances
 **Status:** PENDING
 **Details:**
-- After deploying fix, verify L2 is successfully parsing Claude responses
-- Check incidents are being resolved via L2 (not all going to L3)
-- Monitor Learning page for L2 resolution count
+- Deploy to VM first (192.168.88.247), then physical appliance (192.168.88.246)
+- Verify patterns flowing to Learning dashboard after healing events
+- Patterns with 5+ occurrences and 90%+ success become promotion candidates
 
 ### 3. Connect Additional Cloud Providers
 **Status:** PENDING

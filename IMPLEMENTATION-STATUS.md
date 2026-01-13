@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-11 (Session 26 - Framework Config Deployment + MinIO Storage Box Migration)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.23, ISO v20, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, 656 tests)
+**Last Updated:** 2026-01-13 (Session 29 Continued - Learning Flywheel Pattern Reporting + Portal Link)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.26, ISO v26, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**, 656 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,30 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.23, ISO v20, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box.
+**Status:** Phase 12 nearing completion. Agent v1.0.26, ISO v26, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD), **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**.
+
+**Session 29 Continued (Learning Flywheel + Portal Link):**
+- Learning Flywheel Pattern Reporting - full pipeline for L2→L1 promotion
+  - Agent-side `report_pattern()` calls after successful healing (4 locations in appliance_agent.py)
+  - Server-side `/agent/patterns` POST endpoint for pattern aggregation
+  - Patterns tracked with occurrence counts and success rates
+  - Ready for L2→L1 promotion at 5+ occurrences, 90%+ success rate
+- Generate Portal Link Button - added to SiteDetail page
+  - Calls `POST /api/portal/sites/{site_id}/generate-token`
+  - Modal displays portal URL with copy-to-clipboard
+- **ISO v27 Ready to Build** - agent code updated, needs ISO rebuild to deploy
+
+**Session 29 (L1/L2/L3 Fixes + ISO v26 + L2 Verification):**
+- L1 rule status mismatch fixed (was checking "non_compliant", now ["warning", "fail", "error"])
+- L3 notification deduplication fix (added category filter)
+- L2 JSON parsing fix (always extract JSON with brace-matching, even when starts with `{`)
+- Frameworks API mounted (`/api/frameworks/*` endpoints)
+- Incidents page created (`/incidents` route)
+- ISO v26 built with agent v1.0.26 including L2 fix
+- **L2 LLM VERIFIED WORKING on VM appliance:**
+  - `bitlocker_status` → L2 decision: escalate (confidence: 0.90) → L3
+  - `backup_status` → L2 decision: run_backup_job (confidence: 0.80)
+- No more "Extra data" JSON parsing errors
 
 **Session 15 (Windows Sensors):** Lightweight PowerShell sensor pushes drift events to appliance for instant detection (<30s vs 60s polling). Dual-mode routes sensor-enabled hosts to push model, others to WinRM polling. Scales to 100+ servers per appliance.
 
@@ -558,14 +581,16 @@ Required fields per CLAUDE.md:
 - Fixed database connectivity (correct password, asyncpg driver)
 - Fixed health endpoint for HEAD method (monitoring compatibility)
 
-**ISO v20 Ready:**
-- **VPS:** `/root/msp-iso-build/result-iso-v20/iso/osiriscare-appliance.iso` (1.1GB)
-- **Local:** `/tmp/osiriscare-appliance-v20.iso` (1.1GB)
-- **Physical appliance:** ✅ Updated and online (192.168.88.246)
-- **VM appliance:** 🟡 Pending transfer when home
+**ISO v26 Ready:**
+- **VPS:** `/root/msp-iso-build/result-iso-v26/iso/osiriscare-appliance.iso` (1.1GB)
+- **iMac:** `~/Downloads/osiriscare-appliance-v26.iso` (1.1GB)
+- **VM appliance:** ✅ Running v1.0.26 with **L2 VERIFIED WORKING** (192.168.88.247)
+- **Physical appliance:** 🟡 Running v1.0.23, pending ISO v26 update (192.168.88.246)
 
 **Next Steps:**
-1. Transfer ISO v20 to iMac and update VM appliance (192.168.88.247)
-2. Evidence bundles uploading to MinIO verification
-3. First compliance packet generated
-4. 30-day monitoring period completion
+1. Deploy ISO v26 to physical appliance (HP T640)
+2. Verify L2 on physical appliance (L2 config already in place)
+3. Monitor L2 patterns in Learning dashboard
+4. Evidence bundles uploading to MinIO verification
+5. First compliance packet generated
+6. 30-day monitoring period completion

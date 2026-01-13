@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.23";  # Session 24 - Dashboard events + incident reporting
+    version = "1.0.27";  # Session 29 - Pattern reporting to learning flywheel
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [

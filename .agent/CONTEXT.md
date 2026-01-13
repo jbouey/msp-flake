@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-13 (Session 29 - L1/L2/L3 Fixes + Frontend Fixes)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.26, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, L2 LLM Active)
-**Test Status:** 656 passed (compliance-agent tests), agent v1.0.26, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel seeded with L2 data, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), **L2 LLM enabled on physical appliance with Claude 3.5 Haiku**
+**Last Updated:** 2026-01-13 (Session 29 Continued - Learning Flywheel Pattern Reporting + Portal Link)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.26, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**)
+**Test Status:** 656 passed (compliance-agent tests), agent v1.0.26, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), **L2 LLM VERIFIED WORKING on VM appliance (ISO v26)**
 
 ---
 
@@ -298,6 +298,25 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - ✅ **Frontend Fixes** - 2026-01-13 (Session 29)
   - Frameworks API now mounted (`/api/frameworks/*` endpoints working)
   - Incidents page created (`/incidents` route with all/active/resolved filters)
+- ✅ **ISO v26 Built & L2 VERIFIED WORKING** - 2026-01-13 (Session 29 continued)
+  - Built ISO v26 on VPS with agent v1.0.26 (includes L2 JSON parsing fix)
+  - Deployed to VM appliance (192.168.88.247)
+  - **L2 LLM VERIFIED:**
+    - `bitlocker_status` → L2 decision: escalate (confidence: 0.90) → L3
+    - `backup_status` → L2 decision: run_backup_job (confidence: 0.80)
+  - No more "Extra data" JSON parsing errors
+  - ISO locations: VPS `/root/msp-iso-build/result-iso-v26/`, iMac `~/Downloads/osiriscare-appliance-v26.iso`
+- ✅ **Learning Flywheel Pattern Reporting** - 2026-01-13 (Session 29 continued)
+  - Agent-side `report_pattern()` calls after successful L1/L2 healing (4 locations)
+  - Server-side `/agent/patterns` POST endpoint for pattern aggregation
+  - Patterns stored with occurrence counts, success rates
+  - Ready for L2→L1 promotion when patterns reach 5+ occurrences, 90%+ success
+  - Needs ISO v27 to deploy to appliances
+- ✅ **Generate Portal Link Button** - 2026-01-13 (Session 29 continued)
+  - Added to SiteDetail page in frontend
+  - Calls `POST /api/portal/sites/{site_id}/generate-token`
+  - Modal displays portal URL with copy-to-clipboard
+  - Deployed to VPS
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
@@ -356,6 +375,16 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
 
+### ISO v26 Built (2026-01-13 Session 29)
+- **Location (VPS):** `/root/msp-iso-build/result-iso-v26/iso/osiriscare-appliance.iso`
+- **Location (iMac):** `~/Downloads/osiriscare-appliance-v26.iso`
+- **Size:** 1.1GB
+- **Agent:** compliance-agent v1.0.26 with **L2 JSON parsing fix**
+- **Entry point:** `compliance-agent-appliance`
+- **Features:** L2 LLM with Claude 3.5 Haiku, JSON parsing fix, all previous features
+- **Status:** VM appliance (192.168.88.247) running v1.0.26 with **L2 VERIFIED WORKING**
+- **L2 Verification:** Observed decisions with confidence scores (escalate 0.90, run_backup_job 0.80)
+
 ### ISO v20 Built (2026-01-09 Session 22)
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v20/iso/osiriscare-appliance.iso`
 - **Location (Local):** `/tmp/osiriscare-appliance-v20.iso`
@@ -363,7 +392,7 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** compliance-agent v1.0.22 with **OpenTimestamps, Linux support, asyncssh**
 - **Entry point:** `compliance-agent-appliance`
 - **Features:** OTS blockchain anchoring, Linux drift detection, NetworkPostureDetector, 43 runbooks
-- **Status:** Physical appliance (192.168.88.246) updated and online, VM pending
+- **Status:** Physical appliance (192.168.88.246) running, needs ISO v26 update
 
 ### ISO v16 Built (2026-01-04 Session 9)
 - **Location (iMac):** `~/Downloads/osiriscare-appliance-v16.iso`

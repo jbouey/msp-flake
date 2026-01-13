@@ -288,12 +288,21 @@ class CentralCommandClient:
         issue_signature: str,
         resolution_steps: List[str],
         success: bool,
-        execution_time_ms: int
+        execution_time_ms: int,
+        runbook_id: Optional[str] = None,
     ) -> bool:
         """
         Report successful resolution pattern to learning loop.
 
         This helps promote L2 patterns to L1 rules.
+
+        Args:
+            check_type: The type of check that was healed (e.g., "firewall")
+            issue_signature: Unique identifier for this issue pattern
+            resolution_steps: List of actions taken to resolve
+            success: Whether the healing was successful
+            execution_time_ms: Time taken to resolve
+            runbook_id: Optional runbook ID that was used
 
         Returns:
             True if report accepted
@@ -305,16 +314,22 @@ class CentralCommandClient:
             "resolution_steps": resolution_steps,
             "success": success,
             "execution_time_ms": execution_time_ms,
+            "runbook_id": runbook_id,
             "reported_at": datetime.now(timezone.utc).isoformat(),
         }
 
         status, response = await self._request(
             'POST',
-            '/agent/checkin',
+            '/agent/patterns',
             json_data=payload
         )
 
-        return status == 200
+        if status in (200, 201):
+            logger.debug(f"Pattern reported: {issue_signature}")
+            return True
+        else:
+            logger.debug(f"Pattern report failed: {status} - {response}")
+            return False
 
     # =========================================================================
     # Incident Reporting
