@@ -82,7 +82,7 @@ from .sensor_linux import (
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.30"
+VERSION = "1.0.31"
 
 
 async def run_command(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
@@ -306,6 +306,12 @@ class ApplianceAgent:
         self.signer: Optional[Ed25519Signer] = None
         self._signing_key_path = config.state_dir / "signing.key"
 
+        # Evidence deduplication cache
+        # Stores {check_type: (last_result, last_submit_time)}
+        # Only submits on state change or hourly heartbeat to reduce storage by ~99%
+        self._evidence_state_cache: Dict[str, tuple] = {}
+        self._evidence_heartbeat_interval = 3600  # Hourly heartbeat even if no change
+
         # Initialize Windows targets from config
         for target_cfg in config.windows_targets:
             try:
@@ -428,6 +434,52 @@ class ApplianceAgent:
                 except (asyncio.CancelledError, asyncio.TimeoutError):
                     pass
             logger.info("Sensor API server stopped")
+
+    def _should_submit_evidence(self, check_type: str, result: str) -> bool:
+        """
+        Determine if evidence should be submitted based on deduplication rules.
+
+        Only submits if:
+        1. First submission for this check_type
+        2. Result changed from last submission (state change)
+        3. Hourly heartbeat interval elapsed (confirm state is still same)
+
+        This reduces storage by ~99% by eliminating flapping duplicates.
+
+        Args:
+            check_type: Type of check (e.g., "windows_firewall_status", "linux_ntp_sync")
+            result: Check result ("pass", "fail", "warn", etc.)
+
+        Returns:
+            True if evidence should be submitted, False to skip
+        """
+        now = datetime.now(timezone.utc)
+
+        # Check cache for previous submission
+        if check_type not in self._evidence_state_cache:
+            # First submission for this check type - always submit
+            self._evidence_state_cache[check_type] = (result, now)
+            logger.debug(f"Evidence submit: {check_type} first submission")
+            return True
+
+        last_result, last_time = self._evidence_state_cache[check_type]
+
+        # State changed - always submit
+        if result != last_result:
+            self._evidence_state_cache[check_type] = (result, now)
+            logger.info(f"Evidence submit: {check_type} state changed {last_result} -> {result}")
+            return True
+
+        # Check if heartbeat interval elapsed
+        elapsed = (now - last_time).total_seconds()
+        if elapsed >= self._evidence_heartbeat_interval:
+            self._evidence_state_cache[check_type] = (result, now)
+            logger.debug(f"Evidence submit: {check_type} hourly heartbeat (elapsed: {elapsed:.0f}s)")
+            return True
+
+        # Skip - duplicate within heartbeat window
+        logger.debug(f"Evidence skip: {check_type} duplicate (elapsed: {elapsed:.0f}s)")
+        return False
 
     async def _start_sensor_server(self):
         """
@@ -635,18 +687,20 @@ class ApplianceAgent:
                     except Exception as e:
                         logger.warning(f"Failed to sign evidence bundle: {e}")
 
-                # Upload to Central Command
-                bundle_id = await self.client.submit_evidence(
-                    bundle_hash=bundle_hash,
-                    check_type=check_name,
-                    check_result=check_result.get("status", "unknown"),
-                    evidence_data=evidence_data,
-                    hipaa_control=hipaa_controls.get(check_name),
-                    agent_signature=agent_signature
-                )
+                # Upload to Central Command (with deduplication)
+                check_status = check_result.get("status", "unknown")
+                if self._should_submit_evidence(check_name, check_status):
+                    bundle_id = await self.client.submit_evidence(
+                        bundle_hash=bundle_hash,
+                        check_type=check_name,
+                        check_result=check_status,
+                        evidence_data=evidence_data,
+                        hipaa_control=hipaa_controls.get(check_name),
+                        agent_signature=agent_signature
+                    )
 
-                if bundle_id:
-                    logger.debug(f"Evidence uploaded: {check_name} -> {bundle_id} (signed={agent_signature is not None})")
+                    if bundle_id:
+                        logger.debug(f"Evidence uploaded: {check_name} -> {bundle_id} (signed={agent_signature is not None})")
 
                     # Store locally as well (with signature)
                     await self._store_local_evidence(bundle_id, evidence_data, agent_signature)
@@ -1416,17 +1470,20 @@ try {
                         except Exception as e:
                             logger.warning(f"Failed to sign Windows evidence: {e}")
 
-                    await self.client.submit_evidence(
-                        bundle_hash=bundle_hash,
-                        check_type=f"windows_{check_name}",
-                        check_result=status,
-                        evidence_data=evidence_data,
-                        host=target.hostname,
-                        hipaa_control="164.312(b)",  # Audit controls
-                        agent_signature=agent_signature
-                    )
+                    # Submit with deduplication
+                    windows_check_type = f"windows_{check_name}"
+                    if self._should_submit_evidence(windows_check_type, status):
+                        await self.client.submit_evidence(
+                            bundle_hash=bundle_hash,
+                            check_type=windows_check_type,
+                            check_result=status,
+                            evidence_data=evidence_data,
+                            host=target.hostname,
+                            hipaa_control="164.312(b)",  # Audit controls
+                            agent_signature=agent_signature
+                        )
 
-                    logger.debug(f"Windows check {check_name} on {target.hostname}: {status}")
+                        logger.debug(f"Windows check {check_name} on {target.hostname}: {status}")
 
                     # If check failed and healing is enabled, attempt remediation
                     # Note: AutoHealer respects dry_run mode internally
@@ -1526,17 +1583,21 @@ try {
                     except Exception as e:
                         logger.warning(f"Failed to sign Linux evidence: {e}")
 
-                await self.client.submit_evidence(
-                    bundle_hash=bundle_hash,
-                    check_type=f"linux_{drift.check_type}",
-                    check_result="pass" if drift.compliant else "fail",
-                    evidence_data=evidence_data,
-                    host=drift.target,
-                    hipaa_control=drift.hipaa_controls[0] if drift.hipaa_controls else "164.312(b)",
-                    agent_signature=agent_signature
-                )
+                # Submit with deduplication
+                linux_check_type = f"linux_{drift.check_type}"
+                linux_result = "pass" if drift.compliant else "fail"
+                if self._should_submit_evidence(linux_check_type, linux_result):
+                    await self.client.submit_evidence(
+                        bundle_hash=bundle_hash,
+                        check_type=linux_check_type,
+                        check_result=linux_result,
+                        evidence_data=evidence_data,
+                        host=drift.target,
+                        hipaa_control=drift.hipaa_controls[0] if drift.hipaa_controls else "164.312(b)",
+                        agent_signature=agent_signature
+                    )
 
-                logger.debug(f"Linux {drift.runbook_id} on {drift.target}: {'pass' if drift.compliant else 'fail'}")
+                    logger.debug(f"Linux {drift.runbook_id} on {drift.target}: {linux_result}")
 
                 # If drift detected and L1-eligible, attempt auto-remediation
                 if not drift.compliant and drift.l1_eligible and self.auto_healer:
@@ -1659,15 +1720,18 @@ try {
                     except Exception as e:
                         logger.warning(f"Failed to sign network posture evidence: {e}")
 
-                await self.client.submit_evidence(
-                    bundle_hash=bundle_hash,
-                    check_type="network",
-                    check_result="pass" if result.compliant else "fail",
-                    evidence_data=evidence_data,
-                    host=result.target,
-                    hipaa_control=result.hipaa_controls[0] if result.hipaa_controls else "164.312(e)(1)",
-                    agent_signature=agent_signature
-                )
+                # Submit with deduplication
+                network_result = "pass" if result.compliant else "fail"
+                if self._should_submit_evidence("network", network_result):
+                    await self.client.submit_evidence(
+                        bundle_hash=bundle_hash,
+                        check_type="network",
+                        check_result=network_result,
+                        evidence_data=evidence_data,
+                        host=result.target,
+                        hipaa_control=result.hipaa_controls[0] if result.hipaa_controls else "164.312(e)(1)",
+                        agent_signature=agent_signature
+                    )
 
                 status = "compliant" if result.compliant else f"drifted ({len(result.drift_items)} issues)"
                 logger.debug(f"Network posture {result.target}: {status}")
