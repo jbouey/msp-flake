@@ -29,6 +29,8 @@ RUN pip install --no-cache-dir \
     prometheus-client \
     boto3 \
     sqlalchemy \
+    asyncpg \
+    cryptography \
     aiohttp \
     httpx \
     structlog \

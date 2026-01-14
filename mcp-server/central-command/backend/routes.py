@@ -28,6 +28,8 @@ from .models import (
     LearningStatus,
     PromotionCandidate,
     PromotionHistory,
+    PatternReport,
+    PatternReportResponse,
     OnboardingClient,
     OnboardingMetrics,
     OnboardingStage,
@@ -700,6 +702,105 @@ async def promote_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
         return {"status": "promoted", "pattern_id": pattern_id, "new_rule_id": rule_id}
 
     raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
+
+@router.post("/patterns", response_model=PatternReportResponse)
+async def report_pattern(report: PatternReport, db: AsyncSession = Depends(get_db)):
+    """Receive pattern report from agent after successful healing.
+
+    This endpoint is called by appliances after L1/L2 healing succeeds.
+    Patterns are aggregated and tracked for potential L1 promotion.
+
+    Args:
+        report: Pattern report containing healing details
+
+    Returns:
+        Pattern status including occurrences and success rate
+    """
+    import hashlib
+    from datetime import datetime, timezone
+
+    # Generate pattern ID from signature
+    pattern_signature = f"{report.check_type}:{report.issue_signature}"
+    pattern_id = hashlib.sha256(pattern_signature.encode()).hexdigest()[:16]
+
+    # Check if pattern exists
+    result = await db.execute(
+        text("SELECT pattern_id, occurrences, success_count, failure_count FROM patterns WHERE pattern_id = :pid"),
+        {"pid": pattern_id}
+    )
+    existing = result.fetchone()
+
+    if existing:
+        # Update existing pattern
+        occurrences = existing.occurrences + 1
+        success_count = existing.success_count + (1 if report.success else 0)
+        failure_count = existing.failure_count + (0 if report.success else 1)
+        success_rate = (success_count / occurrences) * 100 if occurrences > 0 else 0.0
+
+        await db.execute(text("""
+            UPDATE patterns
+            SET occurrences = :occ,
+                success_count = :sc,
+                failure_count = :fc,
+                success_rate = :rate,
+                last_seen = NOW()
+            WHERE pattern_id = :pid
+        """), {
+            "pid": pattern_id,
+            "occ": occurrences,
+            "sc": success_count,
+            "fc": failure_count,
+            "rate": success_rate,
+        })
+        await db.commit()
+
+        return PatternReportResponse(
+            pattern_id=pattern_id,
+            status="updated",
+            occurrences=occurrences,
+            success_rate=success_rate,
+        )
+    else:
+        # Create new pattern
+        occurrences = 1
+        success_count = 1 if report.success else 0
+        failure_count = 0 if report.success else 1
+        success_rate = 100.0 if report.success else 0.0
+
+        await db.execute(text("""
+            INSERT INTO patterns (
+                pattern_id, pattern_signature, description, incident_type, runbook_id,
+                occurrences, success_count, failure_count, success_rate,
+                avg_resolution_time_ms, total_resolution_time_ms,
+                status, first_seen, last_seen, created_at
+            ) VALUES (
+                :pid, :sig, :desc, :itype, :rid,
+                :occ, :sc, :fc, :rate,
+                :avg_time, :total_time,
+                'pending', NOW(), NOW(), NOW()
+            )
+        """), {
+            "pid": pattern_id,
+            "sig": pattern_signature,
+            "desc": f"Auto-detected pattern from {report.site_id}",
+            "itype": report.check_type,
+            "rid": report.runbook_id,
+            "occ": occurrences,
+            "sc": success_count,
+            "fc": failure_count,
+            "rate": success_rate,
+            "avg_time": report.execution_time_ms,
+            "total_time": report.execution_time_ms,
+        })
+        await db.commit()
+
+        return PatternReportResponse(
+            pattern_id=pattern_id,
+            status="created",
+            occurrences=occurrences,
+            success_rate=success_rate,
+        )
 
 
 # =============================================================================

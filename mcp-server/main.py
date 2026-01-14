@@ -1194,6 +1194,119 @@ async def list_evidence(
 
 
 # ============================================================================
+# Pattern Reporting Endpoint (for Learning Loop)
+# ============================================================================
+
+class PatternReportInput(BaseModel):
+    """Pattern report from agent after successful healing."""
+    site_id: str
+    check_type: str
+    issue_signature: str
+    resolution_steps: List[str]
+    success: bool
+    execution_time_ms: int
+    runbook_id: Optional[str] = None
+    reported_at: Optional[datetime] = None
+
+
+@app.post("/agent/patterns")
+async def report_agent_pattern(report: PatternReportInput, db: AsyncSession = Depends(get_db)):
+    """Receive pattern report from agent after successful healing.
+
+    This endpoint is called by appliances after L1/L2 healing succeeds.
+    Patterns are aggregated and tracked for potential L1 promotion.
+    """
+    import hashlib
+
+    # Generate pattern ID from signature
+    pattern_signature = f"{report.check_type}:{report.issue_signature}"
+    pattern_id = hashlib.sha256(pattern_signature.encode()).hexdigest()[:16]
+
+    # Check if pattern exists
+    result = await db.execute(
+        text("SELECT pattern_id, occurrences, success_count, failure_count FROM patterns WHERE pattern_id = :pid"),
+        {"pid": pattern_id}
+    )
+    existing = result.fetchone()
+
+    if existing:
+        # Update existing pattern
+        occurrences = existing.occurrences + 1
+        success_count = existing.success_count + (1 if report.success else 0)
+        failure_count = existing.failure_count + (0 if report.success else 1)
+        # success_rate is a generated column, calculated from occurrences/success_count
+
+        await db.execute(text("""
+            UPDATE patterns
+            SET occurrences = :occ,
+                success_count = :sc,
+                failure_count = :fc,
+                last_seen = NOW()
+            WHERE pattern_id = :pid
+        """), {
+            "pid": pattern_id,
+            "occ": occurrences,
+            "sc": success_count,
+            "fc": failure_count,
+        })
+        await db.commit()
+
+        # Calculate success_rate for response
+        success_rate = (success_count / occurrences) * 100 if occurrences > 0 else 0.0
+        logger.info(f"Pattern updated: {pattern_id} (occurrences: {occurrences}, success_rate: {success_rate:.1f}%)")
+        return {
+            "pattern_id": pattern_id,
+            "status": "updated",
+            "occurrences": occurrences,
+            "success_rate": success_rate,
+        }
+    else:
+        # Create new pattern
+        occurrences = 1
+        success_count = 1 if report.success else 0
+        failure_count = 0 if report.success else 1
+        # success_rate is a generated column, calculated automatically
+
+        # runbook_id is NOT NULL, so provide a default if not given
+        runbook_id = report.runbook_id or f"AUTO-{report.check_type.upper()}"
+
+        await db.execute(text("""
+            INSERT INTO patterns (
+                pattern_id, pattern_signature, description, incident_type, runbook_id,
+                occurrences, success_count, failure_count,
+                avg_resolution_time_ms, total_resolution_time_ms,
+                status, first_seen, last_seen, created_at
+            ) VALUES (
+                :pid, :sig, :desc, :itype, :rid,
+                :occ, :sc, :fc,
+                :avg_time, :total_time,
+                'pending', NOW(), NOW(), NOW()
+            )
+        """), {
+            "pid": pattern_id,
+            "sig": pattern_signature,
+            "desc": f"Auto-detected pattern from {report.site_id}",
+            "itype": report.check_type,
+            "rid": runbook_id,
+            "occ": occurrences,
+            "sc": success_count,
+            "fc": failure_count,
+            "avg_time": report.execution_time_ms,
+            "total_time": report.execution_time_ms,
+        })
+        await db.commit()
+
+        success_rate = 100.0 if report.success else 0.0
+        logger.info(f"Pattern created: {pattern_id} (check_type: {report.check_type})")
+        return {
+            "pattern_id": pattern_id,
+            "status": "created",
+            "occurrences": occurrences,
+            "success_rate": success_rate,
+        }
+
+
+# ============================================================================
 # WORM Evidence Upload Endpoint (Proxy Mode)
 # ============================================================================
 
