@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS sensor_registry (
     id SERIAL PRIMARY KEY,
-    site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    site_id VARCHAR(50) NOT NULL,  -- Matches sites.site_id
     hostname TEXT NOT NULL,
     domain TEXT,
     sensor_version TEXT,
@@ -30,7 +30,7 @@ ADD COLUMN IF NOT EXISTS sensor_version TEXT;
 -- Add sensor commands table for queuing deploy/remove commands
 CREATE TABLE IF NOT EXISTS sensor_commands (
     id SERIAL PRIMARY KEY,
-    site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    site_id VARCHAR(50) NOT NULL,  -- Matches sites.site_id
     appliance_id TEXT NOT NULL,
     command_type TEXT NOT NULL CHECK (command_type IN ('deploy_sensor', 'remove_sensor', 'check_sensor')),
     hostname TEXT NOT NULL,

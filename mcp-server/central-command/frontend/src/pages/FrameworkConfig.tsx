@@ -151,12 +151,13 @@ export default function FrameworkConfig() {
 
       try {
         setLoading(true);
-        const [appliancesData, metadataData] = await Promise.all([
+        const [appliancesData, metadataResponse] = await Promise.all([
           sitesApi.getAppliances(siteId),
           frameworksApi.getMetadata(),
         ]);
         setAppliances(appliancesData.appliances);
-        setMetadata(metadataData);
+        // API returns {frameworks: {...}, supported_count: N} - extract frameworks object
+        setMetadata((metadataResponse as any).frameworks || metadataResponse);
 
         // Auto-select first appliance
         if (appliancesData.appliances.length > 0) {
