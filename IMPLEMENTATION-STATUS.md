@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-14 (Session 31 - JSON Rule Loading + Chaos Lab Fixes)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.29, ISO v29, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, **L1 JSON Rule Loading**, **Chaos Lab Automated Testing Ready**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**, 656 tests)
+**Last Updated:** 2026-01-14 (Session 32 - Network Compliance + Extended Check Types)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.30, ISO v29, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab 2x Daily, **Network Compliance Check**, **Extended Check Types**, **Pattern Reporting Deployed**, 656 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,27 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.29, ISO v29, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD), **L1 JSON Rule Loading**, **Chaos Lab Automated Testing Ready**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**.
+**Status:** Phase 12 nearing completion. Agent v1.0.30, ISO v29, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD), L1 JSON Rule Loading, Chaos Lab 2x Daily, **Network Compliance Check (Drata/Vanta style)**, **Extended Check Type Labels**, **Pattern Reporting Deployed**.
+
+**Session 32 (Network Compliance + Extended Check Types):**
+- Network compliance check integrated across full stack (Drata/Vanta style)
+  - Backend: Added `NETWORK` to CheckType enum, 7-metric compliance scoring
+  - Agent: Changed check_type from "network_posture_{os_type}" to "network"
+  - Frontend: Added 'network' type and 'Network' label
+- Extended check type labels for advanced monitoring:
+  - ntp_sync → NTP, disk_space → Disk, service_health → Services
+  - windows_defender → Defender, memory_pressure → Memory, certificate_expiry → Cert
+  - database_corruption → Database, prohibited_port → Port
+- Learning Flywheel pattern endpoints deployed:
+  - `/agent/patterns` and `/patterns` endpoints on VPS
+  - Tier count query fix (`resolution_tier IS NOT NULL`)
+- Infrastructure fixes:
+  - Sensor registry FK constraint (VARCHAR match)
+  - FrameworkConfig API parsing (extract frameworks object)
+  - Dockerfile: asyncpg + cryptography
+- Chaos Lab: Added 2 PM execution (2x daily attack cycles)
+- Agent bumped to v1.0.30
+- 5 commits pushed, VPS deployed and verified
 
 **Session 31 (JSON Rule Loading + Chaos Lab Fixes):**
 - Fixed L1 JSON rule loading from Central Command
@@ -609,22 +629,25 @@ Required fields per CLAUDE.md:
 - Fixed database connectivity (correct password, asyncpg driver)
 - Fixed health endpoint for HEAD method (monitoring compatibility)
 
-**ISO v29 Ready:**
-- **VPS:** `/root/msp-iso-build/result-iso-v29/iso/osiriscare-appliance.iso` (1.1GB)
-- **VM appliance:** 🟡 Pending update to v1.0.29 (192.168.88.247)
-- **Physical appliance:** Running v1.0.28 (192.168.88.246), user handling v29 update
+**Agent v1.0.30 Ready:**
+- **Code:** Pushed to git, deployed to VPS
+- **Features:** Network compliance check, 8 extended check type labels
+- **ISO:** Build pending (run `nix build .#appliance-iso -o result-iso-v30` on VPS)
+
+**Physical Appliance:**
+- Updated to v29 ISO (user confirmed)
+- Running at 192.168.88.246
 
 **Chaos Lab Ready:**
 - All scripts fixed and tested: winrm_attack.py, winrm_verify.py, append_result.py
-- Cron schedule: 6 AM attack execution, 12 PM checkpoint, 6 PM report
+- Cron schedule: 6 AM + **2 PM** execution, 12 PM checkpoint, 6 PM report (2x daily)
 - Located at: iMac gateway ~/chaos-lab/
 
 **Next Steps:**
-1. Deploy ISO v29 to VM appliance (192.168.88.247)
-2. User deploys ISO v29 to physical appliance (HP T640)
-3. Verify JSON rule loading from Central Command
-4. Run first chaos lab attack cycle
-5. Monitor healing in Learning dashboard
-6. Evidence bundles uploading to MinIO verification
-7. First compliance packet generated
-8. 30-day monitoring period completion
+1. Build ISO v30 with network check_type fix
+2. Deploy ISO v30 to VM appliance (192.168.88.247)
+3. Run chaos lab cycle and verify extended check type labels
+4. Monitor patterns flowing to Learning dashboard
+5. Evidence bundles uploading to MinIO verification
+6. First compliance packet generated
+7. 30-day monitoring period completion
