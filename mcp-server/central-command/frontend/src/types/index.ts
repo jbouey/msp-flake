@@ -11,7 +11,12 @@
 export type HealthStatus = 'critical' | 'warning' | 'healthy';
 export type ResolutionLevel = 'L1' | 'L2' | 'L3';
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
-export type CheckType = 'patching' | 'antivirus' | 'backup' | 'logging' | 'firewall' | 'encryption';
+export type CheckType =
+  // Core compliance checks
+  | 'patching' | 'antivirus' | 'backup' | 'logging' | 'firewall' | 'encryption' | 'network'
+  // Extended monitoring checks
+  | 'ntp_sync' | 'certificate_expiry' | 'database_corruption' | 'memory_pressure'
+  | 'windows_defender' | 'disk_space' | 'service_health' | 'prohibited_port';
 export type CheckinStatus = 'pending' | 'connected' | 'failed';
 
 export type OnboardingStage =
@@ -49,6 +54,7 @@ export interface ComplianceMetrics {
   logging: number;
   firewall: number;
   encryption: number;
+  network: number;
   score: number;
 }
 

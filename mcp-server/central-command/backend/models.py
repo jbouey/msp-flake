@@ -44,6 +44,7 @@ class CheckType(str, Enum):
     LOGGING = "logging"
     FIREWALL = "firewall"
     ENCRYPTION = "encryption"
+    NETWORK = "network"  # Network security posture (ports, exposure, DNS)
     # Extended check types for chaos probes and advanced monitoring
     NTP_SYNC = "ntp_sync"
     CERTIFICATE_EXPIRY = "certificate_expiry"
@@ -100,7 +101,8 @@ class ComplianceMetrics(BaseModel):
     logging: int = Field(ge=0, le=100, description="Logging compliance (0 or 100)")
     firewall: int = Field(ge=0, le=100, description="Firewall compliance (0 or 100)")
     encryption: int = Field(ge=0, le=100, description="Encryption compliance (0 or 100)")
-    score: float = Field(ge=0, le=100, description="Average of above six")
+    network: int = Field(default=0, ge=0, le=100, description="Network security posture (0 or 100)")
+    score: float = Field(ge=0, le=100, description="Average of above seven")
 
 
 class HealthMetrics(BaseModel):
@@ -273,6 +275,26 @@ class PromotionHistory(BaseModel):
     promoted_at: datetime
     post_promotion_success_rate: float
     executions_since_promotion: int
+
+
+class PatternReport(BaseModel):
+    """Pattern report from agent after successful healing."""
+    site_id: str
+    check_type: str
+    issue_signature: str
+    resolution_steps: List[str]
+    success: bool
+    execution_time_ms: int
+    runbook_id: Optional[str] = None
+    reported_at: Optional[datetime] = None
+
+
+class PatternReportResponse(BaseModel):
+    """Response to pattern report."""
+    pattern_id: str
+    status: str  # "created", "updated"
+    occurrences: int
+    success_rate: float
 
 
 # =============================================================================
