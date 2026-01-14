@@ -1,7 +1,45 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-13 (Session 29 Continued - Learning Flywheel + Portal Link)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.26, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, **Pattern Reporting**)
+**Last Updated:** 2026-01-14 (Session 30 - L1 Legacy Action Mapping Fix)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.28, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, **L1 Firewall Healing Fixed**)
+
+---
+
+## Session 30 (2026-01-14) - L1 Legacy Action Mapping Fix
+
+### 1. Firewall Flapping Root Cause & Fix
+**Status:** COMPLETE
+**Details:** Fixed firewall drift flapping on Incidents page. L1 rule was matching but healing not executing.
+
+#### Root Cause Analysis
+- L1 rule `L1-FW-001` outputs action `restore_firewall_baseline`
+- `appliance_agent.py` only had handlers for: `restart_service`, `run_command`, `run_windows_runbook`, `escalate`
+- **No handler for `restore_firewall_baseline`** → healing silently failed
+
+#### Fix Applied (appliance_agent.py)
+Added legacy action to Windows runbook mapping:
+```python
+legacy_action_runbooks = {
+    "restore_firewall_baseline": "RB-WIN-SEC-001",  # Windows Firewall Enable
+    "restore_audit_policy": "RB-WIN-SEC-002",       # Audit Policy
+    "restore_defender": "RB-WIN-SEC-006",           # Defender Real-time
+    "enable_bitlocker": "RB-WIN-SEC-005",           # BitLocker Status
+}
+```
+
+When legacy action detected, translates to `run_windows_runbook` with appropriate runbook ID.
+
+#### Deployment
+- [x] Built ISO v1.0.28 on VPS
+- [x] User updated physical appliance (192.168.88.246) - **verified running v1.0.28**
+- [x] Updated VM appliance (192.168.88.247) - ISO attached, boot initiated
+- [x] Manually re-enabled Windows DC firewall to stop immediate flapping
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Added legacy action mapping |
+| `iso/appliance-image.nix` | Version bump 1.0.27 → 1.0.28 |
 
 ---
 

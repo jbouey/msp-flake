@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-13 (Session 29 Continued - Learning Flywheel Pattern Reporting + Portal Link)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.26, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**)
-**Test Status:** 656 passed (compliance-agent tests), agent v1.0.26, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), **L2 LLM VERIFIED WORKING on VM appliance (ISO v26)**
+**Last Updated:** 2026-01-14 (Session 30 - L1 Legacy Action Mapping Fix)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.28, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, **L1 Firewall Healing Fixed**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**)
+**Test Status:** 656+ passed (compliance-agent tests), agent v1.0.28, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), **L1 Firewall Healing Fixed on physical appliance (ISO v28)**
 
 ---
 
@@ -317,6 +317,14 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Calls `POST /api/portal/sites/{site_id}/generate-token`
   - Modal displays portal URL with copy-to-clipboard
   - Deployed to VPS
+- ✅ **L1 Legacy Action Mapping Fix** - 2026-01-14 (Session 30)
+  - Fixed firewall drift flapping on Incidents page
+  - Root cause: L1 rule `L1-FW-001` outputs `restore_firewall_baseline` but no handler existed
+  - Fix: Added legacy action to Windows runbook mapping in `appliance_agent.py`
+  - Mapping: `restore_firewall_baseline` → `RB-WIN-SEC-001`, `restore_audit_policy` → `RB-WIN-SEC-002`, etc.
+  - Built ISO v1.0.28 on VPS
+  - Physical appliance (192.168.88.246) updated to v1.0.28 - **verified running**
+  - VM appliance (192.168.88.247) ISO attached and rebooted
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
@@ -375,6 +383,16 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
 
+### ISO v28 Built (2026-01-14 Session 30)
+- **Location (VPS):** `/opt/msp-flakes/result-iso/iso/osiriscare-appliance.iso`
+- **Location (iMac):** `/tmp/osiriscare-appliance-v1.0.28.iso`
+- **Size:** 1.1GB
+- **Agent:** compliance-agent v1.0.28 with **L1 legacy action mapping fix**
+- **Entry point:** `compliance-agent-appliance`
+- **Features:** L1 firewall healing, L2 LLM, pattern reporting, all previous features
+- **Status:** Physical appliance (192.168.88.246) **verified running v1.0.28**
+- **Fix:** Legacy actions (`restore_firewall_baseline`, etc.) now map to Windows runbooks
+
 ### ISO v26 Built (2026-01-13 Session 29)
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v26/iso/osiriscare-appliance.iso`
 - **Location (iMac):** `~/Downloads/osiriscare-appliance-v26.iso`
@@ -382,7 +400,7 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** compliance-agent v1.0.26 with **L2 JSON parsing fix**
 - **Entry point:** `compliance-agent-appliance`
 - **Features:** L2 LLM with Claude 3.5 Haiku, JSON parsing fix, all previous features
-- **Status:** VM appliance (192.168.88.247) running v1.0.26 with **L2 VERIFIED WORKING**
+- **Status:** Superseded by v1.0.28
 - **L2 Verification:** Observed decisions with confidence scores (escalate 0.90, run_backup_job 0.80)
 
 ### ISO v20 Built (2026-01-09 Session 22)
