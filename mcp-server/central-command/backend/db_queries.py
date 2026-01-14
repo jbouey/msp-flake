@@ -202,14 +202,14 @@ async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
     ))
     recently_promoted = promoted_result.scalar() or 0
     
-    # Count incidents by tier
+    # Count incidents by tier (include all incidents that have a resolution_tier)
     tier_result = await db.execute(text("""
-        SELECT 
+        SELECT
             resolution_tier,
             COUNT(*) as count
-        FROM incidents 
+        FROM incidents
         WHERE reported_at > NOW() - INTERVAL '30 days'
-        AND status = 'resolved'
+        AND resolution_tier IS NOT NULL
         GROUP BY resolution_tier
     """))
     tier_counts = {row.resolution_tier: row.count for row in tier_result.fetchall()}
