@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-14 (Session 30 - L1 Legacy Action Mapping Fix)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.28, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, **L1 Firewall Healing Fixed**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**)
-**Test Status:** 656+ passed (compliance-agent tests), agent v1.0.28, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), **L1 Firewall Healing Fixed on physical appliance (ISO v28)**
+**Last Updated:** 2026-01-14 (Session 31 - JSON Rule Loading + Chaos Lab Fixes)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.29, ISO v29, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, **L1 JSON Rule Loading**, **Chaos Lab Scripts Fixed**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**)
+**Test Status:** 656+ passed (compliance-agent tests), agent v1.0.29, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), **L1 JSON Rule Loading from Central Command**, **Chaos Lab automated attack testing ready**
 
 ---
 
@@ -325,6 +325,16 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Built ISO v1.0.28 on VPS
   - Physical appliance (192.168.88.246) updated to v1.0.28 - **verified running**
   - VM appliance (192.168.88.247) ISO attached and rebooted
+- ✅ **L1 JSON Rule Loading + Chaos Lab Fixes** - 2026-01-14 (Session 31)
+  - Fixed synced JSON rules from Central Command not being loaded by DeterministicEngine
+  - Added `from_synced_json()` class method to Rule for JSON format handling
+  - Added `_load_synced_json_rules()` to load *.json files from rules directory
+  - Synced rules get priority 5 (override built-in priority 10)
+  - Created YAML override rule on appliance for local NixOS firewall checks
+  - Fixed Learning page NULL proposed_rule bug (Optional[str])
+  - Enabled healing mode on appliance (healing_dry_run: false)
+  - Fixed all chaos lab scripts (winrm_attack.py, winrm_verify.py, append_result.py) for proper argument handling
+  - Built ISO v1.0.29 on VPS
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)
@@ -383,9 +393,17 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
 
+### ISO v29 Built (2026-01-14 Session 31)
+- **Location (VPS):** `/root/msp-iso-build/result-iso-v29/iso/osiriscare-appliance.iso`
+- **Size:** 1.1GB
+- **Agent:** compliance-agent v1.0.29 with **L1 JSON rule loading from Central Command**
+- **Entry point:** `compliance-agent-appliance`
+- **Features:** JSON rule loading, L1 firewall healing, L2 LLM, pattern reporting, all previous features
+- **Status:** Ready for deployment to VM appliance (192.168.88.247)
+- **Fix:** Synced rules from Central Command now properly loaded (priority 5 overrides built-in)
+
 ### ISO v28 Built (2026-01-14 Session 30)
-- **Location (VPS):** `/opt/msp-flakes/result-iso/iso/osiriscare-appliance.iso`
-- **Location (iMac):** `/tmp/osiriscare-appliance-v1.0.28.iso`
+- **Location (VPS):** `/root/msp-iso-build/result-iso-v28/iso/osiriscare-appliance.iso`
 - **Size:** 1.1GB
 - **Agent:** compliance-agent v1.0.28 with **L1 legacy action mapping fix**
 - **Entry point:** `compliance-agent-appliance`

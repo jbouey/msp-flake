@@ -1,7 +1,7 @@
 # MSP HIPAA Compliance Platform - Documentation Index
 
-**Last Updated:** 2026-01-09 (Session 22)
-**Platform Version:** Phase 12 (Agent v1.0.22, ISO v20, 43 Runbooks, OTS Blockchain Anchoring, Linux+Windows Support, Partner L3 Escalations, RBAC User Management)
+**Last Updated:** 2026-01-14 (Session 31)
+**Platform Version:** Phase 12 (Agent v1.0.29, ISO v29, 43 Runbooks, OTS Blockchain Anchoring, Linux+Windows Support, Partner L3 Escalations, RBAC User Management, Multi-Framework Compliance, Cloud Integrations, **L1 JSON Rule Loading**, **Chaos Lab Automated Testing**)
 
 ---
 
@@ -46,22 +46,25 @@
 |-----------|--------|-------|
 | Credential-Pull Architecture | ✅ Complete | RMM-style credential fetch (Session 9) |
 | Healing System Integration | ✅ Complete | L1 runbooks verified working (Session 10) |
-| Agent v1.0.22 | ✅ Complete | Linux support + NetworkPostureDetector |
+| Agent v1.0.29 | ✅ Complete | JSON rule loading + all fixes (Session 31) |
 | Windows Firewall Healing | ✅ Tested | Chaos test → auto-healed |
-| ISO v18 | ✅ Deployed | Physical + VM appliances (Session 12) |
+| ISO v29 | ✅ Built | JSON rule loading from Central Command (Session 31) |
 | Email Alerts | ✅ Complete | SMTP via privateemail.com (Session 12) |
 | Push Agent Update UI | ✅ Complete | Button + modal in site detail (Session 12) |
 | Delete Appliance Button | ✅ Complete | In dropdown menu (Session 12) |
-| Test VM Rebuild | ✅ Complete | Now on v1.0.18 (Session 12) |
 | Windows Sensors | ✅ Complete | Push-based drift detection (Session 15) |
 | Partner L3 Escalations | ✅ Complete | Slack/PagerDuty/Teams/Webhook (Session 16) |
 | 1Password Integration | ✅ Complete | Secrets management (Session 17) |
 | Linux Drift Healing | ✅ Complete | 16 runbooks, SSH-based execution (Session 18) |
 | RBAC User Management | ✅ Complete | 3-tier roles, email invites (Session 19) |
 | OpenTimestamps Anchoring | ✅ Complete | Blockchain evidence proofs (Session 21) |
-| ISO v20 | ✅ Built | Agent v1.0.22, OTS, asyncssh (Session 22) |
-| Physical Appliance v20 | ✅ Deployed | Online with L1 auto-healing (Session 22) |
-| VM Appliance v20 | 🟡 Pending | ISO ready, awaiting transfer (Session 22) |
+| Multi-Framework Compliance | ✅ Complete | HIPAA, SOC 2, PCI DSS, NIST, CIS (Sessions 25-26) |
+| Cloud Integrations | ✅ Complete | AWS, Google Workspace, Okta, Azure AD (Sessions 27-28) |
+| L1 Legacy Action Mapping | ✅ Complete | restore_firewall_baseline → RB-WIN-SEC-001 (Session 30) |
+| L1 JSON Rule Loading | ✅ Complete | Synced rules from Central Command (Session 31) |
+| Chaos Lab Scripts | ✅ Complete | winrm_attack, winrm_verify, append_result fixed (Session 31) |
+| Physical Appliance | ✅ Running v1.0.28 | User handling v29 update |
+| VM Appliance | 🟡 Pending v29 | ISO ready for deployment |
 
 ### Phase 11: Partner/Reseller Infrastructure (Complete)
 

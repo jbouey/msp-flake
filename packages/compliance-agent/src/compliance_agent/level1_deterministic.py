@@ -13,6 +13,7 @@ Rules are loaded from:
 3. Promoted rules from Level 2 learning
 """
 
+import json
 import re
 import yaml
 import logging
@@ -148,6 +149,44 @@ class Rule:
             source=source
         )
 
+    @classmethod
+    def from_synced_json(cls, json_data: Dict[str, Any]) -> 'Rule':
+        """
+        Create a Rule from synced JSON format (from Central Command).
+
+        Handles format differences:
+        - JSON uses 'actions' (list), Rule uses 'action' (string)
+        - JSON uses 'severity' field, not 'severity_filter'
+        - Synced rules get priority 5 to override built-in rules (priority 10)
+        """
+        conditions = []
+        for cond in json_data.get("conditions", []):
+            conditions.append(RuleCondition(
+                field=cond["field"],
+                operator=MatchOperator(cond["operator"]),
+                value=cond["value"]
+            ))
+
+        # Convert 'actions' list to 'action' string (use first action)
+        actions = json_data.get("actions", [])
+        action = actions[0] if actions else json_data.get("action", "alert:unknown")
+
+        return cls(
+            id=json_data["id"],
+            name=json_data.get("name", json_data["id"]),
+            description=json_data.get("description", ""),
+            conditions=conditions,
+            action=action,
+            action_params=json_data.get("action_params", {}),
+            hipaa_controls=json_data.get("hipaa_controls", []),
+            severity_filter=json_data.get("severity_filter"),
+            enabled=json_data.get("enabled", True),
+            priority=5,  # Synced rules have higher priority than built-in (10)
+            cooldown_seconds=json_data.get("cooldown_seconds", 300),
+            max_retries=json_data.get("max_retries", 1),
+            source="synced"
+        )
+
     def to_yaml(self) -> Dict[str, Any]:
         """Convert rule to YAML-serializable dict."""
         return {
@@ -227,6 +266,14 @@ class DeterministicEngine:
                 except Exception as e:
                     logger.error(f"Failed to load rule file {rule_file}: {e}")
 
+            # Load synced rules from JSON (from Central Command)
+            # These have higher priority (5) than built-in rules (10)
+            for json_file in self.rules_dir.glob("*.json"):
+                try:
+                    self._load_synced_json_rules(json_file)
+                except Exception as e:
+                    logger.error(f"Failed to load synced rules from {json_file}: {e}")
+
         # Sort by priority (lower = higher priority)
         self.rules.sort(key=lambda r: r.priority)
 
@@ -244,6 +291,39 @@ class DeterministicEngine:
         elif isinstance(data, dict):
             # Single rule
             self.rules.append(Rule.from_yaml(data, source="custom"))
+
+    def _load_synced_json_rules(self, path: Path):
+        """
+        Load rules from a synced JSON file (from Central Command).
+
+        These rules use a slightly different format than YAML rules:
+        - 'actions' list instead of 'action' string
+        - Different field names
+
+        Synced rules get priority 5 to override built-in rules (priority 10).
+        """
+        with open(path) as f:
+            data = json.load(f)
+
+        if isinstance(data, list):
+            # Array of rules (standard sync format)
+            for rule_data in data:
+                try:
+                    rule = Rule.from_synced_json(rule_data)
+                    self.rules.append(rule)
+                    logger.debug(f"Loaded synced rule: {rule.id} -> {rule.action}")
+                except Exception as e:
+                    logger.warning(f"Failed to parse synced rule {rule_data.get('id', 'unknown')}: {e}")
+        elif isinstance(data, dict) and "rules" in data:
+            # Wrapped format with 'rules' key
+            for rule_data in data["rules"]:
+                try:
+                    rule = Rule.from_synced_json(rule_data)
+                    self.rules.append(rule)
+                except Exception as e:
+                    logger.warning(f"Failed to parse synced rule: {e}")
+
+        logger.info(f"Loaded {len(data) if isinstance(data, list) else 0} synced rules from {path.name}")
 
     def _load_builtin_rules(self):
         """Load built-in default rules."""
