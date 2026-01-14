@@ -1,298 +1,118 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-14 (Session 31 - JSON Rule Loading + Chaos Lab Fixes)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.29, ISO v29, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, **L1 JSON Rule Loading**, **Chaos Lab Scripts Fixed**)
+**Last Updated:** 2026-01-14 (Session 32 - Network Compliance + Extended Check Types + Documentation Sweep)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.30, ISO v29, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab Automated, **Network Compliance Check**, **Extended Check Types**)
 
 ---
 
-## Session 31 (2026-01-14) - JSON Rule Loading + Chaos Lab Fixes
+## Session 32 (2026-01-14) - Network Compliance + Extended Check Types
 
-### 1. L1 JSON Rule Loading from Central Command
+### 1. Network Compliance Check Integration
 **Status:** COMPLETE
-**Details:** Fixed L1 rules synced from Central Command not being loaded by DeterministicEngine.
+**Details:** Added Network compliance check across full stack (Drata/Vanta style).
 
-#### Root Cause Analysis
-- Central Command syncs rules to `/var/lib/msp/rules/synced_rules.json`
-- DeterministicEngine only loaded YAML files (`*.yaml`, `*.yml`)
-- JSON rules were silently ignored → synced rules never matched
+#### Changes Made
+- Backend `models.py`: Added `NETWORK = "network"` to CheckType enum
+- Backend `metrics.py`: Updated `calculate_compliance_score()` to include network (7 metrics avg)
+- Agent `appliance_agent.py`: Changed check_type from "network_posture_{os_type}" to "network"
+- Frontend `types/index.ts`: Added 'network' to CheckType union and ComplianceMetrics
+- Frontend `IncidentRow.tsx`: Added 'Network' label
 
-#### Fix Applied (level1_deterministic.py)
-Added JSON loading capability:
-```python
-@classmethod
-def from_synced_json(cls, json_data: Dict[str, Any]) -> 'Rule':
-    """Create a Rule from synced JSON format (from Central Command)."""
-    # Handles format differences:
-    # - JSON uses 'actions' (list), Rule uses 'action' (string)
-    # - Synced rules get priority 5 to override built-in rules (priority 10)
-    ...
-```
+#### Agent Version
+- Bumped to v1.0.30 for ISO compatibility
 
-Added `_load_synced_json_rules()` method to load JSON files from rules directory.
-
-#### Immediate Workaround (on appliance)
-Created YAML override rule `/var/lib/msp/rules/override_firewall.yaml` with `escalate` action for local NixOS firewall checks.
-
-### 2. Learning Page NULL Bug Fix
+### 2. Extended Check Type Labels
 **Status:** COMPLETE
-**Details:** Fixed Central Command Learning page 500 error.
+**Details:** Added frontend labels for all chaos probe/monitoring check types.
 
-#### Root Cause
-- `proposed_rule` column was NULL in database for some patterns
-- `PromotionCandidate` model required `str`, not `Optional[str]`
+| Check Type | Label |
+|------------|-------|
+| ntp_sync | NTP |
+| disk_space | Disk |
+| service_health | Services |
+| windows_defender | Defender |
+| memory_pressure | Memory |
+| certificate_expiry | Cert |
+| database_corruption | Database |
+| prohibited_port | Port |
 
-#### Fix Applied
-Changed `proposed_rule: str` to `proposed_rule: Optional[str] = None` in `models.py` on VPS.
+### 3. Learning Flywheel Pattern Endpoints
+**Status:** COMPLETE (deployed)
+**Details:** Pattern reporting endpoints fully deployed to VPS.
+- `/agent/patterns` - Agent pattern reporting
+- `/patterns` - Dashboard pattern reporting
+- Tier count query fix (`resolution_tier IS NOT NULL`)
 
-### 3. Healing Mode Enabled
+### 4. Infrastructure Fixes
 **Status:** COMPLETE
-**Details:** Disabled dry-run mode on physical appliance.
-- Added `healing_dry_run: false` to `/var/lib/msp/config.yaml`
+- Sensor registry FK constraint fix (VARCHAR match instead of strict FK)
+- FrameworkConfig API parsing fix (extract frameworks object from response)
+- Dockerfile: Added asyncpg + cryptography dependencies
 
-### 4. Chaos Lab Scripts Fixed
+### 5. Chaos Lab Enhancement
 **Status:** COMPLETE
-**Details:** Fixed all three chaos lab helper scripts for proper argument handling.
+**Details:** Added second daily execution at 2 PM for more system stress testing.
 
-#### winrm_attack.py
-- Added `--username` alias for `--user`
-- Added `--command` flag variant (in addition to positional)
-- Added `--scenario-id` parameter
+**New Schedule (iMac 192.168.88.50):**
+| Time | Task |
+|------|------|
+| 6:00 AM | Execute chaos plan (morning) |
+| 12:00 PM | Mid-day checkpoint |
+| 2:00 PM | Execute chaos plan (afternoon) - **NEW** |
+| 6:00 PM | End of day report |
+| 8:00 PM | Generate next day's plan |
 
-#### winrm_verify.py
-- Added `--username` alias for `--user`
-- Added `--categories` flag (comma-separated)
-- Added `--scenario-id` parameter
-
-#### append_result.py
-- Made `--name` and `--category` optional
-- Added `--date` parameter for specifying results file date
-- Added inference of category/name from scenario_id (e.g., `scn_firewall_profile_disable` → category=firewall, name="Profile Disable")
-
-### 5. ISO v29 Built
+### 6. Git Push & VPS Deployment
 **Status:** COMPLETE
-**Details:** Built ISO v29 on VPS with agent v1.0.29.
-- Location: `/root/msp-iso-build/result-iso-v29/iso/osiriscare-appliance.iso`
-- Size: 1.1GB
-- Agent version: 1.0.29 with JSON rule loading
+**Commits pushed:**
+1. `fdb99c6` - L1 legacy action mapping (Session 30)
+2. `e90c52c` - L1 JSON rule loading + chaos lab fixes (Session 31)
+3. `1b3e665` - Network compliance + extended check types (v1.0.30)
+4. `14cac63` - Learning Flywheel pattern reporting + tier fix
+5. `4bc85c2` - Sensor registry FK + FrameworkConfig API fix
+
+**VPS Deployed & Verified:**
+- Backend: models.py, metrics.py, routes.py, db_queries.py
+- Frontend: Built and deployed (index-DUHCrfow.js)
+- Container: Restarted, healthy
 
 **Files Modified:**
 | File | Change |
 |------|--------|
-| `packages/compliance-agent/src/compliance_agent/level1_deterministic.py` | Added JSON loading, `from_synced_json()` |
-| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Version bump 1.0.28 → 1.0.29 |
-| `~/chaos-lab/scripts/winrm_attack.py` (iMac) | Fixed argument handling |
-| `~/chaos-lab/scripts/winrm_verify.py` (iMac) | Fixed argument handling |
-| `~/chaos-lab/scripts/append_result.py` (iMac) | Fixed argument handling |
-| `/opt/mcp-server/app/dashboard_api/models.py` (VPS) | Fixed proposed_rule Optional |
-| `/var/lib/msp/config.yaml` (appliance) | healing_dry_run: false |
-| `/var/lib/msp/rules/override_firewall.yaml` (appliance) | Local firewall escalation rule |
-
----
-
-## Session 30 (2026-01-14) - L1 Legacy Action Mapping Fix
-
-### 1. Firewall Flapping Root Cause & Fix
-**Status:** COMPLETE
-**Details:** Fixed firewall drift flapping on Incidents page. L1 rule was matching but healing not executing.
-
-#### Root Cause Analysis
-- L1 rule `L1-FW-001` outputs action `restore_firewall_baseline`
-- `appliance_agent.py` only had handlers for: `restart_service`, `run_command`, `run_windows_runbook`, `escalate`
-- **No handler for `restore_firewall_baseline`** → healing silently failed
-
-#### Fix Applied (appliance_agent.py)
-Added legacy action to Windows runbook mapping:
-```python
-legacy_action_runbooks = {
-    "restore_firewall_baseline": "RB-WIN-SEC-001",  # Windows Firewall Enable
-    "restore_audit_policy": "RB-WIN-SEC-002",       # Audit Policy
-    "restore_defender": "RB-WIN-SEC-006",           # Defender Real-time
-    "enable_bitlocker": "RB-WIN-SEC-005",           # BitLocker Status
-}
-```
-
-When legacy action detected, translates to `run_windows_runbook` with appropriate runbook ID.
-
-#### Deployment
-- [x] Built ISO v1.0.28 on VPS
-- [x] User updated physical appliance (192.168.88.246) - **verified running v1.0.28**
-- [x] Updated VM appliance (192.168.88.247) - ISO attached, boot initiated
-- [x] Manually re-enabled Windows DC firewall to stop immediate flapping
-
-**Files Modified:**
-| File | Change |
-|------|--------|
-| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Added legacy action mapping |
-| `iso/appliance-image.nix` | Version bump 1.0.27 → 1.0.28 |
-
----
-
-## Session 29 Continued (2026-01-13) - Learning Flywheel Pattern Reporting
-
-### 1. Learning Flywheel Pattern Reporting
-**Status:** COMPLETE
-**Details:** Implemented full pipeline for L2→L1 pattern promotion.
-
-#### Agent-side Changes (appliance_agent.py)
-- [x] Added `report_pattern()` calls after successful L1/L2 healing
-- [x] Four locations updated: local drift, Windows healing, Linux healing, network posture
-- [x] Patterns include: check_type, issue_signature, resolution_steps, success, execution_time_ms
-
-#### Server-side Endpoint (main.py on VPS)
-- [x] Added `/agent/patterns` POST endpoint
-- [x] Creates new patterns or updates existing (increments occurrences, tracks success_rate)
-- [x] Uses generated `success_rate` column (calculated from occurrences/success_count)
-- [x] Pattern ID generated from SHA256(pattern_signature)[:16]
-
-#### Client-side Changes (appliance_client.py)
-- [x] Updated `report_pattern()` to use `/agent/patterns` endpoint
-- [x] Non-critical failures logged at debug level
-
-#### Verified Working
-```bash
-curl -X POST 'http://178.156.162.116:8000/agent/patterns' \
-  -H 'Content-Type: application/json' \
-  -d '{"site_id":"test-site","check_type":"firewall",...}'
-# Response: {"pattern_id":"cd070e6eb7f1c476","status":"created","occurrences":1,"success_rate":100.0}
-```
-
-### 2. Generate Portal Link Button
-**Status:** COMPLETE
-**Details:** Added button to SiteDetail page for generating client portal links.
-
-- [x] Button in SiteDetail header calls `POST /api/portal/sites/{site_id}/generate-token`
-- [x] Modal displays portal URL with copy-to-clipboard functionality
-- [x] Security note about read-only access and regeneration
-- [x] Deployed to VPS
-
-**Files Modified:**
-| File | Change |
-|------|--------|
-| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Added `report_pattern()` calls |
-| `packages/compliance-agent/src/compliance_agent/appliance_client.py` | Updated `report_pattern()` function |
-| `mcp-server/main.py` (VPS) | Added `/agent/patterns` endpoint |
-| `mcp-server/central-command/frontend/src/pages/SiteDetail.tsx` | Added Generate Portal Link button |
-
----
-
-## Session 29 (2026-01-13) - Earlier
-
-### L1/L2/L3 Auto-Healing Fixes + Frontend Fixes
-**Status:** COMPLETE
-**Details:** Fixed critical issues with auto-healing escalation system and frontend pages.
-
-#### L1 Rule Fixes (main.py)
-- [x] **Status mismatch:** Rules checked for `"non_compliant"` but SimpleDriftChecker returns `"pass"`, `"warning"`, `"fail"`, `"error"`
-- [x] Fix: Changed `"operator": "eq", "value": "non_compliant"` to `"operator": "in", "value": ["warning", "fail", "error"]`
-- [x] **Check type mismatch:** Fixed wrong names (e.g., `firewall_enabled` to `firewall`)
-- [x] Affected rules: NTP sync, critical services, disk space, firewall, NixOS generation
-
-#### L3 Notification Deduplication Fix (main.py:885-930)
-- [x] Problem: L3 escalation notifications blocked by older incident notifications
-- [x] Root cause: Dedup query matched across categories (incident vs escalation)
-- [x] Fix: Added `category` filter to dedup query - now checks same category only
-
-#### Windows Backup Check (appliance_agent.py:1247-1364)
-- [x] Added `backup_status` check using `Get-WBSummary` PowerShell
-- [x] Status logic: pass (<24h), warning (<72h or not installed), fail (>72h or no policy)
-
-#### Learning Page Fix (db_queries.py:205-215)
-- [x] Problem: Page showing zeros/untethered from real data
-- [x] Root cause: Query filtered by `status = 'resolved'` but incidents have `resolving`/`escalated`
-- [x] Fix: Changed to `resolution_tier IS NOT NULL`
-
-#### Admin Login Fix
-- [x] Reset password hash for admin user (admin / Admin123)
-- [x] Verified login working
-
-#### L2 LLM Configuration
-- [x] Enabled L2 on physical appliance with Anthropic API key
-- [x] L2 now initializing: "L1=True, L2=True, L3=True"
-- [x] L2 calling Claude 3.5 Haiku for incident analysis
-
-#### L2 JSON Parsing Fix (level2_llm.py:374-390)
-- [x] Problem: "Failed to parse LLM response: Extra data: line 14 column 1"
-- [x] Root cause: Code skipped brace-matching when text started with `{`
-- [x] Fix: Always extract JSON object using brace-matching, even if text starts with `{`
-
-#### Frameworks API Fix (main.py)
-- [x] Problem: `/api/frameworks/metadata` returning 404
-- [x] Root cause: `frameworks_router` not imported or mounted in main.py
-- [x] Fix: Added import and `app.include_router(frameworks_router)`
-
-#### Incidents Page Fix (Frontend)
-- [x] Problem: "View All" incidents link led to blank page
-- [x] Root cause: No `/incidents` route defined in App.tsx
-- [x] Fix: Created `Incidents.tsx` page with all/active/resolved filters
-- [x] Added route and export
-
-**Files Modified:**
-| File | Change |
-|------|--------|
-| `mcp-server/main.py` | Added frameworks_router import/mount |
-| `mcp-server/central-command/frontend/src/pages/Incidents.tsx` | NEW - Incidents page |
-| `mcp-server/central-command/frontend/src/pages/index.ts` | Added Incidents export |
-| `mcp-server/central-command/frontend/src/App.tsx` | Added /incidents route |
-| `packages/compliance-agent/src/compliance_agent/level2_llm.py` | L2 JSON parsing fix |
-| `packages/compliance-agent/setup.py` | Version bump to 1.0.26 |
-| VPS main.py | L1 rules, L3 dedup, frameworks router |
-| VPS db_queries.py | Learning page query fix |
-
----
-
-## Session 29 Continued - ISO v26 Deployment
-
-### 1. Build ISO v26 with L2 JSON Fix
-**Status:** COMPLETE
-**Details:**
-- Updated version in appliance-image.nix from 1.0.23 to 1.0.26
-- Built ISO v26 on VPS: `/root/msp-iso-build/result-iso-v26/`
-- Verified fix is in nix store: `compliance-agent-1.0.26`
-
-### 2. Deploy to VM Appliance
-**Status:** COMPLETE
-**Details:**
-- Transferred ISO to iMac gateway
-- Attached ISO v26 to VirtualBox VM
-- Booted VM with new ISO
-- Configured L2 API key in `/var/lib/msp/config.yaml`
-
-### 3. Verify L2 Working
-**Status:** COMPLETE - L2 VERIFIED WORKING
-**Details:**
-- L2 successfully parsing Claude responses (no more "Extra data" errors)
-- Observed L2 decisions with confidence scores:
-  ```
-  bitlocker_status → L2 decision: escalate (confidence: 0.90) → L3
-  backup_status → L2 decision: run_backup_job (confidence: 0.80)
-  ```
-- L2 LLM planner making intelligent routing decisions
+| `mcp-server/central-command/backend/models.py` | Added NETWORK check type |
+| `mcp-server/central-command/backend/metrics.py` | Added network to compliance score |
+| `mcp-server/central-command/backend/routes.py` | Added pattern endpoints |
+| `mcp-server/central-command/backend/db_queries.py` | Fixed tier count query |
+| `mcp-server/central-command/frontend/src/types/index.ts` | Extended CheckType union |
+| `mcp-server/central-command/frontend/src/components/incidents/IncidentRow.tsx` | Extended labels |
+| `mcp-server/main.py` | Added /agent/patterns endpoint |
+| `mcp-server/Dockerfile` | Added asyncpg, cryptography |
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | v1.0.30, network check_type |
+| `~/chaos-lab/` crontab (iMac) | Added 2 PM execution |
 
 ---
 
 ## Immediate (Next Session)
 
-### 1. Build ISO v27 with Pattern Reporting
+### 1. Build ISO v30 with Network Check Type
 **Status:** PENDING
 **Details:**
-- Agent code updated with `report_pattern()` calls
-- Server-side endpoint already deployed and working
-- Build new ISO to include pattern reporting in agent
-- Version bump to 1.0.27 needed
+- Agent code at v1.0.30 with network check_type fix
+- Update `iso/appliance-image.nix` version to 1.0.30
+- Build ISO on VPS
 
-### 2. Deploy ISO v27 to Appliances
+### 2. Deploy ISO v30 to Appliances
 **Status:** PENDING
 **Details:**
-- Deploy to VM first (192.168.88.247), then physical appliance (192.168.88.246)
-- Verify patterns flowing to Learning dashboard after healing events
-- Patterns with 5+ occurrences and 90%+ success become promotion candidates
+- Deploy to VM first (192.168.88.247)
+- User handles physical appliance (192.168.88.246)
 
-### 3. Connect Additional Cloud Providers
+### 3. Run Chaos Lab Cycle
 **Status:** PENDING
 **Details:**
-- Google Workspace OAuth
-- Okta OAuth
-- Azure AD OAuth
+- Verify extended check types display correctly
+- Monitor Learning dashboard for pattern aggregation
+- Check incidents page for proper labels
 
 ---
 
@@ -302,14 +122,6 @@ curl -X POST 'http://178.156.162.116:8000/agent/patterns' \
 - 30-day monitoring period
 - Evidence bundle verification in MinIO
 - Test framework scoring with real appliance data
-
----
-
-## Session 28 (2026-01-12)
-
-### Cloud Integration Frontend Fixes & Verification
-**Status:** COMPLETE
-(See SESSION_HANDOFF.md for details)
 
 ---
 
@@ -332,12 +144,17 @@ ssh root@178.156.162.116
 ssh root@192.168.88.246
 ```
 
-**Check L2 logs on appliance:**
+**SSH to iMac Gateway:**
 ```bash
-journalctl -u compliance-agent -f | grep -i "l2\|llm"
+ssh jrelly@192.168.88.50
+```
+
+**Check chaos lab cron:**
+```bash
+ssh jrelly@192.168.88.50 "crontab -l | grep -A 10 'Chaos Lab'"
 ```
 
 **Rebuild ISO on VPS:**
 ```bash
-cd /root/msp-iso-build && git pull && nix build .#appliance-iso -o result-iso-v25
+cd /root/msp-iso-build && git pull && nix build .#appliance-iso -o result-iso-v30
 ```

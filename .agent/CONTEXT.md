@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-14 (Session 31 - JSON Rule Loading + Chaos Lab Fixes)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.29, ISO v29, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, **L1 JSON Rule Loading**, **Chaos Lab Scripts Fixed**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**)
-**Test Status:** 656+ passed (compliance-agent tests), agent v1.0.29, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), **L1 JSON Rule Loading from Central Command**, **Chaos Lab automated attack testing ready**
+**Last Updated:** 2026-01-14 (Session 32 - Network Compliance + Extended Check Types)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.30, ISO v29, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab Automated, **Network Compliance Check**, **Extended Check Types**, **Pattern Reporting Deployed**)
+**Test Status:** 656+ passed (compliance-agent tests), agent v1.0.30, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), L1 JSON Rule Loading from Central Command, **Network compliance check (Drata/Vanta style)**, **8 extended check type labels**, **Chaos Lab 2x daily execution**
 
 ---
 
@@ -393,13 +393,23 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
 
+### Agent v1.0.30 Ready (2026-01-14 Session 32)
+- **Status:** Code ready on VPS, ISO build pending
+- **Agent:** compliance-agent v1.0.30 with **Network compliance check + Extended check types**
+- **Features:**
+  - Network check_type for NetworkPostureDetector (was "network_posture_{os_type}")
+  - 7-metric compliance scoring (added network)
+  - 8 extended check type labels (NTP, Disk, Services, Defender, Memory, Cert, Database, Port)
+  - Pattern reporting endpoints deployed
+- **Next:** Build ISO v30 on VPS
+
 ### ISO v29 Built (2026-01-14 Session 31)
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v29/iso/osiriscare-appliance.iso`
 - **Size:** 1.1GB
 - **Agent:** compliance-agent v1.0.29 with **L1 JSON rule loading from Central Command**
 - **Entry point:** `compliance-agent-appliance`
 - **Features:** JSON rule loading, L1 firewall healing, L2 LLM, pattern reporting, all previous features
-- **Status:** Ready for deployment to VM appliance (192.168.88.247)
+- **Status:** Physical appliance updated (user confirmed)
 - **Fix:** Synced rules from Central Command now properly loaded (priority 5 overrides built-in)
 
 ### ISO v28 Built (2026-01-14 Session 30)
