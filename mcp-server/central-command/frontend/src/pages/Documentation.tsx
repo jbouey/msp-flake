@@ -1859,6 +1859,136 @@ journalctl -u compliance-agent -f
           </div>
         ),
       },
+      {
+        id: 'data-retention',
+        title: 'Data Retention & Legal Guidance',
+        content: (
+          <div className="space-y-4">
+            <div className="p-4 bg-yellow-500/10 border border-yellow-500 rounded-ios">
+              <p className="text-sm font-semibold text-yellow-400">
+                Important: This guidance does not constitute legal advice. Consult your compliance
+                officer or legal counsel for organization-specific retention requirements.
+              </p>
+            </div>
+
+            <h4 className="font-semibold mt-4">WORM Storage Architecture</h4>
+            <p className="text-label-secondary">
+              All compliance evidence is stored in a <strong>Write-Once-Read-Many (WORM)</strong> architecture:
+            </p>
+            <ul className="list-disc list-inside space-y-2 text-label-secondary mt-2">
+              <li><strong>Database:</strong> compliance_bundles table has DELETE triggers disabled - records cannot be deleted</li>
+              <li><strong>MinIO Object Storage:</strong> S3-compatible storage with Object Lock enabled</li>
+              <li><strong>Default Retention:</strong> 90 days COMPLIANCE mode lock on MinIO objects</li>
+              <li><strong>Hash Chain:</strong> Each evidence bundle links to the previous via SHA-256 chain hash</li>
+            </ul>
+
+            <h4 className="font-semibold mt-6">HIPAA Retention Requirements</h4>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-separator-light">
+                    <th className="text-left py-2 px-3">Record Type</th>
+                    <th className="text-left py-2 px-3">Retention Period</th>
+                    <th className="text-left py-2 px-3">Reference</th>
+                  </tr>
+                </thead>
+                <tbody className="text-label-secondary">
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3">Security policies & procedures</td>
+                    <td className="py-2 px-3 font-medium">6 years from creation or last effective date</td>
+                    <td className="py-2 px-3">45 CFR 164.530(j)</td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3">Security incident records</td>
+                    <td className="py-2 px-3 font-medium">6 years</td>
+                    <td className="py-2 px-3">45 CFR 164.308(a)(1)(ii)(D)</td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3">Risk analysis documentation</td>
+                    <td className="py-2 px-3 font-medium">6 years</td>
+                    <td className="py-2 px-3">45 CFR 164.308(a)(1)(ii)(A)</td>
+                  </tr>
+                  <tr className="border-b border-separator-light/50">
+                    <td className="py-2 px-3">Access authorization records</td>
+                    <td className="py-2 px-3 font-medium">6 years</td>
+                    <td className="py-2 px-3">45 CFR 164.308(a)(4)</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-3">Audit logs (access/activity)</td>
+                    <td className="py-2 px-3 font-medium">6 years (recommended)</td>
+                    <td className="py-2 px-3">45 CFR 164.312(b)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h4 className="font-semibold mt-6">System Upkeep Schedule</h4>
+            <div className="space-y-3">
+              <div className="p-3 bg-fill-secondary rounded-ios">
+                <h5 className="font-medium text-sm">Daily (Automated)</h5>
+                <ul className="list-disc list-inside text-xs text-label-secondary mt-1">
+                  <li>Evidence bundles synced to WORM storage</li>
+                  <li>OpenTimestamps proofs upgraded</li>
+                  <li>Hash chain integrity verified</li>
+                </ul>
+              </div>
+              <div className="p-3 bg-fill-secondary rounded-ios">
+                <h5 className="font-medium text-sm">Monthly (Administrator)</h5>
+                <ul className="list-disc list-inside text-xs text-label-secondary mt-1">
+                  <li>Review storage utilization (MinIO dashboard port 9001)</li>
+                  <li>Verify backup integrity</li>
+                  <li>Generate compliance packets for all active sites</li>
+                </ul>
+              </div>
+              <div className="p-3 bg-fill-secondary rounded-ios">
+                <h5 className="font-medium text-sm">Quarterly (Administrator)</h5>
+                <ul className="list-disc list-inside text-xs text-label-secondary mt-1">
+                  <li>Audit evidence bundle counts vs expected</li>
+                  <li>Review L3 escalation patterns</li>
+                  <li>Test evidence retrieval from WORM storage</li>
+                </ul>
+              </div>
+              <div className="p-3 bg-fill-secondary rounded-ios">
+                <h5 className="font-medium text-sm">Annually (Administrator + Legal)</h5>
+                <ul className="list-disc list-inside text-xs text-label-secondary mt-1">
+                  <li>Review and update retention policies</li>
+                  <li>Verify WORM lock periods meet requirements</li>
+                  <li>Purge data beyond retention period (if legally permissible)</li>
+                  <li>Document retention review in compliance packet</li>
+                </ul>
+              </div>
+            </div>
+
+            <h4 className="font-semibold mt-6">Data Purging Policy</h4>
+            <div className="p-4 bg-red-500/10 border border-red-500 rounded-ios">
+              <p className="text-sm text-label-secondary">
+                <strong className="text-red-400">Critical:</strong> The database is WORM-protected and does not allow deletions.
+                This is intentional for audit integrity. If data purging is legally required after the retention period:
+              </p>
+              <ol className="list-decimal list-inside text-sm text-label-secondary mt-2 space-y-1">
+                <li>Obtain written authorization from compliance officer</li>
+                <li>Document the purge request with legal justification</li>
+                <li>Contact OsirisCare support for assisted deletion via database migration</li>
+                <li>Evidence of purge authorization must be retained for 6 years</li>
+              </ol>
+            </div>
+
+            <h4 className="font-semibold mt-6">Evidence Chain Verification</h4>
+            <p className="text-sm text-label-secondary">
+              Each evidence bundle includes cryptographic integrity verification:
+            </p>
+            <ul className="list-disc list-inside space-y-1 text-sm text-label-secondary mt-2">
+              <li><strong>bundle_hash:</strong> SHA-256 of bundle content</li>
+              <li><strong>chain_hash:</strong> SHA-256(bundle_hash + prev_hash + position)</li>
+              <li><strong>agent_signature:</strong> Ed25519 signature from appliance</li>
+              <li><strong>OTS proof:</strong> OpenTimestamps Bitcoin blockchain anchoring</li>
+            </ul>
+            <p className="text-xs text-label-tertiary mt-2">
+              Chain integrity can be verified at any point by recalculating hashes from the genesis bundle.
+            </p>
+          </div>
+        ),
+      },
     ],
   },
   portal: {
