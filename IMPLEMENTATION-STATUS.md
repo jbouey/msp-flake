@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-14 (Session 30 - L1 Legacy Action Mapping Fix)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.28, ISO v28, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, **L1 Firewall Healing Fixed**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**, 656 tests)
+**Last Updated:** 2026-01-14 (Session 31 - JSON Rule Loading + Chaos Lab Fixes)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.29, ISO v29, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, **L1 JSON Rule Loading**, **Chaos Lab Automated Testing Ready**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**, 656 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,22 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.28, ISO v28, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD), **L1 Firewall Healing Fixed**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**.
+**Status:** Phase 12 nearing completion. Agent v1.0.29, ISO v29, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD), **L1 JSON Rule Loading**, **Chaos Lab Automated Testing Ready**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**.
+
+**Session 31 (JSON Rule Loading + Chaos Lab Fixes):**
+- Fixed L1 JSON rule loading from Central Command
+  - Root cause: DeterministicEngine only loaded YAML files, ignored synced JSON rules
+  - Added `from_synced_json()` class method to Rule class
+  - Added `_load_synced_json_rules()` to load *.json files
+  - Synced rules get priority 5 (override built-in priority 10)
+- Created YAML override rule on appliance for local NixOS firewall checks
+- Fixed Learning page NULL proposed_rule bug (`Optional[str]`)
+- Enabled healing mode on appliance (`healing_dry_run: false`)
+- Fixed all three chaos lab scripts for proper argument handling:
+  - `winrm_attack.py`: Added --username, --command flag, --scenario-id
+  - `winrm_verify.py`: Added --username, --categories flag, --scenario-id
+  - `append_result.py`: Made name/category optional, added --date, infer from scenario_id
+- Built ISO v1.0.29 on VPS: `/root/msp-iso-build/result-iso-v29/iso/osiriscare-appliance.iso`
 
 **Session 30 (L1 Legacy Action Mapping Fix):**
 - Fixed firewall drift flapping on Incidents page
@@ -594,16 +609,22 @@ Required fields per CLAUDE.md:
 - Fixed database connectivity (correct password, asyncpg driver)
 - Fixed health endpoint for HEAD method (monitoring compatibility)
 
-**ISO v26 Ready:**
-- **VPS:** `/root/msp-iso-build/result-iso-v26/iso/osiriscare-appliance.iso` (1.1GB)
-- **iMac:** `~/Downloads/osiriscare-appliance-v26.iso` (1.1GB)
-- **VM appliance:** ✅ Running v1.0.26 with **L2 VERIFIED WORKING** (192.168.88.247)
-- **Physical appliance:** 🟡 Running v1.0.23, pending ISO v26 update (192.168.88.246)
+**ISO v29 Ready:**
+- **VPS:** `/root/msp-iso-build/result-iso-v29/iso/osiriscare-appliance.iso` (1.1GB)
+- **VM appliance:** 🟡 Pending update to v1.0.29 (192.168.88.247)
+- **Physical appliance:** Running v1.0.28 (192.168.88.246), user handling v29 update
+
+**Chaos Lab Ready:**
+- All scripts fixed and tested: winrm_attack.py, winrm_verify.py, append_result.py
+- Cron schedule: 6 AM attack execution, 12 PM checkpoint, 6 PM report
+- Located at: iMac gateway ~/chaos-lab/
 
 **Next Steps:**
-1. Deploy ISO v26 to physical appliance (HP T640)
-2. Verify L2 on physical appliance (L2 config already in place)
-3. Monitor L2 patterns in Learning dashboard
-4. Evidence bundles uploading to MinIO verification
-5. First compliance packet generated
-6. 30-day monitoring period completion
+1. Deploy ISO v29 to VM appliance (192.168.88.247)
+2. User deploys ISO v29 to physical appliance (HP T640)
+3. Verify JSON rule loading from Central Command
+4. Run first chaos lab attack cycle
+5. Monitor healing in Learning dashboard
+6. Evidence bundles uploading to MinIO verification
+7. First compliance packet generated
+8. 30-day monitoring period completion

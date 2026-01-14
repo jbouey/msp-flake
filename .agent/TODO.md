@@ -1,7 +1,91 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-14 (Session 30 - L1 Legacy Action Mapping Fix)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.28, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, **L1 Firewall Healing Fixed**)
+**Last Updated:** 2026-01-14 (Session 31 - JSON Rule Loading + Chaos Lab Fixes)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.29, ISO v29, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, **L1 JSON Rule Loading**, **Chaos Lab Scripts Fixed**)
+
+---
+
+## Session 31 (2026-01-14) - JSON Rule Loading + Chaos Lab Fixes
+
+### 1. L1 JSON Rule Loading from Central Command
+**Status:** COMPLETE
+**Details:** Fixed L1 rules synced from Central Command not being loaded by DeterministicEngine.
+
+#### Root Cause Analysis
+- Central Command syncs rules to `/var/lib/msp/rules/synced_rules.json`
+- DeterministicEngine only loaded YAML files (`*.yaml`, `*.yml`)
+- JSON rules were silently ignored → synced rules never matched
+
+#### Fix Applied (level1_deterministic.py)
+Added JSON loading capability:
+```python
+@classmethod
+def from_synced_json(cls, json_data: Dict[str, Any]) -> 'Rule':
+    """Create a Rule from synced JSON format (from Central Command)."""
+    # Handles format differences:
+    # - JSON uses 'actions' (list), Rule uses 'action' (string)
+    # - Synced rules get priority 5 to override built-in rules (priority 10)
+    ...
+```
+
+Added `_load_synced_json_rules()` method to load JSON files from rules directory.
+
+#### Immediate Workaround (on appliance)
+Created YAML override rule `/var/lib/msp/rules/override_firewall.yaml` with `escalate` action for local NixOS firewall checks.
+
+### 2. Learning Page NULL Bug Fix
+**Status:** COMPLETE
+**Details:** Fixed Central Command Learning page 500 error.
+
+#### Root Cause
+- `proposed_rule` column was NULL in database for some patterns
+- `PromotionCandidate` model required `str`, not `Optional[str]`
+
+#### Fix Applied
+Changed `proposed_rule: str` to `proposed_rule: Optional[str] = None` in `models.py` on VPS.
+
+### 3. Healing Mode Enabled
+**Status:** COMPLETE
+**Details:** Disabled dry-run mode on physical appliance.
+- Added `healing_dry_run: false` to `/var/lib/msp/config.yaml`
+
+### 4. Chaos Lab Scripts Fixed
+**Status:** COMPLETE
+**Details:** Fixed all three chaos lab helper scripts for proper argument handling.
+
+#### winrm_attack.py
+- Added `--username` alias for `--user`
+- Added `--command` flag variant (in addition to positional)
+- Added `--scenario-id` parameter
+
+#### winrm_verify.py
+- Added `--username` alias for `--user`
+- Added `--categories` flag (comma-separated)
+- Added `--scenario-id` parameter
+
+#### append_result.py
+- Made `--name` and `--category` optional
+- Added `--date` parameter for specifying results file date
+- Added inference of category/name from scenario_id (e.g., `scn_firewall_profile_disable` → category=firewall, name="Profile Disable")
+
+### 5. ISO v29 Built
+**Status:** COMPLETE
+**Details:** Built ISO v29 on VPS with agent v1.0.29.
+- Location: `/root/msp-iso-build/result-iso-v29/iso/osiriscare-appliance.iso`
+- Size: 1.1GB
+- Agent version: 1.0.29 with JSON rule loading
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/level1_deterministic.py` | Added JSON loading, `from_synced_json()` |
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Version bump 1.0.28 → 1.0.29 |
+| `~/chaos-lab/scripts/winrm_attack.py` (iMac) | Fixed argument handling |
+| `~/chaos-lab/scripts/winrm_verify.py` (iMac) | Fixed argument handling |
+| `~/chaos-lab/scripts/append_result.py` (iMac) | Fixed argument handling |
+| `/opt/mcp-server/app/dashboard_api/models.py` (VPS) | Fixed proposed_rule Optional |
+| `/var/lib/msp/config.yaml` (appliance) | healing_dry_run: false |
+| `/var/lib/msp/rules/override_firewall.yaml` (appliance) | Local firewall escalation rule |
 
 ---
 
