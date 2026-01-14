@@ -763,9 +763,27 @@ class ApplianceAgent:
             "escalate": self._heal_escalate,
         }
 
+        # Map legacy action names to Windows runbook IDs
+        legacy_action_runbooks = {
+            "restore_firewall_baseline": "RB-WIN-SEC-001",  # Windows Firewall Enable
+            "restore_audit_policy": "RB-WIN-SEC-002",       # Audit Policy
+            "restore_defender": "RB-WIN-SEC-006",           # Defender Real-time
+            "enable_bitlocker": "RB-WIN-SEC-005",           # BitLocker Status
+        }
+
         handler = action_handlers.get(action)
         if handler:
             return await handler(params, incident)
+        elif action in legacy_action_runbooks:
+            # Translate legacy action to Windows runbook
+            runbook_id = legacy_action_runbooks[action]
+            logger.info(f"Translating legacy action '{action}' to runbook {runbook_id}")
+            runbook_params = {
+                **params,
+                "runbook_id": runbook_id,
+                "phases": ["remediate", "verify"],
+            }
+            return await self._heal_run_windows_runbook(runbook_params, incident)
         else:
             logger.warning(f"Unknown healing action: {action}")
             return {"error": f"Unknown action: {action}"}

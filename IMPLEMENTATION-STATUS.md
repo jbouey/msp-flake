@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-13 (Session 29 Continued - Learning Flywheel Pattern Reporting + Portal Link)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.26, ISO v26, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**, 656 tests)
+**Last Updated:** 2026-01-14 (Session 30 - L1 Legacy Action Mapping Fix)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.28, ISO v28, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, **L1 Firewall Healing Fixed**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**, 656 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,21 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.26, ISO v26, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD), **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**.
+**Status:** Phase 12 nearing completion. Agent v1.0.28, ISO v28, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD), **L1 Firewall Healing Fixed**, **L2 LLM VERIFIED WORKING**, **Pattern Reporting Pipeline Complete**.
+
+**Session 30 (L1 Legacy Action Mapping Fix):**
+- Fixed firewall drift flapping on Incidents page
+  - Root cause: L1 rule `L1-FW-001` outputs `restore_firewall_baseline` but no handler existed
+  - Only had handlers for: `restart_service`, `run_command`, `run_windows_runbook`, `escalate`
+- Added legacy action to Windows runbook mapping in `appliance_agent.py`:
+  - `restore_firewall_baseline` → `RB-WIN-SEC-001` (Windows Firewall Enable)
+  - `restore_audit_policy` → `RB-WIN-SEC-002` (Audit Policy)
+  - `restore_defender` → `RB-WIN-SEC-006` (Defender Real-time)
+  - `enable_bitlocker` → `RB-WIN-SEC-005` (BitLocker Status)
+- Built ISO v1.0.28 on VPS
+- Physical appliance (192.168.88.246) updated to v1.0.28 - **verified running**
+- VM appliance (192.168.88.247) ISO attached and rebooted
+- Manually re-enabled Windows DC firewall to stop immediate flapping
 
 **Session 29 Continued (Learning Flywheel + Portal Link):**
 - Learning Flywheel Pattern Reporting - full pipeline for L2→L1 promotion
@@ -544,7 +558,6 @@ Required fields per CLAUDE.md:
 - Generate Portal Link Button - added to SiteDetail page
   - Calls `POST /api/portal/sites/{site_id}/generate-token`
   - Modal displays portal URL with copy-to-clipboard
-- **ISO v27 Ready to Build** - agent code updated, needs ISO rebuild to deploy
 
 **Session 29 (L1/L2/L3 Fixes + ISO v26 + L2 Verification):**
 - L1 rule status mismatch fixed (was checking "non_compliant", now ["warning", "fail", "error"])
