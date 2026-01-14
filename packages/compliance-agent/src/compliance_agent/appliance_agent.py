@@ -82,7 +82,7 @@ from .sensor_linux import (
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.29"
+VERSION = "1.0.30"
 
 
 async def run_command(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
@@ -1661,7 +1661,7 @@ try {
 
                 await self.client.submit_evidence(
                     bundle_hash=bundle_hash,
-                    check_type=f"network_posture_{result.os_type}",
+                    check_type="network",
                     check_result="pass" if result.compliant else "fail",
                     evidence_data=evidence_data,
                     host=result.target,
@@ -1677,7 +1677,7 @@ try {
                     for prohibited in result.prohibited_ports:
                         try:
                             raw_data = {
-                                "check_type": "network_posture",
+                                "check_type": "network",
                                 "drift_detected": True,
                                 "status": "fail",
                                 "details": {

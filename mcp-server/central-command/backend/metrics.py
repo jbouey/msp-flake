@@ -2,7 +2,7 @@
 
 Implements the scoring model:
 - Connectivity Score (40% weight): check-in freshness, healing success, order execution
-- Compliance Score (60% weight): patching, AV, backup, logging, firewall, encryption
+- Compliance Score (60% weight): patching, AV, backup, logging, firewall, encryption, network
 - Overall Health = connectivity * 0.4 + compliance * 0.6
 
 Health Thresholds:
@@ -195,6 +195,7 @@ def calculate_compliance_score(
     logging: bool = False,
     firewall: bool = False,
     encryption: bool = False,
+    network: bool = False,
 ) -> ComplianceMetrics:
     """Calculate compliance health metrics.
 
@@ -207,6 +208,7 @@ def calculate_compliance_score(
         logging: True if logging is compliant
         firewall: True if firewall is compliant
         encryption: True if encryption is compliant
+        network: True if network security posture is compliant
 
     Returns:
         ComplianceMetrics with individual scores and overall score
@@ -218,16 +220,18 @@ def calculate_compliance_score(
     logging_score = 100 if logging else 0
     firewall_score = 100 if firewall else 0
     encryption_score = 100 if encryption else 0
+    network_score = 100 if network else 0
 
-    # Average of the six metrics
+    # Average of the seven metrics
     score = (
         patching_score +
         antivirus_score +
         backup_score +
         logging_score +
         firewall_score +
-        encryption_score
-    ) / 6
+        encryption_score +
+        network_score
+    ) / 7
 
     return ComplianceMetrics(
         patching=patching_score,
@@ -236,6 +240,7 @@ def calculate_compliance_score(
         logging=logging_score,
         firewall=firewall_score,
         encryption=encryption_score,
+        network=network_score,
         score=round(score, 1),
     )
 
@@ -244,7 +249,7 @@ def compliance_from_dict(checks: Dict[str, bool]) -> ComplianceMetrics:
     """Create ComplianceMetrics from a dictionary of check results.
 
     Args:
-        checks: Dictionary with keys patching, antivirus, backup, logging, firewall, encryption
+        checks: Dictionary with keys patching, antivirus, backup, logging, firewall, encryption, network
 
     Returns:
         ComplianceMetrics instance
@@ -256,6 +261,7 @@ def compliance_from_dict(checks: Dict[str, bool]) -> ComplianceMetrics:
         logging=checks.get("logging", False),
         firewall=checks.get("firewall", False),
         encryption=checks.get("encryption", False),
+        network=checks.get("network", False),
     )
 
 

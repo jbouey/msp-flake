@@ -9,12 +9,23 @@ interface IncidentRowProps {
 }
 
 const checkTypeLabels: Record<string, string> = {
+  // Core compliance checks
   patching: 'Patch',
   antivirus: 'AV',
   backup: 'Backup',
   logging: 'Logging',
   firewall: 'Firewall',
   encryption: 'Encryption',
+  network: 'Network',
+  // Extended monitoring checks
+  ntp_sync: 'NTP',
+  disk_space: 'Disk',
+  service_health: 'Services',
+  windows_defender: 'Defender',
+  memory_pressure: 'Memory',
+  certificate_expiry: 'Cert',
+  database_corruption: 'Database',
+  prohibited_port: 'Port',
 };
 
 const formatTime = (dateStr: string): string => {
