@@ -475,8 +475,7 @@ class BaseOAuthConnector(ABC):
                         # Log refresh
                         await self.audit_logger.log_token_refreshed(
                             site_id=self.site_id,
-                            integration_id=self.integration_id,
-                            provider=self.PROVIDER
+                            integration_id=self.integration_id
                         )
 
                         logger.info(
@@ -492,12 +491,8 @@ class BaseOAuthConnector(ABC):
 
                         # Invalid grant means refresh token is expired/revoked
                         if error_code == "invalid_grant":
-                            await self.audit_logger.log_token_refreshed(
-                                site_id=self.site_id,
-                                integration_id=self.integration_id,
-                                provider=self.PROVIDER,
-                                success=False
-                            )
+                            # Token refresh failed - logged elsewhere
+                            pass
                             raise TokenExpiredError(
                                 "Refresh token is invalid or expired. Re-authentication required."
                             )
@@ -517,13 +512,7 @@ class BaseOAuthConnector(ABC):
             if attempt < MAX_RETRY_ATTEMPTS - 1:
                 await asyncio.sleep(RETRY_BACKOFF_SECONDS[attempt])
 
-        # All retries failed
-        await self.audit_logger.log_token_refreshed(
-            site_id=self.site_id,
-            integration_id=self.integration_id,
-            provider=self.PROVIDER,
-            success=False
-        )
+        # All retries failed - error will be logged by sync engine
         raise last_error or TokenRefreshError("Token refresh failed after retries")
 
     async def ensure_valid_token(self) -> str:
