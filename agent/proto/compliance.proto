@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package osiris;
+
+option go_package = "github.com/osiriscare/agent/proto";
+
+// Agent registration when connecting to appliance
+message Registration {
+    string hostname = 1;
+    string os_version = 2;
+    string agent_version = 3;
+    string machine_guid = 4;  // Unique Windows machine ID
+    repeated string installed_software = 5;  // For RMM detection
+}
+
+message RegistrationResponse {
+    string agent_id = 1;
+    int32 check_interval_seconds = 2;
+    repeated string enabled_checks = 3;
+
+    // Capability tier - controlled by Central Command
+    // MSP-deployed agents get MONITOR_ONLY
+    // Direct clients can be upgraded server-side
+    enum Tier {
+        MONITOR_ONLY = 0;      // Just reports drift
+        SELF_HEAL = 1;         // Can fix drift locally
+        FULL_REMEDIATION = 2;  // Full automation
+    }
+    Tier capability_tier = 4;
+
+    // Config push from appliance
+    map<string, string> check_config = 5;
+}
+
+// Drift event when compliance check fails
+message DriftEvent {
+    string agent_id = 1;
+    string hostname = 2;
+    string check_type = 3;      // bitlocker, defender, patches, firewall, screenlock
+    bool passed = 4;
+    string expected = 5;
+    string actual = 6;
+    string hipaa_control = 7;   // e.g., "164.312(a)(2)(iv)"
+    int64 timestamp = 8;
+    map<string, string> metadata = 9;  // Additional context
+}
+
+// Healing result when agent fixes something (SELF_HEAL tier)
+message HealingResult {
+    string agent_id = 1;
+    string hostname = 2;
+    string check_type = 3;
+    bool success = 4;
+    string action_taken = 5;
+    string error_message = 6;
+    int64 timestamp = 7;
+    map<string, string> artifacts = 8;  // e.g., BitLocker recovery key
+}
+
+// Heartbeat to maintain connection
+message Heartbeat {
+    string agent_id = 1;
+    int64 timestamp = 2;
+    float cpu_percent = 3;
+    float memory_percent = 4;
+}
+
+message HeartbeatResponse {
+    bool acknowledged = 1;
+    bool config_changed = 2;  // If true, agent should re-register
+}
+
+// RMM Detection - Strategic intelligence
+message RMMStatus {
+    string agent_id = 1;
+    string hostname = 2;
+    repeated RMMAgent detected_agents = 3;
+    int64 timestamp = 4;
+}
+
+message RMMAgent {
+    string name = 1;           // "Datto", "ConnectWise", "NinjaRMM", etc.
+    string version = 2;
+    string install_path = 3;
+    bool running = 4;
+    string last_checkin = 5;   // If we can determine it
+}
+
+// Service definition
+service ComplianceAgent {
+    // Initial connection and config fetch
+    rpc Register(Registration) returns (RegistrationResponse);
+
+    // Bidirectional stream for drift events
+    rpc ReportDrift(stream DriftEvent) returns (stream DriftAck);
+
+    // Healing results (for SELF_HEAL tier)
+    rpc ReportHealing(HealingResult) returns (HealingAck);
+
+    // Heartbeat to maintain connection
+    rpc SendHeartbeat(Heartbeat) returns (HeartbeatResponse);
+
+    // RMM status reporting
+    rpc ReportRMMStatus(RMMStatus) returns (RMMStatusAck);
+}
+
+message DriftAck {
+    string event_id = 1;
+    bool received = 2;
+}
+
+message HealingAck {
+    string event_id = 1;
+    bool received = 2;
+}
+
+message RMMStatusAck {
+    bool received = 1;
+}
