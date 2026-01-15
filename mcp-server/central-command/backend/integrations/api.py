@@ -980,7 +980,7 @@ async def get_integrations_health(
             "critical_count": row.critical_count,
             "high_count": row.high_count,
             "last_sync": row.last_sync_at,
-            "resource_count": row.resource_count
+            "resource_count": row.total_resources
         })
 
     overall_status = "healthy"
