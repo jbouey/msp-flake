@@ -473,7 +473,7 @@ class BaseOAuthConnector(ABC):
                         )
 
                         # Log refresh
-                        await self.audit_logger.log_token_refresh(
+                        await self.audit_logger.log_token_refreshed(
                             site_id=self.site_id,
                             integration_id=self.integration_id,
                             provider=self.PROVIDER
@@ -492,7 +492,7 @@ class BaseOAuthConnector(ABC):
 
                         # Invalid grant means refresh token is expired/revoked
                         if error_code == "invalid_grant":
-                            await self.audit_logger.log_token_refresh(
+                            await self.audit_logger.log_token_refreshed(
                                 site_id=self.site_id,
                                 integration_id=self.integration_id,
                                 provider=self.PROVIDER,
@@ -518,7 +518,7 @@ class BaseOAuthConnector(ABC):
                 await asyncio.sleep(RETRY_BACKOFF_SECONDS[attempt])
 
         # All retries failed
-        await self.audit_logger.log_token_refresh(
+        await self.audit_logger.log_token_refreshed(
             site_id=self.site_id,
             integration_id=self.integration_id,
             provider=self.PROVIDER,
