@@ -10,16 +10,18 @@ Auto-heal infrastructure, generate audit evidence, replace traditional MSPs at 7
 
 ## Current State
 
+**Agent Version:** v1.0.34 | **Sprint:** Phase 12 - Launch Readiness
+
+- See `.agent/PROJECT_SUMMARY.md` for full project overview
 - See `.agent/CONTEXT.md` for session state
 - See `IMPLEMENTATION-STATUS.md` for phase tracking
-- Phase 1 complete, Phase 2 active
 
 ## Directory Structure
 
 ```
 packages/compliance-agent/   # Python agent (main work area)
   src/compliance_agent/      # Core modules
-  tests/                     # pytest tests (169 passing)
+  tests/                     # pytest tests (778+ passing)
   venv/                      # Python 3.13 virtualenv
 modules/                     # NixOS modules
 mcp-server/                  # Central MCP server
