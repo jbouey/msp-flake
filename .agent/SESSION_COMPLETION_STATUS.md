@@ -1,132 +1,210 @@
 # Session Completion Status
 
 **Date:** 2026-01-15
-**Session:** 35 - Microsoft Security Integration + Delete Button UX
+**Session:** 40 - Go Agent Implementation (Complete)
+**Agent Version:** v1.0.34
+**ISO Version:** v33 (deployed), v35 pending (with gRPC server)
 **Status:** COMPLETE
 
 ---
 
-## Implementation Tasks
+## Session 40 Accomplishments
 
-### Microsoft Security Integration (Phase 3)
-| Task | Status | File |
-|------|--------|------|
-| Backend OAuth Handler | DONE | integrations/oauth/microsoft_graph.py (893 lines) |
-| Defender Alerts Collection | DONE | Graph API integration |
-| Intune Device Compliance | DONE | DeviceManagement endpoints |
-| Secure Score Data | DONE | Security posture metrics |
-| Azure AD Devices | DONE | Trust/compliance correlation |
-| HIPAA Control Mappings | DONE | All resource types mapped |
-| Frontend Provider Option | DONE | IntegrationSetup.tsx |
-| Unit Tests | DONE | 40 tests passing |
+### 1. Go Agent Core Implementation
+| Task | Status | Files |
+|------|--------|-------|
+| gRPC Protocol | DONE | agent/proto/compliance.proto |
+| Entry Point | DONE | agent/cmd/osiris-agent/main.go |
+| Configuration | DONE | agent/internal/config/config.go |
+| BitLocker Check | DONE | agent/internal/checks/bitlocker.go |
+| Defender Check | DONE | agent/internal/checks/defender.go |
+| Firewall Check | DONE | agent/internal/checks/firewall.go |
+| Patches Check | DONE | agent/internal/checks/patches.go |
+| ScreenLock Check | DONE | agent/internal/checks/screenlock.go |
+| RMM Detection | DONE | agent/internal/checks/rmm.go |
+| gRPC Transport | DONE | agent/internal/transport/grpc.go |
+| Offline Queue | DONE | agent/internal/transport/offline.go |
+| WMI Interface | DONE | agent/internal/wmi/*.go |
+| Cross-compilation | DONE | agent/flake.nix |
 
-### VPS Deployment Fixes
-| Task | Status | Details |
-|------|--------|---------|
-| Valid Provider Constraint | DONE | Added `microsoft_security` to DB |
-| OAuth HTTPS Fix | DONE | Force HTTPS in redirect URIs |
-| Caddy API Proxy | DONE | `/api/*` routes through dashboard domain |
-| Container Name Fix | DONE | Use `mcp-server` not `msp-server` |
-| Public OAuth Router | DONE | No auth for browser callbacks |
-| Deploy Script | DONE | `/opt/mcp-server/deploy.sh` |
-| VPS Documentation | DONE | `.agent/VPS_DEPLOYMENT.md` |
+### 2. Python gRPC Server
+| Task | Status | Files |
+|------|--------|-------|
+| gRPC Server | DONE | grpc_server.py |
+| Appliance Integration | DONE | appliance_agent.py |
+| Unit Tests | DONE | test_grpc_server.py (12 tests) |
 
-### Frontend Fixes
-| Task | Status | File |
-|------|--------|------|
-| Cloud Integrations Button | DONE | SiteDetail.tsx |
-| Delete Button UX | DONE | Integrations.tsx |
-| Loading State | DONE | Shows "Deleting..." feedback |
-| Error Handling | DONE | Resets on error for retry |
-| Frontend Deployed | DONE | Bundle: index-RfjBtVfK.js |
+### 3. Binaries Built on VPS
+| Binary | Platform | Size | Location |
+|--------|----------|------|----------|
+| osiris-agent.exe | Windows amd64 | 10.3 MB | /root/msp-iso-build/agent/ |
+| osiris-agent-linux | Linux amd64 | 9.8 MB | /root/msp-iso-build/agent/ |
+
+### 4. Frontend Dashboard
+| Task | Status | Files |
+|------|--------|-------|
+| Go Agent Types | DONE | types/index.ts |
+| API Client | DONE | utils/api.ts (goAgentsApi) |
+| React Query Hooks | DONE | hooks/useFleet.ts |
+| SiteGoAgents Page | DONE | pages/SiteGoAgents.tsx (NEW) |
+| Route Integration | DONE | App.tsx |
+| Navigation Button | DONE | SiteDetail.tsx (purple button) |
+
+### 5. Backend API
+| Task | Status | Files |
+|------|--------|-------|
+| Database Migration | DONE | migrations/019_go_agents.sql (NEW) |
+| Go Agents Table | DONE | agent_id, site_id, hostname, capability_tier, status |
+| Check Results Table | DONE | go_agent_checks with HIPAA control mapping |
+| Site Summaries | DONE | Auto-update trigger |
+| Command Queue | DONE | go_agent_orders table |
+| API Endpoints | DONE | sites.py (6 endpoints) |
 
 ---
 
 ## Test Results
 
 ```
-API Health: OK (redis, database, minio connected)
-Frontend Build: SUCCESS (154 modules)
-Microsoft Security Tests: 40 passed
-Delete Button: Deployed and working
+786 passed, 11 skipped, 3 warnings
 ```
+
+- 12 new gRPC server tests (8 passed, 4 skipped without grpcio)
 
 ---
 
-## Chaos Lab Status (Jan 15)
+## Git Commits (Session 40)
 
-```
-Total Scenarios: 9
-Attack Success: 0 (connectivity issue to Windows DC)
-Categories: firewall (2), defender (1), audit (6)
-Action: Verify Windows DC (192.168.88.250) reachability
-```
+| Hash | Description |
+|------|-------------|
+| `8422638` | feat: Add Go agent for workstation-scale compliance monitoring |
+| `37b018c` | feat: Integrate gRPC server into appliance agent |
+| `e8ab5c7` | fix: Update Go module dependencies to valid versions |
+| `8d4e621` | chore: Add go.sum with verified dependency hashes |
+| `78f4203` | docs: Update Session 40 documentation |
+| `c94b100` | feat: Add Go Agent dashboard to frontend |
+| `18d2b15` | feat: Add Go Agent backend API and database schema |
+| `7a6c982` | docs: Update SESSION_HANDOFF with file changes |
 
 ---
 
-## Git Commits
+## Architecture Overview
 
-1. `7b3c85f` - fix: Improve delete button UX with loading state
-2. Earlier commits from session:
-   - OAuth HTTPS fix
-   - Cloud Integrations button
-   - Public router for OAuth callback
-   - Deployment infrastructure
+```
+Windows Workstations          NixOS Appliance            Central Command
+┌─────────────────┐          ┌─────────────────────┐     ┌───────────────┐
+│  Go Agent       │  gRPC    │  Python Agent       │HTTPS│               │
+│  (10MB .exe)    │─────────>│  - gRPC Server      │────>│  Dashboard    │
+│                 │  :50051  │  - Sensor API :8080 │     │  API          │
+│  6 WMI Checks   │          │  - Three-tier heal  │     │               │
+│  RMM Detection  │          └─────────────────────┘     └───────────────┘
+│  SQLite Queue   │
+└─────────────────┘
+```
+
+### Capability Tiers (Server-Controlled)
+| Tier | Value | Description |
+|------|-------|-------------|
+| MONITOR_ONLY | 0 | Reports drift only (default) |
+| SELF_HEAL | 1 | Can fix drift locally |
+| FULL_REMEDIATION | 2 | Full automation |
+
+---
+
+## Files Created/Modified
+
+### Go Agent (agent/)
+- `agent/proto/compliance.proto` - gRPC protocol
+- `agent/cmd/osiris-agent/main.go` - Entry point
+- `agent/internal/config/config.go` - Configuration
+- `agent/internal/checks/*.go` - 6 compliance checks
+- `agent/internal/transport/grpc.go` - gRPC client
+- `agent/internal/transport/offline.go` - SQLite queue
+- `agent/internal/wmi/*.go` - WMI interface
+- `agent/flake.nix` - Nix cross-compilation
+- `agent/go.mod`, `agent/go.sum` - Dependencies
+
+### Python Agent
+- `grpc_server.py` - NEW gRPC server
+- `appliance_agent.py` - gRPC integration
+- `test_grpc_server.py` - NEW 12 tests
+
+### Frontend
+- `types/index.ts` - Go agent types
+- `utils/api.ts` - goAgentsApi
+- `hooks/useFleet.ts` - Go agent hooks
+- `hooks/index.ts` - Export hooks
+- `pages/SiteGoAgents.tsx` - NEW dashboard page
+- `pages/index.ts` - Export page
+- `App.tsx` - Route /sites/:siteId/agents
+- `SiteDetail.tsx` - Go Agents button
+
+### Backend
+- `migrations/019_go_agents.sql` - NEW database schema
+- `sites.py` - Go agent API endpoints
+
+### Documentation
+- `.agent/CONTEXT.md` - Session 40 updates
+- `.agent/TODO.md` - Go agent tasks
+- `.agent/SESSION_HANDOFF.md` - File changes
+- `IMPLEMENTATION-STATUS.md` - Session 40 section
+- `docs/ARCHITECTURE.md` - Go Agent section
+
+---
+
+## Next Steps
+
+1. **Deploy Go Agent to Workstations**
+   ```bash
+   scp root@178.156.162.116:/root/msp-iso-build/agent/osiris-agent.exe .
+   osiris-agent.exe --dry-run
+   ```
+
+2. **Build ISO v35**
+   ```bash
+   cd /root/msp-iso-build && git pull
+   nix build .#appliance-iso -o result-iso-v35
+   ```
+
+3. **Run Database Migration**
+   ```bash
+   psql -U postgres -d msp_compliance < migrations/019_go_agents.sql
+   ```
+
+4. **Test End-to-End**
+   - Verify gRPC streaming on port 50051
+   - Check AgentRegistry tracking connected agents
+   - Monitor drift events through three-tier healing
+
+---
+
+## Quick Commands
+
+```bash
+# SSH to VPS
+ssh root@178.156.162.116
+
+# SSH to Physical Appliance
+ssh root@192.168.88.246
+
+# Deploy to VPS
+ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
+
+# Download Go agent
+scp root@178.156.162.116:/root/msp-iso-build/agent/osiris-agent.exe .
+
+# Test Go agent
+osiris-agent.exe --dry-run
+```
 
 ---
 
 ## Deployment State
 
-| Component | Status | Version/Details |
-|-----------|--------|-----------------|
-| VPS Backend | ✅ | `/opt/mcp-server/` |
-| VPS Frontend | ✅ | `index-RfjBtVfK.js` |
-| Database | ✅ | `microsoft_security` in valid_provider |
-| Caddy | ✅ | API proxy for dashboard domain |
-| Deploy Script | ✅ | `/opt/mcp-server/deploy.sh` |
-
----
-
-## Pending Actions (User Required)
-
-- [ ] Configure Azure App Registration:
-  1. Add redirect URI: `https://dashboard.osiriscare.net/api/integrations/oauth/callback`
-  2. Add API permissions (SecurityEvents, DeviceManagement, etc.)
-  3. Create new client secret (use VALUE, not ID)
-  4. Grant admin consent
-- [ ] Verify Windows DC connectivity for chaos lab
-- [ ] Test Microsoft Security integration end-to-end
-
----
-
-## Cloud Integrations Status
-
-| Provider | Status | Resources |
-|----------|--------|-----------|
-| AWS | ✅ | IAM users, EC2, S3, CloudTrail |
-| Google Workspace | ✅ | Users, Devices, OAuth apps |
-| Okta | ✅ | Users, Groups, Apps, Policies |
-| Azure AD | ✅ | Users, Groups, Apps, Devices |
-| Microsoft Security | ✅ NEW | Defender, Intune, Secure Score |
-
----
-
-## Files Modified
-
-### Source Files
-- `mcp-server/central-command/frontend/src/pages/Integrations.tsx`
-- `mcp-server/central-command/frontend/src/pages/SiteDetail.tsx`
-- `mcp-server/central-command/backend/integrations/api.py`
-- `mcp-server/main.py`
-
-### Documentation
-- `.agent/VPS_DEPLOYMENT.md` (NEW)
-- `.agent/TODO.md`
-- `.agent/CONTEXT.md`
-- `.agent/SESSION_HANDOFF.md`
-- `.agent/SESSION_COMPLETION_STATUS.md`
-- `IMPLEMENTATION-STATUS.md`
-
-### VPS-Only (Not in Git)
-- `/opt/mcp-server/deploy.sh`
-- `/opt/mcp-server/Caddyfile`
+| Component | Status | Details |
+|-----------|--------|---------|
+| Go Agent Binaries | BUILT | VPS /root/msp-iso-build/agent/ |
+| Python gRPC Server | CODED | Needs ISO v35 |
+| Frontend Dashboard | CODED | Needs deployment |
+| Backend API | CODED | Needs deployment |
+| Database Migration | PENDING | 019_go_agents.sql |
+| ISO v35 | PENDING | With gRPC server |
