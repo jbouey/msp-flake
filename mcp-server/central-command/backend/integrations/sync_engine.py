@@ -389,7 +389,7 @@ class SyncEngine:
 
         config = OAuthConfig(
             client_id=credentials.get("client_id"),
-            client_secret=SecureCredentials({"client_secret": credentials.get("client_secret")}),
+            client_secret=SecureCredentials(client_secret=credentials.get("client_secret")),
             redirect_uri="",  # Not needed for resource collection
             scopes=[]
         )
@@ -437,7 +437,7 @@ class SyncEngine:
 
         config = OAuthConfig(
             client_id=credentials.get("client_id"),
-            client_secret=SecureCredentials({"client_secret": credentials.get("client_secret")}),
+            client_secret=SecureCredentials(client_secret=credentials.get("client_secret")),
             redirect_uri="",
             scopes=[]
         )
@@ -485,7 +485,7 @@ class SyncEngine:
 
         config = OAuthConfig(
             client_id=credentials.get("client_id"),
-            client_secret=SecureCredentials({"client_secret": credentials.get("client_secret")}),
+            client_secret=SecureCredentials(client_secret=credentials.get("client_secret")),
             redirect_uri="",
             scopes=[]
         )
@@ -533,7 +533,7 @@ class SyncEngine:
 
         config = OAuthConfig(
             client_id=credentials.get("client_id"),
-            client_secret=SecureCredentials({"client_secret": credentials.get("client_secret")}),
+            client_secret=SecureCredentials(client_secret=credentials.get("client_secret")),
             redirect_uri="",
             scopes=[]
         )
