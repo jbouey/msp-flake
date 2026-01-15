@@ -107,6 +107,27 @@ class ApplianceConfig(BaseModel):
         description="Windows servers to manage via WinRM"
     )
 
+    # Workstation Discovery (Active Directory)
+    workstation_enabled: bool = Field(
+        default=True,
+        description="Enable workstation discovery and compliance checking"
+    )
+
+    domain_controller: Optional[str] = Field(
+        default=None,
+        description="Domain controller hostname/IP for AD workstation discovery"
+    )
+
+    dc_username: Optional[str] = Field(
+        default=None,
+        description="Username for domain controller access (domain\\user or user@domain)"
+    )
+
+    dc_password: Optional[str] = Field(
+        default=None,
+        description="Password for domain controller access"
+    )
+
     # WORM Storage (Immutable Evidence Archive)
     worm_enabled: bool = Field(
         default=False,

@@ -1967,8 +1967,17 @@ try {
             logger.error(f"Workstation discovery failed: {e}")
 
     def _get_dc_credentials(self) -> Dict[str, str]:
-        """Get domain controller credentials from Windows targets."""
-        # Look for a Windows target that matches the DC
+        """Get domain controller credentials from config or Windows targets."""
+        # Primary: use dedicated DC credentials from config
+        dc_username = getattr(self.config, 'dc_username', None)
+        dc_password = getattr(self.config, 'dc_password', None)
+        if dc_username and dc_password:
+            return {
+                "username": dc_username,
+                "password": dc_password,
+            }
+
+        # Fallback 1: Look for a Windows target that matches the DC
         for target in self.windows_targets:
             if self._domain_controller and (
                 target.hostname == self._domain_controller or
@@ -1979,7 +1988,7 @@ try {
                     "password": target.password,
                 }
 
-        # Fallback: use first Windows target credentials
+        # Fallback 2: use first Windows target credentials
         if self.windows_targets:
             target = self.windows_targets[0]
             return {
