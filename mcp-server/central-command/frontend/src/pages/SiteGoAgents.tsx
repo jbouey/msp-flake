@@ -10,9 +10,7 @@ import type {
 } from '../types';
 import {
   GO_AGENT_STATUS_LABELS,
-  GO_AGENT_STATUS_COLORS,
   GO_AGENT_TIER_LABELS,
-  GO_AGENT_TIER_COLORS,
   GO_AGENT_CHECK_LABELS,
   GO_AGENT_CHECK_HIPAA,
 } from '../types';
