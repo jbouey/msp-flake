@@ -1,9 +1,24 @@
 # Session Handoff - 2026-01-15
 
-**Session:** 34 - Phase 3 Microsoft Security Integration
+**Session:** 35 - Microsoft Security Integration + Deployment Fix
 **Agent Version:** v1.0.32
 **ISO Version:** v32
 **Last Updated:** 2026-01-15
+
+---
+
+## CRITICAL: VPS Deployment
+
+**See `.agent/VPS_DEPLOYMENT.md` for full deployment guide.**
+
+Quick deploy after pushing to GitHub:
+```bash
+ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
+```
+
+**TWO directories exist - ALWAYS use production:**
+- `/opt/mcp-server/` - **PRODUCTION** (container: `mcp-server`) ✅
+- `/root/msp-iso-build/` - Git repo only (container: `msp-server`) ❌
 
 ---
 
@@ -17,16 +32,25 @@
   - Azure AD devices for trust/compliance correlation
   - HIPAA control mappings for all resource types
 - **Frontend:** Microsoft Security option in integration setup
+  - "Cloud Integrations" button on Site Detail page
   - Provider selector with shield icon
   - Tenant ID field (like Azure AD)
   - OAuth setup instructions for required scopes
 - **Tests:** 40 unit tests passing
-- **Commits:** `ee428ad` (backend) + `2789606` (frontend)
 
-### Deployment Complete
-- **VPS Backend:** Deployed with Microsoft Graph connector
-- **VPS Frontend:** Rebuilt and deployed with Microsoft Security option
-- **ISO v32:** Built and on iMac (192.168.88.50)
+### Session 35 Fixes
+- Added `microsoft_security` to database `valid_provider` constraint
+- Fixed OAuth redirect URI to force HTTPS
+- Fixed Caddy routing for `/api/*` through dashboard domain
+- Fixed Caddyfile to use `mcp-server` container (not `msp-server`)
+- Created `/opt/mcp-server/deploy.sh` deployment script
+- Created `.agent/VPS_DEPLOYMENT.md` documentation
+
+### Deployment Status
+- **VPS Backend:** Deployed to `/opt/mcp-server/` ✅
+- **VPS Frontend:** Deployed to `central-command` container ✅
+- **Database:** `valid_provider` constraint updated ✅
+- **Caddy:** Routing fixed for API proxy ✅
 
 ### What's Working
 - Phase 1 Workstation Coverage - **FULLY IMPLEMENTED**
@@ -35,42 +59,22 @@
   - Resources: security_alert, intune_device, compliance_policy, secure_score, azure_ad_device
   - OAuth scopes: SecurityEvents, DeviceManagement, Device, SecurityActions
 
-### API Endpoint Verification
-```bash
-curl -s -H 'Authorization: Bearer test' 'https://api.osiriscare.net/api/sites/physical-appliance-pilot-1aea78/workstations'
-# Returns: {"summary":null,"workstations":[]}
-# Empty because no workstations scanned yet - will populate after appliance update
-```
-
 ---
 
-## Immediate Next Steps
+## Azure App Registration
 
-1. **Flash VM Appliance with ISO v32**
-   - ISO at `~/Downloads/osiriscare-appliance-v32.iso` on iMac
-   - Attach to VirtualBox VM and boot
+To complete Microsoft Security integration:
 
-2. **Configure Appliance**
-   - Add `domain_controller: NVDC01.northvalley.local` to config.yaml
-   - Restart appliance agent
-
-3. **Test Workstation Scanning**
-   - Navigate to `/sites/{site_id}/workstations` on dashboard
-   - Click "Trigger Scan" or wait for automatic scan cycle
-
----
-
-## Files Deployed This Session
-
-### VPS (/opt/mcp-server/)
-- `app/dashboard_api/sites.py` - Workstation API endpoints
-- `migrations/017_workstations.sql` - Database migration
-- `central-command/frontend/dist/` - Built frontend
-
-### ISO v32
-- Built on VPS at `/root/msp-iso-build/result-iso-v32/`
-- Contains agent v1.0.32 with workstation support
-- Transferred to iMac at `~/Downloads/osiriscare-appliance-v32.iso`
+1. Go to Azure Portal → App registrations
+2. Select app or create new one
+3. Add redirect URI: `https://dashboard.osiriscare.net/api/integrations/oauth/callback`
+4. Add API permissions:
+   - SecurityEvents.Read.All
+   - DeviceManagementManagedDevices.Read.All
+   - DeviceManagementConfiguration.Read.All
+   - SecurityActions.Read.All
+   - Device.Read.All
+5. Grant admin consent
 
 ---
 
@@ -80,27 +84,31 @@ curl -s -H 'Authorization: Bearer test' 'https://api.osiriscare.net/api/sites/ph
 # Verify API health
 curl https://api.osiriscare.net/health
 
-# Test workstations endpoint
-curl -H 'Authorization: Bearer test' 'https://api.osiriscare.net/api/sites/physical-appliance-pilot-1aea78/workstations'
+# Deploy latest changes
+ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
 
-# Check appliance status
-ssh root@192.168.88.246 "journalctl -u osiriscare-agent --since '5 min ago'"
+# Check container status
+ssh root@api.osiriscare.net "docker ps --format 'table {{.Names}}\t{{.Status}}'"
+
+# Check backend logs
+ssh root@api.osiriscare.net "docker logs mcp-server --tail 20"
 ```
 
 ---
 
 ## Git Status
 
-**Commits:**
-- `6ce2403` - chore: Bump agent version to 1.0.32 for ISO build
-- `f491f63` - feat: Phase 1 Workstation Coverage - AD discovery + 5 WMI checks
+**Recent Commits:**
+- `1453e65` - fix: Update deprecated libgdk-pixbuf package name in Dockerfile
+- `d4f3ba7` - fix: Force HTTPS in OAuth redirect URIs
+- `ee379bb` - feat: Add Cloud Integrations button to SiteDetail page
 
 **Pushed:** Yes, to origin/main
 
 ---
 
 ## Related Docs
-- `.agent/TODO.md` - Session 33 tasks complete
-- `.agent/CONTEXT.md` - Updated with workstation coverage
-- `.agent/DEVELOPMENT_ROADMAP.md` - Phase 1 marked complete
-- `.agent/SESSION_COMPLETION_STATUS.md` - Full implementation checklist
+- `.agent/VPS_DEPLOYMENT.md` - **NEW** Deployment guide
+- `.agent/TODO.md` - Session tasks
+- `.agent/CONTEXT.md` - Project context
+- `.agent/DEVELOPMENT_ROADMAP.md` - Phase tracking
