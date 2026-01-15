@@ -39,6 +39,16 @@ Compare AD-discovered workstations with external RMM tool data to:
 - 24 tests covering all comparison scenarios
 - Full test suite: 778 passed, 7 skipped
 
+### 5. Frontend UI
+**File:** `mcp-server/central-command/frontend/src/pages/RMMComparison.tsx`
+- CSV upload for RMM device data
+- Provider selection (ConnectWise, Datto, NinjaRMM, Syncro, Manual)
+- Comparison results display with match confidence
+- Gap analysis cards (missing from RMM, missing from AD, stale entries)
+- Navigation link from SiteWorkstations page
+
+**Route:** `/sites/:siteId/workstations/rmm-compare`
+
 ---
 
 ## CRITICAL: VPS Deployment
@@ -173,6 +183,10 @@ ssh root@api.osiriscare.net "docker exec central-command cat /usr/share/nginx/ht
 | `packages/compliance-agent/tests/test_rmm_comparison.py` | **NEW** 24 tests |
 | `mcp-server/central-command/backend/sites.py` | Added RMM comparison endpoints |
 | `mcp-server/central-command/backend/migrations/018_rmm_comparison.sql` | **NEW** Database migration |
+| `mcp-server/central-command/frontend/src/pages/RMMComparison.tsx` | **NEW** Frontend UI |
+| `mcp-server/central-command/frontend/src/utils/api.ts` | RMM comparison API types |
+| `mcp-server/central-command/frontend/src/pages/SiteWorkstations.tsx` | RMM Compare link |
+| `mcp-server/central-command/frontend/src/App.tsx` | Added route |
 | `.agent/TODO.md` | Session 36 documentation |
 | `.agent/SESSION_HANDOFF.md` | Updated |
 
@@ -191,12 +205,13 @@ ssh root@api.osiriscare.net "docker exec central-command cat /usr/share/nginx/ht
 
 ## Next Session Tasks
 
-1. Deploy migration 018 (RMM comparison tables)
-2. Test RMM comparison API with real data
-3. Add frontend for RMM comparison (optional)
-4. User configures Azure App Registration with correct redirect URI and client secret
-5. Test Microsoft Security integration end-to-end
-6. Build ISO v32 with workstation compliance
+1. Push changes to GitHub: `git push`
+2. Deploy to VPS: `ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"`
+3. Run migration 018 on VPS database
+4. Test RMM comparison API with real CSV data
+5. User configures Azure App Registration with correct redirect URI and client secret
+6. Test Microsoft Security integration end-to-end
+7. Build ISO v32 with workstation compliance
 
 ---
 
