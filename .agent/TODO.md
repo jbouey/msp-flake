@@ -75,10 +75,20 @@ Windows Workstation          NixOS Appliance
 786 passed, 11 skipped, 3 warnings
 ```
 
-### 8. Nix Build
-**Status:** IN PROGRESS
-- Downloading Go toolchain and dependencies (~189 MB)
-- Target: `nix build .#osiris-agent-windows-amd64`
+### 8. Go Agent Build
+**Status:** COMPLETE
+- Built on VPS using `nix-shell -p go`
+- Fixed `agent/flake.nix`: `licenses.proprietary` → `licenses.unfree`
+- Fixed `agent/go.mod`: Updated genproto to valid version `v0.0.0-20240624140628-dc46fd24d27d`
+- Created `agent/go.sum` with verified dependency hashes
+- **Binaries built:**
+  - `osiris-agent.exe` - Windows amd64 (10.3 MB)
+  - `osiris-agent-linux` - Linux amd64 (9.8 MB)
+  - Location: VPS `/root/msp-iso-build/agent/`
+
+### 9. Additional Git Commits
+- `e8ab5c7` - fix: Update Go module dependencies to valid versions
+- `8d4e621` - chore: Add go.sum with verified dependency hashes
 
 ---
 
@@ -434,20 +444,28 @@ ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
 
 ## Immediate (Next Session)
 
-### 1. Build ISO v30 with Network Check Type
+### 1. Deploy Go Agent to Workstations
 **Status:** PENDING
 **Details:**
-- Agent code at v1.0.30 with network check_type fix
-- Update `iso/appliance-image.nix` version to 1.0.30
+- Copy `osiris-agent.exe` from VPS `/root/msp-iso-build/agent/` to Windows workstations
+- Test dry-run mode first: `osiris-agent.exe --dry-run`
+- Configure agent with appliance gRPC endpoint (port 50051)
+
+### 2. Build ISO v35 with gRPC Server
+**Status:** PENDING
+**Details:**
+- gRPC server already integrated into `appliance_agent.py`
+- Update `iso/appliance-image.nix` to include grpc dependencies (grpcio, grpcio-tools)
 - Build ISO on VPS
 
-### 2. Deploy ISO v30 to Appliances
+### 3. Test Go Agent → Appliance Communication
 **Status:** PENDING
 **Details:**
-- Deploy to VM first (192.168.88.247)
-- User handles physical appliance (192.168.88.246)
+- Verify gRPC streaming works on port 50051
+- Check AgentRegistry tracking connected agents
+- Monitor drift events flowing through three-tier healing
 
-### 3. Run Chaos Lab Cycle
+### 4. Run Chaos Lab Cycle
 **Status:** PENDING
 **Details:**
 - Verify extended check types display correctly
@@ -496,5 +514,17 @@ ssh jrelly@192.168.88.50 "crontab -l | grep -A 10 'Chaos Lab'"
 
 **Rebuild ISO on VPS:**
 ```bash
-cd /root/msp-iso-build && git pull && nix build .#appliance-iso -o result-iso-v30
+cd /root/msp-iso-build && git pull && nix build .#appliance-iso -o result-iso-v35
+```
+
+**Go Agent Commands:**
+```bash
+# Download Go agent from VPS
+scp root@178.156.162.116:/root/msp-iso-build/agent/osiris-agent.exe .
+
+# Test Go agent dry-run mode (on Windows)
+osiris-agent.exe --dry-run
+
+# Build Go agent on VPS (if needed)
+cd /root/msp-iso-build/agent && GOOS=windows GOARCH=amd64 go build -o osiris-agent.exe ./cmd/osiris-agent
 ```
