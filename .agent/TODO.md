@@ -1,7 +1,50 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-15 (Session 36 - RMM Comparison Engine)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.32, ISO v32, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, **RMM Comparison Engine**)
+**Last Updated:** 2026-01-15 (Session 38 - Workstation Discovery Config)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.33, ISO v33, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, **Workstation Discovery Config**)
+
+---
+
+## Session 38 (2026-01-15) - Workstation Discovery Config
+
+### 1. Workstation Discovery Config Fields
+**Status:** COMPLETE
+**Files Modified:**
+- `packages/compliance-agent/src/compliance_agent/appliance_config.py` - Added:
+  - `workstation_enabled` (bool)
+  - `domain_controller` (str)
+  - `dc_username` (str)
+  - `dc_password` (str)
+- `packages/compliance-agent/src/compliance_agent/appliance_agent.py` - Updated `_get_dc_credentials()`
+- `packages/compliance-agent/setup.py` - Version 1.0.33
+
+### 2. NVWS01 WinRM Connectivity
+**Status:** COMPLETE
+**Details:** User manually enabled WinRM on NVWS01 workstation VM.
+
+### 3. WinRM Port Check for Online Detection
+**Status:** COMPLETE (with known issue)
+**File:** `packages/compliance-agent/src/compliance_agent/workstation_discovery.py`
+**Changes:**
+- Added `WINRM_CHECK_SCRIPT` using Test-NetConnection port 5985
+- Changed default method from "ping" to "winrm"
+**Known Issue:** script_params variable injection not working correctly - needs debugging.
+
+### 4. ISO v33 Build
+**Status:** IN PROGRESS
+**File:** `iso/appliance-image.nix` - Version 1.0.33
+
+### 5. Git Commits Pushed
+- `c37abf1` - feat: Add workstation discovery config to appliance agent
+- `13f9165` - feat: Add WinRM port check for workstation online detection
+
+---
+
+## Session 37 (2026-01-15) - Microsoft Security OAuth Fixes
+
+### 1. OAuth Integration Complete
+**Status:** COMPLETE
+**Details:** Fixed multiple OAuth bugs for Microsoft Security integration sync.
 
 ---
 

@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-15 (Session 35 - Microsoft Security Integration + Delete Button UX)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.32, ISO v32, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, **Microsoft Security Integration**, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance)
-**Test Status:** 754+ passed (compliance-agent tests), agent v1.0.32, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, **Microsoft Security**), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution, Workstation Compliance (AD discovery + 5 WMI checks)
+**Last Updated:** 2026-01-15 (Session 38 - Workstation Discovery Config)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.33, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, **Workstation Discovery Config**)
+**Test Status:** 778+ passed (compliance-agent tests), agent v1.0.33, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, **Workstation Discovery Config Fields**
 
 ---
 

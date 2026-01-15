@@ -121,8 +121,8 @@ try {
 '''
 
     # PowerShell script for WinRM port check (more reliable when ICMP is disabled)
+    # Note: $Hostname is injected by script_params before execution
     WINRM_CHECK_SCRIPT = '''
-param([string]$Hostname)
 try {
     $test = Test-NetConnection -ComputerName $Hostname -Port 5985 -WarningAction SilentlyContinue
     @{
