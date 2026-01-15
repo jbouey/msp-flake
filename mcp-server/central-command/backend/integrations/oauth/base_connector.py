@@ -726,7 +726,8 @@ class BaseOAuthConnector(ABC):
             encrypted_data
         )
 
-        self._tokens = OAuthTokens(token_data)
+        # token_data is already SecureCredentials, use it directly
+        self._tokens = token_data
 
     async def close(self) -> None:
         """Close HTTP client and cleanup."""
