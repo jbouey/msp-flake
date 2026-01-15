@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-15 (Session 38 - Workstation Discovery Config)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.33, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, **Workstation Discovery Config**, 778 tests)
+**Last Updated:** 2026-01-15 (Session 39 - $params_Hostname Bug Fix)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, **$params_Hostname Fix**, 778 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,29 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.30, ISO v29, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD), L1 JSON Rule Loading, Chaos Lab 2x Daily, **Network Compliance Check (Drata/Vanta style)**, **Extended Check Type Labels**, **Pattern Reporting Deployed**.
+**Status:** Phase 12 nearing completion. Agent v1.0.34, ISO v33, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, **$params_Hostname Bug Fix**.
+
+**Session 39 ($params_Hostname Bug Fix + ISO v33 Deployment):**
+- Fixed $params_Hostname variable injection bug in workstation_discovery.py
+  - Root cause: WindowsExecutor.run_script() injects variables with `$params_` prefix
+  - Scripts were using bare `$Hostname` causing empty variable error
+  - Fixed all 3 check scripts: PING_CHECK_SCRIPT, WMI_CHECK_SCRIPT, WINRM_CHECK_SCRIPT
+- Agent bumped to v1.0.34
+- ISO v33 built on VPS and deployed to physical appliance
+- Workstation discovery testing results:
+  - ✅ Direct WinRM to NVWS01: WORKS (returned "Hostname: NVWS01")
+  - ✅ AD enumeration from DC: WORKS (found NVWS01 at 192.168.88.251)
+  - ❌ Test-NetConnection from DC: TIMED OUT (DC was restoring from chaos snapshot)
+- Created PROJECT_SUMMARY.md documentation
+- Updated CLAUDE.md with current version
+- Commits: `4db0207`, `2b245b6`, `5c6c5c5`
+
+**Session 38 (Workstation Discovery Config):**
+- Added dedicated DC credentials to appliance config for AD workstation discovery
+- Files: appliance_config.py (workstation_enabled, domain_controller, dc_username, dc_password)
+- Added WinRM port check (Test-NetConnection port 5985) for online detection
+- Changed default method from "ping" to "winrm"
+- Agent v1.0.33
 
 **Session 32 (Network Compliance + Extended Check Types):**
 - Network compliance check integrated across full stack (Drata/Vanta style)
