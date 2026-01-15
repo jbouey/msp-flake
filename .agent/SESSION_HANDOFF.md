@@ -1,8 +1,9 @@
 # Session Handoff - 2026-01-15
 
-**Session:** 40 - Go Agent Implementation
+**Session:** 40 - Go Agent Implementation (Complete)
 **Agent Version:** v1.0.34
-**ISO Version:** v33 (deployed)
+**ISO Version:** v33 (deployed), v35 pending (with gRPC server)
+**Go Agent Binaries:** Built on VPS (`/root/msp-iso-build/agent/`)
 **Last Updated:** 2026-01-15
 
 ---
@@ -140,11 +141,12 @@ dc_password: SvcAccount2024!
 
 ## Next Session Tasks
 
-1. **Fix overlay module import** - Ensure appliance_agent is included in overlay
-2. **Wait for DC recovery** - DC was restoring from chaos snapshot
-3. **Re-test workstation online detection** - Once DC is stable
-4. **Verify workstation compliance scan** - Full scan with $params fix
-5. **Build ISO v34** - Include latest fixes if needed
+1. **Deploy Go agent to workstations** - Copy osiris-agent.exe from VPS `/root/msp-iso-build/agent/` to Windows workstations
+2. **Build ISO v35** - Include gRPC server integration (`grpc_server.py`, `appliance_agent.py` changes)
+3. **Test Go agent → Appliance communication** - Verify gRPC streaming works on port 50051
+4. **Fix overlay module import** - Ensure appliance_agent is included in overlay
+5. **Wait for DC recovery** - DC was restoring from chaos snapshot
+6. **Re-test workstation online detection** - Once DC is stable
 
 ### Quick Commands
 ```bash
@@ -175,6 +177,18 @@ ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
 ---
 
 ## Files Modified This Session
+
+### Session 40 (Go Agent Implementation)
+| File | Change |
+|------|--------|
+| `agent/` | Complete Go agent implementation (14 Go files) |
+| `agent/proto/compliance.proto` | gRPC protocol definitions |
+| `agent/flake.nix` | Fixed `licenses.proprietary` → `licenses.unfree` |
+| `agent/go.mod` | Updated dependencies to valid versions |
+| `agent/go.sum` | Created with verified dependency hashes |
+| `packages/compliance-agent/src/compliance_agent/grpc_server.py` | Python gRPC server |
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | gRPC server integration |
+| `packages/compliance-agent/tests/test_grpc_server.py` | 12 gRPC tests |
 
 ### Session 39 ($params_Hostname Bug Fix)
 | File | Change |

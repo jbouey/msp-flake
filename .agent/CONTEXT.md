@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-15 (Session 39 - $params_Hostname Bug Fix)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, **$params_Hostname Fix**)
-**Test Status:** 778+ passed (compliance-agent tests), agent v1.0.34, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, **$params_Hostname variable injection fix**
+**Last Updated:** 2026-01-15 (Session 40 - Go Agent Implementation)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, **Go Agent for Workstation Scale**)
+**Test Status:** 786+ passed (compliance-agent tests), agent v1.0.34, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, **Go Agent (gRPC push-based architecture)**
 
 ---
 
@@ -41,11 +41,29 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 │  │  drift   │    healing     │    evidence    │   mcp_client │  │
 │  │  .py     │    .py         │    .py         │   .py        │  │
 │  └──────────┴────────────────┴────────────────┴──────────────┘  │
-│                              │                                   │
-│  ┌───────────────────────────┴───────────────────────────────┐  │
-│  │              Windows Runbooks (WinRM)                      │  │
-│  │  executor.py │ 7 HIPAA runbooks                           │  │
+│       │                      │                                   │
+│  ┌────┴──────────────────────┴───────────────────────────────┐  │
+│  │   Windows Runbooks (WinRM)  │  gRPC Server (:50051)        │  │
+│  │   executor.py │ 27 runbooks │  Go Agent drift receiver     │  │
 │  └────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ gRPC/mTLS (push from workstations)
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Go Agent (Windows Workstations)               │
+│                                                                  │
+│  ┌──────────────┬────────────────┬────────────────────────────┐ │
+│  │ 6 WMI Checks │  SQLite Queue  │   RMM Detection            │ │
+│  │ BitLocker    │  (WAL offline) │   Detect ConnectWise/Datto │ │
+│  │ Defender     │                │   Auto-disable if present  │ │
+│  │ Firewall     │                │                            │ │
+│  │ Patches      │                │   Capability Tiers:        │ │
+│  │ ScreenLock   │                │   0=Monitor, 1=Heal, 2=Full│ │
+│  │ Services     │                │                            │ │
+│  └──────────────┴────────────────┴────────────────────────────┘ │
+│                                                                  │
+│  Single 10MB exe │ No install │ Windows service optional        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -414,6 +432,30 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **SHA256:** `726f0be6d5aef9d23c701be5cf474a91630ce6acec41015e8d800f1bbe5e6396`
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
+
+### Go Agent for Workstation Scale (2026-01-15 Session 40)
+- **Status:** Binaries built, gRPC server integrated into appliance
+- **Architecture:** Push-based gRPC replaces WinRM polling for workstations
+- **Files Created:**
+  - `agent/` - Complete Go agent implementation (14 Go files)
+  - `agent/proto/compliance.proto` - gRPC protocol definitions
+  - `agent/flake.nix` - Nix cross-compilation for Windows
+  - `packages/compliance-agent/src/compliance_agent/grpc_server.py` - Python gRPC server
+  - `packages/compliance-agent/tests/test_grpc_server.py` - 12 tests
+- **Binaries Built (on VPS):**
+  - `osiris-agent.exe` - Windows amd64 (10.3 MB)
+  - `osiris-agent-linux` - Linux amd64 (9.8 MB)
+  - Location: `/root/msp-iso-build/agent/`
+- **Features:**
+  - 6 WMI compliance checks (BitLocker, Defender, Firewall, Patches, ScreenLock, Services)
+  - SQLite WAL offline queue for network resilience
+  - RMM detection (ConnectWise, Datto, NinjaRMM) with auto-disable
+  - Capability tiers: MONITOR_ONLY (0), SELF_HEAL (1), FULL_REMEDIATION (2)
+- **Git Commits:**
+  - `8d4e621` - chore: Add go.sum with verified dependency hashes
+  - `e8ab5c7` - fix: Update Go module dependencies to valid versions
+  - `37b018c` - feat: Integrate gRPC server into appliance agent
+- **Tests:** 786 passed (up from 778)
 
 ### Agent v1.0.34 Ready (2026-01-15 Session 39)
 - **Status:** Code committed, ISO v33 built and deployed

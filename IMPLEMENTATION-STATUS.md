@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-15 (Session 39 - $params_Hostname Bug Fix)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, **$params_Hostname Fix**, 778 tests)
+**Last Updated:** 2026-01-15 (Session 40 - Go Agent Implementation)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, **Go Agent for Workstation Scale**, 786 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,46 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.34, ISO v33, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, **$params_Hostname Bug Fix**.
+**Status:** Phase 12 nearing completion. Agent v1.0.34, ISO v33, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, **Go Agent for Workstation-Scale Compliance**.
+
+**Session 40 (Go Agent Implementation):**
+- Implemented Go agent for workstation-scale compliance monitoring
+  - Solves WinRM polling scalability problem (25-50 workstations per site)
+  - Push-based architecture: Go agents stream drift events to appliance via gRPC
+- Architecture:
+  ```
+  Windows Workstation          NixOS Appliance
+  ┌─────────────────┐         ┌─────────────────────┐
+  │  Go Agent       │ gRPC    │  Python Agent       │
+  │  - 6 checks     │────────►│  - gRPC Server      │
+  │  - SQLite queue │ :50051  │  - Sensor API :8080 │
+  │  - RMM detect   │         │  - Three-tier heal  │
+  └─────────────────┘         └─────────────────────┘
+  ```
+- Files Created:
+  - `agent/` - Complete Go agent implementation (14 Go files)
+  - `agent/proto/compliance.proto` - gRPC protocol definitions
+  - `agent/flake.nix` - Nix cross-compilation for Windows
+  - `packages/compliance-agent/src/compliance_agent/grpc_server.py` - Python gRPC server
+  - `packages/compliance-agent/tests/test_grpc_server.py` - 12 tests
+- Binaries Built on VPS:
+  - `osiris-agent.exe` - Windows amd64 (10.3 MB)
+  - `osiris-agent-linux` - Linux amd64 (9.8 MB)
+  - Location: `/root/msp-iso-build/agent/`
+- Features:
+  - 6 WMI compliance checks: BitLocker, Defender, Firewall, Patches, ScreenLock, Services
+  - SQLite WAL offline queue for network resilience
+  - RMM detection (ConnectWise, Datto, NinjaRMM) with auto-disable
+  - Capability tiers: MONITOR_ONLY (0), SELF_HEAL (1), FULL_REMEDIATION (2)
+- Appliance Integration:
+  - gRPC server integrated into `appliance_agent.py`
+  - Starts on port 50051 alongside sensor API
+  - AgentRegistry tracks connected Go agents
+- Dependency Fixes:
+  - Fixed `agent/flake.nix`: `licenses.proprietary` → `licenses.unfree`
+  - Fixed `agent/go.mod`: Updated genproto to valid version `v0.0.0-20240624140628-dc46fd24d27d`
+- Git Commits: `8d4e621`, `e8ab5c7`, `37b018c`, `c6f0e68`
+- Tests: 786 passed (up from 778)
 
 **Session 39 ($params_Hostname Bug Fix + ISO v33 Deployment):**
 - Fixed $params_Hostname variable injection bug in workstation_discovery.py
@@ -685,10 +724,12 @@ Required fields per CLAUDE.md:
 - Commits: `7b3c85f` - fix: Improve delete button UX with loading state
 
 **Next Steps:**
-1. User to configure Azure App Registration with correct redirect URI and client secret
-2. Build ISO v32 with workstation compliance
-3. Run chaos lab cycle and verify extended check type labels
-4. Monitor patterns flowing to Learning dashboard
-5. Evidence bundles uploading to MinIO verification
-6. First compliance packet generated
-7. 30-day monitoring period completion
+1. Deploy Go agent to workstations (copy osiris-agent.exe from VPS to Windows workstations)
+2. Build ISO v35 with gRPC server integration
+3. Test Go agent → Appliance gRPC communication
+4. User to configure Azure App Registration with correct redirect URI and client secret
+5. Run chaos lab cycle and verify extended check type labels
+6. Monitor patterns flowing to Learning dashboard
+7. Evidence bundles uploading to MinIO verification
+8. First compliance packet generated
+9. 30-day monitoring period completion
