@@ -1,7 +1,63 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-14 (Session 33 - Phase 1 Workstation Coverage)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.32, ISO v29, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, **Workstation Compliance**)
+**Last Updated:** 2026-01-15 (Session 35 - Microsoft Security Integration + Delete Button UX)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.32, ISO v32, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, **Microsoft Security Integration**, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance)
+
+---
+
+## Session 35 (2026-01-15) - Microsoft Security Integration + Delete Button UX
+
+### 1. Microsoft Security Integration (Phase 3)
+**Status:** COMPLETE
+**Files:**
+- `integrations/oauth/microsoft_graph.py` - Backend (893 lines)
+- `frontend/src/pages/IntegrationSetup.tsx` - Provider selection
+- `frontend/src/pages/SiteDetail.tsx` - Cloud Integrations button
+
+**Features:**
+- Defender alerts collection with severity/status analysis
+- Intune device compliance and encryption status
+- Microsoft Secure Score posture data
+- Azure AD devices for trust/compliance correlation
+- HIPAA control mappings for all resource types
+
+### 2. VPS Deployment Fixes
+**Status:** COMPLETE
+**Issues Fixed:**
+- Added `microsoft_security` to database `valid_provider` constraint
+- Fixed OAuth redirect URI to force HTTPS
+- Fixed Caddy routing for `/api/*` through dashboard domain
+- Fixed Caddyfile to use `mcp-server` container (not `msp-server`)
+- Created OAuth callback public router (no auth required for browser redirect)
+
+### 3. Delete Button UX Fix
+**Status:** COMPLETE
+**File:** `frontend/src/pages/Integrations.tsx`
+**Changes:**
+- Added `deletingId` state tracking in parent component
+- Shows "Deleting..." feedback during delete operation
+- Disables all buttons while delete is in progress
+- Resets confirmation state on error for retry
+
+### 4. Deployment Infrastructure
+**Status:** COMPLETE
+**Files Created:**
+- `/opt/mcp-server/deploy.sh` - VPS deployment script
+- `.agent/VPS_DEPLOYMENT.md` - Deployment documentation
+
+**Quick Deploy:**
+```bash
+ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
+```
+
+### 5. Azure App Registration (User Action Required)
+**Status:** PENDING USER ACTION
+**Instructions:**
+1. Go to Azure Portal → App registrations
+2. Add redirect URI: `https://dashboard.osiriscare.net/api/integrations/oauth/callback`
+3. Add API permissions (SecurityEvents, DeviceManagement, Device, SecurityActions)
+4. Create new client secret and use the **VALUE** (not ID)
+5. Grant admin consent
 
 ---
 

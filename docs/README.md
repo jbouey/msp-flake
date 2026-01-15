@@ -1,7 +1,7 @@
 # MSP HIPAA Compliance Platform - Documentation Index
 
-**Last Updated:** 2026-01-14 (Session 33)
-**Platform Version:** Phase 12 (Agent v1.0.32, ISO v29, 43 Runbooks, OTS Blockchain Anchoring, Linux+Windows Support, Partner L3 Escalations, RBAC User Management, Multi-Framework Compliance, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab Automated Testing, **Workstation Compliance**)
+**Last Updated:** 2026-01-15 (Session 35)
+**Platform Version:** Phase 12 (Agent v1.0.32, ISO v32, 43 Runbooks, OTS Blockchain Anchoring, Linux+Windows Support, Partner L3 Escalations, RBAC User Management, Multi-Framework Compliance, Cloud Integrations, **Microsoft Security Integration**, L1 JSON Rule Loading, Chaos Lab Automated Testing, Workstation Compliance)
 
 ---
 
@@ -66,6 +66,8 @@
 | Network Compliance Check | ✅ Complete | Drata/Vanta-style network posture (Session 32) |
 | Extended Check Types | ✅ Complete | 8 new check type labels (Session 32) |
 | **Workstation Compliance** | ✅ Complete | AD discovery + 5 WMI checks (Session 33) |
+| **Microsoft Security Integration** | ✅ Complete | Defender, Intune, Secure Score (Session 35) |
+| **Delete Button UX** | ✅ Complete | Loading state + error handling (Session 35) |
 | Physical Appliance | ✅ Running v1.0.28 | Pending v32 update |
 | VM Appliance | 🟡 Pending v32 | ISO ready for deployment |
 

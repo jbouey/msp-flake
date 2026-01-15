@@ -1,108 +1,132 @@
 # Session Completion Status
 
 **Date:** 2026-01-15
-**Session:** 33 - Phase 1 Workstation Coverage + Deployment
+**Session:** 35 - Microsoft Security Integration + Delete Button UX
 **Status:** COMPLETE
 
 ---
 
 ## Implementation Tasks
 
-### Agent Backend
+### Microsoft Security Integration (Phase 3)
 | Task | Status | File |
 |------|--------|------|
-| Workstation Discovery | DONE | workstation_discovery.py |
-| Workstation Checks | DONE | workstation_checks.py |
-| Workstation Evidence | DONE | workstation_evidence.py |
-| Agent Integration | DONE | appliance_agent.py (v1.0.32) |
-| WindowsExecutor.run_script() | DONE | executor.py |
-| Unit Tests | DONE | test_workstation_compliance.py (20 tests) |
+| Backend OAuth Handler | DONE | integrations/oauth/microsoft_graph.py (893 lines) |
+| Defender Alerts Collection | DONE | Graph API integration |
+| Intune Device Compliance | DONE | DeviceManagement endpoints |
+| Secure Score Data | DONE | Security posture metrics |
+| Azure AD Devices | DONE | Trust/compliance correlation |
+| HIPAA Control Mappings | DONE | All resource types mapped |
+| Frontend Provider Option | DONE | IntegrationSetup.tsx |
+| Unit Tests | DONE | 40 tests passing |
 
-### Dashboard & API
-| Task | Status | File |
-|------|--------|------|
-| Frontend Page | DONE | SiteWorkstations.tsx |
-| API Client | DONE | api.ts (workstationsApi) |
-| React Hooks | DONE | useFleet.ts |
-| Route Setup | DONE | App.tsx |
-| SiteDetail Link | DONE | SiteDetail.tsx |
-| Backend Endpoints | DONE | sites.py |
-| DB Migration | DONE | 017_workstations.sql |
-
-### Deployment
+### VPS Deployment Fixes
 | Task | Status | Details |
 |------|--------|---------|
-| Push to GitHub | DONE | 2 commits pushed |
-| Deploy Backend to VPS | DONE | sites.py deployed |
-| Run Migration on VPS | DONE | Tables created |
-| Restart Containers | DONE | mcp-server, central-command |
-| Build ISO v32 | DONE | 1.1GB built on VPS |
-| Download ISO | DONE | To local machine |
-| Transfer to iMac | DONE | ~/Downloads/osiriscare-appliance-v32.iso |
+| Valid Provider Constraint | DONE | Added `microsoft_security` to DB |
+| OAuth HTTPS Fix | DONE | Force HTTPS in redirect URIs |
+| Caddy API Proxy | DONE | `/api/*` routes through dashboard domain |
+| Container Name Fix | DONE | Use `mcp-server` not `msp-server` |
+| Public OAuth Router | DONE | No auth for browser callbacks |
+| Deploy Script | DONE | `/opt/mcp-server/deploy.sh` |
+| VPS Documentation | DONE | `.agent/VPS_DEPLOYMENT.md` |
+
+### Frontend Fixes
+| Task | Status | File |
+|------|--------|------|
+| Cloud Integrations Button | DONE | SiteDetail.tsx |
+| Delete Button UX | DONE | Integrations.tsx |
+| Loading State | DONE | Shows "Deleting..." feedback |
+| Error Handling | DONE | Resets on error for retry |
+| Frontend Deployed | DONE | Bundle: index-RfjBtVfK.js |
 
 ---
 
 ## Test Results
 
 ```
-Agent Tests: 754 passed, 7 skipped
+API Health: OK (redis, database, minio connected)
 Frontend Build: SUCCESS (154 modules)
-VPS API Health: OK
-Workstations Endpoint: Returns empty (expected - no scans yet)
+Microsoft Security Tests: 40 passed
+Delete Button: Deployed and working
 ```
 
 ---
 
-## Phase 1 Roadmap Progress
+## Chaos Lab Status (Jan 15)
 
 ```
-Phase 1: Complete Workstation Coverage
-========================================
-[x] System Audit & Gap Analysis
-[x] Workstation Discovery (AD enumeration)
-[x] 5 WMI Compliance Checks
-[x] Evidence Generation
-[x] Agent Integration
-[x] Database Migration
-[x] Backend API
-[x] Frontend Dashboard
-[x] Unit Tests
-[x] VPS Deployment
-[x] ISO v32 Build
-[x] ISO Transfer to iMac
-
-Status: 100% COMPLETE
+Total Scenarios: 9
+Attack Success: 0 (connectivity issue to Windows DC)
+Categories: firewall (2), defender (1), audit (6)
+Action: Verify Windows DC (192.168.88.250) reachability
 ```
-
----
-
-## Pending Actions (User Required)
-
-- [ ] Flash VM appliance with ISO v32
-- [ ] Configure appliance domain_controller setting
-- [ ] Test with real AD environment
 
 ---
 
 ## Git Commits
 
-1. `f491f63` - feat: Phase 1 Workstation Coverage - AD discovery + 5 WMI checks
-2. `6ce2403` - chore: Bump agent version to 1.0.32 for ISO build
+1. `7b3c85f` - fix: Improve delete button UX with loading state
+2. Earlier commits from session:
+   - OAuth HTTPS fix
+   - Cloud Integrations button
+   - Public router for OAuth callback
+   - Deployment infrastructure
 
 ---
 
-## Artifacts
+## Deployment State
 
-### ISO v32
-- **VPS:** `/root/msp-iso-build/result-iso-v32/iso/osiriscare-appliance.iso`
-- **Local:** `/Users/dad/Documents/Msp_Flakes/iso/osiriscare-appliance-v32.iso`
-- **iMac:** `~/Downloads/osiriscare-appliance-v32.iso`
+| Component | Status | Version/Details |
+|-----------|--------|-----------------|
+| VPS Backend | ✅ | `/opt/mcp-server/` |
+| VPS Frontend | ✅ | `index-RfjBtVfK.js` |
+| Database | ✅ | `microsoft_security` in valid_provider |
+| Caddy | ✅ | API proxy for dashboard domain |
+| Deploy Script | ✅ | `/opt/mcp-server/deploy.sh` |
 
-### Documentation Updated
+---
+
+## Pending Actions (User Required)
+
+- [ ] Configure Azure App Registration:
+  1. Add redirect URI: `https://dashboard.osiriscare.net/api/integrations/oauth/callback`
+  2. Add API permissions (SecurityEvents, DeviceManagement, etc.)
+  3. Create new client secret (use VALUE, not ID)
+  4. Grant admin consent
+- [ ] Verify Windows DC connectivity for chaos lab
+- [ ] Test Microsoft Security integration end-to-end
+
+---
+
+## Cloud Integrations Status
+
+| Provider | Status | Resources |
+|----------|--------|-----------|
+| AWS | ✅ | IAM users, EC2, S3, CloudTrail |
+| Google Workspace | ✅ | Users, Devices, OAuth apps |
+| Okta | ✅ | Users, Groups, Apps, Policies |
+| Azure AD | ✅ | Users, Groups, Apps, Devices |
+| Microsoft Security | ✅ NEW | Defender, Intune, Secure Score |
+
+---
+
+## Files Modified
+
+### Source Files
+- `mcp-server/central-command/frontend/src/pages/Integrations.tsx`
+- `mcp-server/central-command/frontend/src/pages/SiteDetail.tsx`
+- `mcp-server/central-command/backend/integrations/api.py`
+- `mcp-server/main.py`
+
+### Documentation
+- `.agent/VPS_DEPLOYMENT.md` (NEW)
+- `.agent/TODO.md`
+- `.agent/CONTEXT.md`
 - `.agent/SESSION_HANDOFF.md`
 - `.agent/SESSION_COMPLETION_STATUS.md`
-- `.agent/CONTEXT.md`
-- `.agent/TODO.md`
-- `docs/README.md`
-- `docs/ARCHITECTURE.md`
-- `docs/HIPAA_FRAMEWORK.md`
+- `IMPLEMENTATION-STATUS.md`
+
+### VPS-Only (Not in Git)
+- `/opt/mcp-server/deploy.sh`
+- `/opt/mcp-server/Caddyfile`

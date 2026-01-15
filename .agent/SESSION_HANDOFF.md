@@ -1,6 +1,6 @@
 # Session Handoff - 2026-01-15
 
-**Session:** 35 - Microsoft Security Integration + Deployment Fix
+**Session:** 35 - Microsoft Security Integration + Delete Button UX
 **Agent Version:** v1.0.32
 **ISO Version:** v32
 **Last Updated:** 2026-01-15
@@ -22,9 +22,9 @@ ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
 
 ---
 
-## Current State
+## Session 35 Accomplishments
 
-### Phase 3 Complete - Microsoft Security Integration
+### 1. Microsoft Security Integration (Phase 3)
 - **Backend:** `integrations/oauth/microsoft_graph.py` (893 lines)
   - Defender alerts collection with severity/status analysis
   - Intune device compliance and encryption status
@@ -38,35 +38,65 @@ ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
   - OAuth setup instructions for required scopes
 - **Tests:** 40 unit tests passing
 
-### Session 35 Fixes
+### 2. VPS Deployment Fixes
 - Added `microsoft_security` to database `valid_provider` constraint
-- Fixed OAuth redirect URI to force HTTPS
+- Fixed OAuth redirect URI to force HTTPS (`.replace("http://", "https://")`)
 - Fixed Caddy routing for `/api/*` through dashboard domain
 - Fixed Caddyfile to use `mcp-server` container (not `msp-server`)
+- Created OAuth callback public router (no auth required for browser redirect)
 - Created `/opt/mcp-server/deploy.sh` deployment script
 - Created `.agent/VPS_DEPLOYMENT.md` documentation
 
-### Deployment Status
-- **VPS Backend:** Deployed to `/opt/mcp-server/` ✅
-- **VPS Frontend:** Deployed to `central-command` container ✅
-- **Database:** `valid_provider` constraint updated ✅
-- **Caddy:** Routing fixed for API proxy ✅
+### 3. Delete Button UX Fix
+- **File:** `frontend/src/pages/Integrations.tsx`
+- Added `deletingId` state tracking in parent component
+- Shows "Deleting..." feedback during delete operation
+- Disables all buttons while delete is in progress
+- Resets confirmation state on error so user can retry
 
-### What's Working
-- Phase 1 Workstation Coverage - **FULLY IMPLEMENTED**
-- Phase 3 Microsoft Security - **FULLY IMPLEMENTED**
-  - Provider: `microsoft_security`
-  - Resources: security_alert, intune_device, compliance_policy, secure_score, azure_ad_device
-  - OAuth scopes: SecurityEvents, DeviceManagement, Device, SecurityActions
+### 4. Commits Pushed
+- `7b3c85f` - fix: Improve delete button UX with loading state
+- `be47208` - (earlier commits from this session)
 
 ---
 
-## Azure App Registration
+## Current Deployment State
+
+| Component | Status | Version/Bundle |
+|-----------|--------|----------------|
+| VPS Backend | ✅ Deployed | `/opt/mcp-server/` |
+| VPS Frontend | ✅ Deployed | `index-RfjBtVfK.js` |
+| Database | ✅ Updated | `valid_provider` includes `microsoft_security` |
+| Caddy | ✅ Fixed | `/api/*` proxy for dashboard domain |
+| Deploy Script | ✅ Created | `/opt/mcp-server/deploy.sh` |
+
+---
+
+## What's Working
+
+### Cloud Integrations (5 providers)
+| Provider | Status | Resources |
+|----------|--------|-----------|
+| AWS | ✅ | IAM users, EC2, S3, CloudTrail |
+| Google Workspace | ✅ | Users, Devices, OAuth apps |
+| Okta | ✅ | Users, Groups, Apps, Policies |
+| Azure AD | ✅ | Users, Groups, Apps, Devices |
+| **Microsoft Security** | ✅ NEW | Defender alerts, Intune, Secure Score |
+
+### Phase 1 Workstation Coverage
+- AD workstation discovery via PowerShell Get-ADComputer
+- 5 WMI compliance checks: BitLocker, Defender, Patches, Firewall, Screen Lock
+- HIPAA control mappings for each check
+- Frontend: SiteWorkstations.tsx page
+
+---
+
+## Azure App Registration (User Action Required)
 
 To complete Microsoft Security integration:
 
 1. Go to Azure Portal → App registrations
-2. Select app or create new one
+2. Select existing app or create new one
 3. Add redirect URI: `https://dashboard.osiriscare.net/api/integrations/oauth/callback`
 4. Add API permissions:
    - SecurityEvents.Read.All
@@ -75,6 +105,7 @@ To complete Microsoft Security integration:
    - SecurityActions.Read.All
    - Device.Read.All
 5. Grant admin consent
+6. Create new client secret and copy the **VALUE** (not ID)
 
 ---
 
@@ -92,23 +123,41 @@ ssh root@api.osiriscare.net "docker ps --format 'table {{.Names}}\t{{.Status}}'"
 
 # Check backend logs
 ssh root@api.osiriscare.net "docker logs mcp-server --tail 20"
+
+# Verify frontend bundle
+ssh root@api.osiriscare.net "docker exec central-command cat /usr/share/nginx/html/index.html | grep -o 'index-[^\"]*\\.js'"
 ```
 
 ---
 
-## Git Status
+## Files Modified This Session
 
-**Recent Commits:**
-- `1453e65` - fix: Update deprecated libgdk-pixbuf package name in Dockerfile
-- `d4f3ba7` - fix: Force HTTPS in OAuth redirect URIs
-- `ee379bb` - feat: Add Cloud Integrations button to SiteDetail page
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/frontend/src/pages/Integrations.tsx` | Delete button UX fix |
+| `mcp-server/central-command/frontend/src/pages/SiteDetail.tsx` | Cloud Integrations button |
+| `mcp-server/central-command/backend/integrations/api.py` | HTTPS fix, public_router |
+| `mcp-server/main.py` | Import public_router |
+| `.agent/VPS_DEPLOYMENT.md` | **NEW** Deployment guide |
+| `/opt/mcp-server/deploy.sh` (VPS) | **NEW** Deploy script |
+| `/opt/mcp-server/Caddyfile` (VPS) | Fixed container name, API proxy |
 
-**Pushed:** Yes, to origin/main
+---
+
+## Next Session Tasks
+
+1. User configures Azure App Registration with correct redirect URI and client secret
+2. Test Microsoft Security integration end-to-end
+3. Build ISO v32 with workstation compliance
+4. First compliance packet generation
+5. 30-day monitoring period
 
 ---
 
 ## Related Docs
-- `.agent/VPS_DEPLOYMENT.md` - **NEW** Deployment guide
+
+- `.agent/VPS_DEPLOYMENT.md` - Deployment guide
 - `.agent/TODO.md` - Session tasks
 - `.agent/CONTEXT.md` - Project context
 - `.agent/DEVELOPMENT_ROADMAP.md` - Phase tracking
+- `IMPLEMENTATION-STATUS.md` - Full status
