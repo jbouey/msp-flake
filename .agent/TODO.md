@@ -1,7 +1,55 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-15 (Session 35 - Microsoft Security Integration + Delete Button UX)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.32, ISO v32, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, **Microsoft Security Integration**, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance)
+**Last Updated:** 2026-01-15 (Session 36 - RMM Comparison Engine)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.32, ISO v32, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, **RMM Comparison Engine**)
+
+---
+
+## Session 36 (2026-01-15) - RMM Comparison Engine
+
+### 1. RMM Comparison Engine
+**Status:** COMPLETE
+**File:** `packages/compliance-agent/src/compliance_agent/rmm_comparison.py`
+**Details:** Compare AD-discovered workstations with external RMM tool data for deduplication.
+
+**Features:**
+- Multi-field matching (hostname, IP, MAC, serial)
+- Confidence scoring (exact, high, medium, low)
+- Gap analysis (missing from RMM, missing from AD, stale entries)
+- Deduplication recommendations with priority
+- Provider loaders for ConnectWise, Datto, NinjaRMM, Syncro
+- CSV import support
+
+**Data Classes:**
+- `RMMDevice` - Normalized device from any RMM
+- `DeviceMatch` - Match result with confidence
+- `CoverageGap` - Gap with recommendation
+- `ComparisonReport` - Full comparison report
+
+### 2. RMM Comparison Tests
+**Status:** COMPLETE
+**File:** `packages/compliance-agent/tests/test_rmm_comparison.py`
+**Details:** 24 tests covering all comparison scenarios.
+
+### 3. Backend API Endpoints
+**Status:** COMPLETE
+**File:** `mcp-server/central-command/backend/sites.py`
+**Endpoints:**
+- `POST /api/sites/{site_id}/workstations/rmm-compare` - Compare with RMM data
+- `GET /api/sites/{site_id}/workstations/rmm-compare` - Get latest report
+
+### 4. Database Migration
+**Status:** COMPLETE
+**File:** `mcp-server/central-command/backend/migrations/018_rmm_comparison.sql`
+**Tables:**
+- `rmm_comparison_reports` - Latest comparison per site
+- `rmm_comparison_history` - Historical trend data
+
+### Test Results
+```
+778 passed, 7 skipped, 3 warnings
+24 RMM comparison tests passing
+```
 
 ---
 

@@ -1,9 +1,43 @@
 # Session Handoff - 2026-01-15
 
-**Session:** 35 - Microsoft Security Integration + Delete Button UX
+**Session:** 36 - RMM Comparison Engine
 **Agent Version:** v1.0.32
 **ISO Version:** v32
 **Last Updated:** 2026-01-15
+
+---
+
+## Session 36 Accomplishments
+
+### 1. RMM Comparison Engine
+**File:** `packages/compliance-agent/src/compliance_agent/rmm_comparison.py` (850 lines)
+
+Compare AD-discovered workstations with external RMM tool data to:
+- Identify duplicate monitoring (same device in both systems)
+- Find coverage gaps (devices in one but not other)
+- Generate deduplication recommendations
+
+**Features:**
+- Multi-field matching: hostname, IP, MAC, serial number
+- Confidence scoring: exact (>90%), high (60-90%), medium (35-60%), low (15-35%)
+- Gap types: missing_from_rmm, missing_from_ad, stale_rmm, stale_ad
+- Provider loaders: ConnectWise, Datto, NinjaRMM, Syncro
+- CSV import for manual RMM data
+
+### 2. Backend API Endpoints
+**File:** `mcp-server/central-command/backend/sites.py`
+- `POST /api/sites/{site_id}/workstations/rmm-compare` - Upload RMM data, get comparison
+- `GET /api/sites/{site_id}/workstations/rmm-compare` - Get latest report
+
+### 3. Database Migration
+**File:** `mcp-server/central-command/backend/migrations/018_rmm_comparison.sql`
+- `rmm_comparison_reports` - Latest comparison per site
+- `rmm_comparison_history` - Historical trend data
+
+### 4. Tests
+**File:** `packages/compliance-agent/tests/test_rmm_comparison.py`
+- 24 tests covering all comparison scenarios
+- Full test suite: 778 passed, 7 skipped
 
 ---
 
@@ -132,6 +166,17 @@ ssh root@api.osiriscare.net "docker exec central-command cat /usr/share/nginx/ht
 
 ## Files Modified This Session
 
+### Session 36 (RMM Comparison)
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/rmm_comparison.py` | **NEW** RMM comparison engine |
+| `packages/compliance-agent/tests/test_rmm_comparison.py` | **NEW** 24 tests |
+| `mcp-server/central-command/backend/sites.py` | Added RMM comparison endpoints |
+| `mcp-server/central-command/backend/migrations/018_rmm_comparison.sql` | **NEW** Database migration |
+| `.agent/TODO.md` | Session 36 documentation |
+| `.agent/SESSION_HANDOFF.md` | Updated |
+
+### Session 35 (Microsoft Security + Delete UX)
 | File | Change |
 |------|--------|
 | `mcp-server/central-command/frontend/src/pages/Integrations.tsx` | Delete button UX fix |
@@ -146,11 +191,12 @@ ssh root@api.osiriscare.net "docker exec central-command cat /usr/share/nginx/ht
 
 ## Next Session Tasks
 
-1. User configures Azure App Registration with correct redirect URI and client secret
-2. Test Microsoft Security integration end-to-end
-3. Build ISO v32 with workstation compliance
-4. First compliance packet generation
-5. 30-day monitoring period
+1. Deploy migration 018 (RMM comparison tables)
+2. Test RMM comparison API with real data
+3. Add frontend for RMM comparison (optional)
+4. User configures Azure App Registration with correct redirect URI and client secret
+5. Test Microsoft Security integration end-to-end
+6. Build ISO v32 with workstation compliance
 
 ---
 

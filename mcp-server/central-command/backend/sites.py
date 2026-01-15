@@ -1318,3 +1318,288 @@ async def trigger_workstation_scan(site_id: str):
             'appliance_id': appliance['appliance_id'],
             'message': 'Workstation scan will run on next appliance check-in',
         }
+
+
+# =============================================================================
+# RMM Comparison Endpoints
+# =============================================================================
+
+
+@router.post("/{site_id}/workstations/rmm-compare")
+async def compare_workstations_with_rmm(
+    site_id: str,
+    rmm_data: Dict[str, Any],
+):
+    """Compare site workstations with RMM tool data.
+
+    Accepts RMM device data and returns a comparison report showing:
+    - Matched devices (with confidence scores)
+    - Coverage gaps (missing from RMM or AD)
+    - Deduplication recommendations
+
+    Request body:
+    {
+        "provider": "connectwise" | "datto" | "ninja" | "syncro" | "manual",
+        "devices": [
+            {
+                "hostname": "WS01",
+                "ip_address": "192.168.1.101",
+                "mac_address": "00:1A:2B:3C:4D:5E",
+                "os_name": "Windows 10",
+                "serial_number": "ABC123",
+                "device_id": "RMM-001"
+            },
+            ...
+        ]
+    }
+    """
+    pool = await get_pool()
+
+    # Validate request
+    provider = rmm_data.get("provider", "manual")
+    devices = rmm_data.get("devices", [])
+
+    if not devices:
+        raise HTTPException(
+            status_code=400,
+            detail="No RMM devices provided"
+        )
+
+    async with pool.acquire() as conn:
+        # Get our workstations for this site
+        ws_rows = await conn.fetch("""
+            SELECT hostname, ip_address, mac_address, os_name, os_version, online
+            FROM workstations
+            WHERE site_id = $1
+        """, site_id)
+
+        if not ws_rows:
+            return {
+                'error': 'no_workstations',
+                'message': f'No workstations discovered for site {site_id}. Run a workstation scan first.',
+            }
+
+        workstations = [dict(row) for row in ws_rows]
+
+        # Perform comparison (inline implementation to avoid agent dependency)
+        comparison = _compare_workstations_with_rmm(workstations, devices, provider)
+
+        # Store comparison result for audit trail
+        await conn.execute("""
+            INSERT INTO rmm_comparison_reports (
+                site_id, provider, our_count, rmm_count,
+                matched_count, coverage_rate, report_data, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+            ON CONFLICT (site_id) DO UPDATE SET
+                provider = EXCLUDED.provider,
+                our_count = EXCLUDED.our_count,
+                rmm_count = EXCLUDED.rmm_count,
+                matched_count = EXCLUDED.matched_count,
+                coverage_rate = EXCLUDED.coverage_rate,
+                report_data = EXCLUDED.report_data,
+                created_at = EXCLUDED.created_at
+        """,
+            site_id,
+            provider,
+            comparison['summary']['our_device_count'],
+            comparison['summary']['rmm_device_count'],
+            comparison['summary']['matched_count'],
+            comparison['summary']['coverage_rate'],
+            json.dumps(comparison),
+            datetime.now(timezone.utc),
+        )
+
+        return comparison
+
+
+@router.get("/{site_id}/workstations/rmm-compare")
+async def get_rmm_comparison_report(site_id: str):
+    """Get the latest RMM comparison report for a site."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT site_id, provider, our_count, rmm_count,
+                   matched_count, coverage_rate, report_data, created_at
+            FROM rmm_comparison_reports
+            WHERE site_id = $1
+        """, site_id)
+
+        if not row:
+            return {
+                'error': 'no_report',
+                'message': f'No RMM comparison report found for site {site_id}. Upload RMM data to generate one.',
+            }
+
+        return {
+            'site_id': row['site_id'],
+            'provider': row['provider'],
+            'summary': {
+                'our_device_count': row['our_count'],
+                'rmm_device_count': row['rmm_count'],
+                'matched_count': row['matched_count'],
+                'coverage_rate': float(row['coverage_rate'] or 0),
+            },
+            'report': row['report_data'],
+            'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+        }
+
+
+def _compare_workstations_with_rmm(
+    workstations: list,
+    rmm_devices: list,
+    provider: str,
+) -> Dict[str, Any]:
+    """
+    Compare workstations with RMM devices.
+
+    This is a simplified version of the agent's RMMComparisonEngine
+    for use in the Central Command backend.
+    """
+    import re
+
+    # Normalize functions
+    def normalize_hostname(hostname: str) -> str:
+        return hostname.upper().strip().split('.')[0] if hostname else ""
+
+    def normalize_mac(mac: str) -> str:
+        if not mac:
+            return ""
+        return re.sub(r'[^A-Fa-f0-9]', '', mac).upper()
+
+    # Build RMM device index
+    rmm_by_hostname = {}
+    rmm_by_ip = {}
+    rmm_by_mac = {}
+
+    for device in rmm_devices:
+        hostname = normalize_hostname(device.get("hostname", ""))
+        ip = device.get("ip_address", "")
+        mac = normalize_mac(device.get("mac_address", ""))
+
+        if hostname:
+            rmm_by_hostname.setdefault(hostname, []).append(device)
+        if ip:
+            rmm_by_ip.setdefault(ip, []).append(device)
+        if mac:
+            rmm_by_mac.setdefault(mac, []).append(device)
+
+    matches = []
+    matched_rmm_ids = set()
+
+    for ws in workstations:
+        ws_hostname = normalize_hostname(ws.get("hostname", ""))
+        ws_ip = ws.get("ip_address", "")
+        ws_mac = normalize_mac(ws.get("mac_address", ""))
+
+        best_match = None
+        best_score = 0
+        matching_fields = []
+
+        # Try hostname match
+        if ws_hostname in rmm_by_hostname:
+            for rmm in rmm_by_hostname[ws_hostname]:
+                score = 0.35
+                fields = ["hostname"]
+
+                # Check additional fields
+                if ws_ip and rmm.get("ip_address") == ws_ip:
+                    score += 0.30
+                    fields.append("ip_address")
+                if ws_mac and normalize_mac(rmm.get("mac_address", "")) == ws_mac:
+                    score += 0.35
+                    fields.append("mac_address")
+
+                if score > best_score:
+                    best_score = score
+                    best_match = rmm
+                    matching_fields = fields
+
+        # Try IP match if no hostname match
+        if not best_match and ws_ip in rmm_by_ip:
+            for rmm in rmm_by_ip[ws_ip]:
+                score = 0.30
+                fields = ["ip_address"]
+                if ws_mac and normalize_mac(rmm.get("mac_address", "")) == ws_mac:
+                    score += 0.35
+                    fields.append("mac_address")
+                if score > best_score:
+                    best_score = score
+                    best_match = rmm
+                    matching_fields = fields
+
+        # Try MAC match if no other match
+        if not best_match and ws_mac in rmm_by_mac:
+            for rmm in rmm_by_mac[ws_mac]:
+                best_score = 0.35
+                best_match = rmm
+                matching_fields = ["mac_address"]
+
+        # Determine confidence
+        if best_score >= 0.90:
+            confidence = "exact"
+        elif best_score >= 0.60:
+            confidence = "high"
+        elif best_score >= 0.35:
+            confidence = "medium"
+        elif best_score >= 0.15:
+            confidence = "low"
+        else:
+            confidence = "no_match"
+
+        matches.append({
+            "our_hostname": ws.get("hostname", ""),
+            "rmm_device": best_match,
+            "confidence": confidence,
+            "confidence_score": best_score,
+            "matching_fields": matching_fields,
+        })
+
+        if best_match:
+            rmm_id = best_match.get("device_id") or best_match.get("hostname", "")
+            matched_rmm_ids.add(rmm_id)
+
+    # Find gaps
+    gaps = []
+
+    # Our devices not in RMM
+    for match in matches:
+        if match["confidence"] == "no_match":
+            gaps.append({
+                "gap_type": "missing_from_rmm",
+                "device": {"hostname": match["our_hostname"]},
+                "recommendation": f"Add {match['our_hostname']} to RMM or verify exclusion",
+                "severity": "medium",
+            })
+
+    # RMM devices not in our data
+    for rmm in rmm_devices:
+        rmm_id = rmm.get("device_id") or rmm.get("hostname", "")
+        if rmm_id not in matched_rmm_ids:
+            gaps.append({
+                "gap_type": "missing_from_ad",
+                "device": rmm,
+                "recommendation": f"Device {rmm.get('hostname', 'unknown')} in RMM but not in AD",
+                "severity": "medium",
+            })
+
+    # Calculate metrics
+    matched_count = sum(1 for m in matches if m["confidence"] != "no_match")
+    exact_count = sum(1 for m in matches if m["confidence"] == "exact")
+    coverage_rate = (matched_count / len(workstations) * 100) if workstations else 0
+
+    return {
+        "summary": {
+            "our_device_count": len(workstations),
+            "rmm_device_count": len(rmm_devices),
+            "matched_count": matched_count,
+            "exact_match_count": exact_count,
+            "coverage_rate": round(coverage_rate, 1),
+        },
+        "matches": matches,
+        "gaps": gaps,
+        "metadata": {
+            "provider": provider,
+            "comparison_timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    }
