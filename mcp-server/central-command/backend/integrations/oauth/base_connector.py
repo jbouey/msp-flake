@@ -29,7 +29,7 @@ import secrets
 import logging
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from urllib.parse import urlencode, parse_qs, urlparse
@@ -104,7 +104,7 @@ class TokenResponse:
 
     def __post_init__(self):
         if not self.expires_at and self.expires_in:
-            self.expires_at = datetime.utcnow() + timedelta(seconds=self.expires_in)
+            self.expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.expires_in)
 
 
 @dataclass
@@ -546,7 +546,7 @@ class BaseOAuthConnector(ABC):
             expires_at = datetime.fromisoformat(expires_at_str)
             buffer = timedelta(seconds=TOKEN_REFRESH_BUFFER_SECONDS)
 
-            if datetime.utcnow() + buffer >= expires_at:
+            if datetime.now(timezone.utc) + buffer >= expires_at:
                 logger.debug(
                     f"Token expiring soon, refreshing: provider={self.PROVIDER} "
                     f"integration={self.integration_id}"
