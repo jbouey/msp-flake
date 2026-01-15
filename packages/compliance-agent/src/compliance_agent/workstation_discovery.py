@@ -99,17 +99,16 @@ $result | ConvertTo-Json -Depth 3
 '''
 
     # PowerShell script to check if workstation is online
+    # Note: script_params injects variables with $params_ prefix
     PING_CHECK_SCRIPT = '''
-param([string]$Hostname)
-$result = Test-Connection -ComputerName $Hostname -Count 1 -Quiet -ErrorAction SilentlyContinue
+$result = Test-Connection -ComputerName $params_Hostname -Count 1 -Quiet -ErrorAction SilentlyContinue
 @{ online = $result } | ConvertTo-Json
 '''
 
     # PowerShell script for WMI connectivity check
     WMI_CHECK_SCRIPT = '''
-param([string]$Hostname)
 try {
-    $wmi = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $Hostname -ErrorAction Stop
+    $wmi = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $params_Hostname -ErrorAction Stop
     @{
         online = $true
         model = $wmi.Model
@@ -121,10 +120,10 @@ try {
 '''
 
     # PowerShell script for WinRM port check (more reliable when ICMP is disabled)
-    # Note: $Hostname is injected by script_params before execution
+    # Note: script_params injects variables with $params_ prefix (e.g., $params_Hostname)
     WINRM_CHECK_SCRIPT = '''
 try {
-    $test = Test-NetConnection -ComputerName $Hostname -Port 5985 -WarningAction SilentlyContinue
+    $test = Test-NetConnection -ComputerName $params_Hostname -Port 5985 -WarningAction SilentlyContinue
     @{
         online = $test.TcpTestSucceeded
         error = if (-not $test.TcpTestSucceeded) { "WinRM port 5985 not accessible" } else { $null }
