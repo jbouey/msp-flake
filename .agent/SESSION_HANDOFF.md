@@ -1,9 +1,46 @@
 # Session Handoff - 2026-01-15
 
-**Session:** 39 - $params_Hostname Bug Fix + ISO v33 Deployment
+**Session:** 40 - Go Agent Implementation
 **Agent Version:** v1.0.34
 **ISO Version:** v33 (deployed)
 **Last Updated:** 2026-01-15
+
+---
+
+## Session 40 Accomplishments
+
+### 1. Go Agent for Workstation-Scale Compliance
+Implemented Go agent that pushes drift events to appliance via gRPC, solving the scalability problem of polling 25-50 workstations per site via WinRM.
+
+**Architecture:**
+```
+Windows Workstation          NixOS Appliance
+┌─────────────────┐         ┌─────────────────────┐
+│  Go Agent       │ gRPC    │  Python Agent       │
+│  - 6 checks     │────────►│  - gRPC Server      │
+│  - SQLite queue │ :50051  │  - Sensor API :8080 │
+│  - RMM detect   │         │  - Three-tier heal  │
+└─────────────────┘         └─────────────────────┘
+```
+
+**Files Created:**
+- `agent/` - Complete Go agent implementation (14 Go files)
+- `agent/proto/compliance.proto` - gRPC protocol definitions
+- `agent/flake.nix` - Nix cross-compilation for Windows
+- `packages/compliance-agent/src/compliance_agent/grpc_server.py` - Python gRPC server
+- `packages/compliance-agent/tests/test_grpc_server.py` - 12 tests
+
+### 2. Appliance Agent gRPC Integration
+**File Modified:** `packages/compliance-agent/src/compliance_agent/appliance_agent.py`
+- Import grpc_server module
+- Add gRPC server config (grpc_enabled, grpc_port=50051)
+- Start/stop gRPC server alongside sensor API
+
+### 3. Git Commits
+- `8422638` - feat: Add Go agent for workstation-scale compliance monitoring
+- `37b018c` - feat: Integrate gRPC server into appliance agent for Go agent support
+
+### 4. Tests: 786 passed, 11 skipped
 
 ---
 
