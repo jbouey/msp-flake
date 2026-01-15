@@ -90,6 +90,41 @@ Windows Workstation          NixOS Appliance
 - `e8ab5c7` - fix: Update Go module dependencies to valid versions
 - `8d4e621` - chore: Add go.sum with verified dependency hashes
 
+### 10. Central Command Frontend Dashboard
+**Status:** COMPLETE
+**Files Created:**
+- `mcp-server/central-command/frontend/src/types/index.ts` - Go agent types
+- `mcp-server/central-command/frontend/src/utils/api.ts` - goAgentsApi
+- `mcp-server/central-command/frontend/src/hooks/useFleet.ts` - Go agent hooks
+- `mcp-server/central-command/frontend/src/pages/SiteGoAgents.tsx` - Go agents dashboard page
+- `mcp-server/central-command/frontend/src/App.tsx` - Route /sites/:siteId/agents
+- `mcp-server/central-command/frontend/src/pages/SiteDetail.tsx` - Go Agents button
+
+**Git Commits:**
+- `c94b100` - feat: Add Go Agent dashboard to frontend
+
+### 11. Central Command Backend API
+**Status:** COMPLETE
+**Files Created:**
+- `mcp-server/central-command/backend/migrations/019_go_agents.sql` - Database schema
+- `mcp-server/central-command/backend/sites.py` - Go agent API endpoints
+
+**Database Schema:**
+- `go_agents` - Connected workstation agents
+- `go_agent_checks` - Check results with HIPAA mapping
+- `site_go_agent_summaries` - Auto-updated site summaries
+- `go_agent_orders` - Command queue for agents
+
+**API Endpoints:**
+- `GET /sites/{site_id}/agents` - List agents with summary
+- `GET /sites/{site_id}/agents/{agent_id}` - Agent detail
+- `PUT /sites/{site_id}/agents/{agent_id}/tier` - Update capability tier
+- `POST /sites/{site_id}/agents/{agent_id}/check` - Trigger check order
+- `DELETE /sites/{site_id}/agents/{agent_id}` - Remove agent
+
+**Git Commits:**
+- `18d2b15` - feat: Add Go Agent backend API and database schema
+
 ---
 
 ## Session 39 (2026-01-15) - $params_Hostname Bug Fix + ISO v33 Deployment

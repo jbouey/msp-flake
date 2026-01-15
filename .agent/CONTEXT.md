@@ -434,7 +434,7 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Entry point:** `compliance-agent-appliance`
 
 ### Go Agent for Workstation Scale (2026-01-15 Session 40)
-- **Status:** Binaries built, gRPC server integrated into appliance
+- **Status:** Complete (Go agent + gRPC server + Frontend + Backend)
 - **Architecture:** Push-based gRPC replaces WinRM polling for workstations
 - **Files Created:**
   - `agent/` - Complete Go agent implementation (14 Go files)
@@ -451,10 +451,21 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - SQLite WAL offline queue for network resilience
   - RMM detection (ConnectWise, Datto, NinjaRMM) with auto-disable
   - Capability tiers: MONITOR_ONLY (0), SELF_HEAL (1), FULL_REMEDIATION (2)
+- **Frontend Dashboard:**
+  - `SiteGoAgents.tsx` - Go agents management page at /sites/:siteId/agents
+  - Go agent types in `types/index.ts`
+  - API client in `utils/api.ts` (goAgentsApi)
+  - React Query hooks in `hooks/useFleet.ts`
+  - Purple "Go Agents" button on SiteDetail.tsx
+- **Backend API:**
+  - `migrations/019_go_agents.sql` - Database schema (4 tables, 2 views, 1 trigger)
+  - `sites.py` - 6 API endpoints for Go agent management
 - **Git Commits:**
   - `8d4e621` - chore: Add go.sum with verified dependency hashes
   - `e8ab5c7` - fix: Update Go module dependencies to valid versions
   - `37b018c` - feat: Integrate gRPC server into appliance agent
+  - `c94b100` - feat: Add Go Agent dashboard to frontend
+  - `18d2b15` - feat: Add Go Agent backend API and database schema
 - **Tests:** 786 passed (up from 778)
 
 ### Agent v1.0.34 Ready (2026-01-15 Session 39)

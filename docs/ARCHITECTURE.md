@@ -1,6 +1,6 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-01-15 (Session 35 - Microsoft Security Integration)
+**Last Updated:** 2026-01-15 (Session 40 - Go Agent Implementation)
 
 ## Overview
 
@@ -245,6 +245,80 @@ Incident Flow:
 │ • Success rate tracking (90%+ required) │
 │ • Continuous improvement                │
 └─────────────────────────────────────────┘
+```
+
+## Go Agent for Workstation-Scale Compliance
+
+Session 40 introduced the Go Agent architecture to solve the WinRM polling scalability problem (25-50+ workstations per site).
+
+### Push-Based Architecture
+
+```
+Windows Workstations          NixOS Appliance            Central Command
+┌─────────────────┐          ┌─────────────────────┐     ┌───────────────┐
+│  Go Agent       │  gRPC    │  Python Agent       │HTTPS│               │
+│  (10MB .exe)    │─────────▶│  - gRPC Server      │────▶│  Dashboard    │
+│                 │  :50051  │  - Sensor API :8080 │     │  API          │
+│  6 WMI Checks:  │          │  - Three-tier heal  │     │               │
+│  - BitLocker    │          └─────────────────────┘     └───────────────┘
+│  - Defender     │
+│  - Firewall     │          Offline Queue:
+│  - Patches      │          SQLite WAL for network
+│  - ScreenLock   │          resilience (queues events
+│  - Services     │          when appliance unreachable)
+│                 │
+│  RMM Detection: │
+│  - ConnectWise  │
+│  - Datto        │
+│  - NinjaRMM     │
+└─────────────────┘
+```
+
+### Capability Tiers (Server-Controlled)
+
+| Tier | Value | Description | Use Case |
+|------|-------|-------------|----------|
+| MONITOR_ONLY | 0 | Reports drift only | MSP-deployed (default) |
+| SELF_HEAL | 1 | Can fix drift locally | Direct clients (opt-in) |
+| FULL_REMEDIATION | 2 | Full automation | Trusted environments |
+
+### Go Agent Files
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Protocol | `agent/proto/compliance.proto` | gRPC service definition |
+| Entry Point | `agent/cmd/osiris-agent/main.go` | Flag parsing, config loading |
+| Checks | `agent/internal/checks/*.go` | 6 compliance checks |
+| Transport | `agent/internal/transport/grpc.go` | gRPC client with mTLS |
+| Offline Queue | `agent/internal/transport/offline.go` | SQLite WAL queue |
+| RMM Detection | `agent/internal/checks/rmm.go` | Detect and report RMM tools |
+
+### Central Command Integration
+
+The frontend provides a Go Agents dashboard at `/sites/:siteId/agents`:
+
+| Feature | Description |
+|---------|-------------|
+| Fleet Summary | Compliance %, active/offline counts, tier distribution |
+| Agent List | Expandable rows with check results |
+| Tier Control | Dropdown to change capability tier |
+| RMM Detection | Shows detected RMM tools per agent |
+| Actions | Run Check, Remove Agent |
+
+### Database Schema
+
+```sql
+-- Go agents table
+go_agents (agent_id, site_id, hostname, capability_tier, status, ...)
+
+-- Check results
+go_agent_checks (agent_id, check_type, status, hipaa_control, ...)
+
+-- Site summaries (auto-updated via trigger)
+site_go_agent_summaries (site_id, total_agents, active_agents, ...)
+
+-- Command queue
+go_agent_orders (order_id, agent_id, order_type, status, ...)
 ```
 
 ## Client Flake Configuration
