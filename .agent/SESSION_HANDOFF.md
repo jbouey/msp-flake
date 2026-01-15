@@ -189,6 +189,16 @@ ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
 | `packages/compliance-agent/src/compliance_agent/grpc_server.py` | Python gRPC server |
 | `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | gRPC server integration |
 | `packages/compliance-agent/tests/test_grpc_server.py` | 12 gRPC tests |
+| **Frontend** | |
+| `mcp-server/.../frontend/src/types/index.ts` | Go agent types and mappings |
+| `mcp-server/.../frontend/src/utils/api.ts` | goAgentsApi with CRUD endpoints |
+| `mcp-server/.../frontend/src/hooks/useFleet.ts` | Go agent hooks |
+| `mcp-server/.../frontend/src/pages/SiteGoAgents.tsx` | **NEW** Go agents dashboard page |
+| `mcp-server/.../frontend/src/pages/SiteDetail.tsx` | Added "Go Agents" button |
+| `mcp-server/.../frontend/src/App.tsx` | Route /sites/:siteId/agents |
+| **Backend** | |
+| `mcp-server/.../backend/migrations/019_go_agents.sql` | **NEW** Go agents database schema |
+| `mcp-server/.../backend/sites.py` | Go agents API endpoints |
 
 ### Session 39 ($params_Hostname Bug Fix)
 | File | Change |
