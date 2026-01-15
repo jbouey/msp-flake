@@ -769,4 +769,76 @@ export const workstationsApi = {
     }),
 };
 
+// =============================================================================
+// RMM COMPARISON API
+// =============================================================================
+
+export interface RMMDevice {
+  hostname: string;
+  device_id?: string;
+  ip_address?: string;
+  mac_address?: string;
+  os_name?: string;
+  serial_number?: string;
+}
+
+export interface RMMCompareRequest {
+  provider: 'connectwise' | 'datto' | 'ninja' | 'syncro' | 'manual';
+  devices: RMMDevice[];
+}
+
+export interface RMMMatch {
+  our_hostname: string;
+  rmm_device: RMMDevice | null;
+  confidence: 'exact' | 'high' | 'medium' | 'low' | 'no_match';
+  confidence_score: number;
+  matching_fields: string[];
+}
+
+export interface RMMGap {
+  gap_type: 'missing_from_rmm' | 'missing_from_ad' | 'stale_rmm' | 'stale_ad';
+  device: Record<string, unknown>;
+  recommendation: string;
+  severity: 'high' | 'medium' | 'low';
+}
+
+export interface RMMComparisonReport {
+  summary: {
+    our_device_count: number;
+    rmm_device_count: number;
+    matched_count: number;
+    exact_match_count: number;
+    coverage_rate: number;
+  };
+  matches: RMMMatch[];
+  gaps: RMMGap[];
+  metadata: {
+    provider: string;
+    comparison_timestamp: string;
+  };
+}
+
+export interface RMMComparisonResponse {
+  site_id: string;
+  provider: string;
+  summary: RMMComparisonReport['summary'];
+  report: RMMComparisonReport;
+  created_at: string | null;
+  error?: string;
+  message?: string;
+}
+
+export const rmmComparisonApi = {
+  // Get the latest RMM comparison report for a site
+  getReport: (siteId: string) =>
+    fetchSitesApi<RMMComparisonResponse>(`/sites/${siteId}/workstations/rmm-compare`),
+
+  // Upload RMM data and compare with workstations
+  compare: (siteId: string, data: RMMCompareRequest) =>
+    fetchSitesApi<RMMComparisonReport>(`/sites/${siteId}/workstations/rmm-compare`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+};
+
 export { ApiError };

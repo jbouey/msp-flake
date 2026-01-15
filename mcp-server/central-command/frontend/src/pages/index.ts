@@ -14,3 +14,4 @@ export { Notifications } from './Notifications';
 export { NotificationSettings } from './NotificationSettings';
 export { Incidents } from './Incidents';
 export { SiteWorkstations } from './SiteWorkstations';
+export { RMMComparison } from './RMMComparison';
