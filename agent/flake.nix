@@ -38,7 +38,7 @@
           meta = with pkgs.lib; {
             description = "OsirisCare Windows workstation compliance agent";
             homepage = "https://github.com/osiriscare/agent";
-            license = licenses.proprietary;
+            license = licenses.unfree;
             maintainers = [ ];
           };
         };
