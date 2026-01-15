@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-14 (Session 32 - Network Compliance + Extended Check Types)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.30, ISO v29, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab 2x Daily, **Network Compliance Check**, **Extended Check Types**, **Pattern Reporting Deployed**, 656 tests)
+**Last Updated:** 2026-01-15 (Session 35 - Microsoft Security Integration + Delete Button UX)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.32, ISO v32, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, **Microsoft Security Integration**, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, 754 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -643,9 +643,28 @@ Required fields per CLAUDE.md:
 - Cron schedule: 6 AM + **2 PM** execution, 12 PM checkpoint, 6 PM report (2x daily)
 - Located at: iMac gateway ~/chaos-lab/
 
+**Session 35 (Microsoft Security Integration + Delete Button UX):**
+- Microsoft Security Integration (Phase 3) fully implemented
+  - Backend: `integrations/oauth/microsoft_graph.py` (893 lines)
+  - Defender alerts, Intune devices, Secure Score, Azure AD devices
+  - HIPAA control mappings for all resource types
+  - OAuth scopes: SecurityEvents, DeviceManagement, Device, SecurityActions
+- VPS Deployment Fixes:
+  - Added `microsoft_security` to database `valid_provider` constraint
+  - Fixed OAuth redirect URI to force HTTPS
+  - Fixed Caddy routing for `/api/*` through dashboard domain
+  - Created public router for OAuth callback (no auth for browser redirects)
+  - Created `/opt/mcp-server/deploy.sh` deployment script
+  - Created `.agent/VPS_DEPLOYMENT.md` documentation
+- Frontend Fixes:
+  - Cloud Integrations button added to Site Detail page
+  - Delete button UX fix with loading state and error handling
+  - Frontend bundle: `index-RfjBtVfK.js`
+- Commits: `7b3c85f` - fix: Improve delete button UX with loading state
+
 **Next Steps:**
-1. Build ISO v30 with network check_type fix
-2. Deploy ISO v30 to VM appliance (192.168.88.247)
+1. User to configure Azure App Registration with correct redirect URI and client secret
+2. Build ISO v32 with workstation compliance
 3. Run chaos lab cycle and verify extended check type labels
 4. Monitor patterns flowing to Learning dashboard
 5. Evidence bundles uploading to MinIO verification
