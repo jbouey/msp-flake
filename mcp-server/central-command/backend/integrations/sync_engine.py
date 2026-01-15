@@ -281,6 +281,12 @@ class SyncEngine:
                 site_id=str(integration_row.site_id),
                 credentials=credentials
             )
+        elif provider == "microsoft_security":
+            resources = await self._sync_microsoft_security(
+                integration_id=integration_id,
+                site_id=str(integration_row.site_id),
+                credentials=credentials
+            )
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -487,6 +493,54 @@ class SyncEngine:
         state_manager = OAuthStateManager(redis_client)
 
         connector = AzureADConnector(
+            integration_id=integration_id,
+            site_id=site_id,
+            config=config,
+            credential_vault=self.vault,
+            state_manager=state_manager,
+            audit_logger=self.audit,
+            tenant_id=credentials.get("tenant_id")
+        )
+
+        # Load tokens
+        await connector.load_encrypted_tokens(
+            await self.vault.encrypt_credentials(integration_id, {
+                "access_token": credentials.get("access_token"),
+                "refresh_token": credentials.get("refresh_token"),
+                "expires_at": credentials.get("token_expires_at")
+            })
+        )
+
+        resources = await connector.collect_resources()
+        return [self._resource_to_dict(r) for r in resources]
+
+    async def _sync_microsoft_security(
+        self,
+        integration_id: str,
+        site_id: str,
+        credentials: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Sync Microsoft Security (Defender + Intune) resources."""
+        from .oauth.microsoft_graph import MicrosoftGraphConnector
+        from .oauth.base_connector import OAuthConfig
+        from .oauth_state import OAuthStateManager
+
+        try:
+            from main import redis_client
+        except ImportError:
+            import sys
+            redis_client = sys.modules.get('server', {}).redis_client
+
+        config = OAuthConfig(
+            client_id=credentials.get("client_id"),
+            client_secret=SecureCredentials({"client_secret": credentials.get("client_secret")}),
+            redirect_uri="",
+            scopes=[]
+        )
+
+        state_manager = OAuthStateManager(redis_client)
+
+        connector = MicrosoftGraphConnector(
             integration_id=integration_id,
             site_id=site_id,
             config=config,

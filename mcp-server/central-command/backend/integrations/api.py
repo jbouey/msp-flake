@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 class IntegrationCreate(BaseModel):
     """Request to create a new integration."""
-    provider: str = Field(..., description="Provider type: aws, google_workspace, okta, azure_ad")
+    provider: str = Field(..., description="Provider type: aws, google_workspace, okta, azure_ad, microsoft_security")
     name: str = Field(..., min_length=1, max_length=255, description="Integration name")
     # AWS-specific fields
     aws_role_arn: Optional[str] = Field(None, description="AWS IAM role ARN for assume role")
@@ -53,7 +53,7 @@ class IntegrationCreate(BaseModel):
     # OAuth-specific fields
     oauth_client_id: Optional[str] = Field(None, description="OAuth client ID")
     oauth_client_secret: Optional[str] = Field(None, description="OAuth client secret")
-    oauth_tenant_id: Optional[str] = Field(None, description="Azure AD tenant ID")
+    oauth_tenant_id: Optional[str] = Field(None, description="Azure AD tenant ID (for azure_ad and microsoft_security)")
     okta_domain: Optional[str] = Field(None, description="Okta organization domain")
     google_customer_id: Optional[str] = Field(None, description="Google Workspace customer ID")
 
@@ -368,7 +368,7 @@ async def create_integration(
         raise HTTPException(status_code=404, detail="Site not found")
 
     # Validate provider
-    valid_providers = ["aws", "google_workspace", "okta", "azure_ad"]
+    valid_providers = ["aws", "google_workspace", "okta", "azure_ad", "microsoft_security"]
     if integration.provider not in valid_providers:
         raise HTTPException(
             status_code=400,
@@ -524,7 +524,7 @@ async def _initiate_oauth_flow(
         )
 
     # Provider-specific validation
-    if integration.provider == "azure_ad" and not integration.oauth_tenant_id:
+    if integration.provider in ("azure_ad", "microsoft_security") and not integration.oauth_tenant_id:
         raise HTTPException(
             status_code=400,
             detail="oauth_tenant_id is required for Azure AD"
@@ -652,6 +652,31 @@ def _build_auth_url(
             "https://graph.microsoft.com/User.Read.All",
             "https://graph.microsoft.com/Group.Read.All",
             "https://graph.microsoft.com/Policy.Read.All",
+            "offline_access",
+        ]
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": " ".join(scopes),
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+
+    elif provider == "microsoft_security":
+        # Microsoft Security: Defender + Intune (requires additional scopes)
+        base = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
+        scopes = [
+            # Azure AD basics
+            "https://graph.microsoft.com/User.Read.All",
+            "https://graph.microsoft.com/Device.Read.All",
+            # Defender for Endpoint
+            "https://graph.microsoft.com/SecurityEvents.Read.All",
+            "https://graph.microsoft.com/SecurityActions.Read.All",
+            # Intune device management
+            "https://graph.microsoft.com/DeviceManagementManagedDevices.Read.All",
+            "https://graph.microsoft.com/DeviceManagementConfiguration.Read.All",
             "offline_access",
         ]
         params = {
@@ -829,7 +854,7 @@ async def _exchange_oauth_code(
 
     if provider == "google_workspace":
         token_url = "https://oauth2.googleapis.com/token"
-    elif provider == "azure_ad":
+    elif provider in ("azure_ad", "microsoft_security"):
         token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     elif provider == "okta":
         token_url = f"https://{okta_domain}/oauth2/v1/token"

@@ -5,6 +5,7 @@ Provides secure OAuth 2.0 + PKCE connectors for:
 - Google Workspace
 - Okta
 - Azure AD (Microsoft Entra ID)
+- Microsoft Security (Defender + Intune)
 
 Security:
 - PKCE (Proof Key for Code Exchange) for all flows
@@ -17,10 +18,12 @@ from .base_connector import BaseOAuthConnector
 from .google_connector import GoogleWorkspaceConnector
 from .okta_connector import OktaConnector
 from .azure_connector import AzureADConnector
+from .microsoft_graph import MicrosoftGraphConnector
 
 __all__ = [
     "BaseOAuthConnector",
     "GoogleWorkspaceConnector",
     "OktaConnector",
     "AzureADConnector",
+    "MicrosoftGraphConnector",
 ]
