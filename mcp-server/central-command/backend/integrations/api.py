@@ -921,6 +921,83 @@ async def _exchange_oauth_code(
     }
 
 
+# =============================================================================
+# HEALTH ENDPOINTS (MUST come before /{integration_id} routes)
+# =============================================================================
+
+@router.get("/sites/{site_id}/health")
+async def get_integrations_health(
+    site_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+) -> Dict[str, Any]:
+    """Get aggregated health status for all integrations in a site."""
+    # Verify site access
+    has_access = await TenantIsolation.verify_site_access(
+        db=db,
+        user_id=user.get("id"),
+        user_role=user.get("role", "readonly"),
+        site_id=site_id,
+        partner_id=user.get("partner_id")
+    )
+
+    if not has_access:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    result = await db.execute(
+        text("""
+            SELECT * FROM v_integration_health
+            WHERE site_id = :site_id
+        """),
+        {"site_id": site_id}
+    )
+    rows = result.fetchall()
+
+    integrations = []
+    total_critical = 0
+    total_high = 0
+
+    for row in rows:
+        status = "healthy"
+        if row.critical_count > 0:
+            status = "critical"
+        elif row.high_count > 0:
+            status = "warning"
+
+        total_critical += row.critical_count or 0
+        total_high += row.high_count or 0
+
+        integrations.append({
+            "integration_id": str(row.integration_id),
+            "provider": row.provider,
+            "status": row.status,
+            "health": status,
+            "critical_count": row.critical_count,
+            "high_count": row.high_count,
+            "last_sync": row.last_sync_at,
+            "resource_count": row.resource_count
+        })
+
+    overall_status = "healthy"
+    if total_critical > 0:
+        overall_status = "critical"
+    elif total_high > 0:
+        overall_status = "warning"
+
+    return {
+        "site_id": site_id,
+        "overall_status": overall_status,
+        "total_integrations": len(integrations),
+        "total_critical": total_critical,
+        "total_high": total_high,
+        "integrations": integrations
+    }
+
+
+# =============================================================================
+# INTEGRATION DETAIL ENDPOINTS (after /health to avoid route conflict)
+# =============================================================================
+
 @router.get("/sites/{site_id}/{integration_id}")
 async def get_integration(
     site_id: str,
@@ -1262,79 +1339,6 @@ async def get_sync_status(
         "completed_at": row.completed_at,
         "resources_synced": row.resources_found,
         "error_message": row.error_message
-    }
-
-
-# =============================================================================
-# HEALTH ENDPOINTS
-# =============================================================================
-
-@router.get("/sites/{site_id}/health")
-async def get_integrations_health(
-    site_id: str,
-    db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_auth),
-) -> Dict[str, Any]:
-    """Get aggregated health status for all integrations in a site."""
-    # Verify site access
-    has_access = await TenantIsolation.verify_site_access(
-        db=db,
-        user_id=user.get("id"),
-        user_role=user.get("role", "readonly"),
-        site_id=site_id,
-        partner_id=user.get("partner_id")
-    )
-
-    if not has_access:
-        raise HTTPException(status_code=404, detail="Site not found")
-
-    result = await db.execute(
-        text("""
-            SELECT * FROM v_integration_health
-            WHERE site_id = :site_id
-        """),
-        {"site_id": site_id}
-    )
-    rows = result.fetchall()
-
-    integrations = []
-    total_critical = 0
-    total_high = 0
-
-    for row in rows:
-        status = "healthy"
-        if row.critical_count > 0:
-            status = "critical"
-        elif row.high_count > 0:
-            status = "warning"
-
-        total_critical += row.critical_count or 0
-        total_high += row.high_count or 0
-
-        integrations.append({
-            "integration_id": str(row.integration_id),
-            "provider": row.provider,
-            "status": row.status,
-            "health": status,
-            "critical_count": row.critical_count,
-            "high_count": row.high_count,
-            "last_sync": row.last_sync_at,
-            "resource_count": row.resource_count
-        })
-
-    overall_status = "healthy"
-    if total_critical > 0:
-        overall_status = "critical"
-    elif total_high > 0:
-        overall_status = "warning"
-
-    return {
-        "site_id": site_id,
-        "overall_status": overall_status,
-        "total_integrations": len(integrations),
-        "total_critical": total_critical,
-        "total_high": total_high,
-        "integrations": integrations
     }
 
 
