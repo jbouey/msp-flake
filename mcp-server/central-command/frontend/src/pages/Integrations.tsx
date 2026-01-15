@@ -45,9 +45,13 @@ function ProviderIcon({ provider, size = 24 }: { provider: IntegrationProvider; 
 function StatusBadge({ status }: { status: string }) {
   const statusConfig: Record<string, { label: string; color: string; bgColor: string }> = {
     active: { label: 'Active', color: '#16A34A', bgColor: '#DCFCE7' },
+    connected: { label: 'Connected', color: '#16A34A', bgColor: '#DCFCE7' },
     pending_oauth: { label: 'Pending OAuth', color: '#CA8A04', bgColor: '#FEF3C7' },
+    configuring: { label: 'Configuring', color: '#CA8A04', bgColor: '#FEF3C7' },
+    pending: { label: 'Pending', color: '#6B7280', bgColor: '#F3F4F6' },
     error: { label: 'Error', color: '#DC2626', bgColor: '#FEE2E2' },
     paused: { label: 'Paused', color: '#6B7280', bgColor: '#F3F4F6' },
+    disabled: { label: 'Disabled', color: '#6B7280', bgColor: '#F3F4F6' },
     disconnected: { label: 'Disconnected', color: '#9CA3AF', bgColor: '#F3F4F6' },
   };
 
