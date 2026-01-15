@@ -1,7 +1,84 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-15 (Session 39 - $params_Hostname Bug Fix)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, **$params_Hostname Fix**)
+**Last Updated:** 2026-01-15 (Session 40 - Go Agent Implementation)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, **Go Agent Implementation**)
+
+---
+
+## Session 40 (2026-01-15) - Go Agent Implementation
+
+### 1. Go Agent for Workstation-Scale Compliance
+**Status:** COMPLETE
+**Details:** Implemented Go agent that pushes drift events to appliance via gRPC, solving the scalability problem of polling 25-50 workstations per site via WinRM.
+
+**Files Created:**
+- `agent/proto/compliance.proto` - gRPC protocol definitions
+- `agent/cmd/osiris-agent/main.go` - Entry point with flag parsing
+- `agent/internal/config/config.go` - JSON configuration loader
+- `agent/internal/checks/checks.go` - Check interface and registry
+- `agent/internal/checks/bitlocker.go` - BitLocker check (§164.312(a)(2)(iv))
+- `agent/internal/checks/defender.go` - Windows Defender check (§164.308(a)(5)(ii)(B))
+- `agent/internal/checks/firewall.go` - Windows Firewall check (§164.312(e)(1))
+- `agent/internal/checks/patches.go` - Patch status check (§164.308(a)(1)(ii)(B))
+- `agent/internal/checks/screenlock.go` - Screen lock check (§164.312(a)(2)(i))
+- `agent/internal/checks/rmm.go` - RMM detection (strategic intelligence)
+- `agent/internal/transport/grpc.go` - gRPC client with mTLS
+- `agent/internal/transport/offline.go` - SQLite WAL offline queue
+- `agent/internal/wmi/wmi.go` - WMI interface
+- `agent/internal/wmi/wmi_windows.go` - Windows WMI via go-ole
+- `agent/internal/wmi/wmi_other.go` - Stub for non-Windows
+- `agent/flake.nix` - Nix cross-compilation for Windows
+- `agent/Makefile` - Development commands
+- `agent/README.md` - Agent documentation
+
+### 2. Python gRPC Server
+**Status:** COMPLETE
+**Files Created:**
+- `packages/compliance-agent/src/compliance_agent/grpc_server.py` - gRPC server for Go agent communication
+- `packages/compliance-agent/tests/test_grpc_server.py` - 12 tests (8 passed, 4 skipped without grpcio)
+
+### 3. Appliance Agent Integration
+**Status:** COMPLETE
+**File Modified:** `packages/compliance-agent/src/compliance_agent/appliance_agent.py`
+**Changes:**
+- Import grpc_server module
+- Add gRPC server config options (grpc_enabled, grpc_port=50051)
+- Start gRPC server alongside sensor API in agent start()
+- Stop gRPC server gracefully in agent stop()
+- Add _start_grpc_server() method
+
+### 4. Architecture Summary
+```
+Windows Workstation          NixOS Appliance
+┌─────────────────┐         ┌─────────────────────┐
+│  Go Agent       │ gRPC    │  Python Agent       │
+│  - 6 checks     │────────►│  - gRPC Server      │
+│  - SQLite queue │ :50051  │  - Sensor API :8080 │
+│  - RMM detect   │         │  - Three-tier heal  │
+└─────────────────┘         └─────────────────────┘
+```
+
+### 5. Capability Tiers (Server-Controlled)
+| Tier | Value | Description | Use Case |
+|------|-------|-------------|----------|
+| MONITOR_ONLY | 0 | Just reports drift | MSP-deployed (default) |
+| SELF_HEAL | 1 | Can fix drift locally | Direct clients (opt-in) |
+| FULL_REMEDIATION | 2 | Full automation | Trusted environments |
+
+### 6. Git Commits
+- `8422638` - feat: Add Go agent for workstation-scale compliance monitoring
+- `37b018c` - feat: Integrate gRPC server into appliance agent for Go agent support
+
+### 7. Tests
+**Status:** COMPLETE
+```
+786 passed, 11 skipped, 3 warnings
+```
+
+### 8. Nix Build
+**Status:** IN PROGRESS
+- Downloading Go toolchain and dependencies (~189 MB)
+- Target: `nix build .#osiris-agent-windows-amd64`
 
 ---
 
