@@ -38,6 +38,9 @@ export {
   useSiteRunbookConfig,
   useSetSiteRunbook,
   useRunbookCategories,
+  // Workstation hooks
+  useSiteWorkstations,
+  useTriggerWorkstationScan,
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';

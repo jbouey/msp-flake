@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-14 (Session 32 - Network Compliance + Extended Check Types)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.30, ISO v29, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab Automated, **Network Compliance Check**, **Extended Check Types**, **Pattern Reporting Deployed**)
-**Test Status:** 656+ passed (compliance-agent tests), agent v1.0.30, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), L1 JSON Rule Loading from Central Command, **Network compliance check (Drata/Vanta style)**, **8 extended check type labels**, **Chaos Lab 2x daily execution**
+**Last Updated:** 2026-01-14 (Session 33 - Phase 1 Workstation Coverage)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.32, ISO v29, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, **Workstation Compliance**)
+**Test Status:** 754+ passed (compliance-agent tests), agent v1.0.32, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution, **Workstation Compliance (AD discovery + 5 WMI checks)**
 
 ---
 
@@ -335,6 +335,17 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - Enabled healing mode on appliance (healing_dry_run: false)
   - Fixed all chaos lab scripts (winrm_attack.py, winrm_verify.py, append_result.py) for proper argument handling
   - Built ISO v1.0.29 on VPS
+- ✅ **Phase 1 Workstation Coverage** - 2026-01-14 (Session 33)
+  - AD workstation discovery via PowerShell Get-ADComputer
+  - 5 WMI compliance checks: BitLocker, Defender, Patches, Firewall, Screen Lock
+  - HIPAA control mappings for each check
+  - Per-workstation + site-level evidence bundles
+  - Database: workstations, workstation_checks, workstation_evidence, site_workstation_summaries
+  - Agent integration with 2-phase scan (discovery hourly, compliance 10 min)
+  - Frontend: SiteWorkstations.tsx page with summary cards and expandable rows
+  - Backend API: /api/sites/{site_id}/workstations endpoints
+  - 20 new tests (754 total, up from 656)
+  - Agent v1.0.32
 
 ### What's Pending
 - ✅ Built ISO v10 with MAC detection fix (1.1GB, on Hetzner VPS)

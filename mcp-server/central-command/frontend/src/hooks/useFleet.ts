@@ -3,8 +3,8 @@
  */
 
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi } from '../utils/api';
-import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi } from '../utils/api';
+import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse } from '../utils/api';
 import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary } from '../types';
 
 // Polling interval in milliseconds (60 seconds - reduced from 30s to prevent flickering)
@@ -533,6 +533,37 @@ export function useSetSiteRunbook() {
       runbookConfigApi.setSiteRunbook(siteId, runbookId, enabled),
     onSuccess: (_, { siteId }) => {
       queryClient.invalidateQueries({ queryKey: ['siteRunbooks', siteId] });
+    },
+  });
+}
+
+// =============================================================================
+// WORKSTATION HOOKS (Site workstation compliance monitoring)
+// =============================================================================
+
+/**
+ * Hook for fetching workstations for a site with summary
+ */
+export function useSiteWorkstations(siteId: string | null) {
+  return useQuery<SiteWorkstationsResponse>({
+    queryKey: ['workstations', siteId],
+    queryFn: () => workstationsApi.getSiteWorkstations(siteId!),
+    enabled: !!siteId,
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for triggering a workstation scan
+ */
+export function useTriggerWorkstationScan() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (siteId: string) => workstationsApi.triggerScan(siteId),
+    onSuccess: (_, siteId) => {
+      queryClient.invalidateQueries({ queryKey: ['workstations', siteId] });
     },
   });
 }

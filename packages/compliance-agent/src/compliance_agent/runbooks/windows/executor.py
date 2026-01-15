@@ -309,6 +309,110 @@ class WindowsExecutor:
 
         return output
 
+    async def run_script(
+        self,
+        target: str,
+        script: str,
+        credentials: Optional[Dict[str, str]] = None,
+        script_params: Optional[Dict[str, str]] = None,
+        timeout_seconds: int = 30,
+    ) -> ExecutionResult:
+        """
+        Execute arbitrary PowerShell script on target.
+
+        Used by workstation discovery and compliance checks.
+
+        Args:
+            target: Hostname or IP of target
+            script: PowerShell script to execute
+            credentials: Dict with username/password (optional if target registered)
+            script_params: Parameters to pass to script (as PowerShell $params)
+            timeout_seconds: Execution timeout
+
+        Returns:
+            ExecutionResult with output and status
+        """
+        import asyncio
+        from functools import partial
+
+        start = datetime.now(timezone.utc)
+
+        # Build or find target
+        if target in self.targets:
+            ws_target = self.targets[target]
+        elif credentials:
+            ws_target = WindowsTarget(
+                hostname=target,
+                username=credentials.get("username", ""),
+                password=credentials.get("password", ""),
+                port=credentials.get("port", 5985),
+                use_ssl=credentials.get("use_ssl", False),
+                transport=credentials.get("transport", "ntlm"),
+            )
+        else:
+            return ExecutionResult(
+                success=False,
+                runbook_id="script",
+                target=target,
+                phase="execute",
+                output={},
+                duration_seconds=0,
+                error=f"Target not found and no credentials provided: {target}",
+            )
+
+        # Prepend script parameters if provided
+        if script_params:
+            param_block = "\n".join(
+                f'$params_{k} = "{v}"' for k, v in script_params.items()
+            )
+            script = f"{param_block}\n{script}"
+
+        try:
+            loop = asyncio.get_event_loop()
+            output = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    partial(self._execute_sync, ws_target, script)
+                ),
+                timeout=timeout_seconds
+            )
+
+            duration = (datetime.now(timezone.utc) - start).total_seconds()
+
+            return ExecutionResult(
+                success=output.get("success", False),
+                runbook_id="script",
+                target=target,
+                phase="execute",
+                output={"stdout": output.get("std_out", ""), "parsed": output.get("parsed")},
+                duration_seconds=duration,
+                error=output.get("std_err") if not output.get("success") else None,
+            )
+
+        except asyncio.TimeoutError:
+            duration = (datetime.now(timezone.utc) - start).total_seconds()
+            return ExecutionResult(
+                success=False,
+                runbook_id="script",
+                target=target,
+                phase="execute",
+                output={},
+                duration_seconds=duration,
+                error=f"Script execution timed out after {timeout_seconds}s",
+            )
+
+        except Exception as e:
+            duration = (datetime.now(timezone.utc) - start).total_seconds()
+            return ExecutionResult(
+                success=False,
+                runbook_id="script",
+                target=target,
+                phase="execute",
+                output={},
+                duration_seconds=duration,
+                error=str(e),
+            )
+
     async def run_runbook(
         self,
         target: WindowsTarget,

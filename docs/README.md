@@ -1,7 +1,7 @@
 # MSP HIPAA Compliance Platform - Documentation Index
 
-**Last Updated:** 2026-01-14 (Session 31)
-**Platform Version:** Phase 12 (Agent v1.0.29, ISO v29, 43 Runbooks, OTS Blockchain Anchoring, Linux+Windows Support, Partner L3 Escalations, RBAC User Management, Multi-Framework Compliance, Cloud Integrations, **L1 JSON Rule Loading**, **Chaos Lab Automated Testing**)
+**Last Updated:** 2026-01-14 (Session 33)
+**Platform Version:** Phase 12 (Agent v1.0.32, ISO v29, 43 Runbooks, OTS Blockchain Anchoring, Linux+Windows Support, Partner L3 Escalations, RBAC User Management, Multi-Framework Compliance, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab Automated Testing, **Workstation Compliance**)
 
 ---
 
@@ -63,8 +63,11 @@
 | L1 Legacy Action Mapping | ✅ Complete | restore_firewall_baseline → RB-WIN-SEC-001 (Session 30) |
 | L1 JSON Rule Loading | ✅ Complete | Synced rules from Central Command (Session 31) |
 | Chaos Lab Scripts | ✅ Complete | winrm_attack, winrm_verify, append_result fixed (Session 31) |
-| Physical Appliance | ✅ Running v1.0.28 | User handling v29 update |
-| VM Appliance | 🟡 Pending v29 | ISO ready for deployment |
+| Network Compliance Check | ✅ Complete | Drata/Vanta-style network posture (Session 32) |
+| Extended Check Types | ✅ Complete | 8 new check type labels (Session 32) |
+| **Workstation Compliance** | ✅ Complete | AD discovery + 5 WMI checks (Session 33) |
+| Physical Appliance | ✅ Running v1.0.28 | Pending v32 update |
+| VM Appliance | 🟡 Pending v32 | ISO ready for deployment |
 
 ### Phase 11: Partner/Reseller Infrastructure (Complete)
 

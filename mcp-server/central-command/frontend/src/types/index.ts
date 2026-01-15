@@ -16,7 +16,9 @@ export type CheckType =
   | 'patching' | 'antivirus' | 'backup' | 'logging' | 'firewall' | 'encryption' | 'network'
   // Extended monitoring checks
   | 'ntp_sync' | 'certificate_expiry' | 'database_corruption' | 'memory_pressure'
-  | 'windows_defender' | 'disk_space' | 'service_health' | 'prohibited_port';
+  | 'windows_defender' | 'disk_space' | 'service_health' | 'prohibited_port'
+  // Workstation checks
+  | 'workstation' | 'bitlocker' | 'defender' | 'patches' | 'screen_lock';
 export type CheckinStatus = 'pending' | 'connected' | 'failed';
 
 export type OnboardingStage =
@@ -429,4 +431,67 @@ export const FRAMEWORK_COLORS: Record<ComplianceFramework, string> = {
   pci_dss: 'green',
   nist_csf: 'orange',
   cis: 'teal',
+};
+
+// =============================================================================
+// WORKSTATION MODELS
+// =============================================================================
+
+export type WorkstationComplianceStatus = 'compliant' | 'drifted' | 'error' | 'unknown' | 'offline';
+
+export interface WorkstationCheckResult {
+  check_type: 'bitlocker' | 'defender' | 'patches' | 'firewall' | 'screen_lock';
+  status: WorkstationComplianceStatus;
+  compliant: boolean;
+  details: Record<string, unknown>;
+  hipaa_controls: string[];
+  checked_at: string;
+}
+
+export interface Workstation {
+  id: string;
+  hostname: string;
+  ip_address?: string;
+  os_name?: string;
+  os_version?: string;
+  online: boolean;
+  last_seen?: string;
+  compliance_status: WorkstationComplianceStatus;
+  last_compliance_check?: string;
+  compliance_percentage: number;
+  checks?: Record<string, WorkstationCheckResult>;
+}
+
+export interface SiteWorkstationSummary {
+  site_id: string;
+  total_workstations: number;
+  online_workstations: number;
+  compliant_workstations: number;
+  drifted_workstations: number;
+  error_workstations: number;
+  unknown_workstations: number;
+  overall_compliance_rate: number;
+  check_compliance: Record<string, {
+    compliant: number;
+    drifted: number;
+    error: number;
+    rate: number;
+  }>;
+  last_scan?: string;
+}
+
+export const WORKSTATION_CHECK_LABELS: Record<string, string> = {
+  bitlocker: 'BitLocker',
+  defender: 'Defender',
+  patches: 'Patches',
+  firewall: 'Firewall',
+  screen_lock: 'Screen Lock',
+};
+
+export const WORKSTATION_CHECK_HIPAA: Record<string, string> = {
+  bitlocker: '§164.312(a)(2)(iv)',
+  defender: '§164.308(a)(5)(ii)(B)',
+  patches: '§164.308(a)(5)(ii)(B)',
+  firewall: '§164.312(a)(1)',
+  screen_lock: '§164.312(a)(2)(iii)',
 };

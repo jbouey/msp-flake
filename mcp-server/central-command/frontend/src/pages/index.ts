@@ -13,3 +13,4 @@ export { Partners } from './Partners';
 export { Notifications } from './Notifications';
 export { NotificationSettings } from './NotificationSettings';
 export { Incidents } from './Incidents';
+export { SiteWorkstations } from './SiteWorkstations';
