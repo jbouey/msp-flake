@@ -35,7 +35,7 @@ function ProviderIcon({ provider, size = 24 }: { provider: IntegrationProvider; 
         className="font-bold text-sm"
         style={{ color: info.color }}
       >
-        {provider === 'aws' ? 'AWS' : provider === 'google_workspace' ? 'G' : provider === 'okta' ? 'O' : 'M'}
+        {provider === 'aws' ? 'AWS' : provider === 'google_workspace' ? 'G' : provider === 'okta' ? 'O' : provider === 'microsoft_security' ? '🛡' : 'M'}
       </span>
     </div>
   );

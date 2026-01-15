@@ -49,7 +49,7 @@ function ProviderCard({
           className="w-10 h-10 rounded-lg flex items-center justify-center font-bold"
           style={{ backgroundColor: info.color + '20', color: info.color }}
         >
-          {provider === 'aws' ? 'AWS' : provider === 'google_workspace' ? 'G' : provider === 'okta' ? 'O' : 'M'}
+          {provider === 'aws' ? 'AWS' : provider === 'google_workspace' ? 'G' : provider === 'okta' ? 'O' : provider === 'microsoft_security' ? '🛡' : 'M'}
         </div>
         <div>
           <h3 className="font-semibold text-white">{info.name}</h3>
@@ -265,7 +265,7 @@ function OAuthCredentialsForm({
         />
       </div>
 
-      {provider === 'azure_ad' && (
+      {(provider === 'azure_ad' || provider === 'microsoft_security') && (
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-1">
             Tenant ID *
@@ -329,6 +329,14 @@ function OAuthCredentialsForm({
               Required permissions: <code className="text-xs bg-gray-800 px-1 rounded">User.Read.All</code>,{' '}
               <code className="text-xs bg-gray-800 px-1 rounded">Group.Read.All</code>,{' '}
               <code className="text-xs bg-gray-800 px-1 rounded">Policy.Read.All</code>
+            </>
+          )}
+          {provider === 'microsoft_security' && (
+            <>
+              Register an application in Azure AD with Microsoft Graph security permissions.
+              Required: <code className="text-xs bg-gray-800 px-1 rounded">SecurityEvents.Read.All</code>,{' '}
+              <code className="text-xs bg-gray-800 px-1 rounded">DeviceManagementManagedDevices.Read.All</code>,{' '}
+              <code className="text-xs bg-gray-800 px-1 rounded">Device.Read.All</code>
             </>
           )}
           {provider === 'okta' && (
@@ -416,7 +424,7 @@ export default function IntegrationSetup() {
       return !!(formValues.aws_role_arn && formValues.aws_external_id);
     }
 
-    if (selectedProvider === 'azure_ad') {
+    if (selectedProvider === 'azure_ad' || selectedProvider === 'microsoft_security') {
       return !!(formValues.oauth_client_id && formValues.oauth_client_secret && formValues.oauth_tenant_id);
     }
 
