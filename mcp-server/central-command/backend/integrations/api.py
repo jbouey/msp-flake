@@ -808,18 +808,16 @@ async def oauth_callback(
 
         encrypted_creds = vault.encrypt_credentials(integration_id, updated_creds)
 
-        # Update integration status
+        # Update integration status (use 'connected' per DB constraint, updated_at set by trigger)
         await db.execute(
             text("""
                 UPDATE integrations
-                SET status = 'active', credentials_encrypted = :creds,
-                    oauth_connected_at = :now
+                SET status = 'connected', credentials_encrypted = :creds
                 WHERE id = :id
             """),
             {
                 "id": integration_id,
-                "creds": encrypted_creds,
-                "now": datetime.now(timezone.utc)
+                "creds": encrypted_creds
             }
         )
         await db.commit()
