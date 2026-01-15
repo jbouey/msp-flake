@@ -408,7 +408,7 @@ class SyncEngine:
 
         # Load tokens
         await connector.load_encrypted_tokens(
-            await self.vault.encrypt_credentials(integration_id, {
+            self.vault.encrypt_credentials(integration_id, {
                 "access_token": credentials.get("access_token"),
                 "refresh_token": credentials.get("refresh_token"),
                 "expires_at": credentials.get("token_expires_at")
@@ -456,7 +456,7 @@ class SyncEngine:
 
         # Load tokens
         await connector.load_encrypted_tokens(
-            await self.vault.encrypt_credentials(integration_id, {
+            self.vault.encrypt_credentials(integration_id, {
                 "access_token": credentials.get("access_token"),
                 "refresh_token": credentials.get("refresh_token"),
                 "expires_at": credentials.get("token_expires_at")
@@ -504,7 +504,7 @@ class SyncEngine:
 
         # Load tokens
         await connector.load_encrypted_tokens(
-            await self.vault.encrypt_credentials(integration_id, {
+            self.vault.encrypt_credentials(integration_id, {
                 "access_token": credentials.get("access_token"),
                 "refresh_token": credentials.get("refresh_token"),
                 "expires_at": credentials.get("token_expires_at")
@@ -552,7 +552,7 @@ class SyncEngine:
 
         # Load tokens
         await connector.load_encrypted_tokens(
-            await self.vault.encrypt_credentials(integration_id, {
+            self.vault.encrypt_credentials(integration_id, {
                 "access_token": credentials.get("access_token"),
                 "refresh_token": credentials.get("refresh_token"),
                 "expires_at": credentials.get("token_expires_at")
