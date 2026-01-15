@@ -391,13 +391,13 @@ class BaseOAuthConnector(ABC):
         )
 
         # Store tokens securely
-        self._tokens = OAuthTokens({
-            "access_token": token_response.access_token,
-            "refresh_token": token_response.refresh_token,
-            "token_type": token_response.token_type,
-            "expires_at": token_response.expires_at.isoformat() if token_response.expires_at else None,
-            "scope": token_response.scope
-        })
+        self._tokens = SecureCredentials(
+            access_token=token_response.access_token,
+            refresh_token=token_response.refresh_token,
+            token_type=token_response.token_type,
+            expires_at=token_response.expires_at.isoformat() if token_response.expires_at else None,
+            scope=token_response.scope
+        )
 
         # Log success
         await self.audit_logger.log_oauth_success(
@@ -464,13 +464,13 @@ class BaseOAuthConnector(ABC):
                         )
 
                         # Update stored tokens
-                        self._tokens = OAuthTokens({
-                            "access_token": token_response.access_token,
-                            "refresh_token": token_response.refresh_token,
-                            "token_type": token_response.token_type,
-                            "expires_at": token_response.expires_at.isoformat() if token_response.expires_at else None,
-                            "scope": token_response.scope
-                        })
+                        self._tokens = SecureCredentials(
+                            access_token=token_response.access_token,
+                            refresh_token=token_response.refresh_token,
+                            token_type=token_response.token_type,
+                            expires_at=token_response.expires_at.isoformat() if token_response.expires_at else None,
+                            scope=token_response.scope
+                        )
 
                         # Log refresh
                         await self.audit_logger.log_token_refresh(
