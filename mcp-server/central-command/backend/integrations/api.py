@@ -107,10 +107,17 @@ class SyncResponse(BaseModel):
 # ROUTER SETUP
 # =============================================================================
 
+# Main router - requires authentication
 router = APIRouter(
     prefix="/api/integrations",
     tags=["integrations"],
     dependencies=[Depends(require_auth)],
+)
+
+# Public router for OAuth callbacks (no auth required - browser redirect)
+public_router = APIRouter(
+    prefix="/api/integrations",
+    tags=["integrations"],
 )
 
 
@@ -708,7 +715,7 @@ def _build_auth_url(
     return f"{base}?{urlencode(params)}"
 
 
-@router.get("/oauth/callback")
+@public_router.get("/oauth/callback")
 async def oauth_callback(
     request: Request,
     code: str = Query(..., description="Authorization code"),
@@ -719,7 +726,7 @@ async def oauth_callback(
     audit: IntegrationAuditLogger = Depends(get_audit_logger),
 ):
     """
-    OAuth callback handler.
+    OAuth callback handler (public - no auth required for browser redirect).
 
     Validates state, exchanges code for tokens, completes integration setup.
     Redirects to frontend with success or error status.

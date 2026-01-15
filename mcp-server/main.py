@@ -47,7 +47,7 @@ from dashboard_api.partners import router as partners_router
 from dashboard_api.discovery import router as discovery_router
 from dashboard_api.runbook_config import router as runbook_config_router
 from dashboard_api.users import router as users_router
-from dashboard_api.integrations.api import router as integrations_router
+from dashboard_api.integrations.api import router as integrations_router, public_router as integrations_public_router
 from dashboard_api.frameworks import router as frameworks_router
 from dashboard_api.email_alerts import create_notification_with_email
 
@@ -408,6 +408,7 @@ app.include_router(discovery_router)
 app.include_router(runbook_config_router)
 app.include_router(users_router)
 app.include_router(integrations_router)
+app.include_router(integrations_public_router)  # OAuth callback (no auth)
 app.include_router(frameworks_router)
 
 # Serve agent update packages (only if directory exists)
