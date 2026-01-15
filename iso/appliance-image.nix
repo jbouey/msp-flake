@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.28";  # Session 30 - L1 legacy action to Windows runbook mapping
+    version = "1.0.32";  # Session 33 - Phase 1 Workstation Coverage
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
