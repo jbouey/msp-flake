@@ -1610,3 +1610,388 @@ def _compare_workstations_with_rmm(
             "comparison_timestamp": datetime.now(timezone.utc).isoformat(),
         },
     }
+
+
+# =============================================================================
+# GO AGENTS API (Workstation-scale gRPC agents)
+# =============================================================================
+# These endpoints support the Go agent dashboard in the frontend.
+# Go agents are lightweight Windows workstation agents that push drift
+# events to the appliance via gRPC (port 50051).
+#
+# NOTE: The actual gRPC communication is handled by the appliance's
+# grpc_server.py. These REST endpoints are for the dashboard to view
+# and manage registered agents.
+# =============================================================================
+
+class GoAgentTierUpdate(BaseModel):
+    """Model for updating Go agent capability tier."""
+    capability_tier: int  # 0=monitor_only, 1=self_heal, 2=full_remediation
+
+
+# Capability tier mapping
+CAPABILITY_TIERS = {
+    0: 'monitor_only',
+    1: 'self_heal',
+    2: 'full_remediation',
+}
+
+
+@router.get("/{site_id}/agents")
+async def get_site_go_agents(site_id: str):
+    """Get all Go agents for a site with summary.
+
+    Returns registered Go agents and aggregated compliance summary.
+    Go agents push drift events via gRPC to the appliance.
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Get summary (if exists)
+        summary_row = await conn.fetchrow("""
+            SELECT site_id, total_agents, active_agents, offline_agents,
+                   error_agents, pending_agents, overall_compliance_rate,
+                   agents_by_tier, agents_by_version, rmm_detected_count,
+                   last_event
+            FROM site_go_agent_summaries
+            WHERE site_id = $1
+        """, site_id)
+
+        summary = None
+        if summary_row:
+            agents_by_tier = summary_row['agents_by_tier']
+            if isinstance(agents_by_tier, str):
+                try:
+                    agents_by_tier = json.loads(agents_by_tier)
+                except:
+                    agents_by_tier = {}
+
+            agents_by_version = summary_row['agents_by_version']
+            if isinstance(agents_by_version, str):
+                try:
+                    agents_by_version = json.loads(agents_by_version)
+                except:
+                    agents_by_version = {}
+
+            summary = {
+                'site_id': summary_row['site_id'],
+                'total_agents': summary_row['total_agents'] or 0,
+                'active_agents': summary_row['active_agents'] or 0,
+                'offline_agents': summary_row['offline_agents'] or 0,
+                'error_agents': summary_row['error_agents'] or 0,
+                'pending_agents': summary_row['pending_agents'] or 0,
+                'overall_compliance_rate': float(summary_row['overall_compliance_rate'] or 0),
+                'agents_by_tier': agents_by_tier,
+                'agents_by_version': agents_by_version,
+                'rmm_detected_count': summary_row['rmm_detected_count'] or 0,
+                'last_event': summary_row['last_event'].isoformat() if summary_row['last_event'] else None,
+            }
+
+        # Get agents with their latest checks
+        agent_rows = await conn.fetch("""
+            SELECT agent_id, hostname, ip_address, agent_version,
+                   capability_tier, status, checks_passed, checks_total,
+                   compliance_percentage, rmm_detected, rmm_disabled,
+                   offline_queue_size, connected_at, last_heartbeat
+            FROM go_agents
+            WHERE site_id = $1
+            ORDER BY hostname
+        """, site_id)
+
+        agents = []
+        for row in agent_rows:
+            # Get latest checks for this agent
+            check_rows = await conn.fetch("""
+                SELECT check_type, status, message, details, hipaa_control, checked_at
+                FROM go_agent_checks
+                WHERE agent_id = $1
+                ORDER BY checked_at DESC
+            """, row['agent_id'])
+
+            # Deduplicate by check_type (keep most recent)
+            checks = []
+            seen_types = set()
+            for check in check_rows:
+                if check['check_type'] not in seen_types:
+                    seen_types.add(check['check_type'])
+                    details = check['details']
+                    if isinstance(details, str):
+                        try:
+                            details = json.loads(details)
+                        except:
+                            details = {}
+
+                    checks.append({
+                        'check_type': check['check_type'],
+                        'status': check['status'],
+                        'message': check['message'],
+                        'details': details,
+                        'hipaa_control': check['hipaa_control'],
+                        'checked_at': check['checked_at'].isoformat() if check['checked_at'] else None,
+                    })
+
+            agents.append({
+                'id': row['agent_id'],
+                'hostname': row['hostname'],
+                'ip_address': row['ip_address'],
+                'agent_version': row['agent_version'],
+                'capability_tier': CAPABILITY_TIERS.get(row['capability_tier'], 'monitor_only'),
+                'status': row['status'],
+                'checks_passed': row['checks_passed'] or 0,
+                'checks_total': row['checks_total'] or 0,
+                'compliance_percentage': float(row['compliance_percentage'] or 0),
+                'rmm_detected': row['rmm_detected'],
+                'rmm_disabled': row['rmm_disabled'] or False,
+                'offline_queue_size': row['offline_queue_size'] or 0,
+                'connected_at': row['connected_at'].isoformat() if row['connected_at'] else None,
+                'last_heartbeat': row['last_heartbeat'].isoformat() if row['last_heartbeat'] else None,
+                'checks': checks,
+            })
+
+        return {
+            'summary': summary,
+            'agents': agents,
+        }
+
+
+@router.get("/{site_id}/agents/summary")
+async def get_go_agent_summary(site_id: str):
+    """Get Go agent summary for a site."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        summary_row = await conn.fetchrow("""
+            SELECT site_id, total_agents, active_agents, offline_agents,
+                   error_agents, pending_agents, overall_compliance_rate,
+                   agents_by_tier, agents_by_version, rmm_detected_count,
+                   last_event
+            FROM site_go_agent_summaries
+            WHERE site_id = $1
+        """, site_id)
+
+        if not summary_row:
+            return {
+                'site_id': site_id,
+                'total_agents': 0,
+                'active_agents': 0,
+                'offline_agents': 0,
+                'error_agents': 0,
+                'pending_agents': 0,
+                'overall_compliance_rate': 0,
+                'agents_by_tier': {'monitor_only': 0, 'self_heal': 0, 'full_remediation': 0},
+                'agents_by_version': {},
+                'rmm_detected_count': 0,
+                'last_event': None,
+            }
+
+        agents_by_tier = summary_row['agents_by_tier']
+        if isinstance(agents_by_tier, str):
+            try:
+                agents_by_tier = json.loads(agents_by_tier)
+            except:
+                agents_by_tier = {}
+
+        agents_by_version = summary_row['agents_by_version']
+        if isinstance(agents_by_version, str):
+            try:
+                agents_by_version = json.loads(agents_by_version)
+            except:
+                agents_by_version = {}
+
+        return {
+            'site_id': summary_row['site_id'],
+            'total_agents': summary_row['total_agents'] or 0,
+            'active_agents': summary_row['active_agents'] or 0,
+            'offline_agents': summary_row['offline_agents'] or 0,
+            'error_agents': summary_row['error_agents'] or 0,
+            'pending_agents': summary_row['pending_agents'] or 0,
+            'overall_compliance_rate': float(summary_row['overall_compliance_rate'] or 0),
+            'agents_by_tier': agents_by_tier,
+            'agents_by_version': agents_by_version,
+            'rmm_detected_count': summary_row['rmm_detected_count'] or 0,
+            'last_event': summary_row['last_event'].isoformat() if summary_row['last_event'] else None,
+        }
+
+
+@router.get("/{site_id}/agents/{agent_id}")
+async def get_go_agent(site_id: str, agent_id: str):
+    """Get details for a specific Go agent."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        agent = await conn.fetchrow("""
+            SELECT agent_id, hostname, ip_address, mac_address,
+                   agent_version, os_name, os_version, capability_tier,
+                   status, checks_passed, checks_total, compliance_percentage,
+                   rmm_detected, rmm_disabled, offline_queue_size,
+                   connected_at, last_heartbeat, created_at
+            FROM go_agents
+            WHERE site_id = $1 AND agent_id = $2
+        """, site_id, agent_id)
+
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Go agent {agent_id} not found")
+
+        # Get check results
+        check_rows = await conn.fetch("""
+            SELECT check_type, status, message, details, hipaa_control, checked_at
+            FROM go_agent_checks
+            WHERE agent_id = $1
+            ORDER BY checked_at DESC
+        """, agent_id)
+
+        checks = []
+        seen_types = set()
+        for check in check_rows:
+            if check['check_type'] not in seen_types:
+                seen_types.add(check['check_type'])
+                details = check['details']
+                if isinstance(details, str):
+                    try:
+                        details = json.loads(details)
+                    except:
+                        details = {}
+
+                checks.append({
+                    'check_type': check['check_type'],
+                    'status': check['status'],
+                    'message': check['message'],
+                    'details': details,
+                    'hipaa_control': check['hipaa_control'],
+                    'checked_at': check['checked_at'].isoformat() if check['checked_at'] else None,
+                })
+
+        return {
+            'id': agent['agent_id'],
+            'hostname': agent['hostname'],
+            'ip_address': agent['ip_address'],
+            'mac_address': agent['mac_address'],
+            'agent_version': agent['agent_version'],
+            'os_name': agent['os_name'],
+            'os_version': agent['os_version'],
+            'capability_tier': CAPABILITY_TIERS.get(agent['capability_tier'], 'monitor_only'),
+            'status': agent['status'],
+            'checks_passed': agent['checks_passed'] or 0,
+            'checks_total': agent['checks_total'] or 0,
+            'compliance_percentage': float(agent['compliance_percentage'] or 0),
+            'rmm_detected': agent['rmm_detected'],
+            'rmm_disabled': agent['rmm_disabled'] or False,
+            'offline_queue_size': agent['offline_queue_size'] or 0,
+            'connected_at': agent['connected_at'].isoformat() if agent['connected_at'] else None,
+            'last_heartbeat': agent['last_heartbeat'].isoformat() if agent['last_heartbeat'] else None,
+            'created_at': agent['created_at'].isoformat() if agent['created_at'] else None,
+            'checks': checks,
+        }
+
+
+@router.put("/{site_id}/agents/{agent_id}/tier")
+async def update_go_agent_tier(site_id: str, agent_id: str, data: GoAgentTierUpdate):
+    """Update the capability tier for a Go agent.
+
+    Tiers control what the agent can do:
+    - 0 (monitor_only): Just reports drift, no remediation
+    - 1 (self_heal): Can fix drift locally (e.g., enable Defender)
+    - 2 (full_remediation): Full automation including disruptive actions
+    """
+    if data.capability_tier not in CAPABILITY_TIERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid capability_tier. Must be 0, 1, or 2."
+        )
+
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Check agent exists
+        agent = await conn.fetchrow("""
+            SELECT agent_id FROM go_agents
+            WHERE site_id = $1 AND agent_id = $2
+        """, site_id, agent_id)
+
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Go agent {agent_id} not found")
+
+        # Update tier
+        await conn.execute("""
+            UPDATE go_agents
+            SET capability_tier = $1, updated_at = NOW()
+            WHERE agent_id = $2
+        """, data.capability_tier, agent_id)
+
+        # Create order to notify agent of tier change
+        order_id = generate_order_id()
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=1)
+
+        await conn.execute("""
+            INSERT INTO go_agent_orders (order_id, agent_id, site_id, order_type,
+                                         parameters, status, created_at, expires_at)
+            VALUES ($1, $2, $3, 'update_tier', $4, 'pending', $5, $6)
+        """, order_id, agent_id, site_id,
+            json.dumps({'capability_tier': data.capability_tier}),
+            now, expires_at)
+
+        return {'status': 'success', 'capability_tier': CAPABILITY_TIERS[data.capability_tier]}
+
+
+@router.post("/{site_id}/agents/{agent_id}/check")
+async def trigger_go_agent_check(site_id: str, agent_id: str):
+    """Trigger an immediate compliance check on a Go agent.
+
+    Creates an order for the agent to run all compliance checks
+    and report results.
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Check agent exists
+        agent = await conn.fetchrow("""
+            SELECT agent_id, status FROM go_agents
+            WHERE site_id = $1 AND agent_id = $2
+        """, site_id, agent_id)
+
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Go agent {agent_id} not found")
+
+        # Create order
+        order_id = generate_order_id()
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(minutes=5)
+
+        await conn.execute("""
+            INSERT INTO go_agent_orders (order_id, agent_id, site_id, order_type,
+                                         parameters, status, created_at, expires_at)
+            VALUES ($1, $2, $3, 'run_check', '{}', 'pending', $4, $5)
+        """, order_id, agent_id, site_id, now, expires_at)
+
+        return {
+            'status': 'success',
+            'message': f'Check request queued for agent {agent["agent_id"]}'
+        }
+
+
+@router.delete("/{site_id}/agents/{agent_id}")
+async def remove_go_agent(site_id: str, agent_id: str):
+    """Remove a Go agent from the registry.
+
+    This removes the agent record and all associated check results.
+    The agent will need to re-register on next connection.
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Check agent exists
+        agent = await conn.fetchrow("""
+            SELECT agent_id FROM go_agents
+            WHERE site_id = $1 AND agent_id = $2
+        """, site_id, agent_id)
+
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Go agent {agent_id} not found")
+
+        # Delete agent (cascades to checks and orders)
+        await conn.execute("""
+            DELETE FROM go_agents WHERE agent_id = $1
+        """, agent_id)
+
+        return {'status': 'success', 'agent_id': agent_id}
