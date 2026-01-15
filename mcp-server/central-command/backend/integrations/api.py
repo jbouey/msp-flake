@@ -569,8 +569,8 @@ async def _initiate_oauth_flow(
     )
     await db.commit()
 
-    # Generate OAuth authorization URL
-    base_url = str(request.base_url).rstrip("/")
+    # Generate OAuth authorization URL (force HTTPS for production)
+    base_url = str(request.base_url).rstrip("/").replace("http://", "https://")
     redirect_uri = f"{base_url}/api/integrations/oauth/callback"
 
     # Store state with integration details
@@ -772,7 +772,7 @@ async def oauth_callback(
         tokens = await _exchange_oauth_code(
             provider=provider,
             code=code,
-            redirect_uri=f"{str(request.base_url).rstrip('/')}/api/integrations/oauth/callback",
+            redirect_uri=f"{str(request.base_url).rstrip('/').replace('http://', 'https://')}/api/integrations/oauth/callback",
             client_id=stored_creds.get("client_id"),
             client_secret=stored_creds.get("client_secret"),
             tenant_id=stored_creds.get("tenant_id"),
