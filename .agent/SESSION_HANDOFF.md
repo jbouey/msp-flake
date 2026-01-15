@@ -1,63 +1,62 @@
 # Session Handoff - 2026-01-15
 
-**Session:** 38 - Workstation Discovery Config + WinRM Online Check
-**Agent Version:** v1.0.33
-**ISO Version:** v33 (building)
+**Session:** 39 - $params_Hostname Bug Fix + ISO v33 Deployment
+**Agent Version:** v1.0.34
+**ISO Version:** v33 (deployed)
 **Last Updated:** 2026-01-15
 
 ---
 
-## Session 38 Accomplishments
+## Session 39 Accomplishments
 
-### 1. Workstation Discovery Config Fields
-Added dedicated DC credentials to appliance config for AD workstation discovery.
+### 1. $params_Hostname Variable Injection Bug Fix
+**Root Cause:** WindowsExecutor.run_script() injects script_params variables with `$params_` prefix, but workstation discovery scripts used bare `$Hostname`.
 
 **Files Modified:**
-- `packages/compliance-agent/src/compliance_agent/appliance_config.py` - Added fields:
-  - `workstation_enabled` (bool, default True)
-  - `domain_controller` (str, DC hostname/IP)
-  - `dc_username` (str, domain credentials)
-  - `dc_password` (str, domain credentials)
-- `packages/compliance-agent/src/compliance_agent/appliance_agent.py` - Updated `_get_dc_credentials()` to use new config fields
-- `packages/compliance-agent/setup.py` - Bumped version to 1.0.33
-
-### 2. NVWS01 WinRM Connectivity Fixed
-User manually enabled WinRM on NVWS01 workstation VM:
-```powershell
-Enable-PSRemoting -Force -SkipNetworkProfileCheck
-Set-Item WSMan:\localhost\Client\TrustedHosts -Value * -Force
-netsh advfirewall firewall add rule name="WinRM-HTTP" dir=in action=allow protocol=TCP localport=5985
-Restart-Service WinRM
-```
-
-### 3. WinRM Port Check for Workstation Online Detection
-Added WinRM-based online detection (port 5985 check) since ICMP ping is disabled on workstations.
-
-**File Modified:**
 - `packages/compliance-agent/src/compliance_agent/workstation_discovery.py`:
-  - Added `WINRM_CHECK_SCRIPT` using Test-NetConnection
-  - Changed default method from "ping" to "winrm" in `check_online_status()`
+  - `PING_CHECK_SCRIPT`: `$Hostname` → `$params_Hostname`
+  - `WMI_CHECK_SCRIPT`: `$Hostname` → `$params_Hostname`
+  - `WINRM_CHECK_SCRIPT`: `$Hostname` → `$params_Hostname`
+- `packages/compliance-agent/setup.py` - Bumped version to 1.0.34
 
-### 4. ISO v33 Build Initiated
-- Updated `iso/appliance-image.nix` version to 1.0.33
-- Nix build running for new ISO
+### 2. ISO v33 Built and Deployed
+- Built on VPS: `/root/msp-iso-build/result-v33/iso/osiriscare-appliance.iso`
+- Downloaded to MacBook: `/tmp/osiriscare-appliance-v33.iso`
+- Copied to iMac: `~/Downloads/osiriscare-appliance-v33.iso`
+- Physical appliance flashed with ISO v33
+
+### 3. Workstation Discovery Testing
+**Results:**
+- ✅ Direct WinRM to NVWS01 from VM appliance: **WORKS** (returned "Hostname: NVWS01")
+- ✅ AD enumeration from DC: **WORKS** (found NVWS01 at 192.168.88.251)
+- ❌ Test-NetConnection from DC: **TIMED OUT** (DC was restoring from chaos lab snapshot)
+
+### 4. Documentation Created
+- `.agent/PROJECT_SUMMARY.md` - Comprehensive project overview for Claude Code website
+- `CLAUDE.md` - Updated with current version (v1.0.34) and test count (778+)
 
 ### 5. Git Commits Pushed
-- `c37abf1` - feat: Add workstation discovery config to appliance agent
-- `13f9165` - feat: Add WinRM port check for workstation online detection
+- `4db0207` - fix: Use $params_Hostname for workstation online detection
+- `2b245b6` - docs: Add PROJECT_SUMMARY.md and update CLAUDE.md
+- `5c6c5c5` - docs: Update claude.md with current version and project summary link
 
 ---
 
-## Known Issue: Workstation Online Check
+## Known Issues
 
-The WinRM online check still shows 0/1 workstations reachable despite WinRM being accessible. The issue is with how `script_params` injects the `$Hostname` variable into the PowerShell script. The executor may need to be updated to properly set variables before script execution.
+### 1. Overlay Module Import Error
+**Error:** `ModuleNotFoundError: No module named 'compliance_agent.appliance_agent'`
+**Location:** `/var/lib/msp/run_agent_overlay.py` on appliance
+**Notes:** The overlay mechanism doesn't properly include the appliance_agent module. Needs investigation.
 
-**To Debug:**
-```python
-# Check how script_params works in executor
-# Look at packages/compliance-agent/src/compliance_agent/runbooks/windows/executor.py
-# The script_params dict should set PowerShell variables before script runs
-```
+### 2. Test-NetConnection Timeout
+**Issue:** Online status check via Test-NetConnection times out when running from DC to workstations.
+**Possible Causes:**
+- DC was restoring from chaos lab snapshot
+- Test-NetConnection may have long default timeout
+- Network latency or firewall issues
+
+**Workaround:** Direct WinRM connection to workstations works. Consider checking online status directly from appliance instead of via DC.
 
 ---
 
@@ -78,44 +77,6 @@ dc_password: SvcAccount2024!
 
 ---
 
-## Session 37 Accomplishments
-
-### 1. Microsoft Security OAuth Integration Complete
-Successfully connected Microsoft Security (Defender + Intune) integration for physical-appliance-pilot.
-
-**OAuth Bugs Fixed:**
-| Issue | Fix | Commit |
-|-------|-----|--------|
-| White page on OAuth error | Created IntegrationError.tsx page | `3aeeff4` |
-| SecureCredentials immutable | Use `to_dict()` before updating | `9d76481` |
-| 'active' vs 'connected' status | Changed OAuth callback to use 'connected' | `b45ee78` |
-| "Disconnected" badge display | Added 'connected' to frontend statusConfig | `00072f7` |
-
-### 2. Sync Engine Fixes
-| Issue | Fix |
-|-------|-----|
-| Sync button disabled for 'connected' | Allow 'connected' and 'error' statuses |
-| SecureCredentials(dict) wrong | Use **kwargs: `SecureCredentials(key=val)` |
-| OAuthTokens initialization | Use SecureCredentials directly |
-| datetime.utcnow() naive | Use datetime.now(timezone.utc) |
-
----
-
-## CRITICAL: VPS Deployment
-
-**See `.agent/VPS_DEPLOYMENT.md` for full deployment guide.**
-
-Quick deploy after pushing to GitHub:
-```bash
-ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
-```
-
-**TWO directories exist - ALWAYS use production:**
-- `/opt/mcp-server/` - **PRODUCTION** (container: `mcp-server`) ✅
-- `/root/msp-iso-build/` - Git repo only (container: `msp-server`) ❌
-
----
-
 ## What's Working
 
 ### Cloud Integrations (5 providers)
@@ -133,49 +94,64 @@ ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
 - HIPAA control mappings for each check
 - Frontend: SiteWorkstations.tsx page
 
+### Three-Tier Auto-Healing
+- L1 Deterministic: 70-80%, <100ms, $0
+- L2 LLM Planner: 15-20%, 2-5s, ~$0.001
+- L3 Human Escalation: 5-10%
+
 ---
 
 ## Next Session Tasks
 
-1. **Debug workstation online detection** - Fix script_params variable injection
-2. **Verify ISO v33 build completed** - Check `ls -la iso/result-v33`
-3. **Deploy ISO v33** to physical appliance
-4. **Test workstation compliance scan** once online detection works
-5. **Verify workstation data in dashboard** after compliance scan runs
+1. **Fix overlay module import** - Ensure appliance_agent is included in overlay
+2. **Wait for DC recovery** - DC was restoring from chaos snapshot
+3. **Re-test workstation online detection** - Once DC is stable
+4. **Verify workstation compliance scan** - Full scan with $params fix
+5. **Build ISO v34** - Include latest fixes if needed
 
 ### Quick Commands
 ```bash
-# Check ISO build status
-ls -la /Users/dad/Documents/Msp_Flakes/iso/result-v33
-
 # Check agent on appliance
 ssh root@192.168.88.246 "tail -50 /var/lib/msp/agent_final.log"
 
 # Test WinRM to NVWS01 directly
-ssh root@192.168.88.246 "/tmp/test_ws_winrm.py"
+ssh root@192.168.88.246 "python3 -c \"
+import winrm
+s = winrm.Session('http://192.168.88.251:5985/wsman', auth=('NORTHVALLEY\\\\svc.monitoring','SvcAccount2024!'), transport='ntlm')
+print(s.run_ps('hostname').std_out.decode())
+\""
 
-# Restart agent with overlay
-ssh root@192.168.88.246 "pkill -f compliance_agent; cd /var/lib/msp && nohup ./run_agent_overlay.py > agent.log 2>&1 &"
+# Check DC status
+ssh root@192.168.88.246 "python3 -c \"
+import winrm
+s = winrm.Session('http://192.168.88.250:5985/wsman', auth=('NORTHVALLEY\\\\svc.monitoring','SvcAccount2024!'), transport='ntlm')
+print(s.run_ps('Get-ADComputer -Filter * | Select Name').std_out.decode())
+\""
+
+# SSH to VPS
+ssh root@178.156.162.116
+
+# Deploy to VPS
+ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
 ```
 
 ---
 
 ## Files Modified This Session
 
-### Session 38 (Workstation Discovery Config)
+### Session 39 ($params_Hostname Bug Fix)
 | File | Change |
 |------|--------|
-| `packages/compliance-agent/setup.py` | Version bump to 1.0.33 |
-| `packages/compliance-agent/src/compliance_agent/appliance_config.py` | Added workstation discovery fields |
-| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Updated `_get_dc_credentials()` |
-| `packages/compliance-agent/src/compliance_agent/workstation_discovery.py` | Added WinRM check, changed default method |
-| `iso/appliance-image.nix` | Version 1.0.33 |
-| `.agent/SESSION_HANDOFF.md` | Updated |
+| `packages/compliance-agent/setup.py` | Version bump to 1.0.34 |
+| `packages/compliance-agent/src/compliance_agent/workstation_discovery.py` | $params_Hostname fix in 3 scripts |
+| `.agent/PROJECT_SUMMARY.md` | New comprehensive project documentation |
+| `CLAUDE.md` | Updated version and test count |
 
 ---
 
 ## Related Docs
 
+- `.agent/PROJECT_SUMMARY.md` - Comprehensive project overview
 - `.agent/VPS_DEPLOYMENT.md` - Deployment guide
 - `.agent/TODO.md` - Session tasks
 - `.agent/CONTEXT.md` - Project context

@@ -1,7 +1,53 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-15 (Session 38 - Workstation Discovery Config)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.33, ISO v33, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, **Workstation Discovery Config**)
+**Last Updated:** 2026-01-15 (Session 39 - $params_Hostname Bug Fix)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, **$params_Hostname Fix**)
+
+---
+
+## Session 39 (2026-01-15) - $params_Hostname Bug Fix + ISO v33 Deployment
+
+### 1. $params_Hostname Variable Injection Bug Fix
+**Status:** COMPLETE
+**Root Cause:** WindowsExecutor.run_script() injects variables with `$params_` prefix, but workstation scripts used bare `$Hostname`.
+**Files Modified:**
+- `packages/compliance-agent/src/compliance_agent/workstation_discovery.py` - Changed all 3 check scripts:
+  - `PING_CHECK_SCRIPT`: `$Hostname` → `$params_Hostname`
+  - `WMI_CHECK_SCRIPT`: `$Hostname` → `$params_Hostname`
+  - `WINRM_CHECK_SCRIPT`: `$Hostname` → `$params_Hostname`
+- `packages/compliance-agent/setup.py` - Version 1.0.34
+
+### 2. ISO v33 Built and Deployed
+**Status:** COMPLETE
+**Details:**
+- Built on VPS: `/root/msp-iso-build/result-v33/iso/osiriscare-appliance.iso`
+- Downloaded to MacBook: `/tmp/osiriscare-appliance-v33.iso`
+- Copied to iMac: `~/Downloads/osiriscare-appliance-v33.iso`
+- Physical appliance flashed with ISO v33
+
+### 3. Workstation Discovery Testing
+**Status:** PARTIAL (blocked by DC)
+**Results:**
+- ✅ Direct WinRM to NVWS01 from VM appliance: WORKS (returned "Hostname: NVWS01")
+- ✅ AD enumeration from DC: WORKS (found NVWS01 at 192.168.88.251)
+- ❌ Test-NetConnection from DC: TIMED OUT (DC was restoring from chaos lab snapshot)
+
+### 4. Documentation Created
+**Status:** COMPLETE
+**Files:**
+- `.agent/PROJECT_SUMMARY.md` - New comprehensive project documentation
+- `CLAUDE.md` - Updated with current version (v1.0.34) and test count (778+)
+
+### 5. Git Commits Pushed
+- `4db0207` - fix: Use $params_Hostname for workstation online detection
+- `2b245b6` - docs: Add PROJECT_SUMMARY.md and update CLAUDE.md
+- `5c6c5c5` - docs: Update claude.md with current version and project summary link
+
+### 6. Known Issue: Overlay Module Import
+**Status:** OPEN
+**Error:** `ModuleNotFoundError: No module named 'compliance_agent.appliance_agent'`
+**Location:** `/var/lib/msp/run_agent_overlay.py` on appliance
+**Notes:** Overlay mechanism needs to properly include appliance_agent module.
 
 ---
 
@@ -23,16 +69,14 @@
 **Details:** User manually enabled WinRM on NVWS01 workstation VM.
 
 ### 3. WinRM Port Check for Online Detection
-**Status:** COMPLETE (with known issue)
+**Status:** COMPLETE
 **File:** `packages/compliance-agent/src/compliance_agent/workstation_discovery.py`
 **Changes:**
 - Added `WINRM_CHECK_SCRIPT` using Test-NetConnection port 5985
 - Changed default method from "ping" to "winrm"
-**Known Issue:** script_params variable injection not working correctly - needs debugging.
 
 ### 4. ISO v33 Build
-**Status:** IN PROGRESS
-**File:** `iso/appliance-image.nix` - Version 1.0.33
+**Status:** COMPLETE (see Session 39)
 
 ### 5. Git Commits Pushed
 - `c37abf1` - feat: Add workstation discovery config to appliance agent

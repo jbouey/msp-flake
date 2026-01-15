@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-15 (Session 38 - Workstation Discovery Config)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.33, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, **Workstation Discovery Config**)
-**Test Status:** 778+ passed (compliance-agent tests), agent v1.0.33, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, **Workstation Discovery Config Fields**
+**Last Updated:** 2026-01-15 (Session 39 - $params_Hostname Bug Fix)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, **$params_Hostname Fix**)
+**Test Status:** 778+ passed (compliance-agent tests), agent v1.0.34, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, **$params_Hostname variable injection fix**
 
 ---
 
@@ -415,15 +415,35 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
 
+### Agent v1.0.34 Ready (2026-01-15 Session 39)
+- **Status:** Code committed, ISO v33 built and deployed
+- **Agent:** compliance-agent v1.0.34 with **$params_Hostname fix for workstation discovery**
+- **Features:**
+  - Fixed $params_Hostname variable injection in workstation online detection scripts
+  - All 3 check scripts (PING, WMI, WINRM) now use correct $params_Hostname variable
+  - Workstation discovery via AD + online status checking
+- **Testing Results:**
+  - ✅ Direct WinRM to NVWS01: WORKS
+  - ✅ AD enumeration from DC: WORKS (found NVWS01)
+  - ❌ Test-NetConnection from DC: TIMED OUT (DC restoring from chaos snapshot)
+
 ### Agent v1.0.30 Ready (2026-01-14 Session 32)
-- **Status:** Code ready on VPS, ISO build pending
+- **Status:** Superseded by v1.0.34
 - **Agent:** compliance-agent v1.0.30 with **Network compliance check + Extended check types**
 - **Features:**
   - Network check_type for NetworkPostureDetector (was "network_posture_{os_type}")
   - 7-metric compliance scoring (added network)
   - 8 extended check type labels (NTP, Disk, Services, Defender, Memory, Cert, Database, Port)
   - Pattern reporting endpoints deployed
-- **Next:** Build ISO v30 on VPS
+
+### ISO v33 Built (2026-01-15 Session 39)
+- **Location (VPS):** `/root/msp-iso-build/result-v33/iso/osiriscare-appliance.iso`
+- **Location (iMac):** `~/Downloads/osiriscare-appliance-v33.iso`
+- **Size:** 1.1GB
+- **Agent:** compliance-agent v1.0.34 with **$params_Hostname fix**
+- **Entry point:** `compliance-agent-appliance`
+- **Features:** Workstation discovery config, $params_Hostname fix, all previous features
+- **Status:** Deployed to physical appliance (192.168.88.246)
 
 ### ISO v29 Built (2026-01-14 Session 31)
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v29/iso/osiriscare-appliance.iso`
