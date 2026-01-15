@@ -3,8 +3,8 @@
  */
 
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi } from '../utils/api';
-import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi } from '../utils/api';
+import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse } from '../utils/api';
 import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary } from '../types';
 
 // Polling interval in milliseconds (60 seconds - reduced from 30s to prevent flickering)
@@ -564,6 +564,71 @@ export function useTriggerWorkstationScan() {
     mutationFn: (siteId: string) => workstationsApi.triggerScan(siteId),
     onSuccess: (_, siteId) => {
       queryClient.invalidateQueries({ queryKey: ['workstations', siteId] });
+    },
+  });
+}
+
+// =============================================================================
+// GO AGENTS HOOKS (Workstation-scale gRPC agents)
+// =============================================================================
+
+/**
+ * Hook for fetching Go agents for a site with summary
+ */
+export function useSiteGoAgents(siteId: string | null) {
+  return useQuery<SiteGoAgentsResponse>({
+    queryKey: ['goAgents', siteId],
+    queryFn: () => goAgentsApi.getSiteAgents(siteId!),
+    enabled: !!siteId,
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for updating Go agent capability tier
+ */
+export function useUpdateGoAgentTier() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, agentId, tier }: {
+      siteId: string;
+      agentId: string;
+      tier: 'monitor_only' | 'self_heal' | 'full_remediation';
+    }) => goAgentsApi.updateTier(siteId, agentId, tier),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['goAgents', siteId] });
+    },
+  });
+}
+
+/**
+ * Hook for triggering a drift check on a Go agent
+ */
+export function useTriggerGoAgentCheck() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, agentId }: { siteId: string; agentId: string }) =>
+      goAgentsApi.triggerCheck(siteId, agentId),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['goAgents', siteId] });
+    },
+  });
+}
+
+/**
+ * Hook for removing a Go agent from registry
+ */
+export function useRemoveGoAgent() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, agentId }: { siteId: string; agentId: string }) =>
+      goAgentsApi.removeAgent(siteId, agentId),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['goAgents', siteId] });
     },
   });
 }

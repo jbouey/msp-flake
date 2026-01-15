@@ -41,6 +41,11 @@ export {
   // Workstation hooks
   useSiteWorkstations,
   useTriggerWorkstationScan,
+  // Go Agent hooks
+  useSiteGoAgents,
+  useUpdateGoAgentTier,
+  useTriggerGoAgentCheck,
+  useRemoveGoAgent,
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';

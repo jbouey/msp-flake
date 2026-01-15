@@ -495,3 +495,95 @@ export const WORKSTATION_CHECK_HIPAA: Record<string, string> = {
   firewall: '§164.312(a)(1)',
   screen_lock: '§164.312(a)(2)(iii)',
 };
+
+// =============================================================================
+// GO AGENT MODELS
+// =============================================================================
+
+export type GoAgentStatus = 'active' | 'offline' | 'error' | 'pending';
+export type GoAgentCapabilityTier = 'monitor_only' | 'self_heal' | 'full_remediation';
+
+export interface GoAgentCheckResult {
+  check_type: 'bitlocker' | 'defender' | 'firewall' | 'patches' | 'screen_lock' | 'services';
+  status: 'pass' | 'fail' | 'error' | 'skipped';
+  message?: string;
+  details?: Record<string, unknown>;
+  hipaa_control: string;
+  checked_at: string;
+}
+
+export interface GoAgent {
+  id: string;
+  hostname: string;
+  ip_address?: string;
+  agent_version?: string;
+  capability_tier: GoAgentCapabilityTier;
+  last_heartbeat?: string;
+  status: GoAgentStatus;
+  checks_passed: number;
+  checks_total: number;
+  compliance_percentage: number;
+  rmm_detected?: string;
+  rmm_disabled: boolean;
+  offline_queue_size: number;
+  connected_at?: string;
+  checks?: GoAgentCheckResult[];
+}
+
+export interface SiteGoAgentSummary {
+  site_id: string;
+  total_agents: number;
+  active_agents: number;
+  offline_agents: number;
+  error_agents: number;
+  pending_agents: number;
+  overall_compliance_rate: number;
+  agents_by_tier: Record<GoAgentCapabilityTier, number>;
+  agents_by_version: Record<string, number>;
+  rmm_detected_count: number;
+  last_event?: string;
+}
+
+export const GO_AGENT_STATUS_LABELS: Record<GoAgentStatus, string> = {
+  active: 'Active',
+  offline: 'Offline',
+  error: 'Error',
+  pending: 'Pending',
+};
+
+export const GO_AGENT_STATUS_COLORS: Record<GoAgentStatus, string> = {
+  active: 'green',
+  offline: 'gray',
+  error: 'red',
+  pending: 'yellow',
+};
+
+export const GO_AGENT_TIER_LABELS: Record<GoAgentCapabilityTier, string> = {
+  monitor_only: 'Monitor Only',
+  self_heal: 'Self-Heal',
+  full_remediation: 'Full Remediation',
+};
+
+export const GO_AGENT_TIER_COLORS: Record<GoAgentCapabilityTier, string> = {
+  monitor_only: 'blue',
+  self_heal: 'purple',
+  full_remediation: 'green',
+};
+
+export const GO_AGENT_CHECK_LABELS: Record<string, string> = {
+  bitlocker: 'BitLocker',
+  defender: 'Defender',
+  firewall: 'Firewall',
+  patches: 'Patches',
+  screen_lock: 'Screen Lock',
+  services: 'Services',
+};
+
+export const GO_AGENT_CHECK_HIPAA: Record<string, string> = {
+  bitlocker: '§164.312(a)(2)(iv)',
+  defender: '§164.308(a)(5)(ii)(B)',
+  firewall: '§164.312(e)(1)',
+  patches: '§164.308(a)(1)(ii)(B)',
+  screen_lock: '§164.312(a)(2)(i)',
+  services: '§164.308(a)(5)(ii)(B)',
+};
