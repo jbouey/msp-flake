@@ -1,12 +1,23 @@
-# Session Handoff - 2026-01-14
+# Session Handoff - 2026-01-15
 
-**Session:** 33 - Phase 1 Workstation Coverage Complete
+**Session:** 33 - Phase 1 Workstation Coverage + VPS Deployment
 **Agent Version:** v1.0.32
-**Last Updated:** 2026-01-14
+**ISO Version:** v32
+**Last Updated:** 2026-01-15
 
 ---
 
 ## Current State
+
+### Deployment Complete
+- **VPS Backend:** Deployed and running
+  - sites.py with workstation API endpoints
+  - Migration 017_workstations.sql executed
+  - Containers restarted and healthy
+- **VPS Frontend:** Deployed with SiteWorkstations.tsx
+- **ISO v32:** Built and transferred to iMac
+  - Location: `~/Downloads/osiriscare-appliance-v32.iso` on iMac (192.168.88.50)
+  - Ready to flash VM appliance
 
 ### What's Working
 - Phase 1 Workstation Coverage - **FULLY IMPLEMENTED**
@@ -18,88 +29,72 @@
   - Backend API endpoints
   - 20 unit tests (754 total passing)
 
-### What's Ready for Deployment
-- Frontend build successful - ready to deploy to VPS
-- Backend API code in `sites.py` - ready to deploy
-- Migration `017_workstations.sql` - ready to run on VPS
-- Agent v1.0.32 - ready for ISO build
+### API Endpoint Verification
+```bash
+curl -s -H 'Authorization: Bearer test' 'https://api.osiriscare.net/api/sites/physical-appliance-pilot-1aea78/workstations'
+# Returns: {"summary":null,"workstations":[]}
+# Empty because no workstations scanned yet - will populate after appliance update
+```
 
 ---
 
 ## Immediate Next Steps
 
-1. **Deploy to VPS**
-   ```bash
-   ssh root@178.156.162.116
-   cd /opt/mcp-server
-   git pull
-   # Run migration 017_workstations.sql
-   docker compose restart mcp-server central-command
-   ```
+1. **Flash VM Appliance with ISO v32**
+   - ISO at `~/Downloads/osiriscare-appliance-v32.iso` on iMac
+   - Attach to VirtualBox VM and boot
 
-2. **Build ISO v32**
-   ```bash
-   cd /root/msp-iso-build
-   git pull
-   nix build .#appliance-iso -o result-iso-v32
-   ```
-
-3. **Configure Appliance**
+2. **Configure Appliance**
    - Add `domain_controller: NVDC01.northvalley.local` to config.yaml
    - Restart appliance agent
 
-4. **Test Workstation Scanning**
-   - Navigate to `/sites/{site_id}/workstations`
+3. **Test Workstation Scanning**
+   - Navigate to `/sites/{site_id}/workstations` on dashboard
    - Click "Trigger Scan" or wait for automatic scan cycle
 
 ---
 
-## Files Changed This Session
+## Files Deployed This Session
 
-### Frontend (mcp-server/central-command/frontend)
-- `src/pages/SiteWorkstations.tsx` - NEW
-- `src/utils/api.ts` - Added workstationsApi
-- `src/hooks/useFleet.ts` - Added useSiteWorkstations
-- `src/hooks/index.ts` - Export hooks
-- `src/pages/index.ts` - Export page
-- `src/App.tsx` - Added route
-- `src/pages/SiteDetail.tsx` - Added button
+### VPS (/opt/mcp-server/)
+- `app/dashboard_api/sites.py` - Workstation API endpoints
+- `migrations/017_workstations.sql` - Database migration
+- `central-command/frontend/dist/` - Built frontend
 
-### Backend (mcp-server/central-command/backend)
-- `sites.py` - Added ~200 lines of workstation API endpoints
-- `migrations/017_workstations.sql` - Fixed FK constraints
-
-### Agent (packages/compliance-agent)
-- All workstation modules created in earlier part of Session 33
+### ISO v32
+- Built on VPS at `/root/msp-iso-build/result-iso-v32/`
+- Contains agent v1.0.32 with workstation support
+- Transferred to iMac at `~/Downloads/osiriscare-appliance-v32.iso`
 
 ---
 
 ## Test Commands
 
 ```bash
-# Run agent tests
-cd /Users/dad/Documents/Msp_Flakes/packages/compliance-agent
-source venv/bin/activate
-python -m pytest tests/ -v --tb=short
+# Verify API health
+curl https://api.osiriscare.net/health
 
-# Build frontend
-cd /Users/dad/Documents/Msp_Flakes/mcp-server/central-command/frontend
-npm run build
+# Test workstations endpoint
+curl -H 'Authorization: Bearer test' 'https://api.osiriscare.net/api/sites/physical-appliance-pilot-1aea78/workstations'
+
+# Check appliance status
+ssh root@192.168.88.246 "journalctl -u osiriscare-agent --since '5 min ago'"
 ```
 
 ---
 
-## Blockers/Notes
+## Git Status
 
-- No blockers - all Phase 1 components complete
-- `domain_controller` config not yet added to appliance - pending deployment
-- Physical appliance has a Windows workstation to test with
+**Commits:**
+- `6ce2403` - chore: Bump agent version to 1.0.32 for ISO build
+- `f491f63` - feat: Phase 1 Workstation Coverage - AD discovery + 5 WMI checks
+
+**Pushed:** Yes, to origin/main
 
 ---
 
 ## Related Docs
-- `.agent/TODO.md` - Updated with Session 33 details
+- `.agent/TODO.md` - Session 33 tasks complete
 - `.agent/CONTEXT.md` - Updated with workstation coverage
-- `.agent/DEVELOPMENT_ROADMAP.md` - Shows Phase 1 complete
-- `.agent/sessions/2026-01-14-session33-workstation-compliance.md` - Part 1 session log
-- `.agent/sessions/2026-01-14-session33-workstation-frontend.md` - Part 2 session log
+- `.agent/DEVELOPMENT_ROADMAP.md` - Phase 1 marked complete
+- `.agent/SESSION_COMPLETION_STATUS.md` - Full implementation checklist
