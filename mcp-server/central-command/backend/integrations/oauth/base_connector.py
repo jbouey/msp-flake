@@ -336,7 +336,7 @@ class BaseOAuthConnector(ABC):
         token_data = {
             "grant_type": "authorization_code",
             "client_id": self.config.client_id,
-            "client_secret": self.config.client_secret.get_value("client_secret"),
+            "client_secret": self.config.client_secret.get("client_secret"),
             "code": code,
             "redirect_uri": self.config.redirect_uri,
             "code_verifier": code_verifier
@@ -428,15 +428,15 @@ class BaseOAuthConnector(ABC):
             TokenRefreshError: Failed to refresh after retries
             TokenExpiredError: Refresh token is invalid/expired
         """
-        if not self._tokens or not self._tokens.get_value("refresh_token"):
+        if not self._tokens or not self._tokens.get("refresh_token"):
             raise TokenRefreshError("No refresh token available")
 
-        refresh_token = self._tokens.get_value("refresh_token")
+        refresh_token = self._tokens.get("refresh_token")
 
         token_data = {
             "grant_type": "refresh_token",
             "client_id": self.config.client_id,
-            "client_secret": self.config.client_secret.get_value("client_secret"),
+            "client_secret": self.config.client_secret.get("client_secret"),
             "refresh_token": refresh_token
         }
 
@@ -541,7 +541,7 @@ class BaseOAuthConnector(ABC):
         if not self._tokens:
             raise TokenExpiredError("No tokens available")
 
-        expires_at_str = self._tokens.get_value("expires_at")
+        expires_at_str = self._tokens.get("expires_at")
         if expires_at_str:
             expires_at = datetime.fromisoformat(expires_at_str)
             buffer = timedelta(seconds=TOKEN_REFRESH_BUFFER_SECONDS)
@@ -553,7 +553,7 @@ class BaseOAuthConnector(ABC):
                 )
                 await self.refresh_tokens()
 
-        return self._tokens.get_value("access_token")
+        return self._tokens.get("access_token")
 
     async def _get_http_client(self) -> httpx.AsyncClient:
         """Get or create authenticated HTTP client."""
@@ -702,11 +702,11 @@ class BaseOAuthConnector(ABC):
             raise ValueError("No tokens to encrypt")
 
         token_data = {
-            "access_token": self._tokens.get_value("access_token"),
-            "refresh_token": self._tokens.get_value("refresh_token"),
-            "token_type": self._tokens.get_value("token_type"),
-            "expires_at": self._tokens.get_value("expires_at"),
-            "scope": self._tokens.get_value("scope")
+            "access_token": self._tokens.get("access_token"),
+            "refresh_token": self._tokens.get("refresh_token"),
+            "token_type": self._tokens.get("token_type"),
+            "expires_at": self._tokens.get("expires_at"),
+            "scope": self._tokens.get("scope")
         }
 
         return await self.credential_vault.encrypt_credentials(
@@ -770,7 +770,7 @@ class BaseOAuthConnector(ABC):
     @property
     def has_valid_tokens(self) -> bool:
         """Check if we have tokens (may need refresh)."""
-        return self._tokens is not None and self._tokens.get_value("access_token") is not None
+        return self._tokens is not None and self._tokens.get("access_token") is not None
 
     @property
     def provider_name(self) -> str:
