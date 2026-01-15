@@ -120,6 +120,20 @@ try {
 }
 '''
 
+    # PowerShell script for WinRM port check (more reliable when ICMP is disabled)
+    WINRM_CHECK_SCRIPT = '''
+param([string]$Hostname)
+try {
+    $test = Test-NetConnection -ComputerName $Hostname -Port 5985 -WarningAction SilentlyContinue
+    @{
+        online = $test.TcpTestSucceeded
+        error = if (-not $test.TcpTestSucceeded) { "WinRM port 5985 not accessible" } else { $null }
+    } | ConvertTo-Json
+} catch {
+    @{ online = $false; error = $_.Exception.Message } | ConvertTo-Json
+}
+'''
+
     def __init__(
         self,
         executor,  # WindowsExecutor instance
@@ -205,7 +219,7 @@ try {
     async def check_online_status(
         self,
         workstations: List[Workstation],
-        method: str = "ping",  # ping or wmi
+        method: str = "winrm",  # winrm, ping, or wmi
         concurrency: int = 10,
     ) -> List[Workstation]:
         """
@@ -213,13 +227,13 @@ try {
 
         Args:
             workstations: List of workstations to check
-            method: 'ping' for ICMP, 'wmi' for WMI query (more reliable)
+            method: 'winrm' for port 5985 check (recommended), 'ping' for ICMP, 'wmi' for WMI query
             concurrency: Max concurrent checks
 
         Returns:
             Same list with online status updated
         """
-        logger.info(f"Checking online status for {len(workstations)} workstations")
+        logger.info(f"Checking online status for {len(workstations)} workstations (method={method})")
 
         semaphore = asyncio.Semaphore(concurrency)
 
@@ -239,6 +253,14 @@ try {
                             script_params={"Hostname": target},
                             credentials=self.credentials,
                             timeout_seconds=10,
+                        )
+                    elif method == "winrm":
+                        result = await self.executor.run_script(
+                            target=self.domain_controller,
+                            script=self.WINRM_CHECK_SCRIPT,
+                            script_params={"Hostname": target},
+                            credentials=self.credentials,
+                            timeout_seconds=15,
                         )
                     else:  # wmi
                         result = await self.executor.run_script(
