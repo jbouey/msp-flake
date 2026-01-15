@@ -580,7 +580,15 @@ async def _initiate_oauth_flow(
     base_url = str(request.base_url).rstrip("/").replace("http://", "https://")
     redirect_uri = f"{base_url}/api/integrations/oauth/callback"
 
-    # Store state with integration details
+    # Generate PKCE code_verifier BEFORE creating state so we can store it
+    import hashlib
+    import base64
+    code_verifier = secrets.token_urlsafe(64)
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode()).digest()
+    ).rstrip(b'=').decode()
+
+    # Store state with integration details AND code_verifier for PKCE
     state = await state_manager.generate(
         site_id=site_id,
         provider=integration.provider,
@@ -588,18 +596,20 @@ async def _initiate_oauth_flow(
         integration_name=integration.name,
         extra_data={
             "integration_id": integration_id,
-            "user_id": user.get("id")
+            "user_id": user.get("id"),
+            "code_verifier": code_verifier  # Store for callback use
         }
     )
 
-    # Build authorization URL based on provider
+    # Build authorization URL based on provider (pass pre-generated code_challenge)
     auth_url = _build_auth_url(
         provider=integration.provider,
         client_id=integration.oauth_client_id,
         redirect_uri=redirect_uri,
         state=state,
         tenant_id=integration.oauth_tenant_id,
-        okta_domain=integration.okta_domain
+        okta_domain=integration.okta_domain,
+        code_challenge=code_challenge
     )
 
     logger.info(
@@ -623,17 +633,14 @@ def _build_auth_url(
     state: str,
     tenant_id: Optional[str] = None,
     okta_domain: Optional[str] = None,
+    code_challenge: Optional[str] = None,
 ) -> str:
     """Build OAuth authorization URL for provider."""
     from urllib.parse import urlencode
-    import hashlib
-    import base64
 
-    # Generate PKCE challenge
-    code_verifier = secrets.token_urlsafe(64)
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode()).digest()
-    ).rstrip(b'=').decode()
+    # code_challenge should be passed in (generated and stored in state before calling this)
+    if not code_challenge:
+        raise ValueError("code_challenge is required for PKCE")
 
     if provider == "google_workspace":
         base = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -774,6 +781,12 @@ async def oauth_callback(
         vault = await get_credential_vault()
         stored_creds = vault.decrypt_credentials(integration_id, row[0])
 
+        # Get code_verifier from state for PKCE
+        code_verifier = state_data.get("extra_data", {}).get("code_verifier")
+        if not code_verifier:
+            logger.error("Missing code_verifier in OAuth state")
+            raise HTTPException(status_code=400, detail="Missing PKCE code_verifier")
+
         # Exchange code for tokens (simplified - full implementation in connectors)
         # In production, this would use the appropriate connector class
         tokens = await _exchange_oauth_code(
@@ -783,7 +796,8 @@ async def oauth_callback(
             client_id=stored_creds.get("client_id"),
             client_secret=stored_creds.get("client_secret"),
             tenant_id=stored_creds.get("tenant_id"),
-            okta_domain=stored_creds.get("okta_domain")
+            okta_domain=stored_creds.get("okta_domain"),
+            code_verifier=code_verifier
         )
 
         # Update stored credentials with tokens
@@ -854,6 +868,7 @@ async def _exchange_oauth_code(
     client_secret: str,
     tenant_id: Optional[str] = None,
     okta_domain: Optional[str] = None,
+    code_verifier: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Exchange authorization code for tokens."""
     import httpx
@@ -875,6 +890,10 @@ async def _exchange_oauth_code(
         "code": code,
         "redirect_uri": redirect_uri,
     }
+
+    # Add PKCE code_verifier if provided
+    if code_verifier:
+        data["code_verifier"] = code_verifier
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
