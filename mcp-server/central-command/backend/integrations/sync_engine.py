@@ -143,13 +143,13 @@ class SyncEngine:
         start_time = datetime.now(timezone.utc)
         print(f"SYNC_ENGINE: sync_integration starting for {integration_id}", flush=True)
 
-        # Get integration details
+        # Get integration details (allow sync for connected or error status for retry)
         result = await self.db.execute(
             text("""
                 SELECT id, site_id, provider, name, credentials_encrypted,
                        aws_role_arn, aws_external_id, aws_regions
                 FROM integrations
-                WHERE id = :id AND status = 'connected'
+                WHERE id = :id AND status IN ('connected', 'error')
             """),
             {"id": integration_id}
         )
