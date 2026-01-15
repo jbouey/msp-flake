@@ -85,6 +85,15 @@ from .sensor_linux import (
     set_sensor_scripts_dir,
 )
 
+# gRPC server for Go agent communication
+from .grpc_server import (
+    AgentRegistry,
+    ComplianceAgentServicer,
+    get_grpc_stats,
+    GRPC_AVAILABLE,
+    serve as grpc_serve,
+)
+
 logger = logging.getLogger(__name__)
 
 VERSION = "1.0.32"
@@ -318,6 +327,12 @@ class ApplianceAgent:
         self._sensor_server: Optional[uvicorn.Server] = None
         self._sensor_server_task: Optional[asyncio.Task] = None
 
+        # gRPC server for Go agents (workstation-scale monitoring)
+        self._grpc_enabled = getattr(config, 'grpc_enabled', GRPC_AVAILABLE)
+        self._grpc_port = getattr(config, 'grpc_port', 50051)
+        self._grpc_server_task: Optional[asyncio.Task] = None
+        self.agent_registry: Optional[AgentRegistry] = None
+
         # Evidence signing
         self.signer: Optional[Ed25519Signer] = None
         self._signing_key_path = config.state_dir / "signing.key"
@@ -418,6 +433,10 @@ class ApplianceAgent:
         if self._sensor_enabled:
             await self._start_sensor_server()
 
+        # Start gRPC server for Go agent communication
+        if self._grpc_enabled and GRPC_AVAILABLE:
+            await self._start_grpc_server()
+
         # Initial delay to let network settle
         await asyncio.sleep(5)
 
@@ -450,6 +469,15 @@ class ApplianceAgent:
                 except (asyncio.CancelledError, asyncio.TimeoutError):
                     pass
             logger.info("Sensor API server stopped")
+
+        # Stop gRPC server
+        if self._grpc_server_task:
+            try:
+                self._grpc_server_task.cancel()
+                await asyncio.wait_for(self._grpc_server_task, timeout=5)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            logger.info("gRPC server stopped")
 
     def _should_submit_evidence(self, check_type: str, result: str) -> bool:
         """
@@ -550,6 +578,41 @@ class ApplianceAgent:
         except Exception as e:
             logger.warning(f"Failed to start sensor API server: {e}")
             self._sensor_enabled = False
+
+    async def _start_grpc_server(self):
+        """
+        Start the gRPC server for Go agent communication.
+
+        Go agents on Windows workstations connect via gRPC (port 50051)
+        for persistent streaming of drift events. This solves the scalability
+        problem of polling 25-50 workstations per site via WinRM.
+        """
+        if not GRPC_AVAILABLE:
+            logger.warning("gRPC server disabled - grpcio not installed")
+            return
+
+        try:
+            # Initialize agent registry
+            self.agent_registry = AgentRegistry()
+
+            # Start gRPC server in background task
+            async def serve():
+                try:
+                    await grpc_serve(
+                        port=self._grpc_port,
+                        agent_registry=self.agent_registry,
+                        healing_engine=self.auto_healer,
+                        config=self.config,
+                    )
+                except asyncio.CancelledError:
+                    pass
+
+            self._grpc_server_task = asyncio.create_task(serve())
+            logger.info(f"gRPC server started on port {self._grpc_port} (Go agents)")
+
+        except Exception as e:
+            logger.warning(f"Failed to start gRPC server: {e}")
+            self._grpc_enabled = False
 
     async def _run_cycle(self):
         """Run one cycle of the agent loop."""
