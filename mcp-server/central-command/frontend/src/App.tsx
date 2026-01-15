@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
-import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, SiteWorkstations, RMMComparison, Documentation, Partners, Notifications, NotificationSettings, Incidents } from './pages';
+import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, SiteWorkstations, RMMComparison, IntegrationError, Documentation, Partners, Notifications, NotificationSettings, Incidents } from './pages';
 import Users from './pages/Users';
 import FrameworkConfig from './pages/FrameworkConfig';
 import Integrations from './pages/Integrations';
@@ -132,6 +132,7 @@ const AppLayout: React.FC = () => {
             <Route path="/sites/:siteId/integrations" element={<Integrations />} />
             <Route path="/sites/:siteId/integrations/setup" element={<IntegrationSetup />} />
             <Route path="/sites/:siteId/integrations/:integrationId" element={<IntegrationResources />} />
+            <Route path="/integrations/error" element={<IntegrationError />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/incidents" element={<Incidents />} />
             <Route path="/notification-settings" element={<NotificationSettings />} />
