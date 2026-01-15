@@ -99,14 +99,26 @@ function IntegrationCard({
   onSync,
   onDelete,
   syncing,
+  deleting,
 }: {
   integration: Integration;
   siteId: string;
   onSync: () => void;
-  onDelete: () => void;
+  onDelete: () => Promise<void>;
   syncing: boolean;
+  deleting: boolean;
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const handleDeleteClick = async () => {
+    try {
+      await onDelete();
+      // Card will be removed from list on success
+    } catch (err) {
+      // Reset confirm state on error so user can try again
+      setShowDeleteConfirm(false);
+    }
+  };
   const info = PROVIDER_INFO[integration.provider];
 
   const formatDate = (date: string | null) => {
@@ -169,22 +181,25 @@ function IntegrationCard({
         {!showDeleteConfirm ? (
           <button
             onClick={() => setShowDeleteConfirm(true)}
-            className="px-3 py-1.5 text-sm text-red-400 hover:text-red-300 transition-colors ml-auto"
+            disabled={deleting}
+            className="px-3 py-1.5 text-sm text-red-400 hover:text-red-300 transition-colors ml-auto disabled:opacity-50"
           >
             Delete
           </button>
         ) : (
           <div className="flex items-center gap-2 ml-auto">
-            <span className="text-sm text-gray-400">Confirm?</span>
+            <span className="text-sm text-gray-400">Delete?</span>
             <button
-              onClick={onDelete}
-              className="px-2 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+              onClick={handleDeleteClick}
+              disabled={deleting}
+              className="px-2 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
             >
-              Yes
+              {deleting ? 'Deleting...' : 'Yes'}
             </button>
             <button
               onClick={() => setShowDeleteConfirm(false)}
-              className="px-2 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-500"
+              disabled={deleting}
+              className="px-2 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-500 disabled:opacity-50"
             >
               No
             </button>
@@ -280,6 +295,7 @@ function EmptyState({ siteId }: { siteId: string }) {
 export default function Integrations() {
   const { siteId } = useParams<{ siteId: string }>();
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const { data: integrations, isLoading, error } = useIntegrations(siteId || null);
   const triggerSync = useTriggerSync();
@@ -305,10 +321,14 @@ export default function Integrations() {
   };
 
   const handleDelete = async (integrationId: string) => {
+    setDeletingId(integrationId);
     try {
       await deleteIntegration.mutateAsync({ siteId, integrationId });
     } catch (err) {
       console.error('Delete failed:', err);
+      throw err; // Re-throw so IntegrationCard can handle it
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -371,6 +391,7 @@ export default function Integrations() {
               onSync={() => handleSync(integration.id)}
               onDelete={() => handleDelete(integration.id)}
               syncing={syncingId === integration.id}
+              deleting={deletingId === integration.id}
             />
           ))}
         </div>
