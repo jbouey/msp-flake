@@ -48,7 +48,7 @@ async function fetchIntegrationsApi<T>(endpoint: string, options?: RequestInit):
 // TYPES
 // =============================================================================
 
-export type IntegrationProvider = 'aws' | 'google_workspace' | 'okta' | 'azure_ad';
+export type IntegrationProvider = 'aws' | 'google_workspace' | 'okta' | 'azure_ad' | 'microsoft_security';
 
 export type IntegrationStatus = 'active' | 'pending_oauth' | 'error' | 'paused' | 'disconnected';
 
@@ -267,6 +267,13 @@ export const PROVIDER_INFO: Record<IntegrationProvider, {
     color: '#0078D4',
     setupType: 'oauth',
   },
+  microsoft_security: {
+    name: 'Microsoft Security (Defender + Intune)',
+    description: 'Security Alerts, Intune Devices, Secure Score, Device Compliance',
+    icon: 'shield',
+    color: '#00A4EF',
+    setupType: 'oauth',
+  },
 };
 
 // Risk level colors and labels
@@ -296,9 +303,15 @@ export const RESOURCE_TYPE_LABELS: Record<string, string> = {
   policy_password: 'Password Policy',
   policy_mfa_enroll: 'MFA Enrollment Policy',
   policy_okta_sign_on: 'Sign-On Policy',
-  // Azure
+  // Azure AD
   conditional_access_policy: 'Conditional Access Policy',
   directory_role: 'Directory Role',
+  // Microsoft Security (Defender + Intune)
+  security_alert: 'Security Alert',
+  intune_device: 'Intune Device',
+  compliance_policy: 'Compliance Policy',
+  secure_score: 'Secure Score',
+  azure_ad_device: 'Azure AD Device',
 };
 
 export { ApiError };
