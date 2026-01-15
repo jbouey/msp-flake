@@ -177,7 +177,7 @@ function IntegrationCard({
         </Link>
         <button
           onClick={onSync}
-          disabled={syncing || !['active', 'connected'].includes(integration.status)}
+          disabled={syncing || !['active', 'connected', 'error'].includes(integration.status)}
           className="px-3 py-1.5 text-sm bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {syncing ? 'Syncing...' : 'Sync Now'}
