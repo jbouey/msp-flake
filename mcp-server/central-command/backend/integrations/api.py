@@ -932,6 +932,11 @@ async def get_integrations_health(
     user: dict = Depends(require_auth),
 ) -> Dict[str, Any]:
     """Get aggregated health status for all integrations in a site."""
+    # Resolve site slug to UUID
+    site_uuid = await TenantIsolation.get_site_uuid(db, site_id)
+    if not site_uuid:
+        raise HTTPException(status_code=404, detail="Site not found")
+
     # Verify site access
     has_access = await TenantIsolation.verify_site_access(
         db=db,
@@ -942,14 +947,14 @@ async def get_integrations_health(
     )
 
     if not has_access:
-        raise HTTPException(status_code=404, detail="Site not found")
+        raise HTTPException(status_code=403, detail="Access denied")
 
     result = await db.execute(
         text("""
             SELECT * FROM v_integration_health
-            WHERE site_id = :site_id
+            WHERE site_id = CAST(:site_uuid AS uuid)
         """),
-        {"site_id": site_id}
+        {"site_uuid": site_uuid}
     )
     rows = result.fetchall()
 
