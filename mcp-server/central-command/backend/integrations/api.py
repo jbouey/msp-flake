@@ -800,12 +800,13 @@ async def oauth_callback(
             code_verifier=code_verifier
         )
 
-        # Update stored credentials with tokens
-        stored_creds["access_token"] = tokens.get("access_token")
-        stored_creds["refresh_token"] = tokens.get("refresh_token")
-        stored_creds["token_expires_at"] = tokens.get("expires_at")
+        # Update stored credentials with tokens (convert to dict first since SecureCredentials is immutable)
+        updated_creds = stored_creds.to_dict()
+        updated_creds["access_token"] = tokens.get("access_token")
+        updated_creds["refresh_token"] = tokens.get("refresh_token")
+        updated_creds["token_expires_at"] = tokens.get("expires_at")
 
-        encrypted_creds = vault.encrypt_credentials(integration_id, stored_creds)
+        encrypted_creds = vault.encrypt_credentials(integration_id, updated_creds)
 
         # Update integration status
         await db.execute(
