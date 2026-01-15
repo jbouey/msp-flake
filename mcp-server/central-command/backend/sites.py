@@ -7,7 +7,7 @@ that modify site data directly.
 import json
 import secrets
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from enum import Enum
@@ -1196,6 +1196,133 @@ async def get_site_workstations(site_id: str):
         }
 
 
+# =============================================================================
+# RMM Comparison Endpoints
+# =============================================================================
+# NOTE: These routes MUST be defined BEFORE /{workstation_id} to avoid
+# "rmm-compare" being captured as a workstation_id by the dynamic route.
+
+
+@router.post("/{site_id}/workstations/rmm-compare")
+async def compare_workstations_with_rmm(
+    site_id: str,
+    rmm_data: Dict[str, Any],
+):
+    """Compare site workstations with RMM tool data.
+
+    Accepts RMM device data and returns a comparison report showing:
+    - Matched devices (with confidence scores)
+    - Coverage gaps (missing from RMM or AD)
+    - Deduplication recommendations
+
+    Request body:
+    {
+        "provider": "connectwise" | "datto" | "ninja" | "syncro" | "manual",
+        "devices": [
+            {
+                "hostname": "WS01",
+                "ip_address": "192.168.1.101",
+                "mac_address": "00:1A:2B:3C:4D:5E",
+                "os_name": "Windows 10",
+                "serial_number": "ABC123",
+                "device_id": "RMM-001"
+            },
+            ...
+        ]
+    }
+    """
+    pool = await get_pool()
+
+    # Validate request
+    provider = rmm_data.get("provider", "manual")
+    devices = rmm_data.get("devices", [])
+
+    if not devices:
+        raise HTTPException(
+            status_code=400,
+            detail="No RMM devices provided"
+        )
+
+    async with pool.acquire() as conn:
+        # Get our workstations for this site
+        ws_rows = await conn.fetch("""
+            SELECT hostname, ip_address, mac_address, os_name, os_version, online
+            FROM workstations
+            WHERE site_id = $1
+        """, site_id)
+
+        if not ws_rows:
+            return {
+                'error': 'no_workstations',
+                'message': f'No workstations discovered for site {site_id}. Run a workstation scan first.',
+            }
+
+        workstations = [dict(row) for row in ws_rows]
+
+        # Perform comparison (inline implementation to avoid agent dependency)
+        comparison = _compare_workstations_with_rmm(workstations, devices, provider)
+
+        # Store comparison result for audit trail
+        await conn.execute("""
+            INSERT INTO rmm_comparison_reports (
+                site_id, provider, our_count, rmm_count,
+                matched_count, coverage_rate, report_data, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+            ON CONFLICT (site_id) DO UPDATE SET
+                provider = EXCLUDED.provider,
+                our_count = EXCLUDED.our_count,
+                rmm_count = EXCLUDED.rmm_count,
+                matched_count = EXCLUDED.matched_count,
+                coverage_rate = EXCLUDED.coverage_rate,
+                report_data = EXCLUDED.report_data,
+                created_at = EXCLUDED.created_at
+        """,
+            site_id,
+            provider,
+            comparison['summary']['our_device_count'],
+            comparison['summary']['rmm_device_count'],
+            comparison['summary']['matched_count'],
+            comparison['summary']['coverage_rate'],
+            json.dumps(comparison),
+            datetime.now(timezone.utc),
+        )
+
+        return comparison
+
+
+@router.get("/{site_id}/workstations/rmm-compare")
+async def get_rmm_comparison_report(site_id: str):
+    """Get the latest RMM comparison report for a site."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT site_id, provider, our_count, rmm_count,
+                   matched_count, coverage_rate, report_data, created_at
+            FROM rmm_comparison_reports
+            WHERE site_id = $1
+        """, site_id)
+
+        if not row:
+            return {
+                'error': 'no_report',
+                'message': f'No RMM comparison report found for site {site_id}. Upload RMM data to generate one.',
+            }
+
+        return {
+            'site_id': row['site_id'],
+            'provider': row['provider'],
+            'summary': {
+                'our_device_count': row['our_count'],
+                'rmm_device_count': row['rmm_count'],
+                'matched_count': row['matched_count'],
+                'coverage_rate': float(row['coverage_rate'] or 0),
+            },
+            'report': row['report_data'],
+            'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+        }
+
+
 @router.get("/{site_id}/workstations/{workstation_id}")
 async def get_workstation(site_id: str, workstation_id: str):
     """Get details for a specific workstation."""
@@ -1321,128 +1448,8 @@ async def trigger_workstation_scan(site_id: str):
 
 
 # =============================================================================
-# RMM Comparison Endpoints
+# RMM Comparison Helper Function
 # =============================================================================
-
-
-@router.post("/{site_id}/workstations/rmm-compare")
-async def compare_workstations_with_rmm(
-    site_id: str,
-    rmm_data: Dict[str, Any],
-):
-    """Compare site workstations with RMM tool data.
-
-    Accepts RMM device data and returns a comparison report showing:
-    - Matched devices (with confidence scores)
-    - Coverage gaps (missing from RMM or AD)
-    - Deduplication recommendations
-
-    Request body:
-    {
-        "provider": "connectwise" | "datto" | "ninja" | "syncro" | "manual",
-        "devices": [
-            {
-                "hostname": "WS01",
-                "ip_address": "192.168.1.101",
-                "mac_address": "00:1A:2B:3C:4D:5E",
-                "os_name": "Windows 10",
-                "serial_number": "ABC123",
-                "device_id": "RMM-001"
-            },
-            ...
-        ]
-    }
-    """
-    pool = await get_pool()
-
-    # Validate request
-    provider = rmm_data.get("provider", "manual")
-    devices = rmm_data.get("devices", [])
-
-    if not devices:
-        raise HTTPException(
-            status_code=400,
-            detail="No RMM devices provided"
-        )
-
-    async with pool.acquire() as conn:
-        # Get our workstations for this site
-        ws_rows = await conn.fetch("""
-            SELECT hostname, ip_address, mac_address, os_name, os_version, online
-            FROM workstations
-            WHERE site_id = $1
-        """, site_id)
-
-        if not ws_rows:
-            return {
-                'error': 'no_workstations',
-                'message': f'No workstations discovered for site {site_id}. Run a workstation scan first.',
-            }
-
-        workstations = [dict(row) for row in ws_rows]
-
-        # Perform comparison (inline implementation to avoid agent dependency)
-        comparison = _compare_workstations_with_rmm(workstations, devices, provider)
-
-        # Store comparison result for audit trail
-        await conn.execute("""
-            INSERT INTO rmm_comparison_reports (
-                site_id, provider, our_count, rmm_count,
-                matched_count, coverage_rate, report_data, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-            ON CONFLICT (site_id) DO UPDATE SET
-                provider = EXCLUDED.provider,
-                our_count = EXCLUDED.our_count,
-                rmm_count = EXCLUDED.rmm_count,
-                matched_count = EXCLUDED.matched_count,
-                coverage_rate = EXCLUDED.coverage_rate,
-                report_data = EXCLUDED.report_data,
-                created_at = EXCLUDED.created_at
-        """,
-            site_id,
-            provider,
-            comparison['summary']['our_device_count'],
-            comparison['summary']['rmm_device_count'],
-            comparison['summary']['matched_count'],
-            comparison['summary']['coverage_rate'],
-            json.dumps(comparison),
-            datetime.now(timezone.utc),
-        )
-
-        return comparison
-
-
-@router.get("/{site_id}/workstations/rmm-compare")
-async def get_rmm_comparison_report(site_id: str):
-    """Get the latest RMM comparison report for a site."""
-    pool = await get_pool()
-
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT site_id, provider, our_count, rmm_count,
-                   matched_count, coverage_rate, report_data, created_at
-            FROM rmm_comparison_reports
-            WHERE site_id = $1
-        """, site_id)
-
-        if not row:
-            return {
-                'error': 'no_report',
-                'message': f'No RMM comparison report found for site {site_id}. Upload RMM data to generate one.',
-            }
-
-        return {
-            'site_id': row['site_id'],
-            'provider': row['provider'],
-            'summary': {
-                'our_device_count': row['our_count'],
-                'rmm_device_count': row['rmm_count'],
-                'matched_count': row['matched_count'],
-                'coverage_rate': float(row['coverage_rate'] or 0),
-            },
-            'report': row['report_data'],
-            'created_at': row['created_at'].isoformat() if row['created_at'] else None,
-        }
 
 
 def _compare_workstations_with_rmm(
