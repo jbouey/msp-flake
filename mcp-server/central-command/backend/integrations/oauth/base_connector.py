@@ -721,9 +721,9 @@ class BaseOAuthConnector(ABC):
         Args:
             encrypted_data: Encrypted token data from storage
         """
-        token_data = await self.credential_vault.decrypt_credentials(
-            integration_id=self.integration_id,
-            encrypted_data=encrypted_data
+        token_data = self.credential_vault.decrypt_credentials(
+            self.integration_id,
+            encrypted_data
         )
 
         self._tokens = OAuthTokens(token_data)
