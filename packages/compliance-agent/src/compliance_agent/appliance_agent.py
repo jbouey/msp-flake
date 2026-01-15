@@ -56,6 +56,11 @@ from .level3_escalation import EscalationHandler, EscalationConfig
 from .learning_loop import SelfLearningSystem, PromotionConfig
 from .ntp_verify import NTPVerifier, verify_time_for_evidence
 
+# Workstation discovery and compliance
+from .workstation_discovery import WorkstationDiscovery, Workstation
+from .workstation_checks import WorkstationComplianceChecker, WorkstationComplianceResult
+from .workstation_evidence import WorkstationEvidenceGenerator, create_workstation_evidence
+
 # Sensor API for dual-mode architecture (Windows)
 from .sensor_api import (
     router as sensor_router,
@@ -82,7 +87,7 @@ from .sensor_linux import (
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.31"
+VERSION = "1.0.32"
 
 
 async def run_command(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
@@ -289,6 +294,17 @@ class ApplianceAgent:
         self._linux_scan_interval = 300  # Scan Linux targets every 5 minutes
         self._network_posture_interval = 600  # Network posture scan every 10 minutes
         self._windows_scan_interval = 300  # Scan Windows every 5 minutes
+
+        # Workstation discovery and compliance
+        self.workstation_discovery: Optional[WorkstationDiscovery] = None
+        self.workstation_checker: Optional[WorkstationComplianceChecker] = None
+        self.workstations: List[Workstation] = []
+        self._last_workstation_scan = datetime.min.replace(tzinfo=timezone.utc)
+        self._last_workstation_discovery = datetime.min.replace(tzinfo=timezone.utc)
+        self._workstation_scan_interval = 600  # Scan workstations every 10 minutes
+        self._workstation_discovery_interval = 3600  # Discover from AD every hour
+        self._workstation_enabled = getattr(config, 'workstation_enabled', True)
+        self._domain_controller: Optional[str] = getattr(config, 'domain_controller', None)
 
         # Three-tier healing components
         self.auto_healer: Optional[AutoHealer] = None
@@ -584,7 +600,11 @@ class ApplianceAgent:
         # 6. Run network posture scan (periodically)
         await self._maybe_scan_network_posture()
 
-        # 7. Process pending orders (remote commands/updates)
+        # 7. Run workstation compliance scan (periodically)
+        if self._workstation_enabled and self._domain_controller:
+            await self._maybe_scan_workstations()
+
+        # 8. Process pending orders (remote commands/updates)
         await self._process_pending_orders()
 
     async def _get_compliance_summary(self) -> dict:
@@ -1789,6 +1809,190 @@ try {
         logger.info(f"Network posture scan complete: {compliant_count} compliant, {drift_count} with issues")
 
         self._last_network_posture_scan = now
+
+    async def _maybe_scan_workstations(self):
+        """
+        Scan workstations if enough time has passed.
+
+        Two-phase process:
+        1. Discovery: Enumerate workstations from AD (hourly)
+        2. Compliance: Run 5 checks on online workstations (every 10 min)
+
+        Checks: BitLocker, Defender, Patches, Firewall, Screen Lock
+        """
+        now = datetime.now(timezone.utc)
+
+        # Phase 1: Discovery (hourly)
+        discovery_elapsed = (now - self._last_workstation_discovery).total_seconds()
+        if discovery_elapsed >= self._workstation_discovery_interval:
+            await self._discover_workstations()
+            self._last_workstation_discovery = now
+
+        # Phase 2: Compliance checks (every 10 min)
+        scan_elapsed = (now - self._last_workstation_scan).total_seconds()
+        if scan_elapsed < self._workstation_scan_interval:
+            return
+
+        if not self.workstations:
+            return
+
+        logger.info(f"Starting workstation compliance scan ({len(self.workstations)} workstations)...")
+
+        # Initialize checker if needed
+        if not self.workstation_checker:
+            if not self.windows_executor:
+                self.windows_executor = WindowsExecutor([])
+            self.workstation_checker = WorkstationComplianceChecker(
+                executor=self.windows_executor,
+            )
+
+        # Get credentials for workstation access
+        workstation_creds = self._get_workstation_credentials()
+
+        # Run checks on online workstations
+        online_workstations = [ws for ws in self.workstations if ws.online]
+        if not online_workstations:
+            logger.info("No online workstations to scan")
+            self._last_workstation_scan = now
+            return
+
+        results: List[WorkstationComplianceResult] = []
+        for ws in online_workstations:
+            try:
+                target = ws.ip_address or ws.hostname
+                result = await self.workstation_checker.run_all_checks(
+                    target=target,
+                    ip_address=ws.ip_address,
+                    credentials=workstation_creds,
+                )
+                results.append(result)
+
+                # Update workstation compliance status
+                ws.compliance_status = result.overall_status.value
+                ws.last_compliance_check = now
+
+                status = "compliant" if result.overall_status.value == "compliant" else "drifted"
+                logger.debug(f"Workstation {ws.hostname}: {status}")
+
+            except Exception as e:
+                logger.error(f"Workstation compliance check failed for {ws.hostname}: {e}")
+                ws.compliance_status = "error"
+                ws.last_compliance_check = now
+
+        # Generate and submit evidence
+        if results:
+            try:
+                evidence = create_workstation_evidence(
+                    site_id=self.config.site_id,
+                    compliance_results=results,
+                    total_discovered=len(self.workstations),
+                    online_count=len(online_workstations),
+                )
+
+                # Submit site summary
+                summary = evidence.get("site_summary", {})
+                summary_json = json.dumps(summary, sort_keys=True)
+                summary_hash = hashlib.sha256(summary_json.encode()).hexdigest()
+
+                # Sign if signer available
+                agent_signature = None
+                if self.signer:
+                    try:
+                        signature_bytes = self.signer.sign(summary_json)
+                        agent_signature = signature_bytes.hex()
+                    except Exception as e:
+                        logger.warning(f"Failed to sign workstation evidence: {e}")
+
+                compliance_rate = summary.get("overall_compliance_rate", 0)
+                check_result = "pass" if compliance_rate >= 80 else "fail"
+
+                if self._should_submit_evidence("workstation", check_result):
+                    await self.client.submit_evidence(
+                        bundle_hash=summary_hash,
+                        check_type="workstation",
+                        check_result=check_result,
+                        evidence_data=summary,
+                        host=f"site:{self.config.site_id}",
+                        hipaa_control="164.312(a)(2)(iv)",  # Encryption/decryption
+                        agent_signature=agent_signature,
+                    )
+
+                # Log summary
+                compliant = summary.get("compliant_workstations", 0)
+                total = summary.get("online_workstations", 0)
+                logger.info(
+                    f"Workstation scan complete: {compliant}/{total} compliant "
+                    f"({compliance_rate:.1f}%)"
+                )
+
+            except Exception as e:
+                logger.error(f"Failed to generate workstation evidence: {e}")
+
+        self._last_workstation_scan = now
+
+    async def _discover_workstations(self):
+        """Discover workstations from Active Directory."""
+        if not self._domain_controller:
+            return
+
+        logger.info(f"Discovering workstations from AD via {self._domain_controller}...")
+
+        try:
+            # Get DC credentials from Windows targets
+            dc_creds = self._get_dc_credentials()
+            if not dc_creds:
+                logger.warning("No DC credentials available for workstation discovery")
+                return
+
+            # Initialize Windows executor if needed
+            if not self.windows_executor:
+                self.windows_executor = WindowsExecutor([])
+
+            # Initialize discovery
+            if not self.workstation_discovery:
+                self.workstation_discovery = WorkstationDiscovery(
+                    executor=self.windows_executor,
+                    domain_controller=self._domain_controller,
+                    credentials=dc_creds,
+                )
+
+            # Discover and check online status
+            workstations = await self.workstation_discovery.discover_and_check()
+            self.workstations = workstations
+
+            online = sum(1 for ws in workstations if ws.online)
+            logger.info(f"Discovered {len(workstations)} workstations, {online} online")
+
+        except Exception as e:
+            logger.error(f"Workstation discovery failed: {e}")
+
+    def _get_dc_credentials(self) -> Dict[str, str]:
+        """Get domain controller credentials from Windows targets."""
+        # Look for a Windows target that matches the DC
+        for target in self.windows_targets:
+            if self._domain_controller and (
+                target.hostname == self._domain_controller or
+                target.hostname.split('.')[0].upper() == self._domain_controller.split('.')[0].upper()
+            ):
+                return {
+                    "username": target.username,
+                    "password": target.password,
+                }
+
+        # Fallback: use first Windows target credentials
+        if self.windows_targets:
+            target = self.windows_targets[0]
+            return {
+                "username": target.username,
+                "password": target.password,
+            }
+
+        return {}
+
+    def _get_workstation_credentials(self) -> Dict[str, str]:
+        """Get credentials for workstation access."""
+        # Same as DC creds for now (domain admin can access workstations)
+        return self._get_dc_credentials()
 
     # =========================================================================
     # Order Processing (remote commands and updates)

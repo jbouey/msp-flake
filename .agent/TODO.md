@@ -1,7 +1,79 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-14 (Session 32 - Network Compliance + Extended Check Types + Documentation Sweep)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.30, ISO v29, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab Automated, **Network Compliance Check**, **Extended Check Types**)
+**Last Updated:** 2026-01-14 (Session 33 - Phase 1 Workstation Coverage)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.32, ISO v29, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, **Workstation Compliance**)
+
+---
+
+## Session 33 (2026-01-14) - Phase 1 Workstation Coverage
+
+### 1. Workstation Discovery Module
+**Status:** COMPLETE
+**File:** `packages/compliance-agent/src/compliance_agent/workstation_discovery.py`
+**Details:** AD enumeration via PowerShell Get-ADComputer, online status checking, caching.
+
+### 2. Workstation Compliance Checks
+**Status:** COMPLETE
+**File:** `packages/compliance-agent/src/compliance_agent/workstation_checks.py`
+**Details:** 5 WMI-based compliance checks:
+- BitLocker encryption (§164.312(a)(2)(iv))
+- Windows Defender (§164.308(a)(5)(ii)(B))
+- Patch status (§164.308(a)(5)(ii)(B))
+- Firewall status (§164.312(a)(1))
+- Screen lock policy (§164.312(a)(2)(iii))
+
+### 3. Workstation Evidence Generation
+**Status:** COMPLETE
+**File:** `packages/compliance-agent/src/compliance_agent/workstation_evidence.py`
+**Details:** Per-workstation bundles + site-level summary, hash-chained, HIPAA control mapping.
+
+### 4. Database Migration
+**Status:** COMPLETE
+**File:** `mcp-server/central-command/backend/migrations/017_workstations.sql`
+**Tables:**
+- `workstations` - Discovered workstations
+- `workstation_checks` - Individual check results
+- `workstation_evidence` - Evidence bundles
+- `site_workstation_summaries` - Site-level aggregation
+- Views: `v_site_workstation_status`, `v_workstation_latest_checks`
+
+### 5. Agent Integration
+**Status:** COMPLETE
+**File:** `packages/compliance-agent/src/compliance_agent/appliance_agent.py`
+**Changes:**
+- Added `_maybe_scan_workstations()` method
+- 2-phase: discovery (hourly) + compliance checks (10 min)
+- Added `run_script()` method to WindowsExecutor
+- Agent version bumped to v1.0.32
+
+### 6. Tests
+**Status:** COMPLETE
+**File:** `packages/compliance-agent/tests/test_workstation_compliance.py`
+**Coverage:** 20 tests passing (754 total)
+
+### 7. Frontend Dashboard
+**Status:** COMPLETE
+**Files:**
+- `frontend/src/pages/SiteWorkstations.tsx` - Main workstation dashboard page
+- `frontend/src/utils/api.ts` - Added workstationsApi
+- `frontend/src/hooks/useFleet.ts` - Added useSiteWorkstations, useTriggerWorkstationScan
+- `frontend/src/hooks/index.ts` - Export workstation hooks
+- `frontend/src/pages/index.ts` - Export SiteWorkstations page
+- `frontend/src/App.tsx` - Added route `/sites/:siteId/workstations`
+- `frontend/src/pages/SiteDetail.tsx` - Added "Workstations" button link
+
+### 8. Backend API
+**Status:** COMPLETE
+**File:** `mcp-server/central-command/backend/sites.py`
+**Endpoints:**
+- `GET /api/sites/{site_id}/workstations` - List workstations with summary
+- `GET /api/sites/{site_id}/workstations/{workstation_id}` - Workstation detail
+- `POST /api/sites/{site_id}/workstations/scan` - Trigger workstation scan
+
+### Development Roadmap
+**Status:** COMPLETE
+**File:** `.agent/DEVELOPMENT_ROADMAP.md`
+**Details:** Full integration of user's 4-phase roadmap with gap analysis.
 
 ---
 

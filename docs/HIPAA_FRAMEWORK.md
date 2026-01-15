@@ -68,6 +68,18 @@ Your MCP + LLM system *supports* compliance (**HIPAA §164.308(a)(1)(ii)(D)**: "
 | Time Sync | NTP drift, source validation | §164.312(b) |
 | Patching | Pending updates, vuln scan results | §164.308(a)(5)(ii)(B) |
 
+### Tier 1.5: Workstation Compliance (NEW - Session 33)
+
+| Component | What to Check | HIPAA Citation |
+|-----------|--------------|----------------|
+| BitLocker | Drive encryption enabled | §164.312(a)(2)(iv) |
+| Windows Defender | Real-time protection active | §164.308(a)(5)(ii)(B) |
+| Patch Status | Recent updates within 30 days | §164.308(a)(5)(ii)(B) |
+| Firewall | All profiles enabled | §164.312(a)(1) |
+| Screen Lock | Inactivity timeout set | §164.312(a)(2)(iii) |
+
+**Implementation:** AD-based discovery + WMI compliance checks via appliance.
+
 ### Tier 2: Application (Moderate)
 
 | Component | What to Monitor | HIPAA Citation |

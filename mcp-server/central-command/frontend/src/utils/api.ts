@@ -739,4 +739,34 @@ export const frameworksApi = {
   getIndustries: () => fetchSitesApi<Record<string, IndustryRecommendation>>('/frameworks/industries'),
 };
 
+// =============================================================================
+// WORKSTATIONS API (Site workstation compliance monitoring)
+// =============================================================================
+
+import type {
+  Workstation,
+  SiteWorkstationSummary,
+} from '../types';
+
+export interface SiteWorkstationsResponse {
+  summary: SiteWorkstationSummary | null;
+  workstations: Workstation[];
+}
+
+export const workstationsApi = {
+  // Get all workstations for a site with summary
+  getSiteWorkstations: (siteId: string) =>
+    fetchSitesApi<SiteWorkstationsResponse>(`/sites/${siteId}/workstations`),
+
+  // Get a single workstation's details
+  getWorkstation: (siteId: string, workstationId: string) =>
+    fetchSitesApi<Workstation>(`/sites/${siteId}/workstations/${workstationId}`),
+
+  // Trigger a workstation scan
+  triggerScan: (siteId: string) =>
+    fetchSitesApi<{ status: string; message: string }>(`/sites/${siteId}/workstations/scan`, {
+      method: 'POST',
+    }),
+};
+
 export { ApiError };

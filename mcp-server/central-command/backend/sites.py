@@ -1079,3 +1079,242 @@ async def send_email_alert(request: EmailAlertRequest):
             status_code=500,
             detail="Failed to send email alert. Check server logs for details."
         )
+
+
+# =============================================================================
+# WORKSTATION COMPLIANCE API
+# =============================================================================
+
+@router.get("/{site_id}/workstations")
+async def get_site_workstations(site_id: str):
+    """Get all workstations for a site with compliance summary.
+
+    Returns workstation discovery and compliance check results from
+    the appliance's AD-based workstation scanning.
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Get summary (if exists)
+        summary_row = await conn.fetchrow("""
+            SELECT site_id, total_workstations, online_workstations,
+                   compliant_workstations, drifted_workstations, error_workstations,
+                   unknown_workstations, overall_compliance_rate, check_compliance,
+                   last_scan
+            FROM site_workstation_summaries
+            WHERE site_id = $1
+        """, site_id)
+
+        summary = None
+        if summary_row:
+            check_compliance = summary_row['check_compliance']
+            if isinstance(check_compliance, str):
+                try:
+                    check_compliance = json.loads(check_compliance)
+                except:
+                    check_compliance = {}
+
+            summary = {
+                'site_id': summary_row['site_id'],
+                'total_workstations': summary_row['total_workstations'],
+                'online_workstations': summary_row['online_workstations'],
+                'compliant_workstations': summary_row['compliant_workstations'],
+                'drifted_workstations': summary_row['drifted_workstations'],
+                'error_workstations': summary_row['error_workstations'],
+                'unknown_workstations': summary_row['unknown_workstations'],
+                'overall_compliance_rate': float(summary_row['overall_compliance_rate'] or 0),
+                'check_compliance': check_compliance or {},
+                'last_scan': summary_row['last_scan'].isoformat() if summary_row['last_scan'] else None,
+            }
+
+        # Get workstations with latest checks
+        ws_rows = await conn.fetch("""
+            SELECT w.id, w.hostname, w.ip_address, w.os_name, w.os_version,
+                   w.online, w.last_seen, w.compliance_status, w.last_compliance_check,
+                   w.compliance_percentage
+            FROM workstations w
+            WHERE w.site_id = $1
+            ORDER BY w.hostname
+        """, site_id)
+
+        workstations = []
+        for ws in ws_rows:
+            # Get check results for this workstation
+            check_rows = await conn.fetch("""
+                SELECT check_type, status, compliant, details, hipaa_controls, checked_at
+                FROM workstation_checks
+                WHERE workstation_id = $1
+                ORDER BY checked_at DESC
+            """, ws['id'])
+
+            # Build checks dict (latest per check_type)
+            checks = {}
+            seen_types = set()
+            for check in check_rows:
+                if check['check_type'] not in seen_types:
+                    seen_types.add(check['check_type'])
+                    details = check['details']
+                    if isinstance(details, str):
+                        try:
+                            details = json.loads(details)
+                        except:
+                            details = {}
+
+                    hipaa = check['hipaa_controls']
+                    if isinstance(hipaa, str):
+                        try:
+                            hipaa = json.loads(hipaa)
+                        except:
+                            hipaa = []
+
+                    checks[check['check_type']] = {
+                        'check_type': check['check_type'],
+                        'status': check['status'],
+                        'compliant': check['compliant'],
+                        'details': details or {},
+                        'hipaa_controls': hipaa or [],
+                        'checked_at': check['checked_at'].isoformat() if check['checked_at'] else None,
+                    }
+
+            workstations.append({
+                'id': str(ws['id']),
+                'hostname': ws['hostname'],
+                'ip_address': ws['ip_address'],
+                'os_name': ws['os_name'],
+                'os_version': ws['os_version'],
+                'online': ws['online'],
+                'last_seen': ws['last_seen'].isoformat() if ws['last_seen'] else None,
+                'compliance_status': ws['compliance_status'] or 'unknown',
+                'last_compliance_check': ws['last_compliance_check'].isoformat() if ws['last_compliance_check'] else None,
+                'compliance_percentage': float(ws['compliance_percentage'] or 0),
+                'checks': checks,
+            })
+
+        return {
+            'summary': summary,
+            'workstations': workstations,
+        }
+
+
+@router.get("/{site_id}/workstations/{workstation_id}")
+async def get_workstation(site_id: str, workstation_id: str):
+    """Get details for a specific workstation."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        ws = await conn.fetchrow("""
+            SELECT id, hostname, ip_address, os_name, os_version,
+                   online, last_seen, compliance_status, last_compliance_check,
+                   compliance_percentage
+            FROM workstations
+            WHERE site_id = $1 AND id = $2
+        """, site_id, workstation_id)
+
+        if not ws:
+            raise HTTPException(status_code=404, detail=f"Workstation {workstation_id} not found")
+
+        # Get check results
+        check_rows = await conn.fetch("""
+            SELECT check_type, status, compliant, details, hipaa_controls, checked_at
+            FROM workstation_checks
+            WHERE workstation_id = $1
+            ORDER BY checked_at DESC
+        """, ws['id'])
+
+        checks = {}
+        seen_types = set()
+        for check in check_rows:
+            if check['check_type'] not in seen_types:
+                seen_types.add(check['check_type'])
+                details = check['details']
+                if isinstance(details, str):
+                    try:
+                        details = json.loads(details)
+                    except:
+                        details = {}
+
+                hipaa = check['hipaa_controls']
+                if isinstance(hipaa, str):
+                    try:
+                        hipaa = json.loads(hipaa)
+                    except:
+                        hipaa = []
+
+                checks[check['check_type']] = {
+                    'check_type': check['check_type'],
+                    'status': check['status'],
+                    'compliant': check['compliant'],
+                    'details': details or {},
+                    'hipaa_controls': hipaa or [],
+                    'checked_at': check['checked_at'].isoformat() if check['checked_at'] else None,
+                }
+
+        return {
+            'id': str(ws['id']),
+            'hostname': ws['hostname'],
+            'ip_address': ws['ip_address'],
+            'os_name': ws['os_name'],
+            'os_version': ws['os_version'],
+            'online': ws['online'],
+            'last_seen': ws['last_seen'].isoformat() if ws['last_seen'] else None,
+            'compliance_status': ws['compliance_status'] or 'unknown',
+            'last_compliance_check': ws['last_compliance_check'].isoformat() if ws['last_compliance_check'] else None,
+            'compliance_percentage': float(ws['compliance_percentage'] or 0),
+            'checks': checks,
+        }
+
+
+@router.post("/{site_id}/workstations/scan")
+async def trigger_workstation_scan(site_id: str):
+    """Trigger a workstation compliance scan for a site.
+
+    Creates an order for the appliance to initiate an immediate
+    workstation discovery and compliance check cycle.
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Find the first online appliance for this site
+        appliance = await conn.fetchrow("""
+            SELECT appliance_id
+            FROM site_appliances
+            WHERE site_id = $1 AND status = 'online'
+            ORDER BY last_checkin DESC
+            LIMIT 1
+        """, site_id)
+
+        if not appliance:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No online appliance found for site {site_id}"
+            )
+
+        # Create an order to trigger workstation scan
+        order_id = generate_order_id()
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=1)
+
+        await conn.execute("""
+            INSERT INTO admin_orders (
+                order_id, appliance_id, site_id, order_type,
+                parameters, priority, status, created_at, expires_at
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)
+        """,
+            order_id,
+            appliance['appliance_id'],
+            site_id,
+            'run_command',
+            json.dumps({'command': 'workstation_scan', 'force': True}),
+            10,  # High priority
+            'pending',
+            now,
+            expires_at
+        )
+
+        return {
+            'status': 'scan_requested',
+            'order_id': order_id,
+            'site_id': site_id,
+            'appliance_id': appliance['appliance_id'],
+            'message': 'Workstation scan will run on next appliance check-in',
+        }
