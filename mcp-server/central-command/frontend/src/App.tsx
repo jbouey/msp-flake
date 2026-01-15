@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
-import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, SiteWorkstations, RMMComparison, IntegrationError, Documentation, Partners, Notifications, NotificationSettings, Incidents } from './pages';
+import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, SiteWorkstations, SiteGoAgents, RMMComparison, IntegrationError, Documentation, Partners, Notifications, NotificationSettings, Incidents } from './pages';
 import Users from './pages/Users';
 import FrameworkConfig from './pages/FrameworkConfig';
 import Integrations from './pages/Integrations';
@@ -129,6 +129,7 @@ const AppLayout: React.FC = () => {
             <Route path="/sites/:siteId/frameworks" element={<FrameworkConfig />} />
             <Route path="/sites/:siteId/workstations" element={<SiteWorkstations />} />
             <Route path="/sites/:siteId/workstations/rmm-compare" element={<RMMComparison />} />
+            <Route path="/sites/:siteId/agents" element={<SiteGoAgents />} />
             <Route path="/sites/:siteId/integrations" element={<Integrations />} />
             <Route path="/sites/:siteId/integrations/setup" element={<IntegrationSetup />} />
             <Route path="/sites/:siteId/integrations/:integrationId" element={<IntegrationResources />} />

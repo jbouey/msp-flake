@@ -14,5 +14,6 @@ export { Notifications } from './Notifications';
 export { NotificationSettings } from './NotificationSettings';
 export { Incidents } from './Incidents';
 export { SiteWorkstations } from './SiteWorkstations';
+export { SiteGoAgents } from './SiteGoAgents';
 export { RMMComparison } from './RMMComparison';
 export { IntegrationError } from './IntegrationError';

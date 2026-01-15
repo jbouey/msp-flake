@@ -841,4 +841,51 @@ export const rmmComparisonApi = {
     }),
 };
 
+// =============================================================================
+// GO AGENTS API (Workstation-scale gRPC agents)
+// =============================================================================
+
+import type {
+  GoAgent,
+  SiteGoAgentSummary,
+} from '../types';
+
+export interface SiteGoAgentsResponse {
+  summary: SiteGoAgentSummary | null;
+  agents: GoAgent[];
+}
+
+export const goAgentsApi = {
+  // Get all Go agents for a site with summary
+  getSiteAgents: (siteId: string) =>
+    fetchSitesApi<SiteGoAgentsResponse>(`/sites/${siteId}/agents`),
+
+  // Get a single Go agent's details
+  getAgent: (siteId: string, agentId: string) =>
+    fetchSitesApi<GoAgent>(`/sites/${siteId}/agents/${agentId}`),
+
+  // Get Go agent summary for a site
+  getSummary: (siteId: string) =>
+    fetchSitesApi<SiteGoAgentSummary>(`/sites/${siteId}/agents/summary`),
+
+  // Update Go agent capability tier
+  updateTier: (siteId: string, agentId: string, tier: 'monitor_only' | 'self_heal' | 'full_remediation') =>
+    fetchSitesApi<{ status: string }>(`/sites/${siteId}/agents/${agentId}/tier`, {
+      method: 'PUT',
+      body: JSON.stringify({ capability_tier: tier }),
+    }),
+
+  // Trigger drift check on a Go agent
+  triggerCheck: (siteId: string, agentId: string) =>
+    fetchSitesApi<{ status: string; message: string }>(`/sites/${siteId}/agents/${agentId}/check`, {
+      method: 'POST',
+    }),
+
+  // Remove a Go agent from registry
+  removeAgent: (siteId: string, agentId: string) =>
+    fetchSitesApi<{ status: string }>(`/sites/${siteId}/agents/${agentId}`, {
+      method: 'DELETE',
+    }),
+};
+
 export { ApiError };
