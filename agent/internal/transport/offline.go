@@ -9,6 +9,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	pb "github.com/osiriscare/agent/proto"
 )
 
 // OfflineQueue stores events when the appliance is unreachable.
@@ -65,7 +66,7 @@ func NewOfflineQueue(dataDir string) (*OfflineQueue, error) {
 }
 
 // Enqueue adds an event to the offline queue
-func (q *OfflineQueue) Enqueue(event *DriftEvent) error {
+func (q *OfflineQueue) Enqueue(event *pb.DriftEvent) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -102,7 +103,7 @@ func (q *OfflineQueue) EnqueueRaw(eventType string, payload []byte) error {
 }
 
 // Dequeue retrieves and removes the oldest event from the queue
-func (q *OfflineQueue) Dequeue() (*DriftEvent, bool) {
+func (q *OfflineQueue) Dequeue() (*pb.DriftEvent, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -130,7 +131,7 @@ func (q *OfflineQueue) Dequeue() (*DriftEvent, bool) {
 	}
 
 	// Unmarshal event
-	var event DriftEvent
+	var event pb.DriftEvent
 	if err := json.Unmarshal(payload, &event); err != nil {
 		return nil, false
 	}
@@ -139,7 +140,7 @@ func (q *OfflineQueue) Dequeue() (*DriftEvent, bool) {
 }
 
 // DequeueAll retrieves and removes all events up to a limit
-func (q *OfflineQueue) DequeueAll(limit int) ([]*DriftEvent, error) {
+func (q *OfflineQueue) DequeueAll(limit int) ([]*pb.DriftEvent, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -154,7 +155,7 @@ func (q *OfflineQueue) DequeueAll(limit int) ([]*DriftEvent, error) {
 	}
 	defer rows.Close()
 
-	var events []*DriftEvent
+	var events []*pb.DriftEvent
 	var ids []int64
 
 	for rows.Next() {
@@ -164,7 +165,7 @@ func (q *OfflineQueue) DequeueAll(limit int) ([]*DriftEvent, error) {
 			continue
 		}
 
-		var event DriftEvent
+		var event pb.DriftEvent
 		if err := json.Unmarshal(payload, &event); err != nil {
 			continue
 		}

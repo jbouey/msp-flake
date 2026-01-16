@@ -1,6 +1,6 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-01-16 (Session 44 - Go Agent Testing & ISO v37)
+**Last Updated:** 2026-01-16 (Session 45 - gRPC Stub Implementation)
 **Agent Version:** v1.0.37
 **ISO Version:** v37
 
@@ -166,8 +166,11 @@ Windows Workstations                  NixOS Appliance
 ### Current Status
 
 - **Binary:** Built on VPS (`osiris-agent.exe`, 10.3 MB)
-- **gRPC Port:** Configured in ISO v37
-- **Streaming:** Stub implementation (heartbeat-based reporting)
+- **gRPC Port:** Configured in ISO v37 (port 50051)
+- **gRPC Implementation:** COMPLETE (Session 45)
+  - Python server: `ComplianceAgentServicer` inherits from generated servicer
+  - Go client: Uses `pb.NewComplianceAgentClient` with generated types
+  - 5 RPC methods: Register, ReportDrift (streaming), ReportHealing, Heartbeat, ReportRMMStatus
 - **Offline Queue:** CGO dependency issue (requires `CGO_ENABLED=1`)
 
 ---

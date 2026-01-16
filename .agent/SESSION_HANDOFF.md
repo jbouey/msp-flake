@@ -1,99 +1,101 @@
 # Session Handoff - 2026-01-16
 
-**Session:** 44 - Go Agent Testing & ISO v37
+**Session:** 45 - gRPC Stub Implementation
 **Agent Version:** v1.0.37
-**ISO Version:** v37 (built, on iMac at ~/osiriscare-v37.iso)
+**ISO Version:** v37 (on iMac at ~/osiriscare-v37.iso)
 **Last Updated:** 2026-01-16
 
 ---
 
-## Session 44 Accomplishments
+## Session 45 Accomplishments
 
-### 1. Go Agent Config on NVWS01
+### 1. gRPC Protobuf Definition
 **Status:** COMPLETE
-- Created `C:\ProgramData\OsirisCare\config.json` on NVWS01 workstation
-- Config: `{"appliance_addr": "192.168.88.247:50051", "data_dir": "C:\\ProgramData\\OsirisCare"}`
-- Used localadmin / NorthValley2024! credentials (from LAB_CREDENTIALS.md)
+- Created unified `/proto/compliance.proto` as single source of truth
+- 5 RPC methods: Register, ReportDrift (streaming), ReportHealing, Heartbeat, ReportRMMStatus
+- CapabilityTier enum: MONITOR_ONLY (0), SELF_HEAL (1), FULL_REMEDIATION (2)
 
-### 2. Firewall Port 50051 Fix
+### 2. Python gRPC Server Implementation
 **Status:** COMPLETE
-**Root Cause:** NixOS firewall only allowed ports 80, 22, 8080 - NOT 50051 for gRPC
-**Hot-fix:** `iptables -I nixos-fw 8 -p tcp --dport 50051 -j nixos-fw-accept` on running VM
-**Permanent fix:** Updated `iso/appliance-image.nix`:
-```nix
-allowedTCPPorts = [ 80 22 8080 50051 ];  # Status + SSH + Sensor API + gRPC
+**Files Generated/Modified:**
+- `compliance_pb2.py` - Generated protobuf messages
+- `compliance_pb2_grpc.py` - Generated gRPC servicer (fixed import to relative)
+- `grpc_server.py` - Rewrote to inherit from generated servicer
+
+**Key Changes:**
+```python
+class ComplianceAgentServicer(compliance_pb2_grpc.ComplianceAgentServicer):
+    def Register(self, request, context):
+        # Returns compliance_pb2.RegisterResponse
+    def ReportDrift(self, request_iterator, context):
+        # Yields compliance_pb2.DriftAck for each event
+    def Heartbeat(self, request, context):
+        # Returns compliance_pb2.HeartbeatResponse
 ```
 
-### 3. Go Agent Dry-Run Testing
+### 3. Go gRPC Client Implementation
 **Status:** COMPLETE
-**Results on NVWS01:**
-| Check | Status | Notes |
-|-------|--------|-------|
-| screenlock | ✅ PASS | Timeout ≤ 600s |
-| rmm_detection | ✅ PASS | No RMM detected |
-| bitlocker | ❌ FAIL | No encrypted volumes |
-| defender | ❌ FAIL | Real-time protection off |
-| firewall | ❌ FAIL | Not all profiles enabled |
-| patches | ❌ ERROR | WMI error |
+**Files Generated/Modified:**
+- `agent/proto/compliance.pb.go` - Generated protobuf messages
+- `agent/proto/compliance_grpc.pb.go` - Generated gRPC client
+- `agent/internal/transport/grpc.go` - Rewrote to use generated client
+- `agent/internal/transport/offline.go` - Updated to use pb.DriftEvent
+- `agent/cmd/osiris-agent/main.go` - Updated to use pb types
 
-### 4. Go Agent Code Audit
-**Status:** COMPLETE
-**Findings:**
-- Clean, well-organized code structure
-- 6 HIPAA compliance checks working
-- **Issues Identified:**
-  1. SQLite offline queue uses `mattn/go-sqlite3` which requires CGO
-     - Fails with `CGO_ENABLED=0` (current build setting)
-     - Fix: Switch to `modernc.org/sqlite` (pure Go) or enable CGO
-  2. gRPC methods are stubs - actual streaming not implemented yet
+**Key Changes:**
+```go
+import pb "github.com/osiriscare/agent/proto"
 
-### 5. Chaos Lab Config Path Bug Fix
-**Status:** COMPLETE
-**File:** `~/chaos-lab/scripts/winrm_attack.py` (on iMac)
-**Issue:** When called via symlink, `__file__` resolves incorrectly
-**Fix:** Use `os.path.realpath(__file__)` and handle both direct and symlink calls
+type GRPCClient struct {
+    client      pb.ComplianceAgentClient
+    driftStream pb.ComplianceAgent_ReportDriftClient
+}
 
-### 6. ISO v37 Build & Transfer
-**Status:** COMPLETE
-- Built on VPS with `nix build .#appliance-iso -o result-iso`
-- Version: Agent v1.0.37
-- Features: Port 50051 in firewall, grpcio dependencies
-- Transferred to iMac: `~/osiriscare-v37.iso` (1.0G)
+func (c *GRPCClient) Register(ctx context.Context) (*pb.RegisterResponse, error) {
+    req := &pb.RegisterRequest{Hostname: c.hostname, ...}
+    return c.client.Register(ctx, req)
+}
+```
 
-### 7. Production Push
+### 4. Tests Updated
 **Status:** COMPLETE
-**Commit:** `50f5f86`
-**VPS Synced:** `git fetch && git reset --hard origin/main`
+- Updated `test_grpc_server.py` for synchronous servicer API
+- All 12 gRPC tests pass
+- Full suite: 811 passed, 7 skipped
 
 ---
 
 ## Files Modified This Session
 
-### Modified:
-| File | Changes |
-|------|---------|
-| `iso/appliance-image.nix` | Added port 50051 to firewall rules |
-| `~/chaos-lab/scripts/winrm_attack.py` (iMac) | Fixed config path resolution for symlinks |
-
-### Created on NVWS01:
+### Proto Definition:
 | File | Purpose |
 |------|---------|
-| `C:\ProgramData\OsirisCare\config.json` | Go Agent configuration |
+| `/proto/compliance.proto` | Unified protobuf definition |
 
----
+### Python (Generated):
+| File | Purpose |
+|------|---------|
+| `compliance_pb2.py` | Generated protobuf messages |
+| `compliance_pb2_grpc.py` | Generated gRPC servicer |
 
-## Known Issues
+### Python (Modified):
+| File | Changes |
+|------|---------|
+| `grpc_server.py` | Rewrote to use generated servicer |
+| `test_grpc_server.py` | Updated for sync API |
 
-### 1. Go Agent CGO Dependency
-- `mattn/go-sqlite3` requires CGO_ENABLED=1
-- Current builds use CGO_ENABLED=0
-- **Workaround:** SQLite queue not functional until fixed
-- **Fix:** Switch to `modernc.org/sqlite` (pure Go)
+### Go (Generated):
+| File | Purpose |
+|------|---------|
+| `agent/proto/compliance.pb.go` | Generated protobuf messages |
+| `agent/proto/compliance_grpc.pb.go` | Generated gRPC client |
 
-### 2. gRPC Streaming Not Implemented
-- Go Agent gRPC methods are stubs
-- Python gRPC server also has stub servicer
-- **Impact:** Full push-based communication not yet working
+### Go (Modified):
+| File | Changes |
+|------|---------|
+| `agent/internal/transport/grpc.go` | Rewrote to use generated client |
+| `agent/internal/transport/offline.go` | Updated DriftEvent types |
+| `agent/cmd/osiris-agent/main.go` | Updated to use pb types |
 
 ---
 
@@ -103,18 +105,14 @@ allowedTCPPorts = [ 80 22 8080 50051 ];  # Status + SSH + Sensor API + gRPC
    - Location: `~/osiriscare-v37.iso` on iMac
    - Target: 192.168.88.246
 
-2. **Test Go Agent gRPC (Real Mode)**
+2. **Rebuild Go Agent Binary**
+   - Need to rebuild with updated gRPC code
+   - Location: VPS `/root/msp-iso-build/agent/`
+
+3. **Test End-to-End gRPC**
    - Run Go Agent without `-dry-run` on NVWS01
-   - Verify gRPC connection to appliance port 50051
-   - Monitor agent logs on appliance
-
-3. **Fix Go Agent CGO Issue**
-   - Replace `mattn/go-sqlite3` with `modernc.org/sqlite`
-   - Rebuild Go Agent binaries
-
-4. **Implement gRPC Streaming**
-   - Wire up Python gRPC servicer
-   - Implement Go Agent streaming client
+   - Verify registration with appliance
+   - Test drift event streaming
 
 ---
 
@@ -123,16 +121,11 @@ allowedTCPPorts = [ 80 22 8080 50051 ];  # Status + SSH + Sensor API + gRPC
 ### VMs (on iMac 192.168.88.50)
 | VM | IP | Status | Notes |
 |----|-----|--------|-------|
-| NVDC01 | 192.168.88.250 | ✅ Online | Domain Controller |
-| NVWS01 | 192.168.88.251 | ✅ Online | Windows 10 Workstation, Go Agent installed |
-| NVSRV01 | 192.168.88.244 | ✅ Online | Windows Server Core |
-| osiriscare-appliance (VM) | 192.168.88.247 | ✅ Online | Running ISO v36 + hot-fix |
-| osiriscare-appliance (Physical) | 192.168.88.246 | ✅ Online | HP T640, needs ISO v37 |
-
-### Go Agent Deployment
-- **Binary:** `C:\OsirisCare\osiris-agent.exe` on NVWS01
-- **Config:** `C:\ProgramData\OsirisCare\config.json`
-- **Appliance Endpoint:** `192.168.88.247:50051`
+| NVDC01 | 192.168.88.250 | Online | Domain Controller |
+| NVWS01 | 192.168.88.251 | Online | Go Agent installed |
+| NVSRV01 | 192.168.88.244 | Online | Windows Server Core |
+| osiriscare-appliance (VM) | 192.168.88.247 | Online | Running ISO v37 + hot-fix |
+| osiriscare-appliance (Physical) | 192.168.88.246 | Online | HP T640, needs ISO v37 |
 
 ---
 
@@ -142,26 +135,44 @@ allowedTCPPorts = [ 80 22 8080 50051 ];  # Status + SSH + Sensor API + gRPC
 # SSH to VM appliance
 ssh root@192.168.88.247
 
-# Check firewall rules on appliance
-iptables -L nixos-fw -n --line-numbers | grep 50051
+# Test Python gRPC imports
+cd packages/compliance-agent && source venv/bin/activate
+python -c "from compliance_agent.grpc_server import GRPC_AVAILABLE; print(f'gRPC: {GRPC_AVAILABLE}')"
 
-# Test gRPC port from NVWS01 (PowerShell)
-Test-NetConnection -ComputerName 192.168.88.247 -Port 50051
-
-# Watch agent logs on appliance
-journalctl -u compliance-agent -f
-
-# Run Go Agent (dry-run)
-C:\OsirisCare\osiris-agent.exe -dry-run
+# Build Go Agent on VPS
+cd /root/msp-iso-build/agent
+GOOS=windows GOARCH=amd64 go build -o osiris-agent.exe ./cmd/osiris-agent
 
 # Run Go Agent (real mode)
 C:\OsirisCare\osiris-agent.exe
 
-# SSH to VPS
-ssh root@178.156.162.116
+# Watch appliance logs
+journalctl -u compliance-agent -f
 
-# Flash ISO to USB (on Mac)
-sudo dd if=~/osiriscare-v37.iso of=/dev/diskN bs=4m status=progress
+# Run Python tests
+python -m pytest tests/test_grpc_server.py -v
+```
+
+---
+
+## Architecture Reference
+
+```
+Go Agent (NVWS01)              Appliance (ISO v37)           Central Command
++------------------+          +---------------------+       +----------------+
+| osiris-agent.exe |  gRPC    | Python Agent        | HTTPS |                |
+|                  |--------->| - gRPC Server       |------>| Dashboard      |
+| pb.DriftEvent    |  :50051  | - ComplianceAgent   |       | API            |
+| pb.RegisterReq   |          |   Servicer          |       |                |
+|                  |          | - Three-tier heal   |       |                |
+| 6 WMI Checks:    |          +---------------------+       +----------------+
+| - BitLocker      |
+| - Defender       |          Protocol:
+| - Firewall       |          - Register (unary)
+| - Patches        |          - ReportDrift (streaming)
+| - ScreenLock     |          - Heartbeat (unary)
+| - Services       |          - ReportHealing (unary)
++------------------+          - ReportRMMStatus (unary)
 ```
 
 ---
@@ -171,5 +182,5 @@ sudo dd if=~/osiriscare-v37.iso of=/dev/diskN bs=4m status=progress
 - `.agent/TODO.md` - Session tasks
 - `.agent/CONTEXT.md` - Project context
 - `.agent/LAB_CREDENTIALS.md` - Lab passwords
-- `IMPLEMENTATION-STATUS.md` - Overall status
+- `docs/ARCHITECTURE.md` - System architecture
 - `agent/README.md` - Go Agent documentation
