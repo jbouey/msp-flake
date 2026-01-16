@@ -888,4 +888,14 @@ export const goAgentsApi = {
     }),
 };
 
+// =============================================================================
+// DEPLOYMENT API
+// =============================================================================
+
+import type { DeploymentStatus } from '../types';
+
+export const deploymentApi = {
+  getStatus: (siteId: string) => fetchSitesApi<DeploymentStatus>(`/sites/${siteId}/deployment-status`),
+};
+
 export { ApiError };

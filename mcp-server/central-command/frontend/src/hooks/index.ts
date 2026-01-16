@@ -65,3 +65,5 @@ export {
   useRefreshIntegrations,
   useRefreshResources,
 } from './useIntegrations';
+
+export { useDeploymentStatus } from './useDeployment';

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { GlassCard, Spinner, Badge, ActionDropdown } from '../components/shared';
 import type { ActionItem } from '../components/shared';
+import { DeploymentProgress } from '../components/deployment';
 import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances } from '../hooks';
 import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
 
@@ -687,6 +688,9 @@ export const SiteDetail: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main content */}
         <div className="lg:col-span-2 space-y-6">
+          {/* Deployment Progress (Zero-Friction Pipeline) */}
+          <DeploymentProgress siteId={siteId} />
+
           {/* Contact Information */}
           <GlassCard>
             <h2 className="text-lg font-semibold mb-4">Contact Information</h2>
