@@ -1,6 +1,6 @@
 # Appliance Provisioning Module
 
-**Last Updated:** 2026-01-04 (Session 9 - Credential-Pull Architecture)
+**Last Updated:** 2026-01-16 (Session 43 - Zero-Friction Deployment Pipeline)
 
 ## Locations
 
@@ -12,6 +12,43 @@
 ## Overview
 
 The provisioning module handles first-boot appliance setup via QR code or manual provision code entry. When an appliance boots without a `config.yaml` file, it enters provisioning mode.
+
+## Zero-Friction Deployment (2026-01-16)
+
+**New Feature:** Automatic domain discovery and AD enumeration eliminates manual target configuration.
+
+### Flow
+
+1. **Appliance Boot** → Automatically discovers AD domain via DNS SRV records
+2. **Domain Discovery** → Reports to Central Command, partner receives notification
+3. **Credential Entry** → Partner enters ONE domain admin credential (only human touchpoint)
+4. **AD Enumeration** → Appliance automatically discovers all servers and workstations
+5. **Target Updates** → Windows targets updated automatically, workstations stored for Go agent deployment
+6. **First Scan** → Compliance scanning begins immediately after enumeration
+
+### Benefits
+
+- **Zero manual target entry** - All servers/workstations discovered automatically
+- **Single credential** - One domain admin credential enables full deployment
+- **Fast deployment** - First compliance report within 1 hour of credential entry
+- **Non-destructive** - Discovered targets merge with manual configs (doesn't overwrite)
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/appliances/domain-discovered` | Appliance reports discovered domain |
+| POST | `/api/appliances/enumeration-results` | Appliance reports enumeration results |
+| GET | `/api/sites/{site_id}/domain-credentials` | Fetch domain credentials for enumeration |
+| POST | `/api/sites/{site_id}/domain-credentials` | Submit domain credentials (triggers enumeration) |
+
+### Check-In Enhancements
+
+The `/api/appliances/checkin` endpoint now returns:
+- `trigger_enumeration` (boolean) - Triggers AD enumeration on next cycle
+- `trigger_immediate_scan` (boolean) - Triggers immediate compliance scan
+
+Flags are cleared after being sent to appliance.
 
 ## Backend API Endpoints
 

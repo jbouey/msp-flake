@@ -1,7 +1,77 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-15 (Session 42 - Workstation Cadence Tests + Go Agent Deployment)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v35, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, **Workstation Cadence Tests**, **Go Agent Deployment**)
+**Last Updated:** 2026-01-16 (Session 43 - Zero-Friction Deployment Pipeline)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v35, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, **Zero-Friction Deployment Pipeline**)
+
+---
+
+## Session 43 (2026-01-16) - Zero-Friction Deployment Pipeline
+
+### 1. AD Domain Auto-Discovery
+**Status:** COMPLETE
+**File Created:** `packages/compliance-agent/src/compliance_agent/domain_discovery.py`
+**Details:**
+- DNS SRV record queries (`_ldap._tcp.dc._msdcs.DOMAIN`)
+- DHCP domain suffix detection
+- resolv.conf search domain parsing
+- LDAP port verification
+- Automatic domain controller discovery
+- Integrated into appliance boot sequence
+- Reports discovered domain to Central Command
+- Triggers partner notification for credential entry
+
+### 2. AD Enumeration (Servers + Workstations)
+**Status:** COMPLETE
+**File Created:** `packages/compliance-agent/src/compliance_agent/ad_enumeration.py`
+**Details:**
+- Enumerates all computers from AD via PowerShell `Get-ADComputer`
+- Separates servers and workstations automatically
+- Tests WinRM connectivity concurrently (5 at a time)
+- Reports enumeration results to Central Command
+- Triggered by `trigger_enumeration` flag from check-in response
+- Automatically updates `windows_targets` with discovered servers
+- Stores workstation targets for Go agent deployment
+- Non-destructive: merges with manually configured targets
+
+### 3. Central Command API Endpoints
+**Status:** COMPLETE
+**Files Modified:** `mcp-server/central-command/backend/sites.py`
+**Endpoints Added:**
+- `POST /api/appliances/domain-discovered` - Receive discovery reports
+- `POST /api/appliances/enumeration-results` - Receive enumeration results
+- `GET /api/sites/{site_id}/domain-credentials` - Fetch domain credentials
+- `POST /api/sites/{site_id}/domain-credentials` - Submit domain credentials
+- Enhanced `/api/appliances/checkin` with `trigger_enumeration` and `trigger_immediate_scan` flags
+
+### 4. Database Migration
+**Status:** COMPLETE
+**File Created:** `mcp-server/central-command/backend/migrations/020_zero_friction.sql`
+**Schema Changes:**
+- `sites.discovered_domain` (JSONB)
+- `sites.domain_discovery_at` (TIMESTAMPTZ)
+- `sites.awaiting_credentials` (BOOLEAN)
+- `sites.credentials_submitted_at` (TIMESTAMPTZ)
+- `site_appliances.trigger_enumeration` (BOOLEAN)
+- `site_appliances.trigger_immediate_scan` (BOOLEAN)
+- `enumeration_results` table
+- `agent_deployments` table
+
+### 5. Appliance Agent Integration
+**Status:** COMPLETE
+**Files Modified:**
+- `packages/compliance-agent/src/compliance_agent/appliance_agent.py` - Domain discovery, AD enumeration, trigger handling
+- `packages/compliance-agent/src/compliance_agent/appliance_client.py` - Domain discovery reporting method
+
+### 6. Documentation
+**Status:** COMPLETE
+**Files Created:**
+- `.agent/audit/provisioning_audit.md` - Architecture audit before implementation
+- `.agent/ZERO_FRICTION_IMPLEMENTATION.md` - Implementation summary
+
+### 7. Remaining Tasks
+**Status:** PENDING
+- Go Agent Auto-Deployment (Task 3) - Module not yet created
+- Dashboard Status Component (Task 5) - React component pending
 
 ---
 
