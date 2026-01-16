@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.33";  # Session 38 - Workstation Discovery Config
+    version = "1.0.37";  # Session 38 - Workstation Discovery Config
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
@@ -23,6 +23,8 @@ let
       jinja2
       pywinrm
       pyyaml
+      grpcio
+      grpcio-tools
     ];
 
     doCheck = false;
@@ -128,7 +130,7 @@ in
     useDHCP = true;
     firewall = {
       enable = true;
-      allowedTCPPorts = [ 80 22 8080 ];  # Status page + SSH + Sensor API
+      allowedTCPPorts = [ 80 22 8080 50051 ];  # Status + SSH + Sensor API + gRPC
       allowedUDPPorts = [ 5353 ];   # mDNS
       # No other inbound - pull-only architecture
     };
