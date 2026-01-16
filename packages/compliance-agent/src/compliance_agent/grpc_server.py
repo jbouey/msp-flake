@@ -24,10 +24,12 @@ logger = logging.getLogger(__name__)
 try:
     import grpc
     from grpc import aio
+    from . import compliance_pb2
+    from . import compliance_pb2_grpc
     GRPC_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     GRPC_AVAILABLE = False
-    logger.warning("grpcio not installed - gRPC server disabled")
+    logger.warning(f"gRPC not available: {e}")
 
 
 class AgentState:
@@ -80,31 +82,11 @@ class AgentRegistry:
         return list(self.agents.values())
 
 
-# Stub servicer for when grpc is not available
-class ComplianceAgentServicerStub:
-    """Stub servicer when grpcio is not installed."""
-
-    async def Register(self, request, context):
-        raise NotImplementedError("grpcio not installed")
-
-    async def ReportDrift(self, request_iterator, context):
-        raise NotImplementedError("grpcio not installed")
-
-    async def ReportHealing(self, request, context):
-        raise NotImplementedError("grpcio not installed")
-
-    async def SendHeartbeat(self, request, context):
-        raise NotImplementedError("grpcio not installed")
-
-    async def ReportRMMStatus(self, request, context):
-        raise NotImplementedError("grpcio not installed")
-
-
 if GRPC_AVAILABLE:
-    class ComplianceAgentServicer:
+    class ComplianceAgentServicer(compliance_pb2_grpc.ComplianceAgentServicer):
         """gRPC service implementation for Go agent communication."""
 
-        # Capability tier constants
+        # Capability tier constants (must match proto enum)
         MONITOR_ONLY = 0
         SELF_HEAL = 1
         FULL_REMEDIATION = 2
@@ -121,19 +103,15 @@ if GRPC_AVAILABLE:
             self.healing_engine = healing_engine
             self.config = config
 
-        async def Register(self, request, context):
+        def Register(self, request, context):
             """Handle agent registration."""
             logger.info(f"Go agent registration: {request.hostname}")
 
             # Generate agent ID
             agent_id = f"go-{request.hostname}-{uuid.uuid4().hex[:8]}"
 
-            # Fetch capability tier from Central Command
-            # MSP-deployed agents get MONITOR_ONLY by default
-            tier = await self._get_agent_tier(request.hostname)
-
-            # Fetch enabled checks for this site
-            enabled_checks = await self._get_enabled_checks()
+            # Default to MONITOR_ONLY for MSP-deployed agents
+            tier = self.MONITOR_ONLY
 
             # Register agent
             self.registry.register(AgentState(
@@ -146,22 +124,28 @@ if GRPC_AVAILABLE:
             if request.installed_software:
                 logger.info(
                     f"Go agent {request.hostname} software: "
-                    f"{request.installed_software[:5]}"
+                    f"{list(request.installed_software)[:5]}"
                 )
 
-            # Build response - this would use the protobuf message
-            # For now, return a dict-like object
-            return {
-                "agent_id": agent_id,
-                "check_interval_seconds": 300,  # 5 minutes for workstations
-                "enabled_checks": enabled_checks,
-                "capability_tier": tier,
-                "check_config": {},
-            }
+            # Build response using protobuf message
+            return compliance_pb2.RegisterResponse(
+                agent_id=agent_id,
+                check_interval_seconds=300,  # 5 minutes for workstations
+                enabled_checks=[
+                    "bitlocker",
+                    "defender",
+                    "patches",
+                    "firewall",
+                    "screenlock",
+                    "rmm_detection",
+                ],
+                capability_tier=tier,
+                check_config={},
+            )
 
-        async def ReportDrift(self, request_iterator, context):
+        def ReportDrift(self, request_iterator, context):
             """Handle streaming drift events from agent."""
-            async for event in request_iterator:
+            for event in request_iterator:
                 logger.info(
                     f"Go agent drift: {event.hostname}/{event.check_type} "
                     f"passed={event.passed}"
@@ -173,50 +157,48 @@ if GRPC_AVAILABLE:
                     agent.drift_count += 1
                     agent.last_heartbeat = datetime.now(timezone.utc)
 
-                # Convert to incident and route through healing engine
+                # Route failed checks to healing engine
                 if not event.passed:
-                    await self._route_drift_to_healing(event)
+                    self._route_drift_to_healing_sync(event)
 
                 # Acknowledge receipt
-                yield {
-                    "event_id": f"{event.agent_id}-{event.timestamp}",
-                    "received": True,
-                }
+                yield compliance_pb2.DriftAck(
+                    event_id=f"{event.agent_id}-{event.timestamp}",
+                    received=True,
+                )
 
-        async def ReportHealing(self, request, context):
+        def ReportHealing(self, request, context):
             """Handle healing results from SELF_HEAL tier agents."""
             logger.info(
                 f"Go agent healing: {request.hostname}/{request.check_type} "
                 f"success={request.success}"
             )
 
-            # Store healing evidence
-            await self._store_healing_evidence(request)
-
             # Handle artifacts (e.g., BitLocker recovery key)
             if request.artifacts:
-                await self._handle_artifacts(request)
+                self._handle_artifacts_sync(request)
 
-            return {
-                "event_id": f"{request.agent_id}-{request.timestamp}",
-                "received": True,
-            }
+            return compliance_pb2.HealingAck(
+                event_id=f"{request.agent_id}-{request.timestamp}",
+                received=True,
+            )
 
-        async def SendHeartbeat(self, request, context):
+        def Heartbeat(self, request, context):
             """Handle agent heartbeats."""
             agent = self.registry.get_agent(request.agent_id)
             if agent:
                 agent.last_heartbeat = datetime.now(timezone.utc)
+                logger.debug(f"Heartbeat from {request.agent_id}")
 
             # Check if config changed (triggers re-registration)
             config_changed = self.registry.config_version_changed(request.agent_id)
 
-            return {
-                "acknowledged": True,
-                "config_changed": config_changed,
-            }
+            return compliance_pb2.HeartbeatResponse(
+                acknowledged=True,
+                config_changed=config_changed,
+            )
 
-        async def ReportRMMStatus(self, request, context):
+        def ReportRMMStatus(self, request, context):
             """Handle RMM detection reports - strategic intelligence."""
             logger.info(
                 f"Go agent RMM status from {request.hostname}: "
@@ -235,30 +217,10 @@ if GRPC_AVAILABLE:
                 agent.rmm_agents = list(request.detected_agents)
                 agent.last_heartbeat = datetime.now(timezone.utc)
 
-            # Store for MSP displacement analysis
-            await self._store_rmm_intelligence(request)
+            return compliance_pb2.RMMAck(received=True)
 
-            return {"received": True}
-
-        async def _get_agent_tier(self, hostname: str) -> int:
-            """Fetch agent capability tier from Central Command."""
-            # Default to MONITOR_ONLY for MSP-deployed agents
-            # Can be upgraded to SELF_HEAL via Central Command
-            return self.MONITOR_ONLY
-
-        async def _get_enabled_checks(self) -> list:
-            """Fetch enabled checks from configuration."""
-            return [
-                "bitlocker",
-                "defender",
-                "patches",
-                "firewall",
-                "screenlock",
-                "rmm_detection",
-            ]
-
-        async def _route_drift_to_healing(self, event) -> None:
-            """Route drift event through existing healing pipeline."""
+        def _route_drift_to_healing_sync(self, event) -> None:
+            """Route drift event through existing healing pipeline (sync wrapper)."""
             if not self.healing_engine:
                 logger.warning(
                     f"Healing not configured - Go agent drift from "
@@ -287,12 +249,23 @@ if GRPC_AVAILABLE:
                     pattern_signature=f"go_agent:{event.check_type}:{event.hostname}",
                 )
 
-                # Route through healing engine
-                result = await self.healing_engine.heal(incident)
+                # Schedule async healing via event loop
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(self._async_heal(incident))
+                else:
+                    loop.run_until_complete(self._async_heal(incident))
 
+            except Exception as e:
+                logger.error(f"Error routing Go agent drift to healing: {e}")
+
+        async def _async_heal(self, incident) -> None:
+            """Run healing asynchronously."""
+            try:
+                result = await self.healing_engine.heal(incident)
                 if result and result.success:
                     logger.info(
-                        f"Healed Go agent drift: {event.hostname}/{event.check_type} "
+                        f"Healed Go agent drift: {incident.host_id}/{incident.incident_type} "
                         f"via {getattr(result, 'runbook_id', 'unknown')}"
                     )
                 else:
@@ -302,32 +275,58 @@ if GRPC_AVAILABLE:
                     )
                     logger.warning(
                         f"Healing failed for Go agent drift: "
-                        f"{event.hostname}/{event.check_type} - {reason}"
+                        f"{incident.host_id}/{incident.incident_type} - {reason}"
                     )
-
             except Exception as e:
-                logger.error(f"Error routing Go agent drift to healing: {e}")
+                logger.error(f"Async healing error: {e}")
 
-        async def _store_healing_evidence(self, result) -> None:
-            """Store healing evidence in evidence bundle."""
-            # TODO: Use existing evidence.py infrastructure
-            pass
-
-        async def _handle_artifacts(self, result) -> None:
+        def _handle_artifacts_sync(self, result) -> None:
             """Handle artifacts like BitLocker recovery keys."""
             if "recovery_key" in result.artifacts:
                 logger.info(
                     f"Storing BitLocker recovery key for {result.hostname}"
                 )
-                # TODO: Use existing BitLocker key backup infrastructure
-
-        async def _store_rmm_intelligence(self, status) -> None:
-            """Store RMM detection for strategic analysis."""
-            # TODO: Store in database for MSP displacement dashboard
-            pass
+                # TODO: Store via existing BitLocker key backup infrastructure
 
 else:
-    ComplianceAgentServicer = ComplianceAgentServicerStub
+    # Stub when gRPC is not available
+    class ComplianceAgentServicer:
+        """Stub servicer when grpcio is not installed."""
+        def __init__(self, *args, **kwargs):
+            pass
+
+
+def serve_sync(
+    port: int,
+    agent_registry: AgentRegistry,
+    mcp_client=None,
+    healing_engine=None,
+    config=None,
+) -> None:
+    """Start the gRPC server (synchronous version for threading)."""
+    if not GRPC_AVAILABLE:
+        logger.warning("gRPC server not started - grpcio not installed")
+        return
+
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+
+    servicer = ComplianceAgentServicer(
+        agent_registry,
+        mcp_client,
+        healing_engine,
+        config,
+    )
+
+    # Register the servicer with the server
+    compliance_pb2_grpc.add_ComplianceAgentServicer_to_server(servicer, server)
+
+    # Listen on all interfaces
+    listen_addr = f"[::]:{port}"
+    server.add_insecure_port(listen_addr)  # TODO: Add TLS
+
+    logger.info(f"Starting gRPC server on {listen_addr}")
+    server.start()
+    server.wait_for_termination()
 
 
 async def serve(
@@ -337,7 +336,7 @@ async def serve(
     healing_engine=None,
     config=None,
 ) -> None:
-    """Start the gRPC server."""
+    """Start the gRPC server (async version)."""
     if not GRPC_AVAILABLE:
         logger.warning("gRPC server not started - grpcio not installed")
         return
@@ -351,8 +350,8 @@ async def serve(
         config,
     )
 
-    # Note: In full implementation, add the servicer using generated code:
-    # compliance_pb2_grpc.add_ComplianceAgentServicer_to_server(servicer, server)
+    # Register the servicer with the server
+    compliance_pb2_grpc.add_ComplianceAgentServicer_to_server(servicer, server)
 
     # Listen on all interfaces
     listen_addr = f"[::]:{port}"

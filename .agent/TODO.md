@@ -1,7 +1,52 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-16 (Session 44 - Go Agent Testing & ISO v37)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, **Go Agent Testing & ISO v37**)
+**Last Updated:** 2026-01-16 (Session 45 - gRPC Stub Implementation)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, **gRPC Stub Implementation**)
+
+---
+
+## Session 45 (2026-01-16) - gRPC Stub Implementation
+
+### 1. gRPC Protobuf Definition
+**Status:** COMPLETE
+**Details:**
+- Created unified `/proto/compliance.proto` as single source of truth
+- 5 RPC methods: Register, ReportDrift (streaming), ReportHealing, Heartbeat, ReportRMMStatus
+- CapabilityTier enum: MONITOR_ONLY, SELF_HEAL, FULL_REMEDIATION
+- Both Python and Go generated from same proto definition
+
+### 2. Python gRPC Server Implementation
+**Status:** COMPLETE
+**Details:**
+- Generated `compliance_pb2.py` and `compliance_pb2_grpc.py` from protobuf
+- Rewrote `grpc_server.py` to inherit from generated servicer
+- Proper protobuf message handling (RegisterResponse, DriftAck, etc.)
+- `add_ComplianceAgentServicer_to_server()` properly wired up
+- Drift events route to existing healing engine
+
+### 3. Go gRPC Client Implementation
+**Status:** COMPLETE
+**Details:**
+- Generated `compliance.pb.go` and `compliance_grpc.pb.go` in `agent/proto/`
+- Rewrote `agent/internal/transport/grpc.go` to use generated protobuf client
+- `Register()` returns `*pb.RegisterResponse`
+- `SendDrift()` uses streaming to send `*pb.DriftEvent`
+- Updated `offline.go` to use `*pb.DriftEvent` types
+- Updated `cmd/osiris-agent/main.go` to use protobuf types
+
+### 4. Tests Updated
+**Status:** COMPLETE
+**Details:**
+- Updated `test_grpc_server.py` for new synchronous servicer API
+- All 12 gRPC tests pass
+- Full suite: 811 passed, 7 skipped
+
+### 5. Documentation Updates
+**Status:** COMPLETE
+**Details:**
+- Updated Central Command docs (README, CHANGELOG, USER_GUIDE)
+- Updated docs/ARCHITECTURE.md with Go Agent details
+- Updated docs/partner/PROVISIONING.md with deployment methods
 
 ---
 

@@ -1,116 +1,116 @@
-# Session 44 Completion Status
+# Session 45 Completion Status
 
 **Date:** 2026-01-16
-**Session:** 44 - Go Agent Testing & ISO v37
+**Session:** 45 - gRPC Stub Implementation
 **Agent Version:** v1.0.37
-**ISO Version:** v37 (built, on iMac at ~/osiriscare-v37.iso)
-**Status:** ✅ COMPLETE
+**ISO Version:** v37 (on iMac at ~/osiriscare-v37.iso)
+**Status:** COMPLETE
 
 ---
 
-## Session 44 Accomplishments
+## Session 45 Accomplishments
 
-### 1. Go Agent Configuration on NVWS01
+### 1. gRPC Protobuf Definition
 | Task | Status | Details |
 |------|--------|---------|
-| Create config directory | DONE | `C:\ProgramData\OsirisCare` |
-| Create config.json | DONE | Appliance endpoint configured |
-| WinRM connectivity | DONE | Used localadmin credentials |
+| Create unified proto | DONE | `/proto/compliance.proto` |
+| Define RPC methods | DONE | 5 methods (Register, ReportDrift, ReportHealing, Heartbeat, ReportRMMStatus) |
+| Define messages | DONE | RegisterRequest/Response, DriftEvent/Ack, HealingResult/Ack, etc. |
+| Define enums | DONE | CapabilityTier (MONITOR_ONLY, SELF_HEAL, FULL_REMEDIATION) |
 
-### 2. Firewall Port 50051 Fix
+### 2. Python gRPC Code Generation
 | Task | Status | Details |
 |------|--------|---------|
-| Root cause identified | DONE | gRPC port not in firewall rules |
-| Hot-fix applied | DONE | `iptables -I nixos-fw 8 -p tcp --dport 50051 -j nixos-fw-accept` |
-| Permanent fix | DONE | Updated `appliance-image.nix` |
-| TCP connectivity verified | DONE | NVWS01 → Appliance:50051 working |
+| Install grpcio-tools | DONE | `pip install grpcio-tools` |
+| Generate compliance_pb2.py | DONE | Protobuf message classes |
+| Generate compliance_pb2_grpc.py | DONE | gRPC servicer base class |
+| Fix relative import | DONE | Changed `import compliance_pb2` to `from . import compliance_pb2` |
 
-### 3. Go Agent Testing
+### 3. Python gRPC Server Implementation
 | Task | Status | Details |
 |------|--------|---------|
-| Dry-run execution | DONE | 6 checks executed |
-| screenlock check | PASS | Timeout ≤ 600s |
-| rmm_detection check | PASS | No RMM detected |
-| bitlocker check | FAIL | No encrypted volumes (expected) |
-| defender check | FAIL | Real-time off (expected) |
-| firewall check | FAIL | Not all profiles enabled (expected) |
-| patches check | ERROR | WMI error |
+| Rewrite grpc_server.py | DONE | Inherits from generated servicer |
+| Implement Register() | DONE | Returns RegisterResponse with agent_id, check config |
+| Implement ReportDrift() | DONE | Yields DriftAck for each event, routes to healing |
+| Implement Heartbeat() | DONE | Returns HeartbeatResponse, updates last_heartbeat |
+| Implement ReportHealing() | DONE | Returns HealingAck, handles artifacts |
+| Implement ReportRMMStatus() | DONE | Returns RMMAck, logs detected RMM tools |
 
-### 4. Go Agent Code Audit
+### 4. Go gRPC Code Generation
 | Task | Status | Details |
 |------|--------|---------|
-| Code structure review | DONE | Clean and well-organized |
-| Compliance checks | DONE | 6 checks implemented |
-| CGO dependency issue | FOUND | `mattn/go-sqlite3` requires CGO |
-| gRPC stubs | FOUND | Streaming not implemented |
+| Install Go (brew) | DONE | `brew install go` |
+| Install protoc-gen-go | DONE | `go install google.golang.org/protobuf/cmd/protoc-gen-go@latest` |
+| Install protoc-gen-go-grpc | DONE | `go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest` |
+| Generate compliance.pb.go | DONE | Protobuf message structs |
+| Generate compliance_grpc.pb.go | DONE | gRPC client interface |
 
-### 5. Chaos Lab Fix
+### 5. Go gRPC Client Implementation
 | Task | Status | Details |
 |------|--------|---------|
-| Config path bug | DONE | Symlink resolution fixed |
-| Script: winrm_attack.py | DONE | Uses `os.path.realpath(__file__)` |
+| Rewrite grpc.go | DONE | Uses pb.NewComplianceAgentClient |
+| Update Register() | DONE | Returns *pb.RegisterResponse |
+| Update SendDrift() | DONE | Sends *pb.DriftEvent via stream |
+| Update SendHeartbeat() | DONE | Returns *pb.HeartbeatResponse |
+| Update offline.go | DONE | Uses *pb.DriftEvent |
+| Update main.go | DONE | Uses pb types |
+| Fix go.mod dependencies | DONE | `go mod tidy` |
 
-### 6. ISO v37 Build
+### 6. Tests Updated
 | Task | Status | Details |
 |------|--------|---------|
-| Build on VPS | DONE | `nix build .#appliance-iso` |
-| Transfer to iMac | DONE | `~/osiriscare-v37.iso` (1.0G) |
-| Version bump | DONE | Agent v1.0.37 |
-| Firewall port | DONE | 50051 included |
-
-### 7. Production Push
-| Task | Status | Details |
-|------|--------|---------|
-| Git commit | DONE | `50f5f86` |
-| VPS sync | DONE | `git reset --hard origin/main` |
+| Update test_grpc_server.py | DONE | Sync API instead of async |
+| All gRPC tests pass | DONE | 12/12 tests |
+| Full suite passes | DONE | 811 passed, 7 skipped |
 
 ---
 
 ## Test Results
 
-**Go Agent Dry-Run:**
-| Check | Result | Notes |
-|-------|--------|-------|
-| screenlock | ✅ PASS | Timeout ≤ 600 seconds |
-| rmm_detection | ✅ PASS | No RMM tools detected |
-| bitlocker | ❌ FAIL | Volume C: not encrypted |
-| defender | ❌ FAIL | Real-time protection disabled |
-| firewall | ❌ FAIL | Domain/Private/Public not all enabled |
-| patches | ❌ ERROR | WMI query error |
+**Python Tests:**
+```
+tests/test_grpc_server.py::TestAgentRegistry::test_register_agent PASSED
+tests/test_grpc_server.py::TestAgentRegistry::test_unregister_agent PASSED
+tests/test_grpc_server.py::TestAgentRegistry::test_config_version_tracking PASSED
+tests/test_grpc_server.py::TestAgentRegistry::test_get_all_agents PASSED
+tests/test_grpc_server.py::TestAgentState::test_initial_state PASSED
+tests/test_grpc_server.py::TestAgentState::test_update_drift_count PASSED
+tests/test_grpc_server.py::TestGRPCStats::test_get_stats_empty PASSED
+tests/test_grpc_server.py::TestGRPCStats::test_get_stats_with_agents PASSED
+tests/test_grpc_server.py::TestComplianceAgentServicer::test_register_creates_agent_id PASSED
+tests/test_grpc_server.py::TestComplianceAgentServicer::test_heartbeat_updates_timestamp PASSED
+tests/test_grpc_server.py::TestDriftRouting::test_drift_without_healing_engine PASSED
+tests/test_grpc_server.py::TestDriftRouting::test_drift_with_healing_engine PASSED
 
-**Network Connectivity:**
-| Test | Result |
-|------|--------|
-| TCP to 192.168.88.247:50051 | ✅ SUCCESS |
-| Hot-fix persistence | ✅ VERIFIED |
+12 passed in 0.54s
+```
+
+**Full Suite:**
+```
+811 passed, 7 skipped, 3 warnings in 33.13s
+```
+
+**Go Build:**
+```
+go build ./...  # SUCCESS
+```
 
 ---
 
 ## Files Modified This Session
 
-### Modified (2 files):
-1. `iso/appliance-image.nix` - Added port 50051 to firewall
-2. `~/chaos-lab/scripts/winrm_attack.py` (iMac) - Fixed config path
+### Created (3 files):
+1. `/proto/compliance.proto` - Unified protobuf definition
+2. `packages/compliance-agent/src/compliance_agent/compliance_pb2.py` - Generated
+3. `packages/compliance-agent/src/compliance_agent/compliance_pb2_grpc.py` - Generated
 
-### Created (1 file):
-1. `C:\ProgramData\OsirisCare\config.json` (on NVWS01)
-
----
-
-## Known Issues Identified
-
-### 1. Go Agent CGO Dependency
-- **Component:** `agent/internal/transport/offline.go`
-- **Dependency:** `mattn/go-sqlite3`
-- **Problem:** Requires CGO_ENABLED=1 at build time
-- **Impact:** SQLite offline queue doesn't work
-- **Fix:** Switch to `modernc.org/sqlite` (pure Go)
-
-### 2. gRPC Streaming Not Implemented
-- **Component:** `agent/internal/transport/grpc.go`, `grpc_server.py`
-- **Problem:** Methods are stubs
-- **Impact:** Push-based communication not functional
-- **Fix:** Implement actual gRPC streaming
+### Modified (6 files):
+1. `packages/compliance-agent/src/compliance_agent/grpc_server.py` - Rewrote servicer
+2. `packages/compliance-agent/tests/test_grpc_server.py` - Updated for sync API
+3. `agent/internal/transport/grpc.go` - Rewrote to use generated client
+4. `agent/internal/transport/offline.go` - Updated DriftEvent types
+5. `agent/cmd/osiris-agent/main.go` - Updated to use pb types
+6. `agent/go.mod` / `agent/go.sum` - Updated dependencies
 
 ---
 
@@ -118,12 +118,12 @@
 
 | Component | Location | Status |
 |-----------|----------|--------|
-| ISO v37 | iMac ~/osiriscare-v37.iso | ✅ Ready to flash |
-| Go Agent Binary | NVWS01 C:\OsirisCare\osiris-agent.exe | ✅ Deployed |
-| Go Agent Config | NVWS01 C:\ProgramData\OsirisCare\config.json | ✅ Created |
-| VM Appliance | 192.168.88.247 | ✅ Running with hot-fix |
-| Physical Appliance | 192.168.88.246 | ⏳ Needs ISO v37 |
-| VPS | 178.156.162.116 | ✅ Synced |
+| ISO v37 | iMac ~/osiriscare-v37.iso | Ready to flash |
+| Go Agent Code | agent/ | Updated with gRPC |
+| Go Agent Binary | NVWS01 C:\OsirisCare\ | Needs rebuild |
+| Python gRPC Server | compliance_agent/ | Complete |
+| VM Appliance | 192.168.88.247 | Running |
+| Physical Appliance | 192.168.88.246 | Needs ISO v37 |
 
 ---
 
@@ -132,31 +132,27 @@
 | Priority | Task | Notes |
 |----------|------|-------|
 | High | Flash ISO v37 to physical appliance | ISO ready on iMac |
-| High | Test Go Agent real mode | Without -dry-run flag |
-| Medium | Fix CGO dependency | Switch to pure Go sqlite |
-| Medium | Implement gRPC streaming | Wire up servicer |
-| Low | Enable Defender/BitLocker on NVWS01 | For realistic testing |
+| High | Rebuild Go Agent binary | With updated gRPC code |
+| High | Test end-to-end gRPC | Register + drift streaming |
+| Medium | Deploy updated Go Agent to NVWS01 | Replace old binary |
 
 ---
 
 ## Quick Commands
 
 ```bash
-# SSH to VM appliance
-ssh root@192.168.88.247
+# Test Python gRPC
+cd packages/compliance-agent && source venv/bin/activate
+python -c "from compliance_agent.grpc_server import GRPC_AVAILABLE; print(GRPC_AVAILABLE)"
 
-# Watch agent logs
-journalctl -u compliance-agent -f
+# Build Go Agent
+cd agent && go build ./...
 
-# Check firewall rule
-iptables -L nixos-fw -n --line-numbers | grep 50051
+# Run Python tests
+python -m pytest tests/test_grpc_server.py -v
 
-# Run Go Agent on NVWS01 (PowerShell)
-C:\OsirisCare\osiris-agent.exe -dry-run
-C:\OsirisCare\osiris-agent.exe  # Real mode
-
-# Flash ISO to USB
-sudo dd if=~/osiriscare-v37.iso of=/dev/diskN bs=4m status=progress
+# Rebuild Go Agent for Windows
+GOOS=windows GOARCH=amd64 go build -o osiris-agent.exe ./cmd/osiris-agent
 ```
 
 ---
@@ -165,14 +161,16 @@ sudo dd if=~/osiriscare-v37.iso of=/dev/diskN bs=4m status=progress
 
 | Metric | Target | Actual | Status |
 |--------|--------|--------|--------|
-| Go Agent checks executed | 6 | 6 | ✅ |
-| Firewall fix deployed | Yes | Yes | ✅ |
-| TCP connectivity working | Yes | Yes | ✅ |
-| ISO v37 built | Yes | Yes | ✅ |
-| Production synced | Yes | Yes | ✅ |
-| Documentation updated | Yes | Yes | ✅ |
+| Proto definition created | Yes | Yes | DONE |
+| Python gRPC generated | Yes | Yes | DONE |
+| Go gRPC generated | Yes | Yes | DONE |
+| Python servicer implemented | Yes | Yes | DONE |
+| Go client implemented | Yes | Yes | DONE |
+| gRPC tests passing | 12 | 12 | DONE |
+| Full test suite | Pass | 811 passed | DONE |
+| Go build succeeds | Yes | Yes | DONE |
 
 ---
 
-**Session Status:** ✅ COMPLETE
-**Handoff Ready:** ✅ YES
+**Session Status:** COMPLETE
+**Handoff Ready:** YES

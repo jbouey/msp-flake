@@ -24,6 +24,7 @@ import (
 	"github.com/osiriscare/agent/internal/checks"
 	"github.com/osiriscare/agent/internal/config"
 	"github.com/osiriscare/agent/internal/transport"
+	pb "github.com/osiriscare/agent/proto"
 )
 
 var (
@@ -87,14 +88,14 @@ func main() {
 	}
 
 	// Register with appliance
-	var regResp *transport.RegistrationResponse
+	var regResp *pb.RegisterResponse
 	if grpcClient != nil && grpcClient.IsConnected() {
 		regResp, err = grpcClient.Register(ctx)
 		if err != nil {
 			log.Printf("Failed to register: %v", err)
 		} else {
 			log.Printf("Registered as %s, tier=%d, interval=%ds",
-				regResp.AgentID, regResp.CapabilityTier, regResp.CheckIntervalSeconds)
+				regResp.AgentId, regResp.CapabilityTier, regResp.CheckIntervalSeconds)
 		}
 	}
 
@@ -146,7 +147,7 @@ func runChecks(
 	registry *checks.Registry,
 	client *transport.GRPCClient,
 	queue *transport.OfflineQueue,
-	reg *transport.RegistrationResponse,
+	reg *pb.RegisterResponse,
 ) {
 	log.Println("Running compliance checks...")
 	start := time.Now()
@@ -172,17 +173,17 @@ func runChecks(
 			// Create drift event
 			agentID := ""
 			if reg != nil {
-				agentID = reg.AgentID
+				agentID = reg.AgentId
 			}
 
-			event := &transport.DriftEvent{
-				AgentID:      agentID,
+			event := &pb.DriftEvent{
+				AgentId:      agentID,
 				Hostname:     checks.GetHostname(),
 				CheckType:    result.CheckType,
 				Passed:       result.Passed,
 				Expected:     result.Expected,
 				Actual:       result.Actual,
-				HIPAAControl: result.HIPAAControl,
+				HipaaControl: result.HIPAAControl,
 				Timestamp:    checks.GetTimestamp(),
 				Metadata:     result.Metadata,
 			}

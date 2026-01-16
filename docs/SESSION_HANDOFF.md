@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-15 (Session 42)
-**Current State:** Workstation Cadence Tests + Go Agent Deployment Complete
+**Last Updated:** 2026-01-16 (Session 45)
+**Current State:** gRPC Stub Implementation Complete
 
 ---
 
@@ -9,11 +9,40 @@
 
 | Component | Status | Version |
 |-----------|--------|---------|
-| Agent | v1.0.34 | Stable |
-| ISO | v35 | Built, pending deployment |
-| Tests | 786+ passed | Healthy |
-| Go Agent | Deployed to NVWS01 | Tested (dry-run) |
+| Agent | v1.0.37 | Stable |
+| ISO | v37 | Built, on iMac |
+| Tests | 811 passed | Healthy |
+| Go Agent | Deployed to NVWS01 | Needs rebuild |
+| gRPC | Fully Implemented | Both Python + Go |
 | Chaos Lab | Enhanced | Cadence verification added |
+
+---
+
+## Session 45 Summary (2026-01-16)
+
+### Completed
+1. **gRPC Protobuf Definition** - Unified `/proto/compliance.proto`
+2. **Python gRPC Server** - Servicer inherits from generated code
+3. **Go gRPC Client** - Uses generated protobuf types
+4. **Tests Updated** - All 12 gRPC tests pass, 811 total
+
+### Files Created/Modified
+- `/proto/compliance.proto` - Unified protobuf definition
+- `compliance_pb2.py`, `compliance_pb2_grpc.py` - Generated Python
+- `grpc_server.py` - Rewrote to use generated servicer
+- `agent/proto/*.go` - Generated Go protobuf
+- `agent/internal/transport/grpc.go` - Rewrote for generated client
+- `test_grpc_server.py` - Updated for sync API
+
+---
+
+## Session 44 Summary (2026-01-16)
+
+### Completed
+1. **Go Agent Config on NVWS01** - Created config.json
+2. **Firewall Port 50051** - Hot-fix + permanent in ISO v37
+3. **Go Agent Dry-Run** - 2 PASS, 3 FAIL, 1 ERROR (expected)
+4. **ISO v37 Build** - With port 50051 and gRPC dependencies
 
 ---
 
@@ -24,14 +53,6 @@
 2. **Chaos Lab Integration** - Monitoring script + cron automation
 3. **Go Agent Deployment** - Deployed to NVWS01, dry-run tested
 4. **ISO v35 Build** - gRPC server for Go Agent communication
-
-### Blocked
-- ISO v35 transfer to iMac (user on different WiFi)
-
-### Files Created
-- `packages/compliance-agent/tests/test_workstation_cadence.py` (21 tests)
-- `~/chaos-lab/scripts/chaos_workstation_cadence.py` (iMac)
-- `~/chaos-lab/README.md` (iMac)
 
 ---
 

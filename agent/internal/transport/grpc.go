@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -16,41 +17,24 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/osiriscare/agent/internal/config"
+	pb "github.com/osiriscare/agent/proto"
 )
 
 // Version is set at build time
 var Version = "0.1.0"
 
-// RegistrationResponse holds the response from agent registration
-type RegistrationResponse struct {
-	AgentID              string
-	CheckIntervalSeconds int32
-	EnabledChecks        []string
-	CapabilityTier       int32
-	CheckConfig          map[string]string
-}
-
-// DriftEvent represents a compliance drift to report
-type DriftEvent struct {
-	AgentID      string
-	Hostname     string
-	CheckType    string
-	Passed       bool
-	Expected     string
-	Actual       string
-	HIPAAControl string
-	Timestamp    int64
-	Metadata     map[string]string
-}
-
 // GRPCClient manages the gRPC connection to the appliance
 type GRPCClient struct {
 	conn      *grpc.ClientConn
+	client    pb.ComplianceAgentClient
 	agentID   string
 	hostname  string
 	connected bool
 	mu        sync.RWMutex
 	config    *config.Config
+
+	// For streaming drift events
+	driftStream pb.ComplianceAgent_ReportDriftClient
 
 	// For fallback HTTP mode
 	httpEndpoint string
@@ -105,6 +89,7 @@ func (c *GRPCClient) connect(ctx context.Context) error {
 	}
 
 	c.conn = conn
+	c.client = pb.NewComplianceAgentClient(conn)
 	c.connected = true
 
 	return nil
@@ -148,30 +133,32 @@ func (c *GRPCClient) loadTLS() (*tls.Config, error) {
 }
 
 // Register registers the agent with the appliance
-func (c *GRPCClient) Register(ctx context.Context) (*RegistrationResponse, error) {
-	// For now, return mock registration
-	// In full implementation, this would call the gRPC Register RPC
+func (c *GRPCClient) Register(ctx context.Context) (*pb.RegisterResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	c.agentID = fmt.Sprintf("%s-%d", c.hostname, time.Now().Unix())
+	if !c.connected {
+		return nil, fmt.Errorf("not connected")
+	}
 
-	return &RegistrationResponse{
-		AgentID:              c.agentID,
-		CheckIntervalSeconds: 300, // 5 minutes
-		EnabledChecks: []string{
-			"bitlocker",
-			"defender",
-			"patches",
-			"firewall",
-			"screenlock",
-			"rmm_detection",
-		},
-		CapabilityTier: 0, // MONITOR_ONLY
-		CheckConfig:    make(map[string]string),
-	}, nil
+	req := &pb.RegisterRequest{
+		Hostname:     c.hostname,
+		OsVersion:    getOSVersion(),
+		AgentVersion: Version,
+		MacAddress:   getMACAddress(),
+	}
+
+	resp, err := c.client.Register(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("register failed: %w", err)
+	}
+
+	c.agentID = resp.AgentId
+	return resp, nil
 }
 
-// SendDrift sends a drift event to the appliance
-func (c *GRPCClient) SendDrift(ctx context.Context, event *DriftEvent) error {
+// StartDriftStream starts the bidirectional drift streaming
+func (c *GRPCClient) StartDriftStream(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -179,14 +166,80 @@ func (c *GRPCClient) SendDrift(ctx context.Context, event *DriftEvent) error {
 		return fmt.Errorf("not connected")
 	}
 
-	// For now, just log the event
-	// In full implementation, this would send via gRPC stream
+	stream, err := c.client.ReportDrift(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to start drift stream: %w", err)
+	}
 
+	c.driftStream = stream
+	return nil
+}
+
+// SendDrift sends a drift event via the stream
+func (c *GRPCClient) SendDrift(ctx context.Context, event *pb.DriftEvent) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.connected {
+		return fmt.Errorf("not connected")
+	}
+
+	// Fill in agent ID
+	event.AgentId = c.agentID
+	event.Hostname = c.hostname
+	event.Timestamp = time.Now().Unix()
+
+	if c.driftStream != nil {
+		// Use streaming
+		if err := c.driftStream.Send(event); err != nil {
+			return fmt.Errorf("failed to send drift: %w", err)
+		}
+		return nil
+	}
+
+	// Fall back to one-shot stream
+	stream, err := c.client.ReportDrift(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create drift stream: %w", err)
+	}
+
+	if err := stream.Send(event); err != nil {
+		return fmt.Errorf("failed to send drift: %w", err)
+	}
+
+	// Receive ack
+	if _, err := stream.Recv(); err != nil && err != io.EOF {
+		return fmt.Errorf("failed to receive ack: %w", err)
+	}
+
+	stream.CloseSend()
 	return nil
 }
 
 // SendHeartbeat sends a heartbeat to the appliance
-func (c *GRPCClient) SendHeartbeat(ctx context.Context) error {
+func (c *GRPCClient) SendHeartbeat(ctx context.Context) (*pb.HeartbeatResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.connected {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	req := &pb.HeartbeatRequest{
+		AgentId:   c.agentID,
+		Timestamp: time.Now().Unix(),
+	}
+
+	resp, err := c.client.Heartbeat(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("heartbeat failed: %w", err)
+	}
+
+	return resp, nil
+}
+
+// SendHealingResult sends a healing result to the appliance
+func (c *GRPCClient) SendHealingResult(ctx context.Context, result *pb.HealingResult) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -194,7 +247,38 @@ func (c *GRPCClient) SendHeartbeat(ctx context.Context) error {
 		return fmt.Errorf("not connected")
 	}
 
-	// In full implementation, this would send via gRPC
+	result.AgentId = c.agentID
+	result.Hostname = c.hostname
+	result.Timestamp = time.Now().Unix()
+
+	_, err := c.client.ReportHealing(ctx, result)
+	if err != nil {
+		return fmt.Errorf("report healing failed: %w", err)
+	}
+
+	return nil
+}
+
+// SendRMMStatus sends RMM detection status to the appliance
+func (c *GRPCClient) SendRMMStatus(ctx context.Context, agents []*pb.RMMAgent) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.connected {
+		return fmt.Errorf("not connected")
+	}
+
+	req := &pb.RMMStatusReport{
+		AgentId:        c.agentID,
+		Hostname:       c.hostname,
+		DetectedAgents: agents,
+		Timestamp:      time.Now().Unix(),
+	}
+
+	_, err := c.client.ReportRMMStatus(ctx, req)
+	if err != nil {
+		return fmt.Errorf("report RMM status failed: %w", err)
+	}
 
 	return nil
 }
@@ -206,8 +290,22 @@ func (c *GRPCClient) IsConnected() bool {
 	return c.connected
 }
 
+// GetAgentID returns the registered agent ID
+func (c *GRPCClient) GetAgentID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.agentID
+}
+
 // Close closes the gRPC connection
 func (c *GRPCClient) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.driftStream != nil {
+		c.driftStream.CloseSend()
+	}
+
 	if c.conn != nil {
 		return c.conn.Close()
 	}
@@ -219,10 +317,30 @@ func (c *GRPCClient) Reconnect(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.driftStream != nil {
+		c.driftStream.CloseSend()
+		c.driftStream = nil
+	}
+
 	if c.conn != nil {
 		c.conn.Close()
 	}
 	c.connected = false
+	c.agentID = ""
 
 	return c.connect(ctx)
+}
+
+// Helper functions
+
+func getOSVersion() string {
+	// On Windows, this would use syscalls to get version
+	// For now, return a placeholder
+	return "Windows"
+}
+
+func getMACAddress() string {
+	// This would get the primary MAC address
+	// For now, return empty
+	return ""
 }
