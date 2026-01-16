@@ -61,6 +61,10 @@ from .workstation_discovery import WorkstationDiscovery, Workstation
 from .workstation_checks import WorkstationComplianceChecker, WorkstationComplianceResult
 from .workstation_evidence import WorkstationEvidenceGenerator, create_workstation_evidence
 
+# Domain discovery for zero-friction deployment
+from .domain_discovery import DomainDiscovery, DiscoveredDomain
+from .ad_enumeration import ADEnumerator, EnumerationResult
+
 # Sensor API for dual-mode architecture (Windows)
 from .sensor_api import (
     router as sensor_router,
@@ -315,6 +319,16 @@ class ApplianceAgent:
         self._workstation_enabled = getattr(config, 'workstation_enabled', True)
         self._domain_controller: Optional[str] = getattr(config, 'domain_controller', None)
 
+        # Domain discovery for zero-friction deployment
+        self.domain_discovery = DomainDiscovery()
+        self.discovered_domain: Optional[DiscoveredDomain] = None
+        self._domain_discovery_complete = False
+        
+        # AD enumeration for zero-friction deployment
+        self.workstation_targets: List[Dict] = []  # Workstations for Go agent deployment
+        self._last_enumeration = datetime.min.replace(tzinfo=timezone.utc)
+        self._enumeration_interval = 3600  # Re-enumerate every hour
+
         # Three-tier healing components
         self.auto_healer: Optional[AutoHealer] = None
         self.incident_db: Optional[IncidentDatabase] = None
@@ -439,6 +453,10 @@ class ApplianceAgent:
 
         # Initial delay to let network settle
         await asyncio.sleep(5)
+
+        # First-boot domain discovery (zero-friction deployment)
+        if not self._domain_discovery_complete:
+            await self._discover_domain_on_boot()
 
         # Main loop
         while self.running:
@@ -641,6 +659,11 @@ class ApplianceAgent:
             await self._update_linux_targets_from_response(checkin_response)
             # Update enabled runbooks from server response (runbook config pull)
             self._update_enabled_runbooks_from_response(checkin_response)
+            
+            # Check if enumeration triggered (zero-friction deployment)
+            if checkin_response.get('trigger_enumeration'):
+                logger.info("Enumeration triggered from Central Command")
+                await self._enumerate_ad_targets()
         else:
             logger.warning(f"[{timestamp}] Checkin failed")
 
@@ -1873,6 +1896,46 @@ try {
 
         self._last_network_posture_scan = now
 
+    async def _discover_domain_on_boot(self):
+        """
+        Run domain discovery on first boot.
+        Reports discovered domain to Central Command for credential prompt.
+        """
+        if self._domain_discovery_complete:
+            return  # Already discovered
+        
+        logger.info("Running first-boot domain discovery...")
+        try:
+            self.discovered_domain = await self.domain_discovery.discover()
+            
+            if self.discovered_domain:
+                # Report to Central Command
+                await self._report_discovered_domain(self.discovered_domain)
+                self._domain_discovery_complete = True
+                logger.info(f"Domain discovery complete: {self.discovered_domain.domain_name}")
+            else:
+                logger.warning("No AD domain discovered - manual configuration required")
+                self._domain_discovery_complete = True  # Mark complete even if failed
+        except Exception as e:
+            logger.error(f"Domain discovery error: {e}")
+            self._domain_discovery_complete = True  # Mark complete to avoid retry loops
+
+    async def _report_discovered_domain(self, domain: DiscoveredDomain):
+        """Report discovered domain to Central Command for credential provisioning."""
+        try:
+            appliance_id = f"{self.config.site_id}-{get_mac_address()}"
+            result = await self.client.report_discovered_domain(
+                appliance_id=appliance_id,
+                discovered_domain=domain.to_dict(),
+                awaiting_credentials=True,
+            )
+            if result:
+                logger.info(f"Reported discovered domain: {domain.domain_name}")
+            else:
+                logger.warning(f"Failed to report domain discovery")
+        except Exception as e:
+            logger.error(f"Error reporting domain: {e}")
+
     async def _maybe_scan_workstations(self):
         """
         Scan workstations if enough time has passed.
@@ -2065,6 +2128,146 @@ try {
         """Get credentials for workstation access."""
         # Same as DC creds for now (domain admin can access workstations)
         return self._get_dc_credentials()
+    
+    async def _enumerate_ad_targets(self):
+        """
+        Enumerate servers and workstations from AD.
+        
+        Called when:
+        1. trigger_enumeration flag is set (after credential submission)
+        2. Periodically (hourly) to catch new machines
+        """
+        if not self.discovered_domain:
+            logger.warning("Cannot enumerate AD: no domain discovered")
+            return
+        
+        # Get domain credentials from Central Command
+        creds = await self._get_domain_credentials()
+        if not creds:
+            logger.warning("No domain credentials available for enumeration")
+            return
+        
+        logger.info(f"Starting AD enumeration for {self.discovered_domain.domain_name}")
+        
+        # Initialize Windows executor if needed
+        if not self.windows_executor:
+            self.windows_executor = WindowsExecutor([])
+        
+        # Create enumerator
+        enumerator = ADEnumerator(
+            domain_controller=self.discovered_domain.domain_controllers[0],
+            username=creds['username'],
+            password=creds['password'],
+            domain=self.discovered_domain.domain_name,
+            executor=self.windows_executor,
+        )
+        
+        # Enumerate all computers
+        servers, workstations = await enumerator.enumerate_all()
+        
+        # Test connectivity to each (with concurrency limit)
+        result = EnumerationResult()
+        result.servers = servers
+        result.workstations = workstations
+        result.enumeration_time = datetime.now(timezone.utc)
+        
+        # Test server connectivity (limit 5 concurrent)
+        semaphore = asyncio.Semaphore(5)
+        
+        async def test_with_limit(computer):
+            async with semaphore:
+                return computer, await enumerator.test_connectivity(computer)
+        
+        # Test servers
+        if servers:
+            logger.info(f"Testing connectivity to {len(servers)} servers...")
+            server_tests = await asyncio.gather(*[test_with_limit(s) for s in servers], return_exceptions=True)
+            for test_result in server_tests:
+                if isinstance(test_result, Exception):
+                    continue
+                computer, reachable = test_result
+                if reachable:
+                    result.reachable_servers.append(computer)
+                else:
+                    result.unreachable.append(computer)
+        
+        # Test workstations (only if Go agent deployment planned)
+        # For now, just mark enabled ones as discovered
+        result.reachable_workstations = [w for w in workstations if w.enabled]
+        
+        # Report results to Central Command
+        await self._report_enumeration_results(result)
+        
+        # Update local target lists
+        # Servers become Windows targets for compliance scanning
+        new_windows_targets = []
+        for s in result.reachable_servers:
+            new_windows_targets.append({
+                "hostname": s.fqdn or s.ip_address or s.hostname,
+                "username": creds['username'],
+                "password": creds['password'],
+            })
+        
+        # Merge with existing targets (don't overwrite manually configured ones)
+        existing_hostnames = {t.hostname for t in self.windows_targets}
+        for target_dict in new_windows_targets:
+            if target_dict['hostname'] not in existing_hostnames:
+                try:
+                    target = WindowsTarget(
+                        hostname=target_dict['hostname'],
+                        username=target_dict['username'],
+                        password=target_dict['password'],
+                        use_ssl=False,
+                        port=5985,
+                        transport='ntlm',
+                    )
+                    self.windows_targets.append(target)
+                except Exception as e:
+                    logger.warning(f"Failed to add enumerated target: {e}")
+        
+        # Store workstation targets for Go agent deployment
+        self.workstation_targets = [
+            {
+                "hostname": w.fqdn or w.ip_address or w.hostname,
+                "os": w.os_name,
+            }
+            for w in result.reachable_workstations
+        ]
+        
+        logger.info(f"Enumeration complete: {len(result.reachable_servers)} servers, "
+                    f"{len(result.reachable_workstations)} workstations")
+        self._last_enumeration = datetime.now(timezone.utc)
+    
+    async def _get_domain_credentials(self) -> Optional[Dict]:
+        """Fetch domain credentials from Central Command."""
+        try:
+            status, response = await self.client._request(
+                'GET',
+                f'/api/sites/{self.config.site_id}/domain-credentials',
+            )
+            if status == 200 and isinstance(response, dict):
+                return response
+        except Exception as e:
+            logger.error(f"Failed to fetch domain credentials: {e}")
+        return None
+    
+    async def _report_enumeration_results(self, result: EnumerationResult):
+        """Report enumeration results to Central Command."""
+        try:
+            appliance_id = f"{self.config.site_id}-{get_mac_address()}"
+            status, response = await self.client._request(
+                'POST',
+                '/api/appliances/enumeration-results',
+                json_data={
+                    "site_id": self.config.site_id,
+                    "appliance_id": appliance_id,
+                    "results": result.to_dict(),
+                }
+            )
+            if status != 200:
+                logger.error(f"Failed to report enumeration: {status}")
+        except Exception as e:
+            logger.error(f"Error reporting enumeration: {e}")
 
     # =========================================================================
     # Order Processing (remote commands and updates)

@@ -6,6 +6,7 @@ that modify site data directly.
 
 import json
 import secrets
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException
@@ -13,6 +14,8 @@ from pydantic import BaseModel
 from enum import Enum
 
 from .fleet import get_pool
+
+logger = logging.getLogger(__name__)
 
 
 def parse_ip_addresses(raw_ips) -> list:
@@ -829,6 +832,256 @@ def normalize_mac(mac: str) -> str:
     return ':'.join(clean[i:i+2] for i in range(0, len(clean), 2))
 
 
+class DiscoveredDomainReport(BaseModel):
+    """Domain discovery report from appliance."""
+    site_id: str
+    appliance_id: str
+    discovered_domain: dict
+    awaiting_credentials: bool = True
+
+
+@appliances_router.post("/domain-discovered")
+async def report_discovered_domain(report: DiscoveredDomainReport):
+    """
+    Receive domain discovery report from appliance.
+    
+    Triggers:
+    1. Store discovered domain info in site record
+    2. Notify partner that credentials are needed
+    3. Update dashboard to show "awaiting credentials" state
+    """
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+    
+    async with pool.acquire() as conn:
+        # Update site record with discovered domain
+        await conn.execute("""
+            UPDATE sites 
+            SET discovered_domain = $1::jsonb,
+                domain_discovery_at = $2,
+                awaiting_credentials = $3
+            WHERE site_id = $4
+        """, [
+            json.dumps(report.discovered_domain),
+            now,
+            report.awaiting_credentials,
+            report.site_id,
+        ])
+        
+        # Get partner for this site
+        partner = await conn.fetchrow("""
+            SELECT p.partner_id, p.name, p.notification_email
+            FROM partners p
+            JOIN sites s ON s.partner_id = p.partner_id
+            WHERE s.site_id = $1
+        """, [report.site_id])
+        
+        if partner:
+            # Create notification for partner
+            domain_name = report.discovered_domain.get('domain_name', 'Unknown')
+            domain_controllers = report.discovered_domain.get('domain_controllers', [])
+            
+            await conn.execute("""
+                INSERT INTO notifications (
+                    site_id, appliance_id, severity, category, title, message, metadata, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+            """, [
+                report.site_id,
+                report.appliance_id,
+                'info',
+                'deployment',
+                f'Domain Discovered: {domain_name}',
+                f'Appliance discovered Active Directory domain "{domain_name}". '
+                f'Please enter domain administrator credentials to begin automatic enumeration.',
+                json.dumps({
+                    "domain_name": domain_name,
+                    "domain_controllers": domain_controllers,
+                    "action_required": "Enter domain administrator credentials",
+                    "dashboard_link": f"/sites/{report.site_id}/credentials",
+                }),
+                now,
+            ])
+            
+            # Try to send email notification if configured
+            try:
+                from .email_alerts import send_critical_alert, is_email_configured
+                if is_email_configured() and partner.get('notification_email'):
+                    send_critical_alert(
+                        recipient=partner['notification_email'],
+                        subject=f"Domain Discovered: {domain_name}",
+                        body=f"""
+                        <p>Your OsirisCare appliance has automatically discovered the Active Directory domain:</p>
+                        <p><strong>{domain_name}</strong></p>
+                        <p>Domain Controllers: {', '.join(domain_controllers) if domain_controllers else 'None found'}</p>
+                        <p><strong>Action Required:</strong> Please enter domain administrator credentials in the dashboard to begin automatic enumeration of servers and workstations.</p>
+                        <p><a href="https://dashboard.osiriscare.net/sites/{report.site_id}/credentials">Enter Credentials</a></p>
+                        """,
+                        severity="info",
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to send email notification: {e}")
+    
+    return {"status": "ok", "message": "Domain discovery recorded"}
+
+
+class EnumerationResultsReport(BaseModel):
+    """Enumeration results report from appliance."""
+    site_id: str
+    appliance_id: str
+    results: dict
+
+
+@appliances_router.post("/enumeration-results")
+async def report_enumeration_results(report: EnumerationResultsReport):
+    """
+    Receive AD enumeration results from appliance.
+    
+    Stores enumeration results and updates site with discovered targets.
+    """
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+    
+    async with pool.acquire() as conn:
+        # Store enumeration results
+        await conn.execute("""
+            INSERT INTO enumeration_results (
+                site_id, appliance_id, enumeration_time,
+                total_servers, total_workstations,
+                reachable_servers, reachable_workstations,
+                results_json, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+        """, [
+            report.site_id,
+            report.appliance_id,
+            datetime.fromisoformat(report.results.get('enumeration_time', now.isoformat())),
+            report.results.get('total_servers', 0),
+            report.results.get('total_workstations', 0),
+            report.results.get('reachable_servers', 0),
+            report.results.get('reachable_workstations', 0),
+            json.dumps(report.results),
+            now,
+        ])
+        
+        logger.info(f"Enumeration results stored: {report.results.get('total_servers', 0)} servers, "
+                   f"{report.results.get('total_workstations', 0)} workstations")
+    
+    return {"status": "ok", "message": "Enumeration results recorded"}
+
+
+class DomainCredentialInput(BaseModel):
+    """Domain credential submission."""
+    domain_name: str
+    username: str          # e.g., "Administrator" or "DOMAIN\\admin"
+    password: str
+    credential_type: str = "domain_admin"  # domain_admin, service_account
+
+
+@router.post("/{site_id}/domain-credentials")
+async def submit_domain_credentials(
+    site_id: str,
+    creds: DomainCredentialInput,
+):
+    """
+    Submit domain credentials after discovery.
+    
+    This is the ONE human touchpoint in zero-friction deployment.
+    After this, enumeration happens automatically.
+    """
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+    
+    async with pool.acquire() as conn:
+        # Validate site exists and is awaiting credentials
+        site = await conn.fetchrow("""
+            SELECT site_id, discovered_domain, awaiting_credentials
+            FROM sites WHERE site_id = $1
+        """, [site_id])
+        
+        if not site:
+            raise HTTPException(404, "Site not found")
+        
+        # Store credential (encrypted)
+        # Using existing site_credentials table
+        credential_data = {
+            "host": creds.domain_name,  # Use domain as "host" identifier
+            "username": creds.username,
+            "password": creds.password,
+            "domain": creds.domain_name,
+        }
+        
+        await conn.execute("""
+            INSERT INTO site_credentials (
+                site_id, credential_type, credential_name, encrypted_data,
+                created_at
+            ) VALUES ($1, $2, $3, $4::jsonb, $5)
+            ON CONFLICT (site_id, credential_type, credential_name) 
+            DO UPDATE SET encrypted_data = $4::jsonb, updated_at = $5
+        """, [
+            site_id,
+            creds.credential_type,
+            f"domain_{creds.domain_name}",
+            json.dumps(credential_data),
+            now,
+        ])
+        
+        # Clear awaiting_credentials flag
+        await conn.execute("""
+            UPDATE sites 
+            SET awaiting_credentials = false,
+                credentials_submitted_at = $1
+            WHERE site_id = $2
+        """, [now, site_id])
+        
+        # Trigger immediate enumeration AND scan via next checkin
+        await conn.execute("""
+            UPDATE site_appliances 
+            SET trigger_enumeration = true,
+                trigger_immediate_scan = true
+            WHERE site_id = $1
+        """, [site_id])
+        
+        logger.info(f"Domain credentials submitted for site {site_id}, enumeration triggered")
+    
+    return {
+        "status": "ok", 
+        "message": "Credentials saved - enumeration and first scan will begin immediately"
+    }
+
+
+@router.get("/{site_id}/domain-credentials")
+async def get_domain_credentials(site_id: str):
+    """
+    Get domain credentials for a site (for appliance enumeration).
+    
+    Returns domain admin credentials if available.
+    """
+    pool = await get_pool()
+    
+    async with pool.acquire() as conn:
+        cred = await conn.fetchrow("""
+            SELECT encrypted_data
+            FROM site_credentials
+            WHERE site_id = $1
+            AND credential_type IN ('domain_admin', 'service_account')
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, [site_id])
+        
+        if not cred or not cred['encrypted_data']:
+            return None
+        
+        # Return credentials (should be decrypted in production)
+        cred_data = cred['encrypted_data']
+        if isinstance(cred_data, str):
+            cred_data = json.loads(cred_data)
+        
+        return {
+            "username": cred_data.get('username', ''),
+            "password": cred_data.get('password', ''),
+            "domain": cred_data.get('domain', ''),
+        }
+
+
 @appliances_router.post("/checkin")
 async def appliance_checkin(checkin: ApplianceCheckin):
     """Smart check-in with automatic deduplication.
@@ -1004,6 +1257,30 @@ async def appliance_checkin(checkin: ApplianceCheckin):
         except Exception:
             pass  # Don't fail checkin if runbook lookup fails (table may not exist yet)
 
+        # === STEP 7: Check for enumeration/scan triggers (zero-friction deployment) ===
+        trigger_enumeration = False
+        trigger_immediate_scan = False
+        try:
+            appliance = await conn.fetchrow("""
+                SELECT trigger_enumeration, trigger_immediate_scan
+                FROM site_appliances
+                WHERE appliance_id = $1
+            """, canonical_id)
+            
+            if appliance:
+                trigger_enumeration = appliance.get('trigger_enumeration', False)
+                trigger_immediate_scan = appliance.get('trigger_immediate_scan', False)
+                
+                # Clear trigger flags after sending
+                if trigger_enumeration or trigger_immediate_scan:
+                    await conn.execute("""
+                        UPDATE site_appliances 
+                        SET trigger_enumeration = false, trigger_immediate_scan = false
+                        WHERE appliance_id = $1
+                    """, canonical_id)
+        except Exception:
+            pass  # Don't fail checkin if trigger lookup fails
+
     return {
         "status": "ok",
         "appliance_id": canonical_id,
@@ -1012,6 +1289,8 @@ async def appliance_checkin(checkin: ApplianceCheckin):
         "pending_orders": pending_orders,
         "windows_targets": windows_targets,
         "enabled_runbooks": enabled_runbooks,
+        "trigger_enumeration": trigger_enumeration,
+        "trigger_immediate_scan": trigger_immediate_scan,
     }
 
 

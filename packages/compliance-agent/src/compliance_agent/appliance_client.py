@@ -175,6 +175,47 @@ class CentralCommandClient:
             return None
 
     # =========================================================================
+    # Domain Discovery (Zero-Friction Deployment)
+    # =========================================================================
+
+    async def report_discovered_domain(
+        self,
+        appliance_id: str,
+        discovered_domain: Dict[str, Any],
+        awaiting_credentials: bool = True
+    ) -> Optional[Dict]:
+        """
+        Report discovered AD domain to Central Command.
+        
+        Args:
+            appliance_id: Appliance identifier
+            discovered_domain: DiscoveredDomain.to_dict() output
+            awaiting_credentials: Whether credentials are needed
+            
+        Returns:
+            Response dict if successful, None otherwise
+        """
+        payload = {
+            "site_id": self.config.site_id,
+            "appliance_id": appliance_id,
+            "discovered_domain": discovered_domain,
+            "awaiting_credentials": awaiting_credentials,
+        }
+        
+        status, response = await self._request(
+            'POST',
+            '/api/appliances/domain-discovered',
+            json_data=payload
+        )
+        
+        if status == 200:
+            logger.info(f"Domain discovery reported: {discovered_domain.get('domain_name')}")
+            return response if isinstance(response, dict) else {}
+        else:
+            logger.warning(f"Failed to report domain discovery: {status} - {response}")
+            return None
+
+    # =========================================================================
     # Evidence Upload
     # =========================================================================
 
