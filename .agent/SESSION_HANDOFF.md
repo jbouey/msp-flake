@@ -1,10 +1,50 @@
-# Session Handoff - 2026-01-15
+# Session Handoff - 2026-01-16
 
-**Session:** 40 - Go Agent Implementation (Complete)
+**Session:** 41 - VM Network/AD Configuration + Go Agent Dashboard Deployment
 **Agent Version:** v1.0.34
 **ISO Version:** v33 (deployed), v35 pending (with gRPC server)
 **Go Agent Binaries:** Built on VPS (`/root/msp-iso-build/agent/`)
-**Last Updated:** 2026-01-15
+**Last Updated:** 2026-01-16
+
+---
+
+## Session 41 Accomplishments
+
+### 1. VM Network Configuration
+Fixed all VMs to be on the 192.168.88.x subnet with DNS pointing to Windows DC.
+
+**Network Status:**
+| VM | IP | Status | Notes |
+|----|-----|--------|-------|
+| NVDC01 (DC) | 192.168.88.250 | ✅ Online | ICMP enabled |
+| NVWS01 (Workstation) | 192.168.88.251 | ✅ Online | ICMP enabled after Windows Updates |
+| NVSRV01 (Server) | 192.168.88.244 | ✅ Online | Windows Server Core, ICMP enabled |
+| northvalley-linux | 192.168.88.x | ✅ Online | Changed from NAT to bridged mode |
+| osiriscare-appliance | 192.168.88.246 | ✅ Online | Physical HP T640 |
+
+### 2. AD Domain Verification
+All 3 Windows machines properly domain-joined to `northvalley.local`:
+- NVDC01 (DC) - DNS 127.0.0.1 (self)
+- NVWS01 - DNS 192.168.88.250, domain joined
+- NVSRV01 - DNS 192.168.88.250, domain joined, nltest confirms DC connectivity
+
+### 3. Service Account WinRM Permissions Fixed
+**Issue:** `svc.monitoring` service account couldn't connect via WinRM.
+**Fix:** Added `svc.monitoring` to:
+- Remote Management Users group (on DC)
+- Domain Admins group (for full access)
+
+**Verified:** svc.monitoring can now connect to all 3 Windows machines via WinRM.
+
+### 4. VPS Deployment (Earlier in Session)
+- Deployed Go Agents frontend to VPS (`index-CBjgnJ2z.js`)
+- Ran database migration `019_go_agents.sql` - created 4 tables + 2 views
+
+### 5. Compliance Agent Ready
+With WinRM permissions fixed, the compliance agent on the appliance can now:
+- Enumerate AD computers via svc.monitoring
+- Connect to workstations via WinRM for compliance checks
+- Report drift events to Central Command
 
 ---
 

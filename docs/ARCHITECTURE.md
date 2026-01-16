@@ -1,6 +1,6 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-01-15 (Session 40 - Go Agent Implementation)
+**Last Updated:** 2026-01-16 (Session 41 - VM Network/AD Configuration)
 
 ## Overview
 
@@ -81,6 +81,38 @@
 - `stale`: Last checkin 5-15 minutes
 - `offline`: Last checkin > 15 minutes
 - `pending`: Never checked in
+
+## Lab Network (North Valley Clinic Test)
+
+**Updated:** Session 41 (2026-01-16)
+
+```
+192.168.88.0/24 - North Valley Lab Network (iMac VirtualBox host)
+├── 192.168.88.1   - Gateway/Router (MikroTik)
+├── 192.168.88.50  - iMac (VirtualBox host) - jrelly@
+├── 192.168.88.244 - NVSRV01 (Windows Server 2022 Core, domain member)
+├── 192.168.88.246 - osiriscare-appliance (HP T640 Physical)
+├── 192.168.88.247 - osiriscare-appliance-vm (VirtualBox, test-appliance-lab)
+├── 192.168.88.250 - NVDC01 (Windows Server 2019 DC)
+└── 192.168.88.251 - NVWS01 (Windows 10 Workstation)
+```
+
+### AD Domain
+
+| Property | Value |
+|----------|-------|
+| Domain FQDN | northvalley.local |
+| DNS Server | 192.168.88.250 |
+| Service Account | NORTHVALLEY\svc.monitoring |
+
+### Appliance Configuration
+
+The physical appliance at 192.168.88.246 uses svc.monitoring to:
+- Enumerate AD computers via Get-ADComputer
+- Connect to workstations via WinRM for compliance checks
+- Report drift events to Central Command
+
+---
 
 ## Repository Structure
 

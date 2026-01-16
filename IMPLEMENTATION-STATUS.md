@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-15 (Session 40 - Go Agent Implementation)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, **Go Agent for Workstation Scale**, 786 tests)
+**Last Updated:** 2026-01-16 (Session 41 - VM Network/AD Configuration)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, **VM Network/AD Fix**, 786 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -534,6 +534,15 @@ Required fields per CLAUDE.md:
 ---
 
 **Status:** Phase 12 nearing completion. Agent v1.0.34, ISO v33, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, **Go Agent for Workstation-Scale Compliance**.
+
+**Session 41 (VM Network/AD Configuration):**
+- Fixed VM network configurations - all VMs now on 192.168.88.x subnet
+- Changed northvalley-linux from NAT to bridged mode
+- Enabled ICMP on DC (NVDC01), NVSRV01, and NVWS01
+- Verified AD domain membership for all 3 Windows machines
+- Fixed svc.monitoring service account WinRM permissions (added to Remote Management Users + Domain Admins)
+- Deployed Go Agents frontend to VPS (`index-CBjgnJ2z.js`)
+- Executed database migration 019_go_agents.sql on VPS
 
 **Session 40 (Go Agent Implementation):**
 - Implemented Go agent for workstation-scale compliance monitoring
