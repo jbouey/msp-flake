@@ -66,15 +66,25 @@
   - Returns `trigger_enumeration` and `trigger_immediate_scan` flags
   - Clears flags after sending
 
-## 🔄 Remaining Tasks
+## ✅ Task 3: Go Agent Auto-Deployment (COMPLETE)
+- **Status:** COMPLETE
+- **File Created:** `packages/compliance-agent/src/compliance_agent/agent_deployment.py`
+- **Features:**
+  - WinRM-based deployment to workstations
+  - Binary transfer via base64 encoding
+  - Config.json creation with appliance gRPC address
+  - Windows service installation
+  - Deployment status checking (skips if already deployed)
+  - Concurrent deployment (5 at a time)
+  - Results reporting to Central Command
+  
+- **Integration:**
+  - Integrated into `appliance_agent.py` run cycle
+  - Runs after enumeration discovers workstations
+  - Checks agent status before deploying (avoids duplicates)
+  - Reports deployment results to Central Command
 
-### Task 3: Go Agent Auto-Deployment (Pending)
-- **Status:** Not yet implemented
-- **Required:**
-  - `agent_deployment.py` module for WinRM-based deployment
-  - Integration into appliance agent loop
-  - Deployment status tracking
-  - Agent version management
+## 🔄 Remaining Tasks
 
 ### Task 5: Dashboard Status Updates (Pending)
 - **Status:** Not yet implemented
@@ -143,12 +153,7 @@
 
 ## Next Steps
 
-1. **Implement Go Agent Deployment** (Task 3)
-   - Create `agent_deployment.py` module
-   - Add deployment logic to appliance agent
-   - Test end-to-end deployment flow
-
-2. **Create Dashboard Component** (Task 5)
+1. **Create Dashboard Component** (Task 5)
    - Build `DeploymentProgress.tsx`
    - Add real-time status API endpoint
    - Integrate into partner dashboard
