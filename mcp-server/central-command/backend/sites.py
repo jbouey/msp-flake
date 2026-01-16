@@ -1082,6 +1082,55 @@ async def get_domain_credentials(site_id: str):
         }
 
 
+class AgentDeploymentReport(BaseModel):
+    """Agent deployment results report from appliance."""
+    site_id: str
+    appliance_id: str
+    deployments: List[dict]  # List of DeploymentResult dicts
+
+
+@appliances_router.post("/agent-deployments")
+async def report_agent_deployments(report: AgentDeploymentReport):
+    """
+    Receive Go agent deployment results from appliance.
+    
+    Stores deployment status in agent_deployments table.
+    """
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+    
+    async with pool.acquire() as conn:
+        for deployment in report.deployments:
+            await conn.execute("""
+                INSERT INTO agent_deployments (
+                    site_id, hostname, deployment_method, agent_version,
+                    success, error_message, deployed_at, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT (site_id, hostname) 
+                DO UPDATE SET
+                    deployment_method = EXCLUDED.deployment_method,
+                    agent_version = EXCLUDED.agent_version,
+                    success = EXCLUDED.success,
+                    error_message = EXCLUDED.error_message,
+                    deployed_at = EXCLUDED.deployed_at,
+                    updated_at = EXCLUDED.updated_at
+            """, [
+                report.site_id,
+                deployment.get('hostname'),
+                deployment.get('method', 'winrm'),
+                deployment.get('agent_version'),
+                deployment.get('success', False),
+                deployment.get('error'),
+                datetime.fromisoformat(deployment['deployed_at']) if deployment.get('deployed_at') else now,
+                now,
+                now,
+            ])
+        
+        logger.info(f"Stored {len(report.deployments)} agent deployment records")
+    
+    return {"status": "ok", "message": "Deployment results recorded"}
+
+
 @appliances_router.post("/checkin")
 async def appliance_checkin(checkin: ApplianceCheckin):
     """Smart check-in with automatic deduplication.

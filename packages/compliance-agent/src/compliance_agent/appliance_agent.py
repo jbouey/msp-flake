@@ -64,6 +64,7 @@ from .workstation_evidence import WorkstationEvidenceGenerator, create_workstati
 # Domain discovery for zero-friction deployment
 from .domain_discovery import DomainDiscovery, DiscoveredDomain
 from .ad_enumeration import ADEnumerator, EnumerationResult
+from .agent_deployment import GoAgentDeployer, DeploymentResult
 
 # Sensor API for dual-mode architecture (Windows)
 from .sensor_api import (
@@ -690,7 +691,11 @@ class ApplianceAgent:
         if self._workstation_enabled and self._domain_controller:
             await self._maybe_scan_workstations()
 
-        # 8. Process pending orders (remote commands/updates)
+        # 8. Deploy Go agents to workstations (if enumeration completed)
+        if self.workstation_targets and self.discovered_domain:
+            await self._maybe_deploy_go_agents()
+
+        # 9. Process pending orders (remote commands/updates)
         await self._process_pending_orders()
 
     async def _get_compliance_summary(self) -> dict:
@@ -2268,6 +2273,105 @@ try {
                 logger.error(f"Failed to report enumeration: {status}")
         except Exception as e:
             logger.error(f"Error reporting enumeration: {e}")
+    
+    async def _maybe_deploy_go_agents(self):
+        """
+        Deploy Go agents to workstations that don't have them.
+        
+        Runs after enumeration discovers new workstations.
+        Only deploys to workstations that don't already have agents running.
+        """
+        if not self.workstation_targets:
+            return
+        
+        # Get domain credentials
+        creds = await self._get_domain_credentials()
+        if not creds:
+            logger.warning("No domain credentials available for Go agent deployment")
+            return
+        
+        # Get appliance IP for gRPC address
+        appliance_ips = get_ip_addresses()
+        if not appliance_ips:
+            logger.warning("Cannot determine appliance IP for Go agent config")
+            return
+        
+        appliance_addr = f"{appliance_ips[0]}:{self._grpc_port}"
+        
+        # Initialize Windows executor if needed
+        if not self.windows_executor:
+            self.windows_executor = WindowsExecutor([])
+        
+        # Create deployer
+        deployer = GoAgentDeployer(
+            domain=self.discovered_domain.domain_name,
+            username=creds['username'],
+            password=creds['password'],
+            appliance_addr=appliance_addr,
+            executor=self.windows_executor,
+        )
+        
+        # Check which workstations need agents
+        workstations_needing_agent = []
+        
+        for ws in self.workstation_targets:
+            hostname = ws.get('hostname')
+            if not hostname:
+                continue
+            
+            try:
+                status = await deployer.check_agent_status(hostname)
+                if not status.get('installed') or status.get('status') != 'Running':
+                    workstations_needing_agent.append(ws)
+            except Exception as e:
+                logger.debug(f"Failed to check agent status on {hostname}: {e}")
+                # Assume needs deployment if check fails
+                workstations_needing_agent.append(ws)
+        
+        if workstations_needing_agent:
+            logger.info(f"Deploying Go agents to {len(workstations_needing_agent)} workstations")
+            results = await deployer.deploy_to_workstations(workstations_needing_agent)
+            
+            # Report deployment results
+            await self._report_deployment_results(results)
+        else:
+            logger.debug("All workstations already have Go agents deployed")
+    
+    async def _report_deployment_results(self, results: List[DeploymentResult]):
+        """Report Go agent deployment results to Central Command."""
+        try:
+            appliance_id = f"{self.config.site_id}-{get_mac_address()}"
+            
+            # Convert results to dict format
+            deployment_data = [
+                {
+                    "hostname": r.hostname,
+                    "success": r.success,
+                    "method": r.method,
+                    "error": r.error,
+                    "agent_version": r.agent_version,
+                    "deployed_at": r.deployed_at.isoformat() if r.deployed_at else None,
+                }
+                for r in results
+            ]
+            
+            status, response = await self.client._request(
+                'POST',
+                '/api/appliances/agent-deployments',
+                json_data={
+                    "site_id": self.config.site_id,
+                    "appliance_id": appliance_id,
+                    "deployments": deployment_data,
+                }
+            )
+            
+            if status != 200:
+                logger.error(f"Failed to report deployment results: {status}")
+            else:
+                successful = sum(1 for r in results if r.success)
+                logger.info(f"Reported deployment results: {successful}/{len(results)} successful")
+        except Exception as e:
+            logger.error(f"Error reporting deployment results: {e}")
 
     # =========================================================================
     # Order Processing (remote commands and updates)
