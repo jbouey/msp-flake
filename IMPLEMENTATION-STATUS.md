@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-16 (Session 41 - VM Network/AD Configuration)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, **VM Network/AD Fix**, 786 tests)
+**Last Updated:** 2026-01-16 (Session 44 - Go Agent Testing & ISO v37)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Fix, Zero-Friction Deployment Pipeline, **Go Agent Testing & ISO v37**, 786 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,25 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.34, ISO v33, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, **Go Agent for Workstation-Scale Compliance**.
+**Status:** Phase 12 nearing completion. Agent v1.0.37, ISO v37, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, **Go Agent Testing & ISO v37 with firewall port 50051**.
+
+**Session 44 (Go Agent Testing & ISO v37):**
+- Created Go Agent config.json on NVWS01 workstation (`C:\ProgramData\OsirisCare\config.json`)
+- Discovered and fixed firewall port 50051 issue (gRPC port not allowed in NixOS firewall)
+- Applied hot-fix: `iptables -I nixos-fw 8 -p tcp --dport 50051 -j nixos-fw-accept`
+- Updated `iso/appliance-image.nix` with permanent firewall fix: `allowedTCPPorts = [ 80 22 8080 50051 ]`
+- Built ISO v37 on VPS with agent v1.0.37
+- Transferred ISO v37 to iMac (`~/osiriscare-v37.iso`, 1.0G)
+- Ran Go Agent dry-run test on NVWS01:
+  - 2 PASS: screenlock, rmm_detection
+  - 3 FAIL: bitlocker, defender, firewall (expected for unconfigured lab VM)
+  - 1 ERROR: patches (WMI error)
+- Completed Go Agent code audit:
+  - Identified CGO dependency issue with `mattn/go-sqlite3` (requires CGO_ENABLED=1)
+  - gRPC methods are stubs - streaming not yet implemented
+- Fixed chaos lab config path bug in `winrm_attack.py` (symlink resolution issue)
+- Pushed commit `50f5f86` to production
+- Synced VPS with `git fetch && git reset --hard origin/main`
 
 **Session 41 (VM Network/AD Configuration):**
 - Fixed VM network configurations - all VMs now on 192.168.88.x subnet
@@ -733,12 +751,13 @@ Required fields per CLAUDE.md:
 - Commits: `7b3c85f` - fix: Improve delete button UX with loading state
 
 **Next Steps:**
-1. Deploy Go agent to workstations (copy osiris-agent.exe from VPS to Windows workstations)
-2. Build ISO v35 with gRPC server integration
-3. Test Go agent → Appliance gRPC communication
-4. User to configure Azure App Registration with correct redirect URI and client secret
-5. Run chaos lab cycle and verify extended check type labels
-6. Monitor patterns flowing to Learning dashboard
-7. Evidence bundles uploading to MinIO verification
-8. First compliance packet generated
-9. 30-day monitoring period completion
+1. Flash ISO v37 to physical appliance (192.168.88.246)
+2. Test Go Agent gRPC communication (without -dry-run)
+3. Fix Go Agent CGO dependency (switch to modernc.org/sqlite for pure Go)
+4. Implement gRPC streaming in Go Agent (currently stubs)
+5. User to configure Azure App Registration with correct redirect URI and client secret
+6. Run chaos lab cycle and verify extended check type labels
+7. Monitor patterns flowing to Learning dashboard
+8. Evidence bundles uploading to MinIO verification
+9. First compliance packet generated
+10. 30-day monitoring period completion

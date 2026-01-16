@@ -1,7 +1,69 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-16 (Session 43 - Zero-Friction Deployment Pipeline)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v35, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, **Zero-Friction Deployment Pipeline**)
+**Last Updated:** 2026-01-16 (Session 44 - Go Agent Testing & ISO v37)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, **Go Agent Testing & ISO v37**)
+
+---
+
+## Session 44 (2026-01-16) - Go Agent Testing & ISO v37
+
+### 1. Go Agent Config on NVWS01
+**Status:** COMPLETE
+**Details:**
+- Created `C:\ProgramData\OsirisCare\config.json` on NVWS01 workstation
+- Config: `{"appliance_addr": "192.168.88.247:50051", "data_dir": "C:\\ProgramData\\OsirisCare"}`
+- Used localadmin / NorthValley2024! credentials (from LAB_CREDENTIALS.md)
+
+### 2. Firewall Port 50051 Fix
+**Status:** COMPLETE
+**Details:**
+- **Root cause:** NixOS firewall only allowed ports 80, 22, 8080 - NOT 50051 for gRPC
+- **Hot-fix:** `iptables -I nixos-fw 8 -p tcp --dport 50051 -j nixos-fw-accept` on running VM
+- **Permanent fix:** Updated `iso/appliance-image.nix` firewall: `allowedTCPPorts = [ 80 22 8080 50051 ]`
+
+### 3. Go Agent Testing on NVWS01
+**Status:** COMPLETE
+**Details:**
+- Ran Go Agent with `-dry-run` flag
+- Results:
+  | Check | Status | Notes |
+  |-------|--------|-------|
+  | screenlock | ✅ PASS | Timeout ≤ 600s |
+  | rmm_detection | ✅ PASS | No RMM detected |
+  | bitlocker | ❌ FAIL | No encrypted volumes |
+  | defender | ❌ FAIL | Real-time protection off |
+  | firewall | ❌ FAIL | Not all profiles enabled |
+  | patches | ❌ ERROR | WMI error |
+
+### 4. Go Agent Code Audit
+**Status:** COMPLETE
+**Findings:**
+- Structure is clean and well-organized
+- 6 HIPAA compliance checks working correctly
+- **Issue identified:** SQLite offline queue uses `mattn/go-sqlite3` which requires CGO
+  - Fails with `CGO_ENABLED=0` (current build setting)
+  - Need to either enable CGO or switch to pure Go sqlite (modernc.org/sqlite)
+- gRPC methods are stubs - actual streaming not implemented yet
+
+### 5. Chaos Lab Config Path Bug Fix
+**Status:** COMPLETE
+**File:** `~/chaos-lab/scripts/winrm_attack.py` (on iMac)
+**Issue:** When called via symlink, `__file__` resolves to `/Users/jrelly/chaos-lab/winrm_attack.py` and script looked for config at wrong path
+**Fix:** Updated to use `os.path.realpath(__file__)` and handle both direct and symlink calls
+
+### 6. ISO v37 Build
+**Status:** COMPLETE
+**Location (VPS):** `/root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso`
+**Location (iMac):** `~/osiriscare-v37.iso` (1.0G)
+**Features:**
+- Agent version 1.0.37
+- Port 50051 added to firewall for gRPC
+- grpcio and grpcio-tools dependencies included
+
+### 7. Production Push
+**Status:** COMPLETE
+**Commit:** `50f5f86` - Updated appliance-image.nix with firewall port 50051
+**VPS Synced:** `git fetch && git reset --hard origin/main`
 
 ---
 
