@@ -1,7 +1,7 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-15 (Session 42 - Workstation Cadence Tests + Go Agent Deployment)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v35, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, **Workstation Cadence Tests**, **Go Agent Deployed to NVWS01**)
+**Last Updated:** 2026-01-16 (Session 43 - Zero-Friction Deployment Pipeline)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v35, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, **Zero-Friction Deployment Pipeline**)
 **Test Status:** 786+ passed (compliance-agent tests), agent v1.0.34, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution + workstation cadence verification, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent (gRPC push-based architecture, **deployed to NVWS01**), VM network fixes, AD/DNS verified, svc.monitoring WinRM access, **21 workstation cadence unit tests**
 
 ---
@@ -432,6 +432,30 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **SHA256:** `726f0be6d5aef9d23c701be5cf474a91630ce6acec41015e8d800f1bbe5e6396`
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
+
+### Zero-Friction Deployment Pipeline (2026-01-16 Session 43)
+- **Status:** Core functionality complete (Go agent deployment pending)
+- **Architecture:** Automatic domain discovery → credential entry → AD enumeration → first scan
+- **Files Created:**
+  - `packages/compliance-agent/src/compliance_agent/domain_discovery.py` - AD domain auto-discovery
+  - `packages/compliance-agent/src/compliance_agent/ad_enumeration.py` - Server/workstation enumeration
+  - `mcp-server/central-command/backend/migrations/020_zero_friction.sql` - Database schema
+  - `.agent/audit/provisioning_audit.md` - Architecture audit
+  - `.agent/ZERO_FRICTION_IMPLEMENTATION.md` - Implementation summary
+- **Features:**
+  - Domain auto-discovery via DNS SRV, DHCP, resolv.conf
+  - AD enumeration of all servers and workstations
+  - Automatic target list updates (non-destructive merge)
+  - Trigger-based enumeration (database flags)
+  - Partner notifications for credential entry
+  - First scan auto-trigger after enumeration
+- **API Endpoints:**
+  - `POST /api/appliances/domain-discovered` - Domain discovery reports
+  - `POST /api/appliances/enumeration-results` - Enumeration results
+  - `GET/POST /api/sites/{site_id}/domain-credentials` - Credential management
+  - Enhanced check-in with `trigger_enumeration` and `trigger_immediate_scan` flags
+- **Human Touchpoints:** Reduced to 1 (domain credential entry)
+- **Time to First Report:** Target <1 hour from credential entry
 
 ### Go Agent for Workstation Scale (2026-01-15 Sessions 40-42)
 - **Status:** Complete + Deployed to NVWS01
