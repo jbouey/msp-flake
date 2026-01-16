@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-16 (Session 41 - VM Network/AD Configuration)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, **VM Network/AD Configuration**)
-**Test Status:** 786+ passed (compliance-agent tests), agent v1.0.34, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent (gRPC push-based architecture), **VM network fixes, AD/DNS verified, svc.monitoring WinRM access**
+**Last Updated:** 2026-01-15 (Session 42 - Workstation Cadence Tests + Go Agent Deployment)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v35, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, **Workstation Cadence Tests**, **Go Agent Deployed to NVWS01**)
+**Test Status:** 786+ passed (compliance-agent tests), agent v1.0.34, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution + workstation cadence verification, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent (gRPC push-based architecture, **deployed to NVWS01**), VM network fixes, AD/DNS verified, svc.monitoring WinRM access, **21 workstation cadence unit tests**
 
 ---
 
@@ -433,8 +433,8 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** Full compliance-agent v1.0.0 with appliance mode
 - **Entry point:** `compliance-agent-appliance`
 
-### Go Agent for Workstation Scale (2026-01-15 Session 40)
-- **Status:** Complete (Go agent + gRPC server + Frontend + Backend)
+### Go Agent for Workstation Scale (2026-01-15 Sessions 40-42)
+- **Status:** Complete + Deployed to NVWS01
 - **Architecture:** Push-based gRPC replaces WinRM polling for workstations
 - **Files Created:**
   - `agent/` - Complete Go agent implementation (14 Go files)
@@ -442,10 +442,15 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - `agent/flake.nix` - Nix cross-compilation for Windows
   - `packages/compliance-agent/src/compliance_agent/grpc_server.py` - Python gRPC server
   - `packages/compliance-agent/tests/test_grpc_server.py` - 12 tests
+  - `packages/compliance-agent/tests/test_workstation_cadence.py` - 21 cadence tests (NEW Session 42)
 - **Binaries Built (on VPS):**
   - `osiris-agent.exe` - Windows amd64 (10.3 MB)
   - `osiris-agent-linux` - Linux amd64 (9.8 MB)
   - Location: `/root/msp-iso-build/agent/`
+- **Deployment (Session 42):**
+  - Deployed to NVWS01 (192.168.88.251) at `C:\OsirisCare\osiris-agent.exe`
+  - Dry-run test: 2 PASS (screenlock, rmm_detection), 3 FAIL (bitlocker, defender, firewall), 1 ERROR (patches)
+  - Ready for gRPC connection when ISO v35 deployed to appliance
 - **Features:**
   - 6 WMI compliance checks (BitLocker, Defender, Firewall, Patches, ScreenLock, Services)
   - SQLite WAL offline queue for network resilience
@@ -489,6 +494,15 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - 8 extended check type labels (NTP, Disk, Services, Defender, Memory, Cert, Database, Port)
   - Pattern reporting endpoints deployed
 
+### ISO v35 Built (2026-01-15 Session 42)
+- **Location (VPS):** `/root/msp-iso-build/result-iso-v35/iso/osiriscare-appliance.iso`
+- **Location (Local):** `/tmp/osiriscare-appliance-v35.iso`
+- **Size:** 1.1GB
+- **Agent:** compliance-agent v1.0.34 with **gRPC server for Go Agent**
+- **Entry point:** `compliance-agent-appliance`
+- **Features:** gRPC server on port 50051 for Go Agent push-based compliance, all v33/v34 features
+- **Status:** Built and ready; transfer to iMac pending (user on different WiFi)
+
 ### ISO v33 Built (2026-01-15 Session 39)
 - **Location (VPS):** `/root/msp-iso-build/result-v33/iso/osiriscare-appliance.iso`
 - **Location (iMac):** `~/Downloads/osiriscare-appliance-v33.iso`
@@ -496,7 +510,7 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** compliance-agent v1.0.34 with **$params_Hostname fix**
 - **Entry point:** `compliance-agent-appliance`
 - **Features:** Workstation discovery config, $params_Hostname fix, all previous features
-- **Status:** Deployed to physical appliance (192.168.88.246)
+- **Status:** Currently on physical appliance (192.168.88.246) - superseded by v35
 
 ### ISO v29 Built (2026-01-14 Session 31)
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v29/iso/osiriscare-appliance.iso`

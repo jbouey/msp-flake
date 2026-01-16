@@ -1,7 +1,68 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-16 (Session 41 - VM Network/AD Configuration)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, **VM Network/AD Fix**)
+**Last Updated:** 2026-01-15 (Session 42 - Workstation Cadence Tests + Go Agent Deployment)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v35, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, **Workstation Cadence Tests**, **Go Agent Deployment**)
+
+---
+
+## Session 42 (2026-01-15) - Workstation Cadence Tests + Go Agent Deployment
+
+### 1. Workstation Cadence Unit Tests
+**Status:** COMPLETE
+**File Created:** `packages/compliance-agent/tests/test_workstation_cadence.py`
+**Details:** 21 unit tests for workstation polling intervals
+- Discovery interval: 3600s (1 hour)
+- Scan interval: 600s (10 minutes)
+- Tests cover: interval constants, discovery cadence, scan cadence, online filtering, timestamps
+
+### 2. Chaos Lab Integration
+**Status:** COMPLETE
+**Files Created (on iMac 192.168.88.50):**
+- `~/chaos-lab/scripts/chaos_workstation_cadence.py` - Monitoring script
+- `~/chaos-lab/tests/test_workstation_cadence.py` - Unit tests
+- `~/chaos-lab/README.md` - Full chaos lab documentation
+
+**Cron Schedule Added:**
+```
+# Workstation Cadence Verification
+0 10 * * * cd /Users/jrelly/chaos-lab && /usr/bin/python3 scripts/chaos_workstation_cadence.py --mode quick --json >> logs/cadence.log 2>&1
+0 16 * * * cd /Users/jrelly/chaos-lab && /usr/bin/python3 scripts/chaos_workstation_cadence.py --mode quick --json >> logs/cadence.log 2>&1
+```
+
+### 3. Go Agent Deployment to NVWS01
+**Status:** COMPLETE
+**Details:**
+- Downloaded `osiris-agent.exe` from VPS `/root/msp-iso-build/agent/`
+- Deployed to NVWS01 (192.168.88.251) at `C:\OsirisCare\osiris-agent.exe`
+- Used HTTP server approach for file transfer (WinRM 413 payload too large)
+
+**Dry-Run Test Results:**
+| Check | Status | Notes |
+|-------|--------|-------|
+| screenlock | ✅ PASS | Timeout ≤ 600s |
+| rmm_detection | ✅ PASS | No RMM detected |
+| bitlocker | ❌ FAIL | No encrypted volumes |
+| defender | ❌ FAIL | Real-time protection off |
+| firewall | ❌ FAIL | Not all profiles enabled |
+| patches | ❌ ERROR | WMI error |
+
+### 4. ISO v35 Build
+**Status:** COMPLETE
+**Location (VPS):** `/root/msp-iso-build/result-iso-v35/iso/osiriscare-appliance.iso`
+**Location (Local):** `/tmp/osiriscare-appliance-v35.iso`
+**Features:**
+- gRPC server for Go Agent communication (port 50051)
+- All previous features from v33/v34
+
+### 5. ISO v35 Transfer to iMac
+**Status:** BLOCKED
+**Issue:** User switched to different WiFi network (not on local 192.168.88.x subnet)
+**ISO Ready:** `/tmp/osiriscare-appliance-v35.iso` for later transfer
+
+### 6. Known Issues Encountered
+- **WinRM 401 with svc.monitoring:** Fixed by using Administrator credentials
+- **WinRM 413 payload too large:** Fixed by using HTTP server for file transfer
+- **SSH to iMac timeout:** User on different WiFi network
 
 ---
 
@@ -533,26 +594,29 @@ ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
 
 ## Immediate (Next Session)
 
-### 1. Deploy Go Agent to Workstations
-**Status:** PENDING
+### 1. Deploy ISO v35 to Appliance
+**Status:** PENDING (blocked by WiFi)
 **Details:**
-- Copy `osiris-agent.exe` from VPS `/root/msp-iso-build/agent/` to Windows workstations
-- Test dry-run mode first: `osiris-agent.exe --dry-run`
-- Configure agent with appliance gRPC endpoint (port 50051)
+- ISO ready at `/tmp/osiriscare-appliance-v35.iso`
+- When back on local network: `scp /tmp/osiriscare-appliance-v35.iso jrelly@192.168.88.50:~/Downloads/`
+- Flash to physical appliance (192.168.88.246)
 
-### 2. Build ISO v35 with gRPC Server
+### 2. Test Go Agent → Appliance gRPC Communication
 **Status:** PENDING
 **Details:**
-- gRPC server already integrated into `appliance_agent.py`
-- Update `iso/appliance-image.nix` to include grpc dependencies (grpcio, grpcio-tools)
-- Build ISO on VPS
-
-### 3. Test Go Agent → Appliance Communication
-**Status:** PENDING
-**Details:**
+- Go Agent already deployed to NVWS01 at `C:\OsirisCare\osiris-agent.exe`
+- Configure agent config.json with appliance endpoint: `192.168.88.246:50051`
+- Run agent: `osiris-agent.exe` (not --dry-run)
 - Verify gRPC streaming works on port 50051
 - Check AgentRegistry tracking connected agents
 - Monitor drift events flowing through three-tier healing
+
+### 3. Verify Workstation Cadence in Chaos Lab
+**Status:** PENDING
+**Details:**
+- Chaos lab cron jobs now run at 10:00 and 16:00
+- Check `~/chaos-lab/logs/cadence.log` for results
+- Verify discovery interval (3600s) and scan interval (600s)
 
 ### 4. Run Chaos Lab Cycle
 **Status:** PENDING
