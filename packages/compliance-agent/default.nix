@@ -9,12 +9,13 @@
 
 python311Packages.buildPythonApplication rec {
   pname = "compliance-agent";
-  version = "0.1.0";
+  version = "1.0.35";
 
   src = ./.;
 
   propagatedBuildInputs = with python311Packages; [
     aiohttp
+    asyncssh
     cryptography
     pydantic
     pydantic-settings
@@ -23,6 +24,8 @@ python311Packages.buildPythonApplication rec {
     jinja2
     pywinrm
     pyyaml
+    grpcio
+    grpcio-tools
   ];
 
   buildInputs = [
