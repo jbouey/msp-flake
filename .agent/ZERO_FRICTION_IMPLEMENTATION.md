@@ -1,7 +1,7 @@
 # Zero-Friction Deployment Pipeline - Implementation Summary
 
 **Date:** 2026-01-16
-**Status:** Core functionality implemented, Go agent deployment pending
+**Status:** ✅ ALL TASKS COMPLETE - Zero-friction deployment pipeline fully implemented
 
 ## ✅ Completed Components
 
@@ -84,15 +84,23 @@
   - Checks agent status before deploying (avoids duplicates)
   - Reports deployment results to Central Command
 
-## 🔄 Remaining Tasks
-
-### Task 5: Dashboard Status Updates (Pending)
-- **Status:** Not yet implemented
-- **Required:**
-  - `DeploymentProgress.tsx` React component
-  - Real-time status polling
-  - Progress visualization
-  - Credential entry UI
+## ✅ Task 5: Dashboard Status Updates (COMPLETE)
+- **Status:** COMPLETE
+- **Files Created:**
+  - `mcp-server/central-command/frontend/src/components/deployment/DeploymentProgress.tsx` - React component
+  - `mcp-server/central-command/frontend/src/hooks/useDeployment.ts` - React Query hook
+  - `mcp-server/central-command/frontend/src/components/deployment/index.ts` - Component exports
+- **Features:**
+  - Real-time status polling (5 seconds for active deployments)
+  - Progress bar visualization
+  - Phase timeline with icons and status badges
+  - Phase-specific details (domain name, server/workstation counts, agent deployment status)
+  - Credential entry CTA button when awaiting credentials
+  - Stats summary (servers, workstations, agents deployed)
+- **Integration:**
+  - Added to SiteDetail page (top of main content area)
+  - Backend API endpoint: `GET /api/sites/{site_id}/deployment-status`
+  - Automatically determines phase from database state
 
 ## Architecture Flow
 
@@ -153,12 +161,7 @@
 
 ## Next Steps
 
-1. **Create Dashboard Component** (Task 5)
-   - Build `DeploymentProgress.tsx`
-   - Add real-time status API endpoint
-   - Integrate into partner dashboard
-
-3. **Integration Testing**
+1. **Integration Testing**
    - Test full flow from boot to first compliance report
    - Verify zero human touchpoints (except credential entry)
    - Measure time to first report
