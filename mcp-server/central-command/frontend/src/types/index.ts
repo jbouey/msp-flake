@@ -38,6 +38,26 @@ export type OnboardingStage =
   | 'compliant'
   | 'active';
 
+export type DeploymentPhase =
+  | 'discovering'
+  | 'awaiting_credentials'
+  | 'enumerating'
+  | 'deploying'
+  | 'scanning'
+  | 'complete';
+
+export interface DeploymentStatus {
+  phase: DeploymentPhase;
+  progress: number;
+  details?: {
+    domain_discovered?: string;
+    servers_found?: number;
+    workstations_found?: number;
+    agents_deployed?: number;
+    first_scan_complete?: boolean;
+  };
+}
+
 // =============================================================================
 // HEALTH METRICS
 // =============================================================================

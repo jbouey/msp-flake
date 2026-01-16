@@ -1048,6 +1048,114 @@ async def submit_domain_credentials(
     }
 
 
+@router.get("/{site_id}/deployment-status")
+async def get_deployment_status(site_id: str):
+    """
+    Get zero-friction deployment status for a site.
+    
+    Returns current phase and progress details.
+    """
+    pool = await get_pool()
+    
+    async with pool.acquire() as conn:
+        # Get site deployment state
+        site = await conn.fetchrow("""
+            SELECT 
+                discovered_domain,
+                domain_discovery_at,
+                awaiting_credentials,
+                credentials_submitted_at
+            FROM sites
+            WHERE site_id = $1
+        """, [site_id])
+        
+        if not site:
+            raise HTTPException(404, "Site not found")
+        
+        # Determine current phase
+        phase = "discovering"
+        details = {}
+        
+        if site.get('discovered_domain'):
+            domain_data = site['discovered_domain']
+            if isinstance(domain_data, str):
+                try:
+                    domain_data = json.loads(domain_data)
+                except:
+                    domain_data = {}
+            domain_name = domain_data.get('domain_name') if domain_data else None
+            
+            if site.get('awaiting_credentials'):
+                phase = "awaiting_credentials"
+                details['domain_discovered'] = domain_name
+            elif site.get('credentials_submitted_at'):
+                # Check if enumeration has run
+                enum_result = await conn.fetchrow("""
+                    SELECT 
+                        total_servers,
+                        total_workstations,
+                        reachable_servers,
+                        reachable_workstations,
+                        enumeration_time
+                    FROM enumeration_results
+                    WHERE site_id = $1
+                    ORDER BY enumeration_time DESC
+                    LIMIT 1
+                """, [site_id])
+                
+                if enum_result:
+                    details['servers_found'] = enum_result.get('total_servers', 0)
+                    details['workstations_found'] = enum_result.get('total_workstations', 0)
+                    phase = "enumerating"
+                    
+                    # Check if agents are being deployed
+                    deployment_result = await conn.fetchrow("""
+                        SELECT COUNT(*) as total, SUM(CASE WHEN success THEN 1 ELSE 0 END) as successful
+                        FROM agent_deployments
+                        WHERE site_id = $1
+                    """, [site_id])
+                    
+                    if deployment_result and deployment_result.get('total', 0) > 0:
+                        phase = "deploying"
+                        details['agents_deployed'] = deployment_result.get('successful', 0)
+                        
+                        # Check if all workstations have agents
+                        if details.get('agents_deployed', 0) >= details.get('workstations_found', 0):
+                            # Check if first scan has completed
+                            first_scan = await conn.fetchrow("""
+                                SELECT COUNT(*) as count
+                                FROM compliance_bundles
+                                WHERE site_id = $1
+                                AND checked_at > $2
+                            """, [site_id, site.get('credentials_submitted_at')])
+                            
+                            if first_scan and first_scan.get('count', 0) > 0:
+                                phase = "scanning"
+                                details['first_scan_complete'] = True
+                                
+                                # If scan complete, deployment is done
+                                phase = "complete"
+                else:
+                    phase = "enumerating"
+                    details['domain_discovered'] = domain_name
+        
+        # Calculate progress percentage
+        phase_progress = {
+            "discovering": 10,
+            "awaiting_credentials": 20,
+            "enumerating": 40,
+            "deploying": 60,
+            "scanning": 80,
+            "complete": 100,
+        }
+        
+        return {
+            "phase": phase,
+            "progress": phase_progress.get(phase, 0),
+            "details": details,
+        }
+
+
 @router.get("/{site_id}/domain-credentials")
 async def get_domain_credentials(site_id: str):
     """
