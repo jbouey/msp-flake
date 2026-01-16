@@ -1,213 +1,175 @@
 # Session Handoff - 2026-01-16
 
-**Session:** 43 - Zero-Friction Deployment Pipeline
-**Agent Version:** v1.0.34
-**ISO Version:** v33 (deployed), v35 pending (with gRPC server)
+**Session:** 44 - Go Agent Testing & ISO v37
+**Agent Version:** v1.0.37
+**ISO Version:** v37 (built, on iMac at ~/osiriscare-v37.iso)
 **Last Updated:** 2026-01-16
 
 ---
 
-## Session 43 Accomplishments
+## Session 44 Accomplishments
 
-### 1. Zero-Friction Deployment Pipeline - Core Implementation
-Implemented automatic domain discovery and AD enumeration to eliminate manual target configuration.
-
-**Files Created:**
-- `packages/compliance-agent/src/compliance_agent/domain_discovery.py` - AD domain auto-discovery (DNS SRV, DHCP, resolv.conf)
-- `packages/compliance-agent/src/compliance_agent/ad_enumeration.py` - Server/workstation enumeration from AD
-- `mcp-server/central-command/backend/migrations/020_zero_friction.sql` - Database schema for zero-friction deployment
-- `.agent/audit/provisioning_audit.md` - Architecture audit before implementation
-- `.agent/ZERO_FRICTION_IMPLEMENTATION.md` - Implementation summary
-
-**Files Modified:**
-- `packages/compliance-agent/src/compliance_agent/appliance_agent.py` - Domain discovery, AD enumeration, trigger handling
-- `packages/compliance-agent/src/compliance_agent/appliance_client.py` - Domain discovery reporting method
-- `mcp-server/central-command/backend/sites.py` - API endpoints for domain discovery, enumeration, credentials
-
-### 2. Domain Auto-Discovery
+### 1. Go Agent Config on NVWS01
 **Status:** COMPLETE
-- Discovers AD domain via DNS SRV records (`_ldap._tcp.dc._msdcs.DOMAIN`)
-- Fallback to DHCP domain suffix
-- Fallback to resolv.conf search domain
-- Verifies LDAP port accessibility
-- Runs automatically on first boot
-- Reports discovered domain to Central Command
-- Triggers partner notification for credential entry
+- Created `C:\ProgramData\OsirisCare\config.json` on NVWS01 workstation
+- Config: `{"appliance_addr": "192.168.88.247:50051", "data_dir": "C:\\ProgramData\\OsirisCare"}`
+- Used localadmin / NorthValley2024! credentials (from LAB_CREDENTIALS.md)
 
-### 3. AD Enumeration
+### 2. Firewall Port 50051 Fix
 **Status:** COMPLETE
-- Enumerates all computers from AD via PowerShell `Get-ADComputer`
-- Separates servers and workstations automatically
-- Tests WinRM connectivity concurrently (5 at a time)
-- Reports enumeration results to Central Command
-- Updates `windows_targets` automatically (non-destructive merge)
-- Stores workstation targets for Go agent deployment
-
-### 4. Central Command API
-**Status:** COMPLETE
-**New Endpoints:**
-- `POST /api/appliances/domain-discovered` - Receive domain discovery reports
-- `POST /api/appliances/enumeration-results` - Receive enumeration results
-- `GET /api/sites/{site_id}/domain-credentials` - Fetch domain credentials
-- `POST /api/sites/{site_id}/domain-credentials` - Submit domain credentials (triggers enumeration)
-
-**Enhanced Endpoints:**
-- `/api/appliances/checkin` - Now returns `trigger_enumeration` and `trigger_immediate_scan` flags
-
-### 5. Database Schema
-**Status:** COMPLETE
-**Migration:** `020_zero_friction.sql`
-- `sites.discovered_domain` (JSONB)
-- `sites.domain_discovery_at` (TIMESTAMPTZ)
-- `sites.awaiting_credentials` (BOOLEAN)
-- `sites.credentials_submitted_at` (TIMESTAMPTZ)
-- `site_appliances.trigger_enumeration` (BOOLEAN)
-- `site_appliances.trigger_immediate_scan` (BOOLEAN)
-- `enumeration_results` table
-- `agent_deployments` table
-
----
-
-## Zero-Friction Deployment Flow
-
-```
-1. BOOT → Domain Discovery
-   └─> Appliance discovers AD domain automatically
-   └─> Reports to Central Command
-   └─> Partner notification sent
-
-2. CREDENTIAL ENTRY → Partner enters domain admin creds
-   └─> Sets trigger_enumeration = true
-   └─> Sets trigger_immediate_scan = true
-
-3. CHECK-IN → Appliance receives triggers
-   └─> Starts AD enumeration
-   └─> Discovers servers + workstations
-   └─> Updates windows_targets automatically
-
-4. SCAN → First compliance scan runs
-   └─> Evidence bundle generated
-   └─> Uploaded to Central Command
-
-5. DEPLOY (Pending) → Go agents deployed to workstations
-   └─> WinRM push
-   └─> Service installation
-   └─> Status tracking
+**Root Cause:** NixOS firewall only allowed ports 80, 22, 8080 - NOT 50051 for gRPC
+**Hot-fix:** `iptables -I nixos-fw 8 -p tcp --dport 50051 -j nixos-fw-accept` on running VM
+**Permanent fix:** Updated `iso/appliance-image.nix`:
+```nix
+allowedTCPPorts = [ 80 22 8080 50051 ];  # Status + SSH + Sensor API + gRPC
 ```
 
----
+### 3. Go Agent Dry-Run Testing
+**Status:** COMPLETE
+**Results on NVWS01:**
+| Check | Status | Notes |
+|-------|--------|-------|
+| screenlock | ✅ PASS | Timeout ≤ 600s |
+| rmm_detection | ✅ PASS | No RMM detected |
+| bitlocker | ❌ FAIL | No encrypted volumes |
+| defender | ❌ FAIL | Real-time protection off |
+| firewall | ❌ FAIL | Not all profiles enabled |
+| patches | ❌ ERROR | WMI error |
 
-## Remaining Tasks
+### 4. Go Agent Code Audit
+**Status:** COMPLETE
+**Findings:**
+- Clean, well-organized code structure
+- 6 HIPAA compliance checks working
+- **Issues Identified:**
+  1. SQLite offline queue uses `mattn/go-sqlite3` which requires CGO
+     - Fails with `CGO_ENABLED=0` (current build setting)
+     - Fix: Switch to `modernc.org/sqlite` (pure Go) or enable CGO
+  2. gRPC methods are stubs - actual streaming not implemented yet
 
-### Task 3: Go Agent Auto-Deployment (Pending)
-- **Status:** Not yet implemented
-- **Required:**
-  - `agent_deployment.py` module for WinRM-based deployment
-  - Integration into appliance agent loop
-  - Deployment status tracking
-  - Agent version management
+### 5. Chaos Lab Config Path Bug Fix
+**Status:** COMPLETE
+**File:** `~/chaos-lab/scripts/winrm_attack.py` (on iMac)
+**Issue:** When called via symlink, `__file__` resolves incorrectly
+**Fix:** Use `os.path.realpath(__file__)` and handle both direct and symlink calls
 
-### Task 5: Dashboard Status Updates (Pending)
-- **Status:** Not yet implemented
-- **Required:**
-  - `DeploymentProgress.tsx` React component
-  - Real-time status polling
-  - Progress visualization
-  - Credential entry UI
+### 6. ISO v37 Build & Transfer
+**Status:** COMPLETE
+- Built on VPS with `nix build .#appliance-iso -o result-iso`
+- Version: Agent v1.0.37
+- Features: Port 50051 in firewall, grpcio dependencies
+- Transferred to iMac: `~/osiriscare-v37.iso` (1.0G)
 
----
-
-## Key Design Decisions
-
-1. **Credential-Pull Architecture:** Maintains existing pattern - credentials never stored on appliance
-2. **Non-Destructive Enumeration:** Discovered targets merged with manual configs, not overwritten
-3. **Trigger-Based:** Uses database flags to trigger actions on next check-in (avoids race conditions)
-4. **Async Connectivity Testing:** Tests WinRM connectivity concurrently (5 at a time) for performance
-
----
-
-## Testing Checklist
-
-- [ ] Domain discovery on fresh appliance boot
-- [ ] Partner notification on domain discovery
-- [ ] Credential submission triggers enumeration
-- [ ] Enumeration discovers servers and workstations
-- [ ] Windows targets updated automatically
-- [ ] First compliance scan runs after enumeration
-- [ ] Evidence bundle generated and uploaded
+### 7. Production Push
+**Status:** COMPLETE
+**Commit:** `50f5f86`
+**VPS Synced:** `git fetch && git reset --hard origin/main`
 
 ---
 
 ## Files Modified This Session
 
-### Created:
-| File | Purpose |
-|------|---------|
-| `packages/compliance-agent/src/compliance_agent/domain_discovery.py` | AD domain auto-discovery |
-| `packages/compliance-agent/src/compliance_agent/ad_enumeration.py` | Server/workstation enumeration |
-| `mcp-server/central-command/backend/migrations/020_zero_friction.sql` | Database schema |
-| `.agent/audit/provisioning_audit.md` | Architecture audit |
-| `.agent/ZERO_FRICTION_IMPLEMENTATION.md` | Implementation summary |
-
 ### Modified:
 | File | Changes |
 |------|---------|
-| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Domain discovery, AD enumeration, trigger handling |
-| `packages/compliance-agent/src/compliance_agent/appliance_client.py` | Domain discovery reporting method |
-| `mcp-server/central-command/backend/sites.py` | API endpoints for domain discovery, enumeration, credentials |
+| `iso/appliance-image.nix` | Added port 50051 to firewall rules |
+| `~/chaos-lab/scripts/winrm_attack.py` (iMac) | Fixed config path resolution for symlinks |
+
+### Created on NVWS01:
+| File | Purpose |
+|------|---------|
+| `C:\ProgramData\OsirisCare\config.json` | Go Agent configuration |
+
+---
+
+## Known Issues
+
+### 1. Go Agent CGO Dependency
+- `mattn/go-sqlite3` requires CGO_ENABLED=1
+- Current builds use CGO_ENABLED=0
+- **Workaround:** SQLite queue not functional until fixed
+- **Fix:** Switch to `modernc.org/sqlite` (pure Go)
+
+### 2. gRPC Streaming Not Implemented
+- Go Agent gRPC methods are stubs
+- Python gRPC server also has stub servicer
+- **Impact:** Full push-based communication not yet working
 
 ---
 
 ## Next Session Tasks
 
-1. **Implement Go Agent Deployment** (Task 3)
-   - Create `agent_deployment.py` module
-   - Add deployment logic to appliance agent
-   - Test end-to-end deployment flow
+1. **Flash ISO v37 to Physical Appliance**
+   - Location: `~/osiriscare-v37.iso` on iMac
+   - Target: 192.168.88.246
 
-2. **Create Dashboard Component** (Task 5)
-   - Build `DeploymentProgress.tsx`
-   - Add real-time status API endpoint
-   - Integrate into partner dashboard
+2. **Test Go Agent gRPC (Real Mode)**
+   - Run Go Agent without `-dry-run` on NVWS01
+   - Verify gRPC connection to appliance port 50051
+   - Monitor agent logs on appliance
 
-3. **Integration Testing**
-   - Test full flow from boot to first compliance report
-   - Verify zero human touchpoints (except credential entry)
-   - Measure time to first report
+3. **Fix Go Agent CGO Issue**
+   - Replace `mattn/go-sqlite3` with `modernc.org/sqlite`
+   - Rebuild Go Agent binaries
 
-4. **Database Migration**
-   - Run `020_zero_friction.sql` on production database
+4. **Implement gRPC Streaming**
+   - Wire up Python gRPC servicer
+   - Implement Go Agent streaming client
+
+---
+
+## Lab Environment Status
+
+### VMs (on iMac 192.168.88.50)
+| VM | IP | Status | Notes |
+|----|-----|--------|-------|
+| NVDC01 | 192.168.88.250 | ✅ Online | Domain Controller |
+| NVWS01 | 192.168.88.251 | ✅ Online | Windows 10 Workstation, Go Agent installed |
+| NVSRV01 | 192.168.88.244 | ✅ Online | Windows Server Core |
+| osiriscare-appliance (VM) | 192.168.88.247 | ✅ Online | Running ISO v36 + hot-fix |
+| osiriscare-appliance (Physical) | 192.168.88.246 | ✅ Online | HP T640, needs ISO v37 |
+
+### Go Agent Deployment
+- **Binary:** `C:\OsirisCare\osiris-agent.exe` on NVWS01
+- **Config:** `C:\ProgramData\OsirisCare\config.json`
+- **Appliance Endpoint:** `192.168.88.247:50051`
 
 ---
 
 ## Quick Commands
 
 ```bash
-# Check agent on appliance
-ssh root@192.168.88.246 "tail -50 /var/lib/msp/agent_final.log"
+# SSH to VM appliance
+ssh root@192.168.88.247
 
-# Test domain discovery
-ssh root@192.168.88.246 "python3 -c \"
-from compliance_agent.domain_discovery import DomainDiscovery
-import asyncio
-dd = DomainDiscovery()
-result = asyncio.run(dd.discover())
-print(result)
-\""
+# Check firewall rules on appliance
+iptables -L nixos-fw -n --line-numbers | grep 50051
+
+# Test gRPC port from NVWS01 (PowerShell)
+Test-NetConnection -ComputerName 192.168.88.247 -Port 50051
+
+# Watch agent logs on appliance
+journalctl -u compliance-agent -f
+
+# Run Go Agent (dry-run)
+C:\OsirisCare\osiris-agent.exe -dry-run
+
+# Run Go Agent (real mode)
+C:\OsirisCare\osiris-agent.exe
 
 # SSH to VPS
 ssh root@178.156.162.116
 
-# Run database migration
-psql -U postgres -d msp_compliance < mcp-server/central-command/backend/migrations/020_zero_friction.sql
+# Flash ISO to USB (on Mac)
+sudo dd if=~/osiriscare-v37.iso of=/dev/diskN bs=4m status=progress
 ```
 
 ---
 
 ## Related Docs
 
-- `.agent/ZERO_FRICTION_IMPLEMENTATION.md` - Implementation summary
-- `.agent/audit/provisioning_audit.md` - Architecture audit
 - `.agent/TODO.md` - Session tasks
 - `.agent/CONTEXT.md` - Project context
-- `docs/partner/PROVISIONING.md` - Updated with zero-friction flow
+- `.agent/LAB_CREDENTIALS.md` - Lab passwords
+- `IMPLEMENTATION-STATUS.md` - Overall status
+- `agent/README.md` - Go Agent documentation

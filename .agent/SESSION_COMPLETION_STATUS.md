@@ -1,192 +1,178 @@
-# Session Completion Status
+# Session 44 Completion Status
 
 **Date:** 2026-01-16
-**Session:** 43 - Zero-Friction Deployment Pipeline
-**Agent Version:** v1.0.34
-**ISO Version:** v33 (deployed), v35 pending (with gRPC server)
-**Status:** CORE FUNCTIONALITY COMPLETE (Go agent deployment pending)
+**Session:** 44 - Go Agent Testing & ISO v37
+**Agent Version:** v1.0.37
+**ISO Version:** v37 (built, on iMac at ~/osiriscare-v37.iso)
+**Status:** ✅ COMPLETE
 
 ---
 
-## Session 43 Accomplishments
+## Session 44 Accomplishments
 
-### 1. AD Domain Auto-Discovery
+### 1. Go Agent Configuration on NVWS01
 | Task | Status | Details |
 |------|--------|---------|
-| DNS SRV record queries | DONE | `_ldap._tcp.dc._msdcs.DOMAIN` |
-| DHCP domain suffix detection | DONE | Networkd lease files |
-| resolv.conf search domain | DONE | Fallback method |
-| LDAP port verification | DONE | Connectivity test |
-| Boot sequence integration | DONE | Runs on first boot |
-| Central Command reporting | DONE | `POST /api/appliances/domain-discovered` |
-| Partner notification | DONE | Email + dashboard notification |
+| Create config directory | DONE | `C:\ProgramData\OsirisCare` |
+| Create config.json | DONE | Appliance endpoint configured |
+| WinRM connectivity | DONE | Used localadmin credentials |
 
-### 2. AD Enumeration (Servers + Workstations)
+### 2. Firewall Port 50051 Fix
 | Task | Status | Details |
 |------|--------|---------|
-| PowerShell Get-ADComputer | DONE | Enumerates all computers |
-| Server/workstation separation | DONE | Based on OS name |
-| WinRM connectivity testing | DONE | Concurrent (5 at a time) |
-| Results reporting | DONE | `POST /api/appliances/enumeration-results` |
-| Target list updates | DONE | Non-destructive merge |
-| Trigger-based execution | DONE | Database flags |
+| Root cause identified | DONE | gRPC port not in firewall rules |
+| Hot-fix applied | DONE | `iptables -I nixos-fw 8 -p tcp --dport 50051 -j nixos-fw-accept` |
+| Permanent fix | DONE | Updated `appliance-image.nix` |
+| TCP connectivity verified | DONE | NVWS01 → Appliance:50051 working |
 
-### 3. Central Command API
+### 3. Go Agent Testing
 | Task | Status | Details |
 |------|--------|---------|
-| Domain discovery endpoint | DONE | `POST /api/appliances/domain-discovered` |
-| Enumeration results endpoint | DONE | `POST /api/appliances/enumeration-results` |
-| Credential fetch endpoint | DONE | `GET /api/sites/{site_id}/domain-credentials` |
-| Credential submit endpoint | DONE | `POST /api/sites/{site_id}/domain-credentials` |
-| Check-in trigger flags | DONE | `trigger_enumeration`, `trigger_immediate_scan` |
+| Dry-run execution | DONE | 6 checks executed |
+| screenlock check | PASS | Timeout ≤ 600s |
+| rmm_detection check | PASS | No RMM detected |
+| bitlocker check | FAIL | No encrypted volumes (expected) |
+| defender check | FAIL | Real-time off (expected) |
+| firewall check | FAIL | Not all profiles enabled (expected) |
+| patches check | ERROR | WMI error |
 
-### 4. Database Schema
+### 4. Go Agent Code Audit
 | Task | Status | Details |
 |------|--------|---------|
-| Migration file | DONE | `020_zero_friction.sql` |
-| Sites table columns | DONE | discovered_domain, awaiting_credentials, etc. |
-| Appliances table columns | DONE | trigger_enumeration, trigger_immediate_scan |
-| Enumeration results table | DONE | Full schema with indexes |
-| Agent deployments table | DONE | Full schema with indexes |
+| Code structure review | DONE | Clean and well-organized |
+| Compliance checks | DONE | 6 checks implemented |
+| CGO dependency issue | FOUND | `mattn/go-sqlite3` requires CGO |
+| gRPC stubs | FOUND | Streaming not implemented |
 
-### 5. Appliance Agent Integration
+### 5. Chaos Lab Fix
 | Task | Status | Details |
 |------|--------|---------|
-| Domain discovery import | DONE | Added to imports |
-| Boot sequence integration | DONE | `_discover_domain_on_boot()` |
-| Enumeration method | DONE | `_enumerate_ad_targets()` |
-| Trigger handling | DONE | Check-in response processing |
-| Credential fetching | DONE | `_get_domain_credentials()` |
-| Results reporting | DONE | `_report_enumeration_results()` |
+| Config path bug | DONE | Symlink resolution fixed |
+| Script: winrm_attack.py | DONE | Uses `os.path.realpath(__file__)` |
 
-### 6. Documentation
+### 6. ISO v37 Build
 | Task | Status | Details |
 |------|--------|---------|
-| Architecture audit | DONE | `.agent/audit/provisioning_audit.md` |
-| Implementation summary | DONE | `.agent/ZERO_FRICTION_IMPLEMENTATION.md` |
-| TODO.md update | DONE | Session 43 section added |
-| CONTEXT.md update | DONE | Zero-friction section added |
-| PROVISIONING.md update | DONE | Zero-friction flow documented |
+| Build on VPS | DONE | `nix build .#appliance-iso` |
+| Transfer to iMac | DONE | `~/osiriscare-v37.iso` (1.0G) |
+| Version bump | DONE | Agent v1.0.37 |
+| Firewall port | DONE | 50051 included |
+
+### 7. Production Push
+| Task | Status | Details |
+|------|--------|---------|
+| Git commit | DONE | `50f5f86` |
+| VPS sync | DONE | `git reset --hard origin/main` |
 
 ---
 
 ## Test Results
 
-**Linter:** ✅ No errors
-- `domain_discovery.py` - No linter errors
-- `ad_enumeration.py` - No linter errors
-- `appliance_agent.py` - No linter errors
-- `sites.py` - No linter errors
+**Go Agent Dry-Run:**
+| Check | Result | Notes |
+|-------|--------|-------|
+| screenlock | ✅ PASS | Timeout ≤ 600 seconds |
+| rmm_detection | ✅ PASS | No RMM tools detected |
+| bitlocker | ❌ FAIL | Volume C: not encrypted |
+| defender | ❌ FAIL | Real-time protection disabled |
+| firewall | ❌ FAIL | Domain/Private/Public not all enabled |
+| patches | ❌ ERROR | WMI query error |
 
-**Code Quality:**
-- Follows existing patterns (credential-pull, non-destructive updates)
-- Proper error handling and logging
-- Type hints and docstrings
-
----
-
-## Files Created/Modified
-
-### Created (5 files):
-1. `packages/compliance-agent/src/compliance_agent/domain_discovery.py` (11.4 KB)
-2. `packages/compliance-agent/src/compliance_agent/ad_enumeration.py` (9.9 KB)
-3. `mcp-server/central-command/backend/migrations/020_zero_friction.sql` (3.2 KB)
-4. `.agent/audit/provisioning_audit.md` (Audit document)
-5. `.agent/ZERO_FRICTION_IMPLEMENTATION.md` (Implementation summary)
-
-### Modified (3 files):
-1. `packages/compliance-agent/src/compliance_agent/appliance_agent.py` - Domain discovery, enumeration, triggers
-2. `packages/compliance-agent/src/compliance_agent/appliance_client.py` - Domain discovery reporting
-3. `mcp-server/central-command/backend/sites.py` - API endpoints
+**Network Connectivity:**
+| Test | Result |
+|------|--------|
+| TCP to 192.168.88.247:50051 | ✅ SUCCESS |
+| Hot-fix persistence | ✅ VERIFIED |
 
 ---
 
-## Architecture Overview
+## Files Modified This Session
 
-```
-Appliance Boot → Domain Discovery → Partner Notification
-                                      ↓
-                              Credential Entry (1 human touchpoint)
-                                      ↓
-                              Enumeration Trigger
-                                      ↓
-                              AD Enumeration → Servers + Workstations
-                                      ↓
-                              Target List Updates → First Scan
-                                      ↓
-                              Evidence Bundle → Central Command
-```
+### Modified (2 files):
+1. `iso/appliance-image.nix` - Added port 50051 to firewall
+2. `~/chaos-lab/scripts/winrm_attack.py` (iMac) - Fixed config path
 
-**Human Touchpoints:** 1 (domain credential entry)
-**Time to First Report:** Target <1 hour from credential entry
+### Created (1 file):
+1. `C:\ProgramData\OsirisCare\config.json` (on NVWS01)
+
+---
+
+## Known Issues Identified
+
+### 1. Go Agent CGO Dependency
+- **Component:** `agent/internal/transport/offline.go`
+- **Dependency:** `mattn/go-sqlite3`
+- **Problem:** Requires CGO_ENABLED=1 at build time
+- **Impact:** SQLite offline queue doesn't work
+- **Fix:** Switch to `modernc.org/sqlite` (pure Go)
+
+### 2. gRPC Streaming Not Implemented
+- **Component:** `agent/internal/transport/grpc.go`, `grpc_server.py`
+- **Problem:** Methods are stubs
+- **Impact:** Push-based communication not functional
+- **Fix:** Implement actual gRPC streaming
+
+---
+
+## Deployment State
+
+| Component | Location | Status |
+|-----------|----------|--------|
+| ISO v37 | iMac ~/osiriscare-v37.iso | ✅ Ready to flash |
+| Go Agent Binary | NVWS01 C:\OsirisCare\osiris-agent.exe | ✅ Deployed |
+| Go Agent Config | NVWS01 C:\ProgramData\OsirisCare\config.json | ✅ Created |
+| VM Appliance | 192.168.88.247 | ✅ Running with hot-fix |
+| Physical Appliance | 192.168.88.246 | ⏳ Needs ISO v37 |
+| VPS | 178.156.162.116 | ✅ Synced |
 
 ---
 
 ## Next Steps
 
-1. **Implement Go Agent Deployment** (Task 3)
-   - Create `agent_deployment.py` module
-   - WinRM-based deployment to workstations
-   - Service installation and status tracking
-
-2. **Create Dashboard Component** (Task 5)
-   - `DeploymentProgress.tsx` React component
-   - Real-time status API endpoint
-   - Progress visualization
-
-3. **Integration Testing**
-   - Full flow from boot to first report
-   - Verify zero human touchpoints (except credential)
-   - Measure deployment time
-
-4. **Database Migration**
-   - Run `020_zero_friction.sql` on production
+| Priority | Task | Notes |
+|----------|------|-------|
+| High | Flash ISO v37 to physical appliance | ISO ready on iMac |
+| High | Test Go Agent real mode | Without -dry-run flag |
+| Medium | Fix CGO dependency | Switch to pure Go sqlite |
+| Medium | Implement gRPC streaming | Wire up servicer |
+| Low | Enable Defender/BitLocker on NVWS01 | For realistic testing |
 
 ---
 
 ## Quick Commands
 
 ```bash
-# Run database migration
-psql -U postgres -d msp_compliance < mcp-server/central-command/backend/migrations/020_zero_friction.sql
+# SSH to VM appliance
+ssh root@192.168.88.247
 
-# Check domain discovery on appliance
-ssh root@192.168.88.246 "python3 -c \"
-from compliance_agent.domain_discovery import DomainDiscovery
-import asyncio
-dd = DomainDiscovery()
-result = asyncio.run(dd.discover())
-print(result.to_dict() if result else 'No domain found')
-\""
+# Watch agent logs
+journalctl -u compliance-agent -f
 
-# SSH to VPS
-ssh root@178.156.162.116
+# Check firewall rule
+iptables -L nixos-fw -n --line-numbers | grep 50051
 
-# Deploy to VPS
-ssh root@api.osiriscare.net "/opt/mcp-server/deploy.sh"
+# Run Go Agent on NVWS01 (PowerShell)
+C:\OsirisCare\osiris-agent.exe -dry-run
+C:\OsirisCare\osiris-agent.exe  # Real mode
+
+# Flash ISO to USB
+sudo dd if=~/osiriscare-v37.iso of=/dev/diskN bs=4m status=progress
 ```
-
----
-
-## Deployment State
-
-| Component | Status | Details |
-|-----------|--------|---------|
-| Domain Discovery | ✅ COMPLETE | Code ready, needs testing |
-| AD Enumeration | ✅ COMPLETE | Code ready, needs testing |
-| API Endpoints | ✅ COMPLETE | Code ready, needs deployment |
-| Database Migration | ✅ COMPLETE | File ready, needs execution |
-| Go Agent Deployment | ⏳ PENDING | Module not yet created |
-| Dashboard Component | ⏳ PENDING | React component not yet created |
 
 ---
 
 ## Success Metrics
 
-| Metric | Target | Status |
-|--------|--------|--------|
-| Time to domain discovery | <5 minutes | ✅ Implemented |
-| Human touchpoints | 1 | ✅ Achieved (credential entry only) |
-| Time to first compliance report | <1 hour | ⏳ Pending testing |
-| Agent deployment success rate | >90% | ⏳ Pending implementation |
-| Partner notification latency | <1 minute | ✅ Implemented |
+| Metric | Target | Actual | Status |
+|--------|--------|--------|--------|
+| Go Agent checks executed | 6 | 6 | ✅ |
+| Firewall fix deployed | Yes | Yes | ✅ |
+| TCP connectivity working | Yes | Yes | ✅ |
+| ISO v37 built | Yes | Yes | ✅ |
+| Production synced | Yes | Yes | ✅ |
+| Documentation updated | Yes | Yes | ✅ |
+
+---
+
+**Session Status:** ✅ COMPLETE
+**Handoff Ready:** ✅ YES

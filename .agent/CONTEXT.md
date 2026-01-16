@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-16 (Session 43 - Zero-Friction Deployment Pipeline)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v35, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, **Zero-Friction Deployment Pipeline**)
-**Test Status:** 786+ passed (compliance-agent tests), agent v1.0.34, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution + workstation cadence verification, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent (gRPC push-based architecture, **deployed to NVWS01**), VM network fixes, AD/DNS verified, svc.monitoring WinRM access, **21 workstation cadence unit tests**
+**Last Updated:** 2026-01-16 (Session 44 - Go Agent Testing & ISO v37)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, Zero-Friction Deployment Pipeline, **Go Agent Testing & ISO v37**)
+**Test Status:** 786+ passed (compliance-agent tests), agent v1.0.37, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution + workstation cadence verification + config path fix, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent (gRPC push-based architecture, deployed to NVWS01, **config.json created, dry-run tested**), VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, **firewall port 50051 for gRPC**
 
 ---
 
@@ -457,8 +457,8 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Human Touchpoints:** Reduced to 1 (domain credential entry)
 - **Time to First Report:** Target <1 hour from credential entry
 
-### Go Agent for Workstation Scale (2026-01-15 Sessions 40-42)
-- **Status:** Complete + Deployed to NVWS01
+### Go Agent for Workstation Scale (2026-01-15 Sessions 40-44)
+- **Status:** Complete + Deployed to NVWS01 + Config created + Dry-run tested
 - **Architecture:** Push-based gRPC replaces WinRM polling for workstations
 - **Files Created:**
   - `agent/` - Complete Go agent implementation (14 Go files)
@@ -518,6 +518,18 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - 8 extended check type labels (NTP, Disk, Services, Defender, Memory, Cert, Database, Port)
   - Pattern reporting endpoints deployed
 
+### ISO v37 Built (2026-01-16 Session 44)
+- **Location (VPS):** `/root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso`
+- **Location (iMac):** `~/osiriscare-v37.iso`
+- **Size:** 1.0GB
+- **Agent:** compliance-agent v1.0.37 with **gRPC server + firewall port 50051**
+- **Entry point:** `compliance-agent-appliance`
+- **Features:**
+  - gRPC server on port 50051 for Go Agent push-based compliance
+  - Firewall port 50051 permanently added
+  - grpcio and grpcio-tools dependencies
+- **Status:** Built and transferred to iMac, ready to flash to appliance
+
 ### ISO v35 Built (2026-01-15 Session 42)
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v35/iso/osiriscare-appliance.iso`
 - **Location (Local):** `/tmp/osiriscare-appliance-v35.iso`
@@ -525,7 +537,7 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Agent:** compliance-agent v1.0.34 with **gRPC server for Go Agent**
 - **Entry point:** `compliance-agent-appliance`
 - **Features:** gRPC server on port 50051 for Go Agent push-based compliance, all v33/v34 features
-- **Status:** Built and ready; transfer to iMac pending (user on different WiFi)
+- **Status:** Superseded by ISO v37
 
 ### ISO v33 Built (2026-01-15 Session 39)
 - **Location (VPS):** `/root/msp-iso-build/result-v33/iso/osiriscare-appliance.iso`
