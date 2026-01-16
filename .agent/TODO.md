@@ -1,7 +1,61 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-15 (Session 40 - Go Agent Implementation)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, **Go Agent Implementation**)
+**Last Updated:** 2026-01-16 (Session 41 - VM Network/AD Configuration)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.34, ISO v33, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, **VM Network/AD Fix**)
+
+---
+
+## Session 41 (2026-01-16) - VM Network/AD Configuration
+
+### 1. VM Network Configuration
+**Status:** COMPLETE
+**Details:** Fixed all VMs to be on 192.168.88.x subnet with correct DNS.
+
+**Network Fixes:**
+- Changed `northvalley-linux` from NAT to bridged mode
+- Enabled ICMP on NVDC01 (DC) via Windows Firewall rule
+- Enabled ICMP on NVSRV01 via Windows Firewall rule
+- Enabled ICMP on NVWS01 after Windows Updates completed
+
+**Final Network Status:**
+| VM | IP | Status | Notes |
+|----|-----|--------|-------|
+| NVDC01 | 192.168.88.250 | ✅ Online | Domain Controller |
+| NVWS01 | 192.168.88.251 | ✅ Online | Windows 10 Workstation |
+| NVSRV01 | 192.168.88.244 | ✅ Online | Windows Server Core |
+| northvalley-linux | DHCP | ✅ Online | Now bridged |
+| osiriscare-appliance | 192.168.88.246 | ✅ Online | Physical HP T640 |
+
+### 2. AD Domain Verification
+**Status:** COMPLETE
+**Details:** All 3 Windows machines properly domain-joined to northvalley.local.
+
+| Machine | DNS Server | Domain | nltest |
+|---------|------------|--------|--------|
+| NVDC01 | 127.0.0.1 | (DC) | - |
+| NVWS01 | 192.168.88.250 | northvalley.local | ✓ |
+| NVSRV01 | 192.168.88.250 | northvalley.local | ✓ |
+
+### 3. Service Account WinRM Permissions
+**Status:** COMPLETE
+**Issue:** `svc.monitoring` couldn't connect via WinRM (401 errors).
+**Fix:** Added svc.monitoring to:
+- Remote Management Users group
+- Domain Admins group
+
+**Verified:** svc.monitoring can now WinRM to all 3 Windows machines.
+
+### 4. VPS Deployment
+**Status:** COMPLETE
+**Details:**
+- Deployed Go Agents frontend (`index-CBjgnJ2z.js`)
+- Executed database migration `019_go_agents.sql`
+- Created 4 tables: go_agents, go_agent_checks, go_agent_orders, site_go_agent_summaries
+- Created 2 views: v_go_agent_latest_checks, v_go_agents_with_checks
+
+### 5. Git Commits
+- Session 40 commits already pushed
+- No new code changes in Session 41 (infrastructure/AD work)
 
 ---
 

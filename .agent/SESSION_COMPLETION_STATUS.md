@@ -1,10 +1,39 @@
 # Session Completion Status
 
-**Date:** 2026-01-15
-**Session:** 40 - Go Agent Implementation (Complete)
+**Date:** 2026-01-16
+**Session:** 41 - VM Network/AD Configuration + Go Agent Dashboard Deployment
 **Agent Version:** v1.0.34
 **ISO Version:** v33 (deployed), v35 pending (with gRPC server)
 **Status:** COMPLETE
+
+---
+
+## Session 41 Accomplishments
+
+### 1. VM Network Configuration
+| Task | Status | Details |
+|------|--------|---------|
+| northvalley-linux NAT→Bridged | DONE | Changed network adapter from NAT to bridged |
+| ICMP enabled on DC | DONE | Added firewall rule for ICMP |
+| ICMP enabled on NVSRV01 | DONE | Added firewall rule for ICMP |
+| ICMP enabled on NVWS01 | DONE | After Windows Updates completed |
+| All VMs pingable | DONE | DC, NVSRV01, NVWS01, appliance |
+
+### 2. AD/DNS Verification
+| Machine | IP | DNS | Domain | Status |
+|---------|-----|-----|--------|--------|
+| NVDC01 | 192.168.88.250 | 127.0.0.1 | (DC) | ✅ |
+| NVWS01 | 192.168.88.251 | 192.168.88.250 | northvalley.local | ✅ |
+| NVSRV01 | 192.168.88.244 | 192.168.88.250 | northvalley.local | ✅ |
+
+### 3. Service Account WinRM Fix
+- Added `svc.monitoring` to Remote Management Users
+- Added `svc.monitoring` to Domain Admins
+- Verified WinRM connectivity to all 3 Windows machines
+
+### 4. VPS Deployment
+- Frontend: `index-CBjgnJ2z.js` deployed
+- Database: Migration 019_go_agents.sql executed (4 tables, 2 views)
 
 ---
 

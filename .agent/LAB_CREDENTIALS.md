@@ -104,6 +104,52 @@
 | MAC | 08:00:27:98:FD:84 |
 | SSH | root@192.168.88.247 (SSH key) |
 | Site ID | test-appliance-lab-b3c40c |
+| API Key | n0hGyslQnVlXg6YHbDoWDk3bVqU9GzNvADTBG3M1WME |
+| Config | /var/lib/msp/config.yaml |
+
+---
+
+## API Keys (CANONICAL SOURCE)
+
+> **IMPORTANT:** Always use these keys. Do NOT copy keys from other sources.
+
+| Key | Value | Purpose |
+|-----|-------|---------|
+| **Anthropic API Key (L2 LLM)** | `(see 1Password - Anthropic L2 Key)` | L2 healing on appliances |
+| Physical Appliance Site API | `q5VihYAYhKMH-vtX-DXuzLrjqbhgM61S5KjgPM4UG4A` | Central Command auth |
+| Lab Appliance Site API | `n0hGyslQnVlXg6YHbDoWDk3bVqU9GzNvADTBG3M1WME` | Central Command auth |
+
+### Appliance Config Template
+
+```yaml
+# /var/lib/msp/config.yaml
+site_id: <site-id>
+api_key: <site-api-key>
+api_endpoint: https://api.osiriscare.net
+healing_dry_run: false
+l2_enabled: true
+l2_api_key: <ANTHROPIC_API_KEY_FROM_1PASSWORD>
+l2_api_provider: anthropic
+l2_api_model: claude-3-5-haiku-latest
+```
+
+---
+
+## Chaos Lab (iMac)
+
+| Property | Value |
+|----------|-------|
+| Location | /Users/jrelly/chaos-lab |
+| Config | /Users/jrelly/chaos-lab/config.env |
+| VM Name | northvalley-dc |
+| Snapshot | pre-chaos-clean |
+| Target DC | 192.168.88.250 (NORTHVALLEY\Administrator) |
+
+**Crontab Schedule:**
+- 20:00 - generate_and_plan.py (creates tomorrow's campaigns)
+- 06:00 - EXECUTION_PLAN.sh (runs attacks, no LLM)
+- 12:00 - mid_day_checkpoint.py (assesses progress)
+- 18:00 - end_of_day_report.py (analysis + Slack)
 
 ---
 
@@ -111,7 +157,7 @@
 
 | System | URL/Host | Username | Password |
 |--------|----------|----------|----------|
-| Dashboard | https://dashboard.osiriscare.net | admin | admin |
+| Dashboard | https://dashboard.osiriscare.net | admin | Admin123 |
 | Dashboard | https://dashboard.osiriscare.net | operator | operator |
 | API | https://api.osiriscare.net | (API key auth) | - |
 | VPS SSH | root@178.156.162.116 | root | (SSH key) |
@@ -198,6 +244,7 @@ ssh jrelly@192.168.88.50 '/Applications/VirtualBox.app/Contents/MacOS/VBoxManage
 192.168.88.0/24 - North Valley Lab Network
 ├── 192.168.88.1   - Gateway/Router
 ├── 192.168.88.50  - iMac (VirtualBox host)
+├── 192.168.88.244 - NVSRV01 (Windows Server 2022 Core, domain member)
 ├── 192.168.88.246 - HP T640 Physical Appliance (physical-appliance-pilot-1aea78)
 ├── 192.168.88.247 - Lab Appliance VM (test-appliance-lab-b3c40c)
 ├── 192.168.88.250 - NVDC01 (Windows Server 2019 DC)
