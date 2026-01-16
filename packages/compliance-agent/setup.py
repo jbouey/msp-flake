@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="compliance-agent",
-    version="1.0.34",
+    version="1.0.35",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     package_data={
@@ -23,6 +23,8 @@ setup(
         "jinja2>=3.1.0",
         "pywinrm>=0.4.3",
         "pyyaml>=6.0.0",
+        "grpcio>=1.60.0",
+        "grpcio-tools>=1.60.0",
     ],
     extras_require={
         "dev": [
