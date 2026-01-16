@@ -358,3 +358,93 @@ Partner Dashboard                    Central Command                     Applian
       │                                    │                   Apply targets │
       │                                    │                   Run WinRM     │
 ```
+
+---
+
+## Go Agent Deployment
+
+**Added in Sessions 40-44 (2026-01-15 to 2026-01-16)**
+
+Go Agents provide lightweight compliance monitoring for Windows workstations, replacing WinRM polling for scale.
+
+### Architecture
+
+```
+Windows Workstation          NixOS Appliance           Central Command
+       │                           │                         │
+       │ gRPC :50051               │                         │
+       │ ──────────────────────────>                         │
+       │     Drift events          │                         │
+       │                           │  HTTPS                  │
+       │                           │ ──────────────────────────>
+       │                           │   Evidence bundles      │
+```
+
+### Deployment Methods
+
+1. **WinRM Push (Planned)**
+   - Appliance deploys `osiris-agent.exe` via WinRM
+   - Creates Windows service for persistence
+   - Configures `config.json` with appliance endpoint
+
+2. **Manual Installation**
+   ```powershell
+   # Copy binary
+   mkdir C:\OsirisCare
+   Copy-Item osiris-agent.exe C:\OsirisCare\
+
+   # Create config
+   @"
+   {
+     "appliance_addr": "192.168.88.247:50051",
+     "data_dir": "C:\\ProgramData\\OsirisCare"
+   }
+   "@ | Out-File C:\ProgramData\OsirisCare\config.json -Encoding UTF8
+
+   # Run agent
+   C:\OsirisCare\osiris-agent.exe
+   ```
+
+3. **Group Policy Deployment**
+   - Deploy binary to `C:\OsirisCare\osiris-agent.exe`
+   - Create scheduled task to run on startup
+   - Configure with appliance gRPC endpoint
+
+### Configuration File
+
+**Location:** `C:\ProgramData\OsirisCare\config.json`
+
+```json
+{
+  "appliance_addr": "192.168.88.247:50051",
+  "data_dir": "C:\\ProgramData\\OsirisCare"
+}
+```
+
+### Compliance Checks
+
+Go Agents perform 6 HIPAA compliance checks via WMI:
+
+| Check | Description | Status on Compliant |
+|-------|-------------|---------------------|
+| BitLocker | Volume encryption | Encrypted |
+| Defender | Real-time protection | Enabled |
+| Firewall | All profiles enabled | All 3 enabled |
+| Patches | Recent Windows Updates | Within 30 days |
+| ScreenLock | Timeout configuration | ≤ 600 seconds |
+| RMM | Third-party RMM detection | None detected |
+
+### Current Limitations
+
+1. **gRPC Streaming:** Not yet implemented (stub methods)
+2. **SQLite Queue:** Requires CGO_ENABLED=1 (currently disabled)
+3. **Auto-Deploy:** Module planned but not yet implemented
+
+### Firewall Requirements
+
+**Appliance (NixOS):**
+- Port 50051 TCP inbound (gRPC)
+- Configured in ISO v37+
+
+**Workstation (Windows):**
+- Port 50051 TCP outbound to appliance

@@ -1,6 +1,8 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-01-16 (Session 41 - VM Network/AD Configuration)
+**Last Updated:** 2026-01-16 (Session 44 - Go Agent Testing & ISO v37)
+**Agent Version:** v1.0.37
+**ISO Version:** v37
 
 ## Overview
 
@@ -111,6 +113,62 @@ The physical appliance at 192.168.88.246 uses svc.monitoring to:
 - Enumerate AD computers via Get-ADComputer
 - Connect to workstations via WinRM for compliance checks
 - Report drift events to Central Command
+
+---
+
+## Go Agent Architecture (Workstation Scale)
+
+Go Agents provide lightweight, push-based compliance monitoring for Windows workstations.
+
+### Problem
+WinRM polling limits scalability to ~15 workstations per appliance due to connection overhead.
+
+### Solution
+Go Agents use gRPC to push compliance data directly to the appliance, enabling 25-50 workstations per site.
+
+```
+Windows Workstations                  NixOS Appliance
+┌─────────────────┐                  ┌─────────────────────┐
+│  Go Agent       │     gRPC        │  Python Agent       │
+│  osiris-agent.  │────────────────>│  - gRPC Server      │
+│  exe            │     :50051      │  - Sensor API :8080 │
+├─────────────────┤                 │  - Three-tier heal  │
+│  6 WMI Checks   │                 └─────────────────────┘
+│  SQLite Queue   │                          │
+│  RMM Detection  │                          │ HTTPS
+└─────────────────┘                          ▼
+                                    ┌─────────────────────┐
+                                    │  Central Command    │
+                                    │  api.osiriscare.net │
+                                    └─────────────────────┘
+```
+
+### Go Agent Checks
+
+| Check | WMI Query | Description |
+|-------|-----------|-------------|
+| BitLocker | Win32_EncryptableVolume | Volume encryption status |
+| Defender | MSFT_MpComputerStatus | Real-time protection |
+| Firewall | HNetCfg.FwMgr | All profiles enabled |
+| Patches | Win32_QuickFixEngineering | Recent updates |
+| ScreenLock | Win32_Desktop | Screen timeout ≤ 600s |
+| RMM | Win32_Service | Detect ConnectWise/Datto/Ninja |
+
+### Firewall Ports
+
+| Port | Protocol | Direction | Purpose |
+|------|----------|-----------|---------|
+| 50051 | TCP | Inbound to Appliance | gRPC from Go Agents |
+| 8080 | TCP | Inbound to Appliance | Sensor API (PowerShell sensors) |
+| 80 | TCP | Inbound to Appliance | Status page |
+| 22 | TCP | Inbound to Appliance | SSH (emergency) |
+
+### Current Status
+
+- **Binary:** Built on VPS (`osiris-agent.exe`, 10.3 MB)
+- **gRPC Port:** Configured in ISO v37
+- **Streaming:** Stub implementation (heartbeat-based reporting)
+- **Offline Queue:** CGO dependency issue (requires `CGO_ENABLED=1`)
 
 ---
 

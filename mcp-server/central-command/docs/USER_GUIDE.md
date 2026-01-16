@@ -2,8 +2,10 @@
 
 ## Malachor MSP Compliance Platform
 
-**Version:** 1.1.0
-**Last Updated:** January 8, 2026
+**Version:** 1.2.0
+**Last Updated:** January 16, 2026
+**Agent Version:** v1.0.37
+**ISO Version:** v37
 
 ---
 
@@ -13,8 +15,10 @@
 2. [Dashboard Overview](#dashboard-overview)
 3. [Fleet Management](#fleet-management)
 4. [Runbook Library](#runbook-library)
-5. [Audit Logs](#audit-logs)
-6. [User Administration](#user-administration)
+5. [Go Agents (Workstation Compliance)](#go-agents-workstation-compliance)
+6. [Zero-Friction Deployment](#zero-friction-deployment)
+7. [Audit Logs](#audit-logs)
+8. [User Administration](#user-administration)
 
 ---
 
@@ -143,6 +147,125 @@ Click any runbook card to see:
 - Execution steps with timeouts
 - Configuration parameters
 - Recent execution history
+
+---
+
+## Go Agents (Workstation Compliance)
+
+Go Agents provide lightweight, push-based compliance monitoring for Windows workstations at scale.
+
+### Overview
+
+Traditional WinRM polling limits scalability to ~15 workstations per appliance. Go Agents use gRPC to push compliance data, enabling 25-50 workstations per appliance.
+
+### Architecture
+
+```
+Windows Workstation         NixOS Appliance
+┌─────────────────┐        ┌─────────────────┐
+│  Go Agent       │ gRPC   │  Python Agent   │
+│  osiris-agent.  │───────>│  Port 50051     │
+│  exe            │        │                 │
+└─────────────────┘        └─────────────────┘
+```
+
+### Compliance Checks
+
+Go Agents perform 6 HIPAA compliance checks:
+
+| Check | Description | HIPAA Control |
+|-------|-------------|---------------|
+| BitLocker | Volume encryption enabled | 164.312(a)(2)(iv) |
+| Defender | Real-time protection active | 164.308(a)(5)(ii)(B) |
+| Firewall | All profiles (Domain/Private/Public) enabled | 164.312(e)(1) |
+| Patches | Windows Update compliance | 164.308(a)(1)(ii)(A) |
+| ScreenLock | Screen timeout ≤ 600 seconds | 164.312(a)(2)(iii) |
+| RMM | Third-party RMM detection | - |
+
+### Viewing Go Agents
+
+Navigate to a site's detail page to see connected Go Agents:
+- Agent hostname
+- Last heartbeat
+- Compliance status
+- Check results
+
+### Deployment
+
+Go Agents are deployed to workstations via:
+1. WinRM push from appliance
+2. Manual installation
+3. Group Policy deployment
+
+**Binary location:** `C:\OsirisCare\osiris-agent.exe`
+**Config location:** `C:\ProgramData\OsirisCare\config.json`
+
+### Current Limitations
+
+- gRPC streaming not yet implemented (agents report via heartbeat)
+- SQLite offline queue requires CGO (currently disabled)
+
+---
+
+## Zero-Friction Deployment
+
+Zero-friction deployment automates the entire site onboarding process with a single credential entry.
+
+### Overview
+
+Traditional deployment requires manually entering each server and workstation. Zero-friction deployment:
+1. Automatically discovers the AD domain
+2. Enumerates all computers from Active Directory
+3. Configures targets automatically
+4. Starts compliance scanning immediately
+
+**Human touchpoints:** 1 (domain credential entry only)
+
+### Deployment Flow
+
+```
+1. Boot Appliance
+   └─> Discovers AD domain via DNS SRV records
+   └─> Reports to Central Command
+   └─> Partner receives notification
+
+2. Enter Credentials (Partner Dashboard)
+   └─> Partner enters one domain admin credential
+   └─> Triggers enumeration
+
+3. Automatic Enumeration
+   └─> Appliance runs Get-ADComputer
+   └─> Discovers all servers and workstations
+   └─> Updates windows_targets automatically
+
+4. Compliance Scanning
+   └─> First scan runs immediately
+   └─> Evidence uploaded to Central Command
+```
+
+### Partner Actions
+
+1. **Receive Notification:** When appliance discovers a domain, you'll receive an email/notification
+2. **Enter Credentials:** Navigate to the site and enter domain admin credentials
+3. **Monitor Progress:** Watch enumeration results populate automatically
+4. **Review Targets:** Verify discovered servers/workstations are correct
+
+### Viewing Discovery Results
+
+Navigate to Site Detail → Discovered Domain to see:
+- Domain name and controllers
+- Discovered servers with online status
+- Discovered workstations
+- Enumeration timestamp
+
+### Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| Zero manual entry | All targets discovered automatically |
+| Single credential | One domain admin credential enables full deployment |
+| Fast deployment | First compliance report within 1 hour |
+| Non-destructive | Discovered targets merge with manual configs |
 
 ---
 
