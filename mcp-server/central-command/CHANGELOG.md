@@ -4,6 +4,99 @@ All notable changes to Central Command Dashboard.
 
 ## [Unreleased]
 
+### Session 44: Go Agent Testing & ISO v37 - 2026-01-16
+
+#### Added
+- Go Agent configuration deployed to NVWS01 workstation
+- Firewall port 50051 permanently added to NixOS appliance image
+- ISO v37 built with agent v1.0.37 and gRPC port fix
+
+#### Fixed
+- NixOS firewall not allowing gRPC port 50051 (root cause of Go Agent connection failures)
+- Chaos lab config path bug (symlink resolution for winrm_attack.py)
+
+#### Verified
+- Go Agent dry-run test: 2 PASS (screenlock, rmm_detection), 3 FAIL (expected), 1 ERROR
+- TCP connectivity from NVWS01 to appliance port 50051
+
+#### Known Issues
+- Go Agent CGO dependency: `mattn/go-sqlite3` requires CGO_ENABLED=1, currently disabled
+- gRPC streaming not implemented (both Go and Python have stub methods)
+
+---
+
+### Session 43: Zero-Friction Deployment Pipeline - 2026-01-16
+
+#### Added
+- **AD Domain Auto-Discovery** (`domain_discovery.py`):
+  - DNS SRV record queries (`_ldap._tcp.dc._msdcs.DOMAIN`)
+  - DHCP domain suffix fallback
+  - resolv.conf search domain fallback
+  - LDAP port verification
+  - Boot sequence integration
+
+- **AD Enumeration** (`ad_enumeration.py`):
+  - PowerShell Get-ADComputer integration
+  - Server/workstation automatic separation
+  - WinRM connectivity testing (concurrent, 5 at a time)
+  - Non-destructive target list merging
+
+- **API Endpoints**:
+  - `POST /api/appliances/domain-discovered` - Domain discovery reporting
+  - `POST /api/appliances/enumeration-results` - Enumeration results
+  - `GET/POST /api/sites/{site_id}/domain-credentials` - Domain credential management
+
+- **Check-in Enhancements**:
+  - `trigger_enumeration` flag for on-demand enumeration
+  - `trigger_immediate_scan` flag for immediate compliance scan
+
+- **Database Migration** (`020_zero_friction.sql`):
+  - `sites.discovered_domain` (JSONB)
+  - `sites.awaiting_credentials` (BOOLEAN)
+  - `enumeration_results` table
+  - `agent_deployments` table
+
+---
+
+### Sessions 40-42: Go Agent Implementation - 2026-01-15
+
+#### Added
+- **Go Agent** (`agent/` directory):
+  - Complete Go implementation for workstation compliance monitoring
+  - 6 HIPAA compliance checks (BitLocker, Defender, Firewall, Patches, ScreenLock, RMM)
+  - gRPC client for push-based communication to appliance
+  - SQLite WAL offline queue for network resilience
+  - RMM detection (ConnectWise, Datto, NinjaRMM) with auto-disable capability
+
+- **gRPC Server** (`grpc_server.py`):
+  - Python gRPC server for Go Agent connections
+  - Port 50051 configuration
+  - AgentRegistry for tracking connected agents
+
+- **Frontend Components**:
+  - `SiteGoAgents.tsx` - Go Agent status display
+  - API hooks for Go Agent management
+
+- **Database Migration** (`019_go_agents.sql`):
+  - `go_agents` table for agent registration
+  - `go_agent_drift_events` table for drift tracking
+
+- **Binary Builds** (on VPS):
+  - `osiris-agent.exe` - Windows amd64 (10.3 MB)
+  - `osiris-agent-linux` - Linux amd64 (9.8 MB)
+
+#### Architecture
+```
+Windows Workstation → gRPC :50051 → NixOS Appliance → HTTPS → Central Command
+```
+
+#### Notes
+- Go Agent replaces WinRM polling for workstations (scales to 25-50 per site)
+- Servers continue to use WinRM for compliance checks
+- gRPC streaming implementation pending (current methods are stubs)
+
+---
+
 ### Phase 1: Backend Foundation - 2025-12-30
 
 #### Added

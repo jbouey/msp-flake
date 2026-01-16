@@ -1,8 +1,10 @@
 # Central Command Dashboard
 
-**Last Updated:** 2026-01-08 (Session 16 - Partner L3 Escalations)
+**Last Updated:** 2026-01-16 (Session 44 - Go Agent Testing & ISO v37)
+**Agent Version:** v1.0.37
+**ISO Version:** v37 (with gRPC port 50051)
 
-Web-based dashboard for OsirisCare MSP compliance platform. Provides fleet overview, incident tracking, runbook management, learning loop visibility, partner/reseller infrastructure, L3 escalation routing, and onboarding pipeline.
+Web-based dashboard for OsirisCare MSP compliance platform. Provides fleet overview, incident tracking, runbook management, learning loop visibility, partner/reseller infrastructure, L3 escalation routing, onboarding pipeline, Go Agent management, and zero-friction deployment.
 
 ## Design Language
 
@@ -158,6 +160,32 @@ overall = (connectivity.score * 0.4) + (compliance.score * 0.6)
 
 Routes L3 incidents from appliances to partner notification channels with HMAC-signed webhooks, priority-based routing (critical=all, high=PD+Slack, medium=Slack+Email, low=Email), and SLA tracking.
 
+### Go Agent (Workstation-Scale Compliance)
+- `POST /api/go-agents/register` - Register Go Agent
+- `GET /api/sites/{site_id}/go-agents` - List Go Agents for site
+- `POST /api/go-agents/{agent_id}/heartbeat` - Go Agent heartbeat
+- `POST /api/go-agents/{agent_id}/drift` - Report drift event from Go Agent
+
+The Go Agent provides push-based compliance monitoring for workstations via gRPC (port 50051). Replaces WinRM polling for scale (25-50 workstations per site).
+
+**Go Agent Checks:**
+| Check | Description |
+|-------|-------------|
+| BitLocker | Volume encryption status |
+| Defender | Real-time protection status |
+| Firewall | All profiles enabled |
+| Patches | Windows Update compliance |
+| ScreenLock | Screen timeout ≤ 600s |
+| RMM | Third-party RMM detection |
+
+### Zero-Friction Deployment
+- `POST /api/appliances/domain-discovered` - Appliance reports discovered AD domain
+- `POST /api/appliances/enumeration-results` - Appliance reports AD enumeration results
+- `GET /api/sites/{site_id}/domain-credentials` - Fetch domain credentials for enumeration
+- `POST /api/sites/{site_id}/domain-credentials` - Submit domain credentials (triggers enumeration)
+
+Automatic domain discovery and AD enumeration eliminates manual target configuration. Single domain credential entry enables full deployment.
+
 ### Appliance Check-in (Credential-Pull)
 - `POST /api/appliances/checkin` - Phone-home with credential-pull
 
@@ -272,3 +300,51 @@ npm run dev
 6. Command Bar - Natural language interface
 7. Client Detail & Polish - Deep dive views
 8. Onboarding Pipeline - Prospect tracking
+9. Go Agent Integration - Workstation-scale compliance (Sessions 40-44)
+10. Zero-Friction Deployment - Automatic AD discovery and enumeration (Session 43)
+
+## Go Agent Architecture
+
+```
+Windows Workstation              NixOS Appliance
+┌─────────────────┐             ┌─────────────────────┐
+│  Go Agent       │   gRPC      │  Python Agent       │
+│  - 6 checks     │────────────>│  - gRPC Server      │
+│  - SQLite queue │   :50051    │  - Sensor API :8080 │
+│  - RMM detect   │             │  - Three-tier heal  │
+└─────────────────┘             └─────────────────────┘
+                                         │
+                                         │ HTTPS
+                                         ▼
+                                ┌─────────────────────┐
+                                │  Central Command    │
+                                │  api.osiriscare.net │
+                                └─────────────────────┘
+```
+
+**Status:** Go Agent binary built, gRPC port 50051 configured. Streaming not yet implemented (stub methods).
+
+## Zero-Friction Deployment Flow
+
+```
+1. BOOT → Appliance discovers AD domain (DNS SRV records)
+   └─> Reports to Central Command
+   └─> Partner receives notification
+
+2. CREDENTIAL ENTRY → Partner enters domain admin credential
+   └─> Sets trigger_enumeration = true
+
+3. ENUMERATION → Appliance receives trigger on next check-in
+   └─> Runs Get-ADComputer to find all servers/workstations
+   └─> Updates windows_targets automatically
+
+4. SCAN → First compliance scan runs immediately
+   └─> Evidence bundle generated
+   └─> Uploaded to Central Command
+
+5. DEPLOY → Go agents deployed to workstations (planned)
+   └─> WinRM push of osiris-agent.exe
+   └─> Service installation
+```
+
+**Human Touchpoints:** 1 (domain credential entry only)
