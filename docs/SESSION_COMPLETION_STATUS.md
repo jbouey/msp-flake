@@ -1,6 +1,63 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-17 (Session 47)
+**Last Updated:** 2026-01-17 (Session 48)
+
+---
+
+## Session 48 - Go Agent gRPC Integration Testing
+
+**Date:** 2026-01-17
+**Status:** BLOCKED - ISO v38 Required
+**Commit:** Documentation only
+
+### Objectives
+1. Test end-to-end gRPC communication between Go Agent and Appliance
+2. Verify registry queries work on actual Windows machine
+
+### Critical Discovery
+**ISO v37 gRPC is non-functional:**
+1. `grpc_server.py` has servicer registration **commented out** (line ~355)
+2. `compliance_pb2.py` and `compliance_pb2_grpc.py` **not included** in ISO package
+
+### Completed Tasks
+
+#### 1. Config JSON Key Bug Fix
+- **Issue:** Go agent config used `appliance_address` but code expected `appliance_addr`
+- **Fix:** Updated `C:\ProgramData\OsirisCare\config.json` on NVWS01
+
+#### 2. gRPC Connection Verified
+- Go agent connects to appliance gRPC port 50051 successfully
+- Error: `rpc error: code = Unimplemented desc = Method not found!`
+
+#### 3. Go Agent Registry Queries Verified
+- **screenlock:** Shows actual values (screensaver_active: false, timeout: 0)
+- **pending_reboot:** Returns false (registry check working)
+- Registry queries are functional on Windows
+
+#### 4. Hot-Patch Attempted
+- Copied `compliance_pb2.py` and `compliance_pb2_grpc.py` to appliance `/tmp/`
+- Set `PYTHONPATH=/tmp`
+- **Failed:** NixOS package uses relative imports (`from . import compliance_pb2`) that don't respect PYTHONPATH
+
+### Known Go Agent Bugs Found
+| Bug | Details |
+|-----|---------|
+| Firewall service state empty | `GetServiceState("MpsSvc")` returns "" |
+| Patches WMI query invalid | "Exception occurred. (Invalid query)" |
+| SQLite requires CGO | `CGO_ENABLED=0` build can't use go-sqlite3 |
+
+### Blocked By
+- **ISO v38 rebuild required** with:
+  - Fixed `grpc_server.py` (uncomment servicer registration)
+  - Include `compliance_pb2.py` in package
+  - Include `compliance_pb2_grpc.py` in package
+
+### Next Steps
+1. Rebuild ISO v38 with gRPC fixes
+2. Fix Go agent firewall service state bug
+3. Fix Go agent patches WMI query bug
+4. Rebuild Go agent with CGO enabled for SQLite
+5. Test end-to-end gRPC communication
 
 ---
 
