@@ -934,10 +934,29 @@ class ApplianceAgent:
             "restore_audit_policy": "RB-WIN-SEC-002",       # Audit Policy
             "restore_defender": "RB-WIN-SEC-006",           # Defender Real-time
             "enable_bitlocker": "RB-WIN-SEC-005",           # BitLocker Status
-            # Alert-style actions from MCP server
-            "alert:firewall_disabled": "RB-WIN-FIREWALL-001",  # Firewall disabled alert
-            "alert:defender_disabled": "RB-WIN-SEC-006",       # Defender disabled alert
-            "alert:bitlocker_disabled": "RB-WIN-SEC-005",      # BitLocker disabled alert
+            # Alert-style actions from L1 rules - FULL COVERAGE mapping
+            # Core security
+            "alert:firewall_disabled": "RB-WIN-FIREWALL-001",
+            "alert:defender_disabled": "RB-WIN-SEC-006",
+            "alert:bitlocker_disabled": "RB-WIN-SEC-005",
+            # Policy compliance
+            "alert:audit_policy_drift": "RB-WIN-SEC-002",
+            "alert:password_policy_drift": "RB-WIN-SEC-004",
+            "alert:lockout_policy_drift": "RB-WIN-SEC-003",
+            "alert:screen_lock_drift": "RB-WIN-SEC-003",
+            # Advanced security
+            "alert:smb_signing_drift": "RB-WIN-SEC-007",
+            "alert:ntlm_security_drift": "RB-WIN-SEC-008",
+            "alert:unauthorized_admin": "RB-WIN-SEC-009",
+            "alert:nla_disabled": "RB-WIN-SEC-010",
+            "alert:uac_disabled": "RB-WIN-SEC-011",
+            "alert:eventlog_protection_drift": "RB-WIN-SEC-012",
+            "alert:credguard_disabled": "RB-WIN-SEC-013",
+            # Services
+            "alert:time_service_failed": "RB-WIN-SVC-004",
+            "alert:dns_client_failed": "RB-WIN-NET-001",
+            # Patching
+            "alert:patches_missing": "RB-WIN-PATCH-001",
         }
 
         handler = action_handlers.get(action)

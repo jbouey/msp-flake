@@ -1,0 +1,296 @@
+[
+  {
+    "id": "L1-NTP-001",
+    "name": "NTP Drift Remediation",
+    "description": "Restart chronyd when NTP sync drifts",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "ntp_sync"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["restart_service:chronyd"],
+    "severity": "medium",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-SERVICE-001",
+    "name": "Critical Service Recovery",
+    "description": "Restart failed critical services",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "critical_services"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["restart_service:sshd", "restart_service:chronyd"],
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 3,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-DISK-001",
+    "name": "Disk Space Alert",
+    "description": "Alert when disk usage exceeds threshold",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "disk_space"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:disk_space_critical"],
+    "severity": "high",
+    "cooldown_seconds": 3600,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-GENERATION-001",
+    "name": "NixOS Generation Drift",
+    "description": "Alert when NixOS generation is invalid",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "nixos_generation"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:generation_drift"],
+    "severity": "medium",
+    "cooldown_seconds": 3600,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-FIREWALL-001",
+    "name": "Windows Firewall Disabled",
+    "description": "Re-enable Windows Firewall on all profiles",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "firewall"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:firewall_disabled"],
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-DEFENDER-001",
+    "name": "Windows Defender Disabled",
+    "description": "Re-enable Windows Defender real-time protection",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "windows_defender"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:defender_disabled"],
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-BITLOCKER-001",
+    "name": "BitLocker Not Enabled",
+    "description": "Enable BitLocker encryption on system drive",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "bitlocker"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:bitlocker_disabled"],
+    "severity": "high",
+    "cooldown_seconds": 1800,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-AUDIT-001",
+    "name": "Audit Policy Non-Compliant",
+    "description": "Configure HIPAA-compliant audit policy",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "audit_policy"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:audit_policy_drift"],
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-PASSWORD-001",
+    "name": "Password Policy Non-Compliant",
+    "description": "Configure HIPAA-compliant password policy",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "password_policy"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:password_policy_drift"],
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-LOCKOUT-001",
+    "name": "Account Lockout Policy Non-Compliant",
+    "description": "Configure account lockout policy",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "lockout_policy"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:lockout_policy_drift"],
+    "severity": "medium",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-SCREEN-001",
+    "name": "Screen Lock Timeout Non-Compliant",
+    "description": "Configure screen lock timeout (15 min HIPAA)",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "screen_lock"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:screen_lock_drift"],
+    "severity": "medium",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-SMB-001",
+    "name": "SMB Signing Disabled",
+    "description": "Enable SMB signing for network security",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "smb_signing"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:smb_signing_drift"],
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-NTLM-001",
+    "name": "NTLM Security Non-Compliant",
+    "description": "Configure NTLMv2 security settings",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "ntlm"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:ntlm_security_drift"],
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-UAC-001",
+    "name": "UAC Disabled",
+    "description": "Re-enable User Account Control",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "uac"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:uac_disabled"],
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-NLA-001",
+    "name": "NLA for RDP Disabled",
+    "description": "Enable Network Level Authentication for RDP",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "nla"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:nla_disabled"],
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-EVENTLOG-001",
+    "name": "Event Log Protection Disabled",
+    "description": "Enable event log protection",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "event_log_protection"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:eventlog_protection_drift"],
+    "severity": "medium",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-CREDGUARD-001",
+    "name": "Credential Guard Not Enabled",
+    "description": "Enable Credential Guard protection",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "credential_guard"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:credguard_disabled"],
+    "severity": "high",
+    "cooldown_seconds": 1800,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-BACKDOOR-001",
+    "name": "Unauthorized Admin Account Detected",
+    "description": "Remove unauthorized administrator accounts",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "unauthorized_users"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:unauthorized_admin"],
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-TIME-001",
+    "name": "Windows Time Service Failed",
+    "description": "Restart Windows Time service",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "time_service"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:time_service_failed"],
+    "severity": "medium",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-DNS-001",
+    "name": "DNS Client Service Failed",
+    "description": "Restart DNS Client service",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "dns_client"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:dns_client_failed"],
+    "severity": "medium",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-PATCH-001",
+    "name": "Critical Patches Missing",
+    "description": "Install missing critical Windows updates",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "patching"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:patches_missing"],
+    "severity": "high",
+    "cooldown_seconds": 3600,
+    "max_retries": 1,
+    "source": "builtin"
+  }
+]
