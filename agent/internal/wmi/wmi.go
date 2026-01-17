@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 )
 
 // QueryResult represents a single WMI object result as a map of property names to values
@@ -41,8 +42,9 @@ func QuerySingle(ctx context.Context, namespace, query string) (QueryResult, err
 }
 
 // GetPropertyBool extracts a boolean property from a QueryResult
+// Uses case-insensitive property name matching
 func GetPropertyBool(result QueryResult, name string) (bool, bool) {
-	val, ok := result[name]
+	val, ok := getPropertyValue(result, name)
 	if !ok {
 		return false, false
 	}
@@ -51,8 +53,9 @@ func GetPropertyBool(result QueryResult, name string) (bool, bool) {
 }
 
 // GetPropertyInt extracts an integer property from a QueryResult
+// Uses case-insensitive property name matching
 func GetPropertyInt(result QueryResult, name string) (int, bool) {
-	val, ok := result[name]
+	val, ok := getPropertyValue(result, name)
 	if !ok {
 		return 0, false
 	}
@@ -70,10 +73,27 @@ func GetPropertyInt(result QueryResult, name string) (int, bool) {
 	}
 }
 
+// getPropertyValue performs case-insensitive property lookup
+func getPropertyValue(result QueryResult, name string) (interface{}, bool) {
+	// Try exact match first
+	if val, ok := result[name]; ok {
+		return val, true
+	}
+	// Try case-insensitive match
+	nameLower := strings.ToLower(name)
+	for k, v := range result {
+		if strings.ToLower(k) == nameLower {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
 // GetPropertyString extracts a string property from a QueryResult
 // Handles type conversion from various WMI types to string
+// Uses case-insensitive property name matching
 func GetPropertyString(result QueryResult, name string) (string, bool) {
-	val, ok := result[name]
+	val, ok := getPropertyValue(result, name)
 	if !ok {
 		return "", false
 	}
