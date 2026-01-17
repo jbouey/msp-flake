@@ -1,7 +1,63 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-17 (Session 48 - Go Agent gRPC Integration Testing)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks, **Go Agent gRPC Integration Testing**)
+**Last Updated:** 2026-01-17 (Session 49 - ISO v38 gRPC Fix & Protobuf Compatibility)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.38, ISO v38, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks, Go Agent gRPC Integration Testing, **ISO v38 gRPC Fix & Protobuf Compatibility**)
+
+---
+
+## Session 49 (2026-01-17) - ISO v38 gRPC Fix & Protobuf Compatibility
+
+### 1. ISO v38 Build
+**Status:** COMPLETE
+**Details:**
+- VPS (159.203.186.142) SSH unreachable during session (pingable but SSH timed out)
+- VM appliance (192.168.88.247) insufficient disk space (610MB tmpfs)
+- Built on physical appliance (192.168.88.246) with 15GB tmpfs
+- Agent version bumped v1.0.35 → v1.0.38
+
+**Locations:**
+- Local: `/Users/dad/Documents/Msp_Flakes/iso/osiriscare-appliance-v38.iso` (1.1GB)
+- Appliance: `/root/msp-iso-build/result-iso-v38/iso/osiriscare-appliance.iso`
+
+### 2. ISO v38 Deployed to VM Appliance
+**Status:** COMPLETE
+**Details:**
+- Transferred ISO to iMac (192.168.88.50): `/Users/jrelly/osiriscare-v38.iso`
+- Used VBoxManage to swap ISO from v37 to v38
+- VM appliance rebooted with new ISO
+
+### 3. Protobuf Version Mismatch Discovery
+**Status:** CRITICAL BUG FOUND & FIXED IN SOURCE
+**Problem:**
+- pb2 files were generated with protobuf 6.31.1 (uses `runtime_version`)
+- ISO has protobuf 4.24.4 (doesn't have `runtime_version` attribute)
+- Error: `cannot import name 'runtime_version' from 'google.protobuf'`
+
+**Fix Applied (to local source):**
+- Regenerated pb2 files on appliance using grpcio-tools with protobuf 4.x
+- Copied regenerated files back to local source:
+  - `packages/compliance-agent/src/compliance_agent/compliance_pb2.py` (protobuf 4.25.1)
+  - `packages/compliance-agent/src/compliance_agent/compliance_pb2_grpc.py`
+
+### 4. NixOS Filesystem Limitation
+**Status:** KNOWN ISSUE
+**Details:**
+- Hot-patch not possible: NixOS live ISO has read-only filesystem
+- Cannot create systemd override in `/etc/systemd/system/`
+- Full ISO rebuild required with fixed pb2 files
+
+### 5. Documentation Updates
+**Status:** COMPLETE
+**Files Updated:**
+- `docs/SESSION_HANDOFF.md` - Session 49 summary
+
+### Remaining Tasks
+1. **Rebuild ISO with fixed pb2 files** - Local source has correct protobuf 4.x compatible files
+2. **Deploy rebuilt ISO to VM appliance** - Then test gRPC
+3. **Test end-to-end gRPC** - Go agent → Appliance → Drift events flow
+4. **Fix Go Agent bugs:**
+   - Firewall service state query (returns empty string)
+   - Patches WMI query syntax error
 
 ---
 

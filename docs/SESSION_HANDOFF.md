@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-17 (Session 48)
-**Current State:** Go Agent gRPC Integration Testing - ISO v38 Required
+**Last Updated:** 2026-01-17 (Session 49)
+**Current State:** ISO v38 Built - Ready for Deployment
 
 ---
 
@@ -9,14 +9,42 @@
 
 | Component | Status | Version |
 |-----------|--------|---------|
-| Agent | v1.0.37 | Stable |
-| ISO | v37 | **BUGGY** - gRPC not working |
+| Agent | v1.0.38 | Stable |
+| ISO | v38 | **READY** - gRPC fixed |
 | Tests | 811 + 24 Go tests | Healthy |
 | Go Agent | Deployed to NVWS01 | 16.6MB binary |
-| gRPC | **BROKEN** in ISO v37 | Needs ISO v38 |
+| gRPC | **FIXED** in ISO v38 | Ready to test |
 | Chaos Lab | Verified | L1 healing working |
 | L1 Rules | Platform-specific | 29 rules in l1_baseline.json |
 | Security Runbooks | 13 total | All categories |
+
+---
+
+## Session 49 Summary (2026-01-17)
+
+### Completed
+1. **ISO v38 Built** - With gRPC fixes on physical appliance (192.168.88.246)
+2. **Version Bump** - Agent v1.0.35 → v1.0.38 in setup.py and default.nix
+3. **gRPC Fix Verified** - Servicer registration at lines 321 and 354
+4. **pb2 Files Included** - compliance_pb2.py and compliance_pb2_grpc.py confirmed
+5. **ISO Copied Local** - `iso/osiriscare-appliance-v38.iso` (1.1GB)
+
+### Build Details
+- **Built On:** Physical appliance (192.168.88.246) - 15GB tmpfs
+- **VPS (159.203.186.142):** SSH unreachable during session
+- **VM Appliance (192.168.88.247):** Insufficient disk space (610MB tmpfs)
+
+### ISO v38 Location
+```
+Local: /Users/dad/Documents/Msp_Flakes/iso/osiriscare-appliance-v38.iso
+Appliance: /root/msp-iso-build/result-iso-v38/iso/osiriscare-appliance.iso
+```
+
+### Next Steps
+1. Flash ISO v38 to VM appliance (192.168.88.247)
+2. Test gRPC connection from Go agent (NVWS01)
+3. Verify drift events flow to appliance
+4. Run end-to-end three-tier healing test
 
 ---
 
