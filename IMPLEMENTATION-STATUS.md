@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-16 (Session 44 - Go Agent Testing & ISO v37)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Fix, Zero-Friction Deployment Pipeline, **Go Agent Testing & ISO v37**, 786 tests)
+**Last Updated:** 2026-01-17 (Session 46 - L1 Platform-Specific Healing Fix)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, **L1 Platform-Specific Healing Fix**, 811 tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,26 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.37, ISO v37, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, **Go Agent Testing & ISO v37 with firewall port 50051**.
+**Status:** Phase 12 nearing completion. Agent v1.0.37, ISO v37, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37 with firewall port 50051, gRPC Stub Implementation, **L1 Platform-Specific Healing Fix with chaos lab verification**.
+
+**Session 46 (L1 Platform-Specific Healing Fix):**
+- Fixed NixOS firewall drift triggering Windows runbook ("No Windows target available")
+- Created `L1-NIXOS-FW-001` rule with platform condition for NixOS → escalates to L3
+- Fixed L1 rules action format from colon-separated to proper `action_params` structure
+- Fixed Defender runbook ID: `RB-WIN-SEC-006` → `RB-WIN-AV-001` (exists in ALL_RUNBOOKS)
+- Saved proper L1 rules to `packages/compliance-agent/src/compliance_agent/rules/l1_baseline.json`
+- Fixed executor.py import: RUNBOOKS (7) → ALL_RUNBOOKS (27) with lazy import
+- Chaos lab verification:
+  - Firewall attacks: L1-FIREWALL-002 → RB-WIN-FIREWALL-001 → SUCCESS
+  - Defender attacks: L1-DEFENDER-001 → RB-WIN-AV-001 → SUCCESS
+  - Password/Audit policy: Detected but no L1 rules → escalated to L3 (expected)
+- Commit: `2d5a9e2` - L1 platform-specific healing rules fix
+
+**Session 45 (gRPC Stub Implementation):**
+- Created unified `/proto/compliance.proto` as single source of truth
+- Python gRPC server fully implemented with generated servicer
+- Go gRPC client using generated protobuf types
+- All 12 gRPC tests pass, 811 total tests
 
 **Session 44 (Go Agent Testing & ISO v37):**
 - Created Go Agent config.json on NVWS01 workstation (`C:\ProgramData\OsirisCare\config.json`)

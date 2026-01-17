@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-16 (Session 45)
-**Current State:** gRPC Stub Implementation Complete
+**Last Updated:** 2026-01-17 (Session 46)
+**Current State:** L1 Platform-Specific Healing Fix Complete
 
 ---
 
@@ -14,7 +14,32 @@
 | Tests | 811 passed | Healthy |
 | Go Agent | Deployed to NVWS01 | Needs rebuild |
 | gRPC | Fully Implemented | Both Python + Go |
-| Chaos Lab | Enhanced | Cadence verification added |
+| Chaos Lab | Verified | L1 healing working |
+| L1 Rules | Platform-specific | 7 rules in l1_baseline.json |
+
+---
+
+## Session 46 Summary (2026-01-17)
+
+### Completed
+1. **NixOS Firewall Platform-Specific Rule** - Escalates to L3 instead of trying Windows runbook
+2. **L1 Rules Action Format Fix** - Changed to proper action_params structure
+3. **Defender Runbook ID Fix** - RB-WIN-SEC-006 -> RB-WIN-AV-001
+4. **L1 Rules Saved to Codebase** - l1_baseline.json with 7 rules
+5. **Chaos Lab Verification** - Firewall and Defender attacks healed successfully
+
+### Chaos Lab Results
+| Attack | L1 Rule | Result |
+|--------|---------|--------|
+| Firewall disable | L1-FIREWALL-002 | SUCCESS |
+| Defender disable | L1-DEFENDER-001 | SUCCESS |
+| Password policy | No L1 rule | Escalated to L3 |
+| Audit policy | No L1 rule | Escalated to L3 |
+
+### Files Modified
+- `/var/lib/msp/rules/l1_rules.json` (appliance)
+- `packages/compliance-agent/src/compliance_agent/rules/l1_baseline.json`
+- `executor.py` - Import fix for ALL_RUNBOOKS
 
 ---
 
@@ -84,18 +109,22 @@
 
 ---
 
-## Next Session (43) Priorities
+## Next Session (47) Priorities
 
-### When Back on Local Network
-1. Transfer ISO v35: `scp /tmp/osiriscare-appliance-v35.iso jrelly@192.168.88.50:~/Downloads/`
-2. Flash ISO v35 to physical appliance
-3. Configure Go Agent for gRPC push (config.json with appliance endpoint)
-4. Test end-to-end: Go Agent → Appliance → Three-tier healing
+### L1 Rules Expansion
+1. Add L1 rule for `password_policy` check type → RB-WIN-SEC-003
+2. Add L1 rule for `audit_policy` check type → RB-WIN-SEC-002
+3. Create runbooks for password/audit policy if not exists in ALL_RUNBOOKS
+
+### Go Agent Integration
+1. Test Go Agent gRPC communication (without --dry-run)
+2. Verify drift events flowing to appliance
+3. Monitor AgentRegistry for connected agents
 
 ### Verification Steps
 - Check chaos lab logs: `~/chaos-lab/logs/cadence.log`
 - Verify gRPC server on port 50051
-- Monitor AgentRegistry for connected agents
+- Run chaos lab with password/audit policy attacks after adding rules
 
 ---
 

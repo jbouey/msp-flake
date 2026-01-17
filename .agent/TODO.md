@@ -1,7 +1,65 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-16 (Session 45 - gRPC Stub Implementation)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, **gRPC Stub Implementation**)
+**Last Updated:** 2026-01-17 (Session 46 - L1 Platform-Specific Healing Fix)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, **L1 Platform-Specific Healing Fix**)
+
+---
+
+## Session 46 (2026-01-17) - L1 Platform-Specific Healing Fix
+
+### 1. NixOS Firewall Platform-Specific Rule
+**Status:** COMPLETE
+**Details:**
+- Fixed NixOS firewall drift incorrectly triggering Windows runbook ("No Windows target available")
+- Created `L1-NIXOS-FW-001` rule with platform condition `"platform": "eq": "nixos"`
+- NixOS firewall issues now escalate to L3 (cannot auto-fix declarative Nix config)
+- Windows firewall issues still use `run_windows_runbook` action
+- Priority 1 ensures NixOS rule matches before generic firewall rule
+
+### 2. L1 Rules Action Format Fix
+**Status:** COMPLETE
+**Details:**
+- Fixed colon-separated action format not working (`run_windows_runbook:RB-WIN-FIREWALL-001`)
+- Root cause: Handler lookup expects just `run_windows_runbook`, not `run_windows_runbook:RB-WIN-FIREWALL-001`
+- Changed to proper format with separate `actions` and `action_params` fields:
+  ```json
+  "actions": ["run_windows_runbook"],
+  "action_params": {"runbook_id": "RB-WIN-FIREWALL-001", "phases": ["remediate", "verify"]}
+  ```
+- Updated all L1 rules in `/var/lib/msp/rules/l1_rules.json`
+
+### 3. Defender Runbook ID Fix
+**Status:** COMPLETE
+**Details:**
+- Fixed incorrect runbook ID for Windows Defender
+- Changed from `RB-WIN-SEC-006` (only in SECURITY_RUNBOOKS) to `RB-WIN-AV-001` (in basic RUNBOOKS)
+- `RB-WIN-AV-001` exists in ALL_RUNBOOKS and handles Defender real-time protection
+
+### 4. L1 Rules Saved to Codebase
+**Status:** COMPLETE
+**Details:**
+- Saved proper L1 rules to `packages/compliance-agent/src/compliance_agent/rules/l1_baseline.json`
+- Contains 7 rules: NTP, Service, NixOS Firewall, Windows Firewall (2), Defender, Disk
+- Rules follow zero-drift policy: proper format, platform-specific, action_params structure
+
+### 5. Chaos Lab Verification
+**Status:** COMPLETE
+**Details:**
+- Multiple chaos lab test cycles with diverse attacks
+- Firewall attacks: L1-FIREWALL-002 → RB-WIN-FIREWALL-001 → SUCCESS
+- Defender attacks: L1-DEFENDER-001 → RB-WIN-AV-001 → SUCCESS
+- Password policy: Detected (pass→fail) but no L1 rule → escalated to L3
+- Audit policy: Detected (pass→fail) but no L1 rule → escalated to L3
+
+### 6. Executor Import Fix
+**Status:** COMPLETE
+**Files:**
+- `executor.py` - Fixed import to use ALL_RUNBOOKS (27) instead of RUNBOOKS (7)
+- Changed to lazy import to avoid circular dependency
+
+### 7. Git Commit
+**Status:** COMPLETE
+**Commit:** `2d5a9e2` - L1 platform-specific healing rules fix
 
 ---
 
