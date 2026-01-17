@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-17 (Session 47)
-**Current State:** Go Agent Compliance Checks Implementation Complete
+**Last Updated:** 2026-01-17 (Session 48)
+**Current State:** Go Agent gRPC Integration Testing - ISO v38 Required
 
 ---
 
@@ -10,13 +10,48 @@
 | Component | Status | Version |
 |-----------|--------|---------|
 | Agent | v1.0.37 | Stable |
-| ISO | v37 | Built, on iMac |
+| ISO | v37 | **BUGGY** - gRPC not working |
 | Tests | 811 + 24 Go tests | Healthy |
-| Go Agent | Registry queries implemented | 16.6MB binary |
-| gRPC | Fully Implemented | Both Python + Go |
+| Go Agent | Deployed to NVWS01 | 16.6MB binary |
+| gRPC | **BROKEN** in ISO v37 | Needs ISO v38 |
 | Chaos Lab | Verified | L1 healing working |
 | L1 Rules | Platform-specific | 29 rules in l1_baseline.json |
 | Security Runbooks | 13 total | All categories |
+
+---
+
+## Session 48 Summary (2026-01-17)
+
+### Critical Bug Discovered
+**ISO v37 gRPC is non-functional:**
+1. `compliance_pb2_grpc.add_ComplianceAgentServicer_to_server()` is **commented out**
+2. `compliance_pb2.py` and `compliance_pb2_grpc.py` are **not included** in ISO
+
+**Error seen:** `rpc error: code = Unimplemented desc = Method not found!`
+
+### Completed
+1. **Config JSON key fix** - Changed `appliance_address` → `appliance_addr` on NVWS01
+2. **gRPC connection verified** - Go agent connects but methods fail
+3. **Go agent registry queries working** - screenlock, pending_reboot show actual values
+4. **Hot-patch attempted** - Failed (NixOS read-only + relative imports)
+
+### Go Agent Check Results on NVWS01
+| Check | Status | Notes |
+|-------|--------|-------|
+| rmm_detection | PASS | No RMM found |
+| screenlock | FAIL | Screensaver disabled (registry working) |
+| defender | FAIL | AntivirusEnabled=false |
+| bitlocker | FAIL | Could not read ProtectionStatus |
+| firewall | FAIL | **BUG:** Service state empty |
+| patches | ERROR | **BUG:** Invalid query |
+
+### Known Go Agent Bugs
+1. **Firewall service state empty** - `GetServiceState("MpsSvc")` returns ""
+2. **Patches WMI query invalid** - Syntax error
+3. **SQLite requires CGO** - Built with `CGO_ENABLED=0`
+
+### Files Modified This Session
+- `C:\ProgramData\OsirisCare\config.json` (NVWS01) - Fixed JSON key
 
 ---
 
@@ -142,27 +177,37 @@
 
 ---
 
-## Next Session (48) Priorities
+## Next Session (49) Priorities
 
-### Go Agent Windows Testing
-1. Deploy rebuilt Go agent binary to NVWS01 (16.6MB with registry queries)
-2. Test compliance checks on actual Windows machine
-3. Verify registry queries work correctly
+### 1. Rebuild ISO v38 with gRPC Fixes (CRITICAL)
+1. Fix `grpc_server.py` - uncomment servicer registration (lines 321, 354)
+2. Include `compliance_pb2.py` in package
+3. Include `compliance_pb2_grpc.py` in package
+4. Build and deploy ISO v38 to VM appliance
 
-### Go Agent gRPC Integration
-1. Test gRPC communication (without --dry-run)
-2. Verify drift events flowing to appliance
-3. Monitor AgentRegistry for connected agents
+### 2. Fix Go Agent Bugs
+1. **Firewall service state empty** - Fix `GetServiceState("MpsSvc")` in `wmi.go`
+2. **Patches WMI query invalid** - Fix WMI query syntax in `patches.go`
+3. Rebuild with CGO enabled for SQLite (optional, queue works but logs error)
 
-### ISO v37 Deployment
-1. Flash ISO v37 to physical appliance (192.168.88.246)
-2. Verify gRPC server running on port 50051
-3. End-to-end test: Go Agent → Appliance → Central Command
+### 3. End-to-End gRPC Test
+1. Deploy fixed Go agent to NVWS01
+2. Flash ISO v38 to VM appliance
+3. Run Go agent and verify drift events flow to appliance
+4. Monitor AgentRegistry for connected agents
+5. Verify three-tier healing processes Go agent drift
 
 ### Verification Steps
-- Check chaos lab logs: `~/chaos-lab/logs/cadence.log`
-- Verify gRPC server on port 50051
-- Test Go agent with registry queries on NVWS01
+```bash
+# Check gRPC methods on appliance
+ssh root@192.168.88.247 "python3 -c 'from compliance_agent import compliance_pb2_grpc; print(dir(compliance_pb2_grpc))'"
+
+# Run Go agent
+C:\OsirisCare\osiris-agent.exe
+
+# Check appliance logs for gRPC activity
+ssh root@192.168.88.247 "journalctl -u compliance-agent -f | grep -i grpc"
+```
 
 ---
 

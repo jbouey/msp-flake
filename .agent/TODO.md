@@ -1,7 +1,69 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-17 (Session 47 - Go Agent Compliance Checks Implementation)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, **Go Agent Compliance Checks**)
+**Last Updated:** 2026-01-17 (Session 48 - Go Agent gRPC Integration Testing)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks, **Go Agent gRPC Integration Testing**)
+
+---
+
+## Session 48 (2026-01-17) - Go Agent gRPC Integration Testing
+
+### 1. Config JSON Key Bug Fix
+**Status:** COMPLETE
+**Issue:** Go agent config used `appliance_address` but code expected `appliance_addr`
+**Fix:** Updated config on NVWS01 to use correct key
+
+### 2. gRPC Connection Verified
+**Status:** COMPLETE
+**Details:**
+- Go agent connects to appliance gRPC port 50051
+- Connection works, but methods return "Unimplemented"
+- Error: `rpc error: code = Unimplemented desc = Method not found!`
+
+### 3. ISO v37 gRPC Bug Discovery
+**Status:** CRITICAL BUG FOUND
+**Root Cause:** ISO v37 has two critical gRPC issues:
+1. **Servicer not registered** - `compliance_pb2_grpc.add_ComplianceAgentServicer_to_server()` is commented out
+2. **Protobuf files missing** - `compliance_pb2.py` and `compliance_pb2_grpc.py` not included in ISO
+
+**Location (deployed):** `/nix/store/il2p4djz4lljnz2g25bv4cky88aq1nnd-compliance-agent-1.0.37/lib/python3.11/site-packages/compliance_agent/grpc_server.py`
+- Line ~355: Servicer registration commented out with note "In full implementation, add the servicer using generated code"
+
+**Local code (correct):** `/Users/dad/Documents/Msp_Flakes/packages/compliance-agent/src/compliance_agent/grpc_server.py`
+- Lines 321 and 354: Servicer properly registered
+
+### 4. Go Agent Check Results on NVWS01
+**Status:** COMPLETE
+**Findings:**
+| Check | Status | Details |
+|-------|--------|---------|
+| rmm_detection | PASS | No RMM found |
+| screenlock | FAIL | Screensaver disabled (registry working) |
+| defender | FAIL | AntivirusEnabled=false, RealTimeProtection=false |
+| bitlocker | FAIL | Could not read ProtectionStatus |
+| firewall | FAIL | MpsSvc service state: "" (bug: empty) |
+| patches | ERROR | Invalid query (WMI bug) |
+
+**Registry queries working:** `pending_reboot: false`, screenlock shows actual values
+
+### 5. Known Go Agent Bugs
+**Status:** PENDING FIX
+1. **Firewall service state empty** - `wmi.GetServiceState("MpsSvc")` returns empty string
+2. **Patches WMI query invalid** - "Exception occurred. (Invalid query)"
+3. **SQLite requires CGO** - `CGO_ENABLED=0` build can't use go-sqlite3
+
+### 6. Hot-Patch Attempt (Failed)
+**Status:** NOT POSSIBLE
+**Reason:** NixOS package imports use relative imports (`from . import compliance_pb2`) that don't respect PYTHONPATH for intra-package imports. ISO rebuild required.
+
+### Remaining Tasks
+1. **Rebuild ISO v38** with:
+   - Fix grpc_server.py servicer registration
+   - Include compliance_pb2.py and compliance_pb2_grpc.py
+2. **Fix Go Agent bugs:**
+   - Firewall service state query
+   - Patches WMI query syntax
+3. **Rebuild Go Agent with CGO** for SQLite offline queue
+4. **Test end-to-end gRPC** after ISO v38
 
 ---
 
