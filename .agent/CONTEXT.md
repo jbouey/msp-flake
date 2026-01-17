@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-17 (Session 50 - ISO v40 gRPC Server Verified Working)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.40, ISO v40, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks Implementation, Go Agent gRPC Integration Testing, ISO v38 gRPC Fix & Protobuf Compatibility, **ISO v40 gRPC Server Verified Working**)
-**Test Status:** 811 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.40, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution + workstation cadence verification + config path fix, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent (gRPC push-based architecture, deployed to NVWS01, config.json fixed, registry queries working), VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules (NixOS escalate, Windows auto-remediate via RB-WIN-FIREWALL-001), comprehensive security runbooks (13 total), ISO v37 gRPC bug discovered (servicer not registered), ISO v38 built with gRPC servicer fix, protobuf 4.x compatibility fix for pb2 files, **ISO v40 gRPC Server Verified Working** (relative import fix in compliance_pb2_grpc.py)
+**Last Updated:** 2026-01-17 (Session 50 - Active Healing & Chaos Lab v2)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.40, ISO v40, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks Implementation, Go Agent gRPC Integration Testing, ISO v40 gRPC Working, **Active Healing Enabled & Chaos Lab v2 Multi-VM**)
+**Test Status:** 811 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.40, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, **Chaos Lab v2 multi-VM with campaign-level restore (21→3 restores)**, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent (gRPC push-based architecture, deployed to NVWS01, config.json fixed, registry queries working), VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules (NixOS escalate, Windows auto-remediate via RB-WIN-FIREWALL-001), comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, **Active healing enabled (HEALING_DRY_RUN=false)**, L2 scenario categories for learning data collection
 
 ---
 
@@ -531,14 +531,23 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
 - **Location (iMac):** `~/osiriscare-v40.iso`
 - **Size:** 1.0GB
-- **Agent:** compliance-agent v1.0.40 with **gRPC server fully working**
+- **Agent:** compliance-agent v1.0.40 with **gRPC server fully working + Active Healing**
 - **Entry point:** `compliance-agent-appliance`
 - **Features:**
   - gRPC server on port 50051 - **VERIFIED WORKING**
   - Relative import fix in compliance_pb2_grpc.py
   - Protobuf 4.x compatible pb2 files
+  - **Active healing enabled** (HEALING_DRY_RUN=false in iso/appliance-image.nix)
 - **Status:** Deployed to VM appliance (192.168.88.246), gRPC registration tested successfully
 - **Test:** Python client registered as `go-test-machine-481ec20f`, returned enabled checks
+
+### Session 50 Changes (2026-01-17)
+- **Chaos Lab v2:** Multi-VM campaign generator with campaign-level restore
+- **Active Healing:** Enabled via `healing_dry_run: false` in config.yaml
+- **NixOS Module:** Added `healingDryRun` option to `modules/compliance-agent.nix`
+- **ISO Environment:** Added `HEALING_DRY_RUN=false` to `iso/appliance-image.nix`
+- **L1 Rules:** Added L1-FIREWALL-002, L1-DEFENDER-001 in mcp-server/main.py
+- **L2 Scenarios:** 6 new categories bypassing L1 for learning data
 
 ### ISO v38 Built (2026-01-17 Session 49)
 - **Location (Local):** `/Users/dad/Documents/Msp_Flakes/iso/osiriscare-appliance-v38.iso`

@@ -1,63 +1,124 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-17 (Session 48)
+**Last Updated:** 2026-01-17 (Session 50)
+
+---
+
+## Session 50 - Active Healing & Chaos Lab v2
+
+**Date:** 2026-01-17
+**Status:** COMPLETE
+**Commits:** `a842dce` (Msp_Flakes), `253474b` (auto-heal-daemon)
+
+### Objectives
+1. Audit chaos lab and reduce VM restore overhead
+2. Enable active healing for learning data collection
+3. Add L2 scenarios that bypass L1 rules
+
+### Completed Tasks
+
+#### 1. Chaos Lab v2 - Multi-VM Campaign Generator
+- **Status:** COMPLETE
+- **Location:** `~/chaos-lab/scripts/generate_and_plan_v2.py` (iMac)
+- **Change:** Campaign-level restore instead of per-scenario (21 → 3 restores)
+- **Targets:** DC (192.168.88.250) + Workstation NVWS01 (192.168.88.251)
+- **Crontab:** Updated to use v2 script
+- **Helper:** Created `winrm_exec.py` for WinRM execution
+
+#### 2. Active Healing Enabled
+- **Status:** COMPLETE
+- **Root Cause:** `HEALING_DRY_RUN=true` was preventing learning data collection
+- **Database:** Was showing 0 L1 resolutions, 0 L2 resolutions, 102 unresolved
+- **Fix:** Set `healing_dry_run: false` in `/var/lib/msp/config.yaml`
+- **Verification:** Logs show "Three-tier healing enabled (ACTIVE)"
+
+#### 3. NixOS Module Update
+- **File:** `modules/compliance-agent.nix`
+- **Change:** Added `healingDryRun` option with default `true`
+```nix
+healingDryRun = mkOption {
+  type = types.bool;
+  default = true;
+  description = "Run healing in dry-run mode";
+};
+```
+
+#### 4. ISO appliance-image.nix Update
+- **File:** `iso/appliance-image.nix`
+- **Change:** Added environment block for active healing
+```nix
+environment = {
+  HEALING_DRY_RUN = "false";
+};
+```
+
+#### 5. L1 Rules Updates
+- **File:** `mcp-server/main.py`
+- **Added:** L1-FIREWALL-002, L1-DEFENDER-001
+- **Updated:** L1-FIREWALL-001 to use `restore_firewall_baseline` action
+
+#### 6. L2 Scenario Categories
+Added 6 categories that bypass L1 rules for L2 LLM engagement:
+- credential_policy
+- scheduled_tasks
+- smb_security
+- local_accounts
+- registry_persistence
+- wmi_persistence
+
+#### 7. Repository Cleanup
+- **`.gitignore`:** Added build artifact patterns
+- **Removed from tracking:** `.DS_Store`, `__pycache__`, `.egg-info`
+
+### Files Changed
+| File | Change Type |
+|------|-------------|
+| `modules/compliance-agent.nix` | Modified |
+| `iso/appliance-image.nix` | Modified |
+| `mcp-server/main.py` | Modified |
+| `.gitignore` | Modified |
+| `~/chaos-lab/scripts/generate_and_plan_v2.py` (iMac) | Created |
+| `~/chaos-lab/config.env` (iMac) | Modified |
+| `/var/lib/msp/config.yaml` (appliance) | Modified |
+
+### Git Activity
+- **Msp_Flakes:** 2 commits
+  - `69c8cd8` - feat: Enable active healing and add L1 rules
+  - `a842dce` - chore: Update .gitignore and remove tracked build artifacts
+- **auto-heal-daemon:** 2 commits
+  - `d71be99` - Update patch_daemon server
+  - `253474b` - chore: Add pycache to gitignore
+
+---
+
+## Session 49 - ISO v38 gRPC Fix & Protobuf Compatibility
+
+**Date:** 2026-01-17
+**Status:** COMPLETE
+**Commit:** Documentation only
+
+### Completed Tasks
+1. ISO v38 built on physical appliance with gRPC fixes
+2. Version bump v1.0.35 → v1.0.38
+3. pb2 files regenerated with protobuf 4.x compatibility
 
 ---
 
 ## Session 48 - Go Agent gRPC Integration Testing
 
 **Date:** 2026-01-17
-**Status:** BLOCKED - ISO v38 Required
-**Commit:** Documentation only
-
-### Objectives
-1. Test end-to-end gRPC communication between Go Agent and Appliance
-2. Verify registry queries work on actual Windows machine
+**Status:** BLOCKED → Resolved in Session 49/50
 
 ### Critical Discovery
-**ISO v37 gRPC is non-functional:**
-1. `grpc_server.py` has servicer registration **commented out** (line ~355)
-2. `compliance_pb2.py` and `compliance_pb2_grpc.py` **not included** in ISO package
+ISO v37 gRPC was non-functional:
+1. Servicer registration commented out
+2. pb2 files not included in package
 
-### Completed Tasks
-
-#### 1. Config JSON Key Bug Fix
-- **Issue:** Go agent config used `appliance_address` but code expected `appliance_addr`
-- **Fix:** Updated `C:\ProgramData\OsirisCare\config.json` on NVWS01
-
-#### 2. gRPC Connection Verified
-- Go agent connects to appliance gRPC port 50051 successfully
-- Error: `rpc error: code = Unimplemented desc = Method not found!`
-
-#### 3. Go Agent Registry Queries Verified
-- **screenlock:** Shows actual values (screensaver_active: false, timeout: 0)
-- **pending_reboot:** Returns false (registry check working)
-- Registry queries are functional on Windows
-
-#### 4. Hot-Patch Attempted
-- Copied `compliance_pb2.py` and `compliance_pb2_grpc.py` to appliance `/tmp/`
-- Set `PYTHONPATH=/tmp`
-- **Failed:** NixOS package uses relative imports (`from . import compliance_pb2`) that don't respect PYTHONPATH
-
-### Known Go Agent Bugs Found
-| Bug | Details |
-|-----|---------|
-| Firewall service state empty | `GetServiceState("MpsSvc")` returns "" |
-| Patches WMI query invalid | "Exception occurred. (Invalid query)" |
-| SQLite requires CGO | `CGO_ENABLED=0` build can't use go-sqlite3 |
-
-### Blocked By
-- **ISO v38 rebuild required** with:
-  - Fixed `grpc_server.py` (uncomment servicer registration)
-  - Include `compliance_pb2.py` in package
-  - Include `compliance_pb2_grpc.py` in package
-
-### Next Steps
-1. Rebuild ISO v38 with gRPC fixes
-2. Fix Go agent firewall service state bug
-3. Fix Go agent patches WMI query bug
-4. Rebuild Go agent with CGO enabled for SQLite
-5. Test end-to-end gRPC communication
+### Resolution
+Fixed in ISO v40 with:
+- Servicer registration uncommented
+- pb2 files with relative import fix
+- Protobuf 4.x compatibility
 
 ---
 
@@ -67,114 +128,24 @@
 **Status:** COMPLETE
 **Commit:** `cbea2c9`
 
-### Objectives
-1. Complete Go agent implementation with actual registry queries
-2. Add offline queue size limits
-3. Add test coverage for Go agent
-
 ### Completed Tasks
-
-#### 1. WMI Registry Query Functions
-- **Files:** `wmi.go`, `wmi_windows.go`, `wmi_other.go`
-- **Functions Added:**
-  - `GetRegistryDWORD(ctx, hive, subKey, valueName)` - Read DWORD values
-  - `GetRegistryString(ctx, hive, subKey, valueName)` - Read string values
-  - `RegistryKeyExists(ctx, hive, subKey)` - Check key existence
-- **Constants:** `HKEY_LOCAL_MACHINE`, `HKEY_CURRENT_USER`, etc.
-
-#### 2. Firewall Check - Registry Queries
-- **File:** `firewall.go`
-- **Change:** Replaced hardcoded profile status with actual registry queries
-- **Registry Path:** `SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy`
-- **Profiles:** Domain, Private (StandardProfile), Public (PublicProfile)
-
-#### 3. Screen Lock Check - Registry Queries
-- **File:** `screenlock.go`
-- **Change:** Replaced stub with actual registry queries
-- **Registry Path:** `Control Panel\Desktop`
-- **Values:** ScreenSaveActive, ScreenSaveTimeOut, ScreenSaverIsSecure
-
-#### 4. Pending Reboot Detection
-- **File:** `patches.go`
-- **Change:** Implemented `checkPendingReboot()` with 4 detection methods:
-  1. Windows Update RebootRequired key
-  2. Component Based Servicing RebootPending key
-  3. PendingFileRenameOperations value
-  4. Computer name pending change
-
-#### 5. Offline Queue Size Limits
-- **File:** `offline.go`
-- **Changes:**
-  - `DefaultMaxQueueSize` = 10,000 events
-  - `DefaultMaxQueueAge` = 7 days
-  - `QueueOptions` struct for configuration
-  - `NewOfflineQueueWithOptions()` constructor
-  - `enforceLimit()` - Auto-prunes old events, removes 10% oldest at capacity
-  - `QueueStats` struct - Count, MaxSize, MaxAge, OldestAge, UsageRatio
-  - `Stats()` method for monitoring
-
-#### 6. Test Coverage
-- **Files Created:**
-  - `checks_test.go` - 12 tests (check types, helpers)
-  - `offline_test.go` - 9 tests (queue operations, limits)
-  - `wmi_test.go` - 5 tests (property helpers, non-Windows stubs)
-- **Total:** 24 tests passing on macOS
-
-#### 7. Build Fix
-- **File:** `main.go`
-- **Fix:** Removed redundant newline from Println statement
-
-### Files Changed
-| File | Change Type | Lines |
-|------|-------------|-------|
-| `agent/internal/wmi/wmi.go` | Modified | +33 |
-| `agent/internal/wmi/wmi_windows.go` | Modified | +172 |
-| `agent/internal/wmi/wmi_other.go` | Modified | +15 |
-| `agent/internal/checks/firewall.go` | Modified | +30/-7 |
-| `agent/internal/checks/screenlock.go` | Modified | +49/-12 |
-| `agent/internal/checks/patches.go` | Modified | +33/-5 |
-| `agent/internal/transport/offline.go` | Modified | +126 |
-| `agent/cmd/osiris-agent/main.go` | Modified | +1/-1 |
-| `agent/internal/checks/checks_test.go` | Created | +141 |
-| `agent/internal/transport/offline_test.go` | Created | +325 |
-| `agent/internal/wmi/wmi_test.go` | Created | +129 |
-
-**Total:** 11 files, 1030 insertions, 25 deletions
-
-### Verification
-- Go tests: 24 passing
-- Build: Successful (16.6MB binary)
-- Python tests: 811 passing (unchanged)
-
-### Next Steps
-1. Deploy rebuilt binary to Windows VM (NVWS01)
-2. Test registry queries on actual Windows machine
-3. Test gRPC communication end-to-end
-4. Deploy ISO v37 to physical appliance
+1. WMI registry query functions
+2. Firewall check - registry queries
+3. Screen lock check - registry queries
+4. Pending reboot detection
+5. Offline queue size limits
+6. 24 Go tests
 
 ---
 
-## Session 46 - L1 Platform-Specific Healing Fix
-
-**Date:** 2026-01-17
-**Status:** COMPLETE
-**Commit:** `880e44c` (Comprehensive runbooks), `2d5a9e2` (Platform-specific rules)
-
-### Completed Tasks
-1. NixOS firewall platform-specific rule (L1-NIXOS-FW-001)
-2. L1 rules action format fix (action_params structure)
-3. Defender runbook ID fix (RB-WIN-AV-001)
-4. Comprehensive security runbooks (13 total)
-5. Expanded L1 rules (29 rules)
-6. Chaos lab verification
-
----
-
-## Session Summary
+## Session Summary Table
 
 | Session | Date | Focus | Status |
 |---------|------|-------|--------|
-| 47 | 2026-01-17 | Go Agent Registry Queries | COMPLETE |
+| **50** | 2026-01-17 | Active Healing & Chaos Lab v2 | **COMPLETE** |
+| 49 | 2026-01-17 | ISO v38 gRPC Fix | COMPLETE |
+| 48 | 2026-01-17 | Go Agent gRPC Testing | BLOCKED → Fixed |
+| 47 | 2026-01-17 | Go Agent Compliance Checks | COMPLETE |
 | 46 | 2026-01-17 | L1 Platform-Specific Healing | COMPLETE |
 | 45 | 2026-01-16 | gRPC Stub Implementation | COMPLETE |
 | 44 | 2026-01-16 | Go Agent Testing & ISO v37 | COMPLETE |
@@ -193,9 +164,8 @@
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 47 details
+- `.agent/TODO.md` - Session 50 details
 - `.agent/CONTEXT.md` - Updated phase status
-- `IMPLEMENTATION-STATUS.md` - Session 47 summary
+- `IMPLEMENTATION-STATUS.md` - Session 50 summary
 - `docs/SESSION_HANDOFF.md` - Full session handoff
-- `docs/ARCHITECTURE.md` - Go Agent section updated
 - `docs/SESSION_COMPLETION_STATUS.md` - This file

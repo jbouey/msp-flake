@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-17 (Session 47 - Go Agent Compliance Checks Implementation)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, **Go Agent Compliance Checks Implementation**, 811 + 24 Go tests)
+**Last Updated:** 2026-01-17 (Session 50 - Active Healing & Chaos Lab v2)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.40, ISO v40, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks Implementation, ISO v40 gRPC Working, **Active Healing & Chaos Lab v2**, 811 + 24 Go tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,18 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.37, ISO v37, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37 with firewall port 50051, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), **Go Agent Compliance Checks Implementation with registry queries and queue limits**.
+**Status:** Phase 12 nearing completion. Agent v1.0.40, ISO v40, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, **Chaos Lab v2 Multi-VM with campaign-level restore**, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), Go Agent Compliance Checks Implementation, ISO v40 gRPC Server Verified Working, **Active Healing Enabled (HEALING_DRY_RUN=false)**.
+
+**Session 50 (Active Healing & Chaos Lab v2):**
+- Implemented Chaos Lab v2 with multi-VM support (DC + Workstation)
+- Campaign-level VM restore (21 → 3 restores per run)
+- Enabled active healing by setting `healing_dry_run: false` in appliance config
+- Added `healingDryRun` NixOS option to `modules/compliance-agent.nix`
+- Added `HEALING_DRY_RUN=false` environment to `iso/appliance-image.nix`
+- Added L1-FIREWALL-002, L1-DEFENDER-001 rules to mcp-server/main.py
+- Added 6 L2-triggering categories for learning data collection
+- Repository cleanup: .gitignore updated, build artifacts removed from tracking
+- All changes pushed: Msp_Flakes (a842dce), auto-heal-daemon (253474b)
 
 **Session 47 (Go Agent Compliance Checks Implementation):**
 - Added WMI registry query functions to Go agent (GetRegistryDWORD, GetRegistryString, RegistryKeyExists)
@@ -781,12 +792,12 @@ Required fields per CLAUDE.md:
 - Commits: `7b3c85f` - fix: Improve delete button UX with loading state
 
 **Next Steps:**
-1. Flash ISO v37 to physical appliance (192.168.88.246)
-2. Test Go Agent gRPC communication (without -dry-run)
-3. Fix Go Agent CGO dependency (switch to modernc.org/sqlite for pure Go)
-4. Implement gRPC streaming in Go Agent (currently stubs)
-5. User to configure Azure App Registration with correct redirect URI and client secret
-6. Run chaos lab cycle and verify extended check type labels
+1. **Monitor chaos lab v2** - Verify multi-VM campaigns running correctly
+2. **Check learning pipeline** - Confirm L1/L2 resolutions accumulating in database
+3. **Test L2 scenarios** - Ensure LLM engagement on 6 new categories
+4. **Flash ISO v40 to physical appliance** - Replace v38/v39 on 192.168.88.246
+5. Test Go Agent gRPC communication (without -dry-run)
+6. Fix Go Agent CGO dependency (switch to modernc.org/sqlite for pure Go)
 7. Monitor patterns flowing to Learning dashboard
 8. Evidence bundles uploading to MinIO verification
 9. First compliance packet generated

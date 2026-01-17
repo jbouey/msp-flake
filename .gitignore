@@ -9,3 +9,10 @@ node_modules/
 *.egg-info/
 venv/
 .env
+
+# Build artifacts
+*.iso
+*.tar.gz
+dist/
+gallery-dl/
+*.exe

@@ -1,7 +1,71 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-17 (Session 49 - ISO v38 gRPC Fix & Protobuf Compatibility)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.38, ISO v38, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks, Go Agent gRPC Integration Testing, **ISO v38 gRPC Fix & Protobuf Compatibility**)
+**Last Updated:** 2026-01-17 (Session 50 - Active Healing & Chaos Lab v2)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.40, ISO v40, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks, Go Agent gRPC Integration Testing, ISO v40 gRPC Working, **Active Healing & Chaos Lab v2**)
+
+---
+
+## Session 50 (2026-01-17) - Active Healing & Chaos Lab v2
+
+### 1. Chaos Lab v2 Implementation
+**Status:** COMPLETE
+**Details:**
+- Created multi-VM campaign generator (`generate_and_plan_v2.py` on iMac)
+- Campaign-level restore instead of per-scenario (21 → 3 restores per run)
+- Added workstation (NVWS01 - 192.168.88.251) as second target
+- Created snapshot for workstation VM
+- Updated crontab to use v2 script
+- Created `winrm_exec.py` helper
+
+### 2. Active Healing Enabled
+**Status:** COMPLETE
+**Details:**
+- Root cause: `HEALING_DRY_RUN=true` prevented learning data collection
+- Database showed 0 L1 resolutions, 0 L2 resolutions, 102 unresolved incidents
+- Fixed by setting `healing_dry_run: false` in `/var/lib/msp/config.yaml` on appliance
+- Added `healingDryRun` NixOS option to `modules/compliance-agent.nix`
+- Added environment block to `iso/appliance-image.nix`
+- Logs now show "Three-tier healing enabled (ACTIVE)"
+
+### 3. L2 Scenario Categories Added
+**Status:** COMPLETE
+**Details:**
+- Added 6 L2-triggering categories that bypass L1 rules:
+  - credential_policy, scheduled_tasks, smb_security
+  - local_accounts, registry_persistence, wmi_persistence
+- These force L2 LLM engagement for learning data collection
+
+### 4. L1 Rules Updates
+**Status:** COMPLETE
+**Details:**
+- Added L1-FIREWALL-002, L1-DEFENDER-001 to mcp-server/main.py
+- Updated L1-FIREWALL-001 to use restore_firewall_baseline action
+
+### 5. Repository Cleanup
+**Status:** COMPLETE
+**Details:**
+- Updated `.gitignore` with build artifact patterns
+- Removed tracked `.DS_Store`, `__pycache__`, `.egg-info` files
+- All changes pushed to both repos:
+  - Msp_Flakes: commit `a842dce`
+  - auto-heal-daemon: commit `253474b`
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `modules/compliance-agent.nix` | Added healingDryRun option |
+| `iso/appliance-image.nix` | Added HEALING_DRY_RUN=false environment |
+| `mcp-server/main.py` | Added L1-FIREWALL-002, L1-DEFENDER-001 |
+| `.gitignore` | Added build artifact patterns |
+| `/Users/jrelly/chaos-lab/scripts/generate_and_plan_v2.py` (iMac) | Created |
+| `/Users/jrelly/chaos-lab/config.env` (iMac) | Multi-VM variables |
+| `/var/lib/msp/config.yaml` (appliance) | healing_dry_run: false |
+
+### Remaining Tasks
+1. **Monitor chaos lab v2** - First run at next scheduled time
+2. **Check learning pipeline** - Verify L1/L2 resolutions accumulating
+3. **Test L2 scenarios** - Ensure LLM engagement on new categories
+4. **Run ISO v40 on physical appliance** - Replace v38/v39
 
 ---
 
