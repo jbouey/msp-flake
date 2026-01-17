@@ -1,7 +1,7 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-17 (Session 50 - Active Healing & Chaos Lab v2)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.40, ISO v40, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks Implementation, Go Agent gRPC Integration Testing, ISO v40 gRPC Working, **Active Healing Enabled & Chaos Lab v2 Multi-VM**)
+**Last Updated:** 2026-01-17 (Session 51 - FULL COVERAGE L1 Healing Tier)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.40, ISO v40, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks Implementation, Go Agent gRPC Integration Testing, ISO v40 gRPC Working, Active Healing Enabled & Chaos Lab v2 Multi-VM, **FULL COVERAGE L1 Healing Tier**)
 **Test Status:** 811 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.40, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, **Chaos Lab v2 multi-VM with campaign-level restore (21→3 restores)**, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent (gRPC push-based architecture, deployed to NVWS01, config.json fixed, registry queries working), VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules (NixOS escalate, Windows auto-remediate via RB-WIN-FIREWALL-001), comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, **Active healing enabled (HEALING_DRY_RUN=false)**, L2 scenario categories for learning data collection
 
 ---
@@ -540,6 +540,16 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - **Active healing enabled** (HEALING_DRY_RUN=false in iso/appliance-image.nix)
 - **Status:** Deployed to VM appliance (192.168.88.246), gRPC registration tested successfully
 - **Test:** Python client registered as `go-test-machine-481ec20f`, returned enabled checks
+
+### Session 51 Changes (2026-01-17) - FULL COVERAGE L1 Healing
+- **FULL COVERAGE Tier:** 21 L1 rules covering all check types
+- **Config Files:** `packages/compliance-agent/config/l1_rules_full_coverage.json` (21 rules), `l1_rules_standard.json` (4 rules)
+- **Alert Mappings:** Expanded `appliance_agent.py` with 18 new alert→runbook mappings
+- **Coverage Tiers:**
+  - **Standard:** firewall, defender, bitlocker (safe, low-risk auto-remediation)
+  - **Full Coverage:** +password_policy, audit_policy, smb_signing, ntlm, uac, nla, event_log, credential_guard, unauthorized_users, screen_lock, time_service, dns_client, patching
+- **Validation:** L1 rule matching verified working, firewall healing end-to-end SUCCESS
+- **Pending:** ISO v41 needed for full alert mapping support (v1.0.37 has 3 mappings, v1.0.41+ has 21)
 
 ### Session 50 Changes (2026-01-17)
 - **Chaos Lab v2:** Multi-VM campaign generator with campaign-level restore

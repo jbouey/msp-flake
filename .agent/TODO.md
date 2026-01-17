@@ -1,7 +1,55 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-17 (Session 50 - Active Healing & Chaos Lab v2)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.40, ISO v40, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks, Go Agent gRPC Integration Testing, ISO v40 gRPC Working, **Active Healing & Chaos Lab v2**)
+**Last Updated:** 2026-01-17 (Session 51 - FULL COVERAGE L1 Healing Tier)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.40, ISO v40, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks, Go Agent gRPC Integration Testing, ISO v40 gRPC Working, Active Healing & Chaos Lab v2, **FULL COVERAGE L1 Healing Tier**)
+
+---
+
+## Session 51 (2026-01-17) - FULL COVERAGE L1 Healing Tier
+
+### 1. FULL COVERAGE L1 Rules Created
+**Status:** COMPLETE
+**Details:**
+- Created 21 L1 rules covering all check types in `config/l1_rules_full_coverage.json`
+- Created 4 core rules in `config/l1_rules_standard.json` (firewall, defender, bitlocker, ntp)
+- Deployed 21 rules to appliance (`/var/lib/msp/rules/l1_rules.json`)
+- Rules loading verified: "Loaded 21 synced rules from l1_rules.json"
+
+### 2. Alert-to-Runbook Mappings Expanded
+**Status:** COMPLETE
+**Details:**
+- Expanded `appliance_agent.py` with 18 new mappings
+- Mappings: audit_policy, password_policy, lockout_policy, screen_lock, smb_signing, ntlm, unauthorized_admin, nla, uac, eventlog_protection, credguard, time_service, dns_client, patches
+- Commit `7ca78ac` pushed to main
+
+### 3. Coverage Tiers Defined
+**Status:** COMPLETE
+**Details:**
+| Tier | Rules | Check Types | Use Case |
+|------|-------|-------------|----------|
+| Standard | 4 | firewall, defender, bitlocker, ntp | Safe, low-risk auto-remediation |
+| Full Coverage | 21 | All check types including security policies | Premium upsell, chaos lab validation |
+
+### 4. Healing Validation
+**Status:** COMPLETE
+**Details:**
+- L1 rule matching verified working
+- Firewall healing: L1-WIN-FIREWALL-001 → alert:firewall_disabled → RB-WIN-FIREWALL-001 → **SUCCESS**
+- Password policy: L1-WIN-PASSWORD-001 matches → "Unknown healing action" (needs ISO v41)
+- Audit policy: L1-WIN-AUDIT-001 matches → "Unknown healing action" (needs ISO v41)
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | +18 alert→runbook mappings |
+| `packages/compliance-agent/config/l1_rules_full_coverage.json` | Created (21 rules) |
+| `packages/compliance-agent/config/l1_rules_standard.json` | Created (4 rules) |
+
+### Remaining Tasks
+1. **Build ISO v41** - Include expanded alert mappings for FULL COVERAGE
+2. **Deploy to appliance** - Flash ISO v41 to get full healing support
+3. **Test diverse healing** - Validate all 21 check types heal correctly
+4. **Add Central Command sync** - Push rules per site/tier configuration
 
 ---
 
