@@ -149,21 +149,64 @@ def list_categories() -> List[Dict]:
 
 def get_runbooks_by_check_type(check_type: str) -> List[WindowsRunbook]:
     """Get runbooks that handle a specific check type."""
-    # Map check types to runbook IDs
+    # Map check types to runbook IDs - COMPREHENSIVE coverage
     check_type_map = {
+        # Core checks
         "patching": ["RB-WIN-PATCH-001", "RB-WIN-UPD-001", "RB-WIN-UPD-002"],
         "antivirus": ["RB-WIN-AV-001", "RB-WIN-SEC-006"],
         "backup": ["RB-WIN-BACKUP-001", "RB-WIN-STG-002"],
         "logging": ["RB-WIN-LOGGING-001", "RB-WIN-SEC-002"],
         "firewall": ["RB-WIN-FIREWALL-001", "RB-WIN-SEC-001", "RB-WIN-NET-003"],
+        "firewall_status": ["RB-WIN-FIREWALL-001", "RB-WIN-SEC-001"],
         "encryption": ["RB-WIN-ENCRYPTION-001", "RB-WIN-SEC-005"],
+        "bitlocker": ["RB-WIN-ENCRYPTION-001", "RB-WIN-SEC-005"],
         "service_health": ["RB-WIN-SVC-001", "RB-WIN-SVC-002", "RB-WIN-SVC-003",
                           "RB-WIN-AD-001", "RB-WIN-AD-002", "RB-WIN-NET-001",
                           "RB-WIN-NET-002", "RB-WIN-NET-004", "RB-WIN-SEC-003",
                           "RB-WIN-SEC-004"],
         "ntp_sync": ["RB-WIN-SVC-004"],
-        "windows_defender": ["RB-WIN-SEC-006"],
+        "windows_defender": ["RB-WIN-AV-001", "RB-WIN-SEC-006"],
         "disk_space": ["RB-WIN-STG-001", "RB-WIN-STG-003"],
+
+        # Security policy checks
+        "audit_policy": ["RB-WIN-SEC-002", "RB-WIN-LOGGING-001"],
+        "password_policy": ["RB-WIN-SEC-004"],
+        "lockout_policy": ["RB-WIN-SEC-003"],
+        "account_lockout": ["RB-WIN-SEC-003"],
+
+        # Advanced security checks
+        "smb_signing": ["RB-WIN-SEC-007"],
+        "ntlm_security": ["RB-WIN-SEC-008"],
+        "ntlm": ["RB-WIN-SEC-008"],
+        "unauthorized_users": ["RB-WIN-SEC-009"],
+        "backdoor_user": ["RB-WIN-SEC-009"],
+        "nla": ["RB-WIN-SEC-010"],
+        "rdp_security": ["RB-WIN-SEC-010"],
+        "uac": ["RB-WIN-SEC-011"],
+        "event_log": ["RB-WIN-SEC-012"],
+        "event_log_protection": ["RB-WIN-SEC-012"],
+        "credential_guard": ["RB-WIN-SEC-013"],
+        "lsa_protection": ["RB-WIN-SEC-013"],
+
+        # Network checks
+        "dns_client": ["RB-WIN-NET-001"],
+        "network_adapter": ["RB-WIN-NET-002"],
+        "network_profile": ["RB-WIN-NET-003"],
+        "netbios": ["RB-WIN-NET-004"],
+
+        # Service checks
+        "dns_service": ["RB-WIN-SVC-001"],
+        "dhcp_service": ["RB-WIN-SVC-002"],
+        "print_spooler": ["RB-WIN-SVC-003"],
+        "time_service": ["RB-WIN-SVC-004"],
+
+        # AD checks
+        "ad_health": ["RB-WIN-AD-001"],
+        "ad_replication": ["RB-WIN-AD-001"],
+        "computer_account": ["RB-WIN-AD-002"],
+
+        # Critical services (generic)
+        "critical_services": ["RB-WIN-SVC-001", "RB-WIN-SVC-002", "RB-WIN-SVC-004"],
     }
 
     runbook_ids = check_type_map.get(check_type, [])

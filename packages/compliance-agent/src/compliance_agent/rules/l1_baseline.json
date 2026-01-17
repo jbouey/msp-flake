@@ -107,5 +107,335 @@
     "cooldown_seconds": 3600,
     "max_retries": 1,
     "source": "builtin"
+  },
+  {
+    "id": "L1-AUDIT-001",
+    "name": "Audit Policy Remediation",
+    "description": "Restore HIPAA-required Windows audit policies",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "audit_policy"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-002", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-PASSWORD-001",
+    "name": "Password Policy Enforcement",
+    "description": "Restore HIPAA-required password policy settings",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "password_policy"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-004", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-LOCKOUT-001",
+    "name": "Account Lockout Policy Reset",
+    "description": "Restore account lockout threshold settings",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "lockout_policy"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-003", "phases": ["remediate", "verify"]},
+    "severity": "medium",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-SMB-001",
+    "name": "SMB Signing Enforcement",
+    "description": "Enable SMB signing to prevent MITM attacks",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "smb_signing"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-007", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-NTLM-001",
+    "name": "NTLM Security Hardening",
+    "description": "Configure NTLM security to prevent credential relay attacks",
+    "conditions": [
+      {"field": "check_type", "operator": "in", "value": ["ntlm_security", "ntlm"]},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-008", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 900,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-BACKDOOR-001",
+    "name": "Unauthorized User Detection",
+    "description": "Disable unauthorized local admin accounts (backdoor users)",
+    "conditions": [
+      {"field": "check_type", "operator": "in", "value": ["unauthorized_users", "backdoor_user"]},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-009", "phases": ["remediate", "verify"]},
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-NLA-001",
+    "name": "NLA Enforcement",
+    "description": "Enable Network Level Authentication for RDP",
+    "conditions": [
+      {"field": "check_type", "operator": "in", "value": ["nla", "rdp_security"]},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-010", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-UAC-001",
+    "name": "UAC Enforcement",
+    "description": "Enable User Account Control settings",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "uac"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-011", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-EVENTLOG-001",
+    "name": "Event Log Protection",
+    "description": "Protect Windows event logs and ensure proper retention",
+    "conditions": [
+      {"field": "check_type", "operator": "in", "value": ["event_log", "event_log_protection"]},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-012", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-CREDGUARD-001",
+    "name": "Credential Guard / LSA Protection",
+    "description": "Enable LSA Protection for credential security",
+    "conditions": [
+      {"field": "check_type", "operator": "in", "value": ["credential_guard", "lsa_protection"]},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-013", "phases": ["remediate", "verify"]},
+    "severity": "medium",
+    "cooldown_seconds": 900,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-BITLOCKER-001",
+    "name": "BitLocker Status Recovery",
+    "description": "Resume BitLocker protection if suspended",
+    "conditions": [
+      {"field": "check_type", "operator": "in", "value": ["bitlocker", "encryption"]},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-005", "phases": ["remediate", "verify"]},
+    "severity": "critical",
+    "cooldown_seconds": 900,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-PATCH-001",
+    "name": "Windows Patch Compliance",
+    "description": "Apply critical Windows security updates",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "patching"},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-PATCH-001", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 3600,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-BACKUP-001",
+    "name": "Backup Verification Alert",
+    "description": "Escalate when backup is stale or failing",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "backup"},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["escalate"],
+    "action_params": {"reason": "Backup verification failed - manual review required"},
+    "severity": "critical",
+    "cooldown_seconds": 3600,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-LOGGING-001",
+    "name": "Windows Event Logging",
+    "description": "Configure Windows audit policy and event logging",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "logging"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-LOGGING-001", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-DNS-001",
+    "name": "DNS Client Configuration Reset",
+    "description": "Reset DNS client settings to proper DNS servers",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "dns_client"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-NET-001", "phases": ["remediate", "verify"]},
+    "severity": "medium",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-NETWORK-001",
+    "name": "Network Adapter Reset",
+    "description": "Reset network adapter if connectivity issues detected",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "network_adapter"},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-NET-002", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-PROFILE-001",
+    "name": "Network Profile Remediation",
+    "description": "Fix network profile for proper firewall behavior",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "network_profile"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-NET-003", "phases": ["remediate", "verify"]},
+    "severity": "medium",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-DNSSVC-001",
+    "name": "DNS Server Service Recovery",
+    "description": "Restart DNS Server service if stopped",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "dns_service"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SVC-001", "phases": ["remediate", "verify"]},
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 3,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-DHCPSVC-001",
+    "name": "DHCP Server Service Recovery",
+    "description": "Restart DHCP Server service if stopped",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "dhcp_service"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SVC-002", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 300,
+    "max_retries": 3,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-TIMESVC-001",
+    "name": "Windows Time Service Recovery",
+    "description": "Restart W32Time service for proper NTP sync",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "time_service"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SVC-004", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 300,
+    "max_retries": 3,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-AD-001",
+    "name": "Active Directory Health Check",
+    "description": "Check and fix AD replication and health issues",
+    "conditions": [
+      {"field": "check_type", "operator": "in", "value": ["ad_health", "ad_replication"]},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-AD-001", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-ANTIVIRUS-001",
+    "name": "Antivirus Health Check",
+    "description": "Enable antivirus and update signatures",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "antivirus"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-AV-001", "phases": ["remediate", "verify"]},
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
   }
 ]

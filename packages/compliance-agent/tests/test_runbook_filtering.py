@@ -239,13 +239,20 @@ class TestCategoryRunbooks:
         """Test security category has expected runbooks."""
         from compliance_agent.runbooks.windows.security import SECURITY_RUNBOOKS
 
-        assert len(SECURITY_RUNBOOKS) == 6
+        assert len(SECURITY_RUNBOOKS) == 13
         assert "RB-WIN-SEC-001" in SECURITY_RUNBOOKS  # Firewall
         assert "RB-WIN-SEC-002" in SECURITY_RUNBOOKS  # Audit Policy
         assert "RB-WIN-SEC-003" in SECURITY_RUNBOOKS  # Account Lockout
         assert "RB-WIN-SEC-004" in SECURITY_RUNBOOKS  # Password Policy
         assert "RB-WIN-SEC-005" in SECURITY_RUNBOOKS  # BitLocker
         assert "RB-WIN-SEC-006" in SECURITY_RUNBOOKS  # Defender
+        assert "RB-WIN-SEC-007" in SECURITY_RUNBOOKS  # SMB Signing
+        assert "RB-WIN-SEC-008" in SECURITY_RUNBOOKS  # NTLM Security
+        assert "RB-WIN-SEC-009" in SECURITY_RUNBOOKS  # Unauthorized Users
+        assert "RB-WIN-SEC-010" in SECURITY_RUNBOOKS  # NLA Enforcement
+        assert "RB-WIN-SEC-011" in SECURITY_RUNBOOKS  # UAC Enforcement
+        assert "RB-WIN-SEC-012" in SECURITY_RUNBOOKS  # Event Log Protection
+        assert "RB-WIN-SEC-013" in SECURITY_RUNBOOKS  # Credential Guard
 
     def test_network_category(self):
         """Test network category has expected runbooks."""
