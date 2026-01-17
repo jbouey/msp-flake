@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-17 (Session 48 - Go Agent gRPC Integration Testing)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks Implementation, **Go Agent gRPC Integration Testing**)
-**Test Status:** 811 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.37, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution + workstation cadence verification + config path fix, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent (gRPC push-based architecture, deployed to NVWS01, config.json fixed, registry queries working), VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules (NixOS escalate, Windows auto-remediate via RB-WIN-FIREWALL-001), comprehensive security runbooks (13 total), **ISO v37 gRPC bug discovered (servicer not registered, pb2 files missing)**
+**Last Updated:** 2026-01-17 (Session 49 - ISO v38 gRPC Fix & Protobuf Compatibility)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.38, ISO v38, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance, Extended Check Types, Workstation Compliance, RMM Comparison, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Configuration, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks Implementation, Go Agent gRPC Integration Testing, **ISO v38 gRPC Fix & Protobuf Compatibility**)
+**Test Status:** 811 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.38, 43 total runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab 2x daily execution + workstation cadence verification + config path fix, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent (gRPC push-based architecture, deployed to NVWS01, config.json fixed, registry queries working), VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules (NixOS escalate, Windows auto-remediate via RB-WIN-FIREWALL-001), comprehensive security runbooks (13 total), ISO v37 gRPC bug discovered (servicer not registered), **ISO v38 built with gRPC servicer fix**, **protobuf 4.x compatibility fix for pb2 files**
 
 ---
 
@@ -527,6 +527,21 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - 8 extended check type labels (NTP, Disk, Services, Defender, Memory, Cert, Database, Port)
   - Pattern reporting endpoints deployed
 
+### ISO v38 Built (2026-01-17 Session 49)
+- **Location (Local):** `/Users/dad/Documents/Msp_Flakes/iso/osiriscare-appliance-v38.iso`
+- **Location (iMac):** `~/osiriscare-v38.iso`
+- **Location (Appliance):** `/root/msp-iso-build/result-iso-v38/iso/osiriscare-appliance.iso`
+- **Size:** 1.1GB
+- **Agent:** compliance-agent v1.0.38 with **gRPC servicer registration fix**
+- **Entry point:** `compliance-agent-appliance`
+- **Features:**
+  - gRPC servicer properly registered (lines 321, 354 in grpc_server.py)
+  - Firewall port 50051 for Go Agent communication
+  - grpcio and grpcio-tools dependencies
+- **Status:** Built on physical appliance (VPS SSH unreachable), deployed to VM appliance
+- **Issue Found:** Protobuf version mismatch - pb2 files need regeneration with protobuf 4.x
+- **Fix Applied:** Local source now has protobuf 4.25.1 compatible pb2 files, needs ISO rebuild
+
 ### ISO v37 Built (2026-01-16 Session 44)
 - **Location (VPS):** `/root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso`
 - **Location (iMac):** `~/osiriscare-v37.iso`
@@ -537,7 +552,7 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - gRPC server on port 50051 for Go Agent push-based compliance
   - Firewall port 50051 permanently added
   - grpcio and grpcio-tools dependencies
-- **Status:** Built and transferred to iMac, ready to flash to appliance
+- **Status:** Superseded by ISO v38 - had gRPC servicer registration bug (commented out)
 
 ### ISO v35 Built (2026-01-15 Session 42)
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v35/iso/osiriscare-appliance.iso`
