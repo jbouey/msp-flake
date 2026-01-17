@@ -1,0 +1,58 @@
+[
+  {
+    "id": "L1-NTP-001",
+    "name": "NTP Drift Remediation",
+    "description": "Restart chronyd when NTP sync drifts",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "ntp_sync"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["restart_service:chronyd"],
+    "severity": "medium",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-FIREWALL-001",
+    "name": "Windows Firewall Disabled",
+    "description": "Re-enable Windows Firewall on all profiles",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "firewall"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:firewall_disabled"],
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-DEFENDER-001",
+    "name": "Windows Defender Disabled",
+    "description": "Re-enable Windows Defender real-time protection",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "windows_defender"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:defender_disabled"],
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-BITLOCKER-001",
+    "name": "BitLocker Not Enabled",
+    "description": "Enable BitLocker encryption on system drive",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "bitlocker"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["alert:bitlocker_disabled"],
+    "severity": "high",
+    "cooldown_seconds": 1800,
+    "max_retries": 1,
+    "source": "builtin"
+  }
+]
