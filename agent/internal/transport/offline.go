@@ -12,11 +12,24 @@ import (
 	pb "github.com/osiriscare/agent/proto"
 )
 
+// Default queue limits
+const (
+	// DefaultMaxQueueSize is the maximum number of events to store
+	DefaultMaxQueueSize = 10000
+	// DefaultMaxQueueAge is the maximum age of events before pruning
+	DefaultMaxQueueAge = 7 * 24 * time.Hour // 7 days
+)
+
+// ErrQueueFull is returned when the queue has reached its maximum size
+var ErrQueueFull = fmt.Errorf("offline queue is full")
+
 // OfflineQueue stores events when the appliance is unreachable.
 // Uses SQLite with WAL mode for durability.
 type OfflineQueue struct {
-	db *sql.DB
-	mu sync.Mutex
+	db       *sql.DB
+	mu       sync.Mutex
+	maxSize  int
+	maxAge   time.Duration
 }
 
 // QueuedEvent represents an event stored in the offline queue
@@ -28,9 +41,28 @@ type QueuedEvent struct {
 	Retries   int
 }
 
+// QueueOptions configures the offline queue
+type QueueOptions struct {
+	MaxSize int           // Maximum number of events (0 = use default)
+	MaxAge  time.Duration // Maximum age before pruning (0 = use default)
+}
+
 // NewOfflineQueue creates a new offline queue backed by SQLite
 func NewOfflineQueue(dataDir string) (*OfflineQueue, error) {
+	return NewOfflineQueueWithOptions(dataDir, QueueOptions{})
+}
+
+// NewOfflineQueueWithOptions creates a new offline queue with custom options
+func NewOfflineQueueWithOptions(dataDir string, opts QueueOptions) (*OfflineQueue, error) {
 	dbPath := dataDir + "/offline_queue.db"
+
+	// Apply defaults
+	if opts.MaxSize <= 0 {
+		opts.MaxSize = DefaultMaxQueueSize
+	}
+	if opts.MaxAge <= 0 {
+		opts.MaxAge = DefaultMaxQueueAge
+	}
 
 	// Open database with WAL mode for better concurrent access
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL")
@@ -62,13 +94,22 @@ func NewOfflineQueue(dataDir string) (*OfflineQueue, error) {
 		return nil, fmt.Errorf("failed to create index: %w", err)
 	}
 
-	return &OfflineQueue{db: db}, nil
+	return &OfflineQueue{
+		db:      db,
+		maxSize: opts.MaxSize,
+		maxAge:  opts.MaxAge,
+	}, nil
 }
 
 // Enqueue adds an event to the offline queue
 func (q *OfflineQueue) Enqueue(event *pb.DriftEvent) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	// Check queue size limit
+	if err := q.enforceLimit(); err != nil {
+		return err
+	}
 
 	payload, err := json.Marshal(event)
 	if err != nil {
@@ -91,12 +132,51 @@ func (q *OfflineQueue) EnqueueRaw(eventType string, payload []byte) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	// Check queue size limit
+	if err := q.enforceLimit(); err != nil {
+		return err
+	}
+
 	_, err := q.db.Exec(
 		"INSERT INTO events (event_type, payload) VALUES (?, ?)",
 		eventType, payload,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to enqueue event: %w", err)
+	}
+
+	return nil
+}
+
+// enforceLimit checks and enforces queue size limits.
+// Must be called with mutex held.
+func (q *OfflineQueue) enforceLimit() error {
+	// First, prune old events
+	cutoff := time.Now().Add(-q.maxAge)
+	q.db.Exec("DELETE FROM events WHERE created_at < ?", cutoff)
+
+	// Check count
+	var count int
+	row := q.db.QueryRow("SELECT COUNT(*) FROM events")
+	if err := row.Scan(&count); err != nil {
+		return fmt.Errorf("failed to count events: %w", err)
+	}
+
+	// If still at limit, remove oldest events to make room
+	if count >= q.maxSize {
+		// Delete oldest 10% to avoid repeated pruning
+		toDelete := q.maxSize / 10
+		if toDelete < 1 {
+			toDelete = 1
+		}
+		_, err := q.db.Exec(`
+			DELETE FROM events WHERE id IN (
+				SELECT id FROM events ORDER BY created_at ASC LIMIT ?
+			)
+		`, toDelete)
+		if err != nil {
+			return fmt.Errorf("failed to prune queue: %w", err)
+		}
 	}
 
 	return nil
@@ -211,6 +291,46 @@ func (q *OfflineQueue) Prune(maxAge time.Duration) (int, error) {
 
 	affected, _ := result.RowsAffected()
 	return int(affected), nil
+}
+
+// QueueStats contains queue status information
+type QueueStats struct {
+	Count      int           // Current number of events
+	MaxSize    int           // Maximum allowed events
+	MaxAge     time.Duration // Maximum age for events
+	OldestAge  time.Duration // Age of oldest event (0 if empty)
+	UsageRatio float64       // Current usage as ratio (0.0 to 1.0)
+}
+
+// Stats returns current queue statistics
+func (q *OfflineQueue) Stats() QueueStats {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	stats := QueueStats{
+		MaxSize: q.maxSize,
+		MaxAge:  q.maxAge,
+	}
+
+	// Get count
+	row := q.db.QueryRow("SELECT COUNT(*) FROM events")
+	if err := row.Scan(&stats.Count); err != nil {
+		return stats
+	}
+
+	// Calculate usage ratio
+	if q.maxSize > 0 {
+		stats.UsageRatio = float64(stats.Count) / float64(q.maxSize)
+	}
+
+	// Get oldest event age
+	var oldestTime time.Time
+	row = q.db.QueryRow("SELECT created_at FROM events ORDER BY created_at ASC LIMIT 1")
+	if err := row.Scan(&oldestTime); err == nil {
+		stats.OldestAge = time.Since(oldestTime)
+	}
+
+	return stats
 }
 
 // Close closes the database connection

@@ -96,20 +96,32 @@ func (c *FirewallCheck) Run(ctx context.Context) CheckResult {
 // queryFirewallProfiles queries firewall profile status via registry
 func queryFirewallProfiles(ctx context.Context) (map[string]bool, error) {
 	profiles := map[string]bool{
-		"Domain":  true,
-		"Private": true,
-		"Public":  true,
+		"Domain":  false,
+		"Private": false,
+		"Public":  false,
 	}
 
-	// Query registry via WMI StdRegProv
+	// Registry paths for firewall profiles
 	// HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy
-	// DomainProfile\EnableFirewall, StandardProfile\EnableFirewall, PublicProfile\EnableFirewall
+	basePath := `SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy`
 
-	// For simplicity, we'll assume firewall is enabled if the service is running
-	// A more thorough check would query registry or use netsh
+	profilePaths := map[string]string{
+		"Domain":  basePath + `\DomainProfile`,
+		"Private": basePath + `\StandardProfile`, // Private is "StandardProfile" in registry
+		"Public":  basePath + `\PublicProfile`,
+	}
 
-	// This is a simplified check - in production, we'd use registry queries
-	// or execute netsh advfirewall show allprofiles state
+	for name, path := range profilePaths {
+		// EnableFirewall: 1 = enabled, 0 = disabled
+		value, err := wmi.GetRegistryDWORD(ctx, wmi.HKEY_LOCAL_MACHINE, path, "EnableFirewall")
+		if err != nil {
+			// If we can't read the value, assume enabled (safer default)
+			// This can happen if the key doesn't exist (unusual but possible)
+			profiles[name] = true
+			continue
+		}
+		profiles[name] = (value == 1)
+	}
 
 	return profiles, nil
 }

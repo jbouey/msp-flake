@@ -79,3 +79,36 @@ func GetPropertyString(result QueryResult, name string) (string, bool) {
 	sval, ok := val.(string)
 	return sval, ok
 }
+
+// Registry hive constants for StdRegProv
+const (
+	HKEY_CLASSES_ROOT   uint32 = 0x80000000
+	HKEY_CURRENT_USER   uint32 = 0x80000001
+	HKEY_LOCAL_MACHINE  uint32 = 0x80000002
+	HKEY_USERS          uint32 = 0x80000003
+	HKEY_CURRENT_CONFIG uint32 = 0x80000005
+)
+
+// GetRegistryDWORD reads a DWORD value from the registry via WMI StdRegProv
+func GetRegistryDWORD(ctx context.Context, hive uint32, subKey, valueName string) (uint32, error) {
+	if runtime.GOOS != "windows" {
+		return 0, fmt.Errorf("registry queries only supported on Windows")
+	}
+	return getRegistryDWORDWindows(ctx, hive, subKey, valueName)
+}
+
+// GetRegistryString reads a string value from the registry via WMI StdRegProv
+func GetRegistryString(ctx context.Context, hive uint32, subKey, valueName string) (string, error) {
+	if runtime.GOOS != "windows" {
+		return "", fmt.Errorf("registry queries only supported on Windows")
+	}
+	return getRegistryStringWindows(ctx, hive, subKey, valueName)
+}
+
+// RegistryKeyExists checks if a registry key exists
+func RegistryKeyExists(ctx context.Context, hive uint32, subKey string) (bool, error) {
+	if runtime.GOOS != "windows" {
+		return false, fmt.Errorf("registry queries only supported on Windows")
+	}
+	return registryKeyExistsWindows(ctx, hive, subKey)
+}

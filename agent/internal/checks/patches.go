@@ -100,11 +100,36 @@ func (c *PatchesCheck) Run(ctx context.Context) CheckResult {
 // checkPendingReboot checks if a reboot is pending
 func checkPendingReboot(ctx context.Context) (bool, error) {
 	// Check registry keys that indicate pending reboot
-	// - HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired
-	// - HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending
+	// Multiple sources can indicate a pending reboot on Windows
 
-	// For simplicity, we'll check via WMI registry provider
-	// A full implementation would query the registry directly
+	// 1. Windows Update reboot required
+	wuRebootRequired := `SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired`
+	if exists, err := wmi.RegistryKeyExists(ctx, wmi.HKEY_LOCAL_MACHINE, wuRebootRequired); err == nil && exists {
+		return true, nil
+	}
+
+	// 2. Component Based Servicing reboot pending
+	cbsRebootPending := `SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending`
+	if exists, err := wmi.RegistryKeyExists(ctx, wmi.HKEY_LOCAL_MACHINE, cbsRebootPending); err == nil && exists {
+		return true, nil
+	}
+
+	// 3. Pending file rename operations (can indicate reboot needed)
+	pendingFileRename := `SYSTEM\CurrentControlSet\Control\Session Manager`
+	if val, err := wmi.GetRegistryString(ctx, wmi.HKEY_LOCAL_MACHINE, pendingFileRename, "PendingFileRenameOperations"); err == nil && val != "" {
+		return true, nil
+	}
+
+	// 4. Computer rename pending
+	computerNamePending := `SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName`
+	activeComputerName := `SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName`
+	if pendingName, err := wmi.GetRegistryString(ctx, wmi.HKEY_LOCAL_MACHINE, computerNamePending, "ComputerName"); err == nil {
+		if activeName, err := wmi.GetRegistryString(ctx, wmi.HKEY_LOCAL_MACHINE, activeComputerName, "ComputerName"); err == nil {
+			if pendingName != activeName {
+				return true, nil
+			}
+		}
+	}
 
 	return false, nil
 }
