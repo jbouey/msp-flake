@@ -32,7 +32,7 @@ func (c *FirewallCheck) Run(ctx context.Context) CheckResult {
 	// Note: We use Win32_Service first to check if firewall service is running
 	services, err := wmi.Query(ctx,
 		"root\\CIMV2",
-		"SELECT Name, State FROM Win32_Service WHERE Name = 'MpsSvc'",
+		"SELECT * FROM Win32_Service WHERE Name = 'MpsSvc'",
 	)
 	if err != nil {
 		result.Error = err
