@@ -302,6 +302,19 @@ in
     };
 
     # ========================================================================
+    # Auto-Healing
+    # ========================================================================
+
+    healingDryRun = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Run healing in dry-run mode (log actions but don't execute).
+        Set to false for production to enable actual remediation.
+      '';
+    };
+
+    # ========================================================================
     # Web UI (Dashboard)
     # ========================================================================
 
@@ -498,6 +511,9 @@ in
 
         # Logging
         LOG_LEVEL = cfg.logLevel;
+
+        # Healing
+        HEALING_DRY_RUN = if cfg.healingDryRun then "true" else "false";
       };
     };
 

@@ -99,6 +99,11 @@ in
       ReadWritePaths = [ "/var/lib/msp" ];
       NoNewPrivileges = true;
     };
+
+    # Enable active healing (not dry-run) for learning data collection
+    environment = {
+      HEALING_DRY_RUN = "false";
+    };
   };
 
   # ============================================================================

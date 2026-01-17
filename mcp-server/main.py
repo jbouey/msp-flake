@@ -1732,16 +1732,44 @@ async def agent_sync_rules(db: AsyncSession = Depends(get_db)):
         },
         {
             "id": "L1-FIREWALL-001",
-            "name": "Firewall Drift",
-            "description": "Alert when firewall is not active (expected: iptables or nftables)",
+            "name": "Windows Firewall Recovery",
+            "description": "Re-enable Windows Firewall when disabled",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "firewall"},
                 {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
             ],
-            "actions": ["alert:firewall_disabled"],
+            "actions": ["restore_firewall_baseline"],
             "severity": "critical",
             "cooldown_seconds": 300,
-            "max_retries": 1,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-FIREWALL-002",
+            "name": "Windows Firewall Status Recovery",
+            "description": "Re-enable Windows Firewall when status check fails",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "firewall_status"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["restore_firewall_baseline"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-DEFENDER-001",
+            "name": "Windows Defender Recovery",
+            "description": "Re-enable Windows Defender when disabled",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "windows_defender"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["restore_defender"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
             "source": "builtin"
         },
         {
