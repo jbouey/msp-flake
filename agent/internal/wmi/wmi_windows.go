@@ -6,6 +6,7 @@ package wmi
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
@@ -147,4 +148,175 @@ func queryWindows(ctx context.Context, namespace, query string) ([]QueryResult, 
 	}
 
 	return results, nil
+}
+
+// getRegistryDWORDWindows reads a DWORD registry value using WMI StdRegProv
+func getRegistryDWORDWindows(ctx context.Context, hive uint32, subKey, valueName string) (uint32, error) {
+	// Initialize COM
+	if err := ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED); err != nil {
+		oleErr, ok := err.(*ole.OleError)
+		if !ok || oleErr.Code() != 0x00000001 {
+			return 0, fmt.Errorf("COM initialization failed: %w", err)
+		}
+	}
+	defer ole.CoUninitialize()
+
+	// Create WMI locator
+	unknown, err := oleutil.CreateObject("WbemScripting.SWbemLocator")
+	if err != nil {
+		return 0, fmt.Errorf("failed to create WMI locator: %w", err)
+	}
+	defer unknown.Release()
+
+	wmi, err := unknown.QueryInterface(ole.IID_IDispatch)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get IDispatch: %w", err)
+	}
+	defer wmi.Release()
+
+	// Connect to default namespace for StdRegProv
+	serviceRaw, err := oleutil.CallMethod(wmi, "ConnectServer", ".", "root\\default")
+	if err != nil {
+		return 0, fmt.Errorf("failed to connect to root\\default: %w", err)
+	}
+	service := serviceRaw.ToIDispatch()
+	defer service.Release()
+
+	// Get StdRegProv class
+	regRaw, err := oleutil.CallMethod(service, "Get", "StdRegProv")
+	if err != nil {
+		return 0, fmt.Errorf("failed to get StdRegProv: %w", err)
+	}
+	reg := regRaw.ToIDispatch()
+	defer reg.Release()
+
+	// Create output parameters
+	outParams, err := oleutil.CallMethod(reg, "GetDWORDValue", hive, subKey, valueName)
+	if err != nil {
+		return 0, fmt.Errorf("GetDWORDValue failed: %w", err)
+	}
+
+	// Parse result - GetDWORDValue returns result in "uValue" output parameter
+	result := outParams.ToIDispatch()
+	defer result.Release()
+
+	valueRaw, err := oleutil.GetProperty(result, "uValue")
+	if err != nil {
+		return 0, fmt.Errorf("failed to get uValue: %w", err)
+	}
+
+	return uint32(valueRaw.Val), nil
+}
+
+// getRegistryStringWindows reads a string registry value using WMI StdRegProv
+func getRegistryStringWindows(ctx context.Context, hive uint32, subKey, valueName string) (string, error) {
+	// Initialize COM
+	if err := ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED); err != nil {
+		oleErr, ok := err.(*ole.OleError)
+		if !ok || oleErr.Code() != 0x00000001 {
+			return "", fmt.Errorf("COM initialization failed: %w", err)
+		}
+	}
+	defer ole.CoUninitialize()
+
+	// Create WMI locator
+	unknown, err := oleutil.CreateObject("WbemScripting.SWbemLocator")
+	if err != nil {
+		return "", fmt.Errorf("failed to create WMI locator: %w", err)
+	}
+	defer unknown.Release()
+
+	wmi, err := unknown.QueryInterface(ole.IID_IDispatch)
+	if err != nil {
+		return "", fmt.Errorf("failed to get IDispatch: %w", err)
+	}
+	defer wmi.Release()
+
+	// Connect to default namespace for StdRegProv
+	serviceRaw, err := oleutil.CallMethod(wmi, "ConnectServer", ".", "root\\default")
+	if err != nil {
+		return "", fmt.Errorf("failed to connect to root\\default: %w", err)
+	}
+	service := serviceRaw.ToIDispatch()
+	defer service.Release()
+
+	// Get StdRegProv class
+	regRaw, err := oleutil.CallMethod(service, "Get", "StdRegProv")
+	if err != nil {
+		return "", fmt.Errorf("failed to get StdRegProv: %w", err)
+	}
+	reg := regRaw.ToIDispatch()
+	defer reg.Release()
+
+	// Call GetStringValue
+	outParams, err := oleutil.CallMethod(reg, "GetStringValue", hive, subKey, valueName)
+	if err != nil {
+		return "", fmt.Errorf("GetStringValue failed: %w", err)
+	}
+
+	// Parse result
+	result := outParams.ToIDispatch()
+	defer result.Release()
+
+	valueRaw, err := oleutil.GetProperty(result, "sValue")
+	if err != nil {
+		return "", fmt.Errorf("failed to get sValue: %w", err)
+	}
+
+	return valueRaw.ToString(), nil
+}
+
+// registryKeyExistsWindows checks if a registry key exists using WMI StdRegProv
+func registryKeyExistsWindows(ctx context.Context, hive uint32, subKey string) (bool, error) {
+	// Initialize COM
+	if err := ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED); err != nil {
+		oleErr, ok := err.(*ole.OleError)
+		if !ok || oleErr.Code() != 0x00000001 {
+			return false, fmt.Errorf("COM initialization failed: %w", err)
+		}
+	}
+	defer ole.CoUninitialize()
+
+	// Create WMI locator
+	unknown, err := oleutil.CreateObject("WbemScripting.SWbemLocator")
+	if err != nil {
+		return false, fmt.Errorf("failed to create WMI locator: %w", err)
+	}
+	defer unknown.Release()
+
+	wmi, err := unknown.QueryInterface(ole.IID_IDispatch)
+	if err != nil {
+		return false, fmt.Errorf("failed to get IDispatch: %w", err)
+	}
+	defer wmi.Release()
+
+	// Connect to default namespace for StdRegProv
+	serviceRaw, err := oleutil.CallMethod(wmi, "ConnectServer", ".", "root\\default")
+	if err != nil {
+		return false, fmt.Errorf("failed to connect to root\\default: %w", err)
+	}
+	service := serviceRaw.ToIDispatch()
+	defer service.Release()
+
+	// Get StdRegProv class
+	regRaw, err := oleutil.CallMethod(service, "Get", "StdRegProv")
+	if err != nil {
+		return false, fmt.Errorf("failed to get StdRegProv: %w", err)
+	}
+	reg := regRaw.ToIDispatch()
+	defer reg.Release()
+
+	// Call EnumKey - if it succeeds, the key exists
+	_, err = oleutil.CallMethod(reg, "EnumKey", hive, subKey)
+	if err != nil {
+		// Key doesn't exist
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// Helper to convert string to int (for registry string values that are actually numbers)
+func parseRegistryInt(s string) (int, error) {
+	return strconv.Atoi(s)
 }

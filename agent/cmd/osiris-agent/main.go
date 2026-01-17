@@ -265,7 +265,7 @@ func runDryRun() {
 
 	results := registry.RunAll(ctx)
 
-	fmt.Println("\n=== Compliance Check Results ===\n")
+	fmt.Println("\n=== Compliance Check Results ===")
 
 	for _, result := range results {
 		status := "PASS"

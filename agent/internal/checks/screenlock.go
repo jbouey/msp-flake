@@ -96,14 +96,47 @@ func (c *ScreenLockCheck) Run(ctx context.Context) CheckResult {
 
 // checkScreenSaverSettings checks screen saver configuration
 func checkScreenSaverSettings(ctx context.Context) (active bool, timeoutSeconds int, passwordProtected bool, err error) {
-	// Default values assume compliant configuration
-	// A full implementation would query:
-	// - HKCU\Control Panel\Desktop\ScreenSaveActive
-	// - HKCU\Control Panel\Desktop\ScreenSaveTimeOut
-	// - HKCU\Control Panel\Desktop\ScreenSaverIsSecure
+	// Query registry for screen saver settings
+	// HKCU\Control Panel\Desktop
+	desktopPath := `Control Panel\Desktop`
 
-	// For now, return defaults that indicate unknown
-	// The full Windows implementation would use registry queries
+	// ScreenSaveActive: "1" = enabled, "0" = disabled
+	activeStr, err := wmi.GetRegistryString(ctx, wmi.HKEY_CURRENT_USER, desktopPath, "ScreenSaveActive")
+	if err != nil {
+		// If we can't read, try checking if screen saver is set at all
+		activeStr = "0"
+	}
+	active = (activeStr == "1")
 
-	return true, 600, true, nil
+	// ScreenSaveTimeOut: timeout in seconds (stored as string)
+	timeoutStr, err := wmi.GetRegistryString(ctx, wmi.HKEY_CURRENT_USER, desktopPath, "ScreenSaveTimeOut")
+	if err != nil {
+		// Default to 0 if not set (no timeout configured)
+		timeoutSeconds = 0
+	} else {
+		// Parse the timeout value
+		if t, parseErr := parseTimeoutString(timeoutStr); parseErr == nil {
+			timeoutSeconds = t
+		} else {
+			timeoutSeconds = 0
+		}
+	}
+
+	// ScreenSaverIsSecure: "1" = password required, "0" = no password
+	secureStr, err := wmi.GetRegistryString(ctx, wmi.HKEY_CURRENT_USER, desktopPath, "ScreenSaverIsSecure")
+	if err != nil {
+		// If not set, assume no password protection
+		passwordProtected = false
+	} else {
+		passwordProtected = (secureStr == "1")
+	}
+
+	return active, timeoutSeconds, passwordProtected, nil
+}
+
+// parseTimeoutString parses a screen saver timeout string to seconds
+func parseTimeoutString(s string) (int, error) {
+	var timeout int
+	_, err := fmt.Sscanf(s, "%d", &timeout)
+	return timeout, err
 }
