@@ -2,7 +2,7 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-import compliance_pb2 as compliance__pb2
+from . import compliance_pb2 as compliance__pb2
 
 
 class ComplianceAgentStub(object):
