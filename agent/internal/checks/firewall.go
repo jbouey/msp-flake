@@ -50,19 +50,11 @@ func (c *FirewallCheck) Run(ctx context.Context) CheckResult {
 	}
 
 	svc := services[0]
-
-	// Debug: List all properties in the WMI result
-	var debugProps []string
-	for k, v := range svc {
-		debugProps = append(debugProps, fmt.Sprintf("%s=%v", k, v))
-	}
-	result.Metadata["debug_props"] = strings.Join(debugProps, "; ")
-
 	state, ok := wmi.GetPropertyString(svc, "State")
 	if !ok || state != "Running" {
 		result.Passed = false
 		result.Expected = "MpsSvc service running"
-		result.Actual = fmt.Sprintf("MpsSvc service state: %s (ok=%v, props=%d)", state, ok, len(svc))
+		result.Actual = fmt.Sprintf("MpsSvc service state: %s", state)
 		return result
 	}
 
