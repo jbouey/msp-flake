@@ -71,13 +71,26 @@ func GetPropertyInt(result QueryResult, name string) (int, bool) {
 }
 
 // GetPropertyString extracts a string property from a QueryResult
+// Handles type conversion from various WMI types to string
 func GetPropertyString(result QueryResult, name string) (string, bool) {
 	val, ok := result[name]
 	if !ok {
 		return "", false
 	}
-	sval, ok := val.(string)
-	return sval, ok
+	if val == nil {
+		return "", false
+	}
+	switch v := val.(type) {
+	case string:
+		return v, true
+	case int, int32, int64, uint, uint32, uint64:
+		return fmt.Sprintf("%d", v), true
+	case bool:
+		return fmt.Sprintf("%v", v), true
+	default:
+		// Try fmt.Sprintf as last resort
+		return fmt.Sprintf("%v", v), true
+	}
 }
 
 // Registry hive constants for StdRegProv
