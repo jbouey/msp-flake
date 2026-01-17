@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.37";  # Session 38 - Workstation Discovery Config
+    version = "1.0.41";  # Session 51 - FULL COVERAGE L1 Healing (21 rules, 18 alert mappings)
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
