@@ -36,9 +36,10 @@ func (c *PatchesCheck) Run(ctx context.Context) CheckResult {
 
 	// Query last Windows Update install date
 	// Win32_QuickFixEngineering gives us installed hotfixes
+	// Note: ORDER BY is not supported in WQL, we sort in Go instead
 	hotfixes, err := wmi.Query(ctx,
 		"root\\CIMV2",
-		"SELECT HotFixID, InstalledOn FROM Win32_QuickFixEngineering ORDER BY InstalledOn DESC",
+		"SELECT HotFixID, InstalledOn FROM Win32_QuickFixEngineering",
 	)
 	if err != nil {
 		result.Error = err
