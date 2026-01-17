@@ -1,8 +1,9 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-01-16 (Session 45 - gRPC Stub Implementation)
+**Last Updated:** 2026-01-17 (Session 47 - Go Agent Compliance Checks Implementation)
 **Agent Version:** v1.0.37
 **ISO Version:** v37
+**Go Agent:** Registry queries implemented, 24 tests
 
 ## Overview
 
@@ -145,14 +146,23 @@ Windows Workstations                  NixOS Appliance
 
 ### Go Agent Checks
 
-| Check | WMI Query | Description |
-|-------|-----------|-------------|
-| BitLocker | Win32_EncryptableVolume | Volume encryption status |
-| Defender | MSFT_MpComputerStatus | Real-time protection |
-| Firewall | HNetCfg.FwMgr | All profiles enabled |
-| Patches | Win32_QuickFixEngineering | Recent updates |
-| ScreenLock | Win32_Desktop | Screen timeout ≤ 600s |
-| RMM | Win32_Service | Detect ConnectWise/Datto/Ninja |
+| Check | Method | Description |
+|-------|--------|-------------|
+| BitLocker | WMI: Win32_EncryptableVolume | Volume encryption status |
+| Defender | WMI: MSFT_MpComputerStatus | Real-time protection, signature age |
+| Firewall | **Registry**: SYSTEM\...\FirewallPolicy | All profiles (Domain/Private/Public) enabled |
+| Patches | WMI: Win32_QuickFixEngineering + **Registry** | Recent updates + pending reboot detection |
+| ScreenLock | **Registry**: Control Panel\Desktop | ScreenSaveActive, Timeout, IsSecure |
+| RMM | WMI: Win32_Service | Detect ConnectWise/Datto/Ninja |
+
+**Session 47 Registry Implementations:**
+- Firewall: Queries `HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy`
+- ScreenLock: Queries `HKCU\Control Panel\Desktop` for ScreenSaveActive, ScreenSaveTimeOut, ScreenSaverIsSecure
+- PendingReboot: 4 detection methods:
+  1. `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired`
+  2. `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending`
+  3. `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations`
+  4. Computer name pending change comparison
 
 ### Firewall Ports
 
@@ -165,13 +175,21 @@ Windows Workstations                  NixOS Appliance
 
 ### Current Status
 
-- **Binary:** Built on VPS (`osiris-agent.exe`, 10.3 MB)
+- **Binary:** Built locally (`osiris-agent.exe`, 16.6 MB)
 - **gRPC Port:** Configured in ISO v37 (port 50051)
 - **gRPC Implementation:** COMPLETE (Session 45)
   - Python server: `ComplianceAgentServicer` inherits from generated servicer
   - Go client: Uses `pb.NewComplianceAgentClient` with generated types
   - 5 RPC methods: Register, ReportDrift (streaming), ReportHealing, Heartbeat, ReportRMMStatus
-- **Offline Queue:** CGO dependency issue (requires `CGO_ENABLED=1`)
+- **Registry Queries:** COMPLETE (Session 47)
+  - `GetRegistryDWORD()`, `GetRegistryString()`, `RegistryKeyExists()` via WMI StdRegProv
+  - Windows implementation using COM/OLE (go-ole library)
+  - Non-Windows stubs for cross-platform builds
+- **Offline Queue:** SQLite with WAL mode
+  - MaxSize: 10,000 events (configurable)
+  - MaxAge: 7 days (auto-prune)
+  - QueueStats for monitoring
+- **Tests:** 24 tests (checks, transport, wmi packages)
 
 ---
 

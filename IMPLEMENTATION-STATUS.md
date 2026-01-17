@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-17 (Session 46 - L1 Platform-Specific Healing Fix)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, **L1 Platform-Specific Healing Fix**, 811 tests)
+**Last Updated:** 2026-01-17 (Session 47 - Go Agent Compliance Checks Implementation)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, **Go Agent Compliance Checks Implementation**, 811 + 24 Go tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,18 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.37, ISO v37, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37 with firewall port 50051, gRPC Stub Implementation, **L1 Platform-Specific Healing Fix with chaos lab verification**.
+**Status:** Phase 12 nearing completion. Agent v1.0.37, ISO v37, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab 2x Daily, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37 with firewall port 50051, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), **Go Agent Compliance Checks Implementation with registry queries and queue limits**.
+
+**Session 47 (Go Agent Compliance Checks Implementation):**
+- Added WMI registry query functions to Go agent (GetRegistryDWORD, GetRegistryString, RegistryKeyExists)
+- Fixed firewall check to use actual registry queries instead of hardcoded values
+- Fixed screen lock check to use actual registry queries for screen saver settings
+- Implemented pending reboot detection with 4 registry-based methods
+- Added offline queue size limits (MaxSize 10000, MaxAge 7 days) with automatic pruning
+- Added QueueStats for queue monitoring (count, usage ratio, oldest age)
+- Created 24 Go agent tests across 3 packages (checks, transport, wmi)
+- Fixed build issue (redundant newline in main.go)
+- Commit: `cbea2c9` - 11 files changed, 1030 insertions(+), 25 deletions(-)
 
 **Session 46 (L1 Platform-Specific Healing Fix):**
 - Fixed NixOS firewall drift triggering Windows runbook ("No Windows target available")
