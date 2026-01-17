@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 
-from .runbooks import WindowsRunbook, get_runbook, PS_HELPERS
+from .runbooks import WindowsRunbook, PS_HELPERS
 
 logger = logging.getLogger(__name__)
 
@@ -433,7 +433,9 @@ class WindowsExecutor:
         Returns:
             List of ExecutionResult for each phase
         """
-        runbook = get_runbook(runbook_id)
+        # Lazy import to avoid circular dependency
+        from . import ALL_RUNBOOKS
+        runbook = ALL_RUNBOOKS.get(runbook_id)
         if not runbook:
             return [ExecutionResult(
                 success=False,
@@ -442,7 +444,7 @@ class WindowsExecutor:
                 phase="init",
                 output={},
                 duration_seconds=0,
-                error=f"Runbook not found: {runbook_id}"
+                error=f"Runbook not found: {runbook_id}. Available: {list(ALL_RUNBOOKS.keys())[:5]}..."
             )]
 
         if phases is None:
@@ -609,11 +611,11 @@ class WindowsExecutor:
         Returns:
             Dict mapping runbook_id to detection result
         """
-        from .runbooks import RUNBOOKS
+        from . import ALL_RUNBOOKS  # Use ALL_RUNBOOKS for all 27 runbooks
 
         results = {}
 
-        for runbook_id, runbook in RUNBOOKS.items():
+        for runbook_id, runbook in ALL_RUNBOOKS.items():
             logger.info(f"Running detection: {runbook_id} on {target.hostname}")
 
             exec_results = await self.run_runbook(

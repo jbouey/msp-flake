@@ -1,0 +1,111 @@
+[
+  {
+    "id": "L1-NTP-001",
+    "name": "NTP Drift Remediation",
+    "description": "Restart chronyd when NTP sync drifts",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "ntp_sync"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["restart_service"],
+    "action_params": {"service_name": "chronyd"},
+    "severity": "medium",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-SERVICE-001",
+    "name": "Critical Service Recovery",
+    "description": "Restart failed critical services",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "critical_services"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["restart_service"],
+    "action_params": {"service_name": "sshd"},
+    "severity": "high",
+    "cooldown_seconds": 600,
+    "max_retries": 3,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-NIXOS-FW-001",
+    "name": "NixOS Firewall Alert",
+    "description": "Escalate NixOS firewall issues (declarative - cannot auto-fix)",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "firewall"},
+      {"field": "platform", "operator": "eq", "value": "nixos"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["escalate"],
+    "action_params": {"reason": "NixOS firewall is declarative, requires manual nix config update"},
+    "severity": "medium",
+    "cooldown_seconds": 3600,
+    "max_retries": 1,
+    "source": "custom",
+    "priority": 1
+  },
+  {
+    "id": "L1-FIREWALL-001",
+    "name": "Windows Firewall Recovery",
+    "description": "Re-enable Windows Firewall when disabled (Windows only)",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "firewall"},
+      {"field": "platform", "operator": "ne", "value": "nixos"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-FIREWALL-001", "phases": ["remediate", "verify"]},
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin",
+    "priority": 10
+  },
+  {
+    "id": "L1-FIREWALL-002",
+    "name": "Windows Firewall Status Recovery",
+    "description": "Re-enable Windows Firewall when status check fails",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "firewall_status"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-FIREWALL-001", "phases": ["remediate", "verify"]},
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-DEFENDER-001",
+    "name": "Windows Defender Recovery",
+    "description": "Re-enable Windows Defender when disabled",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "windows_defender"},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-AV-001", "phases": ["remediate", "verify"]},
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-DISK-001",
+    "name": "Disk Space Alert",
+    "description": "Escalate when disk usage critical",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "disk_space"},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["escalate"],
+    "action_params": {"reason": "Disk space critical, manual cleanup required"},
+    "severity": "high",
+    "cooldown_seconds": 3600,
+    "max_retries": 1,
+    "source": "builtin"
+  }
+]

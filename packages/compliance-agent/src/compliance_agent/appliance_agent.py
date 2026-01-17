@@ -934,6 +934,10 @@ class ApplianceAgent:
             "restore_audit_policy": "RB-WIN-SEC-002",       # Audit Policy
             "restore_defender": "RB-WIN-SEC-006",           # Defender Real-time
             "enable_bitlocker": "RB-WIN-SEC-005",           # BitLocker Status
+            # Alert-style actions from MCP server
+            "alert:firewall_disabled": "RB-WIN-FIREWALL-001",  # Firewall disabled alert
+            "alert:defender_disabled": "RB-WIN-SEC-006",       # Defender disabled alert
+            "alert:bitlocker_disabled": "RB-WIN-SEC-005",      # BitLocker disabled alert
         }
 
         handler = action_handlers.get(action)
@@ -1010,15 +1014,20 @@ class ApplianceAgent:
         if not runbook_id:
             return {"error": "runbook_id required"}
 
-        # Find target - use first Windows target if not specified
+        # Find target - try to match hostname, fallback to first available
         target = None
         if target_host:
+            # Try exact match first
             for t in self.windows_targets:
-                if t.hostname == target_host:
+                if t.hostname == target_host or t.hostname.split('.')[0].upper() == target_host.split('.')[0].upper():
                     target = t
                     break
-        elif self.windows_targets:
+
+        # Fallback to first available target if no match found
+        if not target and self.windows_targets:
             target = self.windows_targets[0]
+            if target_host:
+                logger.debug(f"Target host '{target_host}' not found in windows_targets, using fallback: {target.hostname}")
 
         if not target:
             return {"error": "No Windows target available"}
@@ -1055,13 +1064,27 @@ class ApplianceAgent:
                 f"{'SUCCESS' if overall_success else 'FAILED'} - {len(results)} phases"
             )
 
+            # Log details and extract error from failed phases
+            first_error = None
+            if not overall_success:
+                for result in results:
+                    if not result.success:
+                        logger.warning(
+                            f"  Phase '{result.phase}' failed: error={result.error}, "
+                            f"output={str(result.output)[:200]}"
+                        )
+                        # Capture the first error for the return value
+                        if first_error is None:
+                            first_error = result.error or f"Phase '{result.phase}' failed"
+
             return {
                 "action": "run_windows_runbook",
                 "runbook_id": runbook_id,
                 "target": target.hostname,
                 "phases": phases,
                 "success": overall_success,
-                "phase_details": phase_details
+                "phase_details": phase_details,
+                "error": first_error  # Include error for L1/L2 healing result
             }
 
         except ImportError as e:
