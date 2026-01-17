@@ -1,7 +1,90 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-17 (Session 46 - L1 Platform-Specific Healing Fix)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, **L1 Platform-Specific Healing Fix**)
+**Last Updated:** 2026-01-17 (Session 47 - Go Agent Compliance Checks Implementation)
+**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.37, ISO v37, 43 Runbooks, OTS Anchoring, Linux+Windows Support, Windows Sensors, Partner Escalations, RBAC, Multi-Framework, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab Automated, Network Compliance Check, Extended Check Types, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent Implementation, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing & ISO v37, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, **Go Agent Compliance Checks**)
+
+---
+
+## Session 47 (2026-01-17) - Go Agent Compliance Checks Implementation
+
+### 1. WMI Registry Query Functions
+**Status:** COMPLETE
+**Files Modified:**
+- `agent/internal/wmi/wmi.go` - Added registry query interface:
+  - `GetRegistryDWORD()` - Read DWORD values via StdRegProv
+  - `GetRegistryString()` - Read string values via StdRegProv
+  - `RegistryKeyExists()` - Check if registry key exists
+  - Registry hive constants (HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER, etc.)
+- `agent/internal/wmi/wmi_windows.go` - Windows implementation using COM/OLE
+- `agent/internal/wmi/wmi_other.go` - Non-Windows stubs
+
+### 2. Firewall Check Registry Queries
+**Status:** COMPLETE
+**File:** `agent/internal/checks/firewall.go`
+**Changes:**
+- Replaced hardcoded profile status with actual registry queries
+- Queries `SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy`
+- Checks EnableFirewall value for Domain, Private, Public profiles
+
+### 3. Screen Lock Check Registry Queries
+**Status:** COMPLETE
+**File:** `agent/internal/checks/screenlock.go`
+**Changes:**
+- Replaced stub with actual registry queries
+- Queries `Control Panel\Desktop` for:
+  - ScreenSaveActive (1 = enabled)
+  - ScreenSaveTimeOut (seconds)
+  - ScreenSaverIsSecure (1 = password required)
+
+### 4. Pending Reboot Detection
+**Status:** COMPLETE
+**File:** `agent/internal/checks/patches.go`
+**Changes:**
+- Implemented `checkPendingReboot()` with 4 detection methods:
+  1. Windows Update RebootRequired key
+  2. Component Based Servicing RebootPending key
+  3. PendingFileRenameOperations value
+  4. Computer name pending change detection
+
+### 5. Offline Queue Size Limits
+**Status:** COMPLETE
+**File:** `agent/internal/transport/offline.go`
+**Changes:**
+- Added `DefaultMaxQueueSize` (10000 events)
+- Added `DefaultMaxQueueAge` (7 days)
+- Added `QueueOptions` struct for configurable limits
+- Added `NewOfflineQueueWithOptions()` constructor
+- Added `enforceLimit()` method that:
+  - Prunes events older than maxAge
+  - Removes oldest 10% if at capacity
+- Added `QueueStats` struct with usage monitoring:
+  - Count, MaxSize, MaxAge
+  - OldestAge, UsageRatio
+
+### 6. Test Coverage
+**Status:** COMPLETE
+**Files Created:**
+- `agent/internal/checks/checks_test.go` - 12 tests for check types and helpers
+- `agent/internal/transport/offline_test.go` - 9 tests for offline queue
+- `agent/internal/wmi/wmi_test.go` - 5 tests for WMI helpers and non-Windows stubs
+
+**Test Results:** 24 tests passing on macOS (Windows-specific tests skipped)
+
+### 7. Build Fix
+**Status:** COMPLETE
+**File:** `agent/cmd/osiris-agent/main.go`
+**Fix:** Removed redundant newline from Println statement
+
+### 8. Git Commit
+**Status:** COMPLETE
+**Commit:** `cbea2c9` - feat: Complete Go agent compliance checks implementation (Session 47)
+**Stats:** 11 files changed, 1030 insertions(+), 25 deletions(-)
+
+### 9. Remaining Tasks
+**Status:** PENDING
+- Build and test Go agent on Windows VM
+- Verify registry queries work correctly on actual Windows machines
+- Test gRPC streaming with new check implementations
 
 ---
 

@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-17 (Session 46)
-**Current State:** L1 Platform-Specific Healing Fix Complete
+**Last Updated:** 2026-01-17 (Session 47)
+**Current State:** Go Agent Compliance Checks Implementation Complete
 
 ---
 
@@ -11,11 +11,43 @@
 |-----------|--------|---------|
 | Agent | v1.0.37 | Stable |
 | ISO | v37 | Built, on iMac |
-| Tests | 811 passed | Healthy |
-| Go Agent | Deployed to NVWS01 | Needs rebuild |
+| Tests | 811 + 24 Go tests | Healthy |
+| Go Agent | Registry queries implemented | 16.6MB binary |
 | gRPC | Fully Implemented | Both Python + Go |
 | Chaos Lab | Verified | L1 healing working |
-| L1 Rules | Platform-specific | 7 rules in l1_baseline.json |
+| L1 Rules | Platform-specific | 29 rules in l1_baseline.json |
+| Security Runbooks | 13 total | All categories |
+
+---
+
+## Session 47 Summary (2026-01-17)
+
+### Completed
+1. **WMI Registry Query Functions** - GetRegistryDWORD, GetRegistryString, RegistryKeyExists
+2. **Firewall Check Fix** - Uses actual registry queries instead of hardcoded values
+3. **Screen Lock Check Fix** - Queries ScreenSaveActive, ScreenSaveTimeOut, ScreenSaverIsSecure
+4. **Pending Reboot Detection** - 4 detection methods (Windows Update, CBS, PendingFileRename, ComputerName)
+5. **Offline Queue Size Limits** - MaxSize 10000, MaxAge 7 days, automatic pruning
+6. **Queue Stats** - Count, UsageRatio, OldestAge for monitoring
+7. **24 Go Tests** - checks, transport, wmi packages
+
+### Files Created
+- `agent/internal/checks/checks_test.go` - 12 tests
+- `agent/internal/transport/offline_test.go` - 9 tests
+- `agent/internal/wmi/wmi_test.go` - 5 tests
+
+### Files Modified
+- `agent/internal/wmi/wmi.go` - Registry query interface
+- `agent/internal/wmi/wmi_windows.go` - Windows implementation using COM/OLE
+- `agent/internal/wmi/wmi_other.go` - Non-Windows stubs
+- `agent/internal/checks/firewall.go` - Registry-based profile detection
+- `agent/internal/checks/screenlock.go` - Registry-based screen saver settings
+- `agent/internal/checks/patches.go` - Pending reboot detection
+- `agent/internal/transport/offline.go` - Queue limits and stats
+- `agent/cmd/osiris-agent/main.go` - Build fix
+
+### Git Commit
+- `cbea2c9` - 11 files, 1030 insertions, 25 deletions
 
 ---
 
@@ -25,8 +57,9 @@
 1. **NixOS Firewall Platform-Specific Rule** - Escalates to L3 instead of trying Windows runbook
 2. **L1 Rules Action Format Fix** - Changed to proper action_params structure
 3. **Defender Runbook ID Fix** - RB-WIN-SEC-006 -> RB-WIN-AV-001
-4. **L1 Rules Saved to Codebase** - l1_baseline.json with 7 rules
+4. **L1 Rules Saved to Codebase** - l1_baseline.json with 29 rules (expanded from 7)
 5. **Chaos Lab Verification** - Firewall and Defender attacks healed successfully
+6. **Comprehensive Security Runbooks** - Added 7 new runbooks (SMB, NTLM, Users, NLA, UAC, EventLog, CredGuard)
 
 ### Chaos Lab Results
 | Attack | L1 Rule | Result |
@@ -109,22 +142,27 @@
 
 ---
 
-## Next Session (47) Priorities
+## Next Session (48) Priorities
 
-### L1 Rules Expansion
-1. Add L1 rule for `password_policy` check type → RB-WIN-SEC-003
-2. Add L1 rule for `audit_policy` check type → RB-WIN-SEC-002
-3. Create runbooks for password/audit policy if not exists in ALL_RUNBOOKS
+### Go Agent Windows Testing
+1. Deploy rebuilt Go agent binary to NVWS01 (16.6MB with registry queries)
+2. Test compliance checks on actual Windows machine
+3. Verify registry queries work correctly
 
-### Go Agent Integration
-1. Test Go Agent gRPC communication (without --dry-run)
+### Go Agent gRPC Integration
+1. Test gRPC communication (without --dry-run)
 2. Verify drift events flowing to appliance
 3. Monitor AgentRegistry for connected agents
+
+### ISO v37 Deployment
+1. Flash ISO v37 to physical appliance (192.168.88.246)
+2. Verify gRPC server running on port 50051
+3. End-to-end test: Go Agent → Appliance → Central Command
 
 ### Verification Steps
 - Check chaos lab logs: `~/chaos-lab/logs/cadence.log`
 - Verify gRPC server on port 50051
-- Run chaos lab with password/audit policy attacks after adding rules
+- Test Go agent with registry queries on NVWS01
 
 ---
 
