@@ -78,46 +78,23 @@ func queryWindows(ctx context.Context, namespace, query string) ([]QueryResult, 
 		}
 		item := itemRaw.ToIDispatch()
 
-		// Get properties
-		propsRaw, err := oleutil.GetProperty(item, "Properties_")
-		if err != nil {
-			item.Release()
-			continue
-		}
-		props := propsRaw.ToIDispatch()
-
-		// Get property count
-		propCountRaw, err := oleutil.GetProperty(props, "Count")
-		if err != nil {
-			props.Release()
-			item.Release()
-			continue
-		}
-		propCount := int(propCountRaw.Val)
-
-		// Build result map
+		// Build result map by getting properties directly from the item
+		// This is more reliable than iterating Properties_ collection
 		qr := make(QueryResult)
 
-		for j := 0; j < propCount; j++ {
-			propRaw, err := oleutil.CallMethod(props, "ItemIndex", j)
-			if err != nil {
-				continue
-			}
-			prop := propRaw.ToIDispatch()
+		// Common Win32_Service properties we need
+		propNames := []string{
+			"Name", "State", "Status", "DisplayName", "StartMode",
+			"PathName", "ProcessId", "ServiceType", "StartName",
+			// For other WMI classes, add commonly needed properties
+			"AntivirusEnabled", "RealTimeProtectionEnabled", // Defender
+			"HotFixID", "InstalledOn", // Patches
+		}
 
-			// Get property name
-			nameRaw, err := oleutil.GetProperty(prop, "Name")
+		for _, propName := range propNames {
+			valRaw, err := oleutil.GetProperty(item, propName)
 			if err != nil {
-				prop.Release()
-				continue
-			}
-			name := nameRaw.ToString()
-
-			// Get property value
-			valRaw, err := oleutil.GetProperty(prop, "Value")
-			if err != nil {
-				prop.Release()
-				continue
+				continue // Property doesn't exist for this class
 			}
 
 			// Convert to Go type
@@ -137,13 +114,10 @@ func queryWindows(ctx context.Context, namespace, query string) ([]QueryResult, 
 				val = valRaw.Value()
 			}
 
-			qr[name] = val
-			prop.Release()
+			qr[propName] = val
 		}
 
 		results = append(results, qr)
-
-		props.Release()
 		item.Release()
 	}
 
