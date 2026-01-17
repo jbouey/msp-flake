@@ -9,7 +9,7 @@
 
 python311Packages.buildPythonApplication rec {
   pname = "compliance-agent";
-  version = "1.0.35";
+  version = "1.0.38";
 
   src = ./.;
 
