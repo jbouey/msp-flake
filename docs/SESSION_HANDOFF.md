@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-18 (Session 53 - Complete)
-**Current State:** Go Agent gRPC Integration VERIFIED, ISO v43 Deployed to Physical Appliance
+**Last Updated:** 2026-01-18 (Session 54 - Complete)
+**Current State:** Phase 13 Fleet Updates UI DEPLOYED, Rollout Management WORKING, Healing Tier Toggle VERIFIED
 
 ---
 
@@ -12,45 +12,54 @@
 | Agent | v1.0.43 | Stable |
 | ISO | v43 | **DEPLOYED** - Physical Appliance |
 | Tests | 811 + 24 Go tests | Healthy |
+| Fleet Updates UI | **DEPLOYED** | Create releases, rollouts working |
+| Rollout Management | **TESTED** | Pause/Resume/Advance Stage |
+| Healing Tier Toggle | **VERIFIED** | Standard ↔ Full Coverage |
 | Go Agent | **DEPLOYED to NVWS01** | gRPC Working |
-| gRPC | **VERIFIED WORKING** | Drift → L1 → Runbook ✅ |
+| gRPC | **VERIFIED WORKING** | Drift → L1 → Runbook |
 | Active Healing | **ENABLED** | HEALING_DRY_RUN=false |
 | L1 Rules | 21 (full coverage) | Platform-specific + Go Agent types |
-| Security Audit | COMPLETE | 13 fixes |
-| Zero-Friction Updates | **DOCUMENTED** | Phase 13 ready |
 
 ---
 
-## Session 53 Summary (2026-01-17/18) - COMPLETE
+## Session 54 Summary (2026-01-18) - COMPLETE
 
 ### Completed
 
-#### 1. Go Agent gRPC Integration VERIFIED
+#### 1. Fleet Updates UI Deployed and Tested
 - **Status:** COMPLETE
-- **Flow:** Go Agent → gRPC (:50051) → Python Server → L1 Rules → Windows Runbooks
-- **Verified Events:**
-  - `firewall` → L1-FIREWALL-001 → RB-WIN-FIREWALL-001 ✅
-  - `defender` → L1-DEFENDER-001 → RB-WIN-SEC-006 ✅
-  - `bitlocker` → L1-BITLOCKER-001 ✅
-  - `screenlock` → L1-SCREENLOCK-001 ✅
+- **URL:** dashboard.osiriscare.net/fleet-updates
+- **Features Tested:**
+  - Stats cards: Latest Version, Active Releases, Active Rollouts, Pending Updates
+  - Create releases: version, ISO URL, SHA256, agent version, notes
+  - Set as Latest button to mark fleet default
+  - All features verified working in production
 
-#### 2. L1 Rule Matching Fix
-- **Root Cause:** Go Agent incidents missing `status` field required by L1 rules
-- **Fix:** Added `"status": "fail"` to incident raw_data in grpc_server.py
-- **Also Fixed:** Removed `RB-AUTO-FIREWALL` rule (empty conditions matched ALL incidents)
+#### 2. Test Release v44 Created
+- **Status:** COMPLETE
+- ISO URL: https://updates.osiriscare.net/v44.iso
+- SHA256 checksum: provided
+- Agent version: 1.0.44
+- Set as "Latest" version for fleet
 
-#### 3. ISO v43 Built and Deployed
-- Built on VPS with agent v1.0.43
-- Transferred to iMac via relay
-- Flashed to physical appliance (192.168.88.246)
-- Fixed internal SSD corruption (user wiped with dd, USB boot restored)
+#### 3. Rollout Management Tested
+- **Status:** COMPLETE
+- Started staged rollout (5% → 25% → 100%)
+- Pause: Working
+- Resume: Working
+- Advance Stage: Working (Stage 1 → Stage 2)
+- Database persistence verified
 
-#### 4. Zero-Friction Updates Documentation (Phase 13)
-- Created `docs/ZERO_FRICTION_UPDATES.md`
-- A/B partition scheme for zero-touch remote updates
-- Database schema for update_releases, update_rollouts, appliance_updates
-- Rollout stages: Canary → Early Adopters → Full Fleet
-- Aligned with business model: "Install once, never touch again"
+#### 4. Healing Tier Toggle Verified
+- **Status:** COMPLETE
+- Site Detail shows "Healing Mode" dropdown
+- Options: Standard (4 rules), Full Coverage (21 rules)
+- API: PUT /api/sites/{site_id}/healing-tier working
+- Round-trip tested and verified in database
+
+#### 5. Bug Fixes
+- **sites.py:** Added `List` to typing imports (fixed container crash)
+- **api.ts:** Renamed duplicate `fleetApi` to `fleetUpdatesApi`
 
 ---
 
@@ -75,17 +84,20 @@
 
 ### VPS (178.156.162.116)
 - **Status:** Online
+- **Dashboard:** dashboard.osiriscare.net
+- **Fleet Updates:** dashboard.osiriscare.net/fleet-updates
 - **ISO v43:** `/root/msp-iso-build/result-iso-v43/iso/osiriscare-appliance.iso`
 
 ---
 
 ## Next Session Priorities
 
-### 1. Phase 13: Zero-Touch Update System
+### 1. Phase 13: A/B Partition Implementation
 ```
-See docs/ZERO_FRICTION_UPDATES.md for architecture
-- A/B partition implementation
-- Central Command update API
+Appliance-side implementation:
+- A/B partition scheme in appliance-image.nix
+- Update agent (download, verify, apply)
+- Boot health gate service
 - Auto-rollback mechanism
 ```
 
@@ -132,8 +144,10 @@ cd packages/compliance-agent && source venv/bin/activate && python -m pytest tes
 
 | File | Purpose |
 |------|---------|
-| `docs/ZERO_FRICTION_UPDATES.md` | Phase 13 zero-touch update architecture |
-| `packages/compliance-agent/src/compliance_agent/grpc_server.py` | gRPC server with status field fix |
+| `docs/ZERO_FRICTION_UPDATES.md` | Phase 13 architecture (UI deployed, A/B pending) |
+| `mcp-server/central-command/backend/fleet_updates.py` | Fleet API backend |
+| `mcp-server/central-command/frontend/src/pages/FleetUpdates.tsx` | Fleet Updates UI |
+| `mcp-server/central-command/backend/sites.py` | Healing tier API (List import fixed) |
 | `.agent/TODO.md` | Current task list |
 | `.agent/CONTEXT.md` | Full project context |
 

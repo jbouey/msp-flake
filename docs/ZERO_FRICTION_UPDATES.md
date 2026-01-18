@@ -2,6 +2,20 @@
 
 **Phase 13 - Fleet Update Infrastructure**
 
+**Status:** Central Command UI DEPLOYED (Session 54), Appliance A/B Partition PENDING
+
+## Deployment Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **Central Command UI** | ✅ DEPLOYED | Fleet Updates page at /fleet-updates |
+| **Fleet API** | ✅ DEPLOYED | Create releases, manage rollouts |
+| **Database Schema** | ✅ DEPLOYED | update_releases, update_rollouts, appliance_updates |
+| **Rollout Management** | ✅ TESTED | Pause, resume, advance stage working |
+| **A/B Partition** | 🟡 PENDING | Appliance-side implementation needed |
+| **Boot Health Gate** | 🟡 PENDING | Post-boot auto-rollback logic |
+| **Update Agent** | 🟡 PENDING | Download/verify/apply logic |
+
 ## Overview
 
 A/B partition scheme enabling zero-touch remote updates for all physical appliances via Central Command.
@@ -352,11 +366,17 @@ osiris-update --skip-window
 
 ## Phase 13 Implementation Order
 
-1. **Week 1**: A/B partition scheme in appliance-image.nix
-2. **Week 1**: Boot health gate service
-3. **Week 2**: Update agent (download, verify, apply)
-4. **Week 2**: Central Command fleet API
-5. **Week 3**: Staged rollout logic
-6. **Week 3**: Fleet Updates UI
+1. ~~**Week 1**: A/B partition scheme in appliance-image.nix~~ 🟡 PENDING
+2. ~~**Week 1**: Boot health gate service~~ 🟡 PENDING
+3. ~~**Week 2**: Update agent (download, verify, apply)~~ 🟡 PENDING
+4. ~~**Week 2**: Central Command fleet API~~ ✅ COMPLETE (Session 54)
+5. ~~**Week 3**: Staged rollout logic~~ ✅ COMPLETE (Session 54)
+6. ~~**Week 3**: Fleet Updates UI~~ ✅ COMPLETE (Session 54)
 7. **Week 4**: Testing with VM fleet
 8. **Week 4**: Production rollout to physical appliances
+
+### Session 54 Accomplishments
+- Fleet Updates UI deployed at dashboard.osiriscare.net/fleet-updates
+- Test release v44 created with staged rollout (5% → 25% → 100%)
+- Rollout controls tested: pause, resume, advance stage all working
+- Database tables verified with test data
