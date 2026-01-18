@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-18 (Session 53 - Complete)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.43, ISO v43, 43 Runbooks, **Go Agent Deployed to NVWS01**, **gRPC Integration VERIFIED WORKING**, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Active Healing Enabled, Security Audit & Healing Tier Toggle, **Zero-Friction Updates Documented**)
-**Test Status:** 811 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.43, 43 total runbooks (27 Windows + 16 Linux), **Go Agent running on NVWS01 (192.168.88.251)**, **gRPC drift events → L1 rules → Windows runbooks VERIFIED**, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab v2 multi-VM with campaign-level restore, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, Active healing enabled (HEALING_DRY_RUN=false), L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage)
+**Last Updated:** 2026-01-18 (Session 54 - Complete)
+**Phase:** Phase 13 - Zero-Touch Update System DEPLOYED (Agent v1.0.43, ISO v43, **Fleet Updates UI DEPLOYED**, **Rollout Management WORKING**, **Healing Tier Toggle VERIFIED**, 43 Runbooks, Go Agent Deployed to NVWS01, gRPC Integration Working)
+**Test Status:** 811 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.43, 43 total runbooks (27 Windows + 16 Linux), **Fleet Updates UI tested (create releases, rollouts, pause/resume/advance)**, **Healing Tier dropdown working (Standard/Full Coverage)**, **Test release v44 created with staged rollout**, Go Agent running on NVWS01 (192.168.88.251), gRPC drift events → L1 rules → Windows runbooks VERIFIED, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab v2 multi-VM with campaign-level restore, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, Active healing enabled (HEALING_DRY_RUN=false), L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage)
 
 ---
 
@@ -546,6 +546,18 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
 - **Agent:** compliance-agent v1.0.40 with gRPC server + Active Healing
 - **Status:** Superseded by v43
+
+### Session 54 Changes (2026-01-18) - Phase 13 Fleet Updates Deployed
+- **Fleet Updates UI:** Deployed and tested at dashboard.osiriscare.net/fleet-updates
+  - Stats cards: Latest Version, Active Releases, Active Rollouts, Pending Updates
+  - Create releases with version, ISO URL, SHA256, agent version, notes
+  - Set releases as "Latest" for fleet default
+- **Test Release v44:** Created via UI with staged rollout (5% → 25% → 100%)
+- **Rollout Management:** Pause/Resume/Advance Stage all working
+- **Healing Tier Toggle:** Verified working (Standard 4 rules ↔ Full Coverage 21 rules)
+- **Bug Fixes:**
+  - `sites.py`: Added `List` to typing imports (fixed container crash)
+  - `api.ts`: Renamed duplicate `fleetApi` to `fleetUpdatesApi`
 
 ### Session 53 Changes (2026-01-18) - Go Agent gRPC Integration Complete
 - **gRPC L1 Fix:** Added `status: "fail"` field to Go Agent incident raw_data (required by L1 rules)

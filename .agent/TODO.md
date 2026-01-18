@@ -1,23 +1,71 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-18 (Session 53 - Complete)
-**Sprint:** Phase 12 - Launch Readiness (Agent v1.0.43, ISO v43, 43 Runbooks, Go Agent Deployed to NVWS01, gRPC Integration Complete)
+**Last Updated:** 2026-01-18 (Session 54 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System DEPLOYED (Agent v1.0.43, ISO v43, Fleet Updates UI, Healing Tier Toggle, Rollout Management)
+
+---
+
+## Session 54 (2026-01-18) - Phase 13 Fleet Updates Deployed - COMPLETE
+
+### Completed This Session
+
+#### 1. Fleet Updates UI Deployed and Tested
+**Status:** COMPLETE
+- Navigated to dashboard.osiriscare.net/fleet-updates
+- Stats cards showing: Latest Version, Active Releases, Active Rollouts, Pending Updates
+- "New Release" button creates releases with version, ISO URL, SHA256, agent version, notes
+- "Set as Latest" button to mark a release as the fleet default
+- All features verified working in production
+
+#### 2. Test Release v44 Created
+**Status:** COMPLETE
+- Created release v44 via Fleet Updates UI
+- ISO URL: https://updates.osiriscare.net/v44.iso
+- SHA256 checksum provided
+- Agent version: 1.0.44
+- Set as "Latest" version
+
+#### 3. Rollout Management Tested
+**Status:** COMPLETE
+- Started staged rollout for v44 (5% → 25% → 100%)
+- **Pause/Resume:** Working - tested pause and resume of rollout
+- **Advance Stage:** Working - advanced from Stage 1 (5%) to Stage 2 (25%)
+- Rollout data persisted correctly in database with all fields
+
+#### 4. Healing Tier Toggle Verified
+**Status:** COMPLETE
+- Site Detail page shows "Healing Mode" dropdown
+- Options: Standard (4 rules), Full Coverage (21 rules)
+- **Bug Fixed:** `sites.py` missing `List` import causing container crash
+- **API Verified:** PUT /api/sites/{site_id}/healing-tier working
+- Round-trip tested: Full Coverage → Standard → verified in database
+
+#### 5. Bug Fixes
+**Status:** COMPLETE
+- **Fixed:** `fleetApi` duplicate declaration in api.ts - renamed to `fleetUpdatesApi`
+- **Fixed:** `List` not imported in sites.py - added to typing imports
+- Both fixes deployed to VPS
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/sites.py` | Added `List` to typing imports |
+| `mcp-server/central-command/frontend/src/utils/api.ts` | Renamed update API to `fleetUpdatesApi` |
+| `mcp-server/central-command/frontend/src/pages/FleetUpdates.tsx` | Updated to use `fleetUpdatesApi` |
 
 ---
 
 ## Session 53 (2026-01-17/18) - Go Agent Deployment & gRPC Fixes - COMPLETE
 
-### Completed This Session
+### Completed
 
 #### 1. Go Agent Deployment to NVWS01
-**Status:** COMPLETE
 - Uploaded `osiris-agent.exe` (16.6MB) to appliance web server
 - Deployed to NVWS01 (192.168.88.251) via WinRM from appliance
 - Installed as Windows scheduled task (runs as SYSTEM at startup)
 - Agent running and sending drift events
 
 #### 2. gRPC Integration Verified WORKING
-**Status:** COMPLETE
 - Go agent connects to appliance on port 50051
 - Drift events received and processed:
   - `NVWS01/firewall passed=False` → L1-FIREWALL-001 → RB-WIN-FIREWALL-001 ✅
@@ -26,46 +74,24 @@
   - `NVWS01/screenlock passed=False` → L1-SCREENLOCK-001 ✅
 
 #### 3. L1 Rule Matching Fix
-**Status:** COMPLETE
-- **Root Cause:** Go Agent incidents missing `status` field required by L1 rules
-- **Fix:** Added `"status": "fail"` to incident raw_data in grpc_server.py
-- **Also Fixed:** Removed bad `RB-AUTO-FIREWALL` rule (had empty conditions, matched ALL incidents)
-- **Added:** Proper L1 rules for Go Agent check types (L1-DEFENDER-001, L1-BITLOCKER-001, L1-SCREENLOCK-001)
+- Added `"status": "fail"` to incident raw_data in grpc_server.py
+- Removed bad `RB-AUTO-FIREWALL` rule (had empty conditions)
+- Added proper L1 rules for Go Agent check types
 
-#### 4. ISO v43 Built and Deployed
-**Status:** COMPLETE
-- Built on VPS: `/root/msp-iso-build/result-iso-v43/iso/osiriscare-appliance.iso`
-- Transferred to iMac via relay
-- Physical appliance (192.168.88.246) reflashed and running v1.0.43
-- Internal SSD corruption from earlier dd operation fixed by user
-
-#### 5. Zero-Friction Updates Documentation
-**Status:** COMPLETE
+#### 4. Zero-Friction Updates Documentation
 - Created `docs/ZERO_FRICTION_UPDATES.md` - Phase 13 architecture
-- A/B partition scheme for appliances
-- Remote ISO deployment via Central Command
-- Auto-rollback on failed updates
-- Database schema for update_releases, update_rollouts, appliance_updates
-- Rollout stages: Canary (5%) → Early Adopters (25%) → Full Fleet (100%)
-
-### Files Modified This Session
-| File | Change |
-|------|--------|
-| `packages/compliance-agent/src/compliance_agent/grpc_server.py` | Added `status: "fail"` to incident raw_data |
-| `packages/compliance-agent/setup.py` | Version bump to 1.0.43 |
-| `docs/ZERO_FRICTION_UPDATES.md` | NEW - Phase 13 zero-touch update architecture |
 
 ---
 
 ## Next Session Priorities
 
-### 1. Phase 13: Zero-Touch Update System
-**Status:** PLANNED (docs ready at `docs/ZERO_FRICTION_UPDATES.md`)
+### 1. Phase 13: A/B Partition Implementation
+**Status:** PLANNED (Central Command UI complete)
 **Details:**
-- Implement A/B partition scheme for appliances
-- Remote ISO deployment via Central Command
-- Auto-rollback on failed updates
-- Database migrations for update management
+- Implement A/B partition scheme in appliance ISO
+- Update agent for partition-aware updates
+- Boot health gate service
+- Auto-rollback mechanism
 
 ### 2. Fix VPS 502 Error
 **Status:** PENDING
