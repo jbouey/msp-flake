@@ -239,6 +239,7 @@ if GRPC_AVAILABLE:
                     severity="high" if event.hipaa_control else "medium",
                     raw_data={
                         "check_type": event.check_type,
+                        "status": "fail",  # L1 rules require status field
                         "drift_detected": True,
                         "go_agent": True,
                         "expected": event.expected,
