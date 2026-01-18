@@ -222,6 +222,7 @@ export interface Site {
   contact_name: string | null;
   contact_email: string | null;
   tier: string;
+  healing_tier: 'standard' | 'full_coverage';
   status: string;
   live_status: 'online' | 'stale' | 'offline' | 'pending';
   onboarding_stage: string;
@@ -372,6 +373,12 @@ export const sitesApi = {
   deleteCredential: (siteId: string, credentialId: string) =>
     fetchSitesApi<{ status: string }>(`/sites/${siteId}/credentials/${credentialId}`, {
       method: 'DELETE',
+    }),
+
+  updateHealingTier: (siteId: string, healingTier: 'standard' | 'full_coverage') =>
+    fetchSitesApi<{ status: string; site_id: string; healing_tier: string }>(`/sites/${siteId}/healing-tier`, {
+      method: 'PUT',
+      body: JSON.stringify({ healing_tier: healingTier }),
     }),
 };
 

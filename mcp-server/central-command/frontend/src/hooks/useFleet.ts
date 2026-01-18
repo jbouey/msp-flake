@@ -279,6 +279,22 @@ export function useAddCredential() {
   });
 }
 
+/**
+ * Hook for updating healing tier for a site
+ */
+export function useUpdateHealingTier() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, healingTier }: { siteId: string; healingTier: 'standard' | 'full_coverage' }) =>
+      sitesApi.updateHealingTier(siteId, healingTier),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['sites'] });
+      queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+    },
+  });
+}
+
 // =============================================================================
 // ORDER HOOKS
 // =============================================================================

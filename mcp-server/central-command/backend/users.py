@@ -295,8 +295,11 @@ async def admin_reset_password(
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if len(reset.new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    # SECURITY: Validate password complexity
+    from .auth import validate_password_complexity
+    is_valid, error_msg = validate_password_complexity(reset.new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
 
     # Update password
     password_hash = hash_password(reset.new_password)
@@ -586,8 +589,11 @@ async def accept_invite(accept: InviteAcceptRequest, request: Request, db=Depend
     if accept.password != accept.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
-    if len(accept.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    # SECURITY: Validate password complexity
+    from .auth import validate_password_complexity
+    is_valid, error_msg = validate_password_complexity(accept.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
 
     token_hash = hash_token(accept.token)
 
@@ -719,8 +725,11 @@ async def change_my_password(
     if change.new_password != change.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
-    if len(change.new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    # SECURITY: Validate password complexity
+    from .auth import validate_password_complexity
+    is_valid, error_msg = validate_password_complexity(change.new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
 
     # Verify current password
     result = await db.execute(
