@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-17 (Session 52)
-**Current State:** Security Audit Complete, Healing Tier Toggle Implemented
+**Last Updated:** 2026-01-17 (Session 53)
+**Current State:** Go Agent Deployed to NVWS01, gRPC Server Bugs Fixed
 
 ---
 
@@ -9,11 +9,11 @@
 
 | Component | Status | Version |
 |-----------|--------|---------|
-| Agent | v1.0.40 | Stable |
+| Agent | v1.0.42 | Stable |
 | ISO | v40 | **DEPLOYED** - gRPC working |
 | Tests | 811 + 24 Go tests | Healthy |
-| Go Agent | Deployed to NVWS01 | 16.6MB binary |
-| gRPC | **WORKING** | Verified |
+| Go Agent | **DEPLOYED to NVWS01** | PID 7804, Scheduled Task |
+| gRPC | **3 BUG FIXES** | Import, Event Loop, Method Signature |
 | Chaos Lab | **v2 Multi-VM** | Ready |
 | Active Healing | **ENABLED** | HEALING_DRY_RUN=false |
 | L1 Rules | 21 (full coverage) | Platform-specific |
@@ -22,77 +22,65 @@
 
 ---
 
-## Session 52 Summary (2026-01-17)
+## Session 53 Summary (2026-01-17)
 
 ### Completed
 
-#### 1. Healing Tier Toggle (Central Command Integration)
-- **Database:** `021_healing_tier.sql` migration adds `healing_tier` column to sites table
-- **API Endpoints:**
-  - `GET /api/sites/{site_id}/healing-tier` - Get current tier
-  - `PUT /api/sites/{site_id}/healing-tier` - Update tier
-- **Frontend:** Toggle switch in SiteDetail.tsx under Appliances section
-- **Agent:** `appliance_client.py` syncs tier-specific rules on check-in
+#### 1. Workstation Credential Type Fix
+- **Issue:** NVWS01 workstation not showing in site appliance despite being in database
+- **Root Cause:** `domain_member` credential type wasn't in allowed SQL query types
+- **Fix:** Added `domain_member` to both `mcp-server/main.py` and `mcp-server/central-command/backend/sites.py`
+- **Credential:** localadmin / NorthValley2024!
 
-#### 2. Comprehensive Security Audit (13 Fixes)
+#### 2. Go Agent Deployment to NVWS01
+- **Method:** WinRM from appliance (local machine lacked pywinrm)
+- **Binary:** `osiris-agent.exe` (16.6MB) uploaded to appliance web server
+- **Installation Path:** `C:\Program Files\OsirisCare\osiris-agent.exe`
+- **Config Path:** `C:\ProgramData\OsirisCare\config.json`
+- **Attempts:**
+  1. Windows Service - FAILED (Error 1053, no SCM integration in binary)
+  2. NSSM - FAILED (nssm.cc website down)
+  3. **Scheduled Task - SUCCESS** (runs at logon + every 5 minutes)
+- **Status:** Running as PID 7804
 
-**Backend Fixes:**
-| File | Issue | Fix |
-|------|-------|-----|
-| `auth.py` | Weak token hashing | HMAC-SHA256 with server secret |
-| `auth.py` | Admin password logged | Write to secure file |
-| `auth.py` | No password complexity | 12+ chars, upper/lower/digit/special |
-| `evidence_chain.py` | Hardcoded MinIO credentials | Required env vars |
-| `partners.py` | Weak API key hashing | HMAC with required secret |
-| `partners.py` | No POST magic link | Added POST /auth/magic |
-| `portal.py` | Token in URL | Added POST /auth/validate |
-| `server_minimal.py` | CORS wildcard | Specific origins |
-| `main.py` | No rate limiting | RateLimitMiddleware |
-| `main.py` | No security headers | SecurityHeadersMiddleware |
-| `users.py` | No password complexity | Validation on all endpoints |
+#### 3. gRPC Server Bug Fixes (3 Critical)
+| Bug | Location | Issue | Fix |
+|-----|----------|-------|-----|
+| Import Error | Line 232 | `from .models import Incident` | `from .incident_db import Incident` |
+| Event Loop Error | Lines 248-257 | `asyncio.get_event_loop()` fails in thread pool | `asyncio.run()` with fallback |
+| Method Signature | `_async_heal()` | `heal(incident)` not valid | `heal(site_id, host_id, incident_type, severity, raw_data)` |
 
-**Frontend Fixes:**
-| File | Issue | Fix |
-|------|-------|-----|
-| `PortalLogin.tsx` | Open redirect | siteId validation regex |
-| `PortalLogin.tsx` | Token in URL | POST with body |
-| `IntegrationSetup.tsx` | OAuth redirect | Provider whitelist |
-| `PartnerLogin.tsx` | Token in URL | POST with body |
-
-#### 3. New Files Created
-| File | Purpose |
-|------|---------|
-| `rate_limiter.py` | Sliding window rate limiting (60/min, 1000/hr, 10/burst) |
-| `security_headers.py` | CSP, X-Frame-Options, HSTS, X-Content-Type-Options |
-| `021_healing_tier.sql` | Database migration for healing tier column |
+#### 4. NixOS Hot-Patch via Bind Mount
+- **Problem:** NixOS Nix store is read-only, cannot modify files directly
+- **Solution:**
+  1. Created patched file at `/var/lib/compliance-agent/patch/grpc_server.py`
+  2. Used bind mount to overlay the Nix store file:
+     ```bash
+     mount --bind /var/lib/compliance-agent/patch/grpc_server.py \
+       /nix/store/.../grpc_server.py
+     ```
+  3. Restarted compliance-agent service
+- **Note:** Not permanent - needs ISO v42 build for permanent fix
 
 ### Files Modified This Session
 | File | Change |
 |------|--------|
-| `auth.py` | Token hashing, credential logging, password validation |
-| `evidence_chain.py` | Removed hardcoded MinIO credentials |
-| `partners.py` | API key hashing, POST magic link endpoint |
-| `portal.py` | POST validation endpoints |
-| `sites.py` | Healing tier endpoints |
-| `users.py` | Password complexity validation |
-| `main.py` | Rate limiting and security headers middleware |
-| `server_minimal.py` | Fixed CORS, added security headers |
-| `SiteDetail.tsx` | Healing tier toggle UI |
-| `IntegrationSetup.tsx` | OAuth redirect validation |
-| `PortalLogin.tsx` | Open redirect fix, POST validation |
-| `PartnerLogin.tsx` | POST magic link |
-| `useFleet.ts` | useUpdateHealingTier hook |
-| `api.ts` | updateHealingTier API function |
-| `appliance_client.py` | Tier-specific rule sync |
+| `packages/compliance-agent/src/compliance_agent/grpc_server.py` | 3 bug fixes |
+| `packages/compliance-agent/setup.py` | Version bump to 1.0.42 |
+| `mcp-server/main.py` | Added `domain_member` credential type |
+| `mcp-server/central-command/backend/sites.py` | Added `domain_member` credential type |
+| `.agent/TODO.md` | Session 53 details |
+| `.agent/CONTEXT.md` | Updated header |
 
 ---
 
 ## Infrastructure State
 
 ### Physical Appliance (192.168.88.246)
-- **Status:** Online, running ISO v40
-- **Agent:** v1.0.40
+- **Status:** Online, running ISO v40 with hot-patch
+- **Agent:** v1.0.42 (patched)
 - **Active Healing:** ENABLED
+- **Hot-Patch:** `/var/lib/compliance-agent/patch/grpc_server.py` bind-mounted
 
 ### VM Appliance (192.168.88.247)
 - **Status:** Online, running ISO v40
@@ -101,41 +89,37 @@
 ### Windows Infrastructure
 | Machine | IP | Go Agent | Status |
 |---------|-----|----------|--------|
-| NVWS01 | 192.168.88.251 | Deployed | Dry-run tested |
+| NVWS01 | 192.168.88.251 | **DEPLOYED** | PID 7804, Scheduled Task |
 | NVDC01 | 192.168.88.250 | - | Domain Controller |
 | NVSRV01 | 192.168.88.244 | - | Server Core |
 
 ### VPS (178.156.162.116)
-- **Needs:** Security fixes deployment
-- **Needs:** Database migration 021_healing_tier.sql
-- **Needs:** Env vars: SESSION_TOKEN_SECRET, API_KEY_SECRET, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
+- **Status:** Online
+- **Needs:** ISO v42 build with gRPC fixes
 
 ---
 
 ## Next Session Priorities
 
-### 1. Run Tests
-```bash
-cd /Users/dad/Documents/Msp_Flakes/packages/compliance-agent
-source venv/bin/activate && python -m pytest tests/ -v --tb=short
-```
-
-### 2. Deploy Security Fixes to VPS
-```bash
-ssh root@178.156.162.116
-cd /opt/mcp-server && git pull origin main
-# Run database migration
-docker exec -i msp-postgres psql -U postgres msp < central-command/backend/migrations/021_healing_tier.sql
-# Set env vars in docker-compose.yml
-# Rebuild containers
-docker compose up -d --build
-```
-
-### 3. Build ISO v41
+### 1. Build ISO v42
 ```bash
 ssh root@178.156.162.116
 cd /root/msp-iso-build && git pull
-nix build .#appliance-iso -o result-iso-v41
+nix build .#appliance-iso -o result-iso-v42
+```
+
+### 2. Verify Go Agent Communication
+- Check if drift events from NVWS01 are flowing to appliance
+- Verify L1/L2 healing triggered from Go Agent events
+
+### 3. Make Hot-Patch Permanent
+- ISO v42 will include the gRPC fixes
+- Flash to physical appliance to remove bind mount workaround
+
+### 4. Run Tests
+```bash
+cd /Users/dad/Documents/Msp_Flakes/packages/compliance-agent
+source venv/bin/activate && python -m pytest tests/ -v --tb=short
 ```
 
 ---
@@ -156,46 +140,34 @@ ssh jrelly@192.168.88.50
 # Check agent status
 ssh root@192.168.88.246 "journalctl -u compliance-agent -n 50"
 
+# Check Go Agent on NVWS01 (via WinRM from appliance)
+ssh root@192.168.88.246 "python3 -c \"
+import winrm
+s = winrm.Session('192.168.88.251', auth=('localadmin', 'NorthValley2024!'))
+r = s.run_cmd('tasklist /fi \"imagename eq osiris-agent.exe\"')
+print(r.std_out.decode())
+\""
+
 # Run tests locally
 cd packages/compliance-agent && source venv/bin/activate && python -m pytest tests/ -v
 
 # Git commit
-git add -A && git commit -m "feat: Security audit fixes and healing tier toggle (Session 52)"
+git add -A && git commit -m "feat: Go Agent deployment and gRPC fixes (Session 53)"
 ```
 
 ---
 
-## Security Audit Summary
+## Known Issues
 
-### Password Complexity Requirements
-- Minimum 12 characters
-- At least one uppercase letter
-- At least one lowercase letter
-- At least one digit
-- At least one special character (!@#$%^&* etc.)
-- Not a commonly breached password
-- No 4+ repeating characters
-- No 4+ sequential characters
+### L1 Rule `RB-AUTO-FIREWALL` Too Broad
+- Currently matches ALL incident types
+- Needs type-specific L1 rules for proper incident routing
+- Low priority - healing still works, just not optimal routing
 
-### Security Headers Added
-- Content-Security-Policy (CSP)
-- X-Frame-Options: DENY
-- X-Content-Type-Options: nosniff
-- X-XSS-Protection: 1; mode=block
-- Strict-Transport-Security (HSTS)
-- Referrer-Policy: strict-origin-when-cross-origin
-- Permissions-Policy
-- Cross-Origin-Opener-Policy
-- Cross-Origin-Embedder-Policy
-- Cross-Origin-Resource-Policy
-
-### Required Environment Variables (NEW)
-| Variable | Purpose |
-|----------|---------|
-| `SESSION_TOKEN_SECRET` | HMAC key for session token hashing |
-| `API_KEY_SECRET` | HMAC key for API key hashing |
-| `MINIO_ACCESS_KEY` | MinIO access credentials |
-| `MINIO_SECRET_KEY` | MinIO secret credentials |
+### Go Agent Windows Service
+- Binary lacks Windows SCM integration
+- Workaround: Scheduled Task (works well)
+- Future: Add proper service support to Go agent
 
 ---
 
