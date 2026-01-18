@@ -1,74 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GlassCard } from '../components/shared';
-import api from '../utils/api';
-
-interface Release {
-  id: string;
-  version: string;
-  iso_url: string;
-  sha256: string;
-  size_bytes: number | null;
-  release_notes: string | null;
-  agent_version: string | null;
-  created_at: string;
-  is_active: boolean;
-  is_latest: boolean;
-}
-
-interface RolloutProgress {
-  total: number;
-  succeeded: number;
-  failed: number;
-  rolled_back: number;
-  pending: number;
-  in_progress: number;
-  success_rate: number;
-}
-
-interface Rollout {
-  id: string;
-  release_id: string;
-  version: string;
-  name: string | null;
-  strategy: string;
-  current_stage: number;
-  stages: Array<{ percent: number; delay_hours: number }>;
-  maintenance_window: {
-    start: string;
-    end: string;
-    timezone: string;
-    days: string[];
-  };
-  status: string;
-  started_at: string | null;
-  paused_at: string | null;
-  completed_at: string | null;
-  failure_threshold_percent: number;
-  auto_rollback: boolean;
-  progress: RolloutProgress | null;
-}
-
-interface FleetStats {
-  releases: {
-    total: number;
-    active: number;
-    latest_version: string | null;
-  };
-  rollouts: {
-    total: number;
-    in_progress: number;
-    paused: number;
-    completed: number;
-  };
-  appliance_updates_30d: {
-    total: number;
-    succeeded: number;
-    failed: number;
-    rolled_back: number;
-    success_rate: number;
-  };
-}
+import { fleetApi, type FleetRelease, type FleetRollout, type FleetStats } from '../utils/api';
 
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const colors: Record<string, string> = {
@@ -87,7 +20,9 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   );
 };
 
-const ProgressBar: React.FC<{ progress: RolloutProgress }> = ({ progress }) => {
+const ProgressBar: React.FC<{ progress: FleetRollout['progress'] }> = ({ progress }) => {
+  if (!progress) return null;
+
   const total = progress.total || 1;
   const successWidth = (progress.succeeded / total) * 100;
   const failedWidth = (progress.failed / total) * 100;
@@ -125,36 +60,24 @@ export const FleetUpdates: React.FC = () => {
   // Fetch fleet stats
   const { data: stats } = useQuery<FleetStats>({
     queryKey: ['fleet-stats'],
-    queryFn: async () => {
-      const res = await api.get('/api/fleet/stats');
-      return res.data;
-    },
+    queryFn: () => fleetApi.getStats(),
   });
 
   // Fetch releases
-  const { data: releases = [], isLoading: releasesLoading } = useQuery<Release[]>({
+  const { data: releases = [], isLoading: releasesLoading } = useQuery<FleetRelease[]>({
     queryKey: ['fleet-releases'],
-    queryFn: async () => {
-      const res = await api.get('/api/fleet/releases');
-      return res.data;
-    },
+    queryFn: () => fleetApi.getReleases(),
   });
 
   // Fetch rollouts
-  const { data: rollouts = [], isLoading: rolloutsLoading } = useQuery<Rollout[]>({
+  const { data: rollouts = [], isLoading: rolloutsLoading } = useQuery<FleetRollout[]>({
     queryKey: ['fleet-rollouts'],
-    queryFn: async () => {
-      const res = await api.get('/api/fleet/rollouts');
-      return res.data;
-    },
+    queryFn: () => fleetApi.getRollouts(),
   });
 
   // Create release mutation
   const createReleaseMutation = useMutation({
-    mutationFn: async (release: typeof newRelease) => {
-      const res = await api.post('/api/fleet/releases', release);
-      return res.data;
-    },
+    mutationFn: (release: typeof newRelease) => fleetApi.createRelease(release),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['fleet-releases'] });
       queryClient.invalidateQueries({ queryKey: ['fleet-stats'] });
@@ -165,18 +88,15 @@ export const FleetUpdates: React.FC = () => {
 
   // Create rollout mutation
   const createRolloutMutation = useMutation({
-    mutationFn: async (releaseId: string) => {
-      const res = await api.post('/api/fleet/rollouts', {
-        release_id: releaseId,
-        strategy: 'staged',
-        stages: [
-          { percent: 5, delay_hours: 24 },
-          { percent: 25, delay_hours: 24 },
-          { percent: 100, delay_hours: 0 },
-        ],
-      });
-      return res.data;
-    },
+    mutationFn: (releaseId: string) => fleetApi.createRollout({
+      release_id: releaseId,
+      strategy: 'staged',
+      stages: [
+        { percent: 5, delay_hours: 24 },
+        { percent: 25, delay_hours: 24 },
+        { percent: 100, delay_hours: 0 },
+      ],
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['fleet-rollouts'] });
       queryClient.invalidateQueries({ queryKey: ['fleet-stats'] });
@@ -187,30 +107,22 @@ export const FleetUpdates: React.FC = () => {
 
   // Rollout control mutations
   const pauseRolloutMutation = useMutation({
-    mutationFn: async (rolloutId: string) => {
-      await api.post(`/api/fleet/rollouts/${rolloutId}/pause`);
-    },
+    mutationFn: (rolloutId: string) => fleetApi.pauseRollout(rolloutId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['fleet-rollouts'] }),
   });
 
   const resumeRolloutMutation = useMutation({
-    mutationFn: async (rolloutId: string) => {
-      await api.post(`/api/fleet/rollouts/${rolloutId}/resume`);
-    },
+    mutationFn: (rolloutId: string) => fleetApi.resumeRollout(rolloutId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['fleet-rollouts'] }),
   });
 
   const advanceRolloutMutation = useMutation({
-    mutationFn: async (rolloutId: string) => {
-      await api.post(`/api/fleet/rollouts/${rolloutId}/advance`);
-    },
+    mutationFn: (rolloutId: string) => fleetApi.advanceRollout(rolloutId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['fleet-rollouts'] }),
   });
 
   const setLatestMutation = useMutation({
-    mutationFn: async (version: string) => {
-      await api.put(`/api/fleet/releases/${version}/latest`);
-    },
+    mutationFn: (version: string) => fleetApi.setLatest(version),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['fleet-releases'] });
       queryClient.invalidateQueries({ queryKey: ['fleet-stats'] });
@@ -270,7 +182,7 @@ export const FleetUpdates: React.FC = () => {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <span className="font-medium text-label-primary">{rollout.name || rollout.version}</span>
-                <StatusBadge status={rollout.status} />
+                <span className="ml-2"><StatusBadge status={rollout.status} /></span>
               </div>
               <div className="flex gap-2">
                 {rollout.status === 'in_progress' && (
@@ -305,7 +217,7 @@ export const FleetUpdates: React.FC = () => {
               Stage {rollout.current_stage + 1} of {rollout.stages.length} ({rollout.stages[rollout.current_stage]?.percent}%)
             </div>
 
-            {rollout.progress && <ProgressBar progress={rollout.progress} />}
+            <ProgressBar progress={rollout.progress} />
           </div>
         ))}
       </GlassCard>
