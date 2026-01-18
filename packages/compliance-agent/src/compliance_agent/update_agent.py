@@ -90,12 +90,37 @@ class UpdateAgent:
 
     def get_partition_info(self) -> PartitionInfo:
         """Get current A/B partition state."""
-        # Read ab_state file or detect from mount
-        if self.AB_STATE_FILE.exists():
-            state = self.AB_STATE_FILE.read_text().strip()
-            active = state.upper() if state.upper() in ('A', 'B') else 'A'
-        else:
-            # Detect from current mount
+        import re
+
+        active = None
+
+        # Priority 1: Kernel command line (most reliable during boot)
+        try:
+            cmdline = Path("/proc/cmdline").read_text()
+            if "ab.partition=B" in cmdline:
+                active = 'B'
+            elif "ab.partition=A" in cmdline:
+                active = 'A'
+        except Exception:
+            pass
+
+        # Priority 2: Read ab_state file
+        if active is None and self.AB_STATE_FILE.exists():
+            try:
+                content = self.AB_STATE_FILE.read_text().strip()
+                # Handle GRUB source format: set active_partition="A"
+                if 'active_partition=' in content:
+                    match = re.search(r'active_partition="?([AB])"?', content)
+                    if match:
+                        active = match.group(1)
+                # Handle simple format: just "A" or "B"
+                elif content.upper() in ('A', 'B'):
+                    active = content.upper()
+            except Exception:
+                pass
+
+        # Priority 3: Detect from current mount
+        if active is None:
             try:
                 result = subprocess.run(
                     ["findmnt", "-n", "-o", "SOURCE", "/"],
@@ -133,6 +158,9 @@ class UpdateAgent:
     def set_next_boot(self, partition: str) -> bool:
         """Configure bootloader to boot from specified partition on next reboot.
 
+        Writes ab_state in GRUB-compatible source format that can be included
+        via `source $ab_state_file` in grub.cfg.
+
         Args:
             partition: 'A' or 'B'
 
@@ -144,12 +172,12 @@ class UpdateAgent:
             return False
 
         try:
-            # Write ab_state file
-            self.AB_STATE_FILE.write_text(partition)
+            # Ensure /boot directory exists
+            self.AB_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-            # For GRUB, we might need to update grub.cfg or use grub-reboot
-            # This is NixOS-specific and depends on the boot configuration
-            # For now, we rely on the ab_state file being read by the bootloader
+            # Write ab_state in GRUB source format
+            # This allows: source $ab_state_file in grub.cfg
+            self.AB_STATE_FILE.write_text(f'set active_partition="{partition}"\n')
 
             logger.info(f"Set next boot partition to {partition}")
             return True
@@ -172,7 +200,7 @@ class UpdateAgent:
     def mark_current_as_good(self):
         """Mark current partition as known-good."""
         info = self.get_partition_info()
-        self.AB_STATE_FILE.write_text(info.active)
+        self.set_next_boot(info.active)
         self.clear_boot_count()
         logger.info(f"Marked partition {info.active} as good")
 
