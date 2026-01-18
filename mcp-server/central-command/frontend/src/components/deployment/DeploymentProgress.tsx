@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { GlassCard, Spinner, Badge } from '../shared';
 import { useDeploymentStatus } from '../../hooks/useDeployment';
-import type { DeploymentStatus } from '../../types';
 
 interface DeploymentProgressProps {
   siteId: string;
@@ -89,7 +88,6 @@ export const DeploymentProgress: React.FC<DeploymentProgressProps> = ({ siteId }
         {phases.map((phase, idx) => {
           const isComplete = idx < currentIndex;
           const isCurrent = idx === currentIndex;
-          const isPending = idx > currentIndex;
 
           return (
             <div
