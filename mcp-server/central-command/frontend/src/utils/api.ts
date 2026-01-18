@@ -974,7 +974,7 @@ export interface FleetStats {
   };
 }
 
-export const fleetApi = {
+export const fleetUpdatesApi = {
   // Stats
   getStats: () => fetchSitesApi<FleetStats>('/fleet/stats'),
 

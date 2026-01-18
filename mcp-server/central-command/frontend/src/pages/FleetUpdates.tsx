@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GlassCard } from '../components/shared';
-import { fleetApi, type FleetRelease, type FleetRollout, type FleetStats } from '../utils/api';
+import { fleetUpdatesApi, type FleetRelease, type FleetRollout, type FleetStats } from '../utils/api';
 
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const colors: Record<string, string> = {
@@ -60,24 +60,24 @@ export const FleetUpdates: React.FC = () => {
   // Fetch fleet stats
   const { data: stats } = useQuery<FleetStats>({
     queryKey: ['fleet-stats'],
-    queryFn: () => fleetApi.getStats(),
+    queryFn: () => fleetUpdatesApi.getStats(),
   });
 
   // Fetch releases
   const { data: releases = [], isLoading: releasesLoading } = useQuery<FleetRelease[]>({
     queryKey: ['fleet-releases'],
-    queryFn: () => fleetApi.getReleases(),
+    queryFn: () => fleetUpdatesApi.getReleases(),
   });
 
   // Fetch rollouts
   const { data: rollouts = [], isLoading: rolloutsLoading } = useQuery<FleetRollout[]>({
     queryKey: ['fleet-rollouts'],
-    queryFn: () => fleetApi.getRollouts(),
+    queryFn: () => fleetUpdatesApi.getRollouts(),
   });
 
   // Create release mutation
   const createReleaseMutation = useMutation({
-    mutationFn: (release: typeof newRelease) => fleetApi.createRelease(release),
+    mutationFn: (release: typeof newRelease) => fleetUpdatesApi.createRelease(release),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['fleet-releases'] });
       queryClient.invalidateQueries({ queryKey: ['fleet-stats'] });
@@ -88,7 +88,7 @@ export const FleetUpdates: React.FC = () => {
 
   // Create rollout mutation
   const createRolloutMutation = useMutation({
-    mutationFn: (releaseId: string) => fleetApi.createRollout({
+    mutationFn: (releaseId: string) => fleetUpdatesApi.createRollout({
       release_id: releaseId,
       strategy: 'staged',
       stages: [
@@ -107,22 +107,22 @@ export const FleetUpdates: React.FC = () => {
 
   // Rollout control mutations
   const pauseRolloutMutation = useMutation({
-    mutationFn: (rolloutId: string) => fleetApi.pauseRollout(rolloutId),
+    mutationFn: (rolloutId: string) => fleetUpdatesApi.pauseRollout(rolloutId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['fleet-rollouts'] }),
   });
 
   const resumeRolloutMutation = useMutation({
-    mutationFn: (rolloutId: string) => fleetApi.resumeRollout(rolloutId),
+    mutationFn: (rolloutId: string) => fleetUpdatesApi.resumeRollout(rolloutId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['fleet-rollouts'] }),
   });
 
   const advanceRolloutMutation = useMutation({
-    mutationFn: (rolloutId: string) => fleetApi.advanceRollout(rolloutId),
+    mutationFn: (rolloutId: string) => fleetUpdatesApi.advanceRollout(rolloutId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['fleet-rollouts'] }),
   });
 
   const setLatestMutation = useMutation({
-    mutationFn: (version: string) => fleetApi.setLatest(version),
+    mutationFn: (version: string) => fleetUpdatesApi.setLatest(version),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['fleet-releases'] });
       queryClient.invalidateQueries({ queryKey: ['fleet-stats'] });
