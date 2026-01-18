@@ -1,6 +1,59 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-17 (Session 52)
+**Last Updated:** 2026-01-17 (Session 53)
+
+---
+
+## Session 53 - Go Agent Deployment & gRPC Fixes
+
+**Date:** 2026-01-17
+**Status:** COMPLETE
+**Commits:** Pending
+
+### Objectives
+1. Fix workstations not appearing in site appliance
+2. Deploy Go Agent to NVWS01 workstation
+3. Fix gRPC server bugs for Go Agent integration
+
+### Completed Tasks
+
+#### 1. Workstation Credential Type Fix
+- **Status:** COMPLETE
+- **Issue:** `domain_member` credential type not in allowed SQL types
+- **Files:** `mcp-server/main.py`, `mcp-server/central-command/backend/sites.py`
+- **Result:** NVWS01 now visible in site appliance
+
+#### 2. Go Agent Deployment to NVWS01
+- **Status:** COMPLETE
+- **Binary:** `osiris-agent.exe` (16.6MB)
+- **Installation:** `C:\Program Files\OsirisCare\osiris-agent.exe`
+- **Config:** `C:\ProgramData\OsirisCare\config.json`
+- **Method:** Windows Scheduled Task (logon + every 5 minutes)
+- **Process:** Running as PID 7804
+
+#### 3. gRPC Server Bug Fixes (3 items)
+- **Status:** COMPLETE
+- **grpc_server.py line 232:** Import fix `from .incident_db import Incident`
+- **grpc_server.py lines 248-257:** Event loop fix with `asyncio.run()` and fallback
+- **grpc_server.py `_async_heal()`:** Method signature fix for `heal()` parameters
+
+#### 4. NixOS Hot-Patch
+- **Status:** COMPLETE (temporary)
+- **Method:** Bind mount overlay
+- **Location:** `/var/lib/compliance-agent/patch/grpc_server.py`
+- **Note:** Needs ISO v42 build for permanent fix
+
+### Files Changed
+| File | Change Type |
+|------|-------------|
+| `packages/compliance-agent/src/compliance_agent/grpc_server.py` | Modified |
+| `packages/compliance-agent/setup.py` | Modified (v1.0.42) |
+| `mcp-server/main.py` | Modified |
+| `mcp-server/central-command/backend/sites.py` | Modified |
+| `.agent/TODO.md` | Modified |
+| `.agent/CONTEXT.md` | Modified |
+| `docs/SESSION_HANDOFF.md` | Modified |
+| `docs/SESSION_COMPLETION_STATUS.md` | Modified |
 
 ---
 
@@ -223,7 +276,10 @@ Fixed in ISO v40 with:
 
 | Session | Date | Focus | Status |
 |---------|------|-------|--------|
-| **50** | 2026-01-17 | Active Healing & Chaos Lab v2 | **COMPLETE** |
+| **53** | 2026-01-17 | Go Agent Deployment & gRPC Fixes | **COMPLETE** |
+| 52 | 2026-01-17 | Security Audit & Healing Tier Toggle | COMPLETE |
+| 51 | 2026-01-17 | FULL COVERAGE L1 Healing Tier | COMPLETE |
+| 50 | 2026-01-17 | Active Healing & Chaos Lab v2 | COMPLETE |
 | 49 | 2026-01-17 | ISO v38 gRPC Fix | COMPLETE |
 | 48 | 2026-01-17 | Go Agent gRPC Testing | BLOCKED → Fixed |
 | 47 | 2026-01-17 | Go Agent Compliance Checks | COMPLETE |
@@ -245,8 +301,8 @@ Fixed in ISO v40 with:
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 50 details
+- `.agent/TODO.md` - Session 53 details
 - `.agent/CONTEXT.md` - Updated phase status
-- `IMPLEMENTATION-STATUS.md` - Session 50 summary
+- `IMPLEMENTATION-STATUS.md` - Session 53 summary
 - `docs/SESSION_HANDOFF.md` - Full session handoff
 - `docs/SESSION_COMPLETION_STATUS.md` - This file

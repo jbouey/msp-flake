@@ -229,7 +229,7 @@ if GRPC_AVAILABLE:
                 return
 
             try:
-                from .models import Incident
+                from .incident_db import Incident
 
                 incident = Incident(
                     id=f"GO-{uuid.uuid4().hex[:12]}",
@@ -249,12 +249,17 @@ if GRPC_AVAILABLE:
                     pattern_signature=f"go_agent:{event.check_type}:{event.hostname}",
                 )
 
-                # Schedule async healing via event loop
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.create_task(self._async_heal(incident))
-                else:
-                    loop.run_until_complete(self._async_heal(incident))
+                # Run healing in a new event loop (gRPC runs in thread pool)
+                try:
+                    asyncio.run(self._async_heal(incident))
+                except RuntimeError:
+                    # Fallback: create new loop if asyncio.run fails
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        loop.run_until_complete(self._async_heal(incident))
+                    finally:
+                        loop.close()
 
             except Exception as e:
                 logger.error(f"Error routing Go agent drift to healing: {e}")
@@ -262,7 +267,13 @@ if GRPC_AVAILABLE:
         async def _async_heal(self, incident) -> None:
             """Run healing asynchronously."""
             try:
-                result = await self.healing_engine.heal(incident)
+                result = await self.healing_engine.heal(
+                    site_id=incident.site_id,
+                    host_id=incident.host_id,
+                    incident_type=incident.incident_type,
+                    severity=incident.severity,
+                    raw_data=incident.raw_data,
+                )
                 if result and result.success:
                     logger.info(
                         f"Healed Go agent drift: {incident.host_id}/{incident.incident_type} "

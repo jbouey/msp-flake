@@ -1,7 +1,7 @@
 # MSP Compliance Appliance - Implementation Status
 
-**Last Updated:** 2026-01-17 (Session 52 - Security Audit & Healing Tier Toggle)
-**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.40, ISO v40, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks Implementation, ISO v40 gRPC Working, Active Healing & Chaos Lab v2, FULL COVERAGE L1 Healing Tier, **Security Audit & Healing Tier Toggle**, 811 + 24 Go tests)
+**Last Updated:** 2026-01-17 (Session 53 - Go Agent Deployment & gRPC Fixes)
+**Current Phase:** Phase 12 - Launch Readiness (Agent v1.0.42, ISO v40, 43 Runbooks, OTS Anchoring, Windows Sensors, Partner L3 Escalations, Multi-Framework Compliance, MinIO on Storage Box, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Network Compliance Check, Extended Check Types, Pattern Reporting Deployed, Workstation Compliance, RMM Comparison Engine, Workstation Discovery Config, $params_Hostname Fix, Go Agent for Workstation Scale, VM Network/AD Fix, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks, Go Agent Compliance Checks Implementation, ISO v40 gRPC Working, Active Healing & Chaos Lab v2, FULL COVERAGE L1 Healing Tier, Security Audit & Healing Tier Toggle, **Go Agent Deployed to NVWS01, gRPC Server Bug Fixes**, 811 + 24 Go tests)
 **Aligned With:** CLAUDE.md Master Plan
 
 ---
@@ -533,7 +533,18 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 12 nearing completion. Agent v1.0.40, ISO v40, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, **Chaos Lab v2 Multi-VM with campaign-level restore**, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), Go Agent Compliance Checks Implementation, ISO v40 gRPC Server Verified Working, **Active Healing Enabled (HEALING_DRY_RUN=false)**.
+**Status:** Phase 12 nearing completion. Agent v1.0.42, ISO v40, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, **Chaos Lab v2 Multi-VM with campaign-level restore**, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), Go Agent Compliance Checks Implementation, ISO v40 gRPC Server Verified Working, **Active Healing Enabled (HEALING_DRY_RUN=false)**, **Go Agent Deployed to NVWS01 (Session 53)**.
+
+**Session 53 (Go Agent Deployment & gRPC Fixes):**
+- Deployed Go Agent to NVWS01 workstation via WinRM from appliance
+- Fixed workstation credential type (`domain_member` not in allowed SQL types)
+- Fixed 3 critical gRPC server bugs:
+  - Import error: `from .incident_db import Incident` (was `.models`)
+  - Event loop error: `asyncio.run()` with fallback for thread pool context
+  - Method signature: `heal(site_id, host_id, ...)` (was `heal(incident)`)
+- Go Agent running as PID 7804 via Windows Scheduled Task
+- Hot-patched NixOS appliance using bind mount (temporary until ISO v42)
+- Agent bumped to v1.0.42
 
 **Session 50 (Active Healing & Chaos Lab v2):**
 - Implemented Chaos Lab v2 with multi-VM support (DC + Workstation)
@@ -792,13 +803,13 @@ Required fields per CLAUDE.md:
 - Commits: `7b3c85f` - fix: Improve delete button UX with loading state
 
 **Next Steps:**
-1. **Monitor chaos lab v2** - Verify multi-VM campaigns running correctly
-2. **Check learning pipeline** - Confirm L1/L2 resolutions accumulating in database
-3. **Test L2 scenarios** - Ensure LLM engagement on 6 new categories
-4. **Flash ISO v40 to physical appliance** - Replace v38/v39 on 192.168.88.246
-5. Test Go Agent gRPC communication (without -dry-run)
+1. **Build ISO v42** - Include gRPC fixes for permanent deployment
+2. **Verify Go Agent communication** - Check drift events flowing from NVWS01 to appliance
+3. **Flash ISO v42 to physical appliance** - Remove bind mount workaround
+4. **Monitor chaos lab v2** - Verify multi-VM campaigns running correctly
+5. **Check learning pipeline** - Confirm L1/L2 resolutions accumulating in database
 6. Fix Go Agent CGO dependency (switch to modernc.org/sqlite for pure Go)
-7. Monitor patterns flowing to Learning dashboard
-8. Evidence bundles uploading to MinIO verification
-9. First compliance packet generated
-10. 30-day monitoring period completion
+7. Add Windows SCM integration to Go agent binary (for proper Windows Service support)
+8. Monitor patterns flowing to Learning dashboard
+9. Evidence bundles uploading to MinIO verification
+10. First compliance packet generated
