@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-18 (Session 54 - Complete)
-**Current State:** Phase 13 Fleet Updates UI DEPLOYED, Rollout Management WORKING, Healing Tier Toggle VERIFIED
+**Last Updated:** 2026-01-18 (Session 55 - Complete)
+**Current State:** Phase 13 A/B Partition Update System IMPLEMENTED, ISO v44 Built
 
 ---
 
@@ -9,9 +9,10 @@
 
 | Component | Status | Version |
 |-----------|--------|---------|
-| Agent | v1.0.43 | Stable |
-| ISO | v43 | **DEPLOYED** - Physical Appliance |
-| Tests | 811 + 24 Go tests | Healthy |
+| Agent | v1.0.44 | Stable |
+| ISO | v44 | **BUILT** - Ready for deployment |
+| Tests | 834 + 24 Go tests | Healthy |
+| A/B Partition System | **IMPLEMENTED** | Health gate, GRUB config |
 | Fleet Updates UI | **DEPLOYED** | Create releases, rollouts working |
 | Rollout Management | **TESTED** | Pause/Resume/Advance Stage |
 | Healing Tier Toggle | **VERIFIED** | Standard ↔ Full Coverage |
@@ -22,44 +23,49 @@
 
 ---
 
-## Session 54 Summary (2026-01-18) - COMPLETE
+## Session 55 Summary (2026-01-18) - COMPLETE
 
 ### Completed
 
-#### 1. Fleet Updates UI Deployed and Tested
+#### 1. Health Gate Module
 - **Status:** COMPLETE
-- **URL:** dashboard.osiriscare.net/fleet-updates
-- **Features Tested:**
-  - Stats cards: Latest Version, Active Releases, Active Rollouts, Pending Updates
-  - Create releases: version, ISO URL, SHA256, agent version, notes
-  - Set as Latest button to mark fleet default
-  - All features verified working in production
+- **File:** `packages/compliance-agent/src/compliance_agent/health_gate.py` (480 lines)
+- Post-boot health verification with automatic rollback after 3 failed boots
+- Detects active partition from kernel cmdline and ab_state file
+- Runs health checks: network, NTP, disk space
 
-#### 2. Test Release v44 Created
+#### 2. GRUB A/B Boot Configuration
 - **Status:** COMPLETE
-- ISO URL: https://updates.osiriscare.net/v44.iso
-- SHA256 checksum: provided
-- Agent version: 1.0.44
-- Set as "Latest" version for fleet
+- **File:** `iso/grub-ab.cfg` (65 lines)
+- Sources ab_state file to determine active partition
+- Passes `ab.partition=A|B` via kernel cmdline
+- Recovery menu for manual partition selection
 
-#### 3. Rollout Management Tested
+#### 3. Update Agent Improvements
 - **Status:** COMPLETE
-- Started staged rollout (5% → 25% → 100%)
-- Pause: Working
-- Resume: Working
-- Advance Stage: Working (Stage 1 → Stage 2)
-- Database persistence verified
+- GRUB-compatible ab_state format (`set active_partition="A"`)
+- Kernel cmdline detection priority for partition info
+- `update_iso` order handler in appliance_agent.py
 
-#### 4. Healing Tier Toggle Verified
+#### 4. NixOS Integration
 - **Status:** COMPLETE
-- Site Detail shows "Healing Mode" dropdown
-- Options: Standard (4 rules), Full Coverage (21 rules)
-- API: PUT /api/sites/{site_id}/healing-tier working
-- Round-trip tested and verified in database
+- `msp-health-gate` systemd service (runs before compliance-agent)
+- `/var/lib/msp` data partition mount (partlabel: MSP-DATA)
+- `/boot` partition mount for ab_state
 
-#### 5. Bug Fixes
-- **sites.py:** Added `List` to typing imports (fixed container crash)
-- **api.ts:** Renamed duplicate `fleetApi` to `fleetUpdatesApi`
+#### 5. Entry Points Added
+- `health-gate` - Post-boot health verification CLI
+- `osiris-update` - Update agent status/health CLI
+
+#### 6. Unit Tests
+- **Status:** COMPLETE
+- 25 new tests in `test_health_gate.py`
+- 834 total tests passing
+
+#### 7. ISO v44 Built
+- **Location:** VPS `/root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso`
+- **Size:** 1.1GB
+- **SHA256:** `1daf70e124c71c8c0c4826fb283e9e5ba2c6a9c4bff230d74d27f8a7fbf5a7ce`
 
 ---
 
@@ -67,13 +73,13 @@
 
 ### Physical Appliance (192.168.88.246)
 - **Status:** Online, running ISO v43
-- **Agent:** v1.0.43
+- **Agent:** v1.0.43 (upgrade to v44 ready)
 - **gRPC:** Port 50051 listening
 - **Active Healing:** ENABLED
 
 ### VM Appliance (192.168.88.247)
 - **Status:** Online
-- **Agent:** Previous version (can update to v43)
+- **Agent:** Previous version (can update to v44)
 
 ### Windows Infrastructure
 | Machine | IP | Go Agent | Status |
@@ -86,28 +92,33 @@
 - **Status:** Online
 - **Dashboard:** dashboard.osiriscare.net
 - **Fleet Updates:** dashboard.osiriscare.net/fleet-updates
-- **ISO v43:** `/root/msp-iso-build/result-iso-v43/iso/osiriscare-appliance.iso`
+- **ISO v44:** `/root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso`
 
 ---
 
 ## Next Session Priorities
 
-### 1. Phase 13: A/B Partition Implementation
+### 1. Deploy ISO v44 to Physical Appliance
 ```
-Appliance-side implementation:
-- A/B partition scheme in appliance-image.nix
-- Update agent (download, verify, apply)
-- Boot health gate service
-- Auto-rollback mechanism
+- Download from VPS: /root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso
+- Flash to USB
+- Deploy to physical appliance (192.168.88.246)
 ```
 
-### 2. Fix VPS 502 Error
+### 2. Test Full Update Cycle
+```
+- Create VM with A/B partition layout
+- Test: download → verify → apply → reboot → health gate
+- Verify automatic rollback on failure
+```
+
+### 3. Fix VPS 502 Error
 ```
 Evidence submission returning 502
 Check Central Command logs
 ```
 
-### 3. Deploy Security Fixes
+### 4. Deploy Security Fixes
 ```
 - Migration 021_healing_tier.sql
 - Environment variables for secrets
@@ -131,6 +142,9 @@ ssh jrelly@192.168.88.50
 # Check agent status
 ssh root@192.168.88.246 "journalctl -u compliance-agent -n 50"
 
+# Check health gate status (after ISO v44 deployment)
+ssh root@192.168.88.246 "health-gate --status"
+
 # Check gRPC server
 ssh root@192.168.88.246 "ss -tlnp | grep 50051"
 
@@ -144,12 +158,25 @@ cd packages/compliance-agent && source venv/bin/activate && python -m pytest tes
 
 | File | Purpose |
 |------|---------|
-| `docs/ZERO_FRICTION_UPDATES.md` | Phase 13 architecture (UI deployed, A/B pending) |
+| `packages/compliance-agent/src/compliance_agent/health_gate.py` | Health gate module |
+| `iso/grub-ab.cfg` | GRUB A/B boot configuration |
+| `packages/compliance-agent/tests/test_health_gate.py` | Health gate tests |
+| `docs/ZERO_FRICTION_UPDATES.md` | Phase 13 architecture |
 | `mcp-server/central-command/backend/fleet_updates.py` | Fleet API backend |
-| `mcp-server/central-command/frontend/src/pages/FleetUpdates.tsx` | Fleet Updates UI |
-| `mcp-server/central-command/backend/sites.py` | Healing tier API (List import fixed) |
 | `.agent/TODO.md` | Current task list |
 | `.agent/CONTEXT.md` | Full project context |
+
+---
+
+## Disk Layout Reference
+
+```
+/dev/sda (HP T640 internal SSD)
+├── /dev/sda1  512MB   ESP (FAT32) - GRUB, ab_state
+├── /dev/sda2  2GB     Partition A (squashfs)
+├── /dev/sda3  2GB     Partition B (squashfs)
+└── /dev/sda4  *       Data (ext4) - /var/lib/msp
+```
 
 ---
 

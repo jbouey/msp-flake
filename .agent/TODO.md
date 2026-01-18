@@ -1,57 +1,111 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-18 (Session 54 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System DEPLOYED (Agent v1.0.43, ISO v43, Fleet Updates UI, Healing Tier Toggle, Rollout Management)
+**Last Updated:** 2026-01-18 (Session 55 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management)
+
+---
+
+## Session 55 (2026-01-18) - A/B Partition Update System - COMPLETE
+
+### Completed This Session
+
+#### 1. Health Gate Module Created
+**Status:** COMPLETE
+- Created `packages/compliance-agent/src/compliance_agent/health_gate.py` (480 lines)
+- Post-boot health verification module
+- Detects active partition from kernel cmdline and ab_state file
+- Runs health checks (network, NTP, disk space)
+- Automatic rollback after 3 failed boot attempts
+- Reports status to Central Command
+
+#### 2. GRUB A/B Boot Configuration
+**Status:** COMPLETE
+- Created `iso/grub-ab.cfg` (65 lines)
+- GRUB script for A/B partition boot selection
+- Sources ab_state file to determine active partition
+- Passes `ab.partition=A|B` via kernel cmdline
+- Recovery menu entries for manual partition selection
+
+#### 3. Update Agent Improvements
+**Status:** COMPLETE
+- Updated `get_partition_info()` to detect partition from kernel cmdline first
+- Updated `set_next_boot()` to write GRUB-compatible source format (`set active_partition="A"`)
+- Updated `mark_current_as_good()` to use new format
+
+#### 4. NixOS Integration
+**Status:** COMPLETE
+- Added `msp-health-gate` systemd service (runs before compliance-agent)
+- Enabled `/var/lib/msp` data partition mount (partlabel: MSP-DATA)
+- Enabled `/boot` partition mount for ab_state (partlabel: ESP)
+- Added update directories to activation script
+- Updated version to 1.0.44
+
+#### 5. Entry Points Added
+**Status:** COMPLETE
+- `health-gate` - Health gate CLI for post-boot verification
+- `osiris-update` - Update agent CLI for status/health checks
+
+#### 6. Unit Tests
+**Status:** COMPLETE
+- Created `packages/compliance-agent/tests/test_health_gate.py` (375 lines)
+- 25 unit tests covering all health gate functionality
+- Tests for partition detection, boot state, health checks, rollback triggers
+
+#### 7. ISO v44 Built
+**Status:** COMPLETE
+- Built on VPS with `nix build` using sops-nix input
+- Size: 1.1GB
+- SHA256: `1daf70e124c71c8c0c4826fb283e9e5ba2c6a9c4bff230d74d27f8a7fbf5a7ce`
+- Agent version: 1.0.44 with A/B partition update system
+
+### Files Created This Session
+| File | Lines | Purpose |
+|------|-------|---------|
+| `packages/compliance-agent/src/compliance_agent/health_gate.py` | 480 | Post-boot health verification |
+| `iso/grub-ab.cfg` | 65 | GRUB A/B boot configuration |
+| `packages/compliance-agent/tests/test_health_gate.py` | 375 | Unit tests for health gate |
+| `.agent/sessions/2026-01-18-ab-partition-update-system.md` | 106 | Session log |
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/update_agent.py` | GRUB ab_state format, kernel cmdline detection |
+| `packages/compliance-agent/setup.py` | Added health-gate, osiris-update entry points |
+| `iso/appliance-image.nix` | Health gate service, partition mounts, v1.0.44 |
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | update_iso handler, _do_reboot() |
+| `.agent/CONTEXT.md` | Session 55 changes |
+
+### Test Results
+- **25 new health_gate tests**
+- **834 total tests passing** (up from 811)
 
 ---
 
 ## Session 54 (2026-01-18) - Phase 13 Fleet Updates Deployed - COMPLETE
 
-### Completed This Session
+### Completed
 
 #### 1. Fleet Updates UI Deployed and Tested
-**Status:** COMPLETE
 - Navigated to dashboard.osiriscare.net/fleet-updates
 - Stats cards showing: Latest Version, Active Releases, Active Rollouts, Pending Updates
 - "New Release" button creates releases with version, ISO URL, SHA256, agent version, notes
 - "Set as Latest" button to mark a release as the fleet default
-- All features verified working in production
 
 #### 2. Test Release v44 Created
-**Status:** COMPLETE
-- Created release v44 via Fleet Updates UI
 - ISO URL: https://updates.osiriscare.net/v44.iso
-- SHA256 checksum provided
-- Agent version: 1.0.44
-- Set as "Latest" version
+- Agent version: 1.0.44, Set as "Latest" version
 
 #### 3. Rollout Management Tested
-**Status:** COMPLETE
 - Started staged rollout for v44 (5% → 25% → 100%)
-- **Pause/Resume:** Working - tested pause and resume of rollout
-- **Advance Stage:** Working - advanced from Stage 1 (5%) to Stage 2 (25%)
-- Rollout data persisted correctly in database with all fields
+- Pause/Resume/Advance Stage all working
 
 #### 4. Healing Tier Toggle Verified
-**Status:** COMPLETE
 - Site Detail page shows "Healing Mode" dropdown
-- Options: Standard (4 rules), Full Coverage (21 rules)
-- **Bug Fixed:** `sites.py` missing `List` import causing container crash
-- **API Verified:** PUT /api/sites/{site_id}/healing-tier working
-- Round-trip tested: Full Coverage → Standard → verified in database
+- Standard (4 rules) ↔ Full Coverage (21 rules)
 
 #### 5. Bug Fixes
-**Status:** COMPLETE
-- **Fixed:** `fleetApi` duplicate declaration in api.ts - renamed to `fleetUpdatesApi`
-- **Fixed:** `List` not imported in sites.py - added to typing imports
-- Both fixes deployed to VPS
-
-### Files Modified This Session
-| File | Change |
-|------|--------|
-| `mcp-server/central-command/backend/sites.py` | Added `List` to typing imports |
-| `mcp-server/central-command/frontend/src/utils/api.ts` | Renamed update API to `fleetUpdatesApi` |
-| `mcp-server/central-command/frontend/src/pages/FleetUpdates.tsx` | Updated to use `fleetUpdatesApi` |
+- **Fixed:** `fleetApi` duplicate → `fleetUpdatesApi`
+- **Fixed:** `List` not imported in sites.py
 
 ---
 
@@ -85,21 +139,27 @@
 
 ## Next Session Priorities
 
-### 1. Phase 13: A/B Partition Implementation
-**Status:** PLANNED (Central Command UI complete)
+### 1. Deploy ISO v44 to Physical Appliance
+**Status:** READY
 **Details:**
-- Implement A/B partition scheme in appliance ISO
-- Update agent for partition-aware updates
-- Boot health gate service
-- Auto-rollback mechanism
+- ISO v44 built with A/B partition update system
+- Download from VPS: `/root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso`
+- Flash to USB, deploy to physical appliance (192.168.88.246)
 
-### 2. Fix VPS 502 Error
+### 2. Test Full Update Cycle in VM
+**Status:** PLANNED
+**Details:**
+- Create VM with A/B partition layout
+- Test download → verify → apply → reboot → health gate flow
+- Verify automatic rollback on failure scenario
+
+### 3. Fix VPS 502 Error
 **Status:** PENDING
 **Details:**
 - Evidence submission returning 502
 - Need to investigate Central Command backend logs
 
-### 3. Deploy Security Fixes to VPS
+### 4. Deploy Security Fixes to VPS
 **Status:** PENDING
 **Details:**
 - Run database migration 021_healing_tier.sql

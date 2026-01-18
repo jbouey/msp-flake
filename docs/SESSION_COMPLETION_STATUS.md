@@ -1,6 +1,117 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-18 (Session 54 - Complete)
+**Last Updated:** 2026-01-18 (Session 55 - Complete)
+
+---
+
+## Session 55 - A/B Partition Update System - COMPLETE
+
+**Date:** 2026-01-18
+**Status:** COMPLETE
+**Agent Version:** 1.0.44
+**ISO Version:** v44
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Implement A/B partition update system (appliance-side)
+2. ✅ Create health gate module for post-boot verification
+3. ✅ Create GRUB A/B boot configuration
+4. ✅ Add update_iso order handler to appliance agent
+5. ✅ Build ISO v44 with all components
+6. ✅ Write comprehensive unit tests
+
+### Completed Tasks
+
+#### 1. Health Gate Module Created
+- **Status:** COMPLETE
+- **File:** `packages/compliance-agent/src/compliance_agent/health_gate.py` (480 lines)
+- **Features:**
+  - Detects active partition from kernel cmdline (`ab.partition=A|B`)
+  - Falls back to ab_state file detection
+  - Runs health checks: network connectivity, NTP sync, disk space
+  - Automatic rollback after 3 failed boot attempts (MAX_BOOT_ATTEMPTS)
+  - Reports status to Central Command
+  - CLI: `health-gate --status`, `health-gate --check`
+
+#### 2. GRUB A/B Boot Configuration
+- **Status:** COMPLETE
+- **File:** `iso/grub-ab.cfg` (65 lines)
+- **Features:**
+  - Sources ab_state file to determine active partition
+  - Sets `ab.partition=A|B` in kernel command line
+  - Recovery menu for manual partition selection
+  - Configurable timeout and default partition
+
+#### 3. Update Agent Improvements
+- **Status:** COMPLETE
+- **Modified:** `packages/compliance-agent/src/compliance_agent/update_agent.py`
+- **Changes:**
+  - `get_partition_info()`: Kernel cmdline detection priority
+  - `set_next_boot()`: GRUB-compatible source format (`set active_partition="A"`)
+  - `mark_current_as_good()`: Uses new GRUB format
+
+#### 4. NixOS Integration
+- **Status:** COMPLETE
+- **Modified:** `iso/appliance-image.nix`
+- **Changes:**
+  - Added `msp-health-gate` systemd service (runs before compliance-agent)
+  - `/var/lib/msp` data partition mount (partlabel: MSP-DATA)
+  - `/boot` partition mount for ab_state (partlabel: ESP)
+  - Added update directories to activation script
+  - Updated version to 1.0.44
+
+#### 5. Entry Points
+- **Status:** COMPLETE
+- **Modified:** `packages/compliance-agent/setup.py`
+- **Added:**
+  - `health-gate=compliance_agent.health_gate:main`
+  - `osiris-update=compliance_agent.update_agent:main`
+
+#### 6. Appliance Agent Integration
+- **Status:** COMPLETE
+- **Modified:** `packages/compliance-agent/src/compliance_agent/appliance_agent.py`
+- **Added:**
+  - `update_iso` order handler
+  - `_handle_update_iso()` method for Fleet Updates integration
+  - `_do_reboot()` helper method
+
+#### 7. Unit Tests
+- **Status:** COMPLETE
+- **File:** `packages/compliance-agent/tests/test_health_gate.py` (375 lines)
+- **Tests:** 25 unit tests covering:
+  - Partition detection (kernel cmdline, ab_state file)
+  - Boot state management
+  - Health checks (network, NTP, disk)
+  - Rollback trigger conditions
+  - Status reporting
+
+#### 8. ISO v44 Built
+- **Status:** COMPLETE
+- **Location:** VPS `/root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso`
+- **Size:** 1.1GB
+- **SHA256:** `1daf70e124c71c8c0c4826fb283e9e5ba2c6a9c4bff230d74d27f8a7fbf5a7ce`
+
+### Files Created
+| File | Lines | Purpose |
+|------|-------|---------|
+| `packages/compliance-agent/src/compliance_agent/health_gate.py` | 480 | Health gate module |
+| `iso/grub-ab.cfg` | 65 | GRUB A/B boot config |
+| `packages/compliance-agent/tests/test_health_gate.py` | 375 | Unit tests |
+| `.agent/sessions/2026-01-18-ab-partition-update-system.md` | 106 | Session log |
+
+### Files Modified
+| File | Change Type |
+|------|-------------|
+| `packages/compliance-agent/src/compliance_agent/update_agent.py` | GRUB format, cmdline detection |
+| `packages/compliance-agent/setup.py` | Entry points |
+| `iso/appliance-image.nix` | Health gate service, mounts |
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | update_iso handler |
+| `.agent/CONTEXT.md` | Session 55 changes |
+
+### Test Results
+- **New Tests:** 25 health_gate tests
+- **Total Tests:** 834 passing
+- **Go Tests:** 24 passing
 
 ---
 
@@ -59,19 +170,6 @@
 - `api.ts`: Renamed duplicate `fleetApi` to `fleetUpdatesApi` (TypeScript error)
 - Both fixes deployed to VPS
 
-### Files Changed
-| File | Change Type |
-|------|-------------|
-| `mcp-server/central-command/backend/sites.py` | Modified (List import fix) |
-| `mcp-server/central-command/frontend/src/utils/api.ts` | Modified (fleetUpdatesApi rename) |
-| `mcp-server/central-command/frontend/src/pages/FleetUpdates.tsx` | Modified (use fleetUpdatesApi) |
-| `.agent/TODO.md` | Modified |
-| `.agent/CONTEXT.md` | Modified |
-| `IMPLEMENTATION-STATUS.md` | Modified |
-| `docs/ZERO_FRICTION_UPDATES.md` | Modified (deployment status) |
-| `docs/SESSION_HANDOFF.md` | Modified |
-| `docs/SESSION_COMPLETION_STATUS.md` | Modified |
-
 ---
 
 ## Session 53 - Go Agent Deployment & gRPC Fixes - COMPLETE
@@ -81,64 +179,12 @@
 **Agent Version:** 1.0.43
 **ISO Version:** v43
 
-### Objectives
-1. ✅ Deploy Go Agent to NVWS01 workstation
-2. ✅ Verify gRPC integration working end-to-end
-3. ✅ Fix L1 rule matching for Go Agent incidents
-4. ✅ Build and deploy ISO v43
-5. ✅ Document zero-friction update architecture (Phase 13)
-
 ### Completed Tasks
-
-#### 1. Go Agent Deployment to NVWS01
-- **Status:** COMPLETE
-- **Binary:** `osiris-agent.exe` (16.6MB)
-- **Installation:** `C:\Program Files\OsirisCare\osiris-agent.exe`
-- **Config:** `C:\ProgramData\OsirisCare\config.json`
-- **Method:** Windows Scheduled Task
-
-#### 2. gRPC Integration VERIFIED WORKING
-- **Status:** COMPLETE
-- **Flow:** Go Agent → gRPC → L1 Rules → Windows Runbooks
-- **Verified:**
-  - firewall → L1-FIREWALL-001 → RB-WIN-FIREWALL-001 ✅
-  - defender → L1-DEFENDER-001 → RB-WIN-SEC-006 ✅
-  - bitlocker → L1-BITLOCKER-001 ✅
-  - screenlock → L1-SCREENLOCK-001 ✅
-
-#### 3. L1 Rule Matching Fix
-- **Status:** COMPLETE
-- **Root Cause:** Go Agent incidents missing `status` field
-- **Fix:** Added `"status": "fail"` to grpc_server.py incident raw_data
-- **Also Fixed:** Removed `RB-AUTO-FIREWALL` rule (empty conditions matched ALL incidents)
-- **Added Rules:** L1-DEFENDER-001, L1-BITLOCKER-001, L1-SCREENLOCK-001
-
-#### 4. ISO v43 Built and Deployed
-- **Status:** COMPLETE
-- **VPS Build:** `/root/msp-iso-build/result-iso-v43/iso/osiriscare-appliance.iso`
-- **Physical Appliance:** 192.168.88.246 running v1.0.43
-- **Issue Fixed:** Internal SSD corruption from earlier dd (user wiped, USB boot restored)
-
-#### 5. Zero-Friction Updates Documentation
-- **Status:** COMPLETE
-- **File Created:** `docs/ZERO_FRICTION_UPDATES.md`
-- **Contents:**
-  - A/B partition scheme for appliances
-  - Central Command update API design
-  - Database schema (update_releases, update_rollouts, appliance_updates)
-  - Rollout stages: Canary (5%) → Early Adopters (25%) → Full Fleet (100%)
-  - Auto-rollback mechanism
-
-### Files Changed
-| File | Change Type |
-|------|-------------|
-| `packages/compliance-agent/src/compliance_agent/grpc_server.py` | Modified (status field fix) |
-| `packages/compliance-agent/setup.py` | Modified (v1.0.43) |
-| `docs/ZERO_FRICTION_UPDATES.md` | Created |
-| `.agent/TODO.md` | Modified |
-| `.agent/CONTEXT.md` | Modified |
-| `docs/SESSION_HANDOFF.md` | Modified |
-| `docs/SESSION_COMPLETION_STATUS.md` | Modified |
+1. ✅ Deployed Go Agent to NVWS01 workstation
+2. ✅ Verified gRPC integration working end-to-end
+3. ✅ Fixed L1 rule matching for Go Agent incidents
+4. ✅ Built and deployed ISO v43
+5. ✅ Documented zero-friction update architecture (Phase 13)
 
 ---
 
@@ -149,65 +195,10 @@
 **Commits:** `afa09d8`
 
 ### Completed Tasks
-
-#### 1. Healing Tier Toggle
-- **Status:** COMPLETE
-- **Database:** `021_healing_tier.sql` - Added `healing_tier` column to sites
-- **API:** GET/PUT `/api/sites/{site_id}/healing-tier` endpoints
-- **Frontend:** Toggle switch in SiteDetail.tsx
-- **Agent:** `appliance_client.py` syncs tier-specific rules
-
-#### 2. Backend Security Fixes (11 items)
-- **Status:** COMPLETE
-- `auth.py`: Token hashing (HMAC-SHA256), credential logging, password complexity
-- `evidence_chain.py`: Removed hardcoded MinIO credentials
-- `partners.py`: API key hashing (HMAC), POST magic link endpoint
-- `portal.py`: POST endpoints for magic link validation
-- `server_minimal.py`: Fixed CORS wildcard, added security headers
-- `main.py`: Added rate limiting and security headers middleware
-- `users.py`: Password complexity validation on all endpoints
-
-#### 3. Frontend Security Fixes (4 items)
-- **Status:** COMPLETE
-- `PortalLogin.tsx`: Open redirect fix (siteId validation), POST token validation
-- `IntegrationSetup.tsx`: OAuth redirect URL validation (provider whitelist)
-- `PartnerLogin.tsx`: Changed magic link to POST
-
-#### 4. New Security Middleware
-- **Status:** COMPLETE
-- **Files Created:**
-  - `rate_limiter.py`: Sliding window rate limiting (60/min, 1000/hr, 10/burst)
-  - `security_headers.py`: CSP, X-Frame-Options, HSTS, X-Content-Type-Options, etc.
-
----
-
-## Session 51 - FULL COVERAGE L1 Healing Tier
-
-**Date:** 2026-01-17
-**Status:** COMPLETE
-**Commits:** `7ca78ac`
-
-### Completed Tasks
-1. Created 21 L1 rules in `config/l1_rules_full_coverage.json`
-2. Created 4 core rules in `config/l1_rules_standard.json`
-3. Expanded `appliance_agent.py` with 18 new alert→runbook mappings
-4. Validated L1 rule matching and healing end-to-end
-
----
-
-## Session 50 - Active Healing & Chaos Lab v2
-
-**Date:** 2026-01-17
-**Status:** COMPLETE
-**Commits:** `a842dce` (Msp_Flakes), `253474b` (auto-heal-daemon)
-
-### Completed Tasks
-1. Chaos Lab v2 - Multi-VM campaign generator (21 → 3 restores)
-2. Active healing enabled (HEALING_DRY_RUN=false)
-3. NixOS module update with `healingDryRun` option
-4. ISO appliance-image.nix update
-5. L1 rules updates (L1-FIREWALL-002, L1-DEFENDER-001)
-6. L2 scenario categories for learning data
+1. ✅ Healing Tier Toggle (database, API, frontend, agent)
+2. ✅ Backend Security Fixes (11 items)
+3. ✅ Frontend Security Fixes (4 items)
+4. ✅ New Security Middleware (rate_limiter.py, security_headers.py)
 
 ---
 
@@ -215,7 +206,8 @@
 
 | Session | Date | Focus | Status | Version |
 |---------|------|-------|--------|---------|
-| **54** | 2026-01-18 | Phase 13 Fleet Updates Deployed | **COMPLETE** | v1.0.43 |
+| **55** | 2026-01-18 | A/B Partition Update System | **COMPLETE** | v1.0.44 |
+| 54 | 2026-01-18 | Phase 13 Fleet Updates Deployed | COMPLETE | v1.0.43 |
 | 53 | 2026-01-18 | Go Agent gRPC & ISO v43 | COMPLETE | v1.0.43 |
 | 52 | 2026-01-17 | Security Audit & Healing Tier Toggle | COMPLETE | v1.0.42 |
 | 51 | 2026-01-17 | FULL COVERAGE L1 Healing Tier | COMPLETE | v1.0.41 |
@@ -234,16 +226,16 @@
 
 | Component | Tests | Status |
 |-----------|-------|--------|
-| Python (compliance-agent) | 811 | Passing |
+| Python (compliance-agent) | 834 | Passing |
 | Go (agent) | 24 | Passing |
-| **Total** | **835** | **All Passing** |
+| **Total** | **858** | **All Passing** |
 
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 54 complete
-- `.agent/CONTEXT.md` - Updated to Phase 13 deployed
-- `IMPLEMENTATION-STATUS.md` - Session 54 details
+- `.agent/TODO.md` - Session 55 complete
+- `.agent/CONTEXT.md` - Updated with Session 55 changes
+- `IMPLEMENTATION-STATUS.md` - Session 55 details
 - `docs/SESSION_HANDOFF.md` - Full session handoff
 - `docs/SESSION_COMPLETION_STATUS.md` - This file
-- `docs/ZERO_FRICTION_UPDATES.md` - Updated with deployment status
+- `.agent/sessions/2026-01-18-ab-partition-update-system.md` - Session log
