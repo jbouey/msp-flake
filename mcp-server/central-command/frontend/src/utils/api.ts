@@ -905,4 +905,133 @@ export const deploymentApi = {
   getStatus: (siteId: string) => fetchSitesApi<DeploymentStatus>(`/sites/${siteId}/deployment-status`),
 };
 
+// =============================================================================
+// FLEET UPDATES API
+// =============================================================================
+
+export interface FleetRelease {
+  id: string;
+  version: string;
+  iso_url: string;
+  sha256: string;
+  size_bytes: number | null;
+  release_notes: string | null;
+  agent_version: string | null;
+  created_at: string;
+  is_active: boolean;
+  is_latest: boolean;
+}
+
+export interface FleetRollout {
+  id: string;
+  release_id: string;
+  version: string;
+  name: string | null;
+  strategy: string;
+  current_stage: number;
+  stages: Array<{ percent: number; delay_hours: number }>;
+  maintenance_window: {
+    start: string;
+    end: string;
+    timezone: string;
+    days: string[];
+  };
+  status: string;
+  started_at: string | null;
+  paused_at: string | null;
+  completed_at: string | null;
+  failure_threshold_percent: number;
+  auto_rollback: boolean;
+  progress: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    rolled_back: number;
+    pending: number;
+    in_progress: number;
+    success_rate: number;
+  } | null;
+}
+
+export interface FleetStats {
+  releases: {
+    total: number;
+    active: number;
+    latest_version: string | null;
+  };
+  rollouts: {
+    total: number;
+    in_progress: number;
+    paused: number;
+    completed: number;
+  };
+  appliance_updates_30d: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    rolled_back: number;
+    success_rate: number;
+  };
+}
+
+export const fleetApi = {
+  // Stats
+  getStats: () => fetchSitesApi<FleetStats>('/fleet/stats'),
+
+  // Releases
+  getReleases: (activeOnly = true) =>
+    fetchSitesApi<FleetRelease[]>(`/fleet/releases?active_only=${activeOnly}`),
+
+  createRelease: (release: {
+    version: string;
+    iso_url: string;
+    sha256: string;
+    release_notes?: string;
+    agent_version?: string;
+  }) =>
+    fetchSitesApi<FleetRelease>('/fleet/releases', {
+      method: 'POST',
+      body: JSON.stringify(release),
+    }),
+
+  setLatest: (version: string) =>
+    fetchSitesApi<{ status: string }>(`/fleet/releases/${version}/latest`, {
+      method: 'PUT',
+    }),
+
+  // Rollouts
+  getRollouts: (status?: string) =>
+    fetchSitesApi<FleetRollout[]>(`/fleet/rollouts${status ? `?status=${status}` : ''}`),
+
+  createRollout: (data: {
+    release_id: string;
+    strategy?: string;
+    stages?: Array<{ percent: number; delay_hours: number }>;
+  }) =>
+    fetchSitesApi<FleetRollout>('/fleet/rollouts', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  pauseRollout: (rolloutId: string) =>
+    fetchSitesApi<{ status: string }>(`/fleet/rollouts/${rolloutId}/pause`, {
+      method: 'POST',
+    }),
+
+  resumeRollout: (rolloutId: string) =>
+    fetchSitesApi<{ status: string }>(`/fleet/rollouts/${rolloutId}/resume`, {
+      method: 'POST',
+    }),
+
+  advanceRollout: (rolloutId: string) =>
+    fetchSitesApi<{ status: string }>(`/fleet/rollouts/${rolloutId}/advance`, {
+      method: 'POST',
+    }),
+
+  cancelRollout: (rolloutId: string) =>
+    fetchSitesApi<{ status: string }>(`/fleet/rollouts/${rolloutId}/cancel`, {
+      method: 'POST',
+    }),
+};
+
 export { ApiError };
