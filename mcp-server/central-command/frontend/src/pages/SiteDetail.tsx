@@ -701,7 +701,7 @@ export const SiteDetail: React.FC = () => {
         {/* Main content */}
         <div className="lg:col-span-2 space-y-6">
           {/* Deployment Progress (Zero-Friction Pipeline) */}
-          <DeploymentProgress siteId={siteId} />
+          {siteId && <DeploymentProgress siteId={siteId} />}
 
           {/* Contact Information */}
           <GlassCard>
