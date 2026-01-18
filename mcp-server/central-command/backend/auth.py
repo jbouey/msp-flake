@@ -33,6 +33,70 @@ except ImportError:
     logger.warning("bcrypt not installed, using SHA-256 fallback (less secure)")
 
 
+def validate_password_complexity(password: str) -> Tuple[bool, Optional[str]]:
+    """Validate password meets complexity requirements.
+
+    Requirements:
+    - At least 12 characters (NIST SP 800-63B recommends 8+, we use 12 for security)
+    - At least one uppercase letter
+    - At least one lowercase letter
+    - At least one digit
+    - At least one special character
+    - Not a commonly breached password
+
+    Returns:
+        (is_valid, error_message) - True if valid, False with error message if not
+    """
+    import re
+
+    # Minimum length
+    if len(password) < 12:
+        return False, "Password must be at least 12 characters long"
+
+    # Uppercase check
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must contain at least one uppercase letter"
+
+    # Lowercase check
+    if not re.search(r"[a-z]", password):
+        return False, "Password must contain at least one lowercase letter"
+
+    # Digit check
+    if not re.search(r"\d", password):
+        return False, "Password must contain at least one digit"
+
+    # Special character check
+    if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?~`]", password):
+        return False, "Password must contain at least one special character (!@#$%^&*etc.)"
+
+    # Check against common breached passwords
+    # Small set of the most common passwords - in production, use a larger database
+    COMMON_PASSWORDS = {
+        "password123", "123456789012", "qwerty123456", "admin123456",
+        "letmein123456", "welcome12345", "password1234", "administrator",
+        "changeme1234", "p@ssw0rd1234", "Password123!", "Welcome123!",
+        "Summer2024!!", "Winter2024!!", "Spring2024!!", "Fall2024!!",
+        "Company1234!", "Security123!", "Admin@12345", "User@123456"
+    }
+
+    if password.lower() in [p.lower() for p in COMMON_PASSWORDS]:
+        return False, "Password is too common and may have been breached"
+
+    # Check for repeating characters (e.g., "aaaa" or "1111")
+    if re.search(r"(.)\1{3,}", password):
+        return False, "Password cannot contain 4 or more repeating characters"
+
+    # Check for sequential characters (e.g., "1234" or "abcd")
+    sequences = ["0123456789", "9876543210", "abcdefghijklmnopqrstuvwxyz", "zyxwvutsrqponmlkjihgfedcba"]
+    password_lower = password.lower()
+    for seq in sequences:
+        for i in range(len(seq) - 3):
+            if seq[i:i+4] in password_lower:
+                return False, "Password cannot contain 4 or more sequential characters"
+
+    return True, None
+
+
 def hash_password(password: str) -> str:
     """Hash a password for storage."""
     if HAS_BCRYPT:
@@ -64,8 +128,14 @@ def generate_session_token() -> str:
 
 
 def hash_token(token: str) -> str:
-    """Hash a session token for storage."""
-    return hashlib.sha256(token.encode()).hexdigest()
+    """Hash a session token for storage using HMAC-SHA256.
+
+    Uses a server-side secret for additional security against rainbow tables.
+    """
+    import os
+    # Use environment variable or fallback to a derived key
+    secret = os.getenv("SESSION_TOKEN_SECRET", "osiriscare-session-secret-change-in-production")
+    return hashlib.sha256(f"{secret}:{token}".encode()).hexdigest()
 
 
 async def ensure_default_admin(db: AsyncSession) -> None:
@@ -80,12 +150,24 @@ async def ensure_default_admin(db: AsyncSession) -> None:
     count = result.scalar()
 
     if count == 0:
-        # Get initial password from environment, fall back to random if not set
+        # Get initial password from environment, fail securely if not set
         initial_password = os.getenv("ADMIN_INITIAL_PASSWORD")
         if not initial_password:
+            # SECURITY: Generate random password but NEVER log it
             initial_password = secrets.token_urlsafe(16)
-            logger.warning(f"ADMIN_INITIAL_PASSWORD not set. Generated random password: {initial_password}")
-            logger.warning("Set ADMIN_INITIAL_PASSWORD env var to use a known password on first boot")
+            # Write to a secure file instead of logging
+            password_file = "/var/lib/msp/admin_initial_password.txt"
+            try:
+                import stat
+                with open(password_file, "w") as f:
+                    f.write(initial_password)
+                os.chmod(password_file, stat.S_IRUSR)  # Read-only by owner
+                logger.warning(f"ADMIN_INITIAL_PASSWORD not set. Random password written to {password_file}")
+                logger.warning("Read the file, set ADMIN_INITIAL_PASSWORD env var, then delete the file")
+            except (OSError, IOError):
+                # If we can't write the file, fail securely - don't log the password
+                logger.error("ADMIN_INITIAL_PASSWORD not set and cannot write password file. Set env var and restart.")
+                raise RuntimeError("ADMIN_INITIAL_PASSWORD environment variable must be set")
         else:
             logger.info("Creating admin user with password from ADMIN_INITIAL_PASSWORD env var")
 

@@ -2,21 +2,54 @@
 Minimal MCP Server for Demo
 This is a simplified version that provides health checks and basic endpoints for the demo
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 import json
 from pathlib import Path
 from typing import Dict
+import os
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+
+        # Security headers
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "frame-ancestors 'none'; "
+            "form-action 'self'"
+        )
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Strict-Transport-Security"] = "max-age=86400"
+
+        return response
+
 
 app = FastAPI(title="MSP Compliance Server - Demo Mode")
 
+# Add security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
 # Add CORS middleware
+# SECURITY: Restrict CORS for demo - use specific origins in production
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,  # Don't use wildcard with credentials
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],  # Be specific
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],  # Be specific
 )
 
 # In-memory state for demo

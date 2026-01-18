@@ -356,6 +356,23 @@ class MagicLinkResponse(BaseModel):
     email_sent: bool = False
 
 
+class MagicLinkValidateRequest(BaseModel):
+    """Request to validate magic link token.
+
+    SECURITY: Token is sent in body (not URL) to avoid exposure in server logs.
+    """
+    magic_token: str
+
+
+class LegacyTokenValidateRequest(BaseModel):
+    """Request to validate legacy token.
+
+    SECURITY: Token is sent in body (not URL) to avoid exposure in server logs.
+    """
+    token: str
+    site_id: str
+
+
 @router.post("/sites/{site_id}/generate-token", response_model=TokenResponse)
 async def generate_portal_token(site_id: str):
     """Generate magic link token for client portal access (admin use)."""
@@ -469,6 +486,111 @@ async def validate_magic_link(
         "site_id": site_id,
         "redirect": f"/portal/site/{site_id}"
     }
+
+
+@router.post("/auth/validate")
+async def validate_magic_link_post(
+    request: MagicLinkValidateRequest,
+    response: Response
+):
+    """Validate magic link and create session (POST version).
+
+    SECURITY: Token is sent in body (not URL) to avoid exposure in server logs.
+    Exchanges magic link token for httpOnly session cookie.
+    """
+    _cleanup_expired()
+
+    # Look up magic link
+    link_data = _magic_links.get(request.magic_token)
+    if not link_data:
+        raise HTTPException(status_code=403, detail="Invalid or expired link")
+
+    # Check expiry
+    if datetime.now(timezone.utc) > link_data["expires_at"]:
+        del _magic_links[request.magic_token]
+        raise HTTPException(status_code=403, detail="Link has expired. Please request a new one.")
+
+    # Create session
+    session_id = secrets.token_urlsafe(32)
+    site_id = link_data["site_id"]
+    now = datetime.now(timezone.utc)
+
+    _sessions[session_id] = {
+        "site_id": site_id,
+        "email": link_data["email"],
+        "created_at": now,
+        "expires_at": now + timedelta(days=SESSION_EXPIRY_DAYS)
+    }
+
+    # Delete used magic link
+    del _magic_links[request.magic_token]
+
+    # Set httpOnly cookie
+    response.set_cookie(
+        key="portal_session",
+        value=session_id,
+        httponly=True,
+        secure=True,  # Requires HTTPS
+        samesite="lax",
+        max_age=SESSION_EXPIRY_DAYS * 24 * 60 * 60,
+        path="/"
+    )
+
+    logger.info(f"Session created for site {site_id}")
+
+    return {
+        "status": "authenticated",
+        "site_id": site_id,
+        "redirect": f"/portal/site/{site_id}"
+    }
+
+
+@router.post("/auth/validate-legacy")
+async def validate_legacy_token(
+    request: LegacyTokenValidateRequest,
+    response: Response
+):
+    """Validate legacy token and create session.
+
+    SECURITY: Token is sent in body (not URL) to avoid exposure in server logs.
+    For clients using the old token-based auth approach.
+    """
+    _cleanup_expired()
+
+    # Check legacy token
+    stored_token = _portal_tokens.get(request.site_id)
+    if stored_token and secrets.compare_digest(stored_token, request.token):
+        # Create session
+        session_id = secrets.token_urlsafe(32)
+        now = datetime.now(timezone.utc)
+
+        _sessions[session_id] = {
+            "site_id": request.site_id,
+            "email": None,  # Legacy tokens don't have email
+            "created_at": now,
+            "expires_at": now + timedelta(days=SESSION_EXPIRY_DAYS)
+        }
+
+        # Set httpOnly cookie
+        response.set_cookie(
+            key="portal_session",
+            value=session_id,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=SESSION_EXPIRY_DAYS * 24 * 60 * 60,
+            path="/"
+        )
+
+        logger.info(f"Legacy session created for site {request.site_id}")
+
+        return {
+            "status": "authenticated",
+            "site_id": request.site_id,
+            "redirect": f"/portal/site/{request.site_id}"
+        }
+
+    raise HTTPException(status_code=403, detail="Invalid or expired token")
 
 
 async def validate_session(

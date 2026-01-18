@@ -384,14 +384,35 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None,
     lifespan=lifespan
 )
 
-# CORS middleware
+# CORS middleware - SECURITY: Specific origins only
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://dashboard.osiriscare.net", "https://portal.osiriscare.net"],  # Configure for production
+    allow_origins=[
+        "https://dashboard.osiriscare.net",
+        "https://portal.osiriscare.net",
+        "http://localhost:3000",  # Development
+        "http://localhost:5173",  # Vite dev
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Site-ID", "X-CSRF-Token"],
 )
+
+# Rate limiting middleware - SECURITY: Protect against brute force and DoS
+try:
+    from central_command.backend.rate_limiter import RateLimitMiddleware
+    app.add_middleware(RateLimitMiddleware)
+    logger.info("Rate limiting middleware enabled")
+except ImportError:
+    logger.warning("Rate limiting middleware not available - continuing without rate limits")
+
+# Security headers middleware - SECURITY: CSP, X-Frame-Options, HSTS, etc.
+try:
+    from central_command.backend.security_headers import SecurityHeadersMiddleware
+    app.add_middleware(SecurityHeadersMiddleware)
+    logger.info("Security headers middleware enabled")
+except ImportError:
+    logger.warning("Security headers middleware not available - continuing without security headers")
 
 # Include dashboard API routes
 app.include_router(dashboard_router)
@@ -1678,16 +1699,36 @@ if __name__ == "__main__":
 # =============================================================================
 
 @app.get("/agent/sync")
-async def agent_sync_rules(db: AsyncSession = Depends(get_db)):
+async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     """
     Return L1 rules for agents to sync.
-    
-    Returns built-in rules plus any custom/promoted rules from database.
+
+    Returns rules based on site's healing_tier:
+    - standard: 4 core rules (firewall, defender, bitlocker, ntp)
+    - full_coverage: All 21 L1 rules for comprehensive auto-healing
+
+    Plus any custom/promoted rules from database.
     """
+    # Determine healing tier from site configuration
+    healing_tier = "standard"  # default
+    if site_id:
+        try:
+            result = await db.execute(
+                text("SELECT healing_tier FROM sites WHERE site_id = :site_id"),
+                {"site_id": site_id}
+            )
+            row = result.fetchone()
+            if row and row[0]:
+                healing_tier = row[0]
+        except Exception as e:
+            logger.warning(f"Failed to fetch healing tier for {site_id}: {e}")
+
     # Built-in L1 rules for NixOS appliances
     # Note: status values from SimpleDriftChecker are: "pass", "warning", "fail", "error"
     # Use "in" operator to match non-passing statuses
-    builtin_rules = [
+
+    # Standard rules (4 core rules) - always included
+    standard_rules = [
         {
             "id": "L1-NTP-001",
             "name": "NTP Drift Remediation",
@@ -1787,7 +1828,213 @@ async def agent_sync_rules(db: AsyncSession = Depends(get_db)):
             "source": "builtin"
         }
     ]
-    
+
+    # Additional rules for full_coverage mode (14 more rules)
+    full_coverage_extra_rules = [
+        {
+            "id": "L1-PASSWORD-001",
+            "name": "Password Policy Enforcement",
+            "description": "Enforce minimum password requirements",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "password_policy"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["set_password_policy"],
+            "severity": "high",
+            "cooldown_seconds": 3600,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-AUDIT-001",
+            "name": "Audit Policy Enforcement",
+            "description": "Enable required audit policies",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "audit_policy"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["set_audit_policy"],
+            "severity": "high",
+            "cooldown_seconds": 3600,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-BITLOCKER-001",
+            "name": "BitLocker Encryption",
+            "description": "Enable drive encryption",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "bitlocker"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["enable_bitlocker"],
+            "severity": "critical",
+            "cooldown_seconds": 3600,
+            "max_retries": 1,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-SMB1-001",
+            "name": "SMBv1 Protocol Disabled",
+            "description": "Disable insecure SMBv1 protocol",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "smb1_disabled"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["disable_smb1"],
+            "severity": "high",
+            "cooldown_seconds": 3600,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-AUTOPLAY-001",
+            "name": "AutoPlay Disabled",
+            "description": "Disable AutoPlay to prevent malware spread",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "autoplay_disabled"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["disable_autoplay"],
+            "severity": "medium",
+            "cooldown_seconds": 3600,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-LOCKOUT-001",
+            "name": "Account Lockout Policy",
+            "description": "Configure account lockout after failed attempts",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "lockout_policy"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["set_lockout_policy"],
+            "severity": "medium",
+            "cooldown_seconds": 3600,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-SCREENSAVER-001",
+            "name": "Screensaver Timeout",
+            "description": "Configure screensaver with password protection",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "screensaver_timeout"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["set_screensaver_policy"],
+            "severity": "medium",
+            "cooldown_seconds": 3600,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-RDP-001",
+            "name": "RDP Security",
+            "description": "Secure RDP with NLA requirement",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "rdp_security"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["configure_rdp_security"],
+            "severity": "high",
+            "cooldown_seconds": 3600,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-UAC-001",
+            "name": "UAC Enabled",
+            "description": "Ensure User Account Control is enabled",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "uac_enabled"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["enable_uac"],
+            "severity": "high",
+            "cooldown_seconds": 3600,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-EVENTLOG-001",
+            "name": "Event Log Size",
+            "description": "Configure adequate event log retention",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "event_log_size"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["set_event_log_size"],
+            "severity": "medium",
+            "cooldown_seconds": 3600,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-DEFENDERUPDATES-001",
+            "name": "Windows Defender Definitions",
+            "description": "Update malware definitions",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "defender_definitions"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["update_defender_definitions"],
+            "severity": "high",
+            "cooldown_seconds": 14400,
+            "max_retries": 3,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-GUESTACCOUNT-001",
+            "name": "Guest Account Disabled",
+            "description": "Disable built-in Guest account",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "guest_account_disabled"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["disable_guest_account"],
+            "severity": "medium",
+            "cooldown_seconds": 3600,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-WUPDATES-001",
+            "name": "Windows Updates",
+            "description": "Check and trigger pending security updates",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "windows_updates"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["trigger_windows_update"],
+            "severity": "high",
+            "cooldown_seconds": 86400,
+            "max_retries": 1,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-BACKUP-001",
+            "name": "Backup Status",
+            "description": "Alert when backup fails or is stale",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "backup"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["alert:backup_failed"],
+            "severity": "high",
+            "cooldown_seconds": 7200,
+            "max_retries": 1,
+            "source": "builtin"
+        }
+    ]
+
+    # Select rules based on healing tier
+    if healing_tier == "full_coverage":
+        builtin_rules = standard_rules + full_coverage_extra_rules
+    else:
+        builtin_rules = standard_rules
+
     # Fetch custom/promoted rules from database
     try:
         result = await db.execute(
@@ -1814,11 +2061,12 @@ async def agent_sync_rules(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         logger.warning(f"Failed to fetch DB rules: {e}")
         db_rules = []
-    
+
     all_rules = builtin_rules + db_rules
-    
+
     return {
         "rules": all_rules,
+        "healing_tier": healing_tier,
         "version": "1.0.0",
         "count": len(all_rules)
     }

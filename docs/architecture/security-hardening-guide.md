@@ -957,6 +957,127 @@ systemctl status health-monitor
 
 ---
 
+## API & Web Application Security (Session 52)
+
+### Overview
+
+**Last Updated:** 2026-01-17 (Session 52 Security Audit)
+
+This section covers the security hardening implemented for the Central Command API and frontend applications.
+
+### Security Headers (Middleware)
+
+All API responses include the following security headers:
+
+| Header | Value | Purpose |
+|--------|-------|---------|
+| Content-Security-Policy | Restrictive CSP | Prevent XSS, clickjacking |
+| X-Frame-Options | DENY | Prevent clickjacking |
+| X-Content-Type-Options | nosniff | Prevent MIME sniffing |
+| X-XSS-Protection | 1; mode=block | Legacy XSS protection |
+| Strict-Transport-Security | max-age=31536000 | Force HTTPS |
+| Referrer-Policy | strict-origin-when-cross-origin | Control referrer info |
+| Permissions-Policy | Restrict browser features | Limit camera, mic, geolocation |
+| Cross-Origin-Opener-Policy | same-origin | Prevent cross-origin leaks |
+| Cross-Origin-Embedder-Policy | require-corp | Prevent embedding attacks |
+| Cross-Origin-Resource-Policy | same-origin | Resource isolation |
+
+**Implementation:** `mcp-server/central-command/backend/security_headers.py`
+
+### Rate Limiting (Middleware)
+
+Protection against brute force and DoS attacks:
+
+| Limit Type | Value | Window |
+|------------|-------|--------|
+| Burst limit | 10 requests | 1 second |
+| Minute limit | 60 requests | 1 minute |
+| Hour limit | 1000 requests | 1 hour |
+
+**Auth endpoints** have stricter limits (5/minute) to prevent credential stuffing.
+
+**Implementation:** `mcp-server/central-command/backend/rate_limiter.py`
+
+### Token & Credential Security
+
+| Item | Original Issue | Fix |
+|------|----------------|-----|
+| Session tokens | Plain SHA256 hash | HMAC-SHA256 with `SESSION_TOKEN_SECRET` |
+| API keys | Plain SHA256 hash | HMAC-SHA256 with `API_KEY_SECRET` |
+| Admin password | Logged on init | Written to secure file `/var/lib/msp/admin_initial_password.txt` |
+| MinIO credentials | Hardcoded defaults | Required env vars `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` |
+
+### Password Complexity Requirements
+
+All password-setting endpoints enforce:
+
+- Minimum 12 characters
+- At least one uppercase letter (A-Z)
+- At least one lowercase letter (a-z)
+- At least one digit (0-9)
+- At least one special character (!@#$%^&*()_+-=[]{}etc.)
+- Not in common breached passwords list
+- No 4+ repeating characters (aaaa, 1111)
+- No 4+ sequential characters (1234, abcd)
+
+**Implementation:** `validate_password_complexity()` in `auth.py`
+
+### CORS Configuration
+
+| Setting | Original | Fixed |
+|---------|----------|-------|
+| Origins | `*` (wildcard) | Specific origins from `CORS_ORIGINS` env var |
+| Methods | All | `GET, POST, PUT, DELETE` |
+| Headers | All | `Authorization, Content-Type, X-API-Key` |
+| Credentials | true | true (requires non-wildcard origins) |
+
+### Frontend Security Fixes
+
+| Component | Issue | Fix |
+|-----------|-------|-----|
+| PortalLogin.tsx | Open redirect via siteId | Regex validation `/^[a-zA-Z0-9_-]{1,100}$/` |
+| PortalLogin.tsx | Token exposed in URL | Changed to POST with token in body |
+| IntegrationSetup.tsx | OAuth redirect to arbitrary URL | Whitelist of allowed OAuth domains |
+| PartnerLogin.tsx | Magic link token in URL | Changed to POST with token in body |
+
+### OAuth Provider Whitelist
+
+OAuth redirects are validated against:
+
+```typescript
+const ALLOWED_OAUTH_DOMAINS = [
+  'accounts.google.com',
+  'login.microsoftonline.com',
+  'login.live.com',
+  'login.windows.net',
+  'oauth.okta.com',
+  '.okta.com', // Allow all Okta subdomains
+];
+```
+
+### Required Environment Variables
+
+| Variable | Purpose | Required |
+|----------|---------|----------|
+| `SESSION_TOKEN_SECRET` | HMAC key for session token hashing | Yes |
+| `API_KEY_SECRET` | HMAC key for API key hashing | Yes |
+| `MINIO_ACCESS_KEY` | MinIO access credentials | Yes |
+| `MINIO_SECRET_KEY` | MinIO secret credentials | Yes |
+| `CORS_ORIGINS` | Comma-separated allowed origins | Optional (defaults to localhost) |
+| `ENVIRONMENT` | `production` or `development` | Optional (affects CSP strictness) |
+
+### Deployment Checklist
+
+- [ ] Set `SESSION_TOKEN_SECRET` (generate with `openssl rand -base64 32`)
+- [ ] Set `API_KEY_SECRET` (generate with `openssl rand -base64 32`)
+- [ ] Set `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY`
+- [ ] Set `CORS_ORIGINS` to production domains
+- [ ] Set `ENVIRONMENT=production` for strict CSP
+- [ ] Run database migration `021_healing_tier.sql`
+- [ ] Rebuild Docker containers with new code
+
+---
+
 **End of Document**
-**Version:** 1.0
-**Last Updated:** 2025-10-31
+**Version:** 1.1
+**Last Updated:** 2026-01-17

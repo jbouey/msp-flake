@@ -18,27 +18,84 @@ export const PortalLogin: React.FC = () => {
   const magicToken = searchParams.get('magic');
   const legacyToken = searchParams.get('token');
 
+  // SECURITY: Validate siteId format to prevent path traversal/injection
+  const isValidSiteId = (id: string | undefined): boolean => {
+    if (!id) return false;
+    // Site IDs should only contain alphanumeric chars, dashes, and underscores
+    return /^[a-zA-Z0-9_-]{1,100}$/.test(id);
+  };
+
   useEffect(() => {
+    // SECURITY: Validate siteId before using in navigation
+    if (!isValidSiteId(siteId)) {
+      setState({ status: 'error', message: 'Invalid site identifier.' });
+      return;
+    }
+
     // If we have a magic link token, validate it
     if (magicToken && siteId) {
       validateMagicLink(magicToken);
     }
-    // If we have a legacy token, redirect to dashboard
+    // If we have a legacy token, validate it server-side first (don't pass in URL)
     else if (legacyToken && siteId) {
-      navigate(`/portal/site/${siteId}/dashboard?token=${legacyToken}`, { replace: true });
+      // SECURITY: Validate legacy token server-side instead of passing in URL
+      validateLegacyToken(legacyToken, siteId);
     }
   }, [magicToken, legacyToken, siteId]);
+
+  const validateLegacyToken = async (token: string, site: string) => {
+    setState({ status: 'validating', message: 'Validating your access...' });
+    try {
+      // SECURITY: POST token in body, not URL, to avoid exposure in logs
+      const response = await fetch('/api/portal/auth/validate-legacy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, site_id: site }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Session cookie is now set - redirect to dashboard
+        navigate(`/portal/site/${encodeURIComponent(data.site_id)}/dashboard`, { replace: true });
+      } else {
+        const error = await response.json();
+        setState({
+          status: 'error',
+          message: error.detail || 'Invalid or expired link. Please request a new one.',
+        });
+      }
+    } catch (e) {
+      setState({
+        status: 'error',
+        message: 'Failed to validate access link. Please try again.',
+      });
+    }
+  };
 
   const validateMagicLink = async (token: string) => {
     setState({ status: 'validating', message: 'Validating your access...' });
 
     try {
-      const response = await fetch(`/api/portal/auth/validate?magic=${token}`);
+      // SECURITY: POST token in body, not URL, to avoid exposure in logs
+      const response = await fetch('/api/portal/auth/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ magic_token: token }),
+      });
 
       if (response.ok) {
         const data = await response.json();
         // Session cookie is now set - redirect to dashboard
-        navigate(`/portal/site/${data.site_id}/dashboard`, { replace: true });
+        // SECURITY: Validate and encode site_id before using in URL
+        const validatedSiteId = encodeURIComponent(data.site_id || '');
+        if (isValidSiteId(data.site_id)) {
+          navigate(`/portal/site/${validatedSiteId}/dashboard`, { replace: true });
+        } else {
+          setState({
+            status: 'error',
+            message: 'Invalid site identifier in response.',
+          });
+        }
       } else {
         const error = await response.json();
         setState({

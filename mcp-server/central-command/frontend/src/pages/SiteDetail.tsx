@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { GlassCard, Spinner, Badge, ActionDropdown } from '../components/shared';
 import type { ActionItem } from '../components/shared';
 import { DeploymentProgress } from '../components/deployment';
-import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances } from '../hooks';
+import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier } from '../hooks';
 import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
 
 /**
@@ -512,6 +512,7 @@ export const SiteDetail: React.FC = () => {
   const broadcastOrder = useBroadcastOrder();
   const deleteAppliance = useDeleteAppliance();
   const clearStale = useClearStaleAppliances();
+  const updateHealingTier = useUpdateHealingTier();
 
   const isOrderLoading = createOrder.isPending || broadcastOrder.isPending || deleteAppliance.isPending || clearStale.isPending;
 
@@ -584,6 +585,17 @@ export const SiteDetail: React.FC = () => {
       showToast(`Cleared ${result.deleted_count} stale appliances`, 'success');
     } catch (error) {
       showToast(`Failed to clear stale appliances: ${error}`, 'error');
+    }
+  };
+
+  // Handle updating healing tier
+  const handleHealingTierChange = async (tier: 'standard' | 'full_coverage') => {
+    if (!siteId) return;
+    try {
+      await updateHealingTier.mutateAsync({ siteId, healingTier: tier });
+      showToast(`Healing tier updated to ${tier === 'full_coverage' ? 'Full Coverage (21 rules)' : 'Standard (4 rules)'}`, 'success');
+    } catch (error) {
+      showToast(`Failed to update healing tier: ${error}`, 'error');
     }
   };
 
@@ -713,6 +725,23 @@ export const SiteDetail: React.FC = () => {
                   {site.tier}
                 </Badge>
               </div>
+              <div>
+                <p className="text-label-tertiary text-sm">Healing Mode</p>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={site.healing_tier || 'standard'}
+                    onChange={(e) => handleHealingTierChange(e.target.value as 'standard' | 'full_coverage')}
+                    disabled={updateHealingTier.isPending}
+                    className="px-2 py-1 text-sm rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:outline-none focus:ring-2 focus:ring-accent-primary disabled:opacity-50"
+                  >
+                    <option value="standard">Standard (4 rules)</option>
+                    <option value="full_coverage">Full Coverage (21 rules)</option>
+                  </select>
+                  {updateHealingTier.isPending && (
+                    <Spinner size="sm" />
+                  )}
+                </div>
+              </div>
               {site.address && (
                 <div className="col-span-2">
                   <p className="text-label-tertiary text-sm">Address</p>
@@ -723,7 +752,7 @@ export const SiteDetail: React.FC = () => {
           </GlassCard>
 
           {/* Appliances */}
-          <GlassCard>
+          <GlassCard className="relative z-10">
             <h2 className="text-lg font-semibold mb-4">
               Appliances ({site.appliances.length})
             </h2>

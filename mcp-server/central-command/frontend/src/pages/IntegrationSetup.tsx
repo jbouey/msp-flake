@@ -23,6 +23,45 @@ import {
 
 type SetupStep = 'provider' | 'credentials' | 'complete';
 
+// SECURITY: Whitelist of allowed OAuth redirect domains
+const ALLOWED_OAUTH_DOMAINS = [
+  'accounts.google.com',
+  'login.microsoftonline.com',
+  'login.live.com',
+  'login.windows.net',
+  'oauth.okta.com',
+  '.okta.com', // Allow all Okta subdomains
+];
+
+/**
+ * SECURITY: Validate that an OAuth redirect URL is from a trusted provider.
+ * Prevents open redirect attacks where a malicious server could return
+ * an attacker-controlled URL.
+ */
+function isValidOAuthRedirect(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+
+    // Must be HTTPS
+    if (parsed.protocol !== 'https:') {
+      return false;
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Check against whitelist
+    return ALLOWED_OAUTH_DOMAINS.some(domain => {
+      if (domain.startsWith('.')) {
+        // Wildcard domain match (e.g., .okta.com matches company.okta.com)
+        return hostname.endsWith(domain) || hostname === domain.slice(1);
+      }
+      return hostname === domain;
+    });
+  } catch {
+    return false;
+  }
+}
+
 // Provider selection card
 function ProviderCard({
   provider,
@@ -405,9 +444,15 @@ export default function IntegrationSetup() {
       });
 
       // For OAuth providers, redirect to auth URL
+      // SECURITY: Validate the auth_url against our whitelist to prevent open redirect
       if (result.auth_url) {
-        window.location.href = result.auth_url;
-        return;
+        if (isValidOAuthRedirect(result.auth_url)) {
+          window.location.href = result.auth_url;
+          return;
+        } else {
+          setError('Invalid OAuth redirect URL. Please contact support.');
+          return;
+        }
       }
 
       // For AWS, go to complete step

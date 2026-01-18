@@ -20,6 +20,7 @@ export {
   useCreateSite,
   useUpdateSite,
   useAddCredential,
+  useUpdateHealingTier,
   // Order hooks
   useOrders,
   useCreateApplianceOrder,

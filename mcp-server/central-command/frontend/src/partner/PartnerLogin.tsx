@@ -31,7 +31,12 @@ export const PartnerLogin: React.FC = () => {
     setError(null);
 
     try {
-      const response = await fetch(`/api/partners/auth/magic?token=${token}`);
+      // SECURITY: POST token in body instead of URL to avoid exposure in server logs
+      const response = await fetch('/api/partners/auth/magic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
 
       if (response.ok) {
         const data = await response.json();

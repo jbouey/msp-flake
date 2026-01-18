@@ -11,8 +11,10 @@ before /{partner_id} routes to avoid /me being captured as a partner_id.
 """
 
 import json
+import os
 import secrets
 import hashlib
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Header, Depends, Response
@@ -20,6 +22,16 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .fleet import get_pool
+
+logger = logging.getLogger(__name__)
+
+# Try to import bcrypt, fall back to HMAC-SHA256 if not available
+try:
+    import bcrypt
+    HAS_BCRYPT = True
+except ImportError:
+    HAS_BCRYPT = False
+    logger.warning("bcrypt not installed for partners.py, using HMAC-SHA256 fallback")
 
 # Try to import qrcode for QR generation
 try:
@@ -87,8 +99,23 @@ class ProvisionClaim(BaseModel):
 # =============================================================================
 
 def hash_api_key(api_key: str) -> str:
-    """Hash an API key for storage."""
-    return hashlib.sha256(api_key.encode()).hexdigest()
+    """Hash an API key for secure storage.
+
+    Uses HMAC-SHA256 with server secret for secure hashing that allows lookup.
+    Note: bcrypt is not used for API keys because they need to be looked up by hash.
+    """
+    secret = os.getenv("API_KEY_SECRET")
+    if not secret:
+        # SECURITY: Fail if no secret is configured
+        logger.error("API_KEY_SECRET environment variable must be set for secure API key hashing")
+        raise RuntimeError("API_KEY_SECRET not configured - set this environment variable")
+    return hashlib.sha256(f"{secret}:{api_key}".encode()).hexdigest()
+
+
+def verify_api_key(api_key: str, api_key_hash: str) -> bool:
+    """Verify an API key against its stored hash."""
+    computed_hash = hash_api_key(api_key)
+    return secrets.compare_digest(computed_hash, api_key_hash)
 
 
 def generate_api_key() -> str:
@@ -1318,4 +1345,82 @@ async def trigger_discovery(site_id: str, partner=Depends(require_partner)):
         'status': 'queued',
         'started_at': scan['started_at'].isoformat(),
         'message': 'Discovery scan queued. Appliance will run on next sync.',
+    }
+
+
+# =============================================================================
+# PARTNER AUTHENTICATION ENDPOINTS
+# =============================================================================
+
+class MagicTokenValidate(BaseModel):
+    """Model for validating a magic link token."""
+    token: str
+
+
+@router.post("/auth/magic")
+async def validate_magic_link(request: MagicTokenValidate):
+    """Validate a magic link token and return API key for partner login.
+
+    SECURITY: Token is sent in request body (not URL) to avoid exposure in logs.
+
+    Args:
+        request: Contains the magic link token
+
+    Returns:
+        Partner info and API key on success
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Find user with this magic token
+        user = await conn.fetchrow("""
+            SELECT pu.id, pu.partner_id, pu.email, pu.name, pu.role,
+                   pu.magic_token_expires, p.api_key_hash, p.name as partner_name,
+                   p.slug, p.status as partner_status
+            FROM partner_users pu
+            JOIN partners p ON p.id = pu.partner_id
+            WHERE pu.magic_token = $1
+        """, request.token)
+
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid or expired magic link")
+
+        # Check expiration
+        if user['magic_token_expires'] and user['magic_token_expires'] < datetime.now(timezone.utc):
+            raise HTTPException(status_code=401, detail="Magic link has expired")
+
+        # Check partner is active
+        if user['partner_status'] != 'active':
+            raise HTTPException(status_code=403, detail="Partner account is not active")
+
+        # Clear the magic token (single use)
+        await conn.execute("""
+            UPDATE partner_users
+            SET magic_token = NULL, magic_token_expires = NULL, last_login = NOW()
+            WHERE id = $1
+        """, user['id'])
+
+        # Generate a new API key for this session
+        api_key = generate_api_key()
+        api_key_hash = hash_api_key(api_key)
+
+        # Update the partner's API key
+        await conn.execute("""
+            UPDATE partners SET api_key_hash = $1 WHERE id = $2
+        """, api_key_hash, user['partner_id'])
+
+    return {
+        "success": True,
+        "api_key": api_key,
+        "partner": {
+            "id": str(user['partner_id']),
+            "name": user['partner_name'],
+            "slug": user['slug'],
+        },
+        "user": {
+            "id": str(user['id']),
+            "email": user['email'],
+            "name": user['name'],
+            "role": user['role'],
+        },
     }

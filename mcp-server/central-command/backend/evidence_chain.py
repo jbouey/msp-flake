@@ -439,12 +439,16 @@ async def upload_to_worm_background(
         from minio import Minio
         from minio.retention import Retention, COMPLIANCE
 
-        # MinIO configuration
+        # MinIO configuration - SECURITY: No insecure defaults for credentials
         MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-        MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minio")
-        MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minio-password")
+        MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
+        MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
         MINIO_BUCKET = os.getenv("MINIO_BUCKET", "evidence-worm")
-        MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
+        MINIO_SECURE = os.getenv("MINIO_SECURE", "true").lower() == "true"  # Default to secure
+
+        if not MINIO_ACCESS_KEY or not MINIO_SECRET_KEY:
+            logger.error("MINIO_ACCESS_KEY and MINIO_SECRET_KEY environment variables must be set")
+            raise ValueError("MinIO credentials not configured - set MINIO_ACCESS_KEY and MINIO_SECRET_KEY")
         WORM_RETENTION_DAYS = int(os.getenv("WORM_RETENTION_DAYS", "90"))
 
         minio_client = Minio(

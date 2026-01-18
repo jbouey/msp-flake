@@ -1,6 +1,87 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-17 (Session 50)
+**Last Updated:** 2026-01-17 (Session 52)
+
+---
+
+## Session 52 - Security Audit & Healing Tier Toggle
+
+**Date:** 2026-01-17
+**Status:** COMPLETE
+**Commits:** `afa09d8`
+
+### Objectives
+1. Implement Central Command UI for healing tier selection
+2. Conduct comprehensive security audit on frontend and backend
+3. Fix all identified security vulnerabilities
+
+### Completed Tasks
+
+#### 1. Healing Tier Toggle
+- **Status:** COMPLETE
+- **Database:** `021_healing_tier.sql` - Added `healing_tier` column to sites
+- **API:** GET/PUT `/api/sites/{site_id}/healing-tier` endpoints
+- **Frontend:** Toggle switch in SiteDetail.tsx
+- **Agent:** `appliance_client.py` syncs tier-specific rules
+
+#### 2. Backend Security Fixes (11 items)
+- **Status:** COMPLETE
+- `auth.py`: Token hashing (HMAC-SHA256), credential logging, password complexity
+- `evidence_chain.py`: Removed hardcoded MinIO credentials
+- `partners.py`: API key hashing (HMAC), POST magic link endpoint
+- `portal.py`: POST endpoints for magic link validation
+- `server_minimal.py`: Fixed CORS wildcard, added security headers
+- `main.py`: Added rate limiting and security headers middleware
+- `users.py`: Password complexity validation on all endpoints
+
+#### 3. Frontend Security Fixes (4 items)
+- **Status:** COMPLETE
+- `PortalLogin.tsx`: Open redirect fix (siteId validation), POST token validation
+- `IntegrationSetup.tsx`: OAuth redirect URL validation (provider whitelist)
+- `PartnerLogin.tsx`: Changed magic link to POST
+
+#### 4. New Security Middleware
+- **Status:** COMPLETE
+- **Files Created:**
+  - `rate_limiter.py`: Sliding window rate limiting (60/min, 1000/hr, 10/burst)
+  - `security_headers.py`: CSP, X-Frame-Options, HSTS, X-Content-Type-Options, etc.
+
+### Files Changed
+| File | Change Type |
+|------|-------------|
+| `mcp-server/central-command/backend/auth.py` | Modified |
+| `mcp-server/central-command/backend/evidence_chain.py` | Modified |
+| `mcp-server/central-command/backend/partners.py` | Modified |
+| `mcp-server/central-command/backend/portal.py` | Modified |
+| `mcp-server/central-command/backend/sites.py` | Modified |
+| `mcp-server/central-command/backend/users.py` | Modified |
+| `mcp-server/central-command/backend/rate_limiter.py` | Created |
+| `mcp-server/central-command/backend/security_headers.py` | Created |
+| `mcp-server/central-command/backend/migrations/021_healing_tier.sql` | Created |
+| `mcp-server/main.py` | Modified |
+| `mcp-server/server_minimal.py` | Modified |
+| `mcp-server/central-command/frontend/src/pages/SiteDetail.tsx` | Modified |
+| `mcp-server/central-command/frontend/src/pages/IntegrationSetup.tsx` | Modified |
+| `mcp-server/central-command/frontend/src/portal/PortalLogin.tsx` | Modified |
+| `mcp-server/central-command/frontend/src/partner/PartnerLogin.tsx` | Modified |
+| `mcp-server/central-command/frontend/src/hooks/useFleet.ts` | Modified |
+| `mcp-server/central-command/frontend/src/hooks/index.ts` | Modified |
+| `mcp-server/central-command/frontend/src/utils/api.ts` | Modified |
+| `packages/compliance-agent/src/compliance_agent/appliance_client.py` | Modified |
+
+---
+
+## Session 51 - FULL COVERAGE L1 Healing Tier
+
+**Date:** 2026-01-17
+**Status:** COMPLETE
+**Commits:** `7ca78ac`
+
+### Completed Tasks
+1. Created 21 L1 rules in `config/l1_rules_full_coverage.json`
+2. Created 4 core rules in `config/l1_rules_standard.json`
+3. Expanded `appliance_agent.py` with 18 new alert→runbook mappings
+4. Validated L1 rule matching and healing end-to-end
 
 ---
 

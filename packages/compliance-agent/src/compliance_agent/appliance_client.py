@@ -303,17 +303,24 @@ class CentralCommandClient:
         """
         Fetch L1 rules from Central Command.
 
+        Rules returned depend on site's healing_tier setting:
+        - standard: 7 core rules
+        - full_coverage: All 21 L1 rules
+
         Returns:
             List of rule dictionaries, or None on error
         """
+        # Pass site_id to get tier-specific rules
+        endpoint = f'/agent/sync?site_id={self.config.site_id}'
         status, response = await self._request(
             'GET',
-            '/agent/sync'
+            endpoint
         )
 
         if status == 200:
             rules = response.get('rules', [])
-            logger.info(f"Synced {len(rules)} L1 rules")
+            healing_tier = response.get('healing_tier', 'standard')
+            logger.info(f"Synced {len(rules)} L1 rules (tier: {healing_tier})")
             return rules
         else:
             logger.warning(f"Rules sync failed: {status} - {response}")

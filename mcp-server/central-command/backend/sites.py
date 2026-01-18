@@ -52,6 +52,12 @@ class OrderType(str, Enum):
     REBOOT = "reboot"
 
 
+class HealingTier(str, Enum):
+    """Healing tier options for L1 rules."""
+    STANDARD = "standard"  # 4 core rules: firewall, defender, bitlocker, ntp
+    FULL_COVERAGE = "full_coverage"  # All 21 L1 rules
+
+
 class SiteUpdate(BaseModel):
     """Model for site update request."""
     clinic_name: Optional[str] = None
@@ -62,6 +68,7 @@ class SiteUpdate(BaseModel):
     tier: Optional[str] = None
     onboarding_stage: Optional[str] = None
     notes: Optional[str] = None
+    healing_tier: Optional[HealingTier] = None
 
 
 class OrderCreate(BaseModel):
@@ -134,6 +141,11 @@ async def update_site(site_id: str, update: SiteUpdate):
         values.append(update.onboarding_stage)
         param_num += 1
 
+    if update.healing_tier is not None:
+        updates.append(f"healing_tier = ${param_num}")
+        values.append(update.healing_tier.value)
+        param_num += 1
+
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -159,6 +171,68 @@ async def update_site(site_id: str, update: SiteUpdate):
         "status": "updated",
         "site_id": result["site_id"],
         "clinic_name": result["clinic_name"]
+    }
+
+
+# =============================================================================
+# HEALING TIER ENDPOINT
+# =============================================================================
+
+class HealingTierUpdate(BaseModel):
+    """Model for healing tier update request."""
+    healing_tier: HealingTier
+
+
+@router.put("/{site_id}/healing-tier")
+async def update_healing_tier(site_id: str, update: HealingTierUpdate):
+    """Update the healing tier for a site.
+
+    Healing tiers control which L1 rules are active:
+    - standard: 4 core rules (firewall, defender, bitlocker, ntp)
+    - full_coverage: All 21 L1 rules for comprehensive auto-healing
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        result = await conn.fetchrow("""
+            UPDATE sites
+            SET healing_tier = $1, updated_at = $2
+            WHERE site_id = $3
+            RETURNING site_id, clinic_name, healing_tier
+        """, update.healing_tier.value, datetime.now(timezone.utc), site_id)
+
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Site {site_id} not found")
+
+    logger.info(f"Updated healing tier for {site_id} to {update.healing_tier.value}")
+
+    return {
+        "status": "updated",
+        "site_id": result["site_id"],
+        "clinic_name": result["clinic_name"],
+        "healing_tier": result["healing_tier"]
+    }
+
+
+@router.get("/{site_id}/healing-tier")
+async def get_healing_tier(site_id: str):
+    """Get the current healing tier for a site."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        result = await conn.fetchrow("""
+            SELECT site_id, clinic_name, healing_tier
+            FROM sites
+            WHERE site_id = $1
+        """, site_id)
+
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Site {site_id} not found")
+
+    return {
+        "site_id": result["site_id"],
+        "clinic_name": result["clinic_name"],
+        "healing_tier": result["healing_tier"] or "standard"
     }
 
 
@@ -424,27 +498,36 @@ async def get_site(site_id: str):
             overall_status = 'stale'
         else:
             overall_status = 'offline'
-        
-        # Human-readable name
-        clinic_name = site_id.replace('-', ' ').title()
-        
+
+        # Get site metadata from sites table
+        site_row = await conn.fetchrow("""
+            SELECT clinic_name, contact_name, contact_email, contact_phone,
+                   address, notes, tier, onboarding_stage, healing_tier
+            FROM sites
+            WHERE site_id = $1
+        """, site_id)
+
+        # Human-readable name (from sites table or derived)
+        clinic_name = site_row['clinic_name'] if site_row and site_row['clinic_name'] else site_id.replace('-', ' ').title()
+
         return {
             'site_id': site_id,
             'clinic_name': clinic_name,
-            'contact_name': None,
-            'contact_email': None,
-            'contact_phone': None,
-            'address': None,
+            'contact_name': site_row['contact_name'] if site_row else None,
+            'contact_email': site_row['contact_email'] if site_row else None,
+            'contact_phone': site_row['contact_phone'] if site_row else None,
+            'address': site_row['address'] if site_row else None,
             'provider_count': None,
             'ehr_system': None,
-            'notes': None,
+            'notes': site_row['notes'] if site_row else None,
             'blockers': [],
             'tracking_number': None,
             'tracking_carrier': None,
-            'tier': 'standard',
+            'tier': site_row['tier'] if site_row and site_row['tier'] else 'standard',
+            'healing_tier': site_row['healing_tier'] if site_row and site_row['healing_tier'] else 'standard',
             'status': overall_status,
             'live_status': live_status,
-            'onboarding_stage': 'active',
+            'onboarding_stage': site_row['onboarding_stage'] if site_row and site_row['onboarding_stage'] else 'active',
             'created_at': earliest_checkin.isoformat() if earliest_checkin else None,
             'updated_at': latest_checkin.isoformat() if latest_checkin else None,
             'last_checkin': latest_checkin.isoformat() if latest_checkin else None,
