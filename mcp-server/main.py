@@ -2136,7 +2136,7 @@ async def appliances_checkin(req: ApplianceCheckinRequest, request: Request, db:
                 SELECT credential_type, credential_name, encrypted_data
                 FROM site_credentials
                 WHERE site_id = :site_id
-                AND credential_type IN ('winrm', 'domain_admin', 'service_account', 'local_admin')
+                AND credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
                 ORDER BY created_at DESC
             """), {"site_id": req.site_id})
             creds = result.fetchall()

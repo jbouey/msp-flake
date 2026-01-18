@@ -1444,7 +1444,7 @@ async def appliance_checkin(checkin: ApplianceCheckin):
                 SELECT credential_name, encrypted_data
                 FROM site_credentials
                 WHERE site_id = $1
-                AND credential_type IN ('winrm', 'domain_admin', 'local_admin')
+                AND credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
                 ORDER BY created_at DESC
             """, checkin.site_id)
 
