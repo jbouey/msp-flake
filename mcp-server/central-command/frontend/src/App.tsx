@@ -6,6 +6,7 @@ import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
 import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, SiteWorkstations, SiteGoAgents, RMMComparison, IntegrationError, Documentation, Partners, Notifications, NotificationSettings, Incidents } from './pages';
+import FleetUpdates from './pages/FleetUpdates';
 import Users from './pages/Users';
 import FrameworkConfig from './pages/FrameworkConfig';
 import Integrations from './pages/Integrations';
@@ -42,6 +43,7 @@ const pageTitles: Record<string, string> = {
   '/runbooks': 'Runbook Library',
   '/runbook-config': 'Runbook Configuration',
   '/learning': 'Learning Loop',
+  '/fleet-updates': 'Fleet Updates',
   '/reports': 'Reports',
   '/audit-logs': 'Audit Logs',
   '/docs': 'Documentation',
@@ -144,6 +146,7 @@ const AppLayout: React.FC = () => {
             <Route path="/runbook-config" element={<RunbookConfig />} />
             <Route path="/learning" element={<Learning />} />
             <Route path="/audit-logs" element={<AuditLogs />} />
+            <Route path="/fleet-updates" element={<FleetUpdates />} />
             <Route path="/docs" element={<Documentation />} />
             <Route path="/client/:siteId" element={<ClientDetail />} />
             <Route path="/reports" element={<ComingSoon title="Reports" />} />
