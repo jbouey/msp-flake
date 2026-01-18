@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.41";  # Session 51 - FULL COVERAGE L1 Healing (21 rules, 18 alert mappings)
+    version = "1.0.44";  # Session 55 - A/B Partition Zero-Touch Update System
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
@@ -68,6 +68,35 @@ in
   '';
 
   # ============================================================================
+  # Health Gate Service (A/B Update Verification)
+  # ============================================================================
+
+  # Health gate runs at boot to verify system health after updates
+  # If health checks fail repeatedly, triggers automatic rollback
+  systemd.services.msp-health-gate = {
+    description = "MSP Boot Health Gate";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "compliance-agent.service" ];
+    after = [ "network-online.target" "local-fs.target" "msp-auto-provision.service" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${compliance-agent}/bin/health-gate";
+      TimeoutStartSec = "90s";
+
+      # Working directory for config access
+      WorkingDirectory = "/var/lib/msp";
+
+      # Logging
+      StandardOutput = "journal";
+      StandardError = "journal";
+      SyslogIdentifier = "msp-health-gate";
+    };
+  };
+
+  # ============================================================================
   # Full Compliance Agent
   # ============================================================================
 
@@ -75,7 +104,7 @@ in
   systemd.services.compliance-agent = {
     description = "OsirisCare Compliance Agent";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" "msp-auto-provision.service" ];
+    after = [ "network-online.target" "msp-auto-provision.service" "msp-health-gate.service" ];
     wants = [ "network-online.target" ];
 
     serviceConfig = {
@@ -161,22 +190,35 @@ in
   };
 
   # ============================================================================
-  # Persistent storage for config and evidence
-  # NOTE: This mount is optional - only used when MSP-DATA partition exists
-  # For live ISO testing, we use tmpfs at /var/lib/msp instead
+  # Persistent storage for config, evidence, and A/B update state
+  # NOTE: These mounts are for installed systems with proper partitions
+  # Live ISO testing falls back to tmpfs
   # ============================================================================
-  # fileSystems."/var/lib/msp" = {
-  #   device = "/dev/disk/by-label/MSP-DATA";
-  #   fsType = "ext4";
-  #   options = [ "defaults" "noatime" ];
-  #   neededForBoot = false;
-  # };
+
+  # Data partition for persistent storage
+  # Uses partlabel for A/B scheme compatibility
+  fileSystems."/var/lib/msp" = {
+    device = "/dev/disk/by-partlabel/MSP-DATA";
+    fsType = "ext4";
+    options = [ "defaults" "noatime" "nofail" ];
+    neededForBoot = false;
+  };
+
+  # Boot partition for ab_state file (A/B update control)
+  fileSystems."/boot" = {
+    device = "/dev/disk/by-partlabel/ESP";
+    fsType = "vfat";
+    options = [ "defaults" "nofail" ];
+    neededForBoot = false;
+  };
 
   # Create directories on activation
   system.activationScripts.mspDirs = ''
     mkdir -p /var/lib/msp/evidence
     mkdir -p /var/lib/msp/queue
     mkdir -p /var/lib/msp/rules
+    mkdir -p /var/lib/msp/update
+    mkdir -p /var/lib/msp/update/downloads
     mkdir -p /etc/msp/certs
     chmod 700 /var/lib/msp /etc/msp/certs
   '';

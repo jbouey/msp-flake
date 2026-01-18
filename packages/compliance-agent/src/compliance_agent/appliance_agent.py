@@ -2471,6 +2471,7 @@ try {
             'sync_rules': self._handle_sync_rules,
             'restart_agent': self._handle_restart_agent,
             'update_agent': self._handle_update_agent,
+            'update_iso': self._handle_update_iso,
             'view_logs': self._handle_view_logs,
             'deploy_sensor': self._handle_deploy_sensor,
             'remove_sensor': self._handle_remove_sensor,
@@ -2859,6 +2860,88 @@ Environment="PYTHONPATH={overlay_dir}"
             "total_active_sensors": combined_stats.get("total_active_sensors", 0),
             "all_sensor_hostnames": combined_stats.get("all_sensor_hostnames", []),
         }
+
+    async def _handle_update_iso(self, params: Dict) -> Dict:
+        """Handle A/B partition ISO update via order.
+
+        This is triggered by Central Command's Fleet Updates feature.
+        The update agent handles download, verification, and staging.
+
+        Parameters:
+            update_id: Unique update identifier
+            rollout_id: Rollout campaign ID
+            version: Version string
+            iso_url: URL to download ISO
+            sha256: Expected checksum
+            size_bytes: Optional file size
+            maintenance_window: Dict with days, start, end times
+        """
+        from .update_agent import UpdateAgent, UpdateInfo
+
+        # Create update agent with config
+        update_agent = UpdateAgent(
+            api_base_url=self.config.api_base_url,
+            api_key=self.config.api_key,
+            appliance_id=self.config.appliance_id,
+        )
+
+        # Create UpdateInfo from params
+        update = UpdateInfo(
+            update_id=params.get('update_id', 'unknown'),
+            rollout_id=params.get('rollout_id', 'unknown'),
+            version=params.get('version', 'unknown'),
+            iso_url=params.get('iso_url'),
+            sha256=params.get('sha256'),
+            size_bytes=params.get('size_bytes'),
+            maintenance_window=params.get('maintenance_window', {}),
+            current_status='notified',
+        )
+
+        if not update.iso_url or not update.sha256:
+            return {"error": "iso_url and sha256 are required"}
+
+        logger.info(f"ISO update requested: {update.version}")
+
+        # Download ISO
+        iso_path = await update_agent.download_iso(update)
+        if not iso_path:
+            return {"error": "Download failed", "status": "failed"}
+
+        # Verify checksum
+        if not update_agent.verify_checksum(iso_path, update.sha256):
+            iso_path.unlink()
+            return {"error": "Checksum verification failed", "status": "failed"}
+
+        # Apply update (write to standby partition, set next boot)
+        if not await update_agent.apply_update(update, iso_path):
+            return {"error": "Failed to apply update", "status": "failed"}
+
+        # Clean up download
+        iso_path.unlink()
+
+        # Wait for maintenance window if configured
+        if update.maintenance_window:
+            logger.info(f"Waiting for maintenance window: {update.maintenance_window}")
+            if not await update_agent.wait_for_maintenance_window(update.maintenance_window):
+                logger.warning("Maintenance window wait timed out, proceeding anyway")
+
+        # Report rebooting status
+        await update_agent.report_status("rebooting")
+
+        # Schedule reboot
+        logger.info(f"Scheduling reboot for ISO update to version {update.version}")
+        asyncio.get_event_loop().call_later(5, self._do_reboot)
+
+        return {
+            "status": "rebooting",
+            "version": update.version,
+            "message": "Update applied, rebooting in 5 seconds",
+        }
+
+    def _do_reboot(self):
+        """Execute system reboot."""
+        import os
+        os.system("systemctl reboot")
 
 
 def main():
