@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-18 (Session 53 - Go Agent Deployment & gRPC Fixes)
-**Phase:** Phase 12 - Launch Readiness (Agent v1.0.42, ISO v40, 43 Runbooks, **Go Agent Deployed to NVWS01**, **gRPC Integration Complete**, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Active Healing Enabled, Security Audit & Healing Tier Toggle)
-**Test Status:** 811 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.42, 43 total runbooks (27 Windows + 16 Linux), **Go Agent running on NVWS01 (192.168.88.251)**, **gRPC drift events flowing to healing pipeline**, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab v2 multi-VM with campaign-level restore, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, Active healing enabled (HEALING_DRY_RUN=false), L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage)
+**Last Updated:** 2026-01-18 (Session 53 - Complete)
+**Phase:** Phase 12 - Launch Readiness (Agent v1.0.43, ISO v43, 43 Runbooks, **Go Agent Deployed to NVWS01**, **gRPC Integration VERIFIED WORKING**, OTS Anchoring, Windows Sensors, Partner Escalations, RBAC, Multi-Framework Compliance, Cloud Integrations, Microsoft Security Integration, L1 JSON Rule Loading, Chaos Lab v2 Multi-VM, Active Healing Enabled, Security Audit & Healing Tier Toggle, **Zero-Friction Updates Documented**)
+**Test Status:** 811 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.43, 43 total runbooks (27 Windows + 16 Linux), **Go Agent running on NVWS01 (192.168.88.251)**, **gRPC drift events → L1 rules → Windows runbooks VERIFIED**, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab v2 multi-VM with campaign-level restore, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, Active healing enabled (HEALING_DRY_RUN=false), L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage)
 
 ---
 
@@ -527,19 +527,36 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
   - 8 extended check type labels (NTP, Disk, Services, Defender, Memory, Cert, Database, Port)
   - Pattern reporting endpoints deployed
 
-### ISO v40 Built (2026-01-17 Session 50) ★ CURRENT
-- **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
-- **Location (iMac):** `~/osiriscare-v40.iso`
+### ISO v43 Built (2026-01-18 Session 53) ★ CURRENT
+- **Location (VPS):** `/root/msp-iso-build/result-iso-v43/iso/osiriscare-appliance.iso`
+- **Location (iMac):** `~/osiriscare-v43.iso`
 - **Size:** 1.0GB
-- **Agent:** compliance-agent v1.0.40 with **gRPC server fully working + Active Healing**
+- **Agent:** compliance-agent v1.0.43 with **gRPC L1 rule matching fix**
 - **Entry point:** `compliance-agent-appliance`
 - **Features:**
-  - gRPC server on port 50051 - **VERIFIED WORKING**
-  - Relative import fix in compliance_pb2_grpc.py
-  - Protobuf 4.x compatible pb2 files
-  - **Active healing enabled** (HEALING_DRY_RUN=false in iso/appliance-image.nix)
-- **Status:** Deployed to VM appliance (192.168.88.246), gRPC registration tested successfully
-- **Test:** Python client registered as `go-test-machine-481ec20f`, returned enabled checks
+  - gRPC server on port 50051 - **VERIFIED WORKING END-TO-END**
+  - L1 rule matching fix: Added `status: "fail"` to Go Agent incidents
+  - Removed bad RB-AUTO-FIREWALL rule (empty conditions)
+  - Added L1 rules for Go Agent check types (defender, bitlocker, screenlock)
+  - **Active healing enabled** (HEALING_DRY_RUN=false)
+- **Status:** Deployed to physical appliance (192.168.88.246)
+- **Verified:** Go Agent drift → L1 rules → Windows runbooks working
+
+### ISO v40 Built (2026-01-17 Session 50)
+- **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
+- **Agent:** compliance-agent v1.0.40 with gRPC server + Active Healing
+- **Status:** Superseded by v43
+
+### Session 53 Changes (2026-01-18) - Go Agent gRPC Integration Complete
+- **gRPC L1 Fix:** Added `status: "fail"` field to Go Agent incident raw_data (required by L1 rules)
+- **L1 Rules:** Removed bad RB-AUTO-FIREWALL (empty conditions), added proper Go Agent rules
+- **ISO v43:** Built and deployed to physical appliance (192.168.88.246)
+- **Verified Flow:** Go Agent → gRPC → L1 Rules → Windows Runbooks ✅
+- **Zero-Friction Updates:** Created `docs/ZERO_FRICTION_UPDATES.md` (Phase 13 architecture)
+  - A/B partition scheme for appliances
+  - Remote update deployment via Central Command
+  - Auto-rollback on failure
+  - Database schema for update management
 
 ### Session 52 Changes (2026-01-17) - Security Audit & Healing Tier Toggle
 - **Healing Tier Toggle:** Central Command UI to switch between standard/full_coverage healing tiers
