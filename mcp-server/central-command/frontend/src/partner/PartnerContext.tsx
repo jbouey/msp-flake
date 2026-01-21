@@ -8,6 +8,9 @@ interface Partner {
   primary_color: string;
   logo_url: string | null;
   contact_email: string;
+  email?: string;  // OAuth email
+  auth_provider?: 'microsoft' | 'google' | 'api_key' | null;
+  tenant_id?: string | null;
   revenue_share_percent: number;
   site_count: number;
   provisions: {
@@ -24,6 +27,7 @@ interface PartnerContextType {
   error: string | null;
   login: (apiKey: string) => Promise<boolean>;
   logout: () => void;
+  checkSession: () => Promise<boolean>;
 }
 
 const PartnerContext = createContext<PartnerContextType | undefined>(undefined);
@@ -36,15 +40,59 @@ export const PartnerProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Load API key from storage on mount
+  // Check for OAuth session first, then fall back to API key
   useEffect(() => {
-    const storedKey = localStorage.getItem(STORAGE_KEY);
-    if (storedKey) {
-      validateAndLoadPartner(storedKey);
-    } else {
-      setIsLoading(false);
-    }
+    const initAuth = async () => {
+      // First try OAuth session (cookie-based)
+      const sessionValid = await checkSessionAuth();
+      if (sessionValid) {
+        setIsLoading(false);
+        return;
+      }
+
+      // Fall back to API key
+      const storedKey = localStorage.getItem(STORAGE_KEY);
+      if (storedKey) {
+        await validateAndLoadPartner(storedKey);
+      } else {
+        setIsLoading(false);
+      }
+    };
+
+    initAuth();
   }, []);
+
+  const checkSessionAuth = async (): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/partner-auth/me', {
+        credentials: 'include',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // OAuth session valid - set partner data
+        setPartner({
+          id: data.id,
+          name: data.name,
+          slug: data.slug,
+          brand_name: data.brand_name || data.name,
+          email: data.email,
+          auth_provider: data.auth_provider,
+          tenant_id: data.tenant_id,
+          primary_color: '#4F46E5',
+          logo_url: null,
+          contact_email: data.email,
+          revenue_share_percent: 40,
+          site_count: 0,
+          provisions: { pending: 0, claimed: 0 },
+        });
+        return true;
+      }
+    } catch (e) {
+      console.error('Session check failed:', e);
+    }
+    return false;
+  };
 
   const validateAndLoadPartner = async (key: string) => {
     setIsLoading(true);
@@ -78,11 +126,27 @@ export const PartnerProvider: React.FC<{ children: ReactNode }> = ({ children })
     return partner !== null;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    // Clear API key
     localStorage.removeItem(STORAGE_KEY);
+
+    // Clear OAuth session
+    try {
+      await fetch('/api/partner-auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch (e) {
+      console.error('Logout request failed:', e);
+    }
+
     setPartner(null);
     setApiKey(null);
     setError(null);
+  };
+
+  const checkSession = async (): Promise<boolean> => {
+    return checkSessionAuth();
   };
 
   return (
@@ -95,6 +159,7 @@ export const PartnerProvider: React.FC<{ children: ReactNode }> = ({ children })
         error,
         login,
         logout,
+        checkSession,
       }}
     >
       {children}
