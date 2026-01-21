@@ -262,7 +262,7 @@ class PromotionCandidate(BaseModel):
     occurrences: int
     success_rate: float
     avg_resolution_time_ms: int
-    proposed_rule: str
+    proposed_rule: Optional[str] = None
     first_seen: datetime
     last_seen: datetime
 
