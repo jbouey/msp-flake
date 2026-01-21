@@ -13,6 +13,8 @@ import Integrations from './pages/Integrations';
 import IntegrationSetup from './pages/IntegrationSetup';
 import IntegrationResources from './pages/IntegrationResources';
 import SetPassword from './pages/SetPassword';
+import OAuthCallback from './pages/OAuthCallback';
+import AdminOAuthSettings from './pages/AdminOAuthSettings';
 import { useFleet, useRefreshFleet, useCommandPalette } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PortalDashboard } from './portal/PortalDashboard';
@@ -46,6 +48,7 @@ const pageTitles: Record<string, string> = {
   '/fleet-updates': 'Fleet Updates',
   '/reports': 'Reports',
   '/audit-logs': 'Audit Logs',
+  '/settings/oauth': 'OAuth Settings',
   '/docs': 'Documentation',
 };
 
@@ -146,6 +149,7 @@ const AppLayout: React.FC = () => {
             <Route path="/runbook-config" element={<RunbookConfig />} />
             <Route path="/learning" element={<Learning />} />
             <Route path="/audit-logs" element={<AuditLogs />} />
+            <Route path="/settings/oauth" element={<AdminOAuthSettings />} />
             <Route path="/fleet-updates" element={<FleetUpdates />} />
             <Route path="/docs" element={<Documentation />} />
             <Route path="/client/:siteId" element={<ClientDetail />} />
@@ -198,6 +202,7 @@ const App: React.FC = () => {
           <Routes>
             {/* Public routes - no auth required */}
             <Route path="/set-password" element={<SetPassword />} />
+            <Route path="/auth/oauth/success" element={<OAuthCallback />} />
 
             {/* Portal routes - token or session auth */}
             <Route path="/portal/site/:siteId" element={<PortalLogin />} />
