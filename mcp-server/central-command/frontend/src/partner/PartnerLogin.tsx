@@ -2,17 +2,65 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { usePartner } from './PartnerContext';
 
+interface OAuthProviders {
+  microsoft: boolean;
+  google: boolean;
+}
+
+// OAuth error messages
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  invalid_state: 'Session expired. Please try again.',
+  token_exchange_failed: 'Authentication failed. Please try again.',
+  auth_failed: 'Authentication failed. Please try again.',
+  missing_params: 'Invalid OAuth callback.',
+  invalid_provider: 'Invalid authentication provider.',
+};
+
 export const PartnerLogin: React.FC = () => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { login, isAuthenticated, isLoading, error: authError } = usePartner();
 
   const [apiKey, setApiKey] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [oauthLoading, setOauthLoading] = useState<string | null>(null);
+  const [providers, setProviders] = useState<OAuthProviders>({ microsoft: false, google: false });
+  const [providersLoading, setProvidersLoading] = useState(true);
 
   // Check for magic link token in URL
   const magicToken = searchParams.get('token');
+  const oauthError = searchParams.get('error');
+  const errorDescription = searchParams.get('error_description');
+
+  // Fetch OAuth providers on mount
+  useEffect(() => {
+    const fetchProviders = async () => {
+      try {
+        const response = await fetch('/api/partner-auth/providers');
+        if (response.ok) {
+          const data = await response.json();
+          setProviders(data.providers || { microsoft: false, google: false });
+        }
+      } catch (err) {
+        console.error('Failed to fetch OAuth providers:', err);
+      } finally {
+        setProvidersLoading(false);
+      }
+    };
+    fetchProviders();
+  }, []);
+
+  // Handle OAuth errors from URL
+  useEffect(() => {
+    if (oauthError) {
+      const message = OAUTH_ERROR_MESSAGES[oauthError] || errorDescription || `Authentication error: ${oauthError}`;
+      setError(message);
+      setStatus('error');
+      // Clear URL params
+      setSearchParams({});
+    }
+  }, [oauthError, errorDescription, setSearchParams]);
 
   useEffect(() => {
     if (magicToken) {
@@ -69,6 +117,15 @@ export const PartnerLogin: React.FC = () => {
     }
   };
 
+  const handleOAuthLogin = (provider: 'microsoft' | 'google') => {
+    setOauthLoading(provider);
+    setError(null);
+    // Redirect to OAuth endpoint
+    window.location.href = `/api/partner-auth/${provider}`;
+  };
+
+  const hasOAuthProviders = providers.microsoft || providers.google;
+
   if (isLoading || status === 'loading') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-indigo-800 flex items-center justify-center p-6">
@@ -105,12 +162,64 @@ export const PartnerLogin: React.FC = () => {
             Partner Login
           </h2>
           <p className="text-gray-600 text-center mb-6">
-            Enter your API key to access your dashboard.
+            Sign in with your business identity to access your dashboard.
           </p>
 
           {(error || status === 'error') && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-red-700 text-sm">{error || 'Authentication failed'}</p>
+            </div>
+          )}
+
+          {/* OAuth Buttons */}
+          {!providersLoading && hasOAuthProviders && (
+            <div className="space-y-3 mb-6">
+              {providers.microsoft && (
+                <button
+                  type="button"
+                  onClick={() => handleOAuthLogin('microsoft')}
+                  disabled={oauthLoading !== null}
+                  className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 21 21">
+                    <rect fill="#f25022" x="1" y="1" width="9" height="9"/>
+                    <rect fill="#7fba00" x="11" y="1" width="9" height="9"/>
+                    <rect fill="#05a6f0" x="1" y="11" width="9" height="9"/>
+                    <rect fill="#ffba08" x="11" y="11" width="9" height="9"/>
+                  </svg>
+                  <span className="font-medium text-gray-900">
+                    {oauthLoading === 'microsoft' ? 'Redirecting...' : 'Sign in with Microsoft'}
+                  </span>
+                </button>
+              )}
+
+              {providers.google && (
+                <button
+                  type="button"
+                  onClick={() => handleOAuthLogin('google')}
+                  disabled={oauthLoading !== null}
+                  className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                  </svg>
+                  <span className="font-medium text-gray-900">
+                    {oauthLoading === 'google' ? 'Redirecting...' : 'Sign in with Google Workspace'}
+                  </span>
+                </button>
+              )}
+
+              <div className="relative my-4">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-2 bg-white text-gray-500">Or use API key</span>
+                </div>
+              </div>
             </div>
           )}
 
