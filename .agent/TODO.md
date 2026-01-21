@@ -1,7 +1,58 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-18 (Session 55 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management)
+**Last Updated:** 2026-01-21 (Session 56 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled)
+
+---
+
+## Session 56 (2026-01-21) - Infrastructure Fixes & Full Coverage Enabled - COMPLETE
+
+### Completed This Session
+
+#### 1. Lab Credentials Prominently Placed
+**Status:** COMPLETE
+- Updated `/Users/dad/Documents/Msp_Flakes/CLAUDE.md` with prominent lab credentials section
+- Added quick reference table with DC, WS, appliance, and VPS credentials
+- Updated `packages/compliance-agent/CLAUDE.md` to reference LAB_CREDENTIALS.md
+
+#### 2. api_base_url Bug Fixed
+**Status:** COMPLETE
+- Fixed `appliance_agent.py` lines 2879-2891
+- Changed from non-existent config attributes (`api_base_url`, `api_key`, `appliance_id`)
+- Now uses correct attributes (`mcp_url`, `mcp_api_key_file`, `host_id`)
+
+#### 3. Chaos Lab WS Credentials Fixed
+**Status:** COMPLETE
+- Fixed `~/chaos-lab/config.env` on iMac (192.168.88.50)
+- Changed WS_USER from `NORTHVALLEY\Administrator` to `localadmin`
+- Verified WinRM connectivity to both DC and WS
+
+#### 4. Full Coverage Healing Mode Enabled
+**Status:** COMPLETE
+- Used browser automation to navigate to dashboard.osiriscare.net
+- Changed Healing Mode from "Standard (4 rules)" to "Full Coverage (21 rules)"
+- Physical Appliance Pilot 1Aea78 now using Full Coverage tier
+
+#### 5. Deployment-Status HTTP 500 Fixed
+**Status:** COMPLETE
+- Applied migration 020_zero_friction.sql to VPS database
+- Fixed asyncpg syntax errors in sites.py (14+ instances)
+- Changed `[site_id]` to `site_id` for positional arguments
+- Fixed multi-param queries from `[site_id, timestamp]` to `site_id, timestamp`
+- Deployed updated sites.py to VPS via volume mount
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `CLAUDE.md` | Added Lab Credentials section with quick reference table |
+| `packages/compliance-agent/CLAUDE.md` | Added LAB_CREDENTIALS.md reference |
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Fixed api_base_url bug |
+| `mcp-server/central-command/backend/sites.py` | Fixed asyncpg syntax (14+ instances) |
+
+### VPS Changes
+- Applied migration 020_zero_friction.sql (discovered_domain, awaiting_credentials columns)
+- Created volume mount for dashboard_api hot deployment
+- chmod 755 on mounted volume for permissions
 
 ---
 

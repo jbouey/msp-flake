@@ -14,6 +14,7 @@ This is ONE component of the larger MSP_FLAKES platform. Read these files first:
 3. **Network/VMs:** `../../.agent/NETWORK.md`
 4. **Architecture decisions:** `../../.agent/DECISIONS.md`
 5. **Master architecture:** `../../CLAUDE.md`
+6. **LAB CREDENTIALS:** `../../.agent/LAB_CREDENTIALS.md` ← **ALWAYS CHECK THIS FOR CREDENTIALS**
 
 ---
 

@@ -1,6 +1,81 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-18 (Session 55 - Complete)
+**Last Updated:** 2026-01-21 (Session 56 - Complete)
+
+---
+
+## Session 56 - Infrastructure Fixes & Full Coverage Enabled - COMPLETE
+
+**Date:** 2026-01-21
+**Status:** COMPLETE
+**Agent Version:** 1.0.44
+**ISO Version:** v44
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Place lab credentials prominently in CLAUDE.md
+2. ✅ Fix api_base_url bug in appliance_agent.py
+3. ✅ Fix chaos lab WS credentials
+4. ✅ Enable Full Coverage Healing Mode
+5. ✅ Fix deployment-status HTTP 500 error
+
+### Completed Tasks
+
+#### 1. Lab Credentials Prominently Placed
+- **Status:** COMPLETE
+- **File:** `CLAUDE.md` - Added lab credentials section with quick reference table
+- **File:** `packages/compliance-agent/CLAUDE.md` - Added LAB_CREDENTIALS.md reference
+- **Purpose:** Ensure future sessions always see lab credentials upfront
+
+#### 2. api_base_url Bug Fixed
+- **Status:** COMPLETE
+- **File:** `packages/compliance-agent/src/compliance_agent/appliance_agent.py`
+- **Lines:** 2879-2891
+- **Changes:**
+  - `config.api_base_url` → `config.mcp_url`
+  - `config.api_key` → read from `config.mcp_api_key_file`
+  - `config.appliance_id` → `config.host_id`
+- **Root Cause:** UpdateAgent initialization used non-existent config attributes
+
+#### 3. Chaos Lab WS Credentials Fixed
+- **Status:** COMPLETE
+- **File:** `~/chaos-lab/config.env` on iMac (192.168.88.50)
+- **Change:** `WS_USER` from `NORTHVALLEY\Administrator` to `localadmin`
+- **Verified:** WinRM connectivity to both DC (NVDC01) and WS (NVWS01)
+
+#### 4. Full Coverage Healing Mode Enabled
+- **Status:** COMPLETE
+- **Method:** Browser automation via Claude-in-Chrome
+- **Target:** Physical Appliance Pilot 1Aea78
+- **Change:** Standard (4 rules) → Full Coverage (21 rules)
+- **Verified:** Healing mode dropdown changed successfully
+
+#### 5. Deployment-Status HTTP 500 Fixed
+- **Status:** COMPLETE
+- **Root Cause:** asyncpg syntax errors in sites.py
+- **Issues:**
+  - Missing columns (migration 020 not applied)
+  - asyncpg positional argument syntax error
+- **Fixes Applied:**
+  - Applied migration `020_zero_friction.sql` to VPS database
+  - Fixed 14+ instances of `[site_id]` → `site_id` in sites.py
+  - Fixed multi-param queries: `[site_id, timestamp]` → `site_id, timestamp`
+  - Deployed via volume mount to VPS
+
+### Files Modified
+| File | Change Type |
+|------|-------------|
+| `CLAUDE.md` | Added lab credentials section |
+| `packages/compliance-agent/CLAUDE.md` | Added LAB_CREDENTIALS.md reference |
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Fixed api_base_url bug |
+| `mcp-server/central-command/backend/sites.py` | Fixed asyncpg syntax (14+ instances) |
+
+### VPS Changes
+| Change | Description |
+|--------|-------------|
+| Migration 020 | Added discovered_domain, awaiting_credentials columns |
+| Volume mount | Created dashboard_api hot deployment mount |
+| Permissions | chmod 755 on mounted volume |
 
 ---
 
@@ -206,7 +281,8 @@
 
 | Session | Date | Focus | Status | Version |
 |---------|------|-------|--------|---------|
-| **55** | 2026-01-18 | A/B Partition Update System | **COMPLETE** | v1.0.44 |
+| **56** | 2026-01-21 | Infrastructure Fixes & Full Coverage | **COMPLETE** | v1.0.44 |
+| 55 | 2026-01-18 | A/B Partition Update System | COMPLETE | v1.0.44 |
 | 54 | 2026-01-18 | Phase 13 Fleet Updates Deployed | COMPLETE | v1.0.43 |
 | 53 | 2026-01-18 | Go Agent gRPC & ISO v43 | COMPLETE | v1.0.43 |
 | 52 | 2026-01-17 | Security Audit & Healing Tier Toggle | COMPLETE | v1.0.42 |
@@ -233,9 +309,9 @@
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 55 complete
-- `.agent/CONTEXT.md` - Updated with Session 55 changes
-- `IMPLEMENTATION-STATUS.md` - Session 55 details
+- `.agent/TODO.md` - Session 56 complete
+- `.agent/CONTEXT.md` - Updated with Session 56 changes
+- `IMPLEMENTATION-STATUS.md` - Session 56 details
 - `docs/SESSION_HANDOFF.md` - Full session handoff
 - `docs/SESSION_COMPLETION_STATUS.md` - This file
-- `.agent/sessions/2026-01-18-ab-partition-update-system.md` - Session log
+- `.agent/sessions/2026-01-21-infrastructure-fixes.md` - Session log

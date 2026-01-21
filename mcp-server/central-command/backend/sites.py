@@ -944,20 +944,20 @@ async def report_discovered_domain(report: DiscoveredDomainReport):
                 domain_discovery_at = $2,
                 awaiting_credentials = $3
             WHERE site_id = $4
-        """, [
+        """,
             json.dumps(report.discovered_domain),
             now,
             report.awaiting_credentials,
             report.site_id,
-        ])
-        
+        )
+
         # Get partner for this site
         partner = await conn.fetchrow("""
             SELECT p.partner_id, p.name, p.notification_email
             FROM partners p
             JOIN sites s ON s.partner_id = p.partner_id
             WHERE s.site_id = $1
-        """, [report.site_id])
+        """, report.site_id)
         
         if partner:
             # Create notification for partner
@@ -968,7 +968,7 @@ async def report_discovered_domain(report: DiscoveredDomainReport):
                 INSERT INTO notifications (
                     site_id, appliance_id, severity, category, title, message, metadata, created_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-            """, [
+            """,
                 report.site_id,
                 report.appliance_id,
                 'info',
@@ -983,7 +983,7 @@ async def report_discovered_domain(report: DiscoveredDomainReport):
                     "dashboard_link": f"/sites/{report.site_id}/credentials",
                 }),
                 now,
-            ])
+            )
             
             # Try to send email notification if configured
             try:
@@ -1033,7 +1033,7 @@ async def report_enumeration_results(report: EnumerationResultsReport):
                 reachable_servers, reachable_workstations,
                 results_json, created_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
-        """, [
+        """,
             report.site_id,
             report.appliance_id,
             datetime.fromisoformat(report.results.get('enumeration_time', now.isoformat())),
@@ -1043,7 +1043,7 @@ async def report_enumeration_results(report: EnumerationResultsReport):
             report.results.get('reachable_workstations', 0),
             json.dumps(report.results),
             now,
-        ])
+        )
         
         logger.info(f"Enumeration results stored: {report.results.get('total_servers', 0)} servers, "
                    f"{report.results.get('total_workstations', 0)} workstations")
@@ -1078,11 +1078,11 @@ async def submit_domain_credentials(
         site = await conn.fetchrow("""
             SELECT site_id, discovered_domain, awaiting_credentials
             FROM sites WHERE site_id = $1
-        """, [site_id])
-        
+        """, site_id)
+
         if not site:
             raise HTTPException(404, "Site not found")
-        
+
         # Store credential (encrypted)
         # Using existing site_credentials table
         credential_data = {
@@ -1099,21 +1099,21 @@ async def submit_domain_credentials(
             ) VALUES ($1, $2, $3, $4::jsonb, $5)
             ON CONFLICT (site_id, credential_type, credential_name) 
             DO UPDATE SET encrypted_data = $4::jsonb, updated_at = $5
-        """, [
+        """,
             site_id,
             creds.credential_type,
             f"domain_{creds.domain_name}",
             json.dumps(credential_data),
             now,
-        ])
-        
+        )
+
         # Clear awaiting_credentials flag
         await conn.execute("""
-            UPDATE sites 
+            UPDATE sites
             SET awaiting_credentials = false,
                 credentials_submitted_at = $1
             WHERE site_id = $2
-        """, [now, site_id])
+        """, now, site_id)
         
         # Trigger immediate enumeration AND scan via next checkin
         await conn.execute("""
@@ -1121,8 +1121,8 @@ async def submit_domain_credentials(
             SET trigger_enumeration = true,
                 trigger_immediate_scan = true
             WHERE site_id = $1
-        """, [site_id])
-        
+        """, site_id)
+
         logger.info(f"Domain credentials submitted for site {site_id}, enumeration triggered")
     
     return {
@@ -1150,11 +1150,11 @@ async def get_deployment_status(site_id: str):
                 credentials_submitted_at
             FROM sites
             WHERE site_id = $1
-        """, [site_id])
-        
+        """, site_id)
+
         if not site:
             raise HTTPException(404, "Site not found")
-        
+
         # Determine current phase
         phase = "discovering"
         details = {}
@@ -1184,8 +1184,8 @@ async def get_deployment_status(site_id: str):
                     WHERE site_id = $1
                     ORDER BY enumeration_time DESC
                     LIMIT 1
-                """, [site_id])
-                
+                """, site_id)
+
                 if enum_result:
                     details['servers_found'] = enum_result.get('total_servers', 0)
                     details['workstations_found'] = enum_result.get('total_workstations', 0)
@@ -1196,8 +1196,8 @@ async def get_deployment_status(site_id: str):
                         SELECT COUNT(*) as total, SUM(CASE WHEN success THEN 1 ELSE 0 END) as successful
                         FROM agent_deployments
                         WHERE site_id = $1
-                    """, [site_id])
-                    
+                    """, site_id)
+
                     if deployment_result and deployment_result.get('total', 0) > 0:
                         phase = "deploying"
                         details['agents_deployed'] = deployment_result.get('successful', 0)
@@ -1210,8 +1210,8 @@ async def get_deployment_status(site_id: str):
                                 FROM compliance_bundles
                                 WHERE site_id = $1
                                 AND checked_at > $2
-                            """, [site_id, site.get('credentials_submitted_at')])
-                            
+                            """, site_id, site.get('credentials_submitted_at'))
+
                             if first_scan and first_scan.get('count', 0) > 0:
                                 phase = "scanning"
                                 details['first_scan_complete'] = True
@@ -1256,8 +1256,8 @@ async def get_domain_credentials(site_id: str):
             AND credential_type IN ('domain_admin', 'service_account')
             ORDER BY created_at DESC
             LIMIT 1
-        """, [site_id])
-        
+        """, site_id)
+
         if not cred or not cred['encrypted_data']:
             return None
         
@@ -1305,7 +1305,7 @@ async def report_agent_deployments(report: AgentDeploymentReport):
                     error_message = EXCLUDED.error_message,
                     deployed_at = EXCLUDED.deployed_at,
                     updated_at = EXCLUDED.updated_at
-            """, [
+            """,
                 report.site_id,
                 deployment.get('hostname'),
                 deployment.get('method', 'winrm'),
@@ -1315,7 +1315,7 @@ async def report_agent_deployments(report: AgentDeploymentReport):
                 datetime.fromisoformat(deployment['deployed_at']) if deployment.get('deployed_at') else now,
                 now,
                 now,
-            ])
+            )
         
         logger.info(f"Stored {len(report.deployments)} agent deployment records")
     

@@ -533,7 +533,16 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 13 DEPLOYED. Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, **Health Gate Service**, **GRUB A/B Boot Config**, Fleet Updates UI deployed and tested, Rollout management working (pause/resume/advance), Healing Tier toggle verified, 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab v2 Multi-VM with campaign-level restore, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), Go Agent Compliance Checks Implementation, ISO v43 gRPC Server Verified Working, Active Healing Enabled (HEALING_DRY_RUN=false), Go Agent Deployed to NVWS01.
+**Status:** Phase 13 DEPLOYED. Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, **Health Gate Service**, **GRUB A/B Boot Config**, Fleet Updates UI deployed and tested, Rollout management working (pause/resume/advance), **Full Coverage Healing Mode ENABLED** (21 rules), 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab v2 Multi-VM with campaign-level restore, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), Go Agent Compliance Checks Implementation, ISO v43 gRPC Server Verified Working, Active Healing Enabled (HEALING_DRY_RUN=false), Go Agent Deployed to NVWS01, asyncpg Syntax Fixes Deployed.
+
+**Session 56 (Infrastructure Fixes & Full Coverage Enabled):**
+- Lab credentials prominently placed in CLAUDE.md with quick reference table
+- Fixed api_base_url bug in appliance_agent.py (config.api_base_url → config.mcp_url)
+- Fixed chaos lab WS credentials (WS_USER: NORTHVALLEY\Administrator → localadmin)
+- Enabled Full Coverage Healing Mode (21 rules) on physical appliance via browser automation
+- Applied migration 020_zero_friction.sql to VPS database
+- Fixed asyncpg syntax errors in sites.py (14+ instances of [site_id] → site_id)
+- Deployed updated sites.py to VPS via volume mount
 
 **Session 55 (A/B Partition Update System):**
 - Implemented appliance-side A/B partition update system for zero-touch remote updates

@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-18 (Session 55 - Complete)
-**Current State:** Phase 13 A/B Partition Update System IMPLEMENTED, ISO v44 Built
+**Last Updated:** 2026-01-21 (Session 56 - Complete)
+**Current State:** Phase 13 Zero-Touch Updates, Full Coverage Healing Enabled, asyncpg Fixes Deployed
 
 ---
 
@@ -15,11 +15,45 @@
 | A/B Partition System | **IMPLEMENTED** | Health gate, GRUB config |
 | Fleet Updates UI | **DEPLOYED** | Create releases, rollouts working |
 | Rollout Management | **TESTED** | Pause/Resume/Advance Stage |
-| Healing Tier Toggle | **VERIFIED** | Standard ↔ Full Coverage |
+| Healing Mode | **FULL COVERAGE ENABLED** | 21 rules on physical appliance |
 | Go Agent | **DEPLOYED to NVWS01** | gRPC Working |
 | gRPC | **VERIFIED WORKING** | Drift → L1 → Runbook |
 | Active Healing | **ENABLED** | HEALING_DRY_RUN=false |
 | L1 Rules | 21 (full coverage) | Platform-specific + Go Agent types |
+| VPS Backend | **FIXES DEPLOYED** | asyncpg syntax, migration 020 |
+
+---
+
+## Session 56 Summary (2026-01-21) - COMPLETE
+
+### Completed
+
+#### 1. Lab Credentials Prominently Placed
+- Updated `CLAUDE.md` with prominent lab credentials section
+- Quick reference table: DC, WS, appliance, VPS credentials
+- Updated `packages/compliance-agent/CLAUDE.md` to reference LAB_CREDENTIALS.md
+
+#### 2. api_base_url Bug Fixed
+- Fixed `appliance_agent.py` lines 2879-2891
+- Changed `config.api_base_url` → `config.mcp_url`
+- Changed `config.api_key` → read from `config.mcp_api_key_file`
+- Changed `config.appliance_id` → `config.host_id`
+
+#### 3. Chaos Lab WS Credentials Fixed
+- Fixed `~/chaos-lab/config.env` on iMac (192.168.88.50)
+- Changed `WS_USER` from `NORTHVALLEY\Administrator` to `localadmin`
+- Verified WinRM connectivity to both DC and WS
+
+#### 4. Full Coverage Healing Mode Enabled
+- Used browser automation at dashboard.osiriscare.net
+- Physical Appliance Pilot 1Aea78: Standard → Full Coverage (21 rules)
+
+#### 5. Deployment-Status HTTP 500 Fixed
+- Applied migration `020_zero_friction.sql` to VPS database
+- Fixed asyncpg syntax in `sites.py` (14+ instances)
+- Changed `[site_id]` → `site_id` for positional arguments
+- Fixed multi-param queries: `[site_id, timestamp]` → `site_id, timestamp`
+- Deployed updated `sites.py` to VPS via volume mount
 
 ---
 
