@@ -51,6 +51,7 @@ from dashboard_api.integrations.api import router as integrations_router, public
 from dashboard_api.frameworks import router as frameworks_router
 from dashboard_api.fleet_updates import router as fleet_updates_router
 from dashboard_api.email_alerts import create_notification_with_email
+from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
 
 # ============================================================================
 # Configuration
@@ -433,6 +434,9 @@ app.include_router(integrations_router)
 app.include_router(integrations_public_router)  # OAuth callback (no auth)
 app.include_router(frameworks_router)
 app.include_router(fleet_updates_router)
+app.include_router(oauth_public_router, prefix="/api/auth")  # OAuth login public endpoints
+app.include_router(oauth_router, prefix="/api/auth")  # OAuth authenticated endpoints
+app.include_router(oauth_admin_router, prefix="/api")  # OAuth admin endpoints
 
 # Serve agent update packages (only if directory exists)
 _agent_packages_dir = Path("/opt/mcp-server/agent-packages")

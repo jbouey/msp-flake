@@ -17,12 +17,23 @@ interface AuditLog {
   ip?: string;
 }
 
+interface OAuthIdentity {
+  provider: 'google' | 'microsoft';
+  email: string;
+  name: string | null;
+  linked_at: string | null;
+  last_login_at: string | null;
+}
+
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
+  setTokenFromOAuth: (token: string) => void;
+  oauthIdentities: OAuthIdentity[];
+  refreshOAuthIdentities: () => Promise<void>;
   auditLogs: AuditLog[];
   refreshAuditLogs: () => Promise<void>;
 }
@@ -36,6 +47,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [oauthIdentities, setOauthIdentities] = useState<OAuthIdentity[]>([]);
 
   // Get stored token
   const getToken = (): string | null => {
@@ -160,6 +172,56 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setToken(null);
     setUser(null);
     setAuditLogs([]);
+    setOauthIdentities([]);
+  };
+
+  // Set token from OAuth callback and validate session
+  const setTokenFromOAuth = (token: string) => {
+    setToken(token);
+    // Trigger session validation to load user data
+    const validateAndSetUser = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/auth/me`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const userData = await response.json();
+          setUser({
+            id: userData.id,
+            username: userData.username,
+            role: userData.role,
+            displayName: userData.displayName,
+          });
+        }
+      } catch (error) {
+        console.error('OAuth session validation failed:', error);
+      }
+    };
+    validateAndSetUser();
+  };
+
+  // Fetch OAuth identities linked to current user
+  const refreshOAuthIdentities = async () => {
+    const token = getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_BASE}/auth/oauth/identities`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setOauthIdentities(data.identities || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch OAuth identities:', error);
+    }
   };
 
   return (
@@ -170,6 +232,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isLoading,
         login,
         logout,
+        setTokenFromOAuth,
+        oauthIdentities,
+        refreshOAuthIdentities,
         auditLogs,
         refreshAuditLogs,
       }}
