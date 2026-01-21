@@ -77,8 +77,22 @@ from compliance_agent._types import (
 )
 ```
 
+## Lab Credentials (MUST READ)
+
+**ALWAYS check `.agent/LAB_CREDENTIALS.md` for all lab access credentials.**
+
+Quick reference:
+| System | IP | Username | Password |
+|--------|-----|----------|----------|
+| iMac Host | 192.168.88.50 | jrelly | (SSH key) |
+| Windows DC | 192.168.88.250 | NORTHVALLEY\Administrator | NorthValley2024! |
+| Windows WS | 192.168.88.251 | localadmin | NorthValley2024! |
+| Physical Appliance | 192.168.88.246 | root | (SSH key) |
+| VPS | 178.156.162.116 | root | (SSH key) |
+
 ## Don't Forget
 
+- **READ `.agent/LAB_CREDENTIALS.md` for ALL lab credentials**
 - Run tests before AND after changes
 - Update `.agent/CONTEXT.md` with session changes
 - iMac gateway (NEPA clinic): `192.168.88.50` (jrelly@)

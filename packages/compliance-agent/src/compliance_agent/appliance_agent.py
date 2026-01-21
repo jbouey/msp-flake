@@ -2878,11 +2878,16 @@ Environment="PYTHONPATH={overlay_dir}"
         """
         from .update_agent import UpdateAgent, UpdateInfo
 
+        # Read API key from file if configured
+        api_key = ""
+        if self.config.mcp_api_key_file and self.config.mcp_api_key_file.exists():
+            api_key = self.config.mcp_api_key_file.read_text().strip()
+
         # Create update agent with config
         update_agent = UpdateAgent(
-            api_base_url=self.config.api_base_url,
-            api_key=self.config.api_key,
-            appliance_id=self.config.appliance_id,
+            api_base_url=self.config.mcp_url,
+            api_key=api_key,
+            appliance_id=self.config.host_id,
         )
 
         # Create UpdateInfo from params
