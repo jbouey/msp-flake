@@ -33,6 +33,13 @@ interface PartnerStats {
   totalRevenue: number;
 }
 
+interface PartnerOAuthConfig {
+  allowed_domains: string[];
+  require_approval: boolean;
+  allow_consumer_gmail: boolean;
+  notify_emails: string[];
+}
+
 /**
  * Format date for display
  */
@@ -364,10 +371,18 @@ export const Partners: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [processingApproval, setProcessingApproval] = useState<string | null>(null);
 
-  // Fetch partners and pending approvals on mount
+  // OAuth config state
+  const [oauthConfig, setOauthConfig] = useState<PartnerOAuthConfig | null>(null);
+  const [showOAuthSettings, setShowOAuthSettings] = useState(false);
+  const [oauthDomains, setOauthDomains] = useState('');
+  const [oauthRequireApproval, setOauthRequireApproval] = useState(true);
+  const [savingOAuth, setSavingOAuth] = useState(false);
+
+  // Fetch partners, pending approvals, and OAuth config on mount
   useEffect(() => {
     fetchPartners();
     fetchPendingPartners();
+    fetchOAuthConfig();
   }, []);
 
   const fetchPartners = async () => {
@@ -394,6 +409,54 @@ export const Partners: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to fetch pending partners:', error);
+    }
+  };
+
+  const fetchOAuthConfig = async () => {
+    try {
+      const response = await fetch('/api/admin/partners/oauth-config');
+      if (response.ok) {
+        const data = await response.json();
+        setOauthConfig(data);
+        setOauthDomains(data.allowed_domains?.join(', ') || '');
+        setOauthRequireApproval(data.require_approval ?? true);
+      }
+    } catch (error) {
+      console.error('Failed to fetch OAuth config:', error);
+    }
+  };
+
+  const saveOAuthConfig = async () => {
+    setSavingOAuth(true);
+    try {
+      const domains = oauthDomains
+        .split(',')
+        .map(d => d.trim().toLowerCase())
+        .filter(d => d);
+
+      const response = await fetch('/api/admin/partners/oauth-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          allowed_domains: domains,
+          require_approval: oauthRequireApproval,
+          allow_consumer_gmail: oauthConfig?.allow_consumer_gmail ?? true,
+          notify_emails: oauthConfig?.notify_emails ?? [],
+        }),
+      });
+
+      if (response.ok) {
+        setShowOAuthSettings(false);
+        fetchOAuthConfig();
+      } else {
+        const error = await response.json();
+        alert(`Failed to save OAuth settings: ${error.detail || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Failed to save OAuth config:', error);
+      alert('Failed to save OAuth settings');
+    } finally {
+      setSavingOAuth(false);
     }
   };
 
@@ -595,6 +658,105 @@ export const Partners: React.FC = () => {
           </div>
         </GlassCard>
       )}
+
+      {/* Partner OAuth Settings */}
+      <GlassCard>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <svg className="w-5 h-5 text-accent-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <h2 className="text-lg font-semibold text-label-primary">Partner OAuth Settings</h2>
+          </div>
+          <button
+            onClick={() => setShowOAuthSettings(!showOAuthSettings)}
+            className="text-sm text-accent-primary hover:underline"
+          >
+            {showOAuthSettings ? 'Hide' : 'Configure'}
+          </button>
+        </div>
+
+        {/* Summary when collapsed */}
+        {!showOAuthSettings && oauthConfig && (
+          <div className="flex flex-wrap gap-3 text-sm">
+            <span className="px-2 py-1 rounded bg-fill-secondary text-label-secondary">
+              {oauthConfig.require_approval ? 'Approval Required' : 'Auto-approve'}
+            </span>
+            {oauthConfig.allowed_domains.length > 0 ? (
+              <span className="px-2 py-1 rounded bg-health-healthy/20 text-health-healthy">
+                {oauthConfig.allowed_domains.length} domain{oauthConfig.allowed_domains.length !== 1 ? 's' : ''} whitelisted
+              </span>
+            ) : (
+              <span className="px-2 py-1 rounded bg-health-warning/20 text-health-warning">
+                No domains whitelisted
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Expanded settings */}
+        {showOAuthSettings && (
+          <div className="space-y-4 pt-2">
+            <div>
+              <label className="block text-sm font-medium text-label-primary mb-1">
+                Whitelisted Domains (Auto-Approve)
+              </label>
+              <input
+                type="text"
+                value={oauthDomains}
+                onChange={(e) => setOauthDomains(e.target.value)}
+                placeholder="company.com, partner.net"
+                className="w-full px-3 py-2 border border-separator-light rounded-ios focus:ring-2 focus:ring-accent-primary focus:border-transparent bg-fill-primary"
+              />
+              <p className="text-xs text-label-tertiary mt-1">
+                Partners from these domains are automatically approved. Comma-separated.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="requireApproval"
+                checked={oauthRequireApproval}
+                onChange={(e) => setOauthRequireApproval(e.target.checked)}
+                className="rounded"
+              />
+              <label htmlFor="requireApproval" className="text-sm text-label-primary">
+                Require admin approval for new partners (except whitelisted domains)
+              </label>
+            </div>
+
+            {oauthConfig?.allowed_domains && oauthConfig.allowed_domains.length > 0 && (
+              <div className="p-3 bg-fill-secondary rounded-ios">
+                <p className="text-xs text-label-secondary mb-2">Currently whitelisted:</p>
+                <div className="flex flex-wrap gap-2">
+                  {oauthConfig.allowed_domains.map((domain) => (
+                    <span key={domain} className="px-2 py-1 bg-health-healthy/20 text-health-healthy text-xs rounded">
+                      {domain}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowOAuthSettings(false)}
+                className="px-4 py-2 text-sm text-label-secondary hover:bg-fill-tertiary rounded-ios"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveOAuthConfig}
+                disabled={savingOAuth}
+                className="px-4 py-2 text-sm bg-accent-primary text-white rounded-ios hover:bg-accent-primary/90 disabled:opacity-50"
+              >
+                {savingOAuth ? 'Saving...' : 'Save Settings'}
+              </button>
+            </div>
+          </div>
+        )}
+      </GlassCard>
 
       {/* Filter tabs */}
       <div className="flex items-center gap-2">
