@@ -1,15 +1,15 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-21 (Session 57 - Complete)
+**Last Updated:** 2026-01-22 (Session 57 - Complete)
 
 ---
 
-## Session 57 - Partner Portal OAuth Fixes - COMPLETE
+## Session 57 - Partner Portal OAuth + ISO v44 Deployment - COMPLETE
 
-**Date:** 2026-01-21
+**Date:** 2026-01-21/22
 **Status:** COMPLETE
 **Agent Version:** 1.0.44
-**ISO Version:** v44
+**ISO Version:** v44 (deployed to physical appliance)
 **Phase:** 13 (Zero-Touch Update System)
 
 ### Objectives
@@ -17,7 +17,10 @@
 2. ✅ Fix email notification import error in partner_auth.py
 3. ✅ Fix PartnerDashboard spinning for OAuth users
 4. ✅ Add admin pending partner approvals UI
-5. ✅ Deploy all changes to VPS
+5. ✅ Add domain whitelisting config UI
+6. ✅ Deploy ISO v44 to physical appliance
+7. ✅ Verify A/B partition system working
+8. ✅ Deploy all changes to VPS
 
 ### Completed Tasks
 
@@ -50,21 +53,42 @@
   - Checks API key first, then session cookie
   - Verifies partner is active and not pending approval
 
-#### 4. VPS Deployment
+#### 4. Partner OAuth Domain Whitelisting Config UI
+- **Status:** COMPLETE
+- **File:** `mcp-server/central-command/frontend/src/pages/Partners.tsx`
+- **Features:**
+  - "Partner OAuth Settings" section
+  - Configure whitelisted domains for auto-approval
+  - Toggle approval requirement
+  - Uses `/api/admin/partners/oauth-config` endpoint
+- **Purpose:** Partners from whitelisted domains bypass manual approval
+
+#### 5. ISO v44 Deployed to Physical Appliance
+- **Status:** COMPLETE
+- **Target:** Physical appliance 192.168.88.246
+- **Method:** USB flash and boot
+- **Verification:**
+  - `health-gate --status`: Active partition A, 0/3 boot attempts
+  - `osiris-update --status`: A/B partitions (/dev/sda2, /dev/sda3)
+  - Compliance agent v1.0.44 running
+  - Evidence submission working
+- **Result:** Appliance now supports zero-touch remote updates via Fleet Updates
+
+#### 6. VPS Deployment
 - **Status:** COMPLETE
 - **Method:** Bind mount at `/opt/mcp-server/dashboard_api_mount`
 - **Changes:**
   - Deployed `partner_auth.py` with email fix
   - Deployed `partners.py` with dual-auth support
   - Registered `partner_admin_router` in main.py
-  - Frontend rebuilt and deployed
+  - Frontend rebuilt and deployed with OAuth config UI
 
 ### Files Modified
 | File | Change Type |
 |------|-------------|
 | `mcp-server/central-command/backend/partner_auth.py` | Email notification fix |
 | `mcp-server/central-command/backend/partners.py` | Dual-auth support |
-| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Pending approvals UI |
+| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Pending approvals UI + OAuth config UI |
 | `mcp-server/central-command/frontend/src/partner/PartnerDashboard.tsx` | OAuth session support |
 | VPS `main.py` | partner_admin_router registration |
 
@@ -74,7 +98,15 @@
 | partner_auth.py | Email notification via send_critical_alert |
 | partners.py | Session cookie support in require_partner() |
 | main.py | Added partner_admin_router registration |
-| Frontend | Rebuilt with OAuth session support |
+| Frontend | Rebuilt with OAuth session support + domain whitelisting UI |
+
+### Physical Appliance Changes
+| Change | Description |
+|--------|-------------|
+| ISO Version | v44 with A/B partition system |
+| Health Gate | Active, monitoring boot health |
+| Update Agent | Ready for remote updates via Fleet Updates |
+| Agent | v1.0.44, evidence submission working |
 
 ---
 
@@ -355,7 +387,7 @@
 
 | Session | Date | Focus | Status | Version |
 |---------|------|-------|--------|---------|
-| **57** | 2026-01-21 | Partner Portal OAuth Fixes | **COMPLETE** | v1.0.44 |
+| **57** | 2026-01-21/22 | Partner Portal OAuth + ISO v44 Deployment | **COMPLETE** | v1.0.44 |
 | 56 | 2026-01-21 | Infrastructure Fixes & Full Coverage | COMPLETE | v1.0.44 |
 | 55 | 2026-01-18 | A/B Partition Update System | COMPLETE | v1.0.44 |
 | 54 | 2026-01-18 | Phase 13 Fleet Updates Deployed | COMPLETE | v1.0.43 |
