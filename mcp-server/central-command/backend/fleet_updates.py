@@ -387,7 +387,7 @@ async def create_rollout(rollout: RolloutCreate, background_tasks: BackgroundTas
 
         # Get all appliances to include in rollout
         appliance_query = """
-            SELECT id FROM appliances WHERE status = 'online'
+            SELECT id FROM appliances WHERE status = 'active'
         """
         if rollout.target_filter:
             if "site_ids" in rollout.target_filter:
@@ -631,9 +631,27 @@ async def list_rollout_appliances(
 
 @router.get("/appliances/{appliance_id}/pending-update")
 async def get_pending_update(appliance_id: str):
-    """Check if an appliance has a pending update (called during check-in)."""
+    """Check if an appliance has a pending update (called during check-in).
+
+    appliance_id can be either:
+    - UUID: Direct appliance ID lookup
+    - site_id: String identifier like 'physical-appliance-pilot-1aea78'
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # Try to parse as UUID first, otherwise look up by site_id
+        try:
+            app_uuid = UUID(appliance_id)
+        except ValueError:
+            # Look up by site_id
+            app_row = await conn.fetchrow(
+                "SELECT id FROM appliances WHERE site_id = $1",
+                appliance_id
+            )
+            if not app_row:
+                return {"update_available": False}
+            app_uuid = app_row["id"]
+
         # Find active rollout with notified status for this appliance
         row = await conn.fetchrow(
             """
@@ -649,7 +667,7 @@ async def get_pending_update(appliance_id: str):
             AND au.stage_assigned <= r.current_stage
             LIMIT 1
             """,
-            UUID(appliance_id)
+            app_uuid
         )
 
         if not row:
@@ -676,9 +694,25 @@ async def get_pending_update(appliance_id: str):
 
 @router.post("/appliances/{appliance_id}/update-status")
 async def update_appliance_status(appliance_id: str, status_update: ApplianceUpdateStatus):
-    """Update the status of an appliance's update (called by appliance)."""
+    """Update the status of an appliance's update (called by appliance).
+
+    appliance_id can be either UUID or site_id.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # Try to parse as UUID first, otherwise look up by site_id
+        try:
+            app_uuid = UUID(appliance_id)
+        except ValueError:
+            # Look up by site_id
+            app_row = await conn.fetchrow(
+                "SELECT id FROM appliances WHERE site_id = $1",
+                appliance_id
+            )
+            if not app_row:
+                raise HTTPException(status_code=404, detail="Appliance not found")
+            app_uuid = app_row["id"]
+
         # Find the active update for this appliance
         update = await conn.fetchrow(
             """
@@ -688,7 +722,7 @@ async def update_appliance_status(appliance_id: str, status_update: ApplianceUpd
             WHERE au.appliance_id = $1 AND r.status = 'in_progress'
             ORDER BY au.created_at DESC LIMIT 1
             """,
-            UUID(appliance_id)
+            app_uuid
         )
 
         if not update:
@@ -767,7 +801,7 @@ async def update_appliance_status(appliance_id: str, status_update: ApplianceUpd
             VALUES ('appliance_status_update', $1, $2, $3)
             """,
             update["rollout_id"],
-            UUID(appliance_id),
+            app_uuid,
             json.dumps({"status": status_update.status, "error": status_update.error_message}),
         )
 

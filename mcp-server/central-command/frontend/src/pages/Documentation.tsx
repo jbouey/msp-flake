@@ -1763,6 +1763,114 @@ journalctl -u compliance-agent -f
           </div>
         ),
       },
+      {
+        id: 'iso-deployment',
+        title: 'ISO Deployment & OTA Updates',
+        content: (
+          <div className="space-y-4">
+            <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-ios">
+              <p className="text-amber-400 font-medium">Important: A/B Partition System</p>
+              <p className="text-sm text-label-secondary mt-1">
+                Starting with ISO v44, appliances use an A/B partition system for zero-downtime updates.
+                The first deployment must be via USB flash, then future updates work via OTA.
+              </p>
+            </div>
+
+            <h4 className="font-semibold">Current ISO Version</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-label-tertiary">Version:</span>
+                  <span className="ml-2 font-mono">v44</span>
+                </div>
+                <div>
+                  <span className="text-label-tertiary">Agent:</span>
+                  <span className="ml-2 font-mono">1.0.44</span>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-label-tertiary">SHA256:</span>
+                  <code className="ml-2 text-xs bg-gray-800 px-2 py-1 rounded">1daf70e124c71c8c0c4826fb283e9e5ba2c6a9c4bff230d74d27f8a7fbf5a7ce</code>
+                </div>
+              </div>
+            </div>
+
+            <h4 className="font-semibold mt-6">Download ISO</h4>
+            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+              <pre>{`# Download from VPS (if you have SSH access)
+scp root@178.156.162.116:/opt/mcp-server/static/releases/v44/nixos-appliance-v44.iso ~/Downloads/
+
+# Or download via HTTPS
+curl -O https://api.osiriscare.net/releases/v44/nixos-appliance-v44.iso
+
+# Verify SHA256
+shasum -a 256 nixos-appliance-v44.iso
+# Should match: 1daf70e124c71c8c0c4826fb283e9e5ba2c6a9c4bff230d74d27f8a7fbf5a7ce`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">Flash to USB</h4>
+            <div className="space-y-3">
+              <p className="text-sm text-label-secondary">
+                Use Balena Etcher (recommended) or dd to write the ISO to a USB drive.
+              </p>
+              <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm">
+                <pre>{`# Option 1: Balena Etcher (GUI)
+# Download from https://etcher.balena.io
+# Select ISO, select USB drive, click Flash
+
+# Option 2: dd (macOS/Linux)
+# Find USB device first
+diskutil list   # macOS
+lsblk           # Linux
+
+# Unmount and write (replace diskN with your device)
+diskutil unmountDisk /dev/diskN   # macOS
+sudo dd if=nixos-appliance-v44.iso of=/dev/rdiskN bs=4m
+# Note: Use /dev/rdiskN (raw) on macOS for faster writes`}</pre>
+              </div>
+            </div>
+
+            <h4 className="font-semibold mt-6">Deploy to Appliance</h4>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+              <li>Insert USB into appliance (HP T640 or compatible)</li>
+              <li>Power on and boot from USB (may need F12 for boot menu)</li>
+              <li>Wait for NixOS to boot and install (~5 minutes)</li>
+              <li>Appliance will auto-register and check in to Central Command</li>
+              <li>Verify in Fleet Updates page that appliance shows v44</li>
+            </ol>
+
+            <h4 className="font-semibold mt-6">A/B Partition Layout</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios font-mono text-sm">
+              <pre className="text-label-secondary">{`/dev/sda (Internal SSD)
+├── sda1  512MB   ESP (FAT32) - GRUB bootloader, ab_state
+├── sda2  2GB     Partition A (squashfs, read-only)
+├── sda3  2GB     Partition B (squashfs, read-only)
+└── sda4  *       Data partition (ext4) - /var/lib/msp`}</pre>
+            </div>
+
+            <h4 className="font-semibold mt-6">OTA Updates (After v44)</h4>
+            <p className="text-sm text-label-secondary">
+              Once an appliance is running v44+, future updates are deployed via Fleet Updates:
+            </p>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary mt-2">
+              <li>Navigate to Fleet Updates in Central Command</li>
+              <li>Create a new release with ISO URL and SHA256</li>
+              <li>Start a staged rollout (5% → 25% → 100%)</li>
+              <li>Appliances download to standby partition</li>
+              <li>Reboot during maintenance window (2-5 AM EST)</li>
+              <li>Health gate verifies, auto-rollback on failure</li>
+            </ol>
+
+            <h4 className="font-semibold mt-6">Rollback</h4>
+            <div className="p-4 bg-fill-secondary rounded-ios">
+              <p className="text-sm text-label-secondary">
+                If an update fails health checks after 3 boot attempts, the appliance
+                automatically rolls back to the previous working partition. Manual rollback
+                is also available via the GRUB recovery menu.
+              </p>
+            </div>
+          </div>
+        ),
+      },
     ],
   },
   compliance: {

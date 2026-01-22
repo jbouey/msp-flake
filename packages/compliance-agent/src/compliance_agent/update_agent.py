@@ -710,10 +710,14 @@ def main():
     import yaml
     config = yaml.safe_load(config_path.read_text())
 
+    # Support both site_id (new) and appliance_id (legacy) config keys
+    # Backend accepts either UUID or site_id
+    appliance_id = config.get("site_id") or config.get("appliance_id", "unknown")
+
     agent = UpdateAgent(
-        api_base_url=config.get("api_base_url", "https://api.osiriscare.net"),
+        api_base_url=config.get("api_endpoint", config.get("api_base_url", "https://api.osiriscare.net")),
         api_key=config.get("api_key", ""),
-        appliance_id=config.get("appliance_id", "unknown"),
+        appliance_id=appliance_id,
     )
 
     if args.status:
