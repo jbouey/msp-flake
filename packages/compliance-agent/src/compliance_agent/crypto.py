@@ -18,31 +18,71 @@ from cryptography.exceptions import InvalidSignature
 import hashlib
 
 
+class KeyIntegrityError(Exception):
+    """Raised when private key integrity check fails (possible tampering)."""
+    pass
+
+
 class Ed25519Signer:
     """
     Ed25519 signing operations.
 
     Used for signing evidence bundles locally.
+    Includes integrity verification to detect key tampering.
     """
 
-    def __init__(self, private_key_path: Path):
+    def __init__(self, private_key_path: Path, verify_integrity: bool = True):
         """
         Initialize signer with private key.
 
         Args:
             private_key_path: Path to Ed25519 private key (PEM format)
+            verify_integrity: If True, verify key hasn't been tampered with
 
         Raises:
             ValueError: If key file cannot be loaded
+            KeyIntegrityError: If key integrity check fails (tampering detected)
         """
-        self.private_key_path = private_key_path
-        self._private_key = self._load_private_key()
+        self.private_key_path = Path(private_key_path)
+        self._integrity_hash_path = self.private_key_path.with_suffix('.hash')
+        self._private_key = self._load_private_key(verify_integrity)
 
-    def _load_private_key(self) -> Ed25519PrivateKey:
-        """Load Ed25519 private key from file."""
+    def _compute_key_hash(self, key_data: bytes) -> str:
+        """Compute SHA256 hash of key data for integrity verification."""
+        return hashlib.sha256(key_data).hexdigest()
+
+    def _load_private_key(self, verify_integrity: bool = True) -> Ed25519PrivateKey:
+        """
+        Load Ed25519 private key from file with integrity verification.
+
+        On first load, stores a hash of the key for future verification.
+        On subsequent loads, verifies the key hasn't been tampered with.
+        """
         try:
             with open(self.private_key_path, 'rb') as f:
                 key_data = f.read()
+
+            # Compute hash of raw key data
+            current_hash = self._compute_key_hash(key_data)
+
+            # Check integrity if hash file exists
+            if verify_integrity and self._integrity_hash_path.exists():
+                with open(self._integrity_hash_path, 'r') as f:
+                    stored_hash = f.read().strip()
+
+                if stored_hash != current_hash:
+                    raise KeyIntegrityError(
+                        f"Private key integrity check FAILED for {self.private_key_path}. "
+                        "The key file may have been tampered with. "
+                        "If this is expected (key rotation), delete the .hash file and restart."
+                    )
+
+            # Store hash on first load (if file doesn't exist)
+            if not self._integrity_hash_path.exists():
+                with open(self._integrity_hash_path, 'w') as f:
+                    f.write(current_hash)
+                # Set restrictive permissions on hash file
+                self._integrity_hash_path.chmod(0o600)
 
             # Try PEM format first
             try:
@@ -62,6 +102,9 @@ class Ed25519Signer:
 
             return private_key
 
+        except KeyIntegrityError:
+            # Re-raise integrity errors as-is
+            raise
         except Exception as e:
             raise ValueError(f"Failed to load private key from {self.private_key_path}: {e}")
 
@@ -283,6 +326,7 @@ def ensure_signing_key(key_path: Path) -> tuple[bool, str]:
     On first run, generates a new Ed25519 keypair and saves:
     - Private key: key_path (raw 32 bytes)
     - Public key: key_path.with_suffix('.pub') (raw 32 bytes)
+    - Integrity hash: key_path.with_suffix('.hash') (for tampering detection)
 
     Args:
         key_path: Path where private key should be stored
@@ -295,17 +339,19 @@ def ensure_signing_key(key_path: Path) -> tuple[bool, str]:
     Raises:
         PermissionError: If directory not writable
         OSError: If key generation fails
+        KeyIntegrityError: If existing key fails integrity check
     """
     import logging
     logger = logging.getLogger(__name__)
 
     key_path = Path(key_path)
     pub_path = key_path.with_suffix('.pub')
+    hash_path = key_path.with_suffix('.hash')
 
     # Check if key already exists
     if key_path.exists():
-        # Load existing key and return public key
-        signer = Ed25519Signer(key_path)
+        # Load existing key with integrity verification
+        signer = Ed25519Signer(key_path, verify_integrity=True)
         public_key_hex = signer.get_public_key_bytes().hex()
         logger.debug(f"Using existing signing key: {key_path}")
         return False, public_key_hex
@@ -326,7 +372,13 @@ def ensure_signing_key(key_path: Path) -> tuple[bool, str]:
     pub_path.write_bytes(public_bytes)
     pub_path.chmod(0o644)  # World readable
 
+    # Write integrity hash (for tampering detection)
+    key_hash = hashlib.sha256(private_bytes).hexdigest()
+    hash_path.write_text(key_hash)
+    hash_path.chmod(0o600)  # Owner read/write only
+
     logger.info(f"Generated signing keypair: private={key_path}, public={pub_path}")
+    logger.info(f"Created integrity hash: {hash_path}")
     logger.info(f"Public key (hex): {public_bytes.hex()}")
 
     return True, public_bytes.hex()

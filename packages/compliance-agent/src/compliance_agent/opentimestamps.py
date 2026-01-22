@@ -252,6 +252,42 @@ class OTSClient:
         logger.error(f"OTS submission failed for all calendars: {bundle_id}")
         return None
 
+    def _validate_ots_proof(self, proof_bytes: bytes, expected_hash: bytes) -> tuple[bool, str]:
+        """
+        Validate that proof_bytes is a valid OTS proof structure.
+
+        OTS proof format:
+        - Magic header: F0 0D 00 (hex) or 0x00 for version byte
+        - Contains the submitted hash
+        - Contains calendar attestation
+
+        Args:
+            proof_bytes: Raw proof bytes from calendar
+            expected_hash: The 32-byte hash that was submitted
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        # Minimum proof size (header + hash + some attestation data)
+        if len(proof_bytes) < 50:
+            return False, f"Proof too short: {len(proof_bytes)} bytes"
+
+        # OTS proofs start with the SHA256 operation (0x08) or contain
+        # attestation markers. Check for reasonable structure.
+        # The proof should contain our submitted hash somewhere
+        if expected_hash not in proof_bytes:
+            return False, "Proof does not contain submitted hash"
+
+        # Check for known OTS operation codes (basic sanity check)
+        # 0x00 = attestation, 0x08 = SHA256, 0xf0 = append, 0xf1 = prepend
+        valid_opcodes = {0x00, 0x08, 0xf0, 0xf1, 0x02, 0x03}
+        has_valid_opcode = any(b in valid_opcodes for b in proof_bytes[:20])
+
+        if not has_valid_opcode:
+            return False, "Proof does not contain valid OTS opcodes"
+
+        return True, ""
+
     async def _submit_to_calendar(
         self,
         session: aiohttp.ClientSession,
@@ -265,6 +301,8 @@ class OTSClient:
         The OTS protocol uses a simple REST API:
         POST /digest with raw 32-byte hash as body
         Returns binary OTS proof data
+
+        Validates the returned proof before accepting it.
         """
         url = f"{calendar_url}/digest"
 
@@ -278,8 +316,20 @@ class OTSClient:
             if resp.status == 200:
                 proof_bytes = await resp.read()
 
+                # Validate proof structure before accepting
+                is_valid, error_msg = self._validate_ots_proof(proof_bytes, hash_bytes)
+                if not is_valid:
+                    logger.warning(
+                        f"OTS calendar {calendar_url} returned invalid proof: {error_msg}"
+                    )
+                    return None
+
                 # Encode proof as base64 for storage
                 proof_b64 = base64.b64encode(proof_bytes).decode('ascii')
+
+                logger.debug(
+                    f"OTS proof validated: {len(proof_bytes)} bytes from {calendar_url}"
+                )
 
                 return OTSProof(
                     bundle_hash=hash_bytes.hex(),

@@ -210,7 +210,13 @@ class TestOTSClient:
     @pytest.mark.asyncio
     async def test_submit_hash_mocked_success(self, client):
         """Test successful hash submission with mocked HTTP."""
-        mock_proof_data = b'\x00\x01\x02'  # Fake OTS proof bytes
+        # Create a valid mock OTS proof that passes validation:
+        # - Must be at least 50 bytes
+        # - Must contain the submitted hash
+        # - Must contain valid OTS opcodes (0x00, 0x08, 0xf0, 0xf1, 0x02, 0x03)
+        test_hash = bytes.fromhex("a" * 64)  # 32 bytes
+        # Build mock proof: opcode (0x08=SHA256) + hash + padding to 50+ bytes
+        mock_proof_data = b'\x08' + test_hash + b'\x00' * 20  # Valid OTS-like structure
 
         with patch('aiohttp.ClientSession') as mock_session_class:
             mock_response = AsyncMock()
