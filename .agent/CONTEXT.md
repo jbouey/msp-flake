@@ -1,7 +1,7 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-22 (Session 59 - Complete)
-**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, Go Agent Deployed to NVWS01, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Claude Code Skills System (9 skill files)**)
+**Last Updated:** 2026-01-22 (Session 60 - Complete)
+**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, Go Agent Deployed to NVWS01, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Claude Code Skills System (9 skill files)**, **Blockchain Evidence Security Hardening (Ed25519 verification + OTS validation)**)
 **Test Status:** 834 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.44, 43 total runbooks (27 Windows + 16 Linux), **A/B partition update system with health gate**, **GRUB boot configuration**, **Automatic rollback on 3 failed boots**, Fleet Updates UI tested (create releases, rollouts, pause/resume/advance), **Full Coverage Healing Mode enabled** (21 rules on physical appliance), Test release v44 created with staged rollout, Go Agent running on NVWS01 (192.168.88.251), gRPC drift events → L1 rules → Windows runbooks VERIFIED, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, **Chaos Lab Healing-First** (EXECUTION_PLAN_v2.sh with ENABLE_RESTORES=false), **Full Spectrum Chaos Test** (5 attack categories), Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, Active healing enabled (HEALING_DRY_RUN=false), L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage), asyncpg syntax fixes deployed to VPS, api_base_url bug fixed in appliance_agent.py, chaos lab WS credentials fixed (localadmin), **Clock drift fixes via Basic auth**, **Credential format fix (.\\ for local accounts)**
 
 ---
@@ -546,6 +546,40 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
 - **Agent:** compliance-agent v1.0.40 with gRPC server + Active Healing
 - **Status:** Superseded by v43
+
+### Session 60 Changes (2026-01-22) - Security Audit & Blockchain Evidence Hardening
+- **Security Audit Completed:**
+  - Frontend security audit: 6.5/10 (input validation, CSP, sanitization issues identified)
+  - Backend security audit: 7.5/10 (auth improvements, rate limiting gaps identified)
+  - Security fixes deployed to VPS: nginx headers, auth.py, oauth_login.py, fleet.py
+  - Nginx security headers verified working (X-Frame-Options, X-Content-Type-Options, CSP)
+- **Blockchain Evidence Security Hardening (3 Critical Fixes):**
+  - **Fix 1: Ed25519 Signature Verification** (`evidence_chain.py`)
+    - Added `verify_ed25519_signature()` function with actual cryptographic verification
+    - Added `get_agent_public_key()` function to retrieve agent public keys
+    - Updated `/api/evidence/verify` endpoint to perform real signature verification
+    - Added audit logging for all verification attempts
+  - **Fix 2: Private Key Integrity Checking** (`crypto.py`)
+    - Added `KeyIntegrityError` exception class for tampered key detection
+    - Modified `Ed25519Signer._load_private_key()` to store/verify key hash
+    - Updated `ensure_signing_key()` to create `.hash` file for integrity
+    - Detects key tampering on load via SHA256 hash comparison
+  - **Fix 3: OTS Proof Validation** (`opentimestamps.py`)
+    - Added `_validate_ots_proof()` method with 3 validation checks
+    - Validates: minimum length (50+ bytes), hash presence, valid OTS opcodes
+    - Rejects invalid calendar server responses before storage
+- **gRPC check_type Mapping Fix:**
+  - Fixed Go agent check_type mapping in `grpc_server.py`
+  - `screenlock` → `screen_lock`, `patches` → `patching`
+  - Ensures Go agent drift events match L1 rule patterns
+- **Test Suite Fix:**
+  - Fixed `test_opentimestamps.py` with valid mock proof data
+  - Test results: 834 passed, 7 skipped
+- **Security Score Improvement:**
+  - Before: 3/10 (signatures stored but not verified)
+  - After: 8/10 (full Ed25519 verification, key integrity, OTS validation)
+- **Git Commits:** `678ac04`, `6bb43bc`
+- **Pending (Blocked):** ISO v45 build requires lab network access
 
 ### Session 59 Changes (2026-01-22) - Claude Code Skills System
 - **Claude Code Skills System Created:**

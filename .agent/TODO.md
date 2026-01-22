@@ -1,7 +1,81 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-22 (Session 59 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**)
+**Last Updated:** 2026-01-22 (Session 60 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**)
+
+---
+
+## Session 60 (2026-01-22) - Security Audit & Blockchain Evidence Hardening - COMPLETE
+
+### Completed This Session
+
+#### 1. Security Audit - Frontend & Backend
+**Status:** COMPLETE
+- Frontend security audit: **6.5/10** (input validation, CSP, sanitization issues)
+- Backend security audit: **7.5/10** (auth improvements needed, rate limiting gaps)
+- Applied security fixes to VPS: nginx headers, auth.py, oauth_login.py, fleet.py
+- Verified nginx security headers working on dashboard.osiriscare.net:
+  - X-Frame-Options: DENY, X-Content-Type-Options: nosniff
+  - X-XSS-Protection: 1; mode=block, Content-Security-Policy configured
+
+#### 2. Blockchain Evidence System Security Hardening (3 Critical Fixes)
+**Status:** COMPLETE
+- **Issue 1: Ed25519 signatures stored but never verified** - Security Score: 3/10
+  - Signatures were stored but verification only checked presence, not cryptographic validity
+  - **FIX:** Added `verify_ed25519_signature()` function with actual Ed25519 verification
+  - **FIX:** Added `get_agent_public_key()` function to retrieve public keys
+  - **FIX:** Updated `/api/evidence/verify` endpoint to perform actual cryptographic verification
+  - Added audit logging for all verification attempts
+
+- **Issue 2: Private key integrity not verified** - Risk: Key tampering undetected
+  - Private keys loaded without integrity checking
+  - **FIX:** Added `KeyIntegrityError` exception class
+  - **FIX:** Modified `Ed25519Signer._load_private_key()` to store and verify key hash
+  - **FIX:** Updated `ensure_signing_key()` to create `.hash` file for integrity verification
+  - Detects key file tampering immediately on load
+
+- **Issue 3: OTS proofs accepted without validation** - Risk: Invalid proofs stored
+  - Calendar server responses accepted without validation
+  - **FIX:** Added `_validate_ots_proof()` method with 3 validation checks:
+    - Minimum proof length (50+ bytes)
+    - Proof contains submitted hash
+    - Proof contains valid OTS opcodes (0x00, 0x08, 0xf0, 0xf1, 0x02, 0x03)
+
+#### 3. Test Suite Fix
+**Status:** COMPLETE
+- Fixed `test_opentimestamps.py` test that failed due to new validation
+- Updated mock proof to be valid (50+ bytes with hash and OTS opcodes)
+- Test results: **834 passed, 7 skipped** (2 pre-existing failures in test_worm_upload.py unrelated)
+
+#### 4. gRPC check_type Mapping Fix
+**Status:** COMPLETE
+- Fixed Go agent check_type mapping in grpc_server.py:
+  - `screenlock` → `screen_lock` (L1-SCREENLOCK-001)
+  - `patches` → `patching` (L1-PATCHING-001)
+- Ensures Go agent drift events match L1 rule patterns
+
+### Git Commits This Session
+| Commit | Message |
+|--------|---------|
+| `678ac04` | Security hardening + Go agent check_type fix |
+| `6bb43bc` | Blockchain evidence system security hardening |
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/evidence_chain.py` | Ed25519 signature verification, public key lookup, audit logging |
+| `packages/compliance-agent/src/compliance_agent/crypto.py` | Key integrity verification, KeyIntegrityError exception |
+| `packages/compliance-agent/src/compliance_agent/opentimestamps.py` | OTS proof validation |
+| `packages/compliance-agent/tests/test_opentimestamps.py` | Valid mock proof data |
+| `packages/compliance-agent/src/compliance_agent/grpc_server.py` | check_type mapping fix |
+
+### Security Score Improvement
+- **Before:** 3/10 (signatures stored but not verified)
+- **After:** 8/10 (full Ed25519 verification, key integrity, OTS validation)
+
+### Pending (Blocked)
+- **ISO v45 Build** - Lab network unreachable, requires physical appliance access
+- Deploy gRPC check_type fix to appliance (requires ISO reflash)
 
 ---
 

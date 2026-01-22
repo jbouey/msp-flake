@@ -1,6 +1,108 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-22 (Session 59 - Complete)
+**Last Updated:** 2026-01-22 (Session 60 - Complete)
+
+---
+
+## Session 60 - Security Audit & Blockchain Evidence Hardening - COMPLETE
+
+**Date:** 2026-01-22
+**Status:** COMPLETE
+**Agent Version:** 1.0.44
+**ISO Version:** v44 (deployed)
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Complete security audit of frontend and backend
+2. ✅ Deploy security fixes to VPS
+3. ✅ Audit blockchain evidence system
+4. ✅ Fix Ed25519 signature verification
+5. ✅ Fix private key integrity checking
+6. ✅ Fix OTS proof validation
+7. ✅ Fix gRPC check_type mapping for Go agent
+8. ⏸️ Build ISO v45 (blocked - lab network unreachable)
+
+### Completed Tasks
+
+#### 1. Security Audit
+- **Status:** COMPLETE
+- **Frontend Score:** 6.5/10 (input validation, CSP, sanitization issues)
+- **Backend Score:** 7.5/10 (auth improvements needed, rate limiting gaps)
+- **Deployed to VPS:** nginx headers, auth.py, oauth_login.py, fleet.py
+- **Verified:** Security headers working on dashboard.osiriscare.net
+
+#### 2. Blockchain Evidence Security Hardening
+
+##### Fix 1: Ed25519 Signature Verification (evidence_chain.py)
+- **Issue:** Signatures stored but verification only checked presence
+- **Solution:**
+  - Added `verify_ed25519_signature()` with actual cryptographic verification
+  - Added `get_agent_public_key()` for public key retrieval
+  - Updated `/api/evidence/verify` endpoint for real verification
+  - Added audit logging for all verification attempts
+- **HIPAA Impact:** §164.312(c)(1) Integrity Controls, §164.312(d) Authentication
+
+##### Fix 2: Private Key Integrity Checking (crypto.py)
+- **Issue:** Private keys loaded without tampering detection
+- **Solution:**
+  - Added `KeyIntegrityError` exception class
+  - Modified `Ed25519Signer._load_private_key()` to store/verify key hash
+  - Updated `ensure_signing_key()` to create `.hash` file for integrity
+  - Detects key tampering on load via SHA256 hash comparison
+- **Security Impact:** Prevents undetected key replacement attacks
+
+##### Fix 3: OTS Proof Validation (opentimestamps.py)
+- **Issue:** Calendar server responses accepted without validation
+- **Solution:**
+  - Added `_validate_ots_proof()` method with 3 validation checks
+  - Validates: minimum length (50+ bytes), hash presence, valid OTS opcodes
+  - Rejects invalid proofs before storage
+- **Security Impact:** Prevents acceptance of invalid timestamp proofs
+
+#### 3. gRPC check_type Mapping Fix
+- **Status:** COMPLETE
+- **File:** `packages/compliance-agent/src/compliance_agent/grpc_server.py`
+- **Changes:**
+  - `screenlock` → `screen_lock` (L1-SCREENLOCK-001)
+  - `patches` → `patching` (L1-PATCHING-001)
+- **Purpose:** Ensures Go agent drift events match L1 rule patterns
+
+#### 4. Test Suite Fix
+- **Status:** COMPLETE
+- **File:** `packages/compliance-agent/tests/test_opentimestamps.py`
+- **Change:** Updated mock proof to be valid (50+ bytes with hash and OTS opcodes)
+- **Results:** 834 passed, 7 skipped
+
+### Security Score Improvement
+| Component | Before | After |
+|-----------|--------|-------|
+| Evidence Signing | 3/10 | 8/10 |
+| Reason | Signatures stored but not verified | Full Ed25519 verification, key integrity, OTS validation |
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/evidence_chain.py` | Ed25519 verification, public key lookup |
+| `packages/compliance-agent/src/compliance_agent/crypto.py` | KeyIntegrityError, key hash verification |
+| `packages/compliance-agent/src/compliance_agent/opentimestamps.py` | OTS proof validation |
+| `packages/compliance-agent/tests/test_opentimestamps.py` | Valid mock proof data |
+| `packages/compliance-agent/src/compliance_agent/grpc_server.py` | check_type mapping fix |
+
+### Git Commits
+| Commit | Message |
+|--------|---------|
+| `678ac04` | Security hardening + Go agent check_type fix |
+| `6bb43bc` | Blockchain evidence system security hardening |
+
+### Pending (Blocked)
+- **ISO v45 Build:** Lab network unreachable (192.168.88.x not accessible)
+- **Deploy gRPC fix:** Requires ISO reflash to physical appliance
+
+### Key Lessons Learned
+1. Signature storage ≠ signature verification - must cryptographically validate
+2. Private key integrity should be verified on every load
+3. External service responses (OTS calendars) need validation before acceptance
+4. check_type mapping must match exactly between Go agent and L1 rules
 
 ---
 
@@ -588,7 +690,8 @@
 
 | Session | Date | Focus | Status | Version |
 |---------|------|-------|--------|---------|
-| **59** | 2026-01-22 | Claude Code Skills System | **COMPLETE** | v1.0.44 |
+| **60** | 2026-01-22 | Security Audit & Blockchain Hardening | **COMPLETE** | v1.0.44 |
+| 59 | 2026-01-22 | Claude Code Skills System | COMPLETE | v1.0.44 |
 | 58 | 2026-01-22 | Chaos Lab Healing-First & Multi-VM Testing | COMPLETE | v1.0.44 |
 | 57 | 2026-01-21/22 | Partner Portal OAuth + ISO v44 Deployment | COMPLETE | v1.0.44 |
 | 56 | 2026-01-21 | Infrastructure Fixes & Full Coverage | COMPLETE | v1.0.44 |
@@ -619,8 +722,9 @@
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 59 complete (Claude Code Skills System)
-- `.agent/CONTEXT.md` - Updated with Session 59 changes
-- `docs/SESSION_HANDOFF.md` - Full session handoff
-- `docs/SESSION_COMPLETION_STATUS.md` - This file
-- `.claude/skills/` - 9 new skill files for Claude Code knowledge retention
+- `.agent/TODO.md` - Session 60 complete (Security Audit & Blockchain Hardening)
+- `.agent/CONTEXT.md` - Updated with Session 60 changes
+- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 60
+- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 60 details
+- `.agent/sessions/2026-01-22-security-audit-blockchain-hardening.md` - Session 60 detailed log
+- `.claude/skills/` - 9 skill files for Claude Code knowledge retention (Session 59)
