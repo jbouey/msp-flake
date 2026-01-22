@@ -10,7 +10,7 @@ Auto-heal infrastructure, generate audit evidence, replace traditional MSPs at 7
 
 ## Current State
 
-**Agent Version:** v1.0.34 | **Sprint:** Phase 12 - Launch Readiness
+**Agent Version:** v1.0.44 | **Sprint:** Phase 13 - Zero-Touch Updates
 
 - See `.agent/PROJECT_SUMMARY.md` for full project overview
 - See `.agent/CONTEXT.md` for session state
@@ -21,12 +21,14 @@ Auto-heal infrastructure, generate audit evidence, replace traditional MSPs at 7
 ```
 packages/compliance-agent/   # Python agent (main work area)
   src/compliance_agent/      # Core modules
-  tests/                     # pytest tests (778+ passing)
+  tests/                     # pytest tests (839 passing)
   venv/                      # Python 3.13 virtualenv
 modules/                     # NixOS modules
 mcp-server/                  # Central MCP server
+  central-command/           # Dashboard backend + frontend
 docs/                        # Detailed reference docs
 .agent/                      # Session tracking
+.claude/skills/              # Implementation pattern guides
 ```
 
 ## Key Commands
@@ -56,6 +58,37 @@ python -m pytest tests/test_agent.py -v
 | `docs/DISCOVERY.md` | Network discovery, device enrollment |
 | `docs/DASHBOARDS.md` | Executive reporting, compliance packets |
 | `docs/PROVENANCE.md` | Signing, time sync, hash chains, SBOM |
+
+## Skills Reference
+
+Detailed implementation patterns in `.claude/skills/`:
+
+| Skill | Key Patterns |
+|-------|--------------|
+| [security.md](.claude/skills/security.md) | Auth, OAuth/PKCE, secrets (SOPS), evidence signing |
+| [testing.md](.claude/skills/testing.md) | pytest async, 839 tests, fixtures, mocking |
+| [frontend.md](.claude/skills/frontend.md) | React Query, 51 hooks, API client, Tailwind |
+| [backend.md](.claude/skills/backend.md) | FastAPI routers, L1/L2/L3 healing, gRPC |
+| [database.md](.claude/skills/database.md) | PostgreSQL + SQLite, migrations, pooling |
+| [api.md](.claude/skills/api.md) | REST/gRPC patterns, TypeScript client |
+| [infrastructure.md](.claude/skills/infrastructure.md) | NixOS, A/B updates, Docker, systemd |
+| [compliance.md](.claude/skills/compliance.md) | HIPAA controls, drift checks, PHI scrubber |
+| [performance.md](.claude/skills/performance.md) | Query optimization, caching, async patterns |
+
+**Auto-Skill Loading:** Before working on these areas, READ the corresponding skill file first:
+
+| Task | Read These Skills |
+|------|-------------------|
+| Writing/fixing tests | `.claude/skills/testing.md` |
+| API endpoints (Python) | `.claude/skills/backend.md` + `.claude/skills/api.md` |
+| React components/hooks | `.claude/skills/frontend.md` |
+| Database queries/schema | `.claude/skills/database.md` |
+| HIPAA/evidence/runbooks | `.claude/skills/compliance.md` |
+| Deploy/NixOS/Docker | `.claude/skills/infrastructure.md` |
+| Auth/OAuth/secrets | `.claude/skills/security.md` |
+| Performance issues | `.claude/skills/performance.md` |
+
+This ensures consistent patterns and avoids reinventing existing solutions.
 
 ## Three-Tier Auto-Healing
 

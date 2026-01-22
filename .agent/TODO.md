@@ -1,7 +1,68 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-22 (Session 58 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**)
+**Last Updated:** 2026-01-22 (Session 59 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**)
+
+---
+
+## Session 59 (2026-01-22) - Claude Code Skills System - COMPLETE
+
+### Completed This Session
+
+#### 1. Created .claude/skills/ Directory with 9 Skill Files
+**Status:** COMPLETE
+- Created comprehensive skill reference files for Claude Code persistent knowledge:
+  - `security.md` - Auth, OAuth, secrets, evidence signing patterns
+  - `testing.md` - pytest async patterns, fixtures, mocking
+  - `frontend.md` - React Query hooks, API client, TypeScript patterns
+  - `backend.md` - FastAPI, three-tier healing, gRPC servicer
+  - `database.md` - PostgreSQL + SQLite patterns, migrations
+  - `api.md` - REST/gRPC endpoints, auth flow
+  - `infrastructure.md` - NixOS, Docker, A/B updates
+  - `compliance.md` - HIPAA drift checks, evidence bundles, PHI scrubber
+  - `performance.md` - DB optimization, caching, async patterns
+
+#### 2. Updated CLAUDE.md with Skills Reference
+**Status:** COMPLETE
+- Added Skills Reference section with table linking all 9 skill files
+- Added Auto-Skill Loading directive for automatic skill activation
+- Maps task types to relevant skill files (testing, API, frontend, etc.)
+
+#### 3. Auto-Skill Loading Directive
+**Status:** COMPLETE
+- Instructs Claude Code to read relevant skill files before working on specific task types:
+  - Writing/fixing tests → `.claude/skills/testing.md`
+  - API endpoints (Python) → `.claude/skills/backend.md` + `.claude/skills/api.md`
+  - React components/hooks → `.claude/skills/frontend.md`
+  - Database queries/schema → `.claude/skills/database.md`
+  - HIPAA/evidence/runbooks → `.claude/skills/compliance.md`
+  - Deploy/NixOS/Docker → `.claude/skills/infrastructure.md`
+  - Auth/OAuth/secrets → `.claude/skills/security.md`
+  - Performance issues → `.claude/skills/performance.md`
+
+### Files Created This Session
+| File | Lines | Purpose |
+|------|-------|---------|
+| `.claude/skills/security.md` | ~180 | Auth, OAuth, secrets, Ed25519 signing |
+| `.claude/skills/testing.md` | ~200 | pytest async patterns, fixtures |
+| `.claude/skills/frontend.md` | ~250 | React Query, TypeScript, API client |
+| `.claude/skills/backend.md` | ~280 | FastAPI, three-tier healing, gRPC |
+| `.claude/skills/database.md` | ~220 | PostgreSQL, SQLite, migrations |
+| `.claude/skills/api.md` | ~280 | REST/gRPC endpoints, auth |
+| `.claude/skills/infrastructure.md` | ~300 | NixOS, Docker, A/B updates |
+| `.claude/skills/compliance.md` | ~280 | HIPAA, evidence, PHI scrubber |
+| `.claude/skills/performance.md` | ~250 | DB optimization, async patterns |
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `CLAUDE.md` | Added Skills Reference section, Auto-Skill Loading directive |
+
+### Benefits
+- **Persistent Knowledge:** Skill files are read automatically based on task type
+- **Consistent Patterns:** All sessions use same coding patterns and conventions
+- **Reduced Context:** Skills load only when relevant, saving context window
+- **Self-Documenting:** Skills serve as reference for human developers too
 
 ---
 
