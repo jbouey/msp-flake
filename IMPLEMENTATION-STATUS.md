@@ -533,7 +533,18 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 13 DEPLOYED. Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, **Health Gate Service**, **GRUB A/B Boot Config**, Fleet Updates UI deployed and tested, Rollout management working (pause/resume/advance), **Full Coverage Healing Mode ENABLED** (21 rules), 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab v2 Multi-VM with campaign-level restore, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), Go Agent Compliance Checks Implementation, ISO v43 gRPC Server Verified Working, Active Healing Enabled (HEALING_DRY_RUN=false), Go Agent Deployed to NVWS01, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed** (Session 57).
+**Status:** Phase 13 DEPLOYED. Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, **Health Gate Service**, **GRUB A/B Boot Config**, Fleet Updates UI deployed and tested, Rollout management working (pause/resume/advance), **Full Coverage Healing Mode ENABLED** (21 rules), 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, **Chaos Lab Healing-First** (ENABLE_RESTORES=false), **DC Firewall 100% Heal Rate** (5/5), **All 3 VMs (DC/WS/SRV) WinRM Working**, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), Go Agent Compliance Checks Implementation, ISO v43 gRPC Server Verified Working, Active Healing Enabled (HEALING_DRY_RUN=false), Go Agent Deployed to NVWS01, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed** (Session 57), **Clock Drift Fixes** (Session 58).
+
+**Session 58 (Chaos Lab Healing-First):**
+- Created EXECUTION_PLAN_v2.sh with healing-first approach (ENABLE_RESTORES=false)
+- Fixed clock drift issues across Windows VMs (Basic auth Set-Date)
+- All 3 VMs (DC, WS, SRV) now accessible via WinRM
+- Changed credential format from domain to local (`.\Administrator`)
+- DC firewall healing verified at 100% (5/5 rounds)
+- Created FULL_COVERAGE_5X.sh (5-round stress test)
+- Created FULL_SPECTRUM_CHAOS.sh (5 attack categories)
+- Created NETWORK_COMPLIANCE_SCAN.sh (Vanta/Drata style)
+- WS/SRV Go agent healing pending investigation
 
 **Session 57 (Partner Portal OAuth Fixes):**
 - Partner OAuth authentication end-to-end working (Google + Microsoft)

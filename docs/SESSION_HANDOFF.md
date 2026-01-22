@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-22 (Session 57 - Complete)
-**Current State:** Phase 13 Zero-Touch Updates, **ISO v44 Deployed to Physical Appliance**, Full Coverage Healing Enabled, **Partner Portal OAuth Fixed**
+**Last Updated:** 2026-01-22 (Session 58 - Complete)
+**Current State:** Phase 13 Zero-Touch Updates, **ISO v44 Deployed**, Full Coverage Healing, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**
 
 ---
 
@@ -14,15 +14,67 @@
 | Tests | 834 + 24 Go tests | Healthy |
 | A/B Partition System | **VERIFIED WORKING** | Health gate active, GRUB config |
 | Fleet Updates UI | **DEPLOYED** | Create releases, rollouts working |
-| Rollout Management | **TESTED** | Pause/Resume/Advance Stage |
 | Healing Mode | **FULL COVERAGE ENABLED** | 21 rules on physical appliance |
+| Chaos Lab | **HEALING-FIRST** | Restores disabled by default |
+| DC Healing | **100% SUCCESS** | 5/5 firewall heals |
+| All 3 VMs | **WINRM WORKING** | DC, WS, SRV accessible |
 | Go Agent | **DEPLOYED to NVWS01** | gRPC Working |
 | gRPC | **VERIFIED WORKING** | Drift → L1 → Runbook |
 | Active Healing | **ENABLED** | HEALING_DRY_RUN=false |
-| L1 Rules | 21 (full coverage) | Platform-specific + Go Agent types |
-| VPS Backend | **FIXES DEPLOYED** | asyncpg syntax, migration 020 |
 | Partner Portal | **OAUTH WORKING** | Google + Microsoft login |
 | Domain Whitelisting | **CONFIG UI DEPLOYED** | Auto-approve by domain |
+
+---
+
+## Session 58 Summary (2026-01-22) - COMPLETE
+
+### Chaos Lab Healing-First Approach
+
+#### 1. Healing-First Philosophy Implemented
+- **File:** `~/chaos-lab/EXECUTION_PLAN_v2.sh`
+- `ENABLE_RESTORES=false` by default - let healing fix issues
+- `TIME_SYNC_BEFORE_ATTACK=true` - prevents clock drift auth failures
+- Reduces VM restores from ~21 to 0-3 per test run
+- Philosophy: Restores are the exception, not the workflow
+
+#### 2. Clock Drift & WinRM Authentication Fixed
+- Fixed DC time drift (was 8 days behind after VM restore)
+- Used Basic auth for time sync commands when NTLM failing
+- Changed credential format: `NORTHVALLEY\Administrator` → `.\Administrator`
+- Enabled `AllowUnencrypted=true` on WS and SRV for Basic auth
+
+#### 3. All 3 VMs Now Working
+| VM | IP | User | Status |
+|----|-----|------|--------|
+| DC (NVDC01) | 192.168.88.250 | `.\Administrator` | Working |
+| WS (NVWS01) | 192.168.88.251 | `.\localadmin` | Working |
+| SRV (NVSRV01) | 192.168.88.244 | `.\Administrator` | Working |
+
+#### 4. Full Coverage Stress Test Results
+- **DC firewall healed 5/5 (100%)** - L1 healing verified working
+- WS/SRV firewall: 0/5 (Go agents running but not healing - needs investigation)
+
+#### 5. Full Spectrum Chaos Test Created
+- 5 attack categories: Security, Network, Services, Policy, Persistence
+- Tests diverse attack vectors for comprehensive healing validation
+
+#### 6. Network Compliance Scanner
+- Vanta/Drata-style network scanning implementation
+- Enterprise architecture discussed but deferred for user decision
+
+### Files Created on iMac (chaos-lab)
+| File | Purpose |
+|------|---------|
+| `EXECUTION_PLAN_v2.sh` | Healing-first chaos testing |
+| `FULL_COVERAGE_5X.sh` | 5-round stress test |
+| `FULL_SPECTRUM_CHAOS.sh` | 5-category attack test |
+| `NETWORK_COMPLIANCE_SCAN.sh` | Network compliance scanner |
+| `CLOCK_DRIFT_FIX.md` | Time sync documentation |
+
+### config.env Updates
+- Added SRV config (NVSRV01 at 192.168.88.244)
+- Changed credential formats to local account style (`.\`)
+- Added `ENABLE_RESTORES=false`, `TIME_SYNC_BEFORE_ATTACK=true`
 
 ---
 
@@ -189,30 +241,34 @@
 
 ## Next Session Priorities
 
-### 1. Deploy ISO v44 to Physical Appliance
+### 1. Investigate WS/SRV Go Agent Healing
 ```
-- Download from VPS: /root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso
-- Flash to USB
-- Deploy to physical appliance (192.168.88.246)
+- Go agents running on WS/SRV but not healing firewall attacks
+- Check Go agent logs on NVWS01 and NVSRV01
+- Verify gRPC connection to appliance
+- Check L1 rules for Go Agent check types
 ```
 
-### 2. Test Full Update Cycle
+### 2. Add L1 Rules for Additional Attack Types
+```
+- DNS hijack → L1 rule + runbook needed
+- SMB signing → L1 rule + runbook needed
+- Persistence (scheduled tasks, registry) → L1 rules needed
+- Audit policy → L1 rule + runbook needed
+```
+
+### 3. Enterprise Network Scanning Decision
+```
+- User considering Vanta/Drata-style architecture
+- Options discussed: appliance-based vs external scanning
+- Continue discussion when user is ready
+```
+
+### 4. Test Full Update Cycle
 ```
 - Create VM with A/B partition layout
 - Test: download → verify → apply → reboot → health gate
 - Verify automatic rollback on failure
-```
-
-### 3. Fix VPS 502 Error
-```
-Evidence submission returning 502
-Check Central Command logs
-```
-
-### 4. Deploy Security Fixes
-```
-- Migration 021_healing_tier.sql
-- Environment variables for secrets
 ```
 
 ---

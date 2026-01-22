@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-22 (Session 57 - Complete)
-**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, 43 Runbooks, Go Agent Deployed to NVWS01, gRPC Integration Working, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**)
-**Test Status:** 834 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.44, 43 total runbooks (27 Windows + 16 Linux), **A/B partition update system with health gate**, **GRUB boot configuration**, **Automatic rollback on 3 failed boots**, Fleet Updates UI tested (create releases, rollouts, pause/resume/advance), **Full Coverage Healing Mode enabled** (21 rules on physical appliance), Test release v44 created with staged rollout, Go Agent running on NVWS01 (192.168.88.251), gRPC drift events → L1 rules → Windows runbooks VERIFIED, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, Chaos Lab v2 multi-VM with campaign-level restore, Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, Active healing enabled (HEALING_DRY_RUN=false), L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage), asyncpg syntax fixes deployed to VPS, api_base_url bug fixed in appliance_agent.py, chaos lab WS credentials fixed (localadmin)
+**Last Updated:** 2026-01-22 (Session 58 - Complete)
+**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, Go Agent Deployed to NVWS01, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**)
+**Test Status:** 834 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.44, 43 total runbooks (27 Windows + 16 Linux), **A/B partition update system with health gate**, **GRUB boot configuration**, **Automatic rollback on 3 failed boots**, Fleet Updates UI tested (create releases, rollouts, pause/resume/advance), **Full Coverage Healing Mode enabled** (21 rules on physical appliance), Test release v44 created with staged rollout, Go Agent running on NVWS01 (192.168.88.251), gRPC drift events → L1 rules → Windows runbooks VERIFIED, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, **Chaos Lab Healing-First** (EXECUTION_PLAN_v2.sh with ENABLE_RESTORES=false), **Full Spectrum Chaos Test** (5 attack categories), Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, Active healing enabled (HEALING_DRY_RUN=false), L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage), asyncpg syntax fixes deployed to VPS, api_base_url bug fixed in appliance_agent.py, chaos lab WS credentials fixed (localadmin), **Clock drift fixes via Basic auth**, **Credential format fix (.\\ for local accounts)**
 
 ---
 
@@ -546,6 +546,37 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
 - **Agent:** compliance-agent v1.0.40 with gRPC server + Active Healing
 - **Status:** Superseded by v43
+
+### Session 58 Changes (2026-01-22) - Chaos Lab Healing-First & Multi-VM Testing
+- **Chaos Lab Healing-First Approach:**
+  - Created `EXECUTION_PLAN_v2.sh` with `ENABLE_RESTORES=false` by default
+  - `TIME_SYNC_BEFORE_ATTACK=true` prevents clock drift auth failures
+  - Philosophy: Let healing fix issues, restores are the exception not the workflow
+  - Reduces VM restore operations from ~21 to 0-3 per test run
+- **Clock Drift & WinRM Authentication Fixes:**
+  - Fixed DC time drift (8 days behind) via Basic auth Set-Date command
+  - Changed credential format from `NORTHVALLEY\Administrator` to `.\Administrator` (local format works with NTLM)
+  - Enabled `AllowUnencrypted=true` on WS and SRV for Basic auth support
+  - All 3 VMs (DC, WS, SRV) now accessible via WinRM
+- **Full Coverage Stress Test (FULL_COVERAGE_5X.sh):**
+  - 5-round stress test across all 3 VMs
+  - **DC firewall healed 5/5 (100%)** - L1 healing verified working
+  - WS/SRV: 0/5 (Go agents running but not healing - needs investigation)
+- **Full Spectrum Chaos Test (FULL_SPECTRUM_CHAOS.sh):**
+  - 5 attack categories: Security, Network, Services, Policy, Persistence
+  - Tests: Firewall/Defender disable, DNS hijack, Service stop, Audit clear, Scheduled tasks
+- **Network Compliance Scanner (NETWORK_COMPLIANCE_SCAN.sh):**
+  - Vanta/Drata-style network scanning implementation
+  - Checks: DNS config, Firewall profiles, Network profile, Open ports, SMB signing
+- **Files Created on iMac (chaos-lab):**
+  - `EXECUTION_PLAN_v2.sh`, `FULL_COVERAGE_5X.sh`, `FULL_SPECTRUM_CHAOS.sh`
+  - `NETWORK_COMPLIANCE_SCAN.sh`, `CLOCK_DRIFT_FIX.md`, `scripts/force_time_sync.sh`
+- **config.env Updates:**
+  - Added SRV_HOST, SRV_USER, SRV_PASS for NVSRV01 (192.168.88.244)
+  - Changed DC_USER to `.\Administrator`, WS_USER to `.\localadmin`
+  - Added `ENABLE_RESTORES=false`, `TIME_SYNC_BEFORE_ATTACK=true`
+- **Pending Investigation:** WS/SRV Go agent healing, additional L1 rules needed
+- **Enterprise Network Scanning:** Architecture discussed but deferred for user decision
 
 ### Session 57 Changes (2026-01-21/22) - Partner Portal OAuth + ISO v44 Deployment
 - **Partner Portal OAuth Authentication Fixed:**
