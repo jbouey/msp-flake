@@ -1,7 +1,86 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-21 (Session 57 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Partner Portal OAuth Fixes**)
+**Last Updated:** 2026-01-22 (Session 58 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**)
+
+---
+
+## Session 58 (2026-01-22) - Chaos Lab Healing-First & Multi-VM Testing - COMPLETE
+
+### Completed This Session
+
+#### 1. Chaos Lab Healing-First Approach
+**Status:** COMPLETE
+- Created `EXECUTION_PLAN_v2.sh` on iMac chaos-lab with healing-first philosophy
+  - `ENABLE_RESTORES=false` by default - VM restores disabled to test healing
+  - `TIME_SYNC_BEFORE_ATTACK=true` - sync time before attacks to prevent auth failures
+  - Reduces restore operations from ~21 to 0-3 per test run
+- Created `CLOCK_DRIFT_FIX.md` documentation for manual time sync procedures
+
+#### 2. Clock Drift & WinRM Authentication Fixes
+**Status:** COMPLETE
+- Fixed DC time drift (was 8 days behind after VM restore)
+- Fixed WinRM authentication via Basic auth for time sync commands
+- Changed credential format from `NORTHVALLEY\Administrator` to `.\Administrator` (local format works with NTLM)
+- Enabled `AllowUnencrypted=true` on WS and SRV for Basic auth support
+- Updated `config.env` with corrected credentials and SRV configuration
+
+#### 3. All 3 VMs Working with WinRM
+**Status:** COMPLETE
+- DC (192.168.88.250) - `.\Administrator` - Working
+- WS (192.168.88.251) - `.\localadmin` - Working
+- SRV (192.168.88.244) - `.\Administrator` - Working
+- All VMs now accessible for chaos testing without clock drift issues
+
+#### 4. Full Coverage Stress Test Created
+**Status:** COMPLETE
+- Created `FULL_COVERAGE_5X.sh` - 5-round stress test across all VMs
+- Results: **DC firewall healed 5/5 (100%)**
+- WS/SRV firewall: 0/5 (Go agents running but not healing - need L1 rules investigation)
+
+#### 5. Full Spectrum Chaos Test Created
+**Status:** COMPLETE
+- Created `FULL_SPECTRUM_CHAOS.sh` with 5 attack categories:
+  - Security: Firewall disable, Defender disable
+  - Network: DNS hijack, Network profile to Public
+  - Services: Critical service stop
+  - Policy: Audit policy clear, Password policy weaken
+  - Persistence: Scheduled tasks, Registry run keys
+- Tests healing capabilities across diverse attack vectors
+
+#### 6. Network Compliance Scanner
+**Status:** COMPLETE (Implementation)
+- Created `NETWORK_COMPLIANCE_SCAN.sh` for Vanta/Drata-style network scanning
+- Checks: DNS config, Firewall profiles, Network profile, Open ports, SMB signing
+- Enterprise network scanning architecture discussed but deferred for further consideration
+
+### Files Created on iMac (chaos-lab)
+| File | Purpose |
+|------|---------|
+| `~/chaos-lab/EXECUTION_PLAN_v2.sh` | Healing-first chaos testing (restores disabled) |
+| `~/chaos-lab/FULL_COVERAGE_5X.sh` | 5-round stress test |
+| `~/chaos-lab/FULL_SPECTRUM_CHAOS.sh` | 5-category attack test |
+| `~/chaos-lab/NETWORK_COMPLIANCE_SCAN.sh` | Network compliance scanner |
+| `~/chaos-lab/CLOCK_DRIFT_FIX.md` | Clock drift fix documentation |
+| `~/chaos-lab/scripts/force_time_sync.sh` | Time sync helper script |
+
+### Files Modified on iMac
+| File | Change |
+|------|--------|
+| `~/chaos-lab/config.env` | Added SRV config, changed credential formats, added ENABLE_RESTORES=false |
+
+### Key Test Results
+| Target | Attack | Heal Rate | Notes |
+|--------|--------|-----------|-------|
+| DC Firewall | Disable Domain Profile | 5/5 (100%) | L1 healing working |
+| WS Firewall | Disable All Profiles | 0/5 (0%) | Go agent needs investigation |
+| SRV Firewall | Disable All Profiles | 0/5 (0%) | Go agent needs investigation |
+| DNS/SMB/Persistence | Various | Not healed | Need L1/L2 rules |
+
+### Pending Investigation
+- WS/SRV Go agents running but not healing firewall attacks
+- Additional L1 rules needed for DNS, SMB signing, persistence attacks
+- Enterprise network scanning architecture decision pending user review
 
 ---
 

@@ -1,6 +1,117 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-22 (Session 57 - Complete)
+**Last Updated:** 2026-01-22 (Session 58 - Complete)
+
+---
+
+## Session 58 - Chaos Lab Healing-First & Multi-VM Testing - COMPLETE
+
+**Date:** 2026-01-22
+**Status:** COMPLETE
+**Agent Version:** 1.0.44
+**ISO Version:** v44 (deployed)
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Review chaos lab scripts to reduce VM restores
+2. ✅ Fix clock drift preventing WinRM authentication
+3. ✅ Get all 3 VMs (DC, WS, SRV) working with chaos testing
+4. ✅ Run full diversity/spectrum chaos tests
+5. ✅ Create network compliance scanner
+6. ⏸️ Enterprise network scanning architecture (deferred - user to decide)
+
+### Completed Tasks
+
+#### 1. Chaos Lab Healing-First Approach
+- **Status:** COMPLETE
+- **File:** `~/chaos-lab/EXECUTION_PLAN_v2.sh` (on iMac)
+- **Features:**
+  - `ENABLE_RESTORES=false` by default - VM restores disabled
+  - `TIME_SYNC_BEFORE_ATTACK=true` - sync time before attacks
+  - Philosophy: Let healing fix issues, restores are exception not workflow
+  - Reduces VM restore operations from ~21 to 0-3 per test run
+- **Documentation:** `~/chaos-lab/CLOCK_DRIFT_FIX.md`
+
+#### 2. Clock Drift & WinRM Authentication Fixed
+- **Status:** COMPLETE
+- **Root Cause:** DC was 8 days behind after VM snapshot restore
+- **Fix:** Used Basic auth to run Set-Date command
+- **Credential Format:** Changed from `NORTHVALLEY\Administrator` to `.\Administrator`
+  - Local format (`.\`) works with NTLM when domain auth fails
+- **WS/SRV:** Enabled `AllowUnencrypted=true` for Basic auth support
+
+#### 3. All 3 VMs Working with WinRM
+- **Status:** COMPLETE
+- **DC (NVDC01):** 192.168.88.250 - `.\Administrator` - Working
+- **WS (NVWS01):** 192.168.88.251 - `.\localadmin` - Working
+- **SRV (NVSRV01):** 192.168.88.244 - `.\Administrator` - Working
+- **Verification:** All three respond to WinRM commands
+
+#### 4. Full Coverage Stress Test (FULL_COVERAGE_5X.sh)
+- **Status:** COMPLETE
+- **Test:** 5 rounds of firewall attacks across all 3 VMs
+- **Results:**
+  | Target | Attack | Heal Rate | Status |
+  |--------|--------|-----------|--------|
+  | DC Firewall | Disable Domain Profile | 5/5 (100%) | L1 healing working |
+  | WS Firewall | Disable All Profiles | 0/5 (0%) | Go agent needs investigation |
+  | SRV Firewall | Disable All Profiles | 0/5 (0%) | Go agent needs investigation |
+- **Conclusion:** DC healing verified working; WS/SRV need Go agent investigation
+
+#### 5. Full Spectrum Chaos Test (FULL_SPECTRUM_CHAOS.sh)
+- **Status:** COMPLETE
+- **5 Attack Categories:**
+  - **Security:** Firewall disable, Defender disable
+  - **Network:** DNS hijack, Network profile to Public
+  - **Services:** Critical service stop
+  - **Policy:** Audit policy clear, Password policy weaken
+  - **Persistence:** Scheduled tasks, Registry run keys
+- **Purpose:** Test healing across diverse attack vectors
+
+#### 6. Network Compliance Scanner (NETWORK_COMPLIANCE_SCAN.sh)
+- **Status:** COMPLETE (Implementation)
+- **Checks:**
+  - DNS configuration
+  - Firewall profiles (all 3)
+  - Network profile (Domain/Private/Public)
+  - Open ports
+  - SMB signing
+- **Style:** Vanta/Drata-like compliance scanning
+
+#### 7. config.env Updates
+- **Status:** COMPLETE
+- **Changes:**
+  - Added `SRV_HOST`, `SRV_USER`, `SRV_PASS` for NVSRV01
+  - Changed `DC_USER` to `.\Administrator`
+  - Changed `WS_USER` to `.\localadmin`
+  - Added `ENABLE_RESTORES=false`
+  - Added `TIME_SYNC_BEFORE_ATTACK=true`
+
+### Files Created on iMac (chaos-lab)
+| File | Lines | Purpose |
+|------|-------|---------|
+| `~/chaos-lab/EXECUTION_PLAN_v2.sh` | ~150 | Healing-first chaos testing |
+| `~/chaos-lab/FULL_COVERAGE_5X.sh` | ~100 | 5-round stress test |
+| `~/chaos-lab/FULL_SPECTRUM_CHAOS.sh` | ~200 | 5-category attack test |
+| `~/chaos-lab/NETWORK_COMPLIANCE_SCAN.sh` | ~100 | Network compliance scanner |
+| `~/chaos-lab/CLOCK_DRIFT_FIX.md` | ~50 | Clock drift documentation |
+| `~/chaos-lab/scripts/force_time_sync.sh` | ~30 | Time sync helper |
+
+### Files Modified on iMac
+| File | Change |
+|------|--------|
+| `~/chaos-lab/config.env` | SRV config, credential formats, ENABLE_RESTORES=false |
+
+### Pending Investigation
+1. **WS/SRV Go Agents:** Running but not healing firewall attacks
+2. **Additional L1 Rules:** DNS, SMB signing, persistence attacks not healed
+3. **Enterprise Network Scanning:** Architecture decision deferred to user
+
+### Key Lessons Learned
+1. VM restores cause clock drift → breaks Kerberos/NTLM auth
+2. Local credential format (`.\user`) more reliable than domain format
+3. Basic auth with AllowUnencrypted needed when NTLM failing
+4. DC healing works via WinRM runbooks; WS/SRV need Go agent fixes
 
 ---
 
@@ -387,7 +498,8 @@
 
 | Session | Date | Focus | Status | Version |
 |---------|------|-------|--------|---------|
-| **57** | 2026-01-21/22 | Partner Portal OAuth + ISO v44 Deployment | **COMPLETE** | v1.0.44 |
+| **58** | 2026-01-22 | Chaos Lab Healing-First & Multi-VM Testing | **COMPLETE** | v1.0.44 |
+| 57 | 2026-01-21/22 | Partner Portal OAuth + ISO v44 Deployment | COMPLETE | v1.0.44 |
 | 56 | 2026-01-21 | Infrastructure Fixes & Full Coverage | COMPLETE | v1.0.44 |
 | 55 | 2026-01-18 | A/B Partition Update System | COMPLETE | v1.0.44 |
 | 54 | 2026-01-18 | Phase 13 Fleet Updates Deployed | COMPLETE | v1.0.43 |
@@ -416,9 +528,9 @@
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 56 complete
-- `.agent/CONTEXT.md` - Updated with Session 56 changes
-- `IMPLEMENTATION-STATUS.md` - Session 56 details
+- `.agent/TODO.md` - Session 58 complete (Chaos Lab Healing-First)
+- `.agent/CONTEXT.md` - Updated with Session 58 changes
+- `IMPLEMENTATION-STATUS.md` - Session 58 details
 - `docs/SESSION_HANDOFF.md` - Full session handoff
 - `docs/SESSION_COMPLETION_STATUS.md` - This file
-- `.agent/sessions/2026-01-21-infrastructure-fixes.md` - Session log
+- `.agent/sessions/2026-01-22-chaos-lab-healing-first.md` - Session 58 log
