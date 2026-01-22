@@ -1,7 +1,7 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-22 (Session 58 - Complete)
-**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, Go Agent Deployed to NVWS01, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**)
+**Last Updated:** 2026-01-22 (Session 59 - Complete)
+**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, Go Agent Deployed to NVWS01, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Claude Code Skills System (9 skill files)**)
 **Test Status:** 834 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.44, 43 total runbooks (27 Windows + 16 Linux), **A/B partition update system with health gate**, **GRUB boot configuration**, **Automatic rollback on 3 failed boots**, Fleet Updates UI tested (create releases, rollouts, pause/resume/advance), **Full Coverage Healing Mode enabled** (21 rules on physical appliance), Test release v44 created with staged rollout, Go Agent running on NVWS01 (192.168.88.251), gRPC drift events → L1 rules → Windows runbooks VERIFIED, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, Learning flywheel with automatic pattern reporting, Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, **Chaos Lab Healing-First** (EXECUTION_PLAN_v2.sh with ENABLE_RESTORES=false), **Full Spectrum Chaos Test** (5 attack categories), Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, Active healing enabled (HEALING_DRY_RUN=false), L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage), asyncpg syntax fixes deployed to VPS, api_base_url bug fixed in appliance_agent.py, chaos lab WS credentials fixed (localadmin), **Clock drift fixes via Basic auth**, **Credential format fix (.\\ for local accounts)**
 
 ---
@@ -546,6 +546,31 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
 - **Agent:** compliance-agent v1.0.40 with gRPC server + Active Healing
 - **Status:** Superseded by v43
+
+### Session 59 Changes (2026-01-22) - Claude Code Skills System
+- **Claude Code Skills System Created:**
+  - Created `.claude/skills/` directory with 9 comprehensive skill files
+  - Each skill file contains patterns, code examples, and key file locations
+  - Skills are automatically loaded based on task type per CLAUDE.md directive
+- **Skill Files Created:**
+  - `security.md` - Auth patterns, OAuth PKCE, secrets management, Ed25519 signing
+  - `testing.md` - pytest async patterns, fixtures, AsyncMock, test isolation
+  - `frontend.md` - React Query hooks, API client patterns, TypeScript interfaces
+  - `backend.md` - FastAPI routers, three-tier healing, gRPC servicer
+  - `database.md` - PostgreSQL + SQLite patterns, connection pooling, migrations
+  - `api.md` - REST/gRPC endpoints, auth flow, TypeScript client
+  - `infrastructure.md` - NixOS modules, Docker compose, A/B updates
+  - `compliance.md` - HIPAA drift checks, evidence bundles, PHI scrubber, L1 rules
+  - `performance.md` - DB optimization, React Query caching, async patterns
+- **CLAUDE.md Updates:**
+  - Added Skills Reference section with table linking all 9 skills
+  - Added Auto-Skill Loading directive mapping task types to skill files
+  - Skills load automatically when working on related task types
+- **Benefits:**
+  - Persistent knowledge across sessions
+  - Consistent coding patterns and conventions
+  - Reduced context usage - skills load only when relevant
+  - Self-documenting for human developers
 
 ### Session 58 Changes (2026-01-22) - Chaos Lab Healing-First & Multi-VM Testing
 - **Chaos Lab Healing-First Approach:**
