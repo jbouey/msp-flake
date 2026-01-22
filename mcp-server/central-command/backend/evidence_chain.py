@@ -27,6 +27,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 import aiohttp
 
+# Ed25519 signature verification
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives import serialization
+from cryptography.exceptions import InvalidSignature
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/evidence", tags=["evidence"])
@@ -46,6 +51,76 @@ OTS_CALENDARS = [
 
 OTS_ENABLED = os.getenv("OTS_ENABLED", "true").lower() == "true"
 OTS_TIMEOUT = int(os.getenv("OTS_TIMEOUT", "30"))
+
+
+# =============================================================================
+# Ed25519 Signature Verification
+# =============================================================================
+
+def verify_ed25519_signature(
+    data: bytes,
+    signature_hex: str,
+    public_key_hex: str
+) -> bool:
+    """
+    Verify an Ed25519 signature.
+
+    Args:
+        data: The data that was signed
+        signature_hex: Hex-encoded 64-byte Ed25519 signature
+        public_key_hex: Hex-encoded 32-byte Ed25519 public key
+
+    Returns:
+        True if signature is valid, False otherwise
+    """
+    try:
+        # Decode signature and public key from hex
+        signature_bytes = bytes.fromhex(signature_hex)
+        public_key_bytes = bytes.fromhex(public_key_hex)
+
+        # Validate lengths
+        if len(signature_bytes) != 64:
+            logger.warning(f"Invalid signature length: {len(signature_bytes)} (expected 64)")
+            return False
+        if len(public_key_bytes) != 32:
+            logger.warning(f"Invalid public key length: {len(public_key_bytes)} (expected 32)")
+            return False
+
+        # Load public key
+        public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+
+        # Verify signature
+        public_key.verify(signature_bytes, data)
+        return True
+
+    except InvalidSignature:
+        logger.warning("Ed25519 signature verification failed: invalid signature")
+        return False
+    except ValueError as e:
+        logger.warning(f"Ed25519 signature verification failed: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Ed25519 signature verification error: {e}")
+        return False
+
+
+async def get_agent_public_key(db: AsyncSession, site_id: str) -> Optional[str]:
+    """
+    Get the registered public key for a site's agent.
+
+    Args:
+        db: Database session
+        site_id: Site identifier
+
+    Returns:
+        Hex-encoded public key if found, None otherwise
+    """
+    result = await db.execute(
+        text("SELECT agent_public_key FROM sites WHERE site_id = :site_id"),
+        {"site_id": site_id}
+    )
+    row = result.fetchone()
+    return row.agent_public_key if row and row.agent_public_key else None
 
 
 # =============================================================================
@@ -585,13 +660,56 @@ async def verify_evidence(
     expected_chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
     chain_valid = (bundle.chain_hash == expected_chain_hash)
 
-    # Note: Full signature verification would require agent's public key
-    # For now, we trust that if signature is present, it was verified on submission
-    signature_valid = bundle.agent_signature is not None
+    # Verify bundle hash against content
+    hash_content = json.dumps({
+        "site_id": site_id,
+        "checked_at": bundle.checked_at.isoformat() if bundle.checked_at else None,
+        "checks": bundle.checks if isinstance(bundle.checks, list) else json.loads(bundle.checks) if bundle.checks else [],
+        "summary": bundle.summary if isinstance(bundle.summary, dict) else json.loads(bundle.summary) if bundle.summary else {}
+    }, sort_keys=True)
+    computed_hash = hashlib.sha256(hash_content.encode()).hexdigest()
+    hash_valid = (bundle.bundle_hash == computed_hash)
+
+    # Verify Ed25519 signature (HIPAA §164.312(c)(1) - Integrity Controls)
+    signature_valid = None  # None means signature not present
+    if bundle.agent_signature:
+        # Get the agent's registered public key
+        agent_public_key = await get_agent_public_key(db, site_id)
+
+        if agent_public_key:
+            # Reconstruct the signed data (bundle content)
+            signed_data = json.dumps({
+                "site_id": site_id,
+                "bundle_id": bundle_id,
+                "bundle_hash": bundle.bundle_hash,
+                "checked_at": bundle.checked_at.isoformat() if bundle.checked_at else None,
+            }, sort_keys=True).encode('utf-8')
+
+            # Actually verify the signature
+            signature_valid = verify_ed25519_signature(
+                data=signed_data,
+                signature_hex=bundle.agent_signature,
+                public_key_hex=agent_public_key
+            )
+
+            if signature_valid:
+                logger.info(f"Signature verified: bundle={bundle_id[:8]}... site={site_id}")
+            else:
+                logger.warning(f"Signature verification FAILED: bundle={bundle_id[:8]}... site={site_id}")
+        else:
+            # Signature present but no public key registered - can't verify
+            logger.warning(f"Cannot verify signature: no public key for site={site_id}")
+            signature_valid = None
+
+    # Audit log the verification attempt
+    logger.info(
+        f"Evidence verified: bundle={bundle_id} site={site_id} "
+        f"hash_valid={hash_valid} sig_valid={signature_valid} chain_valid={chain_valid}"
+    )
 
     return EvidenceVerifyResponse(
         bundle_id=bundle_id,
-        hash_valid=True,  # Hash is stored, can be verified against content
+        hash_valid=hash_valid,
         signature_valid=signature_valid,
         chain_valid=chain_valid,
         ots_status=bundle.ots_proof_status or bundle.ots_status or "none",
