@@ -231,17 +231,28 @@ if GRPC_AVAILABLE:
             try:
                 from .incident_db import Incident
 
+                # Map Go agent check types to L1 rule check types
+                check_type_map = {
+                    "defender": "windows_defender",  # Go sends 'defender', L1 expects 'windows_defender'
+                    "firewall": "firewall_status",   # L1-FIREWALL-002 uses 'firewall_status'
+                    "screenlock": "screen_lock",     # Go sends 'screenlock', L1 expects 'screen_lock'
+                    "patches": "patching",           # Go sends 'patches', L1 expects 'patching'
+                }
+                mapped_check_type = check_type_map.get(event.check_type, event.check_type)
+
                 incident = Incident(
                     id=f"GO-{uuid.uuid4().hex[:12]}",
                     site_id=self.config.site_id if self.config else "unknown",
                     host_id=event.hostname,
-                    incident_type=event.check_type,
+                    incident_type=mapped_check_type,
                     severity="high" if event.hipaa_control else "medium",
                     raw_data={
-                        "check_type": event.check_type,
+                        "check_type": mapped_check_type,
+                        "original_check_type": event.check_type,  # Keep original for debugging
                         "status": "fail",  # L1 rules require status field
                         "drift_detected": True,
                         "go_agent": True,
+                        "platform": "windows",  # CRITICAL: L1 rules use platform for Windows vs NixOS
                         "expected": event.expected,
                         "actual": event.actual,
                         **dict(event.metadata),

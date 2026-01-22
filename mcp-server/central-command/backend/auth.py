@@ -131,10 +131,15 @@ def hash_token(token: str) -> str:
     """Hash a session token for storage using HMAC-SHA256.
 
     Uses a server-side secret for additional security against rainbow tables.
+    Requires SESSION_TOKEN_SECRET environment variable to be set.
     """
     import os
-    # Use environment variable or fallback to a derived key
-    secret = os.getenv("SESSION_TOKEN_SECRET", "osiriscare-session-secret-change-in-production")
+    secret = os.getenv("SESSION_TOKEN_SECRET")
+    if not secret:
+        raise RuntimeError(
+            "SESSION_TOKEN_SECRET environment variable must be set for secure token hashing. "
+            "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
     return hashlib.sha256(f"{secret}:{token}".encode()).hexdigest()
 
 

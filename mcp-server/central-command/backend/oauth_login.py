@@ -110,11 +110,18 @@ def generate_pkce_challenge() -> PKCEChallenge:
 
 
 def encrypt_secret(plaintext: str) -> bytes:
-    """Encrypt a secret for database storage."""
+    """Encrypt a secret for database storage.
+
+    Requires either OAUTH_ENCRYPTION_KEY or SESSION_TOKEN_SECRET environment variable.
+    """
     key = os.getenv("OAUTH_ENCRYPTION_KEY")
     if not key:
-        # Generate a key from the session secret as fallback
-        session_secret = os.getenv("SESSION_TOKEN_SECRET", "osiriscare-default-secret")
+        session_secret = os.getenv("SESSION_TOKEN_SECRET")
+        if not session_secret:
+            raise RuntimeError(
+                "OAUTH_ENCRYPTION_KEY or SESSION_TOKEN_SECRET environment variable must be set. "
+                "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            )
         key = base64.urlsafe_b64encode(hashlib.sha256(session_secret.encode()).digest())
     else:
         key = key.encode() if isinstance(key, str) else key
@@ -124,10 +131,18 @@ def encrypt_secret(plaintext: str) -> bytes:
 
 
 def decrypt_secret(ciphertext: bytes) -> str:
-    """Decrypt a secret from database storage."""
+    """Decrypt a secret from database storage.
+
+    Requires either OAUTH_ENCRYPTION_KEY or SESSION_TOKEN_SECRET environment variable.
+    """
     key = os.getenv("OAUTH_ENCRYPTION_KEY")
     if not key:
-        session_secret = os.getenv("SESSION_TOKEN_SECRET", "osiriscare-default-secret")
+        session_secret = os.getenv("SESSION_TOKEN_SECRET")
+        if not session_secret:
+            raise RuntimeError(
+                "OAUTH_ENCRYPTION_KEY or SESSION_TOKEN_SECRET environment variable must be set. "
+                "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            )
         key = base64.urlsafe_b64encode(hashlib.sha256(session_secret.encode()).digest())
     else:
         key = key.encode() if isinstance(key, str) else key

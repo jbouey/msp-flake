@@ -39,10 +39,12 @@ async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
         import os
-        database_url = os.environ.get(
-            "DATABASE_URL",
-            "postgresql://mcp:mcp-hipaa-2024-secure@localhost:5432/mcp"
-        )
+        database_url = os.environ.get("DATABASE_URL")
+        if not database_url:
+            raise RuntimeError(
+                "DATABASE_URL environment variable must be set. "
+                "Example: postgresql://user:pass@host:5432/dbname"
+            )
         # Strip SQLAlchemy async driver suffix for raw asyncpg
         if "+asyncpg" in database_url:
             database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
