@@ -46,19 +46,27 @@ export const PartnerDashboard: React.FC = () => {
   }, [isAuthenticated, isLoading, navigate]);
 
   useEffect(() => {
-    if (isAuthenticated && apiKey) {
+    if (isAuthenticated) {
       loadData();
     }
-  }, [isAuthenticated, apiKey]);
+  }, [isAuthenticated]);
 
   const loadData = async () => {
-    if (!apiKey) return;
+    if (!isAuthenticated) return;
     setLoading(true);
+
+    // Use API key header if available, otherwise use cookie auth
+    const headers: HeadersInit = apiKey
+      ? { 'X-API-Key': apiKey }
+      : {};
+    const fetchOptions: RequestInit = apiKey
+      ? { headers }
+      : { credentials: 'include' };
 
     try {
       const [sitesRes, provisionsRes] = await Promise.all([
-        fetch('/api/partners/me/sites', { headers: { 'X-API-Key': apiKey } }),
-        fetch('/api/partners/me/provisions', { headers: { 'X-API-Key': apiKey } }),
+        fetch('/api/partners/me/sites', fetchOptions),
+        fetch('/api/partners/me/provisions', fetchOptions),
       ]);
 
       if (sitesRes.ok) {
@@ -78,16 +86,18 @@ export const PartnerDashboard: React.FC = () => {
   };
 
   const handleCreateProvision = async () => {
-    if (!apiKey || !newClientName.trim()) return;
+    if (!isAuthenticated || !newClientName.trim()) return;
 
     setCreating(true);
     try {
+      const headers: HeadersInit = apiKey
+        ? { 'Content-Type': 'application/json', 'X-API-Key': apiKey }
+        : { 'Content-Type': 'application/json' };
+
       const response = await fetch('/api/partners/me/provisions', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
-        },
+        headers,
+        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
           target_client_name: newClientName.trim(),
           expires_days: 30,
@@ -107,13 +117,14 @@ export const PartnerDashboard: React.FC = () => {
   };
 
   const handleRevokeProvision = async (id: string) => {
-    if (!apiKey || !confirm('Revoke this provision code?')) return;
+    if (!isAuthenticated || !confirm('Revoke this provision code?')) return;
 
     try {
-      await fetch(`/api/partners/me/provisions/${id}`, {
-        method: 'DELETE',
-        headers: { 'X-API-Key': apiKey },
-      });
+      const fetchOptions: RequestInit = apiKey
+        ? { method: 'DELETE', headers: { 'X-API-Key': apiKey } }
+        : { method: 'DELETE', credentials: 'include' };
+
+      await fetch(`/api/partners/me/provisions/${id}`, fetchOptions);
       loadData();
     } catch (e) {
       console.error('Failed to revoke', e);

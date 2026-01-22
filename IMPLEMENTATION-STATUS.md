@@ -533,7 +533,15 @@ Required fields per CLAUDE.md:
 
 ---
 
-**Status:** Phase 13 DEPLOYED. Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, **Health Gate Service**, **GRUB A/B Boot Config**, Fleet Updates UI deployed and tested, Rollout management working (pause/resume/advance), **Full Coverage Healing Mode ENABLED** (21 rules), 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab v2 Multi-VM with campaign-level restore, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), Go Agent Compliance Checks Implementation, ISO v43 gRPC Server Verified Working, Active Healing Enabled (HEALING_DRY_RUN=false), Go Agent Deployed to NVWS01, asyncpg Syntax Fixes Deployed.
+**Status:** Phase 13 DEPLOYED. Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, **Health Gate Service**, **GRUB A/B Boot Config**, Fleet Updates UI deployed and tested, Rollout management working (pause/resume/advance), **Full Coverage Healing Mode ENABLED** (21 rules), 43 runbooks (27 Windows + 16 Linux), OpenTimestamps blockchain anchoring, Windows Sensor dual-mode architecture, Partner L3 Escalation system complete, Multi-Framework Compliance (5 frameworks), MinIO on Hetzner Storage Box, Cloud Integrations (AWS, Google, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading, Chaos Lab v2 Multi-VM with campaign-level restore, Network Compliance Check (Drata/Vanta style), Extended Check Type Labels, Pattern Reporting Deployed, Workstation Discovery Config, $params_Hostname Bug Fix, Go Agent for Workstation-Scale Compliance, Zero-Friction Deployment Pipeline, Go Agent Testing, gRPC Stub Implementation, L1 Platform-Specific Healing Fix, Comprehensive Security Runbooks (13 total), Go Agent Compliance Checks Implementation, ISO v43 gRPC Server Verified Working, Active Healing Enabled (HEALING_DRY_RUN=false), Go Agent Deployed to NVWS01, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed** (Session 57).
+
+**Session 57 (Partner Portal OAuth Fixes):**
+- Partner OAuth authentication end-to-end working (Google + Microsoft)
+- Fixed email notification import error in partner_auth.py
+- Fixed PartnerDashboard.tsx to support OAuth session-based auth (not just API key)
+- Fixed require_partner() in partners.py to support both API key header AND session cookies
+- Added admin pending partner approvals UI to Partners.tsx
+- Deployed partner_admin_router registration on VPS
 
 **Session 56 (Infrastructure Fixes & Full Coverage Enabled):**
 - Lab credentials prominently placed in CLAUDE.md with quick reference table

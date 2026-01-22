@@ -13,6 +13,17 @@ interface Partner {
   status: 'active' | 'suspended' | 'inactive';
   site_count: number;
   created_at: string;
+  pending_approval?: boolean;
+  oauth_email?: string;
+}
+
+interface PendingPartner {
+  id: string;
+  name: string;
+  slug: string;
+  oauth_email: string;
+  auth_provider: string;
+  created_at: string;
 }
 
 interface PartnerStats {
@@ -345,15 +356,18 @@ const PartnerDetailModal: React.FC<{
  */
 export const Partners: React.FC = () => {
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [pendingPartners, setPendingPartners] = useState<PendingPartner[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showNewPartnerModal, setShowNewPartnerModal] = useState(false);
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
+  const [processingApproval, setProcessingApproval] = useState<string | null>(null);
 
-  // Fetch partners on mount
+  // Fetch partners and pending approvals on mount
   useEffect(() => {
     fetchPartners();
+    fetchPendingPartners();
   }, []);
 
   const fetchPartners = async () => {
@@ -368,6 +382,63 @@ export const Partners: React.FC = () => {
       console.error('Failed to fetch partners:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchPendingPartners = async () => {
+    try {
+      const response = await fetch('/api/admin/partners/pending');
+      if (response.ok) {
+        const data = await response.json();
+        setPendingPartners(data.pending || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch pending partners:', error);
+    }
+  };
+
+  const handleApprovePartner = async (partnerId: string) => {
+    setProcessingApproval(partnerId);
+    try {
+      const response = await fetch(`/api/admin/partners/approve/${partnerId}`, {
+        method: 'POST',
+      });
+      if (response.ok) {
+        // Refresh both lists
+        fetchPendingPartners();
+        fetchPartners();
+      } else {
+        const error = await response.json();
+        alert(`Failed to approve partner: ${error.detail || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Failed to approve partner:', error);
+      alert('Failed to approve partner');
+    } finally {
+      setProcessingApproval(null);
+    }
+  };
+
+  const handleRejectPartner = async (partnerId: string) => {
+    if (!confirm('Are you sure you want to reject this partner signup? This will delete their account.')) {
+      return;
+    }
+    setProcessingApproval(partnerId);
+    try {
+      const response = await fetch(`/api/admin/partners/reject/${partnerId}`, {
+        method: 'POST',
+      });
+      if (response.ok) {
+        fetchPendingPartners();
+      } else {
+        const error = await response.json();
+        alert(`Failed to reject partner: ${error.detail || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Failed to reject partner:', error);
+      alert('Failed to reject partner');
+    } finally {
+      setProcessingApproval(null);
     }
   };
 
@@ -458,10 +529,72 @@ export const Partners: React.FC = () => {
           <p className="text-xs text-label-tertiary">Total Sites</p>
         </GlassCard>
         <GlassCard padding="md" className="text-center">
-          <p className="text-2xl font-bold text-health-warning">40%</p>
-          <p className="text-xs text-label-tertiary">Avg. Revenue Share</p>
+          <p className="text-2xl font-bold text-health-warning">{pendingPartners.length}</p>
+          <p className="text-xs text-label-tertiary">Pending Approval</p>
         </GlassCard>
       </div>
+
+      {/* Pending Approvals Section */}
+      {pendingPartners.length > 0 && (
+        <GlassCard>
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-2 h-2 rounded-full bg-health-warning animate-pulse" />
+            <h2 className="text-lg font-semibold text-label-primary">Pending Partner Approvals</h2>
+            <Badge variant="warning">{pendingPartners.length}</Badge>
+          </div>
+          <div className="space-y-3">
+            {pendingPartners.map((pending) => (
+              <div
+                key={pending.id}
+                className="flex items-center justify-between p-4 bg-fill-secondary rounded-lg border border-separator-light"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-health-warning/20 flex items-center justify-center">
+                    {pending.auth_provider === 'google' ? (
+                      <svg className="w-5 h-5" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" viewBox="0 0 21 21">
+                        <rect fill="#f25022" x="1" y="1" width="9" height="9"/>
+                        <rect fill="#7fba00" x="11" y="1" width="9" height="9"/>
+                        <rect fill="#05a6f0" x="1" y="11" width="9" height="9"/>
+                        <rect fill="#ffba08" x="11" y="11" width="9" height="9"/>
+                      </svg>
+                    )}
+                  </div>
+                  <div>
+                    <p className="font-medium text-label-primary">{pending.name}</p>
+                    <p className="text-sm text-label-secondary">{pending.oauth_email}</p>
+                    <p className="text-xs text-label-tertiary">
+                      Signed up via {pending.auth_provider === 'google' ? 'Google' : 'Microsoft'} on {formatDate(pending.created_at)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleRejectPartner(pending.id)}
+                    disabled={processingApproval === pending.id}
+                    className="px-3 py-1.5 text-sm rounded-ios bg-health-critical/10 text-health-critical hover:bg-health-critical/20 transition-colors disabled:opacity-50"
+                  >
+                    Reject
+                  </button>
+                  <button
+                    onClick={() => handleApprovePartner(pending.id)}
+                    disabled={processingApproval === pending.id}
+                    className="px-3 py-1.5 text-sm rounded-ios bg-health-healthy text-white hover:bg-health-healthy/90 transition-colors disabled:opacity-50"
+                  >
+                    {processingApproval === pending.id ? 'Processing...' : 'Approve'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
 
       {/* Filter tabs */}
       <div className="flex items-center gap-2">

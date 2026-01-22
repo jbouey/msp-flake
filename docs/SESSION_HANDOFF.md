@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-21 (Session 56 - Complete)
-**Current State:** Phase 13 Zero-Touch Updates, Full Coverage Healing Enabled, asyncpg Fixes Deployed
+**Last Updated:** 2026-01-21 (Session 57 - Complete)
+**Current State:** Phase 13 Zero-Touch Updates, Full Coverage Healing Enabled, **Partner Portal OAuth Fixed**
 
 ---
 
@@ -21,6 +21,48 @@
 | Active Healing | **ENABLED** | HEALING_DRY_RUN=false |
 | L1 Rules | 21 (full coverage) | Platform-specific + Go Agent types |
 | VPS Backend | **FIXES DEPLOYED** | asyncpg syntax, migration 020 |
+| Partner Portal | **OAUTH WORKING** | Google + Microsoft login |
+
+---
+
+## Session 57 Summary (2026-01-21) - COMPLETE
+
+### Completed
+
+#### 1. Partner Portal OAuth Authentication Fixed
+- Fixed email notification import error in `partner_auth.py`
+- Changed `from .notifications import send_email` to `from .email_alerts import send_critical_alert`
+- Email now routes through existing L3 alert infrastructure
+
+#### 2. Partner Dashboard OAuth Session Support
+- Fixed `PartnerDashboard.tsx` to support OAuth session-based auth
+- Changed dependency from `apiKey` to `isAuthenticated`
+- Added dual-auth support: API key header OR session cookie
+- Dashboard no longer spins indefinitely for OAuth-authenticated partners
+
+#### 3. Dual-Auth Support in Backend
+- Fixed `require_partner()` in `partners.py` to support both auth methods
+- Added `Cookie` import from FastAPI
+- Added `osiris_partner_session` cookie parameter
+- Session hash lookup in `partner_sessions` table
+- Checks API key first, then session cookie
+
+#### 4. Admin Pending Partner Approvals UI
+- Added "Pending Partner Approvals" section to `Partners.tsx`
+- Added `PendingPartner` interface with proper types
+- Added `fetchPendingPartners()` function
+- Added `handleApprovePartner()` and `handleRejectPartner()` handlers
+- Google/Microsoft icons for OAuth provider identification
+- Added `partner_admin_router` registration in `main.py` on VPS
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/partner_auth.py` | Email notification fix |
+| `mcp-server/central-command/backend/partners.py` | Dual-auth support (API key + session cookie) |
+| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Pending approvals UI |
+| `mcp-server/central-command/frontend/src/partner/PartnerDashboard.tsx` | OAuth session support |
+| VPS `main.py` | partner_admin_router registration |
 
 ---
 

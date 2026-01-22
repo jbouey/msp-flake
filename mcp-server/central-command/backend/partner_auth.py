@@ -117,35 +117,34 @@ def hash_session_token(token: str) -> str:
 # =============================================================================
 
 async def store_oauth_state(state: str, data: OAuthState, pool) -> None:
-    """Store OAuth state in database (fallback from Redis)."""
-    # For simplicity, we'll use a temporary approach
-    # In production, this should use Redis with TTL
+    """Store OAuth state in dedicated oauth_partner_state table."""
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO partner_sessions (id, partner_id, session_token_hash, expires_at, user_agent)
-            VALUES (gen_random_uuid(), NULL, $1, $2, $3)
-            ON CONFLICT (session_token_hash) DO UPDATE SET expires_at = $2
-        """, f"state:{state}", datetime.now(timezone.utc) + timedelta(seconds=STATE_TOKEN_TTL),
-            json.dumps(data.model_dump()))
+            INSERT INTO oauth_partner_state (state_token, provider, code_verifier, redirect_after, expires_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (state_token) DO UPDATE SET expires_at = $5
+        """, state, data.provider, data.code_verifier, data.redirect_after,
+            datetime.now(timezone.utc) + timedelta(seconds=STATE_TOKEN_TTL))
 
 
 async def get_oauth_state(state: str, pool) -> Optional[OAuthState]:
     """Retrieve and delete OAuth state (single use)."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
-            DELETE FROM partner_sessions
-            WHERE session_token_hash = $1 AND expires_at > NOW()
-            RETURNING user_agent
-        """, f"state:{state}")
+            DELETE FROM oauth_partner_state
+            WHERE state_token = $1 AND expires_at > NOW()
+            RETURNING provider, code_verifier, redirect_after, created_at
+        """, state)
 
-        if not row or not row['user_agent']:
+        if not row:
             return None
 
-        try:
-            data = json.loads(row['user_agent'])
-            return OAuthState(**data)
-        except (json.JSONDecodeError, TypeError):
-            return None
+        return OAuthState(
+            provider=row['provider'],
+            code_verifier=row['code_verifier'],
+            redirect_after=row['redirect_after'] or '/partner/dashboard',
+            created_at=row['created_at'].isoformat() if row['created_at'] else datetime.now(timezone.utc).isoformat()
+        )
 
 
 # =============================================================================
@@ -205,6 +204,72 @@ async def delete_partner_session(session_token: str, pool) -> None:
 
 
 # =============================================================================
+# OAUTH CONFIG & APPROVAL
+# =============================================================================
+
+async def get_oauth_config(pool) -> dict:
+    """Get partner OAuth configuration."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT allowed_domains, require_approval, allow_consumer_gmail, notify_emails
+            FROM partner_oauth_config
+            LIMIT 1
+        """)
+        if row:
+            return {
+                "allowed_domains": row["allowed_domains"] or [],
+                "require_approval": row["require_approval"],
+                "allow_consumer_gmail": row["allow_consumer_gmail"],
+                "notify_emails": row["notify_emails"] or [],
+            }
+        return {
+            "allowed_domains": [],
+            "require_approval": True,
+            "allow_consumer_gmail": True,
+            "notify_emails": [],
+        }
+
+
+async def send_partner_approval_notification(partner_name: str, partner_email: str, pool) -> None:
+    """Send email notification to admins about new partner signup."""
+    try:
+        # Import here to avoid circular imports
+        from .email_alerts import send_critical_alert
+
+        title = f"New Partner Signup: {partner_name}"
+        message = f"""A new partner has signed up via OAuth and requires approval:
+
+Name: {partner_name}
+Email: {partner_email}
+
+Please review and approve/reject at:
+https://dashboard.osiriscare.net/admin/partners/pending
+
+This signup was created at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}."""
+
+        # send_critical_alert uses ALERT_EMAIL from env
+        success = send_critical_alert(
+            title=title,
+            message=message,
+            category="partner-approval",
+            metadata={"partner_email": partner_email, "partner_name": partner_name}
+        )
+        if success:
+            logger.info(f"Sent partner approval notification for {partner_email}")
+
+    except Exception as e:
+        logger.error(f"Failed to send partner approval notification: {e}")
+
+
+def is_domain_allowed(email: str, allowed_domains: list) -> bool:
+    """Check if email domain is in the allowed list."""
+    if not allowed_domains:
+        return False
+    domain = email.split("@")[-1].lower()
+    return domain in [d.lower() for d in allowed_domains]
+
+
+# =============================================================================
 # PARTNER UPSERT
 # =============================================================================
 
@@ -219,10 +284,13 @@ async def upsert_partner_from_oauth(
 ) -> dict:
     """Create or update partner from OAuth identity."""
 
+    # Get OAuth config for approval settings
+    config = await get_oauth_config(pool)
+
     async with pool.acquire() as conn:
         # Check if partner exists with this OAuth identity
         existing = await conn.fetchrow("""
-            SELECT id, name, slug, status FROM partners
+            SELECT id, name, slug, status, pending_approval FROM partners
             WHERE auth_provider = $1 AND oauth_subject = $2
         """, provider, subject)
 
@@ -250,7 +318,10 @@ async def upsert_partner_from_oauth(
             if existing['status'] != 'active':
                 raise HTTPException(status_code=403, detail="Partner account is suspended")
 
-            return dict(existing)
+            # Check if still pending approval
+            result = dict(existing)
+            result["pending_approval"] = existing.get("pending_approval", False)
+            return result
         else:
             # Create new partner
             # Generate slug from email domain or name
@@ -265,21 +336,30 @@ async def upsert_partner_from_oauth(
                     slug = test_slug
                     break
 
+            # Determine if approval is required
+            require_approval = config.get("require_approval", True)
+            allowed_domains = config.get("allowed_domains", [])
+
+            # Auto-approve if domain is in allowlist
+            pending_approval = require_approval and not is_domain_allowed(email, allowed_domains)
+
             row = await conn.fetchrow("""
                 INSERT INTO partners (
                     name, slug, contact_email, brand_name,
                     auth_provider, oauth_subject, oauth_tenant_id,
                     oauth_email, oauth_name,
                     oauth_access_token_encrypted, oauth_refresh_token_encrypted,
-                    oauth_token_expires_at, last_login_at, status
+                    oauth_token_expires_at, last_login_at, status,
+                    pending_approval, auto_approved_domain
                 ) VALUES (
                     $1, $2, $3, $4,
                     $5, $6, $7,
                     $8, $9,
                     $10, $11,
-                    $12, NOW(), 'active'
+                    $12, NOW(), 'active',
+                    $13, $14
                 )
-                RETURNING id, name, slug, status
+                RETURNING id, name, slug, status, pending_approval
             """,
                 name or email.split("@")[0],
                 slug,
@@ -292,10 +372,21 @@ async def upsert_partner_from_oauth(
                 name,
                 access_token_enc.encode() if access_token_enc else None,
                 refresh_token_enc.encode() if refresh_token_enc else None,
-                expires_at
+                expires_at,
+                pending_approval,
+                not pending_approval and is_domain_allowed(email, allowed_domains)
             )
 
-            logger.info(f"Created new partner via OAuth: {row['slug']} ({provider})")
+            logger.info(f"Created new partner via OAuth: {row['slug']} ({provider}), pending_approval={pending_approval}")
+
+            # Send notification if pending approval
+            if pending_approval:
+                await send_partner_approval_notification(
+                    partner_name=name or email.split("@")[0],
+                    partner_email=email,
+                    pool=pool
+                )
+
             return dict(row)
 
 
@@ -436,6 +527,14 @@ async def oauth_callback(
             pool=pool
         )
 
+        # Check if pending approval
+        if partner.get("pending_approval"):
+            logger.info(f"Partner OAuth signup pending approval: {partner['slug']} via {provider}")
+            return RedirectResponse(
+                url="/partner/login?pending=true&email=" + user_info["email"],
+                status_code=303
+            )
+
         # Create session
         session_token = await create_partner_session(partner["id"], request, pool)
 
@@ -554,20 +653,15 @@ async def exchange_google_code(code: str, code_verifier: str) -> tuple[dict, dic
 
         profile = userinfo_response.json()
 
-        # Check for Google Workspace (reject consumer Gmail)
-        hd = profile.get("hd")  # Hosted domain (only present for Workspace accounts)
-        if not hd:
-            raise HTTPException(
-                status_code=403,
-                detail="Google Workspace account required. Consumer Gmail accounts are not supported."
-            )
+        # Get hosted domain (present for Workspace accounts, None for consumer Gmail)
+        hd = profile.get("hd")
 
         user_info = {
             "provider": "google",
             "subject": profile.get("sub"),
             "email": profile.get("email"),
             "name": profile.get("name"),
-            "tenant_id": hd,  # Google Workspace domain
+            "tenant_id": hd or profile.get("email", "").split("@")[-1],  # Use email domain if no hd
         }
 
         return tokens, user_info
@@ -631,3 +725,152 @@ async def get_oauth_providers():
             "google": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
         }
     }
+
+
+# =============================================================================
+# ADMIN PARTNER APPROVAL ENDPOINTS
+# =============================================================================
+
+# Admin router - requires admin authentication (imported from dashboard_api)
+admin_router = APIRouter(prefix="/admin/partners", tags=["admin-partners"])
+
+
+@admin_router.get("/pending")
+async def list_pending_partners(request: Request):
+    """List all partners pending approval (admin only)."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, name, slug, contact_email, oauth_email, auth_provider,
+                   oauth_tenant_id, created_at
+            FROM partners
+            WHERE pending_approval = TRUE
+            ORDER BY created_at DESC
+        """)
+
+    return {
+        "pending": [
+            {
+                "id": str(row["id"]),
+                "name": row["name"],
+                "slug": row["slug"],
+                "email": row["oauth_email"] or row["contact_email"],
+                "auth_provider": row["auth_provider"],
+                "tenant_id": row["oauth_tenant_id"],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            }
+            for row in rows
+        ]
+    }
+
+
+@admin_router.post("/approve/{partner_id}")
+async def approve_partner(partner_id: str, request: Request):
+    """Approve a pending partner (admin only)."""
+    pool = await get_pool()
+
+    # Get admin user ID from request state (set by auth middleware)
+    admin_user_id = getattr(request.state, "user_id", None)
+
+    async with pool.acquire() as conn:
+        # Check partner exists and is pending
+        partner = await conn.fetchrow("""
+            SELECT id, name, slug, oauth_email, pending_approval
+            FROM partners WHERE id = $1
+        """, partner_id)
+
+        if not partner:
+            raise HTTPException(status_code=404, detail="Partner not found")
+
+        if not partner["pending_approval"]:
+            raise HTTPException(status_code=400, detail="Partner is not pending approval")
+
+        # Approve the partner
+        await conn.execute("""
+            UPDATE partners
+            SET pending_approval = FALSE,
+                approved_by = $1,
+                approved_at = NOW()
+            WHERE id = $2
+        """, admin_user_id, partner_id)
+
+    logger.info(f"Partner approved: {partner['slug']} by admin {admin_user_id}")
+
+    # Send approval notification to partner
+    try:
+        from .notifications import send_email
+        await send_email(
+            partner["oauth_email"],
+            "Your OsirisCare Partner Account Has Been Approved",
+            f"""
+Your partner account has been approved!
+
+You can now sign in to the Partner Portal:
+https://dashboard.osiriscare.net/partner/login
+
+Welcome to the OsirisCare Partner Program.
+"""
+        )
+    except Exception as e:
+        logger.error(f"Failed to send approval notification: {e}")
+
+    return {"status": "approved", "partner_id": partner_id}
+
+
+@admin_router.post("/reject/{partner_id}")
+async def reject_partner(partner_id: str, request: Request):
+    """Reject and delete a pending partner (admin only)."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Check partner exists and is pending
+        partner = await conn.fetchrow("""
+            SELECT id, name, slug, oauth_email, pending_approval
+            FROM partners WHERE id = $1
+        """, partner_id)
+
+        if not partner:
+            raise HTTPException(status_code=404, detail="Partner not found")
+
+        if not partner["pending_approval"]:
+            raise HTTPException(status_code=400, detail="Partner is not pending approval")
+
+        # Delete the partner
+        await conn.execute("DELETE FROM partners WHERE id = $1", partner_id)
+
+    logger.info(f"Partner rejected and deleted: {partner['slug']}")
+
+    return {"status": "rejected", "partner_id": partner_id}
+
+
+@admin_router.get("/oauth-config")
+async def get_admin_oauth_config(request: Request):
+    """Get OAuth configuration (admin only)."""
+    pool = await get_pool()
+    config = await get_oauth_config(pool)
+    return config
+
+
+@admin_router.put("/oauth-config")
+async def update_oauth_config(request: Request):
+    """Update OAuth configuration (admin only)."""
+    pool = await get_pool()
+    data = await request.json()
+
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE partner_oauth_config
+            SET allowed_domains = $1,
+                require_approval = $2,
+                allow_consumer_gmail = $3,
+                notify_emails = $4,
+                updated_at = NOW()
+        """,
+            data.get("allowed_domains", []),
+            data.get("require_approval", True),
+            data.get("allow_consumer_gmail", True),
+            data.get("notify_emails", [])
+        )
+
+    return {"status": "updated"}

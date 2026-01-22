@@ -17,7 +17,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Header, Depends, Response
+from fastapi import APIRouter, HTTPException, Header, Depends, Response, Cookie
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -152,16 +152,49 @@ async def get_partner_from_api_key(api_key: str):
         return partner
 
 
-async def require_partner(x_api_key: str = Header(None)):
-    """Dependency to require valid partner API key."""
-    if not x_api_key:
-        raise HTTPException(status_code=401, detail="API key required")
+async def require_partner(
+    x_api_key: str = Header(None),
+    osiris_partner_session: Optional[str] = Cookie(None)
+):
+    """Dependency to require valid partner authentication.
 
-    partner = await get_partner_from_api_key(x_api_key)
-    if not partner:
+    Supports two auth methods:
+    1. API Key via X-API-Key header
+    2. OAuth session via osiris_partner_session cookie
+    """
+    pool = await get_pool()
+
+    # Try API key first
+    if x_api_key:
+        partner = await get_partner_from_api_key(x_api_key)
+        if partner:
+            return partner
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
 
-    return partner
+    # Try session cookie
+    if osiris_partner_session:
+        session_hash = hashlib.sha256(osiris_partner_session.encode()).hexdigest()
+
+        async with pool.acquire() as conn:
+            session = await conn.fetchrow("""
+                SELECT ps.partner_id, p.id, p.name, p.slug, p.status
+                FROM partner_sessions ps
+                JOIN partners p ON p.id = ps.partner_id
+                WHERE ps.session_token_hash = $1
+                  AND ps.expires_at > NOW()
+                  AND p.status = 'active'
+                  AND (p.pending_approval IS NULL OR p.pending_approval = false)
+            """, session_hash)
+
+            if session:
+                return {
+                    'id': session['id'],
+                    'name': session['name'],
+                    'slug': session['slug'],
+                    'status': session['status']
+                }
+
+    raise HTTPException(status_code=401, detail="Authentication required")
 
 
 # =============================================================================

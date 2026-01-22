@@ -32,6 +32,8 @@ export const PartnerLogin: React.FC = () => {
   const magicToken = searchParams.get('token');
   const oauthError = searchParams.get('error');
   const errorDescription = searchParams.get('error_description');
+  const pendingApproval = searchParams.get('pending');
+  const pendingEmail = searchParams.get('email');
 
   // Fetch OAuth providers on mount
   useEffect(() => {
@@ -165,7 +167,26 @@ export const PartnerLogin: React.FC = () => {
             Sign in with your business identity to access your dashboard.
           </p>
 
-          {(error || status === 'error') && (
+          {pendingApproval && (
+            <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p className="text-amber-800 font-medium">Account Pending Approval</p>
+                  <p className="text-amber-700 text-sm mt-1">
+                    Your signup request for <strong>{pendingEmail}</strong> has been submitted and is awaiting administrator approval.
+                  </p>
+                  <p className="text-amber-600 text-sm mt-2">
+                    You'll receive an email once your account is approved.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(error || status === 'error') && !pendingApproval && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-red-700 text-sm">{error || 'Authentication failed'}</p>
             </div>
