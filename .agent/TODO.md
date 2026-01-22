@@ -1,7 +1,58 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-21 (Session 56 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled)
+**Last Updated:** 2026-01-21 (Session 57 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Partner Portal OAuth Fixes**)
+
+---
+
+## Session 57 (2026-01-21) - Partner Portal OAuth Fixes - COMPLETE
+
+### Completed This Session
+
+#### 1. Partner Portal OAuth Authentication Fixed
+**Status:** COMPLETE
+- Fixed email notification import error in `partner_auth.py`
+  - Changed `from .notifications import send_email` to `from .email_alerts import send_critical_alert`
+  - Email now sends via existing L3 alert infrastructure
+- Fixed `PartnerDashboard.tsx` to support OAuth session-based auth
+  - Changed dependency from `apiKey` to `isAuthenticated`
+  - Added dual-auth support: API key header OR session cookie
+  - Dashboard no longer spins for OAuth-authenticated partners
+- Fixed `require_partner()` in `partners.py` to support both auth methods
+  - Added `Cookie` import from FastAPI
+  - Added `osiris_partner_session` cookie parameter
+  - Session hash lookup in `partner_sessions` table
+  - Checks API key first, then session cookie
+
+#### 2. Admin Pending Partner Approvals UI
+**Status:** COMPLETE
+- Added "Pending Partner Approvals" section to `Partners.tsx`
+- Added `PendingPartner` interface with proper types
+- Added `fetchPendingPartners()` function
+- Added `handleApprovePartner()` and `handleRejectPartner()` handlers
+- Added visual UI with Google/Microsoft icons and approve/reject buttons
+- Added `partner_admin_router` registration in `main.py` on VPS
+
+#### 3. VPS Deployment
+**Status:** COMPLETE
+- Deployed `partner_auth.py` changes via bind mount (`/opt/mcp-server/dashboard_api_mount`)
+- Deployed `partners.py` changes for dual-auth support
+- Registered `partner_admin_router` in main.py
+- Frontend changes deployed via container rebuild
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/partner_auth.py` | Fixed email notification import |
+| `mcp-server/central-command/backend/partners.py` | Added session cookie support to require_partner() |
+| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Added pending approvals UI |
+| `mcp-server/central-command/frontend/src/partner/PartnerDashboard.tsx` | Fixed OAuth session support |
+| VPS `main.py` | Added partner_admin_router registration |
+
+### VPS Changes
+- Partner OAuth authentication now working end-to-end
+- Admin can view and approve/reject pending partner signups
+- Partners can authenticate via Google/Microsoft OAuth
 
 ---
 
