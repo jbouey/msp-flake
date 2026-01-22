@@ -5,7 +5,7 @@
 
 ---
 
-## Session 57 (2026-01-21) - Partner Portal OAuth Fixes - COMPLETE
+## Session 57 (2026-01-21/22) - Partner Portal OAuth + ISO v44 Deployment - COMPLETE
 
 ### Completed This Session
 
@@ -33,26 +33,47 @@
 - Added visual UI with Google/Microsoft icons and approve/reject buttons
 - Added `partner_admin_router` registration in `main.py` on VPS
 
-#### 3. VPS Deployment
+#### 3. Partner OAuth Domain Whitelisting Config UI
 **Status:** COMPLETE
-- Deployed `partner_auth.py` changes via bind mount (`/opt/mcp-server/dashboard_api_mount`)
-- Deployed `partners.py` changes for dual-auth support
-- Registered `partner_admin_router` in main.py
-- Frontend changes deployed via container rebuild
+- Added "Partner OAuth Settings" section to `Partners.tsx`
+- Allows admin to configure whitelisted domains for auto-approval
+- Shows current whitelist and approval requirement status
+- Uses `/api/admin/partners/oauth-config` endpoint
+- Partners from whitelisted domains bypass manual approval
+
+#### 4. ISO v44 Deployed to Physical Appliance
+**Status:** COMPLETE
+- Physical appliance (192.168.88.246) now running ISO v44
+- A/B partition system verified working:
+  - `health-gate --status`: Active partition A, 0/3 boot attempts
+  - `osiris-update --status`: A/B partitions configured (/dev/sda2, /dev/sda3)
+- Compliance agent v1.0.44 running and submitting evidence
+- Appliance now supports zero-touch remote updates via Fleet Updates
+
+#### 5. VPS 502 Error Investigation
+**Status:** COMPLETE (Already Fixed)
+- Evidence submission showing 200 OK in logs
+- No active 502 errors found
 
 ### Files Modified This Session
 | File | Change |
 |------|--------|
 | `mcp-server/central-command/backend/partner_auth.py` | Fixed email notification import |
 | `mcp-server/central-command/backend/partners.py` | Added session cookie support to require_partner() |
-| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Added pending approvals UI |
+| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Added pending approvals UI + OAuth config UI |
 | `mcp-server/central-command/frontend/src/partner/PartnerDashboard.tsx` | Fixed OAuth session support |
 | VPS `main.py` | Added partner_admin_router registration |
 
 ### VPS Changes
 - Partner OAuth authentication now working end-to-end
 - Admin can view and approve/reject pending partner signups
+- Admin can configure domain whitelisting for auto-approval
 - Partners can authenticate via Google/Microsoft OAuth
+
+### Physical Appliance Changes
+- ISO v44 deployed with A/B partition update system
+- Health gate service monitoring boot health
+- Ready for zero-touch remote updates
 
 ---
 
@@ -241,25 +262,27 @@
 
 ## Next Session Priorities
 
-### 1. Deploy ISO v44 to Physical Appliance
+### 1. Test Remote ISO Update via Fleet Updates
 **Status:** READY
 **Details:**
-- ISO v44 built with A/B partition update system
-- Download from VPS: `/root/msp-iso-build/result-iso/iso/osiriscare-appliance.iso`
-- Flash to USB, deploy to physical appliance (192.168.88.246)
+- Physical appliance now has A/B partition system
+- Test pushing v45 update via Fleet Updates dashboard
+- Verify download → verify → apply → reboot → health gate flow
+- Confirm automatic rollback on simulated failure
 
-### 2. Test Full Update Cycle in VM
+### 2. Test Partner Signup with Domain Whitelisting
+**Status:** READY
+**Details:**
+- Add test domain to whitelist via Partners page
+- Test OAuth signup from whitelisted domain (should auto-approve)
+- Test OAuth signup from non-whitelisted domain (should require approval)
+
+### 3. Deploy Go Agent to Additional Workstations
 **Status:** PLANNED
 **Details:**
-- Create VM with A/B partition layout
-- Test download → verify → apply → reboot → health gate flow
-- Verify automatic rollback on failure scenario
-
-### 3. Fix VPS 502 Error
-**Status:** PENDING
-**Details:**
-- Evidence submission returning 502
-- Need to investigate Central Command backend logs
+- Deploy to NVDC01 (192.168.88.250)
+- Deploy to additional lab workstations
+- Verify gRPC drift events flow to appliance
 
 ### 4. Deploy Security Fixes to VPS
 **Status:** PENDING

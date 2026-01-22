@@ -1,6 +1,6 @@
-# Session 57 - Partner Portal OAuth Fixes
+# Session 57 - Partner Portal OAuth + ISO v44 Deployment
 
-**Date:** 2026-01-21
+**Date:** 2026-01-21/22
 **Status:** COMPLETE
 **Phase:** 13 (Zero-Touch Update System)
 
@@ -8,7 +8,7 @@
 
 ## Summary
 
-Fixed Partner Portal OAuth authentication flow, enabling partners to sign in via Google Workspace or Microsoft Entra ID. Added admin UI for viewing and approving pending partner signups.
+Fixed Partner Portal OAuth authentication flow, enabling partners to sign in via Google Workspace or Microsoft Entra ID. Added admin UI for viewing and approving pending partner signups. Added domain whitelisting config UI. Deployed ISO v44 to physical appliance and verified A/B partition system working.
 
 ---
 
@@ -121,8 +121,47 @@ Frontend deployed via container rebuild.
 
 ---
 
+## ISO v44 Deployment
+
+### Physical Appliance (192.168.88.246)
+
+Deployed ISO v44 to physical appliance via USB flash.
+
+**Verification:**
+```
+=== Health Gate ===
+Active partition: A
+Boot attempts: 0/3
+No pending update
+
+=== Update Agent ===
+Active partition: A
+Standby partition: B
+Active device: /dev/sda2
+Standby device: /dev/sda3
+Boot count: 0
+
+=== Agent Service ===
+compliance-agent.service - OsirisCare Compliance Agent
+Active: active (running)
+```
+
+The appliance is now ready for zero-touch remote updates via Fleet Updates.
+
+---
+
+## Domain Whitelisting Config UI
+
+Added "Partner OAuth Settings" section to Partners.tsx:
+- Configure whitelisted domains for auto-approval
+- Toggle approval requirement
+- Shows current whitelist status
+- Uses `/api/admin/partners/oauth-config` endpoint
+
+---
+
 ## Next Steps
 
-1. Test full partner onboarding flow with new OAuth signup
-2. Configure domain whitelisting for auto-approval
-3. Monitor partner OAuth usage in production
+1. Test remote ISO update via Fleet Updates (push v45 to appliance)
+2. Test partner signup with domain whitelisting (auto-approve vs manual)
+3. Deploy Go Agent to additional workstations

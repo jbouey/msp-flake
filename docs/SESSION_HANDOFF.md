@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-21 (Session 57 - Complete)
-**Current State:** Phase 13 Zero-Touch Updates, Full Coverage Healing Enabled, **Partner Portal OAuth Fixed**
+**Last Updated:** 2026-01-22 (Session 57 - Complete)
+**Current State:** Phase 13 Zero-Touch Updates, **ISO v44 Deployed to Physical Appliance**, Full Coverage Healing Enabled, **Partner Portal OAuth Fixed**
 
 ---
 
@@ -10,9 +10,9 @@
 | Component | Status | Version |
 |-----------|--------|---------|
 | Agent | v1.0.44 | Stable |
-| ISO | v44 | **BUILT** - Ready for deployment |
+| ISO | v44 | **DEPLOYED to physical appliance** |
 | Tests | 834 + 24 Go tests | Healthy |
-| A/B Partition System | **IMPLEMENTED** | Health gate, GRUB config |
+| A/B Partition System | **VERIFIED WORKING** | Health gate active, GRUB config |
 | Fleet Updates UI | **DEPLOYED** | Create releases, rollouts working |
 | Rollout Management | **TESTED** | Pause/Resume/Advance Stage |
 | Healing Mode | **FULL COVERAGE ENABLED** | 21 rules on physical appliance |
@@ -22,10 +22,11 @@
 | L1 Rules | 21 (full coverage) | Platform-specific + Go Agent types |
 | VPS Backend | **FIXES DEPLOYED** | asyncpg syntax, migration 020 |
 | Partner Portal | **OAUTH WORKING** | Google + Microsoft login |
+| Domain Whitelisting | **CONFIG UI DEPLOYED** | Auto-approve by domain |
 
 ---
 
-## Session 57 Summary (2026-01-21) - COMPLETE
+## Session 57 Summary (2026-01-21/22) - COMPLETE
 
 ### Completed
 
@@ -55,12 +56,26 @@
 - Google/Microsoft icons for OAuth provider identification
 - Added `partner_admin_router` registration in `main.py` on VPS
 
+#### 5. Partner OAuth Domain Whitelisting Config UI
+- Added "Partner OAuth Settings" section to `Partners.tsx`
+- Admin can configure whitelisted domains for auto-approval
+- Shows current whitelist and approval requirement status
+- Uses `/api/admin/partners/oauth-config` endpoint
+
+#### 6. ISO v44 Deployed to Physical Appliance
+- Physical appliance (192.168.88.246) now running ISO v44
+- A/B partition system verified working:
+  - `health-gate --status`: Active partition A, 0/3 boot attempts
+  - `osiris-update --status`: A/B partitions configured (/dev/sda2, /dev/sda3)
+- Compliance agent v1.0.44 running and submitting evidence
+- Appliance now supports zero-touch remote updates via Fleet Updates
+
 ### Files Modified
 | File | Change |
 |------|--------|
 | `mcp-server/central-command/backend/partner_auth.py` | Email notification fix |
 | `mcp-server/central-command/backend/partners.py` | Dual-auth support (API key + session cookie) |
-| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Pending approvals UI |
+| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Pending approvals UI + OAuth config UI |
 | `mcp-server/central-command/frontend/src/partner/PartnerDashboard.tsx` | OAuth session support |
 | VPS `main.py` | partner_admin_router registration |
 
