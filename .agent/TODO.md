@@ -23,6 +23,11 @@
 1. **Test Remote ISO Update via Fleet Updates** - A/B partition system ready
 2. **Test Partner OAuth Domain Whitelisting** - Admin endpoints now working
 3. **Investigate screen_lock Healing Failure** - Other checks working, this one failing
+4. ~~Deploy Security Fixes to VPS~~ - ✅ **ALREADY DONE** (verified 2026-01-23)
+   - `SESSION_TOKEN_SECRET` ✅ set
+   - `API_KEY_SECRET` ✅ set
+   - `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` ✅ set
+   - Migration `021_healing_tier.sql` ✅ applied
 
 ---
 
