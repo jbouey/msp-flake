@@ -9,11 +9,12 @@ import secrets
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from enum import Enum
 
 from .fleet import get_pool
+from .auth import require_auth, require_operator
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,8 @@ def parse_parameters(params):
 # =============================================================================
 
 @router.put("/{site_id}")
-async def update_site(site_id: str, update: SiteUpdate):
-    """Update site information."""
+async def update_site(site_id: str, update: SiteUpdate, user: dict = Depends(require_operator)):
+    """Update site information. Requires operator or admin access."""
     pool = await get_pool()
 
     updates = []
@@ -184,8 +185,8 @@ class HealingTierUpdate(BaseModel):
 
 
 @router.put("/{site_id}/healing-tier")
-async def update_healing_tier(site_id: str, update: HealingTierUpdate):
-    """Update the healing tier for a site.
+async def update_healing_tier(site_id: str, update: HealingTierUpdate, user: dict = Depends(require_operator)):
+    """Update the healing tier for a site. Requires operator or admin access.
 
     Healing tiers control which L1 rules are active:
     - standard: 4 core rules (firewall, defender, bitlocker, ntp)
@@ -215,8 +216,8 @@ async def update_healing_tier(site_id: str, update: HealingTierUpdate):
 
 
 @router.get("/{site_id}/healing-tier")
-async def get_healing_tier(site_id: str):
-    """Get the current healing tier for a site."""
+async def get_healing_tier(site_id: str, user: dict = Depends(require_auth)):
+    """Get the current healing tier for a site. Requires authentication."""
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -245,8 +246,9 @@ async def create_appliance_order(
     site_id: str,
     appliance_id: str,
     order: OrderCreate,
+    user: dict = Depends(require_operator),
 ):
-    """Create an order for a specific appliance."""
+    """Create an order for a specific appliance. Requires operator or admin access."""
     pool = await get_pool()
 
     order_id = generate_order_id()
@@ -351,8 +353,8 @@ def calculate_live_status(last_checkin):
 
 
 @router.get("")
-async def list_sites(status: Optional[str] = None):
-    """List all sites with aggregated appliance data."""
+async def list_sites(status: Optional[str] = None, user: dict = Depends(require_auth)):
+    """List all sites with aggregated appliance data. Requires authentication."""
     pool = await get_pool()
     
     async with pool.acquire() as conn:
@@ -410,8 +412,8 @@ async def list_sites(status: Optional[str] = None):
 
 
 @router.get("/{site_id}")
-async def get_site(site_id: str):
-    """Get details for a specific site."""
+async def get_site(site_id: str, user: dict = Depends(require_auth)):
+    """Get details for a specific site. Requires authentication."""
     pool = await get_pool()
     
     async with pool.acquire() as conn:
@@ -566,8 +568,8 @@ class CredentialCreate(BaseModel):
 
 
 @router.post("/{site_id}/credentials")
-async def add_credential(site_id: str, cred: CredentialCreate):
-    """Add a credential for a site. Appliances will pull this on next check-in."""
+async def add_credential(site_id: str, cred: CredentialCreate, user: dict = Depends(require_operator)):
+    """Add a credential for a site. Appliances will pull this on next check-in. Requires operator or admin access."""
     pool = await get_pool()
 
     # Build credential data as JSON
@@ -602,8 +604,8 @@ async def add_credential(site_id: str, cred: CredentialCreate):
 
 
 @router.delete("/{site_id}/credentials/{credential_id}")
-async def delete_credential(site_id: str, credential_id: str):
-    """Delete a credential. Appliances will stop receiving it on next check-in."""
+async def delete_credential(site_id: str, credential_id: str, user: dict = Depends(require_operator)):
+    """Delete a credential. Appliances will stop receiving it on next check-in. Requires operator or admin access."""
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -619,8 +621,8 @@ async def delete_credential(site_id: str, credential_id: str):
 
 
 @router.get("/{site_id}/appliances")
-async def get_site_appliances(site_id: str):
-    """Get all appliances for a site."""
+async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
+    """Get all appliances for a site. Requires authentication."""
     pool = await get_pool()
     
     async with pool.acquire() as conn:
@@ -661,8 +663,8 @@ async def get_site_appliances(site_id: str):
 
 
 @router.delete("/{site_id}/appliances/{appliance_id}")
-async def delete_appliance(site_id: str, appliance_id: str):
-    """Delete an appliance from a site."""
+async def delete_appliance(site_id: str, appliance_id: str, user: dict = Depends(require_operator)):
+    """Delete an appliance from a site. Requires operator or admin access."""
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -690,8 +692,8 @@ class ClearStaleRequest(BaseModel):
 
 
 @router.post("/{site_id}/appliances/clear-stale")
-async def clear_stale_appliances(site_id: str, request: ClearStaleRequest):
-    """Clear stale appliances that haven't checked in recently.
+async def clear_stale_appliances(site_id: str, request: ClearStaleRequest, user: dict = Depends(require_operator)):
+    """Clear stale appliances that haven't checked in recently. Requires operator or admin access.
 
     Deletes appliances from the site that haven't checked in for more than
     the specified number of hours.
@@ -1063,10 +1065,11 @@ class DomainCredentialInput(BaseModel):
 async def submit_domain_credentials(
     site_id: str,
     creds: DomainCredentialInput,
+    user: dict = Depends(require_operator),
 ):
     """
-    Submit domain credentials after discovery.
-    
+    Submit domain credentials after discovery. Requires operator or admin access.
+
     This is the ONE human touchpoint in zero-friction deployment.
     After this, enumeration happens automatically.
     """
@@ -1132,10 +1135,10 @@ async def submit_domain_credentials(
 
 
 @router.get("/{site_id}/deployment-status")
-async def get_deployment_status(site_id: str):
+async def get_deployment_status(site_id: str, user: dict = Depends(require_auth)):
     """
-    Get zero-friction deployment status for a site.
-    
+    Get zero-friction deployment status for a site. Requires authentication.
+
     Returns current phase and progress details.
     """
     pool = await get_pool()
@@ -1240,11 +1243,12 @@ async def get_deployment_status(site_id: str):
 
 
 @router.get("/{site_id}/domain-credentials")
-async def get_domain_credentials(site_id: str):
+async def get_domain_credentials(site_id: str, user: dict = Depends(require_operator)):
     """
-    Get domain credentials for a site (for appliance enumeration).
-    
+    Get domain credentials for a site (for appliance enumeration). Requires operator or admin access.
+
     Returns domain admin credentials if available.
+    WARNING: This endpoint returns sensitive credentials - access is restricted to operators/admins.
     """
     pool = await get_pool()
     
@@ -1605,8 +1609,8 @@ async def send_email_alert(request: EmailAlertRequest):
 # =============================================================================
 
 @router.get("/{site_id}/workstations")
-async def get_site_workstations(site_id: str):
-    """Get all workstations for a site with compliance summary.
+async def get_site_workstations(site_id: str, user: dict = Depends(require_auth)):
+    """Get all workstations for a site with compliance summary. Requires authentication.
 
     Returns workstation discovery and compliance check results from
     the appliance's AD-based workstation scanning.
@@ -1726,8 +1730,9 @@ async def get_site_workstations(site_id: str):
 async def compare_workstations_with_rmm(
     site_id: str,
     rmm_data: Dict[str, Any],
+    user: dict = Depends(require_operator),
 ):
-    """Compare site workstations with RMM tool data.
+    """Compare site workstations with RMM tool data. Requires operator or admin access.
 
     Accepts RMM device data and returns a comparison report showing:
     - Matched devices (with confidence scores)
@@ -1810,8 +1815,8 @@ async def compare_workstations_with_rmm(
 
 
 @router.get("/{site_id}/workstations/rmm-compare")
-async def get_rmm_comparison_report(site_id: str):
-    """Get the latest RMM comparison report for a site."""
+async def get_rmm_comparison_report(site_id: str, user: dict = Depends(require_auth)):
+    """Get the latest RMM comparison report for a site. Requires authentication."""
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -1843,8 +1848,8 @@ async def get_rmm_comparison_report(site_id: str):
 
 
 @router.get("/{site_id}/workstations/{workstation_id}")
-async def get_workstation(site_id: str, workstation_id: str):
-    """Get details for a specific workstation."""
+async def get_workstation(site_id: str, workstation_id: str, user: dict = Depends(require_auth)):
+    """Get details for a specific workstation. Requires authentication."""
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -1911,8 +1916,8 @@ async def get_workstation(site_id: str, workstation_id: str):
 
 
 @router.post("/{site_id}/workstations/scan")
-async def trigger_workstation_scan(site_id: str):
-    """Trigger a workstation compliance scan for a site.
+async def trigger_workstation_scan(site_id: str, user: dict = Depends(require_operator)):
+    """Trigger a workstation compliance scan for a site. Requires operator or admin access.
 
     Creates an order for the appliance to initiate an immediate
     workstation discovery and compliance check cycle.
@@ -2157,8 +2162,8 @@ CAPABILITY_TIERS = {
 
 
 @router.get("/{site_id}/agents")
-async def get_site_go_agents(site_id: str):
-    """Get all Go agents for a site with summary.
+async def get_site_go_agents(site_id: str, user: dict = Depends(require_auth)):
+    """Get all Go agents for a site with summary. Requires authentication.
 
     Returns registered Go agents and aggregated compliance summary.
     Go agents push drift events via gRPC to the appliance.
@@ -2274,8 +2279,8 @@ async def get_site_go_agents(site_id: str):
 
 
 @router.get("/{site_id}/agents/summary")
-async def get_go_agent_summary(site_id: str):
-    """Get Go agent summary for a site."""
+async def get_go_agent_summary(site_id: str, user: dict = Depends(require_auth)):
+    """Get Go agent summary for a site. Requires authentication."""
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -2333,8 +2338,8 @@ async def get_go_agent_summary(site_id: str):
 
 
 @router.get("/{site_id}/agents/{agent_id}")
-async def get_go_agent(site_id: str, agent_id: str):
-    """Get details for a specific Go agent."""
+async def get_go_agent(site_id: str, agent_id: str, user: dict = Depends(require_auth)):
+    """Get details for a specific Go agent. Requires authentication."""
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -2404,8 +2409,8 @@ async def get_go_agent(site_id: str, agent_id: str):
 
 
 @router.put("/{site_id}/agents/{agent_id}/tier")
-async def update_go_agent_tier(site_id: str, agent_id: str, data: GoAgentTierUpdate):
-    """Update the capability tier for a Go agent.
+async def update_go_agent_tier(site_id: str, agent_id: str, data: GoAgentTierUpdate, user: dict = Depends(require_operator)):
+    """Update the capability tier for a Go agent. Requires operator or admin access.
 
     Tiers control what the agent can do:
     - 0 (monitor_only): Just reports drift, no remediation
@@ -2454,8 +2459,8 @@ async def update_go_agent_tier(site_id: str, agent_id: str, data: GoAgentTierUpd
 
 
 @router.post("/{site_id}/agents/{agent_id}/check")
-async def trigger_go_agent_check(site_id: str, agent_id: str):
-    """Trigger an immediate compliance check on a Go agent.
+async def trigger_go_agent_check(site_id: str, agent_id: str, user: dict = Depends(require_operator)):
+    """Trigger an immediate compliance check on a Go agent. Requires operator or admin access.
 
     Creates an order for the agent to run all compliance checks
     and report results.
@@ -2490,8 +2495,8 @@ async def trigger_go_agent_check(site_id: str, agent_id: str):
 
 
 @router.delete("/{site_id}/agents/{agent_id}")
-async def remove_go_agent(site_id: str, agent_id: str):
-    """Remove a Go agent from the registry.
+async def remove_go_agent(site_id: str, agent_id: str, user: dict = Depends(require_operator)):
+    """Remove a Go agent from the registry. Requires operator or admin access.
 
     This removes the agent record and all associated check results.
     The agent will need to re-register on next connection.
