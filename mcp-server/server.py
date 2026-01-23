@@ -22,6 +22,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 import redis.asyncio as redis
 import aiohttp
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy import text
 
 # Import our database layer
 from database import init_database, get_store, IncidentStore
@@ -44,6 +46,18 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 
 # Rate limiting
 RATE_LIMIT_COOLDOWN_SECONDS = 300  # 5 minutes
+
+# PostgreSQL Database URL (for SQLAlchemy async session - used by evidence_chain)
+PG_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://mcp:mcp@mcp-postgres:5432/mcp")
+
+# SQLAlchemy async engine and session for routers that need it
+_pg_engine = create_async_engine(PG_DATABASE_URL, echo=False, pool_size=5, max_overflow=10)
+async_session = async_sessionmaker(_pg_engine, class_=AsyncSession, expire_on_commit=False)
+
+async def get_db():
+    """Get database session for SQLAlchemy-based routers."""
+    async with async_session() as session:
+        yield session
 
 # Global store reference
 store: Optional[IncidentStore] = None

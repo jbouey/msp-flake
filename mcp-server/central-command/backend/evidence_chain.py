@@ -124,16 +124,17 @@ async def get_agent_public_key(db: AsyncSession, site_id: str) -> Optional[str]:
 
 
 # =============================================================================
-# Database Session
+# Database Session (SQLAlchemy async)
 # =============================================================================
 
 async def get_db():
-    """Get database session."""
+    """Get database session from server module."""
     import sys
     try:
         from main import async_session
     except ImportError:
-        if 'server' in sys.modules and hasattr(sys.modules['server'], 'async_session'):
+        # Running as server.py instead of main.py
+        if 'server' in sys.modules:
             async_session = sys.modules['server'].async_session
         else:
             raise HTTPException(status_code=500, detail="Database session not configured")
