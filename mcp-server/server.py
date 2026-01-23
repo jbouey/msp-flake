@@ -145,6 +145,22 @@ for _backend_path in _backend_paths:
         sys.path.insert(0, _backend_path)
         break
 
+# Add rate limiting middleware for DoS/brute force protection
+try:
+    from dashboard_api.rate_limiter import RateLimitMiddleware, RateLimiter
+    # Create rate limiter with appropriate limits
+    # Auth endpoints: 5 attempts per minute (handled internally with "auth:" prefix)
+    # Standard rate: 60 req/min, 1000 req/hour, burst: 10
+    _rate_limiter = RateLimiter(
+        requests_per_minute=60,
+        requests_per_hour=1000,
+        burst_limit=10
+    )
+    app.add_middleware(RateLimitMiddleware, rate_limiter=_rate_limiter)
+    print("✓ Rate limiting middleware enabled (60 req/min, 10 burst)")
+except ImportError as e:
+    print(f"⚠ Rate limiting middleware not available - continuing without rate limits: {e}")
+
 try:
     from dashboard_api.routes import router as dashboard_router, auth_router
     from dashboard_api.portal import router as portal_router
