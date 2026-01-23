@@ -17,6 +17,53 @@ This system automatically improves runbooks by learning from execution failures.
 
 ---
 
+## Critical: Resolution Recording Requirement
+
+**IMPORTANT (Session 62 Fix):** The learning data flywheel requires that `resolve_incident()` is called after every healing attempt. Without resolution recording:
+- `pattern_stats` table shows 0 L1/L2/L3 resolutions
+- L2→L1 promotion criteria cannot be evaluated
+- The learning system cannot function
+
+**Required in auto_healer.py:**
+```python
+from .incident_db import IncidentDatabase, Incident, ResolutionLevel, IncidentOutcome
+
+# After L1 healing:
+self.incident_db.resolve_incident(
+    incident_id=incident.id,
+    resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
+    resolution_action=match.action,
+    outcome=IncidentOutcome.SUCCESS if success else IncidentOutcome.FAILURE,
+    resolution_time_ms=duration_ms
+)
+
+# After L2 healing:
+self.incident_db.resolve_incident(
+    incident_id=incident.id,
+    resolution_level=ResolutionLevel.LEVEL2_LLM,
+    resolution_action=action_taken,
+    outcome=IncidentOutcome.SUCCESS if success else IncidentOutcome.FAILURE,
+    resolution_time_ms=duration_ms
+)
+
+# After L3 escalation:
+self.incident_db.resolve_incident(
+    incident_id=incident.id,
+    resolution_level=ResolutionLevel.LEVEL3_HUMAN,
+    resolution_action="Escalated to human operator",
+    outcome=IncidentOutcome.ESCALATED
+)
+```
+
+This ensures the `pattern_stats` table tracks:
+- `total_occurrences` - How many times pattern seen
+- `l1_resolutions` - Successful L1 heals
+- `l2_resolutions` - Successful L2 heals
+- `l3_resolutions` - Escalations to human
+- `success_count` - Total successful resolutions
+
+---
+
 ## Architecture Overview
 
 ```

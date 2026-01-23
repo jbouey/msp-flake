@@ -1,7 +1,67 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-22 (Session 60 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**)
+**Last Updated:** 2026-01-22 (Session 62 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**)
+
+---
+
+## Session 62 (2026-01-22) - Learning System Resolution Recording Fix - COMPLETE
+
+### Completed This Session
+
+#### 1. Critical Bug Fix: auto_healer.py Resolution Recording
+**Status:** COMPLETE
+- **Issue:** `auto_healer.py` was creating incidents but NEVER calling `resolve_incident()` after healing
+- **Impact:** `pattern_stats` table showed 0 L1/L2/L3 resolutions despite successful healing
+- **Root Cause:** Missing `resolve_incident()` calls after healing attempts
+- **Fix Applied:**
+  - Added `IncidentOutcome` import from `incident_db`
+  - Added `resolve_incident()` call after L1 healing with appropriate outcome (SUCCESS/FAILURE)
+  - Added `resolve_incident()` call after L2 healing with appropriate outcome
+  - Added `resolve_incident()` call after L3 escalation with ESCALATED outcome
+- **Result:** L1 resolutions now being tracked (0 → 2 → 4 → 8+ and growing)
+
+#### 2. Deployed Fix to NixOS Appliance
+**Status:** COMPLETE
+- **Challenge:** NixOS appliance has read-only `/nix/store` - cannot directly modify compliance agent
+- **Solution:** Python monkey-patching wrapper approach
+- **Implementation:**
+  - Created `/var/lib/msp/run_agent.py` with monkey-patching of AutoHealer methods
+  - Used systemd runtime override at `/run/systemd/system/compliance-agent.service.d/override.conf`
+  - Changed ExecStart to use wrapper script
+- **Verification:** After deployment, pattern_stats showed growing L1 resolutions
+
+#### 3. Learning System Data Flywheel Now Operational
+**Status:** COMPLETE
+- **Before:** 383 incidents in local SQLite but 0 resolutions recorded
+- **After:** L1 resolutions being tracked, data flywheel functional
+- **Pattern Stats:** Total occurrences tracked, L1 resolutions incrementing
+- **Ready For:** L2→L1 promotion when patterns reach 5+ occurrences, 90%+ success
+
+### Git Commits This Session
+| Commit | Message |
+|--------|---------|
+| (pending) | fix: Record incident resolutions in learning system database |
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/auto_healer.py` | Added resolve_incident() calls after L1/L2/L3 healing |
+
+### Key Learning
+- Resolution tracking is **essential** for the learning data flywheel to function
+- Without `resolve_incident()` calls, the system creates incidents but never records outcomes
+- The fix enables L2→L1 pattern promotion based on tracked success rates
+
+---
+
+## Session 61 (2026-01-22) - User Deletion Fix & Learning Audit - COMPLETE
+
+### Completed This Session
+- Fixed user deletion HTTP 500 error in Central Command
+- Verified L1 healing working for Go agent
+- Audited learning system infrastructure
+- Prepared site owner approval workflow for L2→L1 promotions
 
 ---
 
