@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.44";  # Session 55 - A/B Partition Zero-Touch Update System
+    version = "1.0.45";  # Session 63 - Production Healing + Learning Loop Fixes
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
