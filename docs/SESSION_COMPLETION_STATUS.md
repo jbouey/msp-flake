@@ -1,6 +1,80 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-22 (Session 60 - Complete)
+**Last Updated:** 2026-01-22 (Session 62 - Complete)
+
+---
+
+## Session 62 - Learning System Resolution Recording Fix - COMPLETE
+
+**Date:** 2026-01-22
+**Status:** COMPLETE
+**Agent Version:** 1.0.44
+**ISO Version:** v44 (deployed)
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Audit learning system data collection
+2. ✅ Fix resolution recording in auto_healer.py
+3. ✅ Deploy fix to NixOS appliance
+4. ✅ Verify learning data flywheel operational
+
+### Completed Tasks
+
+#### 1. Critical Bug Fix: auto_healer.py Resolution Recording
+- **Status:** COMPLETE
+- **Issue:** `auto_healer.py` was creating incidents but NEVER calling `resolve_incident()` after healing
+- **Impact:** `pattern_stats` table showed 0 L1/L2/L3 resolutions despite successful healing
+- **Root Cause:** Missing `resolve_incident()` calls after healing attempts
+- **Fix Applied:**
+  - Added `IncidentOutcome` import from `incident_db`
+  - Added `resolve_incident()` call after L1 healing with SUCCESS/FAILURE outcome
+  - Added `resolve_incident()` call after L2 healing with SUCCESS/FAILURE outcome
+  - Added `resolve_incident()` call after L3 escalation with ESCALATED outcome
+- **Result:** L1 resolutions now tracked (0 → 2 → 4 → 8+ and growing)
+
+#### 2. Deployed Fix to NixOS Appliance
+- **Status:** COMPLETE
+- **Challenge:** NixOS appliance has read-only `/nix/store` - cannot directly modify compliance agent
+- **Solution:** Python monkey-patching wrapper approach
+- **Implementation:**
+  - Created `/var/lib/msp/run_agent.py` with monkey-patching of AutoHealer methods
+  - Used systemd runtime override at `/run/systemd/system/compliance-agent.service.d/override.conf`
+  - Changed ExecStart to use wrapper script
+- **Verification:** pattern_stats showed growing L1 resolutions after deployment
+
+#### 3. Learning Data Flywheel Now Operational
+- **Status:** COMPLETE
+- **Before:** 383 incidents in local SQLite but 0 resolutions recorded
+- **After:** L1 resolutions being tracked, data flywheel functional
+- **Pattern Stats:** Total occurrences tracked, L1 resolutions incrementing
+- **Ready For:** L2→L1 promotion when patterns reach 5+ occurrences, 90%+ success
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/auto_healer.py` | Added resolve_incident() calls after L1/L2/L3 |
+
+### Key Lessons Learned
+1. Resolution tracking is **essential** for the learning data flywheel to function
+2. Without `resolve_incident()` calls, the system creates incidents but never records outcomes
+3. NixOS read-only filesystem requires creative deployment (monkey-patching, systemd overrides)
+4. The fix enables L2→L1 pattern promotion based on tracked success rates
+
+---
+
+## Session 61 - User Deletion Fix & Learning Audit - COMPLETE
+
+**Date:** 2026-01-22
+**Status:** COMPLETE
+**Agent Version:** 1.0.44
+**ISO Version:** v44 (deployed)
+**Phase:** 13 (Zero-Touch Update System)
+
+### Completed Tasks
+- Fixed user deletion HTTP 500 error in Central Command
+- Verified L1 healing working for Go agent
+- Audited learning system infrastructure
+- Prepared site owner approval workflow for L2→L1 promotions
 
 ---
 
@@ -690,7 +764,9 @@
 
 | Session | Date | Focus | Status | Version |
 |---------|------|-------|--------|---------|
-| **60** | 2026-01-22 | Security Audit & Blockchain Hardening | **COMPLETE** | v1.0.44 |
+| **62** | 2026-01-22 | Learning System Resolution Recording Fix | **COMPLETE** | v1.0.44 |
+| 61 | 2026-01-22 | User Deletion Fix & Learning Audit | COMPLETE | v1.0.44 |
+| 60 | 2026-01-22 | Security Audit & Blockchain Hardening | COMPLETE | v1.0.44 |
 | 59 | 2026-01-22 | Claude Code Skills System | COMPLETE | v1.0.44 |
 | 58 | 2026-01-22 | Chaos Lab Healing-First & Multi-VM Testing | COMPLETE | v1.0.44 |
 | 57 | 2026-01-21/22 | Partner Portal OAuth + ISO v44 Deployment | COMPLETE | v1.0.44 |
@@ -722,9 +798,9 @@
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 60 complete (Security Audit & Blockchain Hardening)
-- `.agent/CONTEXT.md` - Updated with Session 60 changes
-- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 60
-- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 60 details
-- `.agent/sessions/2026-01-22-security-audit-blockchain-hardening.md` - Session 60 detailed log
+- `.agent/TODO.md` - Session 62 complete (Learning System Resolution Recording Fix)
+- `.agent/CONTEXT.md` - Updated with Session 62 changes
+- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 62
+- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 62 details
+- `docs/LEARNING_SYSTEM.md` - Updated with resolution recording requirements
 - `.claude/skills/` - 9 skill files for Claude Code knowledge retention (Session 59)
