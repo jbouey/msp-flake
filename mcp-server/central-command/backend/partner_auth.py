@@ -34,8 +34,10 @@ from fastapi import APIRouter, Request, Response, HTTPException, Depends, Cookie
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 import httpx
+from typing import Dict
 
 from .fleet import get_pool
+from .auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -736,7 +738,7 @@ admin_router = APIRouter(prefix="/admin/partners", tags=["admin-partners"])
 
 
 @admin_router.get("/pending")
-async def list_pending_partners(request: Request):
+async def list_pending_partners(request: Request, user: Dict = Depends(require_admin)):
     """List all partners pending approval (admin only)."""
     pool = await get_pool()
 
@@ -766,12 +768,12 @@ async def list_pending_partners(request: Request):
 
 
 @admin_router.post("/approve/{partner_id}")
-async def approve_partner(partner_id: str, request: Request):
+async def approve_partner(partner_id: str, request: Request, user: Dict = Depends(require_admin)):
     """Approve a pending partner (admin only)."""
     pool = await get_pool()
 
-    # Get admin user ID from request state (set by auth middleware)
-    admin_user_id = getattr(request.state, "user_id", None)
+    # Get admin user ID from authenticated user
+    admin_user_id = user.get("id")
 
     async with pool.acquire() as conn:
         # Check partner exists and is pending
@@ -819,7 +821,7 @@ Welcome to the OsirisCare Partner Program.
 
 
 @admin_router.post("/reject/{partner_id}")
-async def reject_partner(partner_id: str, request: Request):
+async def reject_partner(partner_id: str, request: Request, user: Dict = Depends(require_admin)):
     """Reject and delete a pending partner (admin only)."""
     pool = await get_pool()
 
@@ -845,7 +847,7 @@ async def reject_partner(partner_id: str, request: Request):
 
 
 @admin_router.get("/oauth-config")
-async def get_admin_oauth_config(request: Request):
+async def get_admin_oauth_config(request: Request, user: Dict = Depends(require_admin)):
     """Get OAuth configuration (admin only)."""
     pool = await get_pool()
     config = await get_oauth_config(pool)
@@ -853,7 +855,7 @@ async def get_admin_oauth_config(request: Request):
 
 
 @admin_router.put("/oauth-config")
-async def update_oauth_config(request: Request):
+async def update_oauth_config(request: Request, user: Dict = Depends(require_admin)):
     """Update OAuth configuration (admin only)."""
     pool = await get_pool()
     data = await request.json()
