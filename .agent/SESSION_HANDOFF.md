@@ -1,6 +1,6 @@
 # Session Handoff - 2026-01-23
 
-**Session:** 65 - Documentation Sync & Planning
+**Session:** 65 - Security Audit
 **Agent Version:** v1.0.45
 **ISO Version:** v44 (deployed to physical appliance)
 **Last Updated:** 2026-01-23
@@ -19,33 +19,71 @@
 | Healing Mode | **FULL COVERAGE** | 21 rules active |
 | Go Agents | **ALL 3 VMs** | DC, WS, SRV deployed |
 | gRPC | **WORKING** | Drift → L1 → Runbook verified |
-| Partner Portal | **OAUTH WORKING** | Admin router fixed |
-| Learning System | **OPERATIONAL** | Resolution recording fixed |
+| Partner Portal | **SECURED** | Admin auth added, OAuth working |
+| User Auth | **SECURED** | Strong password, lockout, RBAC |
+| Evidence Pipeline | **SECURED** | Ed25519 signatures required |
 
 ---
 
-## Session 64 Accomplishments (Previous)
+## Session 65 Accomplishments (Current)
 
-### 1. Partner Admin Router Fixed
-- **Issue:** Partner admin endpoints returning 404 (pending approvals, oauth-config)
-- **Root Cause:** `admin_router` from `partner_auth.py` not registered in `main.py`
-- **Fix:** Added `partner_admin_router` import and `app.include_router()` call
+### 1. Comprehensive Security Audit - THREE Critical Vulnerabilities Fixed
+
+#### Critical 1: Partner Admin Endpoints (FIXED)
+- **Issue:** `/api/admin/partners/*` endpoints had NO authentication
+- **Impact:** Anyone could modify OAuth config, approve/reject partners
+- **Fix:** Added `require_admin` dependency to all admin endpoints
 - **Commit:** `9edd9fc`
+- **Report:** `docs/security/PARTNER_SECURITY_AUDIT_2026-01-23.md`
 
-### 2. Go Agent Deployed to All 3 Windows VMs
-| VM | IP | Status |
-|----|-----|--------|
-| NVDC01 | 192.168.88.250 | Domain Controller - Agent running |
-| NVSRV01 | 192.168.88.244 | Server Core - Agent running |
-| NVWS01 | 192.168.88.251 | Workstation - Agent running |
+#### Critical 2: Evidence Submission (FIXED)
+- **Issue:** `POST /api/evidence/sites/{site_id}/submit` accepted data WITHOUT authentication
+- **Impact:** Anyone could inject fake evidence into compliance chain
+- **Fix:** Now requires Ed25519 signature from registered agent
+- **Commit:** `73093d8`
+- **Report:** `docs/security/PIPELINE_SECURITY_AUDIT_2026-01-23.md`
 
-All three sending gRPC drift events to appliance.
+#### Critical 3: Sites API (FIXED)
+- **Issue:** `/api/sites/*` endpoints returned all data WITHOUT authentication
+- **Impact:** Domain credentials (admin passwords!) exposed publicly
+- **Fix:** All endpoints now require `require_auth` or `require_operator`
+- **Commit:** `73093d8`
+- **Report:** `docs/security/PIPELINE_SECURITY_AUDIT_2026-01-23.md`
 
-### 3. Go Agent Configuration Issues Resolved
-- **Wrong config key:** `appliance_address` → `appliance_addr`
-- **Missing -config flag:** Scheduled task must include `-config C:\OsirisCare\config.json`
-- **Binary version mismatch:** Updated DC/SRV from 15MB to 16.6MB version
-- **Working directory:** Must set `WorkingDirectory` to `C:\OsirisCare`
+### 2. User Authentication Audit (No Critical Issues)
+- **Result:** Well-implemented with industry-standard practices
+- Strong password policy (12+ chars, complexity, common password check)
+- Account lockout (5 attempts = 15 min lock)
+- No user enumeration (generic error messages)
+- SQL injection protected (parameterized queries)
+- RBAC properly enforced
+- **Report:** `docs/security/USER_AUTH_SECURITY_AUDIT_2026-01-23.md`
+
+### 3. Database Schema Updates
+```sql
+-- Added for Ed25519 signature verification
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS agent_public_key VARCHAR(128);
+```
+
+### 4. Server.py Updates
+- Added SQLAlchemy async session for evidence_chain router
+- Registered evidence_chain_router
+- Constructs async DB URL from DATABASE_URL env var
+
+---
+
+## Security Status Summary
+
+| Area | Status | Audit Report |
+|------|--------|--------------|
+| Partner Portal | ✅ SECURED | PARTNER_SECURITY_AUDIT_2026-01-23.md |
+| User Auth | ✅ SECURE | USER_AUTH_SECURITY_AUDIT_2026-01-23.md |
+| Evidence Pipeline | ✅ SECURED | PIPELINE_SECURITY_AUDIT_2026-01-23.md |
+| Sites API | ✅ SECURED | PIPELINE_SECURITY_AUDIT_2026-01-23.md |
+
+**Open Issues:**
+- MEDIUM: No rate limiting on login/API endpoints
+- LOW: bcrypt not installed (using SHA-256 fallback)
 
 ---
 
@@ -57,20 +95,20 @@ All three sending gRPC drift events to appliance.
 - Verify: download → verify → apply → reboot → health gate flow
 - Test automatic rollback on simulated failure
 
-### Priority 2: Test Partner OAuth Domain Whitelisting
-- Partner admin endpoints now working
-- Add test domain to whitelist via Partners page
-- Test OAuth signup from whitelisted domain (should auto-approve)
-- Test OAuth signup from non-whitelisted domain (should require approval)
+### Priority 2: Register Agent Public Keys
+- Sites need `agent_public_key` registered for evidence verification
+- Generate Ed25519 keypair on physical appliance
+- Register public key in sites table
+- Test evidence submission with valid signature
 
-### Priority 3: Investigate screen_lock Healing Failure
-- Go agents reporting drift events for all checks
-- firewall/defender/bitlocker healing works
-- screen_lock healing failing - needs investigation
+### Priority 3: Add Rate Limiting Middleware
+- Implement rate limiting for login endpoint (10 req/min)
+- Implement rate limiting for authenticated endpoints (100 req/min)
+- Return 429 Too Many Requests when exceeded
 
-### Priority 4: Deploy Security Fixes to VPS (if not done)
-- Run migration `021_healing_tier.sql`
-- Set env vars: `SESSION_TOKEN_SECRET`, `API_KEY_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`
+### Priority 4: Install bcrypt in Docker Image
+- Update Dockerfile to include bcrypt
+- More secure password hashing with adaptive work factor
 
 ---
 
@@ -92,27 +130,25 @@ All three sending gRPC drift events to appliance.
 ### VPS
 | Service | URL | Status |
 |---------|-----|--------|
-| Dashboard | https://dashboard.osiriscare.net | Online |
-| API | https://api.osiriscare.net | Online |
+| Dashboard | https://dashboard.osiriscare.net | Online, Auth Required |
+| API | https://api.osiriscare.net | Online, Auth Required |
 | MSP Portal | https://msp.osiriscare.net | Online |
 
 ---
 
-## Key Learnings from Recent Sessions
+## Key Learnings from Session 65
 
-### Session 64
-- Go Agent config key must be `appliance_addr` (not `appliance_address`)
-- Windows scheduled tasks need `-config` flag and `WorkingDirectory` set
-- Partner admin router must be explicitly registered in FastAPI main.py
+### Security Testing
+1. Always test endpoints both **with** and **without** authentication
+2. Admin endpoints in separate routers may not inherit auth from parent
+3. Database credential endpoints are HIGH-PRIORITY security targets
+4. Ed25519 signatures provide cryptographic proof of origin
 
-### Session 63
-- `ApplianceConfig` loads from YAML file, not environment variables
-- Learning loop must map check_types to actual runbook IDs
-- Builtin L1 rules are sufficient; bad auto-promoted rules were duplicates
-
-### Session 62
-- Resolution tracking is **essential** for learning data flywheel
-- Without `resolve_incident()` calls, system creates incidents but never records outcomes
+### Deployment
+1. DATABASE_URL env var used by fleet.py may conflict with async URLs
+2. Use `PG_ASYNC_DATABASE_URL` for explicit async PostgreSQL configuration
+3. SQLAlchemy async requires `+asyncpg` driver in URL
+4. Container restart may not pick up code changes - rebuild image
 
 ---
 
@@ -138,38 +174,25 @@ python -m pytest tests/ -v --tb=short
 # Check appliance logs
 journalctl -u compliance-agent -f
 
-# Check health gate status (on appliance)
-health-gate --status
+# Restart mcp-server on VPS
+ssh root@178.156.162.116 "docker restart mcp-server"
 
-# Check A/B partition status (on appliance)
-osiris-update --status
+# Check mcp-server logs
+ssh root@178.156.162.116 "docker logs mcp-server --tail 50"
+
+# Test endpoint authentication
+curl -s "https://api.osiriscare.net/api/sites"
+# Should return: {"detail":"Authentication required"} (401)
 ```
 
 ---
 
-## Architecture Reference
+## Security Audit Reports Location
 
-```
-                           Physical Appliance (192.168.88.246)
-Windows VMs                +----------------------------------+
-+------------------+       |  Agent v1.0.45 (ISO v44)         |
-| NVDC01 (.250)    | WinRM |  - Three-tier healing (ACTIVE)   |
-| NVWS01 (.251)    |------>|  - gRPC Server :50051            |
-| NVSRV01 (.244)   |       |  - Sensor API :8080              |
-+------------------+       |  - A/B Partition Updates         |
-        |                  |  - Health Gate Service           |
-        | gRPC             +----------------------------------+
-        v                              |
-+------------------+                   | HTTPS
-| Go Agents        |                   v
-| (all 3 VMs)      |          +------------------+
-| - 6 WMI checks   |          | Central Command  |
-| - gRPC streaming |          | (VPS)            |
-+------------------+          | - Dashboard      |
-                              | - Fleet Updates  |
-                              | - Learning Loop  |
-                              +------------------+
-```
+All security audit reports are in `docs/security/`:
+- `PARTNER_SECURITY_AUDIT_2026-01-23.md`
+- `USER_AUTH_SECURITY_AUDIT_2026-01-23.md`
+- `PIPELINE_SECURITY_AUDIT_2026-01-23.md`
 
 ---
 
