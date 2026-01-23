@@ -48,7 +48,8 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 RATE_LIMIT_COOLDOWN_SECONDS = 300  # 5 minutes
 
 # PostgreSQL Database URL (for SQLAlchemy async session - used by evidence_chain)
-PG_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://mcp:mcp@mcp-postgres:5432/mcp")
+# NOTE: Must use +asyncpg dialect for async support
+PG_DATABASE_URL = os.getenv("PG_ASYNC_DATABASE_URL", "postgresql+asyncpg://mcp:mcp@mcp-postgres:5432/mcp")
 
 # SQLAlchemy async engine and session for routers that need it
 _pg_engine = create_async_engine(PG_DATABASE_URL, echo=False, pool_size=5, max_overflow=10)
