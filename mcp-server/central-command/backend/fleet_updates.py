@@ -591,7 +591,7 @@ async def list_rollout_appliances(
     pool = await get_pool()
     async with pool.acquire() as conn:
         query = """
-            SELECT au.id, au.appliance_id, a.name as appliance_name, a.site_id,
+            SELECT au.id, au.appliance_id, a.host_id as appliance_name, a.site_id,
                    au.rollout_id, au.stage_assigned, au.status, au.previous_version,
                    au.new_version, au.download_started_at, au.download_completed_at,
                    au.reboot_at, au.completed_at, au.error_message, au.boot_attempts,

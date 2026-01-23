@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 
+const getToken = (): string | null => localStorage.getItem('auth_token');
+
 interface Partner {
   id: string;
   name: string;
@@ -401,8 +403,12 @@ export const Partners: React.FC = () => {
   };
 
   const fetchPendingPartners = async () => {
+    const token = getToken();
+    if (!token) return;
     try {
-      const response = await fetch('/api/admin/partners/pending');
+      const response = await fetch('/api/admin/partners/pending', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (response.ok) {
         const data = await response.json();
         setPendingPartners(data.pending || []);
@@ -413,8 +419,12 @@ export const Partners: React.FC = () => {
   };
 
   const fetchOAuthConfig = async () => {
+    const token = getToken();
+    if (!token) return;
     try {
-      const response = await fetch('/api/admin/partners/oauth-config');
+      const response = await fetch('/api/admin/partners/oauth-config', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (response.ok) {
         const data = await response.json();
         setOauthConfig(data);
@@ -427,6 +437,8 @@ export const Partners: React.FC = () => {
   };
 
   const saveOAuthConfig = async () => {
+    const token = getToken();
+    if (!token) return;
     setSavingOAuth(true);
     try {
       const domains = oauthDomains
@@ -436,7 +448,10 @@ export const Partners: React.FC = () => {
 
       const response = await fetch('/api/admin/partners/oauth-config', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           allowed_domains: domains,
           require_approval: oauthRequireApproval,
@@ -461,10 +476,13 @@ export const Partners: React.FC = () => {
   };
 
   const handleApprovePartner = async (partnerId: string) => {
+    const token = getToken();
+    if (!token) return;
     setProcessingApproval(partnerId);
     try {
       const response = await fetch(`/api/admin/partners/approve/${partnerId}`, {
         method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (response.ok) {
         // Refresh both lists
@@ -486,10 +504,13 @@ export const Partners: React.FC = () => {
     if (!confirm('Are you sure you want to reject this partner signup? This will delete their account.')) {
       return;
     }
+    const token = getToken();
+    if (!token) return;
     setProcessingApproval(partnerId);
     try {
       const response = await fetch(`/api/admin/partners/reject/${partnerId}`, {
         method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (response.ok) {
         fetchPendingPartners();

@@ -166,6 +166,7 @@ try:
     from dashboard_api.portal import router as portal_router
     from dashboard_api.sites import router as sites_router, orders_router, appliances_router, alerts_router
     from dashboard_api.partners import router as partners_router
+    from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router
     from dashboard_api.discovery import router as discovery_router
     from dashboard_api.provisioning import router as provisioning_router
     from dashboard_api.runbook_config import router as runbook_config_router
@@ -175,6 +176,7 @@ try:
     from dashboard_api.frameworks import router as frameworks_router
     from dashboard_api.integrations.api import router as integrations_router
     from dashboard_api.evidence_chain import router as evidence_chain_router
+    from dashboard_api.fleet_updates import router as fleet_updates_router
     app.include_router(dashboard_router)
     app.include_router(auth_router)  # Admin authentication endpoints
     app.include_router(users_router)  # User management (RBAC)
@@ -185,6 +187,8 @@ try:
     app.include_router(appliances_router)  # Smart appliance checkin with deduplication
     app.include_router(alerts_router)  # Email alerts for L3 escalations
     app.include_router(partners_router)
+    app.include_router(partner_auth_router, prefix="/api")  # Partner OAuth login
+    app.include_router(partner_admin_router, prefix="/api")  # Partner admin endpoints
     app.include_router(discovery_router)
     app.include_router(provisioning_router)
     app.include_router(runbook_config_router)  # Runbook enable/disable config
@@ -193,7 +197,8 @@ try:
     app.include_router(escalations_router)  # Agent L3 escalations to partners
     app.include_router(integrations_router)  # Cloud integrations (AWS, Google, Okta, Azure)
     app.include_router(evidence_chain_router)  # Evidence chain with Ed25519 signature verification
-    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users, frameworks, integrations, evidence_chain)")
+    app.include_router(fleet_updates_router)  # Fleet updates and rollout management
+    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users, frameworks, integrations, evidence_chain, fleet_updates)")
 except ImportError as e:
     print(f"⚠ Could not import central-command routers: {e}")
 
