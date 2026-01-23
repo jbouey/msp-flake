@@ -1,6 +1,115 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-22 (Session 62 - Complete)
+**Last Updated:** 2026-01-23 (Session 65 - Starting)
+
+---
+
+## Session 64 - Go Agent Full Deployment - COMPLETE
+
+**Date:** 2026-01-23
+**Status:** COMPLETE
+**Agent Version:** 1.0.45
+**ISO Version:** v44 (deployed)
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Fix partner admin router (pending approvals, oauth-config endpoints)
+2. ✅ Deploy Go Agent to remaining Windows VMs (DC, SRV)
+3. ✅ Resolve Go Agent configuration issues
+
+### Completed Tasks
+
+#### 1. Partner Admin Router Fixed
+- **Status:** COMPLETE
+- **Issue:** Partner admin endpoints returning 404
+- **Root Cause:** `admin_router` from `partner_auth.py` not registered in `main.py`
+- **Fix:** Added `partner_admin_router` import and `app.include_router()` call
+- **Commit:** `9edd9fc`
+
+#### 2. Go Agent Deployed to All 3 Windows VMs
+- **Status:** COMPLETE
+- **NVDC01 (192.168.88.250):** Domain Controller - Agent running via scheduled task
+- **NVSRV01 (192.168.88.244):** Server Core - Agent running via scheduled task
+- **NVWS01 (192.168.88.251):** Workstation - Already deployed (previous session)
+- **Verification:** All three sending gRPC drift events to appliance
+
+#### 3. Go Agent Configuration Issues Resolved
+- **Status:** COMPLETE
+- **Issues Fixed:**
+  - Wrong config key: `appliance_address` → `appliance_addr`
+  - Missing -config flag in scheduled task
+  - Binary version mismatch (15MB → 16.6MB)
+  - Working directory not set in scheduled task
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/main.py` | Added partner_admin_router registration |
+| `/var/www/status/osiris-agent.exe` (appliance) | Updated to 16.6MB version |
+
+### Key Lessons Learned
+1. Go Agent config key must be `appliance_addr` (not `appliance_address`)
+2. Windows scheduled tasks need `-config` flag and `WorkingDirectory` set
+3. Partner admin router must be explicitly registered in FastAPI main.py
+
+---
+
+## Session 63 - Production Healing + Learning Loop Audit - COMPLETE
+
+**Date:** 2026-01-23
+**Status:** COMPLETE
+**Agent Version:** 1.0.45
+**ISO Version:** v44 (deployed)
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Enable production healing mode
+2. ✅ Add run_runbook: action handler
+3. ✅ Fix learning loop runbook mapping
+4. ✅ Clean up bad auto-promoted rules
+
+### Completed Tasks
+
+#### 1. Production Healing Mode Enabled
+- **Issue:** Healing was in dry-run mode despite environment variable
+- **Root Cause:** `ApplianceConfig` loads from `/var/lib/msp/config.yaml`, not environment variables
+- **Fix:** Added `healing_dry_run: false` and `healing_enabled: true` to config.yaml
+- **Result:** Agent now shows "Three-tier healing enabled (ACTIVE)"
+
+#### 2. run_runbook: Action Handler Added
+- **Issue:** Auto-promoted rules use `run_runbook:<ID>` format but executor didn't handle it
+- **Fix:** Added handler in `appliance_agent.py` lines 1004-1013
+- **Commit:** `ebc4963`
+
+#### 3. Learning Loop Runbook Mapping Fix
+- **Issue:** Learning system generated rules with non-existent runbook IDs like `AUTO-BITLOCKER_STATUS`
+- **Root Cause:** `learning_loop.py` used raw `resolution_action` without mapping to actual runbooks
+- **Fix:** Added `CHECK_TYPE_TO_RUNBOOK` mapping dictionary and `map_action_to_runbook()` function
+- **Commit:** `26442af`
+
+#### 4. Cleaned Up Bad Auto-Promoted Rules
+- **Issue:** 7 auto-promoted rules with bad `AUTO-*` runbook IDs
+- **Fix:** Removed all bad rules from `/var/lib/msp/rules/l1_rules.json`
+- **Result:** 30 → 23 rules (builtin rules only)
+
+### Git Commits
+| Commit | Message |
+|--------|---------|
+| `ebc4963` | feat: Add run_runbook: action handler for auto-promoted L1 rules |
+| `26442af` | fix: Map check_types to actual runbook IDs in learning loop |
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `appliance_agent.py` | Added run_runbook: action handler |
+| `learning_loop.py` | Added CHECK_TYPE_TO_RUNBOOK mapping |
+| `/var/lib/msp/config.yaml` (appliance) | Added healing_dry_run: false |
+| `/var/lib/msp/rules/l1_rules.json` (appliance) | Removed 7 bad rules |
+
+### Key Lessons Learned
+1. `ApplianceConfig` loads from YAML file, not environment variables
+2. Learning loop must map check_types to actual runbook IDs
+3. Builtin L1 rules are sufficient; bad auto-promoted rules were duplicates
 
 ---
 

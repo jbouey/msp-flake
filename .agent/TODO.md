@@ -1,7 +1,65 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-23 (Session 63 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**)
+**Last Updated:** 2026-01-23 (Session 65 - Starting)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**)
+
+---
+
+## Session 65 (2026-01-23) - Documentation Sync & Next Steps - IN PROGRESS
+
+### Session Goals
+1. ✅ Review and confirm current state
+2. 🔄 Sync all documentation files
+3. ⏳ Identify and prioritize next tasks
+
+### Current State Confirmed
+- **Agent Version:** v1.0.45
+- **ISO Version:** v44 (deployed to physical appliance)
+- **Go Agents:** Deployed to all 3 VMs (DC, WS, SRV)
+- **Learning System:** Operational (resolution recording fixed)
+- **Partner Portal:** OAuth working, admin router fixed
+
+### Next Priorities (from Session 64)
+1. **Test Remote ISO Update via Fleet Updates** - A/B partition system ready
+2. **Test Partner OAuth Domain Whitelisting** - Admin endpoints now working
+3. **Investigate screen_lock Healing Failure** - Other checks working, this one failing
+
+---
+
+## Session 64 (2026-01-23) - Go Agent Full Deployment - COMPLETE
+
+### Completed This Session
+
+#### 1. Partner Admin Router Fixed
+**Status:** COMPLETE
+- **Issue:** Partner admin endpoints returning 404 (pending approvals, oauth-config)
+- **Root Cause:** `admin_router` from `partner_auth.py` was not registered in `main.py`
+- **Fix:** Added `partner_admin_router` import and `app.include_router()` call
+- **Commit:** `9edd9fc`
+
+#### 2. Go Agent Deployed to All 3 Windows VMs
+**Status:** COMPLETE
+- **NVDC01 (192.168.88.250):** Domain Controller - Agent running via scheduled task
+- **NVSRV01 (192.168.88.244):** Server Core - Agent running via scheduled task
+- **NVWS01 (192.168.88.251):** Workstation - Already deployed
+- **All three now sending gRPC drift events to appliance**
+
+#### 3. Go Agent Configuration Issues Resolved
+- **Wrong config key:** Changed `appliance_address` → `appliance_addr` (matching NVWS01)
+- **Missing -config flag:** Scheduled task must include `-config C:\OsirisCare\config.json`
+- **Binary version mismatch:** Updated DC/SRV from 15MB to 16.6MB version
+- **Working directory:** Scheduled task must set `WorkingDirectory` to `C:\OsirisCare`
+
+### Git Commits This Session
+| Commit | Message |
+|--------|---------|
+| `9edd9fc` | fix: Register partner_admin_router for pending approvals and oauth-config endpoints |
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `mcp-server/main.py` | Added partner_admin_router registration |
+| `/var/www/status/osiris-agent.exe` (appliance) | Updated to 16.6MB version |
 
 ---
 

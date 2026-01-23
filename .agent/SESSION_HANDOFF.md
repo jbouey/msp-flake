@@ -1,156 +1,148 @@
-# Session Handoff - 2026-01-16
+# Session Handoff - 2026-01-23
 
-**Session:** 45 - gRPC Stub Implementation
-**Agent Version:** v1.0.37
-**ISO Version:** v37 (on iMac at ~/osiriscare-v37.iso)
-**Last Updated:** 2026-01-16
-
----
-
-## Session 45 Accomplishments
-
-### 1. gRPC Protobuf Definition
-**Status:** COMPLETE
-- Created unified `/proto/compliance.proto` as single source of truth
-- 5 RPC methods: Register, ReportDrift (streaming), ReportHealing, Heartbeat, ReportRMMStatus
-- CapabilityTier enum: MONITOR_ONLY (0), SELF_HEAL (1), FULL_REMEDIATION (2)
-
-### 2. Python gRPC Server Implementation
-**Status:** COMPLETE
-**Files Generated/Modified:**
-- `compliance_pb2.py` - Generated protobuf messages
-- `compliance_pb2_grpc.py` - Generated gRPC servicer (fixed import to relative)
-- `grpc_server.py` - Rewrote to inherit from generated servicer
-
-**Key Changes:**
-```python
-class ComplianceAgentServicer(compliance_pb2_grpc.ComplianceAgentServicer):
-    def Register(self, request, context):
-        # Returns compliance_pb2.RegisterResponse
-    def ReportDrift(self, request_iterator, context):
-        # Yields compliance_pb2.DriftAck for each event
-    def Heartbeat(self, request, context):
-        # Returns compliance_pb2.HeartbeatResponse
-```
-
-### 3. Go gRPC Client Implementation
-**Status:** COMPLETE
-**Files Generated/Modified:**
-- `agent/proto/compliance.pb.go` - Generated protobuf messages
-- `agent/proto/compliance_grpc.pb.go` - Generated gRPC client
-- `agent/internal/transport/grpc.go` - Rewrote to use generated client
-- `agent/internal/transport/offline.go` - Updated to use pb.DriftEvent
-- `agent/cmd/osiris-agent/main.go` - Updated to use pb types
-
-**Key Changes:**
-```go
-import pb "github.com/osiriscare/agent/proto"
-
-type GRPCClient struct {
-    client      pb.ComplianceAgentClient
-    driftStream pb.ComplianceAgent_ReportDriftClient
-}
-
-func (c *GRPCClient) Register(ctx context.Context) (*pb.RegisterResponse, error) {
-    req := &pb.RegisterRequest{Hostname: c.hostname, ...}
-    return c.client.Register(ctx, req)
-}
-```
-
-### 4. Tests Updated
-**Status:** COMPLETE
-- Updated `test_grpc_server.py` for synchronous servicer API
-- All 12 gRPC tests pass
-- Full suite: 811 passed, 7 skipped
+**Session:** 65 - Documentation Sync & Planning
+**Agent Version:** v1.0.45
+**ISO Version:** v44 (deployed to physical appliance)
+**Last Updated:** 2026-01-23
 
 ---
 
-## Files Modified This Session
+## Current State Summary
 
-### Proto Definition:
-| File | Purpose |
-|------|---------|
-| `/proto/compliance.proto` | Unified protobuf definition |
-
-### Python (Generated):
-| File | Purpose |
-|------|---------|
-| `compliance_pb2.py` | Generated protobuf messages |
-| `compliance_pb2_grpc.py` | Generated gRPC servicer |
-
-### Python (Modified):
-| File | Changes |
-|------|---------|
-| `grpc_server.py` | Rewrote to use generated servicer |
-| `test_grpc_server.py` | Updated for sync API |
-
-### Go (Generated):
-| File | Purpose |
-|------|---------|
-| `agent/proto/compliance.pb.go` | Generated protobuf messages |
-| `agent/proto/compliance_grpc.pb.go` | Generated gRPC client |
-
-### Go (Modified):
-| File | Changes |
-|------|---------|
-| `agent/internal/transport/grpc.go` | Rewrote to use generated client |
-| `agent/internal/transport/offline.go` | Updated DriftEvent types |
-| `agent/cmd/osiris-agent/main.go` | Updated to use pb types |
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Agent | v1.0.45 | Stable |
+| ISO | v44 | Deployed to physical appliance |
+| Tests | 834 + 24 Go | All passing |
+| A/B Partition | **WORKING** | Health gate, GRUB config ready |
+| Fleet Updates | **DEPLOYED** | Create releases, rollouts working |
+| Healing Mode | **FULL COVERAGE** | 21 rules active |
+| Go Agents | **ALL 3 VMs** | DC, WS, SRV deployed |
+| gRPC | **WORKING** | Drift → L1 → Runbook verified |
+| Partner Portal | **OAUTH WORKING** | Admin router fixed |
+| Learning System | **OPERATIONAL** | Resolution recording fixed |
 
 ---
 
-## Next Session Tasks
+## Session 64 Accomplishments (Previous)
 
-1. **Flash ISO v37 to Physical Appliance**
-   - Location: `~/osiriscare-v37.iso` on iMac
-   - Target: 192.168.88.246
+### 1. Partner Admin Router Fixed
+- **Issue:** Partner admin endpoints returning 404 (pending approvals, oauth-config)
+- **Root Cause:** `admin_router` from `partner_auth.py` not registered in `main.py`
+- **Fix:** Added `partner_admin_router` import and `app.include_router()` call
+- **Commit:** `9edd9fc`
 
-2. **Rebuild Go Agent Binary**
-   - Need to rebuild with updated gRPC code
-   - Location: VPS `/root/msp-iso-build/agent/`
+### 2. Go Agent Deployed to All 3 Windows VMs
+| VM | IP | Status |
+|----|-----|--------|
+| NVDC01 | 192.168.88.250 | Domain Controller - Agent running |
+| NVSRV01 | 192.168.88.244 | Server Core - Agent running |
+| NVWS01 | 192.168.88.251 | Workstation - Agent running |
 
-3. **Test End-to-End gRPC**
-   - Run Go Agent without `-dry-run` on NVWS01
-   - Verify registration with appliance
-   - Test drift event streaming
+All three sending gRPC drift events to appliance.
+
+### 3. Go Agent Configuration Issues Resolved
+- **Wrong config key:** `appliance_address` → `appliance_addr`
+- **Missing -config flag:** Scheduled task must include `-config C:\OsirisCare\config.json`
+- **Binary version mismatch:** Updated DC/SRV from 15MB to 16.6MB version
+- **Working directory:** Must set `WorkingDirectory` to `C:\OsirisCare`
+
+---
+
+## Next Session Priorities
+
+### Priority 1: Test Remote ISO Update via Fleet Updates
+- Physical appliance has A/B partition system ready
+- Push v45 update via dashboard.osiriscare.net/fleet-updates
+- Verify: download → verify → apply → reboot → health gate flow
+- Test automatic rollback on simulated failure
+
+### Priority 2: Test Partner OAuth Domain Whitelisting
+- Partner admin endpoints now working
+- Add test domain to whitelist via Partners page
+- Test OAuth signup from whitelisted domain (should auto-approve)
+- Test OAuth signup from non-whitelisted domain (should require approval)
+
+### Priority 3: Investigate screen_lock Healing Failure
+- Go agents reporting drift events for all checks
+- firewall/defender/bitlocker healing works
+- screen_lock healing failing - needs investigation
+
+### Priority 4: Deploy Security Fixes to VPS (if not done)
+- Run migration `021_healing_tier.sql`
+- Set env vars: `SESSION_TOKEN_SECRET`, `API_KEY_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`
 
 ---
 
 ## Lab Environment Status
 
-### VMs (on iMac 192.168.88.50)
-| VM | IP | Status | Notes |
-|----|-----|--------|-------|
-| NVDC01 | 192.168.88.250 | Online | Domain Controller |
-| NVWS01 | 192.168.88.251 | Online | Go Agent installed |
-| NVSRV01 | 192.168.88.244 | Online | Windows Server Core |
-| osiriscare-appliance (VM) | 192.168.88.247 | Online | Running ISO v37 + hot-fix |
-| osiriscare-appliance (Physical) | 192.168.88.246 | Online | HP T640, needs ISO v37 |
+### Windows VMs (on iMac 192.168.88.50)
+| VM | IP | Go Agent | Status |
+|----|-----|----------|--------|
+| NVDC01 | 192.168.88.250 | ✅ Deployed | Domain Controller |
+| NVWS01 | 192.168.88.251 | ✅ Deployed | Workstation |
+| NVSRV01 | 192.168.88.244 | ✅ Deployed | Server Core |
+
+### Appliances
+| Appliance | IP | Version | Status |
+|-----------|-----|---------|--------|
+| Physical (HP T640) | 192.168.88.246 | v1.0.45 / ISO v44 | Online, A/B working |
+| VM (VirtualBox) | 192.168.88.247 | v1.0.44 | Online |
+
+### VPS
+| Service | URL | Status |
+|---------|-----|--------|
+| Dashboard | https://dashboard.osiriscare.net | Online |
+| API | https://api.osiriscare.net | Online |
+| MSP Portal | https://msp.osiriscare.net | Online |
+
+---
+
+## Key Learnings from Recent Sessions
+
+### Session 64
+- Go Agent config key must be `appliance_addr` (not `appliance_address`)
+- Windows scheduled tasks need `-config` flag and `WorkingDirectory` set
+- Partner admin router must be explicitly registered in FastAPI main.py
+
+### Session 63
+- `ApplianceConfig` loads from YAML file, not environment variables
+- Learning loop must map check_types to actual runbook IDs
+- Builtin L1 rules are sufficient; bad auto-promoted rules were duplicates
+
+### Session 62
+- Resolution tracking is **essential** for learning data flywheel
+- Without `resolve_incident()` calls, system creates incidents but never records outcomes
 
 ---
 
 ## Quick Commands
 
 ```bash
+# SSH to physical appliance
+ssh root@192.168.88.246
+
 # SSH to VM appliance
 ssh root@192.168.88.247
 
-# Test Python gRPC imports
+# SSH to iMac gateway
+ssh jrelly@192.168.88.50
+
+# SSH to VPS
+ssh root@178.156.162.116
+
+# Run tests locally
 cd packages/compliance-agent && source venv/bin/activate
-python -c "from compliance_agent.grpc_server import GRPC_AVAILABLE; print(f'gRPC: {GRPC_AVAILABLE}')"
+python -m pytest tests/ -v --tb=short
 
-# Build Go Agent on VPS
-cd /root/msp-iso-build/agent
-GOOS=windows GOARCH=amd64 go build -o osiris-agent.exe ./cmd/osiris-agent
-
-# Run Go Agent (real mode)
-C:\OsirisCare\osiris-agent.exe
-
-# Watch appliance logs
+# Check appliance logs
 journalctl -u compliance-agent -f
 
-# Run Python tests
-python -m pytest tests/test_grpc_server.py -v
+# Check health gate status (on appliance)
+health-gate --status
+
+# Check A/B partition status (on appliance)
+osiris-update --status
 ```
 
 ---
@@ -158,29 +150,33 @@ python -m pytest tests/test_grpc_server.py -v
 ## Architecture Reference
 
 ```
-Go Agent (NVWS01)              Appliance (ISO v37)           Central Command
-+------------------+          +---------------------+       +----------------+
-| osiris-agent.exe |  gRPC    | Python Agent        | HTTPS |                |
-|                  |--------->| - gRPC Server       |------>| Dashboard      |
-| pb.DriftEvent    |  :50051  | - ComplianceAgent   |       | API            |
-| pb.RegisterReq   |          |   Servicer          |       |                |
-|                  |          | - Three-tier heal   |       |                |
-| 6 WMI Checks:    |          +---------------------+       +----------------+
-| - BitLocker      |
-| - Defender       |          Protocol:
-| - Firewall       |          - Register (unary)
-| - Patches        |          - ReportDrift (streaming)
-| - ScreenLock     |          - Heartbeat (unary)
-| - Services       |          - ReportHealing (unary)
-+------------------+          - ReportRMMStatus (unary)
+                           Physical Appliance (192.168.88.246)
+Windows VMs                +----------------------------------+
++------------------+       |  Agent v1.0.45 (ISO v44)         |
+| NVDC01 (.250)    | WinRM |  - Three-tier healing (ACTIVE)   |
+| NVWS01 (.251)    |------>|  - gRPC Server :50051            |
+| NVSRV01 (.244)   |       |  - Sensor API :8080              |
++------------------+       |  - A/B Partition Updates         |
+        |                  |  - Health Gate Service           |
+        | gRPC             +----------------------------------+
+        v                              |
++------------------+                   | HTTPS
+| Go Agents        |                   v
+| (all 3 VMs)      |          +------------------+
+| - 6 WMI checks   |          | Central Command  |
+| - gRPC streaming |          | (VPS)            |
++------------------+          | - Dashboard      |
+                              | - Fleet Updates  |
+                              | - Learning Loop  |
+                              +------------------+
 ```
 
 ---
 
 ## Related Docs
 
-- `.agent/TODO.md` - Session tasks
-- `.agent/CONTEXT.md` - Project context
-- `.agent/LAB_CREDENTIALS.md` - Lab passwords
+- `.agent/TODO.md` - Current tasks and session history
+- `.agent/CONTEXT.md` - Full project context
+- `.agent/LAB_CREDENTIALS.md` - Lab passwords (MUST READ)
+- `IMPLEMENTATION-STATUS.md` - Phase tracking
 - `docs/ARCHITECTURE.md` - System architecture
-- `agent/README.md` - Go Agent documentation

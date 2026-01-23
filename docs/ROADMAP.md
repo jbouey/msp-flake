@@ -64,7 +64,9 @@ mcp-server/
 
 ## Current Implementation Status
 
-**Phase:** Phase 1 Complete → Phase 2 Active
+**Phase:** Phase 13 - Zero-Touch Update System
+**Agent Version:** v1.0.45
+**ISO Version:** v44 (deployed to physical appliance)
 
 **Deliverables:**
 - ✅ NixOS Compliance Agent - Production flake with 27 options
@@ -72,20 +74,27 @@ mcp-server/
 - ✅ Dual Deployment Modes - Reseller and direct with toggles
 - ✅ 10 Guardrails Locked - All safety controls implemented
 - ✅ VM Integration Tests - 7 test cases
-- 🟡 Agent Core - Scaffold ready, implementation in Phase 2
-- 🟡 Self-Healing Logic - Architecture locked, execution in Phase 2
+- ✅ Agent Core - Full implementation with three-tier healing
+- ✅ Self-Healing Logic - L1/L2/L3 healing operational
+- ✅ A/B Partition Updates - Health gate, GRUB config, auto-rollback
+- ✅ Fleet Updates UI - Release management, staged rollouts
+- ✅ Go Agent - Deployed to all 3 Windows VMs (DC, WS, SRV)
+- ✅ Partner Portal - OAuth authentication, domain whitelisting
+- ✅ Learning System - Data flywheel operational
 
 **Key Files:**
 - `flake-compliance.nix` - Main flake (production)
 - `modules/compliance-agent.nix` - NixOS module (546 lines, 27 options)
-- `packages/compliance-agent/` - Agent implementation
-- `nixosTests/compliance-agent.nix` - VM integration tests
+- `packages/compliance-agent/` - Agent implementation (834 tests)
+- `agent/` - Go agent for Windows workstations (24 tests)
+- `iso/` - Appliance ISO build configs
+- `mcp-server/central-command/` - Dashboard and API
 
-**Next Milestone:** Phase 2 Agent Core (2 weeks)
-- MCP client implementation
-- Drift detection
-- Self-healing logic
-- Evidence generation
+**Current Milestone:** Phase 13 Zero-Touch Updates
+- ✅ A/B partition system implemented
+- ✅ Fleet Updates UI deployed
+- ⏳ Test remote ISO update via Fleet Updates
+- ⏳ Test partner OAuth domain whitelisting
 
 ## Quick Checklist: This Week
 
