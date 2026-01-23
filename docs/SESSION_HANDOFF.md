@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-23 (Session 65 - Starting)
-**Current State:** Phase 13 Zero-Touch Updates, **ISO v44 Deployed**, Full Coverage Healing, **Go Agent Deployed to ALL 3 VMs**, **Partner Admin Router Fixed**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
+**Last Updated:** 2026-01-23 (Session 66 - Partner Admin Auth Headers Fix)
+**Current State:** Phase 13 Zero-Touch Updates, **ISO v44 Deployed**, Full Coverage Healing, **Go Agent Deployed to ALL 3 VMs**, **Partner Admin Router Fixed**, **Partner Admin Auth Headers Fixed**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
 
 ---
 
@@ -27,6 +27,50 @@
 | Claude Code Skills | **9 SKILL FILES** | Auto-loading per task type |
 | Evidence Security | **HARDENED** | Ed25519 verify + OTS validation |
 | Learning System | **OPERATIONAL** | Resolution recording fixed |
+
+---
+
+## Session 66 Summary (2026-01-23) - COMPLETE
+
+### Partner Admin Auth Headers Fix
+
+#### 1. Partner Admin Endpoints Fixed on VPS (COMPLETE)
+- **Issue:** `/api/admin/partners/pending` and `/api/admin/partners/oauth-config` returning 404
+- **Root Cause:** `partner_auth_router` and `partner_admin_router` not registered in VPS `server.py`
+- **Fix:**
+  - Deployed `partner_auth.py` to VPS at `/root/msp-iso-build/mcp-server/central-command/backend/`
+  - Added router imports and registrations to VPS `server.py` with `/api` prefix
+  - Restarted Docker container `mcp-server`
+- **Result:** Endpoints now return 401 (auth required) instead of 404
+
+#### 2. Frontend Auth Headers Fixed (COMPLETE)
+- **Issue:** Partners.tsx admin API calls not sending Authorization headers
+- **Fix:**
+  - Added `getToken()` helper function
+  - Added `Authorization: Bearer ${token}` headers to 5 admin API calls
+- **Result:** OAuth Settings panel now functional from dashboard
+
+#### 3. Local server.py Updated (COMPLETE)
+- Added `partner_auth_router` and `partner_admin_router` imports and registrations
+- **Commit:** `1e0104e`
+
+#### 4. Lab Network Blocked
+- Physical appliance (192.168.88.246) and iMac gateway (192.168.88.50) unreachable
+- Blocked: Test Remote ISO Update priority task
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Added auth headers to admin API calls |
+| `mcp-server/server.py` | Added partner_auth router imports and registrations |
+| `mcp-server/central-command/backend/fleet_updates.py` | Minor fix: a.name → a.host_id |
+
+### VPS Deployment
+| Change | Location |
+|--------|----------|
+| `partner_auth.py` | `/root/msp-iso-build/mcp-server/central-command/backend/` |
+| `server.py` | Updated with router imports |
+| Frontend dist | New bundle `index-CZ9NczUg.js` |
 
 ---
 

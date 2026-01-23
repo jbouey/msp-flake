@@ -1,7 +1,80 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-23 (Session 65 - Security Audit COMPLETE)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Comprehensive Security Audit - 3 CRITICAL Fixes**)
+**Last Updated:** 2026-01-23 (Session 66 - Partner Admin Auth Headers Fix)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed**)
+
+---
+
+## Session 66 (2026-01-23) - Partner Admin Auth Headers Fix - COMPLETE
+
+### Session Goals
+1. ✅ Test Remote ISO Update (BLOCKED - lab network unreachable)
+2. ✅ Test Partner Signup with Domain Whitelisting
+3. ✅ Fix Partner Admin API 404 errors on VPS
+4. ✅ Add auth headers to frontend admin API calls
+
+### Accomplishments
+
+#### 1. Partner Admin Endpoints Fixed on VPS (COMPLETE)
+- **Issue:** `/api/admin/partners/pending` and `/api/admin/partners/oauth-config` returning 404
+- **Root Cause:** `partner_auth_router` and `partner_admin_router` not registered in VPS `server.py`
+- **Fix:**
+  - Deployed `partner_auth.py` to VPS at `/root/msp-iso-build/mcp-server/central-command/backend/`
+  - Added router imports to VPS `server.py`
+  - Registered routers with `/api` prefix
+  - Restarted Docker container `mcp-server`
+- **Result:** Endpoints now return "Authentication required" (401) instead of 404
+
+#### 2. Frontend Auth Headers Fixed (COMPLETE)
+- **Issue:** Partners.tsx admin API calls not sending Authorization headers
+- **File:** `mcp-server/central-command/frontend/src/pages/Partners.tsx`
+- **Fix:**
+  - Added `getToken()` helper function to retrieve auth token from localStorage
+  - Added `Authorization: Bearer ${token}` headers to 5 admin API calls:
+    - `fetchPendingPartners()`
+    - `fetchOAuthConfig()`
+    - `saveOAuthConfig()`
+    - `handleApprovePartner()`
+    - `handleRejectPartner()`
+- **Result:** OAuth Settings panel now works correctly from dashboard
+
+#### 3. Local server.py Updated (COMPLETE)
+- **File:** `mcp-server/server.py`
+- **Changes:**
+  - Added `partner_auth_router` and `partner_admin_router` imports
+  - Registered routers with `app.include_router()` with `/api` prefix
+- **Commit:** `1e0104e`
+
+#### 4. Frontend Deployed to VPS (COMPLETE)
+- Built new frontend bundle: `index-CZ9NczUg.js`
+- Deployed to VPS at `/root/msp-iso-build/mcp-server/central-command/frontend/dist/`
+
+### Blocked Tasks
+- **Test Remote ISO Update:** Lab network unreachable (192.168.88.246 appliance, 192.168.88.50 iMac)
+
+### Git Commits This Session
+| Commit | Message |
+|--------|---------|
+| `1e0104e` | fix: Add auth headers to partner admin API calls |
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Added auth headers to admin API calls |
+| `mcp-server/server.py` | Added partner_auth router imports and registrations |
+| `mcp-server/central-command/backend/fleet_updates.py` | Minor fix: a.name → a.host_id |
+
+### VPS Changes
+| Change | Location |
+|--------|----------|
+| `partner_auth.py` | Deployed to `/root/msp-iso-build/mcp-server/central-command/backend/` |
+| `server.py` | Updated with router imports and registrations |
+| Frontend dist | Deployed new bundle `index-CZ9NczUg.js` |
+
+### Next Priorities
+1. **Test Remote ISO Update** - Blocked until lab network accessible
+2. **Test Partner OAuth Signup Flow** - With domain whitelisting
+3. **Install bcrypt in Docker Image** - LOW priority from Session 65 audit
 
 ---
 
