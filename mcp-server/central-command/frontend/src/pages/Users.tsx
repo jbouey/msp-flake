@@ -387,7 +387,7 @@ const ResetPasswordModal: React.FC<{
   };
 
   const passwordsMatch = password === confirmPassword;
-  const passwordValid = password.length >= 8;
+  const passwordValid = password.length >= 12;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -403,11 +403,11 @@ const ResetPasswordModal: React.FC<{
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-3 py-2 bg-fill-secondary border border-separator-default rounded-lg text-label-primary focus:outline-none focus:border-accent-primary"
-              placeholder="Minimum 8 characters"
+              placeholder="Minimum 12 characters"
               required
             />
             {password && !passwordValid && (
-              <p className="text-xs text-red-400 mt-1">Password must be at least 8 characters</p>
+              <p className="text-xs text-red-400 mt-1">Password must be at least 12 characters</p>
             )}
           </div>
 
