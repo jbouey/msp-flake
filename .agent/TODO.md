@@ -1,33 +1,75 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-23 (Session 65 - Starting)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**)
+**Last Updated:** 2026-01-23 (Session 65 - Security Audit COMPLETE)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Comprehensive Security Audit - 3 CRITICAL Fixes**)
 
 ---
 
-## Session 65 (2026-01-23) - Documentation Sync & Next Steps - IN PROGRESS
+## Session 65 (2026-01-23) - Comprehensive Security Audit - COMPLETE
 
 ### Session Goals
-1. ✅ Review and confirm current state
-2. 🔄 Sync all documentation files
-3. ⏳ Identify and prioritize next tasks
+1. ✅ Comprehensive security audit across all endpoints
+2. ✅ Fixed THREE CRITICAL vulnerabilities
+3. ✅ Created detailed security audit reports
+4. ✅ Updated documentation
 
-### Current State Confirmed
-- **Agent Version:** v1.0.45
-- **ISO Version:** v44 (deployed to physical appliance)
-- **Go Agents:** Deployed to all 3 VMs (DC, WS, SRV)
-- **Learning System:** Operational (resolution recording fixed)
-- **Partner Portal:** OAuth working, admin router fixed
+### Accomplishments
 
-### Next Priorities (from Session 64)
+#### 1. CRITICAL: Evidence Submission Without Auth (FIXED)
+- **Issue:** `POST /api/evidence/sites/{site_id}/submit` accepted bundles WITHOUT authentication
+- **Impact:** Anyone could inject fake compliance evidence into audit trail
+- **Fix:** Now requires Ed25519 signature from registered agent (`agent_signature` field)
+- **Commit:** `73093d8`
+- **Report:** `docs/security/PIPELINE_SECURITY_AUDIT_2026-01-23.md`
+
+#### 2. CRITICAL: Sites API Without Auth (FIXED)
+- **Issue:** `/api/sites/*` endpoints exposed data WITHOUT authentication
+- **Impact:** Domain credentials (admin passwords!) publicly accessible
+- **Fix:** Added `require_auth`/`require_operator` to all 25+ endpoints
+- **Commit:** `73093d8`
+- **Report:** `docs/security/PIPELINE_SECURITY_AUDIT_2026-01-23.md`
+
+#### 3. CRITICAL: Partner Admin Endpoints Without Auth (FIXED)
+- **Issue:** `/api/admin/partners/*` endpoints had NO authentication
+- **Impact:** Anyone could modify OAuth config, approve/reject partners
+- **Fix:** Added `require_admin` dependency to all admin endpoints
+- **Commit:** `9edd9fc`
+- **Report:** `docs/security/PARTNER_SECURITY_AUDIT_2026-01-23.md`
+
+#### 4. User Authentication Audit (No Critical Issues)
+- Strong password policy (12+ chars, complexity, common password check)
+- Account lockout (5 attempts = 15 min lock)
+- No user enumeration (generic error messages)
+- SQL injection protected (parameterized queries)
+- **Report:** `docs/security/USER_AUTH_SECURITY_AUDIT_2026-01-23.md`
+
+### Database Changes
+```sql
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS agent_public_key VARCHAR(128);
+```
+
+### Server.py Updates
+- Added SQLAlchemy async session for evidence_chain router
+- Registered evidence_chain_router
+- Constructs async DB URL from DATABASE_URL env var
+
+### Security Status
+| Area | Status | Report |
+|------|--------|--------|
+| Partner Portal | ✅ SECURED | PARTNER_SECURITY_AUDIT |
+| User Auth | ✅ SECURE | USER_AUTH_SECURITY_AUDIT |
+| Evidence Pipeline | ✅ SECURED | PIPELINE_SECURITY_AUDIT |
+| Sites API | ✅ SECURED | PIPELINE_SECURITY_AUDIT |
+
+### Open Issues (Non-Critical)
+- MEDIUM: No rate limiting on login/API endpoints
+- LOW: bcrypt not installed (using SHA-256 fallback)
+
+### Next Priorities
 1. **Test Remote ISO Update via Fleet Updates** - A/B partition system ready
-2. **Test Partner OAuth Domain Whitelisting** - Admin endpoints now working
-3. **Investigate screen_lock Healing Failure** - Other checks working, this one failing
-4. ~~Deploy Security Fixes to VPS~~ - ✅ **ALREADY DONE** (verified 2026-01-23)
-   - `SESSION_TOKEN_SECRET` ✅ set
-   - `API_KEY_SECRET` ✅ set
-   - `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` ✅ set
-   - Migration `021_healing_tier.sql` ✅ applied
+2. **Register Agent Public Keys** - Sites need `agent_public_key` for evidence verification
+3. **Add Rate Limiting Middleware** - MEDIUM priority from audit
+4. **Install bcrypt in Docker Image** - LOW priority from audit
 
 ---
 
