@@ -23,6 +23,84 @@ from .level1_deterministic import Rule, RuleCondition, MatchOperator
 logger = logging.getLogger(__name__)
 
 
+# Mapping from check_type to actual Windows runbook IDs
+# This ensures promoted rules use correct runbook IDs that exist
+CHECK_TYPE_TO_RUNBOOK = {
+    # Security checks
+    "firewall": "RB-WIN-FIREWALL-001",
+    "firewall_status": "RB-WIN-FIREWALL-001",
+    "windows_defender": "RB-WIN-AV-001",
+    "antivirus": "RB-WIN-AV-001",
+    "av_edr": "RB-WIN-AV-001",
+    "bitlocker": "RB-WIN-ENCRYPTION-001",
+    "bitlocker_status": "RB-WIN-ENCRYPTION-001",
+    "encryption": "RB-WIN-ENCRYPTION-001",
+    # Operational checks
+    "backup": "RB-WIN-BACKUP-001",
+    "backup_status": "RB-WIN-BACKUP-001",
+    "patching": "RB-WIN-PATCH-001",
+    "patches": "RB-WIN-PATCH-001",
+    "logging": "RB-WIN-LOGGING-001",
+    "audit_policy": "RB-WIN-LOGGING-001",
+    # Network checks
+    "screen_lock": "RB-WIN-SEC-003",
+    "screenlock": "RB-WIN-SEC-003",
+    # Linux checks (for reference)
+    "ntp_sync": None,  # Linux uses restart_service:chronyd
+    "critical_services": None,  # Linux uses restart_service
+    "disk_space": None,  # Alert only
+}
+
+
+def map_action_to_runbook(action_name: str, check_type: Optional[str] = None) -> str:
+    """
+    Map a generic action name or check_type to an actual runbook action.
+
+    Returns the action string in the correct format for the executor.
+    """
+    # If check_type is provided and maps to a runbook, use it
+    if check_type:
+        runbook_id = CHECK_TYPE_TO_RUNBOOK.get(check_type)
+        if runbook_id:
+            return f"run_runbook:{runbook_id}"
+
+    # Legacy action name mappings (same as appliance_agent.py)
+    legacy_mappings = {
+        "restore_firewall_baseline": "RB-WIN-FIREWALL-001",
+        "restore_audit_policy": "RB-WIN-LOGGING-001",
+        "restore_defender": "RB-WIN-AV-001",
+        "enable_bitlocker": "RB-WIN-ENCRYPTION-001",
+        "run_backup_job": "RB-WIN-BACKUP-001",
+        "install_patches": "RB-WIN-PATCH-001",
+    }
+
+    if action_name in legacy_mappings:
+        return f"run_runbook:{legacy_mappings[action_name]}"
+
+    # If action already has run_runbook: prefix, validate and return
+    if action_name.startswith("run_runbook:"):
+        runbook_id = action_name.split(":", 1)[1]
+        # If it's an AUTO-* format, try to map it
+        if runbook_id.startswith("AUTO-"):
+            # Extract check_type from AUTO-<CHECK_TYPE> format
+            auto_check_type = runbook_id[5:].lower()  # Remove "AUTO-" prefix
+            mapped_runbook = CHECK_TYPE_TO_RUNBOOK.get(auto_check_type)
+            if mapped_runbook:
+                return f"run_runbook:{mapped_runbook}"
+        return action_name  # Return as-is if valid format
+
+    # If it's a restart_service action, keep it (Linux)
+    if action_name.startswith("restart_service:"):
+        return action_name
+
+    # If it's an alert action, keep it
+    if action_name.startswith("alert:"):
+        return action_name
+
+    # Return original action if no mapping found
+    return action_name
+
+
 @dataclass
 class PromotionCandidate:
     """A pattern eligible for L1 promotion."""
@@ -110,6 +188,32 @@ class SelfLearningSystem:
             top_action = successful_actions[0]
             action_name = top_action.get("resolution_action", "unknown")
 
+            # Extract check_type from sample incidents for runbook mapping
+            check_type = None
+            if sample_incidents:
+                first_incident = sample_incidents[0]
+                # Try to get check_type from raw_data or incident fields
+                raw_data_value = first_incident.get("raw_data", "{}")
+                if isinstance(raw_data_value, dict):
+                    check_type = raw_data_value.get("check_type")
+                else:
+                    try:
+                        raw_data = json.loads(raw_data_value)
+                        check_type = raw_data.get("check_type")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                # Fallback to incident_type if no check_type
+                if not check_type:
+                    check_type = first_incident.get("incident_type")
+
+            # Map action to actual runbook ID (fixes AUTO-* -> RB-WIN-* conversion)
+            mapped_action = map_action_to_runbook(action_name, check_type)
+            if mapped_action != action_name:
+                logger.info(
+                    f"Mapped action '{action_name}' to '{mapped_action}' "
+                    f"for check_type '{check_type}'"
+                )
+
             # Calculate confidence score
             confidence = self._calculate_confidence(stats, successful_actions)
 
@@ -117,7 +221,7 @@ class SelfLearningSystem:
                 pattern_signature=stats.pattern_signature,
                 stats=stats,
                 sample_incidents=sample_incidents,
-                recommended_action=action_name,
+                recommended_action=mapped_action,
                 action_params=self._extract_action_params(sample_incidents, action_name),
                 confidence_score=confidence,
                 promotion_reason=self._generate_promotion_reason(stats, confidence)
