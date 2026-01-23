@@ -1,7 +1,74 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-22 (Session 62 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.44, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**)
+**Last Updated:** 2026-01-23 (Session 63 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**)
+
+---
+
+## Session 63 (2026-01-23) - Production Healing + Learning Loop Audit - COMPLETE
+
+### Completed This Session
+
+#### 1. Production Healing Mode Enabled
+**Status:** COMPLETE
+- **Issue:** Healing was in dry-run mode despite environment variable
+- **Root Cause:** `ApplianceConfig` loads from `/var/lib/msp/config.yaml`, not environment variables
+- **Fix:** Added `healing_dry_run: false` and `healing_enabled: true` to config.yaml
+- **Result:** Agent now shows "Three-tier healing enabled (ACTIVE)"
+
+#### 2. run_runbook: Action Handler Added
+**Status:** COMPLETE
+- **Issue:** Auto-promoted rules use `run_runbook:<ID>` format but executor didn't handle it
+- **Fix:** Added handler in `appliance_agent.py` lines 1004-1013
+- **Commit:** `ebc4963 feat: Add run_runbook: action handler for auto-promoted L1 rules`
+
+#### 3. Learning Loop Runbook Mapping Audit & Fix
+**Status:** COMPLETE
+- **Issue:** Learning system generated rules with non-existent runbook IDs like `AUTO-BITLOCKER_STATUS`
+- **Root Cause:** `learning_loop.py` used raw `resolution_action` without mapping to actual runbooks
+- **Fixes Applied:**
+  - Added `CHECK_TYPE_TO_RUNBOOK` mapping dictionary (check_type → actual runbook ID)
+  - Added `map_action_to_runbook()` function to convert actions
+  - Updated `find_promotion_candidates()` to use mapped actions
+- **Commit:** `26442af fix: Map check_types to actual runbook IDs in learning loop`
+
+#### 4. Cleaned Up Bad Auto-Promoted Rules
+**Status:** COMPLETE
+- **Issue:** 7 auto-promoted rules with bad `AUTO-*` runbook IDs existed in `/var/lib/msp/rules/l1_rules.json`
+- **Rules Removed:**
+  - `RB-AUTO-FIREWALL` → `AUTO-FIREWALL`
+  - `RB-AUTO-BITLOCKE` → `AUTO-BITLOCKER_STATUS`
+  - `RB-AUTO-NTP_SYNC` → `AUTO-NTP_SYNC`
+  - `RB-AUTO-BACKUP_S` → `AUTO-BACKUP_STATUS`
+  - `RB-AUTO-PROHIBIT` → `AUTO-PROHIBITED_PORT`
+  - `RB-AUTO-AUDIT_PO` → `AUTO-AUDIT_POLICY`
+  - `RB-AUTO-WINDOWS_` → `AUTO-WINDOWS_DEFENDER`
+- **Result:** 30 → 23 rules (builtin rules only)
+
+#### 5. Agent Verification
+**Status:** COMPLETE
+- **Firewall healing:** L1-FIREWALL-001 → restore_firewall_baseline → RB-WIN-SEC-001 ✓
+- **BitLocker healing:** L1-BITLOCKER-001 → enable_bitlocker → RB-WIN-SEC-005 ✓
+- **No more "Runbook not found: AUTO-*" errors**
+
+### Git Commits This Session
+| Commit | Message |
+|--------|---------|
+| `ebc4963` | feat: Add run_runbook: action handler for auto-promoted L1 rules |
+| `26442af` | fix: Map check_types to actual runbook IDs in learning loop |
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Added run_runbook: action handler |
+| `packages/compliance-agent/src/compliance_agent/learning_loop.py` | Added CHECK_TYPE_TO_RUNBOOK mapping, map_action_to_runbook() function |
+| `/var/lib/msp/config.yaml` (appliance) | Added healing_dry_run: false, healing_enabled: true |
+| `/var/lib/msp/rules/l1_rules.json` (appliance) | Removed 7 bad auto-promoted rules |
+
+### Key Learning
+- `ApplianceConfig` loads from YAML file, not environment variables
+- Learning loop must map check_types to actual runbook IDs for promotions to work
+- Builtin L1 rules are sufficient; bad auto-promoted rules were duplicates
 
 ---
 
