@@ -1,7 +1,7 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-23 (Session 66 - Partner Admin Auth Headers Fix)
-**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, **Go Agent Deployed to ALL 3 VMs (DC/WS/SRV)**, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Partner Admin Router Fixed**, **Claude Code Skills System (9 skill files)**, **Blockchain Evidence Security Hardening (Ed25519 verification + OTS validation)**, **Learning System Resolution Recording Fix (auto_healer.py)**, **Production Healing Mode ENABLED (dry_run=false)**, **Learning Loop Runbook Mapping Fix**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed (VPS Deployed)**)
+**Last Updated:** 2026-01-23 (Session 66 Continued - A/B Partition Install Attempted)
+**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, **ISO v44**, **A/B Partition Update System DESIGNED** (needs custom initramfs), Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, **Go Agent Deployed to ALL 3 VMs (DC/WS/SRV)**, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Partner Admin Router Fixed**, **Claude Code Skills System (9 skill files)**, **Blockchain Evidence Security Hardening (Ed25519 verification + OTS validation)**, **Learning System Resolution Recording Fix (auto_healer.py)**, **Production Healing Mode ENABLED (dry_run=false)**, **Learning Loop Runbook Mapping Fix**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed (VPS Deployed)**, **Physical Appliance OFFLINE - Needs USB Recovery**)
 **Test Status:** 834 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.45, 43 total runbooks (27 Windows + 16 Linux), **A/B partition update system with health gate**, **GRUB boot configuration**, **Automatic rollback on 3 failed boots**, Fleet Updates UI tested (create releases, rollouts, pause/resume/advance), **Full Coverage Healing Mode enabled** (21 rules on physical appliance), Test release v44 created with staged rollout, **Go Agent running on ALL 3 VMs** (NVDC01, NVWS01, NVSRV01), gRPC drift events → L1 rules → Windows runbooks VERIFIED, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, **Learning flywheel NOW OPERATIONAL** (resolution recording fixed), Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, **Chaos Lab Healing-First** (EXECUTION_PLAN_v2.sh with ENABLE_RESTORES=false), **Full Spectrum Chaos Test** (5 attack categories), Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, **Active healing enabled (HEALING_DRY_RUN=false in config.yaml)**, L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage), asyncpg syntax fixes deployed to VPS, api_base_url bug fixed in appliance_agent.py, chaos lab WS credentials fixed (localadmin), **Clock drift fixes via Basic auth**, **Credential format fix (.\\ for local accounts)**, **CHECK_TYPE_TO_RUNBOOK mapping added to learning_loop.py**, **Partner admin router registered in main.py**
 
 ---
@@ -546,6 +546,27 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
 - **Agent:** compliance-agent v1.0.40 with gRPC server + Active Healing
 - **Status:** Superseded by v43
+
+### Session 66 Continued Changes (2026-01-23) - A/B Partition Install Attempted
+- **Lab Network Back Online:**
+  - Physical appliance (192.168.88.246) and iMac (192.168.88.50) reachable
+  - Discovered appliance was running in live ISO mode (tmpfs root, no A/B partitions)
+- **A/B Partition Install Attempted (FAILED):**
+  - Created GPT: ESP (512MB), A (2GB), B (2GB), DATA (remaining)
+  - Installed GRUB with kernel/initrd to ESP
+  - Wrote nix-store.squashfs to partition A
+  - Created ab_state file
+  - Boot FAILED - NixOS initramfs designed for ISO boot, not partition-based
+  - **Physical appliance is OFFLINE - needs USB recovery**
+- **Fleet Updates Bug Fixed on VPS:**
+  - Issue: `a.name` column doesn't exist (should be `a.host_id`)
+  - Fix: Copied updated `fleet_updates.py` to `/opt/mcp-server/dashboard_api_mount/`
+- **Central Command Frontend Updated:**
+  - Copied latest build (`index-CZ9NczUg.js`) to central-command container
+  - Dashboard now serves correct frontend for Jayla's login
+- **VPS Changes:**
+  - `/opt/mcp-server/dashboard_api_mount/fleet_updates.py` - fixed a.name → a.host_id
+  - `central-command:/usr/share/nginx/html/` - updated frontend dist
 
 ### Session 66 Changes (2026-01-23) - Partner Admin Auth Headers Fix
 - **Partner Admin Endpoints Fixed on VPS:**
