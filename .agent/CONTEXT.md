@@ -1,7 +1,7 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-23 (Session 65 - Security Audit COMPLETE)
-**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, **Go Agent Deployed to ALL 3 VMs (DC/WS/SRV)**, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Partner Admin Router Fixed**, **Claude Code Skills System (9 skill files)**, **Blockchain Evidence Security Hardening (Ed25519 verification + OTS validation)**, **Learning System Resolution Recording Fix (auto_healer.py)**, **Production Healing Mode ENABLED (dry_run=false)**, **Learning Loop Runbook Mapping Fix**, **Comprehensive Security Audit - 3 CRITICAL Fixes**)
+**Last Updated:** 2026-01-23 (Session 66 - Partner Admin Auth Headers Fix)
+**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, **Go Agent Deployed to ALL 3 VMs (DC/WS/SRV)**, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Partner Admin Router Fixed**, **Claude Code Skills System (9 skill files)**, **Blockchain Evidence Security Hardening (Ed25519 verification + OTS validation)**, **Learning System Resolution Recording Fix (auto_healer.py)**, **Production Healing Mode ENABLED (dry_run=false)**, **Learning Loop Runbook Mapping Fix**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed (VPS Deployed)**)
 **Test Status:** 834 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.45, 43 total runbooks (27 Windows + 16 Linux), **A/B partition update system with health gate**, **GRUB boot configuration**, **Automatic rollback on 3 failed boots**, Fleet Updates UI tested (create releases, rollouts, pause/resume/advance), **Full Coverage Healing Mode enabled** (21 rules on physical appliance), Test release v44 created with staged rollout, **Go Agent running on ALL 3 VMs** (NVDC01, NVWS01, NVSRV01), gRPC drift events → L1 rules → Windows runbooks VERIFIED, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, **Learning flywheel NOW OPERATIONAL** (resolution recording fixed), Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, **Chaos Lab Healing-First** (EXECUTION_PLAN_v2.sh with ENABLE_RESTORES=false), **Full Spectrum Chaos Test** (5 attack categories), Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, **Active healing enabled (HEALING_DRY_RUN=false in config.yaml)**, L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage), asyncpg syntax fixes deployed to VPS, api_base_url bug fixed in appliance_agent.py, chaos lab WS credentials fixed (localadmin), **Clock drift fixes via Basic auth**, **Credential format fix (.\\ for local accounts)**, **CHECK_TYPE_TO_RUNBOOK mapping added to learning_loop.py**, **Partner admin router registered in main.py**
 
 ---
@@ -546,6 +546,30 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
 - **Agent:** compliance-agent v1.0.40 with gRPC server + Active Healing
 - **Status:** Superseded by v43
+
+### Session 66 Changes (2026-01-23) - Partner Admin Auth Headers Fix
+- **Partner Admin Endpoints Fixed on VPS:**
+  - Issue: `/api/admin/partners/pending` and `/api/admin/partners/oauth-config` returning 404
+  - Root Cause: `partner_auth_router` and `partner_admin_router` not registered in VPS `server.py`
+  - Fix: Deployed `partner_auth.py` to VPS, added router imports/registrations with `/api` prefix
+  - Result: Endpoints now return 401 (auth required) instead of 404
+- **Frontend Auth Headers Fixed (Partners.tsx):**
+  - Issue: Admin API calls not sending Authorization headers
+  - Fix: Added `getToken()` helper, added `Authorization: Bearer ${token}` to 5 admin API calls
+  - Affected: fetchPendingPartners, fetchOAuthConfig, saveOAuthConfig, handleApprovePartner, handleRejectPartner
+  - Result: OAuth Settings panel now functional from dashboard
+- **Local server.py Updated:**
+  - Added `partner_auth_router` and `partner_admin_router` imports
+  - Registered routers with `/api` prefix
+- **Frontend Deployed to VPS:**
+  - Built new bundle: `index-CZ9NczUg.js`
+  - Deployed to `/root/msp-iso-build/mcp-server/central-command/frontend/dist/`
+- **Git Commits:** `1e0104e` - fix: Add auth headers to partner admin API calls
+- **Blocked:** Lab network unreachable (192.168.88.246 appliance, 192.168.88.50 iMac)
+- **Files Modified:**
+  - `mcp-server/central-command/frontend/src/pages/Partners.tsx` - Auth headers
+  - `mcp-server/server.py` - Router imports and registrations
+  - `mcp-server/central-command/backend/fleet_updates.py` - Minor fix: a.name → a.host_id
 
 ### Session 65 Changes (2026-01-23) - Comprehensive Security Audit
 - **THREE CRITICAL Vulnerabilities Fixed:**

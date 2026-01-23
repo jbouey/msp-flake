@@ -1,6 +1,6 @@
 # Session Handoff - 2026-01-23
 
-**Session:** 65 - Security Audit
+**Session:** 66 - Partner Admin Auth Headers Fix
 **Agent Version:** v1.0.45
 **ISO Version:** v44 (deployed to physical appliance)
 **Last Updated:** 2026-01-23
@@ -25,7 +25,47 @@
 
 ---
 
-## Session 65 Accomplishments (Current)
+## Session 66 Accomplishments (Current)
+
+### 1. Partner Admin Endpoints Fixed on VPS
+- **Issue:** `/api/admin/partners/pending` and `/api/admin/partners/oauth-config` returning 404
+- **Root Cause:** `partner_auth_router` and `partner_admin_router` not registered in VPS `server.py`
+- **Fix:**
+  - Deployed `partner_auth.py` to VPS at `/root/msp-iso-build/mcp-server/central-command/backend/`
+  - Added router imports to VPS `server.py`
+  - Registered routers with `/api` prefix
+  - Restarted Docker container `mcp-server`
+- **Result:** Endpoints now return "Authentication required" (401) instead of 404
+
+### 2. Frontend Auth Headers Fixed
+- **Issue:** Partners.tsx admin API calls not sending Authorization headers
+- **File:** `mcp-server/central-command/frontend/src/pages/Partners.tsx`
+- **Fix:**
+  - Added `getToken()` helper function
+  - Added `Authorization: Bearer ${token}` headers to 5 admin API calls
+- **Result:** OAuth Settings panel now works correctly from dashboard
+- **Commit:** `1e0104e`
+
+### 3. Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Added auth headers to admin API calls |
+| `mcp-server/server.py` | Added partner_auth router imports and registrations |
+| `mcp-server/central-command/backend/fleet_updates.py` | Minor fix: a.name → a.host_id |
+
+### 4. VPS Deployment
+| Change | Location |
+|--------|----------|
+| `partner_auth.py` | `/root/msp-iso-build/mcp-server/central-command/backend/` |
+| `server.py` | Updated with router imports |
+| Frontend dist | New bundle `index-CZ9NczUg.js` |
+
+### 5. Blocked
+- **Test Remote ISO Update:** Lab network unreachable (192.168.88.246 appliance, 192.168.88.50 iMac)
+
+---
+
+## Session 65 Accomplishments
 
 ### 1. Comprehensive Security Audit - THREE Critical Vulnerabilities Fixed
 
@@ -89,24 +129,26 @@ ALTER TABLE sites ADD COLUMN IF NOT EXISTS agent_public_key VARCHAR(128);
 
 ## Next Session Priorities
 
-### Priority 1: Test Remote ISO Update via Fleet Updates
+### Priority 1: Test Remote ISO Update via Fleet Updates (BLOCKED)
 - Physical appliance has A/B partition system ready
 - Push v45 update via dashboard.osiriscare.net/fleet-updates
 - Verify: download → verify → apply → reboot → health gate flow
 - Test automatic rollback on simulated failure
+- **BLOCKED:** Lab network unreachable (192.168.88.246, 192.168.88.50)
 
-### Priority 2: Register Agent Public Keys
+### Priority 2: Test Partner OAuth Signup Flow
+- Test Google OAuth partner signup
+- Test Microsoft OAuth partner signup
+- Verify domain whitelisting auto-approval
+- Verify pending partner approval workflow
+
+### Priority 3: Register Agent Public Keys
 - Sites need `agent_public_key` registered for evidence verification
 - Generate Ed25519 keypair on physical appliance
 - Register public key in sites table
 - Test evidence submission with valid signature
 
-### Priority 3: Add Rate Limiting Middleware
-- Implement rate limiting for login endpoint (10 req/min)
-- Implement rate limiting for authenticated endpoints (100 req/min)
-- Return 429 Too Many Requests when exceeded
-
-### Priority 4: Install bcrypt in Docker Image
+### Priority 4: Install bcrypt in Docker Image (LOW)
 - Update Dockerfile to include bcrypt
 - More secure password hashing with adaptive work factor
 

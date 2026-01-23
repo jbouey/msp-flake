@@ -1,6 +1,90 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-23 (Session 65 - Starting)
+**Last Updated:** 2026-01-23 (Session 66 - Partner Admin Auth Headers Fix)
+
+---
+
+## Session 66 - Partner Admin Auth Headers Fix - COMPLETE
+
+**Date:** 2026-01-23
+**Status:** COMPLETE
+**Agent Version:** 1.0.45
+**ISO Version:** v44 (deployed)
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Fix Partner Admin API 404 errors on VPS
+2. ✅ Add auth headers to frontend admin API calls
+3. ⏸️ Test Remote ISO Update (blocked - lab network unreachable)
+4. ✅ Test Partner Signup with Domain Whitelisting
+
+### Completed Tasks
+
+#### 1. Partner Admin Endpoints Fixed on VPS
+- **Status:** COMPLETE
+- **Issue:** `/api/admin/partners/pending` and `/api/admin/partners/oauth-config` returning 404 on VPS
+- **Root Cause:** `partner_auth_router` and `partner_admin_router` not registered in VPS `server.py`
+- **Fix:**
+  - Deployed `partner_auth.py` to VPS at `/root/msp-iso-build/mcp-server/central-command/backend/`
+  - Added router imports to VPS `server.py`
+  - Registered routers with `/api` prefix
+  - Restarted Docker container `mcp-server`
+- **Result:** Endpoints now return "Authentication required" (401) instead of 404
+
+#### 2. Frontend Auth Headers Fixed
+- **Status:** COMPLETE
+- **Issue:** Partners.tsx admin API calls not sending Authorization headers
+- **File:** `mcp-server/central-command/frontend/src/pages/Partners.tsx`
+- **Fix:**
+  - Added `getToken()` helper function to retrieve auth token from localStorage
+  - Added `Authorization: Bearer ${token}` headers to 5 admin API calls:
+    - `fetchPendingPartners()`
+    - `fetchOAuthConfig()`
+    - `saveOAuthConfig()`
+    - `handleApprovePartner()`
+    - `handleRejectPartner()`
+- **Result:** OAuth Settings panel now works correctly from dashboard
+
+#### 3. Local server.py Updated
+- **Status:** COMPLETE
+- **File:** `mcp-server/server.py`
+- **Changes:**
+  - Added `partner_auth_router` and `partner_admin_router` imports
+  - Registered routers with `app.include_router()` with `/api` prefix
+- **Commit:** `1e0104e`
+
+#### 4. Frontend Deployed to VPS
+- **Status:** COMPLETE
+- Built new frontend bundle: `index-CZ9NczUg.js`
+- Deployed to VPS at `/root/msp-iso-build/mcp-server/central-command/frontend/dist/`
+
+### Blocked Tasks
+- **Test Remote ISO Update:** Lab network unreachable (192.168.88.246 appliance, 192.168.88.50 iMac)
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/frontend/src/pages/Partners.tsx` | Added auth headers to admin API calls |
+| `mcp-server/server.py` | Added partner_auth router imports and registrations |
+| `mcp-server/central-command/backend/fleet_updates.py` | Minor fix: a.name → a.host_id |
+
+### VPS Changes
+| Change | Location |
+|--------|----------|
+| `partner_auth.py` | Deployed to `/root/msp-iso-build/mcp-server/central-command/backend/` |
+| `server.py` | Updated with router imports and registrations |
+| Frontend dist | Deployed new bundle `index-CZ9NczUg.js` |
+
+### Git Commits
+| Commit | Message |
+|--------|---------|
+| `1e0104e` | fix: Add auth headers to partner admin API calls |
+
+### Key Lessons Learned
+1. VPS `server.py` is separate from local `server.py` - both need updates
+2. Frontend fetch calls need explicit Authorization headers for admin endpoints
+3. Docker volume mounts require container restart to pick up changes
+4. Lab network accessibility is essential for ISO update testing
 
 ---
 
@@ -873,7 +957,11 @@
 
 | Session | Date | Focus | Status | Version |
 |---------|------|-------|--------|---------|
-| **62** | 2026-01-22 | Learning System Resolution Recording Fix | **COMPLETE** | v1.0.44 |
+| **66** | 2026-01-23 | Partner Admin Auth Headers Fix | **COMPLETE** | v1.0.45 |
+| 65 | 2026-01-23 | Comprehensive Security Audit | COMPLETE | v1.0.45 |
+| 64 | 2026-01-23 | Go Agent Full Deployment | COMPLETE | v1.0.45 |
+| 63 | 2026-01-23 | Production Healing + Learning Loop | COMPLETE | v1.0.45 |
+| **62** | 2026-01-22 | Learning System Resolution Recording Fix | COMPLETE | v1.0.44 |
 | 61 | 2026-01-22 | User Deletion Fix & Learning Audit | COMPLETE | v1.0.44 |
 | 60 | 2026-01-22 | Security Audit & Blockchain Hardening | COMPLETE | v1.0.44 |
 | 59 | 2026-01-22 | Claude Code Skills System | COMPLETE | v1.0.44 |
@@ -907,9 +995,9 @@
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 62 complete (Learning System Resolution Recording Fix)
-- `.agent/CONTEXT.md` - Updated with Session 62 changes
-- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 62
-- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 62 details
+- `.agent/TODO.md` - Session 66 complete (Partner Admin Auth Headers Fix)
+- `.agent/CONTEXT.md` - Updated with Session 66 changes
+- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 66
+- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 66 details
 - `docs/LEARNING_SYSTEM.md` - Updated with resolution recording requirements
 - `.claude/skills/` - 9 skill files for Claude Code knowledge retention (Session 59)
