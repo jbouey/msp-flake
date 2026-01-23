@@ -2126,6 +2126,235 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
     }
 
 
+# ============================================================================
+# Learning System - L2->L1 Promotion Reports
+# ============================================================================
+
+class PromotionReportRequest(BaseModel):
+    """Promotion report from appliance learning system."""
+    appliance_id: str
+    site_id: str
+    checked_at: str
+    candidates_found: int = 0
+    candidates_promoted: int = 0
+    candidates_pending: int = 0
+    pending_candidates: List[Dict[str, Any]] = []
+    promoted_rules: List[Dict[str, Any]] = []
+    rollbacks: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+
+@app.post("/api/learning/promotion-report")
+async def receive_promotion_report(
+    req: PromotionReportRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Receive promotion reports from appliance learning systems.
+
+    Stores the report and sends email notifications for:
+    - Pending candidates requiring human review
+    - Auto-promoted rules
+    - Rolled back rules
+    """
+    try:
+        now = datetime.now(timezone.utc)
+
+        # Store the promotion report
+        report_id = str(uuid.uuid4())
+        await db.execute(
+            text("""
+                INSERT INTO learning_promotion_reports
+                (id, appliance_id, site_id, checked_at, candidates_found,
+                 candidates_promoted, candidates_pending, report_data, created_at)
+                VALUES (:id, :appliance_id, :site_id, :checked_at, :candidates_found,
+                        :candidates_promoted, :candidates_pending, :report_data, :created_at)
+            """),
+            {
+                "id": report_id,
+                "appliance_id": req.appliance_id,
+                "site_id": req.site_id,
+                "checked_at": req.checked_at,
+                "candidates_found": req.candidates_found,
+                "candidates_promoted": req.candidates_promoted,
+                "candidates_pending": req.candidates_pending,
+                "report_data": json.dumps({
+                    "pending_candidates": req.pending_candidates,
+                    "promoted_rules": req.promoted_rules,
+                    "rollbacks": req.rollbacks,
+                    "errors": req.errors
+                }),
+                "created_at": now.isoformat()
+            }
+        )
+        await db.commit()
+
+        # Send email notification if there are actionable items
+        should_notify = (
+            req.candidates_pending > 0 or
+            req.candidates_promoted > 0 or
+            len(req.rollbacks) > 0
+        )
+
+        if should_notify:
+            await _send_promotion_notification(req, db)
+
+        logger.info(
+            f"Promotion report from {req.appliance_id}: "
+            f"{req.candidates_found} found, {req.candidates_promoted} promoted, "
+            f"{req.candidates_pending} pending"
+        )
+
+        return {"status": "ok", "report_id": report_id}
+
+    except Exception as e:
+        logger.error(f"Failed to process promotion report: {e}")
+        # Don't fail the request - appliance shouldn't retry
+        return {"status": "error", "message": str(e)}
+
+
+async def _send_promotion_notification(req: PromotionReportRequest, db: AsyncSession):
+    """Send email notification for promotion events."""
+    try:
+        # Get alert email from environment
+        alert_email = os.getenv("ALERT_EMAIL", "administrator@osiriscare.net")
+        smtp_user = os.getenv("SMTP_USER", "")
+        smtp_password = os.getenv("SMTP_PASSWORD", "")
+
+        if not smtp_user or not smtp_password:
+            logger.debug("SMTP not configured - skipping promotion notification email")
+            return
+
+        # Build email content
+        subject_parts = []
+        if req.candidates_pending > 0:
+            subject_parts.append(f"{req.candidates_pending} patterns ready for review")
+        if req.candidates_promoted > 0:
+            subject_parts.append(f"{req.candidates_promoted} auto-promoted")
+        if req.rollbacks:
+            subject_parts.append(f"{len(req.rollbacks)} rules rolled back")
+
+        subject = f"[Learning System] {', '.join(subject_parts)}"
+
+        # Build HTML body
+        body_parts = [
+            f"<h2>Learning System Report</h2>",
+            f"<p><strong>Appliance:</strong> {req.appliance_id}</p>",
+            f"<p><strong>Site:</strong> {req.site_id}</p>",
+            f"<p><strong>Checked at:</strong> {req.checked_at}</p>",
+            "<hr>"
+        ]
+
+        if req.candidates_pending > 0:
+            body_parts.append("<h3>🔍 Patterns Ready for Review</h3>")
+            body_parts.append("<table border='1' cellpadding='5'>")
+            body_parts.append("<tr><th>Pattern</th><th>Action</th><th>Confidence</th><th>Success Rate</th></tr>")
+            for c in req.pending_candidates[:10]:
+                body_parts.append(
+                    f"<tr><td>{c.get('pattern_signature', 'N/A')[:12]}</td>"
+                    f"<td>{c.get('recommended_action', 'N/A')}</td>"
+                    f"<td>{c.get('confidence_score', 0):.1%}</td>"
+                    f"<td>{c.get('stats', {}).get('success_rate', 0):.1%}</td></tr>"
+                )
+            body_parts.append("</table>")
+            body_parts.append("<p><a href='https://dashboard.osiriscare.net/learning'>Review in Dashboard</a></p>")
+
+        if req.candidates_promoted > 0:
+            body_parts.append("<h3>✅ Auto-Promoted Rules</h3>")
+            body_parts.append("<ul>")
+            for r in req.promoted_rules[:10]:
+                body_parts.append(
+                    f"<li><strong>{r.get('rule_id', 'N/A')}</strong>: "
+                    f"{r.get('action', 'N/A')} (confidence: {r.get('confidence', 0):.1%})</li>"
+                )
+            body_parts.append("</ul>")
+
+        if req.rollbacks:
+            body_parts.append("<h3>⚠️ Rolled Back Rules</h3>")
+            body_parts.append("<ul>")
+            for r in req.rollbacks[:10]:
+                body_parts.append(
+                    f"<li><strong>{r.get('rule_id', 'N/A')}</strong>: "
+                    f"{r.get('reason', 'Performance degradation')}</li>"
+                )
+            body_parts.append("</ul>")
+
+        html_body = "\n".join(body_parts)
+
+        # Send email using SMTP
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        smtp_host = os.getenv("SMTP_HOST", "mail.privateemail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_from = os.getenv("SMTP_FROM", "alerts@osiriscare.net")
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = smtp_from
+        msg["To"] = alert_email
+        msg.attach(MIMEText(html_body, "html"))
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+
+        logger.info(f"Sent promotion notification email to {alert_email}")
+
+    except Exception as e:
+        logger.error(f"Failed to send promotion notification: {e}")
+
+
+@app.get("/api/learning/promotion-candidates")
+async def get_promotion_candidates(
+    site_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get pending promotion candidates for dashboard display."""
+    try:
+        # Get recent reports with pending candidates
+        query = """
+            SELECT id, appliance_id, site_id, checked_at,
+                   candidates_pending, report_data, created_at
+            FROM learning_promotion_reports
+            WHERE candidates_pending > 0
+        """
+        params = {}
+
+        if site_id:
+            query += " AND site_id = :site_id"
+            params["site_id"] = site_id
+
+        query += " ORDER BY created_at DESC LIMIT 50"
+
+        result = await db.execute(text(query), params)
+        rows = result.fetchall()
+
+        candidates = []
+        for row in rows:
+            report_data = json.loads(row[5]) if row[5] else {}
+            for c in report_data.get("pending_candidates", []):
+                candidates.append({
+                    "report_id": row[0],
+                    "appliance_id": row[1],
+                    "site_id": row[2],
+                    "checked_at": row[3],
+                    **c
+                })
+
+        return {
+            "status": "ok",
+            "total_pending": len(candidates),
+            "candidates": candidates[:100]  # Limit response size
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get promotion candidates: {e}")
+        return {"status": "error", "message": str(e), "candidates": []}
+
+
 # Alias for agent compatibility
 class ApplianceCheckinRequest(BaseModel):
     """Appliance check-in from agent (uses different field names)."""

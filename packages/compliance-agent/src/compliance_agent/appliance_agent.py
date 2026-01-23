@@ -336,6 +336,12 @@ class ApplianceAgent:
         self._healing_enabled = getattr(config, 'healing_enabled', True)
         self._healing_dry_run = getattr(config, 'healing_dry_run', True)
 
+        # Learning system for L2->L1 promotion (data flywheel)
+        self.learning_system: Optional[SelfLearningSystem] = None
+        self._last_promotion_check = datetime.min.replace(tzinfo=timezone.utc)
+        self._promotion_check_interval = getattr(config, 'promotion_check_interval', 3600)  # Hourly default
+        self._auto_promote = getattr(config, 'auto_promote', False)  # Require human approval by default
+
         # Dual-mode sensor support
         self._sensor_enabled = getattr(config, 'sensor_enabled', True)
         self._sensor_port = getattr(config, 'sensor_port', 8080)
@@ -695,7 +701,11 @@ class ApplianceAgent:
         if self.workstation_targets and self.discovered_domain:
             await self._maybe_deploy_go_agents()
 
-        # 9. Process pending orders (remote commands/updates)
+        # 9. Check for L2->L1 promotion candidates (periodically)
+        if self.learning_system:
+            await self._maybe_check_promotions()
+
+        # 10. Process pending orders (remote commands/updates)
         await self._process_pending_orders()
 
     async def _get_compliance_summary(self) -> dict:
@@ -883,6 +893,25 @@ class ApplianceAgent:
 
         # Keep reference to incident database for later use
         self.incident_db = self.auto_healer.incident_db
+
+        # Initialize learning system for L2->L1 promotion
+        promotion_config = PromotionConfig(
+            min_occurrences=5,
+            min_l2_resolutions=3,
+            min_success_rate=0.9,
+            max_avg_resolution_time_ms=30000,
+            check_interval_hours=self._promotion_check_interval // 3600,
+            auto_promote=self._auto_promote,
+            promotion_output_dir=self.config.rules_dir / "promoted"
+        )
+        self.learning_system = SelfLearningSystem(
+            incident_db=self.incident_db,
+            config=promotion_config
+        )
+        logger.info(
+            f"Learning system initialized (auto_promote={self._auto_promote}, "
+            f"check_interval={self._promotion_check_interval}s)"
+        )
 
         logger.info(f"Healing system initialized (L1 rules from {self.config.rules_dir})")
 
@@ -2414,6 +2443,93 @@ try {
                 logger.info(f"Reported deployment results: {successful}/{len(results)} successful")
         except Exception as e:
             logger.error(f"Error reporting deployment results: {e}")
+
+    # =========================================================================
+    # Learning System - L2->L1 Promotion
+    # =========================================================================
+
+    async def _maybe_check_promotions(self):
+        """Check for L2->L1 promotion candidates periodically."""
+        now = datetime.now(timezone.utc)
+        elapsed = (now - self._last_promotion_check).total_seconds()
+
+        if elapsed < self._promotion_check_interval:
+            return
+
+        self._last_promotion_check = now
+        logger.info("Running scheduled promotion check...")
+
+        try:
+            # Run the promotion check with notification callback
+            report = self.learning_system.run_promotion_check(
+                notify_callback=self._notify_promotion_candidates
+            )
+
+            # Report to Central Command if there are candidates
+            if report["candidates_found"] > 0 or report.get("monitoring_report", {}).get("rollbacks_triggered"):
+                await self._report_promotions_to_central(report)
+
+        except Exception as e:
+            logger.error(f"Promotion check failed: {e}")
+
+    def _notify_promotion_candidates(self, report: Dict[str, Any]):
+        """
+        Callback for promotion notifications.
+
+        Logs the notification and prepares it for Central Command.
+        Email/webhook notifications are handled by Central Command.
+        """
+        if report["candidates_pending"] > 0:
+            logger.info(
+                f"📋 {report['candidates_pending']} patterns ready for promotion review. "
+                f"Check Central Command dashboard."
+            )
+
+        if report["candidates_promoted"] > 0:
+            logger.info(
+                f"✅ Auto-promoted {report['candidates_promoted']} patterns to L1 rules."
+            )
+
+        rollbacks = report.get("monitoring_report", {}).get("rollbacks_triggered", [])
+        if rollbacks:
+            logger.warning(
+                f"⚠️ Rolled back {len(rollbacks)} underperforming rules."
+            )
+
+    async def _report_promotions_to_central(self, report: Dict[str, Any]):
+        """Report promotion status to Central Command."""
+        try:
+            # Build appliance identifier
+            mac = get_mac_address()
+            appliance_id = f"{self.config.site_id}-{mac}"
+
+            # Prepare payload for Central Command
+            payload = {
+                "appliance_id": appliance_id,
+                "site_id": self.config.site_id,
+                "checked_at": report["checked_at"],
+                "candidates_found": report["candidates_found"],
+                "candidates_promoted": report["candidates_promoted"],
+                "candidates_pending": report["candidates_pending"],
+                "pending_candidates": report.get("pending_candidates", []),
+                "promoted_rules": report.get("promoted_rules", []),
+                "rollbacks": report.get("monitoring_report", {}).get("rollbacks_triggered", []),
+                "errors": report.get("errors", [])
+            }
+
+            # POST to Central Command
+            response = await self.client.post(
+                "/api/learning/promotion-report",
+                json=payload
+            )
+
+            if response and response.get("status") == "ok":
+                logger.debug("Reported promotion status to Central Command")
+            else:
+                logger.warning(f"Failed to report promotion status: {response}")
+
+        except Exception as e:
+            logger.error(f"Error reporting promotions to Central Command: {e}")
 
     # =========================================================================
     # Order Processing (remote commands and updates)

@@ -768,3 +768,156 @@ class SelfLearningSystem:
                 logger.warning(f"Error reading rollback history for {rule_file}: {e}")
 
         return history
+
+    # =========================================================================
+    # Background Promotion Check (Scheduled Task)
+    # =========================================================================
+
+    def run_promotion_check(
+        self,
+        notify_callback: Optional[callable] = None
+    ) -> Dict[str, Any]:
+        """
+        Run a scheduled promotion check.
+
+        This is the main entry point for the background scheduler.
+        It finds candidates, optionally auto-promotes them, and returns
+        a report suitable for notifications.
+
+        Args:
+            notify_callback: Optional callback(report) for notifications.
+                             Called with the check report if candidates found.
+
+        Returns:
+            Promotion check report with candidates and any actions taken
+        """
+        check_time = datetime.now(timezone.utc)
+        report = {
+            "checked_at": check_time.isoformat(),
+            "check_interval_hours": self.config.check_interval_hours,
+            "auto_promote_enabled": self.config.auto_promote,
+            "candidates_found": 0,
+            "candidates_promoted": 0,
+            "candidates_pending": 0,
+            "promoted_rules": [],
+            "pending_candidates": [],
+            "monitoring_report": None,
+            "errors": []
+        }
+
+        try:
+            # Find promotion candidates
+            candidates = self.find_promotion_candidates()
+            report["candidates_found"] = len(candidates)
+
+            if candidates:
+                logger.info(f"Found {len(candidates)} promotion candidates")
+
+                for candidate in candidates:
+                    if self.config.auto_promote:
+                        # Auto-promote if enabled
+                        try:
+                            rule = self.promote_pattern(candidate, approved_by="auto")
+                            report["candidates_promoted"] += 1
+                            report["promoted_rules"].append({
+                                "rule_id": rule.id,
+                                "pattern": candidate.pattern_signature,
+                                "action": candidate.recommended_action,
+                                "confidence": candidate.confidence_score
+                            })
+                            logger.info(
+                                f"Auto-promoted pattern {candidate.pattern_signature[:8]} "
+                                f"to rule {rule.id}"
+                            )
+                        except Exception as e:
+                            report["errors"].append({
+                                "pattern": candidate.pattern_signature,
+                                "error": str(e)
+                            })
+                            logger.error(f"Failed to promote pattern: {e}")
+                    else:
+                        # Add to pending for human review
+                        report["candidates_pending"] += 1
+                        report["pending_candidates"].append({
+                            "pattern_signature": candidate.pattern_signature,
+                            "recommended_action": candidate.recommended_action,
+                            "confidence_score": candidate.confidence_score,
+                            "promotion_reason": candidate.promotion_reason,
+                            "stats": {
+                                "total_occurrences": candidate.stats.total_occurrences,
+                                "success_rate": candidate.stats.success_rate,
+                                "l2_resolutions": candidate.stats.l2_resolutions
+                            }
+                        })
+
+            # Also run monitoring on existing promoted rules
+            try:
+                monitoring = self.monitor_promoted_rules()
+                report["monitoring_report"] = monitoring
+
+                if monitoring.get("rollbacks_triggered"):
+                    logger.warning(
+                        f"Rolled back {len(monitoring['rollbacks_triggered'])} "
+                        f"underperforming rules"
+                    )
+            except Exception as e:
+                report["errors"].append({
+                    "phase": "monitoring",
+                    "error": str(e)
+                })
+                logger.error(f"Error monitoring promoted rules: {e}")
+
+            # Send notification if callback provided and there's something to report
+            if notify_callback and (
+                report["candidates_pending"] > 0 or
+                report["candidates_promoted"] > 0 or
+                (report["monitoring_report"] and
+                 report["monitoring_report"].get("rollbacks_triggered"))
+            ):
+                try:
+                    notify_callback(report)
+                except Exception as e:
+                    logger.error(f"Notification callback failed: {e}")
+                    report["errors"].append({
+                        "phase": "notification",
+                        "error": str(e)
+                    })
+
+        except Exception as e:
+            report["errors"].append({
+                "phase": "check",
+                "error": str(e)
+            })
+            logger.error(f"Promotion check failed: {e}")
+
+        # Log summary
+        logger.info(
+            f"Promotion check complete: {report['candidates_found']} found, "
+            f"{report['candidates_promoted']} promoted, "
+            f"{report['candidates_pending']} pending review"
+        )
+
+        return report
+
+    def get_pending_promotions_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of pending promotions for dashboard/API.
+
+        Returns lightweight summary suitable for UI display.
+        """
+        candidates = self.find_promotion_candidates()
+
+        return {
+            "pending_count": len(candidates),
+            "requires_review": not self.config.auto_promote,
+            "candidates": [
+                {
+                    "pattern": c.pattern_signature[:8],
+                    "action": c.recommended_action,
+                    "confidence": round(c.confidence_score, 2),
+                    "occurrences": c.stats.total_occurrences,
+                    "success_rate": round(c.stats.success_rate, 2)
+                }
+                for c in candidates[:10]  # Limit to top 10
+            ]
+        }
