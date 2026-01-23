@@ -16,7 +16,7 @@ from typing import Optional, Dict, Any, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .incident_db import IncidentDatabase, Incident, ResolutionLevel
+from .incident_db import IncidentDatabase, Incident, ResolutionLevel, IncidentOutcome
 from .level1_deterministic import DeterministicEngine, RuleMatch
 from .level2_llm import Level2Planner, LLMConfig, LLMMode, LLMDecision
 from .level3_escalation import EscalationHandler, EscalationConfig
@@ -253,9 +253,23 @@ class AutoHealer:
         end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
+        # Record resolution in incident DB for learning system
+        success = result.get("success", False)
+        try:
+            self.incident_db.resolve_incident(
+                incident_id=incident.id,
+                resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
+                resolution_action=match.action,
+                outcome=IncidentOutcome.SUCCESS if success else IncidentOutcome.FAILURE,
+                resolution_time_ms=duration_ms
+            )
+            logger.debug(f"Recorded L1 resolution for incident {incident.id}")
+        except Exception as e:
+            logger.warning(f"Failed to record L1 resolution: {e}")
+
         return HealingResult(
             incident_id=incident.id,
-            success=result.get("success", False),
+            success=success,
             resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
             action_taken=match.action,
             resolution_time_ms=duration_ms,
@@ -328,9 +342,23 @@ class AutoHealer:
         end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
+        # Record resolution in incident DB for learning system
+        success = result.get("success", False)
+        try:
+            self.incident_db.resolve_incident(
+                incident_id=incident.id,
+                resolution_level=ResolutionLevel.LEVEL2_LLM,
+                resolution_action=decision.recommended_action,
+                outcome=IncidentOutcome.SUCCESS if success else IncidentOutcome.FAILURE,
+                resolution_time_ms=duration_ms
+            )
+            logger.debug(f"Recorded L2 resolution for incident {incident.id}")
+        except Exception as e:
+            logger.warning(f"Failed to record L2 resolution: {e}")
+
         return HealingResult(
             incident_id=incident.id,
-            success=result.get("success", False),
+            success=success,
             resolution_level=ResolutionLevel.LEVEL2_LLM,
             action_taken=decision.recommended_action,
             resolution_time_ms=duration_ms,
@@ -361,6 +389,19 @@ class AutoHealer:
 
         end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
+
+        # Record escalation in incident DB for learning system
+        try:
+            self.incident_db.resolve_incident(
+                incident_id=incident.id,
+                resolution_level=ResolutionLevel.LEVEL3_HUMAN,
+                resolution_action="escalated",
+                outcome=IncidentOutcome.ESCALATED,
+                resolution_time_ms=duration_ms
+            )
+            logger.debug(f"Recorded L3 escalation for incident {incident.id}")
+        except Exception as e:
+            logger.warning(f"Failed to record L3 escalation: {e}")
 
         return HealingResult(
             incident_id=incident.id,
