@@ -2091,10 +2091,11 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             if isinstance(pattern, list):
                 conditions = pattern
             elif isinstance(pattern, dict):
-                conditions = [
-                    {"field": k, "operator": "eq", "value": v}
-                    for k, v in pattern.items()
-                ]
+                conditions = []
+                for k, v in pattern.items():
+                    # Map incident_type to check_type (auto_healer uses check_type)
+                    field = "check_type" if k == "incident_type" else k
+                    conditions.append({"field": field, "operator": "eq", "value": v})
                 # Add status condition for fail/warning/error
                 conditions.append({"field": "status", "operator": "in", "value": ["warning", "fail", "error"]})
             else:
