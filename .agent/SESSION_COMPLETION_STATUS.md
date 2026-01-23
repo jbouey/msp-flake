@@ -1,129 +1,107 @@
-# Session 45 Completion Status
+# Session 65 Completion Status
 
-**Date:** 2026-01-16
-**Session:** 45 - gRPC Stub Implementation
-**Agent Version:** v1.0.37
-**ISO Version:** v37 (on iMac at ~/osiriscare-v37.iso)
+**Date:** 2026-01-23
+**Session:** 65 - Comprehensive Security Audit
+**Agent Version:** v1.0.45
+**ISO Version:** v44 (deployed to physical appliance)
 **Status:** COMPLETE
 
 ---
 
-## Session 45 Accomplishments
+## Session 65 Accomplishments
 
-### 1. gRPC Protobuf Definition
+### 1. Critical Security Vulnerabilities Fixed (3 CRITICAL)
+
+| Vulnerability | Severity | Status | Commit |
+|--------------|----------|--------|--------|
+| Evidence Submission No Auth | CRITICAL | FIXED | `73093d8` |
+| Sites API No Auth | CRITICAL | FIXED | `73093d8` |
+| Partner Admin No Auth | CRITICAL | FIXED | `9edd9fc` |
+
+### 2. Evidence Submission Security (CRIT-001)
 | Task | Status | Details |
 |------|--------|---------|
-| Create unified proto | DONE | `/proto/compliance.proto` |
-| Define RPC methods | DONE | 5 methods (Register, ReportDrift, ReportHealing, Heartbeat, ReportRMMStatus) |
-| Define messages | DONE | RegisterRequest/Response, DriftEvent/Ack, HealingResult/Ack, etc. |
-| Define enums | DONE | CapabilityTier (MONITOR_ONLY, SELF_HEAL, FULL_REMEDIATION) |
+| Identify vulnerability | DONE | `POST /api/evidence/sites/{id}/submit` accepted bundles without auth |
+| Implement Ed25519 verification | DONE | Added `verify_ed25519_signature()` function |
+| Add public key lookup | DONE | Sites table `agent_public_key` column |
+| Test fix | DONE | Endpoint returns 401 without valid signature |
 
-### 2. Python gRPC Code Generation
+### 3. Sites API Security (CRIT-002)
 | Task | Status | Details |
 |------|--------|---------|
-| Install grpcio-tools | DONE | `pip install grpcio-tools` |
-| Generate compliance_pb2.py | DONE | Protobuf message classes |
-| Generate compliance_pb2_grpc.py | DONE | gRPC servicer base class |
-| Fix relative import | DONE | Changed `import compliance_pb2` to `from . import compliance_pb2` |
+| Audit all endpoints | DONE | 25+ endpoints reviewed |
+| Add require_auth | DONE | All list/get endpoints |
+| Add require_operator | DONE | Credentials, sensitive endpoints |
+| Test all endpoints | DONE | All return 401 without auth |
 
-### 3. Python gRPC Server Implementation
+### 4. Partner Admin Security (CRIT-003)
 | Task | Status | Details |
 |------|--------|---------|
-| Rewrite grpc_server.py | DONE | Inherits from generated servicer |
-| Implement Register() | DONE | Returns RegisterResponse with agent_id, check config |
-| Implement ReportDrift() | DONE | Yields DriftAck for each event, routes to healing |
-| Implement Heartbeat() | DONE | Returns HeartbeatResponse, updates last_heartbeat |
-| Implement ReportHealing() | DONE | Returns HealingAck, handles artifacts |
-| Implement ReportRMMStatus() | DONE | Returns RMMAck, logs detected RMM tools |
+| Identify vulnerability | DONE | Admin endpoints had no auth |
+| Add require_admin | DONE | All admin endpoints protected |
+| Test fix | DONE | Endpoints return 401 without admin session |
 
-### 4. Go gRPC Code Generation
+### 5. User Authentication Audit
 | Task | Status | Details |
 |------|--------|---------|
-| Install Go (brew) | DONE | `brew install go` |
-| Install protoc-gen-go | DONE | `go install google.golang.org/protobuf/cmd/protoc-gen-go@latest` |
-| Install protoc-gen-go-grpc | DONE | `go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest` |
-| Generate compliance.pb.go | DONE | Protobuf message structs |
-| Generate compliance_grpc.pb.go | DONE | gRPC client interface |
-
-### 5. Go gRPC Client Implementation
-| Task | Status | Details |
-|------|--------|---------|
-| Rewrite grpc.go | DONE | Uses pb.NewComplianceAgentClient |
-| Update Register() | DONE | Returns *pb.RegisterResponse |
-| Update SendDrift() | DONE | Sends *pb.DriftEvent via stream |
-| Update SendHeartbeat() | DONE | Returns *pb.HeartbeatResponse |
-| Update offline.go | DONE | Uses *pb.DriftEvent |
-| Update main.go | DONE | Uses pb types |
-| Fix go.mod dependencies | DONE | `go mod tidy` |
-
-### 6. Tests Updated
-| Task | Status | Details |
-|------|--------|---------|
-| Update test_grpc_server.py | DONE | Sync API instead of async |
-| All gRPC tests pass | DONE | 12/12 tests |
-| Full suite passes | DONE | 811 passed, 7 skipped |
+| Password policy review | DONE | 12+ chars, complexity, common password check |
+| Lockout testing | DONE | 5 attempts = 15 min lock, working |
+| Enumeration testing | DONE | Generic error messages, no enumeration |
+| SQL injection testing | DONE | Parameterized queries, protected |
+| RBAC testing | DONE | Admin/operator/readonly properly enforced |
 
 ---
 
-## Test Results
+## Security Audit Reports Created
 
-**Python Tests:**
-```
-tests/test_grpc_server.py::TestAgentRegistry::test_register_agent PASSED
-tests/test_grpc_server.py::TestAgentRegistry::test_unregister_agent PASSED
-tests/test_grpc_server.py::TestAgentRegistry::test_config_version_tracking PASSED
-tests/test_grpc_server.py::TestAgentRegistry::test_get_all_agents PASSED
-tests/test_grpc_server.py::TestAgentState::test_initial_state PASSED
-tests/test_grpc_server.py::TestAgentState::test_update_drift_count PASSED
-tests/test_grpc_server.py::TestGRPCStats::test_get_stats_empty PASSED
-tests/test_grpc_server.py::TestGRPCStats::test_get_stats_with_agents PASSED
-tests/test_grpc_server.py::TestComplianceAgentServicer::test_register_creates_agent_id PASSED
-tests/test_grpc_server.py::TestComplianceAgentServicer::test_heartbeat_updates_timestamp PASSED
-tests/test_grpc_server.py::TestDriftRouting::test_drift_without_healing_engine PASSED
-tests/test_grpc_server.py::TestDriftRouting::test_drift_with_healing_engine PASSED
-
-12 passed in 0.54s
-```
-
-**Full Suite:**
-```
-811 passed, 7 skipped, 3 warnings in 33.13s
-```
-
-**Go Build:**
-```
-go build ./...  # SUCCESS
-```
+| Report | Location |
+|--------|----------|
+| Partner Portal Audit | `docs/security/PARTNER_SECURITY_AUDIT_2026-01-23.md` |
+| User Auth Audit | `docs/security/USER_AUTH_SECURITY_AUDIT_2026-01-23.md` |
+| Pipeline Audit | `docs/security/PIPELINE_SECURITY_AUDIT_2026-01-23.md` |
 
 ---
 
 ## Files Modified This Session
 
-### Created (3 files):
-1. `/proto/compliance.proto` - Unified protobuf definition
-2. `packages/compliance-agent/src/compliance_agent/compliance_pb2.py` - Generated
-3. `packages/compliance-agent/src/compliance_agent/compliance_pb2_grpc.py` - Generated
+### Backend Files:
+1. `mcp-server/central-command/backend/evidence_chain.py` - Ed25519 signature verification
+2. `mcp-server/central-command/backend/sites.py` - Added auth to all endpoints
+3. `mcp-server/central-command/backend/partner_auth.py` - Added require_admin to admin endpoints
+4. `mcp-server/central-command/backend/server.py` - Added SQLAlchemy async session
 
-### Modified (6 files):
-1. `packages/compliance-agent/src/compliance_agent/grpc_server.py` - Rewrote servicer
-2. `packages/compliance-agent/tests/test_grpc_server.py` - Updated for sync API
-3. `agent/internal/transport/grpc.go` - Rewrote to use generated client
-4. `agent/internal/transport/offline.go` - Updated DriftEvent types
-5. `agent/cmd/osiris-agent/main.go` - Updated to use pb types
-6. `agent/go.mod` / `agent/go.sum` - Updated dependencies
+### Database:
+```sql
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS agent_public_key VARCHAR(128);
+```
+
+### Documentation:
+- `.agent/TODO.md` - Session 65 security audit details
+- `.agent/CONTEXT.md` - Session 65 changes section
+- `.agent/SESSION_HANDOFF.md` - Updated with security status
+- `IMPLEMENTATION-STATUS.md` - Session 65 summary
 
 ---
 
 ## Deployment State
 
-| Component | Location | Status |
-|-----------|----------|--------|
-| ISO v37 | iMac ~/osiriscare-v37.iso | Ready to flash |
-| Go Agent Code | agent/ | Updated with gRPC |
-| Go Agent Binary | NVWS01 C:\OsirisCare\ | Needs rebuild |
-| Python gRPC Server | compliance_agent/ | Complete |
-| VM Appliance | 192.168.88.247 | Running |
-| Physical Appliance | 192.168.88.246 | Needs ISO v37 |
+| Component | Status | Notes |
+|-----------|--------|-------|
+| VPS API | SECURED | All endpoints require authentication |
+| Evidence Chain | SECURED | Requires Ed25519 signature |
+| Sites API | SECURED | Requires auth/operator |
+| Partner Admin | SECURED | Requires admin role |
+| Physical Appliance | Online | 192.168.88.246, v1.0.45 |
+| VM Appliance | Online | 192.168.88.247, v1.0.44 |
+
+---
+
+## Open Issues (Non-Critical)
+
+| Issue | Severity | Status | Priority |
+|-------|----------|--------|----------|
+| No rate limiting | MEDIUM | OPEN | High |
+| bcrypt not installed | LOW | OPEN | Low |
 
 ---
 
@@ -131,29 +109,10 @@ go build ./...  # SUCCESS
 
 | Priority | Task | Notes |
 |----------|------|-------|
-| High | Flash ISO v37 to physical appliance | ISO ready on iMac |
-| High | Rebuild Go Agent binary | With updated gRPC code |
-| High | Test end-to-end gRPC | Register + drift streaming |
-| Medium | Deploy updated Go Agent to NVWS01 | Replace old binary |
-
----
-
-## Quick Commands
-
-```bash
-# Test Python gRPC
-cd packages/compliance-agent && source venv/bin/activate
-python -c "from compliance_agent.grpc_server import GRPC_AVAILABLE; print(GRPC_AVAILABLE)"
-
-# Build Go Agent
-cd agent && go build ./...
-
-# Run Python tests
-python -m pytest tests/test_grpc_server.py -v
-
-# Rebuild Go Agent for Windows
-GOOS=windows GOARCH=amd64 go build -o osiris-agent.exe ./cmd/osiris-agent
-```
+| High | Test Remote ISO Update | A/B partition system ready |
+| High | Register Agent Public Keys | Sites need public key for evidence |
+| Medium | Add Rate Limiting | MEDIUM priority from audit |
+| Low | Install bcrypt | LOW priority from audit |
 
 ---
 
@@ -161,16 +120,14 @@ GOOS=windows GOARCH=amd64 go build -o osiris-agent.exe ./cmd/osiris-agent
 
 | Metric | Target | Actual | Status |
 |--------|--------|--------|--------|
-| Proto definition created | Yes | Yes | DONE |
-| Python gRPC generated | Yes | Yes | DONE |
-| Go gRPC generated | Yes | Yes | DONE |
-| Python servicer implemented | Yes | Yes | DONE |
-| Go client implemented | Yes | Yes | DONE |
-| gRPC tests passing | 12 | 12 | DONE |
-| Full test suite | Pass | 811 passed | DONE |
-| Go build succeeds | Yes | Yes | DONE |
+| Critical vulnerabilities fixed | All | 3/3 | DONE |
+| Security audit reports | 3 | 3 | DONE |
+| Endpoints protected | 100% | 100% | DONE |
+| User auth issues | 0 critical | 0 critical | DONE |
+| Tests passing | All | 834 + 24 Go | DONE |
 
 ---
 
 **Session Status:** COMPLETE
 **Handoff Ready:** YES
+**Security Status:** ALL CRITICAL ISSUES FIXED

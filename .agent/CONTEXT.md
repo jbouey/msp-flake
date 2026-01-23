@@ -1,7 +1,7 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-23 (Session 65 - Starting)
-**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, **Go Agent Deployed to ALL 3 VMs (DC/WS/SRV)**, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Partner Admin Router Fixed**, **Claude Code Skills System (9 skill files)**, **Blockchain Evidence Security Hardening (Ed25519 verification + OTS validation)**, **Learning System Resolution Recording Fix (auto_healer.py)**, **Production Healing Mode ENABLED (dry_run=false)**, **Learning Loop Runbook Mapping Fix**)
+**Last Updated:** 2026-01-23 (Session 65 - Security Audit COMPLETE)
+**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, **ISO v44 DEPLOYED TO PHYSICAL APPLIANCE**, **A/B Partition Update System VERIFIED WORKING**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, **Go Agent Deployed to ALL 3 VMs (DC/WS/SRV)**, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Partner Admin Router Fixed**, **Claude Code Skills System (9 skill files)**, **Blockchain Evidence Security Hardening (Ed25519 verification + OTS validation)**, **Learning System Resolution Recording Fix (auto_healer.py)**, **Production Healing Mode ENABLED (dry_run=false)**, **Learning Loop Runbook Mapping Fix**, **Comprehensive Security Audit - 3 CRITICAL Fixes**)
 **Test Status:** 834 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.45, 43 total runbooks (27 Windows + 16 Linux), **A/B partition update system with health gate**, **GRUB boot configuration**, **Automatic rollback on 3 failed boots**, Fleet Updates UI tested (create releases, rollouts, pause/resume/advance), **Full Coverage Healing Mode enabled** (21 rules on physical appliance), Test release v44 created with staged rollout, **Go Agent running on ALL 3 VMs** (NVDC01, NVWS01, NVSRV01), gRPC drift events → L1 rules → Windows runbooks VERIFIED, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, **Learning flywheel NOW OPERATIONAL** (resolution recording fixed), Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, **Chaos Lab Healing-First** (EXECUTION_PLAN_v2.sh with ENABLE_RESTORES=false), **Full Spectrum Chaos Test** (5 attack categories), Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, **Active healing enabled (HEALING_DRY_RUN=false in config.yaml)**, L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage), asyncpg syntax fixes deployed to VPS, api_base_url bug fixed in appliance_agent.py, chaos lab WS credentials fixed (localadmin), **Clock drift fixes via Basic auth**, **Credential format fix (.\\ for local accounts)**, **CHECK_TYPE_TO_RUNBOOK mapping added to learning_loop.py**, **Partner admin router registered in main.py**
 
 ---
@@ -546,6 +546,43 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
 - **Agent:** compliance-agent v1.0.40 with gRPC server + Active Healing
 - **Status:** Superseded by v43
+
+### Session 65 Changes (2026-01-23) - Comprehensive Security Audit
+- **THREE CRITICAL Vulnerabilities Fixed:**
+  - **CRIT-001: Evidence Submission Without Auth** (`evidence_chain.py`)
+    - Issue: `POST /api/evidence/sites/{site_id}/submit` accepted bundles without authentication
+    - Impact: Anyone could inject fake compliance evidence into audit trail
+    - Fix: Now requires Ed25519 signature from registered agent
+    - Commit: `73093d8`
+  - **CRIT-002: Sites API Without Auth** (`sites.py`)
+    - Issue: `/api/sites/*` endpoints exposed data without authentication
+    - Impact: Domain credentials (admin passwords!) publicly accessible
+    - Fix: Added `require_auth`/`require_operator` to all 25+ endpoints
+    - Commit: `73093d8`
+  - **CRIT-003: Partner Admin Endpoints Without Auth** (`partner_auth.py`)
+    - Issue: `/api/admin/partners/*` endpoints had no authentication
+    - Impact: Anyone could modify OAuth config, approve/reject partners
+    - Fix: Added `require_admin` dependency to all admin endpoints
+    - Commit: `9edd9fc`
+- **User Authentication Audit (No Critical Issues):**
+  - Strong password policy (12+ chars, complexity, common password check)
+  - Account lockout (5 attempts = 15 min lock)
+  - No user enumeration (generic error messages)
+  - SQL injection protected (parameterized queries)
+  - RBAC properly enforced
+- **Database Changes:**
+  - Added `agent_public_key` column to sites table for Ed25519 verification
+- **Server.py Updates:**
+  - Added SQLAlchemy async session for evidence_chain router
+  - Registered evidence_chain_router
+  - Constructs async DB URL from DATABASE_URL env var
+- **Security Audit Reports Created:**
+  - `docs/security/PARTNER_SECURITY_AUDIT_2026-01-23.md`
+  - `docs/security/USER_AUTH_SECURITY_AUDIT_2026-01-23.md`
+  - `docs/security/PIPELINE_SECURITY_AUDIT_2026-01-23.md`
+- **Open Issues (Non-Critical):**
+  - MEDIUM: No rate limiting on login/API endpoints
+  - LOW: bcrypt not installed (using SHA-256 fallback)
 
 ### Session 63 Changes (2026-01-23) - Production Healing + Learning Loop Audit
 - **Production Healing Mode Enabled:**
