@@ -48,15 +48,29 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 RATE_LIMIT_COOLDOWN_SECONDS = 300  # 5 minutes
 
 # PostgreSQL Database URL (for SQLAlchemy async session - used by evidence_chain)
-# NOTE: Must use +asyncpg dialect for async support
-PG_DATABASE_URL = os.getenv("PG_ASYNC_DATABASE_URL", "postgresql+asyncpg://mcp:mcp@mcp-postgres:5432/mcp")
+# Constructs async URL from DATABASE_URL environment variable
+_base_db_url = os.getenv("DATABASE_URL", "")
+if _base_db_url:
+    # Convert postgresql:// to postgresql+asyncpg://
+    if _base_db_url.startswith("postgresql://"):
+        PG_DATABASE_URL = _base_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif _base_db_url.startswith("postgresql+asyncpg://"):
+        PG_DATABASE_URL = _base_db_url
+    else:
+        PG_DATABASE_URL = f"postgresql+asyncpg://{_base_db_url.split('://', 1)[-1]}"
 
-# SQLAlchemy async engine and session for routers that need it
-_pg_engine = create_async_engine(PG_DATABASE_URL, echo=False, pool_size=5, max_overflow=10)
-async_session = async_sessionmaker(_pg_engine, class_=AsyncSession, expire_on_commit=False)
+    # SQLAlchemy async engine and session for routers that need it
+    _pg_engine = create_async_engine(PG_DATABASE_URL, echo=False, pool_size=5, max_overflow=10)
+    async_session = async_sessionmaker(_pg_engine, class_=AsyncSession, expire_on_commit=False)
+else:
+    # No database configured - async_session will be None
+    _pg_engine = None
+    async_session = None
 
 async def get_db():
     """Get database session for SQLAlchemy-based routers."""
+    if async_session is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
     async with async_session() as session:
         yield session
 
