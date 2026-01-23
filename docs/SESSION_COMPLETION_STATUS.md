@@ -1,6 +1,70 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-23 (Session 66 - Partner Admin Auth Headers Fix)
+**Last Updated:** 2026-01-23 (Session 66 Continued - A/B Partition Install Attempted)
+
+---
+
+## Session 66 Continued - A/B Partition Install Attempted - PARTIAL
+
+**Date:** 2026-01-23
+**Status:** PARTIAL (VPS fixes complete, appliance offline)
+**Agent Version:** 1.0.45
+**ISO Version:** v44
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Lab network back online - test Remote ISO Update
+2. ⚠️ Install A/B partition system on physical appliance (FAILED)
+3. ✅ Fix fleet_updates.py bug on VPS
+4. ✅ Update central-command frontend for Jayla's login
+
+### Completed Tasks
+
+#### 1. Lab Network Back Online
+- Physical appliance (192.168.88.246) and iMac (192.168.88.50) reachable
+- Discovered appliance was running in live ISO mode (tmpfs root)
+
+#### 2. Fleet Updates Bug Fixed on VPS
+- **Issue:** `a.name` column doesn't exist (should be `a.host_id`)
+- **Fix:** Copied updated `fleet_updates.py` to `/opt/mcp-server/dashboard_api_mount/`
+- **Result:** `/api/fleet/rollouts/{id}/appliances` endpoint now works
+
+#### 3. Central Command Frontend Updated
+- **Issue:** Dashboard serving old bundle (`index-CVXc0kO4.js`)
+- **Fix:** Copied latest build (`index-CZ9NczUg.js`) to central-command container
+- **Result:** Jayla can log in to dashboard
+
+### Failed Tasks
+
+#### A/B Partition Install (FAILED)
+- **Goal:** Install proper A/B partition system for remote updates
+- **Actions:**
+  - Created GPT: ESP (512MB), A (2GB), B (2GB), DATA (remaining)
+  - Used loopback devices (kernel wouldn't re-read partition table)
+  - Formatted ESP (FAT32), DATA (ext4)
+  - Wrote nix-store.squashfs to partition A
+  - Installed GRUB with kernel/initrd to ESP
+  - Created ab_state file
+  - Restored config to data partition
+- **Result:** Boot FAILED
+- **Root Cause:** NixOS ISO initramfs designed for ISO boot, not partition-based squashfs boot
+- **Status:** Physical appliance is **OFFLINE** - needs USB recovery
+
+### VPS Changes
+| Change | Location |
+|--------|----------|
+| `fleet_updates.py` | `/opt/mcp-server/dashboard_api_mount/` - fixed a.name → a.host_id |
+| Frontend dist | `central-command:/usr/share/nginx/html/` - latest bundle |
+
+### Recovery Required
+1. Boot physical appliance from USB with v45 ISO
+2. Either: proper reinstall, or run from live ISO with data partition
+3. Config backup exists on data partition (sda4)
+
+### Key Lessons Learned
+1. NixOS ISO initramfs expects ISO boot mechanism (findiso=)
+2. Partition-based squashfs boot requires custom initramfs
+3. Live ISO mode works but has no persistence without explicit data partition mounting
 
 ---
 

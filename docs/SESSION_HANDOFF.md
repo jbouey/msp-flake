@@ -1,7 +1,18 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-23 (Session 66 - Partner Admin Auth Headers Fix)
-**Current State:** Phase 13 Zero-Touch Updates, **ISO v44 Deployed**, Full Coverage Healing, **Go Agent Deployed to ALL 3 VMs**, **Partner Admin Router Fixed**, **Partner Admin Auth Headers Fixed**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
+**Last Updated:** 2026-01-23 (Session 66 Continued - A/B Partition Install Attempted)
+**Current State:** Phase 13 Zero-Touch Updates, **ISO v44**, Full Coverage Healing, **Go Agent Deployed to ALL 3 VMs**, **Partner Admin Router Fixed**, **Partner Admin Auth Headers Fixed**, **PHYSICAL APPLIANCE OFFLINE - NEEDS USB RECOVERY**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
+
+---
+
+## ⚠️ URGENT: Physical Appliance Offline
+
+The physical appliance (192.168.88.246) is **OFFLINE** after a failed A/B partition install attempt.
+
+**Recovery Required:**
+1. Boot from USB with v45 ISO
+2. Either: reinstall properly, or run from live ISO with data partition mounted
+3. Config backup exists on data partition (sda4)
 
 ---
 
@@ -10,11 +21,12 @@
 | Component | Status | Version |
 |-----------|--------|---------|
 | Agent | v1.0.45 | Stable |
-| ISO | v44 | **DEPLOYED to physical appliance** |
+| ISO | v44 | Available |
 | Tests | 834 + 24 Go tests | Healthy |
-| A/B Partition System | **VERIFIED WORKING** | Health gate active, GRUB config |
+| **Physical Appliance** | **⚠️ OFFLINE** | Needs USB recovery |
+| A/B Partition System | **DESIGNED** | Needs custom initramfs for partition boot |
 | Fleet Updates UI | **DEPLOYED** | Create releases, rollouts working |
-| Healing Mode | **FULL COVERAGE ENABLED** | 21 rules on physical appliance |
+| Healing Mode | **FULL COVERAGE ENABLED** | (when appliance online) |
 | Chaos Lab | **HEALING-FIRST** | Restores disabled by default |
 | DC Healing | **100% SUCCESS** | 5/5 firewall heals |
 | All 3 VMs | **WINRM WORKING** | DC, WS, SRV accessible |
@@ -27,6 +39,29 @@
 | Claude Code Skills | **9 SKILL FILES** | Auto-loading per task type |
 | Evidence Security | **HARDENED** | Ed25519 verify + OTS validation |
 | Learning System | **OPERATIONAL** | Resolution recording fixed |
+
+---
+
+## Session 66 Continued (2026-01-23) - A/B Partition Install Attempted
+
+### What Happened
+1. **Lab network came back online** - Physical appliance and iMac reachable
+2. **Discovered appliance was in live ISO mode** - Running from tmpfs, no A/B partitions
+3. **Attempted A/B partition install:**
+   - Created GPT: ESP (512MB), A (2GB), B (2GB), DATA (remaining)
+   - Installed GRUB with kernel/initrd
+   - Wrote nix-store.squashfs to partition A
+   - Boot **FAILED** - NixOS initramfs designed for ISO boot, not partition-based
+4. **Appliance is now OFFLINE** - Needs USB recovery
+
+### VPS Fixes
+- Fixed `fleet_updates.py` bug (`a.name → a.host_id`) in `/opt/mcp-server/dashboard_api_mount/`
+- Updated central-command frontend for Jayla's login
+
+### Next Steps
+1. **URGENT:** Boot appliance from USB, recover
+2. Investigate custom initramfs for partition-based boot
+3. Or: Run from live ISO mode with persistent data partition
 
 ---
 

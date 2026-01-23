@@ -1,7 +1,64 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-23 (Session 66 - Partner Admin Auth Headers Fix)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed**)
+**Last Updated:** 2026-01-23 (Session 66 Continued - A/B Partition Install Attempted)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed**, **Physical Appliance OFFLINE - Needs USB Recovery**)
+
+---
+
+## Session 66 Continued (2026-01-23) - A/B Partition Install Attempted
+
+### Session Goals
+1. ✅ Lab network back online - test Remote ISO Update
+2. ⚠️ Install A/B partition system on physical appliance
+3. ✅ Fix fleet_updates.py bug on VPS
+4. ✅ Update central-command frontend for Jayla's login
+
+### Accomplishments
+
+#### 1. Lab Network Back Online
+- Physical appliance (192.168.88.246) and iMac (192.168.88.50) reachable
+- Discovered appliance was running in **live ISO mode** (tmpfs root, no A/B partitions)
+
+#### 2. A/B Partition Install Attempted (FAILED)
+- **Goal:** Install proper A/B partition system for remote updates
+- **Actions Taken:**
+  - Created GPT partition table: ESP (512MB), A (2GB), B (2GB), DATA (remaining)
+  - Used loopback devices to access partitions (kernel wouldn't re-read)
+  - Formatted ESP as FAT32, DATA as ext4
+  - Wrote nix-store.squashfs to partition A
+  - Installed GRUB to ESP with A/B boot config
+  - Copied kernel and initrd to ESP
+  - Created ab_state file
+  - Restored config to data partition
+- **Result:** Boot FAILED
+- **Root Cause:** NixOS ISO initramfs is designed for ISO boot, not partition-based squashfs boot
+- **Status:** Physical appliance is **OFFLINE** - needs USB recovery
+
+#### 3. Fleet Updates Bug Fixed on VPS (COMPLETE)
+- **Issue:** `a.name` column doesn't exist in appliances table (should be `a.host_id`)
+- **Fix:** Copied updated `fleet_updates.py` to `/opt/mcp-server/dashboard_api_mount/`
+- **Result:** `/api/fleet/rollouts/{id}/appliances` endpoint now works
+
+#### 4. Central Command Frontend Updated (COMPLETE)
+- **Issue:** Dashboard was serving old frontend bundle (`index-CVXc0kO4.js`)
+- **Fix:** Copied latest build to central-command container (`index-CZ9NczUg.js`)
+- **Result:** Jayla can now log in to dashboard
+
+### Blocked/Failed Tasks
+- **Physical appliance OFFLINE:** Needs USB boot recovery
+  - Boot from v45 ISO USB
+  - Either: reinstall properly, or just run from live ISO with data partition mounted
+
+### VPS Changes This Section
+| Change | Location |
+|--------|----------|
+| `fleet_updates.py` | `/opt/mcp-server/dashboard_api_mount/` - fixed a.name → a.host_id |
+| Frontend dist | Copied to `central-command:/usr/share/nginx/html/` |
+
+### Next Priorities
+1. **URGENT: Recover physical appliance** - Boot from USB, fix boot config
+2. **Test Partner OAuth Signup Flow** - With domain whitelisting
+3. **Investigate proper A/B boot** - Need custom initramfs or different approach
 
 ---
 

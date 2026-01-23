@@ -1,9 +1,19 @@
 # Session Handoff - 2026-01-23
 
-**Session:** 66 - Partner Admin Auth Headers Fix
+**Session:** 66 Continued - A/B Partition Install Attempted
 **Agent Version:** v1.0.45
-**ISO Version:** v44 (deployed to physical appliance)
+**ISO Version:** v44
 **Last Updated:** 2026-01-23
+
+---
+
+## ⚠️ URGENT: Physical Appliance Offline
+
+The physical appliance (192.168.88.246) is **OFFLINE** after a failed A/B partition install.
+
+**Recovery:**
+1. Boot from USB with v45 ISO
+2. Config backup on data partition (sda4)
 
 ---
 
@@ -12,20 +22,38 @@
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Agent | v1.0.45 | Stable |
-| ISO | v44 | Deployed to physical appliance |
+| ISO | v44 | Available |
+| **Physical Appliance** | **⚠️ OFFLINE** | Needs USB recovery |
 | Tests | 834 + 24 Go | All passing |
-| A/B Partition | **WORKING** | Health gate, GRUB config ready |
+| A/B Partition | **DESIGNED** | Needs custom initramfs |
 | Fleet Updates | **DEPLOYED** | Create releases, rollouts working |
-| Healing Mode | **FULL COVERAGE** | 21 rules active |
 | Go Agents | **ALL 3 VMs** | DC, WS, SRV deployed |
 | gRPC | **WORKING** | Drift → L1 → Runbook verified |
 | Partner Portal | **SECURED** | Admin auth added, OAuth working |
-| User Auth | **SECURED** | Strong password, lockout, RBAC |
+| Dashboard | **WORKING** | Frontend updated for Jayla |
 | Evidence Pipeline | **SECURED** | Ed25519 signatures required |
 
 ---
 
-## Session 66 Accomplishments (Current)
+## Session 66 Continued Accomplishments
+
+### 1. Lab Network Back Online
+- Physical appliance (192.168.88.246) and iMac (192.168.88.50) reachable
+- Discovered appliance was in live ISO mode (tmpfs root, no A/B partitions)
+
+### 2. A/B Partition Install Attempted (FAILED)
+- Created GPT: ESP (512MB), A (2GB), B (2GB), DATA (remaining)
+- Installed GRUB with kernel/initrd
+- Boot FAILED - NixOS initramfs doesn't support partition-based boot
+- **Appliance is OFFLINE** - needs USB recovery
+
+### 3. VPS Fixes
+- Fixed `fleet_updates.py` bug (`a.name → a.host_id`) in `/opt/mcp-server/dashboard_api_mount/`
+- Updated central-command frontend for Jayla's login
+
+---
+
+## Session 66 Accomplishments
 
 ### 1. Partner Admin Endpoints Fixed on VPS
 - **Issue:** `/api/admin/partners/pending` and `/api/admin/partners/oauth-config` returning 404
