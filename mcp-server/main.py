@@ -2152,10 +2152,8 @@ async def receive_promotion_report(
     """
     Receive promotion reports from appliance learning systems.
 
-    Stores the report and sends email notifications for:
-    - Pending candidates requiring human review
-    - Auto-promoted rules
-    - Rolled back rules
+    Stores the report and individual candidates for site owner approval.
+    Sends email notifications to site owner for pending approvals.
     """
     try:
         now = datetime.now(timezone.utc)
@@ -2187,29 +2185,60 @@ async def receive_promotion_report(
                 "created_at": now.isoformat()
             }
         )
+
+        # Store individual candidates for approval workflow
+        candidate_ids = []
+        for candidate in req.pending_candidates:
+            candidate_id = str(uuid.uuid4())
+            candidate_ids.append(candidate_id)
+            stats = candidate.get("stats", {})
+            await db.execute(
+                text("""
+                    INSERT INTO learning_promotion_candidates
+                    (id, report_id, site_id, appliance_id, pattern_signature,
+                     recommended_action, confidence_score, success_rate,
+                     total_occurrences, l2_resolutions, promotion_reason,
+                     approval_status, created_at)
+                    VALUES (:id, :report_id, :site_id, :appliance_id, :pattern_signature,
+                            :recommended_action, :confidence_score, :success_rate,
+                            :total_occurrences, :l2_resolutions, :promotion_reason,
+                            'pending', :created_at)
+                """),
+                {
+                    "id": candidate_id,
+                    "report_id": report_id,
+                    "site_id": req.site_id,
+                    "appliance_id": req.appliance_id,
+                    "pattern_signature": candidate.get("pattern_signature", "")[:32],
+                    "recommended_action": candidate.get("recommended_action", "unknown"),
+                    "confidence_score": candidate.get("confidence_score", 0),
+                    "success_rate": stats.get("success_rate", 0),
+                    "total_occurrences": stats.get("total_occurrences", 0),
+                    "l2_resolutions": stats.get("l2_resolutions", 0),
+                    "promotion_reason": candidate.get("promotion_reason", ""),
+                    "created_at": now.isoformat()
+                }
+            )
+
         await db.commit()
 
-        # Send email notification if there are actionable items
-        should_notify = (
-            req.candidates_pending > 0 or
-            req.candidates_promoted > 0 or
-            len(req.rollbacks) > 0
-        )
+        # Send notification to site owner if there are pending candidates
+        if req.candidates_pending > 0:
+            await _notify_site_owner_promotion(req, candidate_ids, db)
 
-        if should_notify:
+        # Also notify admin about rollbacks (critical)
+        if req.rollbacks:
             await _send_promotion_notification(req, db)
 
         logger.info(
             f"Promotion report from {req.appliance_id}: "
-            f"{req.candidates_found} found, {req.candidates_promoted} promoted, "
-            f"{req.candidates_pending} pending"
+            f"{req.candidates_found} found, {req.candidates_pending} pending approval"
         )
 
-        return {"status": "ok", "report_id": report_id}
+        return {"status": "ok", "report_id": report_id, "candidate_ids": candidate_ids}
 
     except Exception as e:
         logger.error(f"Failed to process promotion report: {e}")
-        # Don't fail the request - appliance shouldn't retry
         return {"status": "error", "message": str(e)}
 
 
@@ -2307,52 +2336,326 @@ async def _send_promotion_notification(req: PromotionReportRequest, db: AsyncSes
         logger.error(f"Failed to send promotion notification: {e}")
 
 
+async def _notify_site_owner_promotion(
+    req: PromotionReportRequest,
+    candidate_ids: List[str],
+    db: AsyncSession
+):
+    """Send email notification to site owner about pending promotions."""
+    try:
+        # Get site owner email from sites table
+        result = await db.execute(
+            text("SELECT contact_email, name FROM sites WHERE site_id = :site_id"),
+            {"site_id": req.site_id}
+        )
+        row = result.fetchone()
+
+        if not row or not row[0]:
+            logger.debug(f"No contact email for site {req.site_id}")
+            return
+
+        owner_email = row[0]
+        site_name = row[1] or req.site_id
+
+        smtp_user = os.getenv("SMTP_USER", "")
+        smtp_password = os.getenv("SMTP_PASSWORD", "")
+
+        if not smtp_user or not smtp_password:
+            logger.debug("SMTP not configured - skipping site owner notification")
+            return
+
+        # Build email
+        subject = f"[{site_name}] {req.candidates_pending} automation rules ready for approval"
+
+        dashboard_url = os.getenv("DASHBOARD_URL", "https://dashboard.osiriscare.net")
+        approval_link = f"{dashboard_url}/learning?site={req.site_id}"
+
+        body_parts = [
+            f"<h2>New Automation Rules Detected</h2>",
+            f"<p>The compliance system has identified <strong>{req.candidates_pending}</strong> "
+            f"patterns that can be automated for your site.</p>",
+            f"<p><strong>Site:</strong> {site_name}</p>",
+            f"<p><strong>Appliance:</strong> {req.appliance_id}</p>",
+            "<hr>",
+            "<h3>Patterns Ready for Review</h3>",
+            "<table border='1' cellpadding='8' style='border-collapse: collapse;'>",
+            "<tr style='background:#f0f0f0;'><th>Action</th><th>Confidence</th><th>Success Rate</th><th>Occurrences</th></tr>"
+        ]
+
+        for c in req.pending_candidates[:5]:
+            stats = c.get("stats", {})
+            body_parts.append(
+                f"<tr>"
+                f"<td>{c.get('recommended_action', 'N/A')}</td>"
+                f"<td>{c.get('confidence_score', 0):.0%}</td>"
+                f"<td>{stats.get('success_rate', 0):.0%}</td>"
+                f"<td>{stats.get('total_occurrences', 0)}</td>"
+                f"</tr>"
+            )
+
+        if req.candidates_pending > 5:
+            body_parts.append(f"<tr><td colspan='4'><em>... and {req.candidates_pending - 5} more</em></td></tr>")
+
+        body_parts.extend([
+            "</table>",
+            "<br>",
+            f"<p><a href='{approval_link}' style='background:#4CAF50;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;'>Review & Approve</a></p>",
+            "<p style='color:#666;font-size:12px;'>These patterns have been successfully handled automatically multiple times. "
+            "Approving them will enable instant automated remediation without requiring AI processing.</p>"
+        ])
+
+        html_body = "\n".join(body_parts)
+
+        # Send email
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        smtp_host = os.getenv("SMTP_HOST", "mail.privateemail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_from = os.getenv("SMTP_FROM", "alerts@osiriscare.net")
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = smtp_from
+        msg["To"] = owner_email
+        msg.attach(MIMEText(html_body, "html"))
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+
+        # Mark candidates as notified
+        await db.execute(
+            text("UPDATE learning_promotion_candidates SET notified_at = :now WHERE id = ANY(:ids)"),
+            {"now": datetime.now(timezone.utc).isoformat(), "ids": candidate_ids}
+        )
+        await db.commit()
+
+        logger.info(f"Sent promotion approval request to {owner_email} for site {req.site_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to notify site owner: {e}")
+
+
 @app.get("/api/learning/promotion-candidates")
 async def get_promotion_candidates(
     site_id: Optional[str] = None,
+    status: str = "pending",
     db: AsyncSession = Depends(get_db)
 ):
-    """Get pending promotion candidates for dashboard display."""
+    """Get promotion candidates for dashboard display."""
     try:
-        # Get recent reports with pending candidates
         query = """
-            SELECT id, appliance_id, site_id, checked_at,
-                   candidates_pending, report_data, created_at
-            FROM learning_promotion_reports
-            WHERE candidates_pending > 0
+            SELECT id, report_id, site_id, appliance_id, pattern_signature,
+                   recommended_action, confidence_score, success_rate,
+                   total_occurrences, l2_resolutions, promotion_reason,
+                   approval_status, approved_by, approved_at, created_at
+            FROM learning_promotion_candidates
+            WHERE approval_status = :status
         """
-        params = {}
+        params = {"status": status}
 
         if site_id:
             query += " AND site_id = :site_id"
             params["site_id"] = site_id
 
-        query += " ORDER BY created_at DESC LIMIT 50"
+        query += " ORDER BY created_at DESC LIMIT 100"
 
         result = await db.execute(text(query), params)
         rows = result.fetchall()
 
-        candidates = []
-        for row in rows:
-            report_data = json.loads(row[5]) if row[5] else {}
-            for c in report_data.get("pending_candidates", []):
-                candidates.append({
-                    "report_id": row[0],
-                    "appliance_id": row[1],
-                    "site_id": row[2],
-                    "checked_at": row[3],
-                    **c
-                })
+        candidates = [
+            {
+                "id": str(row[0]),
+                "report_id": str(row[1]),
+                "site_id": row[2],
+                "appliance_id": row[3],
+                "pattern_signature": row[4],
+                "recommended_action": row[5],
+                "confidence_score": float(row[6]) if row[6] else 0,
+                "success_rate": float(row[7]) if row[7] else 0,
+                "total_occurrences": row[8],
+                "l2_resolutions": row[9],
+                "promotion_reason": row[10],
+                "approval_status": row[11],
+                "approved_by": str(row[12]) if row[12] else None,
+                "approved_at": row[13].isoformat() if row[13] else None,
+                "created_at": row[14].isoformat() if row[14] else None
+            }
+            for row in rows
+        ]
 
         return {
             "status": "ok",
-            "total_pending": len(candidates),
-            "candidates": candidates[:100]  # Limit response size
+            "total": len(candidates),
+            "candidates": candidates
         }
 
     except Exception as e:
         logger.error(f"Failed to get promotion candidates: {e}")
         return {"status": "error", "message": str(e), "candidates": []}
+
+
+class PromotionApprovalRequest(BaseModel):
+    """Request to approve or reject a promotion candidate."""
+    action: str  # "approve" or "reject"
+    reason: Optional[str] = None  # Required for rejection
+
+
+@app.post("/api/learning/promotions/{candidate_id}/review")
+async def review_promotion_candidate(
+    candidate_id: str,
+    req: PromotionApprovalRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Approve or reject a promotion candidate.
+
+    Site owners can approve patterns to be promoted to L1 deterministic rules.
+    """
+    try:
+        # Get current user from session
+        current_user = await get_current_user_from_session(request, db)
+        if not current_user:
+            return JSONResponse(status_code=401, content={"error": "Not authenticated"})
+
+        # Verify the candidate exists
+        result = await db.execute(
+            text("SELECT site_id, approval_status FROM learning_promotion_candidates WHERE id = :id"),
+            {"id": candidate_id}
+        )
+        row = result.fetchone()
+
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Candidate not found"})
+
+        site_id = row[0]
+        current_status = row[1]
+
+        if current_status != "pending":
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Candidate already {current_status}"}
+            )
+
+        # Check user has access to this site (admin or site owner)
+        # For now, allow any authenticated user - can add site-level perms later
+        if current_user["role"] not in ["admin", "operator"]:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Insufficient permissions"}
+            )
+
+        now = datetime.now(timezone.utc)
+
+        if req.action == "approve":
+            await db.execute(
+                text("""
+                    UPDATE learning_promotion_candidates
+                    SET approval_status = 'approved',
+                        approved_by = :user_id,
+                        approved_at = :now
+                    WHERE id = :id
+                """),
+                {"id": candidate_id, "user_id": current_user["id"], "now": now.isoformat()}
+            )
+            await db.commit()
+
+            logger.info(f"Promotion candidate {candidate_id} approved by {current_user['username']}")
+            return {"status": "ok", "message": "Promotion approved", "approval_status": "approved"}
+
+        elif req.action == "reject":
+            await db.execute(
+                text("""
+                    UPDATE learning_promotion_candidates
+                    SET approval_status = 'rejected',
+                        approved_by = :user_id,
+                        approved_at = :now,
+                        rejection_reason = :reason
+                    WHERE id = :id
+                """),
+                {
+                    "id": candidate_id,
+                    "user_id": current_user["id"],
+                    "now": now.isoformat(),
+                    "reason": req.reason or "Rejected by user"
+                }
+            )
+            await db.commit()
+
+            logger.info(f"Promotion candidate {candidate_id} rejected by {current_user['username']}")
+            return {"status": "ok", "message": "Promotion rejected", "approval_status": "rejected"}
+
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Invalid action. Use 'approve' or 'reject'"}
+            )
+
+    except Exception as e:
+        logger.error(f"Failed to review promotion: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/learning/approved-promotions")
+async def get_approved_promotions(
+    site_id: str,
+    since: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get approved promotions for an appliance to apply.
+
+    Called by appliances during sync to get newly approved rules.
+    """
+    try:
+        query = """
+            SELECT id, pattern_signature, recommended_action, confidence_score,
+                   success_rate, total_occurrences, l2_resolutions, promotion_reason,
+                   approved_at
+            FROM learning_promotion_candidates
+            WHERE site_id = :site_id
+            AND approval_status = 'approved'
+        """
+        params = {"site_id": site_id}
+
+        if since:
+            query += " AND approved_at > :since"
+            params["since"] = since
+
+        query += " ORDER BY approved_at ASC"
+
+        result = await db.execute(text(query), params)
+        rows = result.fetchall()
+
+        promotions = [
+            {
+                "id": str(row[0]),
+                "pattern_signature": row[1],
+                "recommended_action": row[2],
+                "confidence_score": float(row[3]) if row[3] else 0,
+                "success_rate": float(row[4]) if row[4] else 0,
+                "total_occurrences": row[5],
+                "l2_resolutions": row[6],
+                "promotion_reason": row[7],
+                "approved_at": row[8].isoformat() if row[8] else None
+            }
+            for row in rows
+        ]
+
+        return {
+            "status": "ok",
+            "site_id": site_id,
+            "count": len(promotions),
+            "promotions": promotions
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get approved promotions: {e}")
+        return {"status": "error", "message": str(e), "promotions": []}
 
 
 # Alias for agent compatibility
