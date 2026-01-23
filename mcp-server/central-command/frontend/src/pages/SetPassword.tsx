@@ -47,8 +47,8 @@ export default function SetPassword() {
       return;
     }
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
+    if (password.length < 12) {
+      setError('Password must be at least 12 characters');
       return;
     }
 
@@ -74,7 +74,7 @@ export default function SetPassword() {
   };
 
   const passwordsMatch = password === confirmPassword;
-  const passwordValid = password.length >= 8;
+  const passwordValid = password.length >= 12;
 
   // Loading state
   if (validating) {
@@ -169,11 +169,11 @@ export default function SetPassword() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-4 py-3 bg-fill-secondary border border-separator-default rounded-lg text-label-primary focus:outline-none focus:border-accent-primary"
-              placeholder="Minimum 8 characters"
+              placeholder="Minimum 12 characters"
               required
             />
             {password && !passwordValid && (
-              <p className="text-xs text-red-400 mt-1">Password must be at least 8 characters</p>
+              <p className="text-xs text-red-400 mt-1">Password must be at least 12 characters</p>
             )}
           </div>
 
