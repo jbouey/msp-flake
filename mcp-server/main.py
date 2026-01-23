@@ -2084,11 +2084,27 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
         )
         db_rules = []
         for row in result.fetchall():
+            # Convert incident_pattern dict to conditions list
+            # Database stores: {"incident_type": "firewall"} or {"check_type": "screen_lock"}
+            # Conditions format: [{"field": "incident_type", "operator": "eq", "value": "firewall"}]
+            pattern = row[1]
+            if isinstance(pattern, list):
+                conditions = pattern
+            elif isinstance(pattern, dict):
+                conditions = [
+                    {"field": k, "operator": "eq", "value": v}
+                    for k, v in pattern.items()
+                ]
+                # Add status condition for fail/warning/error
+                conditions.append({"field": "status", "operator": "in", "value": ["warning", "fail", "error"]})
+            else:
+                conditions = []
+
             db_rules.append({
                 "id": row[0],
                 "name": f"Promoted: {row[0]}",
                 "description": f"Auto-promoted rule with {row[3]:.0%} confidence",
-                "conditions": row[1] if isinstance(row[1], list) else [],
+                "conditions": conditions,
                 "actions": [f"run_runbook:{row[2]}"],
                 "severity": "medium",
                 "cooldown_seconds": 300,
