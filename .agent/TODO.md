@@ -62,14 +62,36 @@ ALTER TABLE sites ADD COLUMN IF NOT EXISTS agent_public_key VARCHAR(128);
 | Sites API | ✅ SECURED | PIPELINE_SECURITY_AUDIT |
 
 ### Open Issues (Non-Critical)
-- MEDIUM: No rate limiting on login/API endpoints
+- ~~MEDIUM: No rate limiting on login/API endpoints~~ - ✅ FIXED
 - LOW: bcrypt not installed (using SHA-256 fallback)
 
 ### Next Priorities
 1. **Test Remote ISO Update via Fleet Updates** - A/B partition system ready
-2. **Register Agent Public Keys** - Sites need `agent_public_key` for evidence verification
-3. **Add Rate Limiting Middleware** - MEDIUM priority from audit
+2. ~~**Register Agent Public Keys**~~ - ✅ DONE
+3. ~~**Add Rate Limiting Middleware**~~ - ✅ DONE
 4. **Install bcrypt in Docker Image** - LOW priority from audit
+5. **Configure Appliance Evidence Signing** - Appliance needs to sign bundles
+
+---
+
+## Session 65 Continuation (2026-01-23) - Security Hardening
+
+### Completed
+1. **Agent Public Key Registration**
+   - Generated Ed25519 public key from appliance private key
+   - Public key: `46a39bab029f186341ac57f911c71389276d3059fede54ac57640faf60b2bf39`
+   - Registered in database for `physical-appliance-pilot-1aea78`
+   - Evidence submission now verifies signatures (401 if invalid)
+
+2. **Rate Limiting Middleware Deployed**
+   - Added `RateLimitMiddleware` to server.py
+   - Limits: 60 req/min, 1000 req/hour, burst 10
+   - Auth endpoints tracked separately
+   - Returns 429 Too Many Requests when exceeded
+   - Verified working: parallel requests → 429 responses
+
+### Commits
+- `599eb11` - feat: Add rate limiting middleware to Central Command API
 
 ---
 
