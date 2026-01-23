@@ -259,6 +259,18 @@ async def delete_user(
         {"id": user_id}
     )
 
+    # Delete OAuth identities if any
+    await db.execute(
+        text("DELETE FROM admin_oauth_identities WHERE user_id = :id"),
+        {"id": user_id}
+    )
+
+    # Set audit log user_id to NULL to preserve audit trail
+    await db.execute(
+        text("UPDATE admin_audit_log SET user_id = NULL WHERE user_id = :id"),
+        {"id": user_id}
+    )
+
     # Delete user
     await db.execute(
         text("DELETE FROM admin_users WHERE id = :id"),
