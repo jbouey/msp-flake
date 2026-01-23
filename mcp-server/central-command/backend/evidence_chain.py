@@ -366,18 +366,61 @@ async def submit_evidence(
     """
     Submit an evidence bundle from appliance.
 
+    - Verifies Ed25519 signature from registered agent (REQUIRED)
     - Stores bundle in database
     - Links to previous bundle (hash chain)
     - Submits hash to OTS (async, background)
     - Triggers WORM upload if enabled
+
+    Security: Only appliances with a registered public key can submit evidence.
+    The agent_signature must be valid for the bundle content.
     """
-    # Verify site exists
+    # Verify site exists and get its registered public key
     site_result = await db.execute(
-        text("SELECT site_id FROM sites WHERE site_id = :site_id"),
+        text("SELECT site_id, agent_public_key FROM sites WHERE site_id = :site_id"),
         {"site_id": site_id}
     )
-    if not site_result.fetchone():
+    site_row = site_result.fetchone()
+    if not site_row:
         raise HTTPException(status_code=404, detail=f"Site not found: {site_id}")
+
+    # SECURITY: Require Ed25519 signature verification for evidence submission
+    # This prevents unauthorized parties from injecting fake evidence into the chain
+    if not bundle.agent_signature:
+        logger.warning(f"Evidence submission rejected: no signature provided for site={site_id}")
+        raise HTTPException(
+            status_code=401,
+            detail="Evidence submission requires agent_signature"
+        )
+
+    if not site_row.agent_public_key:
+        logger.warning(f"Evidence submission rejected: no public key registered for site={site_id}")
+        raise HTTPException(
+            status_code=401,
+            detail="Site has no registered agent public key"
+        )
+
+    # Verify the Ed25519 signature
+    # The signed data is the core bundle content that the agent signs
+    signed_data = json.dumps({
+        "site_id": site_id,
+        "checked_at": bundle.checked_at.isoformat(),
+        "checks": bundle.checks,
+        "summary": bundle.summary
+    }, sort_keys=True).encode('utf-8')
+
+    if not verify_ed25519_signature(
+        data=signed_data,
+        signature_hex=bundle.agent_signature,
+        public_key_hex=site_row.agent_public_key
+    ):
+        logger.warning(f"Evidence submission rejected: invalid signature for site={site_id}")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid agent signature"
+        )
+
+    logger.info(f"Evidence signature verified for site={site_id}")
 
     # Generate bundle_id if not provided
     import uuid
