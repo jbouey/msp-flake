@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-22 (Session 62 - Complete)
-**Current State:** Phase 13 Zero-Touch Updates, **ISO v44 Deployed**, Full Coverage Healing, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**
+**Last Updated:** 2026-01-23 (Session 65 - Starting)
+**Current State:** Phase 13 Zero-Touch Updates, **ISO v44 Deployed**, Full Coverage Healing, **Go Agent Deployed to ALL 3 VMs**, **Partner Admin Router Fixed**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
 
 ---
 
@@ -9,7 +9,7 @@
 
 | Component | Status | Version |
 |-----------|--------|---------|
-| Agent | v1.0.44 | Stable |
+| Agent | v1.0.45 | Stable |
 | ISO | v44 | **DEPLOYED to physical appliance** |
 | Tests | 834 + 24 Go tests | Healthy |
 | A/B Partition System | **VERIFIED WORKING** | Health gate active, GRUB config |
@@ -18,14 +18,70 @@
 | Chaos Lab | **HEALING-FIRST** | Restores disabled by default |
 | DC Healing | **100% SUCCESS** | 5/5 firewall heals |
 | All 3 VMs | **WINRM WORKING** | DC, WS, SRV accessible |
-| Go Agent | **DEPLOYED to NVWS01** | gRPC Working |
+| **Go Agent** | **DEPLOYED to ALL 3 VMs** | DC, WS, SRV - gRPC Working |
 | gRPC | **VERIFIED WORKING** | Drift → L1 → Runbook |
 | Active Healing | **ENABLED** | HEALING_DRY_RUN=false |
 | Partner Portal | **OAUTH WORKING** | Google + Microsoft login |
+| **Partner Admin** | **ROUTER FIXED** | Pending approvals, oauth-config working |
 | Domain Whitelisting | **CONFIG UI DEPLOYED** | Auto-approve by domain |
 | Claude Code Skills | **9 SKILL FILES** | Auto-loading per task type |
 | Evidence Security | **HARDENED** | Ed25519 verify + OTS validation |
-| **Learning System** | **NOW OPERATIONAL** | Resolution recording fixed |
+| Learning System | **OPERATIONAL** | Resolution recording fixed |
+
+---
+
+## Session 64 Summary (2026-01-23) - COMPLETE
+
+### Go Agent Full Deployment
+
+#### 1. Partner Admin Router Fixed
+- **Issue:** Partner admin endpoints returning 404 (pending approvals, oauth-config)
+- **Root Cause:** `admin_router` from `partner_auth.py` was not registered in `main.py`
+- **Fix:** Added `partner_admin_router` import and `app.include_router()` call
+- **Commit:** `9edd9fc`
+
+#### 2. Go Agent Deployed to All 3 Windows VMs
+| VM | IP | Status |
+|----|-----|--------|
+| NVDC01 | 192.168.88.250 | Domain Controller - Agent running |
+| NVSRV01 | 192.168.88.244 | Server Core - Agent running |
+| NVWS01 | 192.168.88.251 | Workstation - Already deployed |
+
+All three now sending gRPC drift events to appliance.
+
+#### 3. Go Agent Configuration Issues Resolved
+- **Wrong config key:** Changed `appliance_address` → `appliance_addr`
+- **Missing -config flag:** Scheduled task must include `-config C:\OsirisCare\config.json`
+- **Binary version mismatch:** Updated DC/SRV from 15MB to 16.6MB version
+- **Working directory:** Must set `WorkingDirectory` to `C:\OsirisCare`
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/main.py` | Added partner_admin_router registration |
+| `/var/www/status/osiris-agent.exe` (appliance) | Updated to 16.6MB version |
+
+---
+
+## Session 63 Summary (2026-01-23) - COMPLETE
+
+### Production Healing + Learning Loop Audit
+
+#### 1. Production Healing Mode Enabled
+- **Issue:** Healing was in dry-run mode despite environment variable
+- **Root Cause:** `ApplianceConfig` loads from `/var/lib/msp/config.yaml`, not environment variables
+- **Fix:** Added `healing_dry_run: false` and `healing_enabled: true` to config.yaml
+- **Result:** Agent now shows "Three-tier healing enabled (ACTIVE)"
+
+#### 2. run_runbook: Action Handler Added
+- Auto-promoted rules use `run_runbook:<ID>` format but executor didn't handle it
+- Added handler in `appliance_agent.py`
+- **Commit:** `ebc4963`
+
+#### 3. Learning Loop Runbook Mapping Fix
+- **Issue:** Learning system generated rules with non-existent runbook IDs like `AUTO-BITLOCKER_STATUS`
+- **Fix:** Added `CHECK_TYPE_TO_RUNBOOK` mapping dictionary
+- **Commit:** `26442af`
 
 ---
 

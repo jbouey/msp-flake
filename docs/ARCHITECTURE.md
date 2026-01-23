@@ -1,9 +1,9 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-01-17 (Session 47 - Go Agent Compliance Checks Implementation)
-**Agent Version:** v1.0.37
-**ISO Version:** v37
-**Go Agent:** Registry queries implemented, 24 tests
+**Last Updated:** 2026-01-23 (Session 65)
+**Agent Version:** v1.0.45
+**ISO Version:** v44 (deployed to physical appliance)
+**Go Agent:** Deployed to all 3 VMs (DC, WS, SRV), gRPC verified working, 24 tests
 
 ## Overview
 
