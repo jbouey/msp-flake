@@ -2034,6 +2034,35 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "cooldown_seconds": 7200,
             "max_retries": 1,
             "source": "builtin"
+        },
+        # Go Agent check_types (mapped from grpc_server.py)
+        {
+            "id": "L1-SCREENLOCK-001",
+            "name": "Screen Lock Policy",
+            "description": "Enforce screen lock timeout and password requirement",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "screen_lock"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["set_screen_lock_policy"],
+            "severity": "high",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-PATCHING-001",
+            "name": "Windows Update Service",
+            "description": "Ensure Windows Update service is running and updates are applied",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "patching"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["trigger_windows_update"],
+            "severity": "critical",
+            "cooldown_seconds": 86400,
+            "max_retries": 1,
+            "source": "builtin"
         }
     ]
 
