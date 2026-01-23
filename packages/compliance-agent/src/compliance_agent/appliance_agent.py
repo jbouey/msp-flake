@@ -1001,6 +1001,16 @@ class ApplianceAgent:
                 "phases": ["remediate", "verify"],
             }
             return await self._heal_run_windows_runbook(runbook_params, incident)
+        elif action.startswith("run_runbook:"):
+            # Auto-promoted L1 rules use run_runbook:<RUNBOOK_ID> format
+            runbook_id = action.split(":", 1)[1]
+            logger.info(f"Executing auto-promoted rule runbook: {runbook_id}")
+            runbook_params = {
+                **params,
+                "runbook_id": runbook_id,
+                "phases": ["remediate", "verify"],
+            }
+            return await self._heal_run_windows_runbook(runbook_params, incident)
         else:
             logger.warning(f"Unknown healing action: {action}")
             return {"error": f"Unknown action: {action}"}
