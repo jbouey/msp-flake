@@ -29,6 +29,54 @@ let
 
     doCheck = false;
   };
+
+  # Build the network-scanner package (EYES)
+  network-scanner = pkgs.python311Packages.buildPythonApplication {
+    pname = "network-scanner";
+    version = "0.1.0";  # Session 69 - Device discovery
+    src = ../packages/network-scanner;
+
+    propagatedBuildInputs = with pkgs.python311Packages; [
+      aiohttp
+      pydantic
+      pyyaml
+      python-nmap
+      ldap3
+    ];
+
+    doCheck = false;
+  };
+
+  # Build the local-portal package (WINDOW)
+  local-portal = pkgs.python311Packages.buildPythonApplication {
+    pname = "local-portal";
+    version = "0.1.0";  # Session 69 - Device transparency UI
+    src = ../packages/local-portal;
+
+    propagatedBuildInputs = with pkgs.python311Packages; [
+      fastapi
+      uvicorn
+      aiohttp
+      pydantic
+      python-multipart
+      reportlab
+    ];
+
+    doCheck = false;
+  };
+
+  # Build the local-portal frontend
+  local-portal-frontend = pkgs.buildNpmPackage {
+    pname = "local-portal-frontend";
+    version = "0.1.0";
+    src = ../packages/local-portal/frontend;
+    npmDepsHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # TODO: Update after first build
+    buildPhase = "npm run build";
+    installPhase = ''
+      mkdir -p $out
+      cp -r dist/* $out/
+    '';
+  };
 in
 {
   # Note: installation-cd-minimal.nix is imported from the flake, not here
@@ -61,9 +109,11 @@ in
 
     Access via: ssh root@osiriscare-appliance.local
     Status page: http://osiriscare-appliance.local
+    Local Portal: http://osiriscare-appliance.local:8083
 
     Run 'ip addr' to see IP addresses
     Run 'journalctl -u compliance-agent -f' to watch agent
+    Run 'journalctl -u network-scanner -f' to watch scanner
 
   '';
 
@@ -136,6 +186,104 @@ in
   };
 
   # ============================================================================
+  # Network Scanner Service (EYES) - Device Discovery
+  # ============================================================================
+  systemd.services.network-scanner = {
+    description = "MSP Network Scanner (EYES) - Device Discovery";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "msp-auto-provision.service" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${network-scanner}/bin/network-scanner";
+      Restart = "always";
+      RestartSec = "30s";
+
+      WorkingDirectory = "/var/lib/msp";
+
+      StandardOutput = "journal";
+      StandardError = "journal";
+      SyslogIdentifier = "network-scanner";
+
+      # Security hardening
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      ReadWritePaths = [ "/var/lib/msp" ];
+      NoNewPrivileges = true;
+
+      # Capabilities for network scanning
+      AmbientCapabilities = [ "CAP_NET_RAW" "CAP_NET_ADMIN" ];
+      CapabilityBoundingSet = [ "CAP_NET_RAW" "CAP_NET_ADMIN" ];
+    };
+
+    environment = {
+      SCANNER_DB_PATH = "/var/lib/msp/devices.db";
+      SCANNER_API_PORT = "8082";
+      SCANNER_DAILY_SCAN_HOUR = "2";
+      SCANNER_EXCLUDE_MEDICAL = "1";  # Always exclude medical devices by default
+    };
+  };
+
+  # Daily network scan timer (2 AM)
+  systemd.timers.network-scanner-daily = {
+    description = "Daily network scan timer";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "*-*-* 02:00:00";
+      Persistent = true;
+      RandomizedDelaySec = "5m";
+    };
+  };
+
+  systemd.services.network-scanner-daily = {
+    description = "Trigger daily network scan";
+    after = [ "network-scanner.service" ];
+    requires = [ "network-scanner.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.curl}/bin/curl -X POST http://127.0.0.1:8082/api/scans/trigger -H 'Content-Type: application/json' -d '{\"scan_type\": \"full\", \"triggered_by\": \"schedule\"}'";
+    };
+  };
+
+  # ============================================================================
+  # Local Portal Service (WINDOW) - Device Transparency UI
+  # ============================================================================
+  systemd.services.local-portal = {
+    description = "MSP Local Portal (WINDOW) - Device Transparency UI";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "network-scanner.service" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${local-portal}/bin/local-portal --port 8083 --host 0.0.0.0";
+      Restart = "always";
+      RestartSec = "10s";
+
+      WorkingDirectory = "/var/lib/msp";
+
+      StandardOutput = "journal";
+      StandardError = "journal";
+      SyslogIdentifier = "local-portal";
+
+      # Security hardening
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      ReadWritePaths = [ "/var/lib/msp" ];
+      NoNewPrivileges = true;
+    };
+
+    environment = {
+      SCANNER_DB_PATH = "/var/lib/msp/devices.db";
+      SCANNER_API_URL = "http://127.0.0.1:8082";
+      EXPORT_DIR = "/var/lib/msp/exports";
+    };
+  };
+
+  # ============================================================================
   # Minimal packages - only what the appliance needs
   # ============================================================================
   environment.systemPackages = with pkgs; [
@@ -149,8 +297,16 @@ in
     iputils
     dnsutils
 
+    # Network scanning (for network-scanner service)
+    nmap
+    arp-scan
+
     # Compliance agent (includes all Python dependencies)
     compliance-agent
+
+    # Network scanner and local portal
+    network-scanner
+    local-portal
 
     # Config management
     jq
@@ -164,7 +320,7 @@ in
     useDHCP = true;
     firewall = {
       enable = true;
-      allowedTCPPorts = [ 80 22 8080 50051 ];  # Status + SSH + Sensor API + gRPC
+      allowedTCPPorts = [ 80 22 8080 50051 8082 8083 ];  # Status + SSH + Sensor API + gRPC + Scanner API + Local Portal
       allowedUDPPorts = [ 5353 ];   # mDNS
       # No other inbound - pull-only architecture
     };
@@ -219,6 +375,7 @@ in
     mkdir -p /var/lib/msp/rules
     mkdir -p /var/lib/msp/update
     mkdir -p /var/lib/msp/update/downloads
+    mkdir -p /var/lib/msp/exports
     mkdir -p /etc/msp/certs
     chmod 700 /var/lib/msp /etc/msp/certs
   '';

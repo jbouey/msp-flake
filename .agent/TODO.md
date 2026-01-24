@@ -173,12 +173,13 @@
 
 ## Next Session Priorities
 
-### 1. Integration Test on Physical Appliance
+### 1. Build and Deploy Updated ISO
 **Status:** READY
 **Details:**
-- Update appliance-image.nix to import new modules
-- Build ISO with network-scanner and local-portal
-- Deploy and test device discovery
+- `iso/appliance-image.nix` now includes network-scanner and local-portal
+- Ports 8082 (scanner API) and 8083 (local portal) configured
+- Build ISO on VPS: `nix build .#appliance-iso`
+- Deploy to physical appliance via OTA USB update
 
 ### 2. Central Command Device UI
 **Status:** READY
