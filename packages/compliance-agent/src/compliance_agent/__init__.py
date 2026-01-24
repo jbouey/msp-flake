@@ -1,6 +1,6 @@
 """MSP Compliance Agent - Self-Healing NixOS Agent"""
 
-__version__ = "0.2.0"
+__version__ = "1.0.46"
 
 # Three-Tier Auto-Healing Architecture
 from .incident_db import IncidentDatabase, Incident, ResolutionLevel, IncidentOutcome
