@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
 **Last Updated:** 2026-01-24 (Session 68 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.47, ISO v46, **CLIENT PORTAL ALL PHASES COMPLETE**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **A/B Partition Update System**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance ONLINE**)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.47, **ISO v47 DEPLOYED**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.47**)
 
 ---
 
@@ -68,6 +68,23 @@
   - Common workflows
   - Keyboard shortcuts
   - Troubleshooting guide
+
+#### 5. v47 ISO Deployed to Physical Appliance
+- **Version Bump:** 1.0.46 → 1.0.47 in all version files
+- **ISO Built:** On VPS via nix build
+- **SHA256:** `bbf2e943d6fb8e08083f3f3d4f749f29266397fb5c705cf859fc6da291a6cb25`
+- **Release Created:** v47 in Fleet Updates database
+- **OTA USB Update:** Downloaded ISO, verified hash, dd to USB, reboot
+- **Verified:** Appliance running agent v1.0.47
+
+#### 6. Chaos Lab Healing Verified
+- **Chaos Script:** Disables firewall, stops Windows Update, disables screen lock
+- **Config Fixed:** Added `healing_enabled: true`, `healing_dry_run: false`
+- **Results:**
+  - Firewall OFF → L1-FIREWALL-002 → RB-WIN-SEC-001 → **HEALED**
+  - Windows Update stopped → RB-WIN-SEC-005 → **HEALED**
+  - BitLocker drift → Go agent → **HEALED**
+  - Defender issues → L1-DEFENDER-001 → RB-WIN-SEC-006 → Running
 
 ### Files Modified This Session
 
