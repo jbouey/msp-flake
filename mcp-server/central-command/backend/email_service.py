@@ -161,6 +161,41 @@ OsirisCare Central Command
         return False
 
 
+async def send_email(to_email: str, subject: str, body: str) -> bool:
+    """Send a simple plain-text email.
+
+    Args:
+        to_email: Recipient email address
+        subject: Email subject
+        body: Plain text body
+
+    Returns:
+        True if email sent successfully, False otherwise
+    """
+    if not is_email_configured():
+        logger.warning("Email not configured - skipping email")
+        return False
+
+    try:
+        msg = MIMEText(body, "plain")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_FROM
+        msg["To"] = to_email
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls(context=context)
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM, to_email, msg.as_string())
+
+        logger.info(f"Email sent to {to_email}: {subject}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {e}")
+        return False
+
+
 def send_password_reset_email(
     to_email: str,
     reset_token: str,
