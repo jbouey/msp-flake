@@ -20,7 +20,17 @@ src/
 ├── contexts/       # Auth, Partner contexts
 ├── utils/          # API client (api.ts)
 ├── types/          # TypeScript interfaces
-└── partner/        # Partner portal UI
+├── partner/        # Partner portal UI
+└── client/         # Client portal UI (OsirisCare-branded)
+    ├── ClientContext.tsx    # Cookie-based auth context
+    ├── ClientLogin.tsx      # Magic link + password
+    ├── ClientVerify.tsx     # Token validation
+    ├── ClientDashboard.tsx  # Main dashboard with KPIs
+    ├── ClientEvidence.tsx   # Evidence archive
+    ├── ClientReports.tsx    # Monthly/annual reports
+    ├── ClientNotifications.tsx
+    ├── ClientSettings.tsx   # Password, transfer provider
+    └── ClientHelp.tsx       # Help documentation with visuals
 ```
 
 ## React Query Patterns
@@ -199,7 +209,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 ## Routing Structure
 
 ```typescript
-// Main routes
+// Main routes (admin app)
 <Routes>
   <Route path="/" element={<Dashboard />} />
   <Route path="/sites" element={<Sites />} />
@@ -210,9 +220,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   <Route path="/fleet-updates" element={<FleetUpdates />} />
 </Routes>
 
-// Portal routes (separate auth)
+// Portal routes (site-based magic link)
 <Route path="/portal/site/:siteId" element={<PortalLogin />} />
 <Route path="/portal/site/:siteId/dashboard" element={<PortalDashboard />} />
+
+// Partner routes (API key auth)
+<Route path="/partner/*" element={<PartnerProvider>...</PartnerProvider>} />
+
+// Client portal routes (OsirisCare-branded, cookie auth)
+<Route path="/client/*" element={<ClientProvider>
+  <Routes>
+    <Route path="login" element={<ClientLogin />} />
+    <Route path="verify" element={<ClientVerify />} />
+    <Route path="dashboard" element={<ClientDashboard />} />
+    <Route path="evidence" element={<ClientEvidence />} />
+    <Route path="reports" element={<ClientReports />} />
+    <Route path="notifications" element={<ClientNotifications />} />
+    <Route path="settings" element={<ClientSettings />} />
+    <Route path="help" element={<ClientHelp />} />
+  </Routes>
+</ClientProvider>} />
 ```
 
 ## Key Files
