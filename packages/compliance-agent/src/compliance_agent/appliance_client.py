@@ -228,7 +228,8 @@ class CentralCommandClient:
         timestamp: Optional[datetime] = None,
         host: Optional[str] = None,
         hipaa_control: Optional[str] = None,
-        agent_signature: Optional[str] = None
+        agent_signature: Optional[str] = None,
+        signer: Optional[Any] = None  # Ed25519Signer instance
     ) -> Optional[str]:
         """
         Submit evidence bundle to Central Command.
@@ -256,28 +257,46 @@ class CentralCommandClient:
             host = socket.gethostname()
 
         # Build payload matching server's EvidenceBundleCreate model
+        checks = [
+            {
+                "check": check_type,
+                "status": check_result,
+                "host": host,
+                "details": evidence_data,
+                "hipaa_control": hipaa_control
+            }
+        ]
+        summary = {
+            "total_checks": 1,
+            "compliant": 1 if check_result == "compliant" else 0,
+            "non_compliant": 1 if check_result == "non_compliant" else 0,
+            "errors": 1 if check_result == "error" else 0,
+            "local_hash": bundle_hash  # For client-side verification
+        }
+
         payload = {
             "site_id": self.config.site_id,
             "checked_at": timestamp.isoformat(),
-            "checks": [
-                {
-                    "check": check_type,
-                    "status": check_result,
-                    "host": host,
-                    "details": evidence_data,
-                    "hipaa_control": hipaa_control
-                }
-            ],
-            "summary": {
-                "total_checks": 1,
-                "compliant": 1 if check_result == "compliant" else 0,
-                "non_compliant": 1 if check_result == "non_compliant" else 0,
-                "errors": 1 if check_result == "error" else 0,
-                "local_hash": bundle_hash  # For client-side verification
-            }
+            "checks": checks,
+            "summary": summary
         }
 
-        # Include agent signature if provided
+        # Sign the payload if signer is provided (matches server-side verification)
+        if signer and not agent_signature:
+            try:
+                # Build the exact structure the server expects for verification
+                signed_data = json.dumps({
+                    "site_id": self.config.site_id,
+                    "checked_at": timestamp.isoformat(),
+                    "checks": checks,
+                    "summary": summary
+                }, sort_keys=True)
+                signature_bytes = signer.sign(signed_data)
+                agent_signature = signature_bytes.hex()
+            except Exception as e:
+                logger.warning(f"Failed to sign evidence bundle: {e}")
+
+        # Include agent signature if available
         if agent_signature:
             payload["agent_signature"] = agent_signature
 
