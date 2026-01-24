@@ -27,10 +27,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Literal
 from decimal import Decimal
 
-from fastapi import APIRouter, Request, Response, HTTPException, Depends, Cookie, Query
+from fastapi import APIRouter, Request, Response, HTTPException, Depends, Cookie, Query, Header
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 import httpx
+
+# Stripe integration (optional - graceful fallback if not installed)
+try:
+    import stripe
+    STRIPE_AVAILABLE = True
+except ImportError:
+    stripe = None
+    STRIPE_AVAILABLE = False
 
 from .fleet import get_pool
 
@@ -49,6 +57,16 @@ SESSION_COOKIE_MAX_AGE = SESSION_DURATION_DAYS * 24 * 60 * 60
 
 # Magic link configuration
 MAGIC_LINK_EXPIRY_MINUTES = 60
+
+# Stripe configuration
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")  # Default subscription price
+
+# Initialize Stripe
+if STRIPE_AVAILABLE and STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
+    logger.info("Stripe integration enabled")
 
 
 # =============================================================================
@@ -1355,3 +1373,377 @@ async def cancel_transfer(user: dict = Depends(require_client_owner)):
             raise HTTPException(status_code=404, detail="No pending transfer request")
 
     return {"status": "cancelled"}
+
+
+# =============================================================================
+# BILLING ENDPOINTS (Stripe Integration)
+# =============================================================================
+
+def require_stripe():
+    """Dependency that ensures Stripe is configured."""
+    if not STRIPE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Billing service not available (Stripe not installed)"
+        )
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Billing service not configured"
+        )
+    return True
+
+
+class CreateCheckoutRequest(BaseModel):
+    """Request to create a checkout session."""
+    price_id: Optional[str] = None  # Use default if not specified
+    success_url: Optional[str] = None
+    cancel_url: Optional[str] = None
+
+
+@auth_router.get("/billing")
+async def get_billing_info(
+    user: dict = Depends(require_client_owner),
+    _: bool = Depends(require_stripe)
+):
+    """
+    Get current billing information for the organization.
+
+    Returns:
+    - Current subscription status
+    - Payment method on file
+    - Next billing date
+    - Current plan details
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        org = await conn.fetchrow("""
+            SELECT stripe_customer_id, subscription_status, subscription_plan,
+                   billing_email, next_billing_date
+            FROM client_orgs
+            WHERE id = $1
+        """, org_id)
+
+        if not org or not org["stripe_customer_id"]:
+            return {
+                "has_subscription": False,
+                "status": "no_subscription",
+                "message": "No active subscription. Set up billing to access premium features."
+            }
+
+        # Fetch subscription details from Stripe
+        try:
+            customer = stripe.Customer.retrieve(
+                org["stripe_customer_id"],
+                expand=["subscriptions", "default_source"]
+            )
+
+            subscriptions = customer.subscriptions.data if customer.subscriptions else []
+            active_sub = next((s for s in subscriptions if s.status in ["active", "trialing"]), None)
+
+            # Get payment method
+            payment_method = None
+            if customer.invoice_settings and customer.invoice_settings.default_payment_method:
+                pm = stripe.PaymentMethod.retrieve(customer.invoice_settings.default_payment_method)
+                if pm.card:
+                    payment_method = {
+                        "type": "card",
+                        "brand": pm.card.brand,
+                        "last4": pm.card.last4,
+                        "exp_month": pm.card.exp_month,
+                        "exp_year": pm.card.exp_year,
+                    }
+
+            if active_sub:
+                return {
+                    "has_subscription": True,
+                    "status": active_sub.status,
+                    "plan": {
+                        "name": active_sub.items.data[0].price.nickname or "OsirisCare Compliance",
+                        "amount": active_sub.items.data[0].price.unit_amount / 100,
+                        "currency": active_sub.items.data[0].price.currency.upper(),
+                        "interval": active_sub.items.data[0].price.recurring.interval,
+                    },
+                    "current_period_end": datetime.fromtimestamp(active_sub.current_period_end).isoformat(),
+                    "cancel_at_period_end": active_sub.cancel_at_period_end,
+                    "payment_method": payment_method,
+                }
+            else:
+                return {
+                    "has_subscription": False,
+                    "status": "inactive",
+                    "payment_method": payment_method,
+                    "message": "Your subscription is not active."
+                }
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe API error: {e}")
+            raise HTTPException(status_code=502, detail="Failed to fetch billing information")
+
+
+@auth_router.post("/billing/checkout")
+async def create_checkout_session(
+    request: CreateCheckoutRequest,
+    user: dict = Depends(require_client_owner),
+    _: bool = Depends(require_stripe)
+):
+    """
+    Create a Stripe Checkout session for subscription signup.
+
+    Returns a URL to redirect the user to Stripe's hosted checkout page.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        org = await conn.fetchrow("""
+            SELECT id, name, stripe_customer_id
+            FROM client_orgs
+            WHERE id = $1
+        """, org_id)
+
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        # Get or create Stripe customer
+        customer_id = org["stripe_customer_id"]
+        if not customer_id:
+            try:
+                customer = stripe.Customer.create(
+                    email=user["email"],
+                    name=org["name"],
+                    metadata={"org_id": str(org_id)}
+                )
+                customer_id = customer.id
+
+                # Store customer ID
+                await conn.execute("""
+                    UPDATE client_orgs
+                    SET stripe_customer_id = $1, updated_at = NOW()
+                    WHERE id = $2
+                """, customer_id, org_id)
+
+            except stripe.error.StripeError as e:
+                logger.error(f"Failed to create Stripe customer: {e}")
+                raise HTTPException(status_code=502, detail="Failed to initialize billing")
+
+        # Create checkout session
+        price_id = request.price_id or STRIPE_PRICE_ID
+        if not price_id:
+            raise HTTPException(status_code=400, detail="No price ID configured")
+
+        success_url = request.success_url or f"{BASE_URL}/client/settings?billing=success"
+        cancel_url = request.cancel_url or f"{BASE_URL}/client/settings?billing=cancelled"
+
+        try:
+            session = stripe.checkout.Session.create(
+                customer=customer_id,
+                payment_method_types=["card"],
+                line_items=[{"price": price_id, "quantity": 1}],
+                mode="subscription",
+                success_url=success_url,
+                cancel_url=cancel_url,
+                metadata={"org_id": str(org_id)},
+            )
+
+            return {"checkout_url": session.url, "session_id": session.id}
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Failed to create checkout session: {e}")
+            raise HTTPException(status_code=502, detail="Failed to create checkout session")
+
+
+@auth_router.post("/billing/portal")
+async def create_billing_portal_session(
+    user: dict = Depends(require_client_owner),
+    _: bool = Depends(require_stripe)
+):
+    """
+    Create a Stripe Customer Portal session.
+
+    The customer portal allows users to:
+    - Update payment methods
+    - View invoices
+    - Cancel subscription
+    - Update billing info
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        org = await conn.fetchrow("""
+            SELECT stripe_customer_id
+            FROM client_orgs
+            WHERE id = $1
+        """, org_id)
+
+        if not org or not org["stripe_customer_id"]:
+            raise HTTPException(
+                status_code=400,
+                detail="No billing account found. Please set up billing first."
+            )
+
+        try:
+            session = stripe.billing_portal.Session.create(
+                customer=org["stripe_customer_id"],
+                return_url=f"{BASE_URL}/client/settings",
+            )
+
+            return {"portal_url": session.url}
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Failed to create portal session: {e}")
+            raise HTTPException(status_code=502, detail="Failed to access billing portal")
+
+
+@auth_router.get("/billing/invoices")
+async def list_invoices(
+    user: dict = Depends(require_client_owner),
+    _: bool = Depends(require_stripe),
+    limit: int = Query(10, ge=1, le=100)
+):
+    """
+    List recent invoices for the organization.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        org = await conn.fetchrow("""
+            SELECT stripe_customer_id
+            FROM client_orgs
+            WHERE id = $1
+        """, org_id)
+
+        if not org or not org["stripe_customer_id"]:
+            return {"invoices": [], "has_more": False}
+
+        try:
+            invoices = stripe.Invoice.list(
+                customer=org["stripe_customer_id"],
+                limit=limit,
+            )
+
+            return {
+                "invoices": [
+                    {
+                        "id": inv.id,
+                        "number": inv.number,
+                        "amount_due": inv.amount_due / 100,
+                        "amount_paid": inv.amount_paid / 100,
+                        "currency": inv.currency.upper(),
+                        "status": inv.status,
+                        "created": datetime.fromtimestamp(inv.created).isoformat(),
+                        "invoice_pdf": inv.invoice_pdf,
+                        "hosted_invoice_url": inv.hosted_invoice_url,
+                    }
+                    for inv in invoices.data
+                ],
+                "has_more": invoices.has_more,
+            }
+
+        except stripe.error.StripeError as e:
+            logger.error(f"Failed to list invoices: {e}")
+            raise HTTPException(status_code=502, detail="Failed to fetch invoices")
+
+
+# Webhook handler (public - no auth, but verified by Stripe signature)
+billing_webhook_router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+
+
+@billing_webhook_router.post("/stripe")
+async def stripe_webhook(
+    request: Request,
+    stripe_signature: str = Header(None, alias="Stripe-Signature")
+):
+    """
+    Handle Stripe webhook events.
+
+    Events handled:
+    - checkout.session.completed: Subscription created
+    - customer.subscription.updated: Subscription changed
+    - customer.subscription.deleted: Subscription cancelled
+    - invoice.paid: Payment successful
+    - invoice.payment_failed: Payment failed
+    """
+    if not STRIPE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Stripe not available")
+
+    if not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="Webhook secret not configured")
+
+    # Get raw body for signature verification
+    body = await request.body()
+
+    try:
+        event = stripe.Webhook.construct_event(
+            body, stripe_signature, STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    pool = await get_pool()
+
+    # Handle specific events
+    if event.type == "checkout.session.completed":
+        session = event.data.object
+        org_id = session.metadata.get("org_id")
+
+        if org_id:
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE client_orgs
+                    SET subscription_status = 'active', updated_at = NOW()
+                    WHERE id = $1
+                """, org_id)
+            logger.info(f"Subscription activated for org {org_id}")
+
+    elif event.type == "customer.subscription.updated":
+        subscription = event.data.object
+        customer_id = subscription.customer
+
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE client_orgs
+                SET subscription_status = $1,
+                    next_billing_date = $2,
+                    updated_at = NOW()
+                WHERE stripe_customer_id = $3
+            """, subscription.status,
+                datetime.fromtimestamp(subscription.current_period_end),
+                customer_id)
+        logger.info(f"Subscription updated for customer {customer_id}: {subscription.status}")
+
+    elif event.type == "customer.subscription.deleted":
+        subscription = event.data.object
+        customer_id = subscription.customer
+
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE client_orgs
+                SET subscription_status = 'cancelled', updated_at = NOW()
+                WHERE stripe_customer_id = $1
+            """, customer_id)
+        logger.info(f"Subscription cancelled for customer {customer_id}")
+
+    elif event.type == "invoice.paid":
+        invoice = event.data.object
+        logger.info(f"Invoice paid: {invoice.id} for {invoice.customer}")
+
+    elif event.type == "invoice.payment_failed":
+        invoice = event.data.object
+        logger.warning(f"Invoice payment failed: {invoice.id} for {invoice.customer}")
+
+        # Could send notification to client here
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE client_orgs
+                SET subscription_status = 'past_due', updated_at = NOW()
+                WHERE stripe_customer_id = $1
+            """, invoice.customer)
+
+    return {"status": "ok"}
