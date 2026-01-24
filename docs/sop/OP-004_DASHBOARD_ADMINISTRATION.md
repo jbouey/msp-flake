@@ -1,8 +1,8 @@
 # OP-004: Dashboard Administration
 
 **Document Type:** Operator Manual
-**Version:** 1.0
-**Last Updated:** 2025-12-31
+**Version:** 2.0
+**Last Updated:** 2026-01-24 (Session 68)
 **Owner:** MSP Operations Team
 **Review Cycle:** Quarterly
 **Classification:** Level 3 (Reference Guide)
@@ -21,20 +21,28 @@ This manual provides detailed instructions for using the Central Command dashboa
 |-------------|-----|---------|
 | Production | https://dashboard.osiriscare.net | Live dashboard |
 | API | https://api.osiriscare.net | REST API endpoints |
+| Client Portal | https://dashboard.osiriscare.net/client/* | Client self-service |
+| Partner Portal | https://dashboard.osiriscare.net/partner/* | Partner dashboard |
+
+### Authentication
+
+- **Admin Users:** Username/password login
+- **Partners:** OAuth (Google/Microsoft) or API key
+- **Clients:** Magic link email authentication
 
 ---
 
 ## Dashboard Pages Reference
 
-### 1. Overview Page (`/`)
+### 1. Overview Dashboard (`/`)
 
 **Purpose:** High-level system health and key metrics at a glance.
 
-**Key Features:**
-- Fleet status summary (online/offline/stale counts)
-- Recent incidents with severity indicators
-- System health indicators
-- Quick navigation to critical items
+**Key Sections:**
+- **Fleet Status:** Online/Offline/Stale appliance counts
+- **Compliance Score:** Average across all sites
+- **Recent Incidents:** Last 10 incidents with severity
+- **Quick Stats:** Total sites, active alerts, pending updates
 
 **Usage:**
 - Check this page first when starting your shift
@@ -49,209 +57,466 @@ This manual provides detailed instructions for using the Central Command dashboa
 
 **Key Features:**
 - Real-time site status (Online/Stale/Offline/Pending)
-- Filter by status
+- Filter by status, tier, partner
 - Create new sites
-- View appliance count and tier
+- Bulk actions
 
 **Status Indicators:**
-| Status | Icon | Meaning | Action |
-|--------|------|---------|--------|
-| Online | Green | Checkin < 5 min | None |
-| Stale | Yellow | Checkin 5-15 min | Monitor |
-| Offline | Red | Checkin > 15 min | Investigate |
-| Pending | Gray | Never connected | Await appliance |
+
+| Status | Color | Check-in Age | Action |
+|--------|-------|--------------|--------|
+| Online | Green | < 5 min | None |
+| Stale | Yellow | 5-60 min | Monitor |
+| Offline | Red | > 60 min | Investigate |
+| Pending | Gray | Never | Await appliance |
 
 **Creating a New Site:**
 1. Click **"+ New Site"** button
 2. Enter clinic name (required)
 3. Add contact information (optional)
 4. Select tier (small/mid/large)
-5. Click **"Create Site"**
-6. Note the generated `site_id` for appliance configuration
-
-**Viewing Site Details:**
-- Click any row to navigate to `/sites/{site_id}`
-- See appliance information, credentials, and timestamps
+5. Optionally assign to partner
+6. Click **"Create Site"**
 
 ---
 
 ### 3. Site Detail Page (`/sites/:siteId`)
 
-**Purpose:** Complete view of a single site with all related data.
+**Purpose:** Complete view of a single site with all management options.
 
 **Sections:**
-- **Header:** Clinic name, status badge, site_id
-- **Contact Info:** Name, email, phone, address
-- **Appliances:** List of connected appliances with individual status
-- **Credentials:** Encrypted credential storage
-- **Timeline:** Onboarding stage timestamps
 
-**Adding Credentials:**
-1. Scroll to Credentials section
-2. Click **"+ Add Credential"**
-3. Select credential type (Router, AD, EHR, Backup, Other)
-4. Enter details (name, host, username, password)
-5. Click **"Add Credential"**
+| Section | Description |
+|---------|-------------|
+| Header | Site name, status badge, quick actions |
+| Contact Info | Name, email, phone, address |
+| Appliances | Connected appliances with status |
+| Credentials | Stored credentials (encrypted) |
+| Compliance Score | Per-check breakdown |
+| Recent Checks | Last compliance check results |
 
-**Security Note:** Credentials are encrypted with Fernet and never exposed in API responses.
+**Quick Actions:**
 
----
-
-### 4. Onboarding Page (`/onboarding`)
-
-**Purpose:** Pipeline view of prospects moving through onboarding stages.
-
-**Pipeline Stages:**
-
-**Phase 1: Sales & Contracting**
-| Stage | Description |
-|-------|-------------|
-| Lead | Initial prospect identified |
-| Discovery | Needs assessment meeting scheduled |
-| Proposal | Proposal sent to prospect |
-| Contract | Contract negotiation/signing |
-| Intake | Gathering requirements and credentials |
-| Creds | Credentials received and verified |
-| Shipped | Appliance shipped to site |
-
-**Phase 2: Technical Deployment**
-| Stage | Description |
-|-------|-------------|
-| Received | Appliance arrived at site |
-| Connectivity | First phone-home received |
-| Scanning | Network discovery in progress |
-| Baseline | Baseline configuration applied |
-| Compliant | Meeting compliance requirements |
-| Active | Fully operational client |
-
-**Key Metrics:**
-- **At Risk:** >7 days in current stage
-- **Stalled:** >14 days in current stage
-- **Connectivity Issues:** Sites with offline appliances
-
-**Creating a New Prospect:**
-1. Click **"+ New Prospect"** button
-2. Enter clinic name (required)
-3. Add contact information (optional)
-4. Select practice size tier
-5. Click **"Add Prospect"**
-6. Navigate to site detail page to continue setup
-
-**Phase Filtering:**
-- Use filter buttons to show All, Phase 1, or Phase 2 prospects
-- Prospects are sorted by days in stage (at-risk first)
-
-**Blockers Alert:**
-- Yellow banner shows prospects with active blockers
-- Click through to resolve blocker issues
+| Button | Description |
+|--------|-------------|
+| Frameworks | Configure compliance frameworks |
+| Workstations | View workstation compliance |
+| Go Agents | Manage Go agent deployments |
+| Integrations | Cloud service integrations |
+| Generate Portal Link | Create client portal access |
+| Healing Tier Toggle | Switch Standard/Full Coverage |
 
 ---
 
-### 5. Fleet Page (`/fleet`)
+### 4. Framework Config (`/sites/:siteId/frameworks`)
 
-**Purpose:** Monitor all client appliances and their compliance status.
+**Purpose:** Configure which compliance frameworks apply to a site.
+
+**Available Frameworks:**
+
+| Framework | Description |
+|-----------|-------------|
+| HIPAA | Healthcare (default) |
+| SOC 2 | Service organizations |
+| PCI DSS | Payment card industry |
+| NIST CSF | Cybersecurity framework |
+| CIS Controls | Security best practices |
 
 **Features:**
-- Client health overview
-- Compliance score tracking
-- Recent check results
-- Quick access to client details
+- Enable/disable frameworks per site
+- Industry presets (Healthcare, Financial, Technology)
+- Custom control mapping
+- Framework-specific evidence generation
 
 ---
 
-### 6. Incidents Page (`/incidents`)
+### 5. Workstations Page (`/sites/:siteId/workstations`)
 
-**Purpose:** View and manage automated incident responses.
+**Purpose:** Monitor workstation compliance across the site.
+
+**Compliance Checks:**
+
+| Check | Description | HIPAA Control |
+|-------|-------------|---------------|
+| BitLocker | Disk encryption status | 164.312(a)(2)(iv) |
+| Defender | Antimalware status | 164.308(a)(5) |
+| Firewall | Windows Firewall profiles | 164.312(c)(1) |
+| Patches | Windows Update status | 164.308(a)(5)(ii)(B) |
+| Screen Lock | Lock timeout settings | 164.312(a)(2)(iii) |
 
 **Features:**
-- List of all incidents with severity
-- Filter by client, level, resolution status
-- View incident details and remediation steps
-- Track automated vs manual resolution
-
-**Severity Levels:**
-| Level | Color | Description |
-|-------|-------|-------------|
-| Critical | Red | Immediate action required |
-| Warning | Orange | Attention needed soon |
-| Info | Blue | Informational only |
+- Per-workstation compliance status
+- Site-level summary statistics
+- Export compliance report
+- RMM comparison tool
 
 ---
 
-### 7. Learning Page (`/learning`)
+### 6. RMM Comparison (`/sites/:siteId/workstations/rmm-compare`)
 
-**Purpose:** Monitor the data flywheel and pattern promotion.
+**Purpose:** Compare OsirisCare coverage against existing RMM tools.
 
-**Features:**
-- View L2 patterns being tracked
-- Promote successful patterns to L1 rules
-- Review promotion history
-- Monitor learning metrics
+**Detected RMMs:**
+- ConnectWise
+- Datto
+- NinjaRMM
+- Kaseya
+- Continuum
+
+**Comparison Metrics:**
+- Device coverage percentage
+- Check type coverage
+- Response time comparison
+- Cost analysis
 
 ---
 
-### 8. Runbooks Page (`/runbooks`)
+### 7. Go Agents Page (`/sites/:siteId/agents`)
 
-**Purpose:** Browse and manage remediation runbooks.
+**Purpose:** Manage lightweight Go agents on workstations.
+
+**Agent Status:**
+
+| Status | Description |
+|--------|-------------|
+| Active | Agent reporting via gRPC |
+| Offline | No recent heartbeat |
+| Pending | Awaiting first connection |
+
+**Capabilities:**
+- Deploy agents to workstations
+- View agent version and health
+- Trigger manual compliance scan
+- Configure capability tier (Monitor/Heal/Full)
+
+---
+
+### 8. Cloud Integrations (`/sites/:siteId/integrations`)
+
+**Purpose:** Connect cloud services for expanded compliance coverage.
+
+**Supported Integrations:**
+
+| Service | Data Collected |
+|---------|----------------|
+| AWS | IAM users, S3 buckets, CloudTrail |
+| Google Workspace | Users, devices, audit logs |
+| Okta | Users, MFA status, sign-in logs |
+| Azure AD | Users, devices, conditional access |
+| Microsoft Security | Defender alerts, Intune compliance, Secure Score |
+
+**Setup Flow:**
+1. Click **"+ Add Integration"**
+2. Select service type
+3. Complete OAuth authorization
+4. Configure sync settings
+5. View discovered resources
+
+---
+
+### 9. Notifications Page (`/notifications`)
+
+**Purpose:** View all system notifications and alerts.
+
+**Notification Types:**
+
+| Type | Description |
+|------|-------------|
+| Alert | Critical/High severity issues |
+| Warning | Medium severity issues |
+| Info | Informational messages |
+| System | Platform announcements |
 
 **Features:**
-- List all available runbooks
-- View runbook details and steps
-- Check recent executions
-- Verify runbook effectiveness
+- Filter by type, severity, read status
+- Mark individual or all as read
+- Link to related incidents
+
+---
+
+### 10. Incidents Page (`/incidents`)
+
+**Purpose:** View and manage all incidents across the fleet.
+
+**Filters:**
+
+| Filter | Options |
+|--------|---------|
+| Status | All, Active, Resolved |
+| Severity | Critical, High, Medium, Low |
+| Site | All sites or specific |
+| Tier | L1 (auto), L2 (LLM), L3 (human) |
+
+**Incident Details:**
+- Check type and description
+- Resolution tier (L1/L2/L3)
+- Resolution action taken
+- Timestamp and duration
+- Raw incident data
+
+---
+
+### 11. Notification Settings (`/notification-settings`)
+
+**Purpose:** Configure system notification channels.
+
+**Channels:**
+
+| Channel | Configuration |
+|---------|---------------|
+| Email | SMTP settings, recipients |
+| Slack | Webhook URL |
+| PagerDuty | Integration key |
+| Teams | Webhook URL |
+| Webhook | Custom endpoint |
+
+---
+
+### 12. Onboarding Page (`/onboarding`)
+
+**Purpose:** Pipeline view of prospects through onboarding stages.
+
+**Stages:**
+
+| Phase | Stages |
+|-------|--------|
+| Phase 1 (Sales) | Lead → Discovery → Proposal → Contract → Intake → Creds → Shipped |
+| Phase 2 (Deploy) | Received → Connectivity → Scanning → Baseline → Compliant → Active |
+
+**Metrics:**
+- At Risk: >7 days in stage
+- Stalled: >14 days in stage
+- Blockers: Active issues preventing progress
+
+---
+
+### 13. Partners Page (`/partners`)
+
+**Purpose:** Manage partner/reseller accounts.
+
+**Sections:**
+
+| Section | Description |
+|---------|-------------|
+| Active Partners | List of approved partners |
+| Pending Approvals | OAuth signups awaiting approval |
+| OAuth Settings | Domain whitelist configuration |
+
+**Partner Management:**
+- Create/edit partner accounts
+- Generate/regenerate API keys
+- View assigned sites
+- Approve/reject OAuth signups
+
+---
+
+### 14. Users Page (`/users`)
+
+**Purpose:** Manage admin user accounts.
+
+**User Roles:**
+
+| Role | Permissions |
+|------|-------------|
+| Admin | Full access, user management |
+| Operator | View all, execute actions |
+| Readonly | View only |
+
+**Features:**
+- Invite new users via email
+- Resend invites
+- Revoke pending invites
+- Change user roles
+- Disable/enable accounts
+
+---
+
+### 15. Runbooks Page (`/runbooks`)
+
+**Purpose:** Browse all available remediation runbooks.
+
+**Runbook Categories:**
+
+| Category | Count | Examples |
+|----------|-------|----------|
+| Windows Security | 13 | Firewall, Defender, BitLocker |
+| Windows Services | 4 | Critical services, DNS |
+| Windows Network | 3 | DNS client, NLA |
+| Linux SSH | 3 | SSH hardening, key management |
+| Linux Firewall | 1 | iptables/nftables |
+| Linux Services | 4 | Critical services |
+
+**Total: 43 runbooks** (27 Windows + 16 Linux)
+
+---
+
+### 16. Runbook Config (`/runbook-config`)
+
+**Purpose:** Enable/disable runbooks per site.
+
+**Configuration:**
+- Toggle runbooks on/off for each site
+- Set execution priority
+- Configure parameters
+- View execution history
+
+---
+
+### 17. Learning Page (`/learning`)
+
+**Purpose:** Monitor the data flywheel and L2→L1 pattern promotion.
+
+**Sections:**
+
+| Section | Description |
+|---------|-------------|
+| Pattern Stats | Total patterns, promotion candidates |
+| Promotion Queue | Patterns ready for L1 promotion |
+| Recent Promotions | Successfully promoted patterns |
+| Learning Metrics | Success rates by check type |
+
+**Promotion Criteria:**
+- 5+ successful occurrences
+- 90%+ success rate
+- No recent failures
+
+---
+
+### 18. Audit Logs Page (`/audit-logs`)
+
+**Purpose:** Security audit trail of all admin actions.
+
+**Logged Events:**
+
+| Event Type | Description |
+|------------|-------------|
+| LOGIN_SUCCESS | Successful authentication |
+| LOGIN_FAILED | Failed login attempt |
+| USER_CREATED | New user invited |
+| USER_UPDATED | User role/status changed |
+| SITE_CREATED | New site created |
+| CREDENTIAL_ADDED | Credential stored |
+| RUNBOOK_EXECUTED | Manual runbook execution |
+
+**Filters:**
+- Date range
+- Event type
+- User
+- Resource
+
+---
+
+### 19. OAuth Settings (`/settings/oauth`)
+
+**Purpose:** Configure OAuth providers for partner authentication.
+
+**Settings:**
+
+| Provider | Configuration |
+|----------|---------------|
+| Google | Client ID, Client Secret |
+| Microsoft | Client ID, Client Secret, Tenant ID |
+
+**Domain Whitelist:**
+- Auto-approve partners from whitelisted domains
+- Comma-separated domain list
+
+---
+
+### 20. Fleet Updates (`/fleet-updates`)
+
+**Purpose:** Manage appliance ISO updates across the fleet.
+
+**Sections:**
+
+| Section | Description |
+|---------|-------------|
+| Stats | Latest version, active releases/rollouts |
+| Releases | List of available ISO releases |
+| Rollouts | Active deployment rollouts |
+| Update History | Per-appliance update history |
+
+**Creating a Release:**
+1. Click **"+ New Release"**
+2. Enter version (e.g., v47)
+3. Enter ISO URL
+4. Enter SHA256 hash
+5. Enter agent version
+6. Add release notes
+7. Click **"Create Release"**
+
+**Creating a Rollout:**
+1. Select release
+2. Click **"Create Rollout"**
+3. Configure stages (e.g., 5% → 25% → 100%)
+4. Set pause between stages
+5. Click **"Start Rollout"**
+
+**Rollout Controls:**
+- Pause/Resume rollout
+- Advance to next stage
+- Cancel rollout
+
+---
+
+### 21. Documentation (`/docs`)
+
+**Purpose:** Built-in operational documentation and SOPs.
+
+**Available SOPs:**
+- Daily Operations
+- Incident Response
+- Disaster Recovery
+- Client Escalation
+- Evidence Verification
+- Sites Management
+- Dashboard Administration
 
 ---
 
 ## Common Workflows
 
-### Workflow 1: Daily Status Check
+### Daily Operations Check
 
-1. Navigate to Overview page
-2. Check for critical incidents (red indicators)
-3. Review offline sites on Sites page
-4. Check Onboarding page for at-risk prospects
-5. Address any blockers or issues
+1. **Overview Dashboard:** Check for critical alerts
+2. **Sites Page:** Verify all sites online
+3. **Incidents Page:** Review active incidents
+4. **Onboarding:** Check for stalled prospects
+5. **Fleet Updates:** Verify update rollout progress
 
-### Workflow 2: New Client Onboarding
+### New Client Onboarding
 
-1. Go to Onboarding page
-2. Click **"+ New Prospect"**
-3. Fill in clinic information
-4. Navigate to Site Detail page
-5. Add any known credentials
-6. Configure appliance with site_id
-7. Ship appliance to client
-8. Monitor for first phone-home
-9. Verify stage progression
+1. **Onboarding Page:** Click "+ New Prospect"
+2. **Site Detail:** Add contact info and credentials
+3. **Partners Page:** Assign to partner (if applicable)
+4. **Provision Code:** Generate for appliance
+5. **Monitor:** Watch for first phone-home
+6. **Validate:** Verify compliance checks passing
 
-### Workflow 3: Troubleshooting Offline Site
+### Troubleshooting Offline Site
 
-1. Navigate to Sites page
-2. Filter to show Offline sites
-3. Click on affected site
-4. Check last checkin timestamp
-5. Review appliance information
-6. Possible causes:
-   - Network issue at client site
-   - Appliance powered off
-   - Firewall blocking HTTPS
-   - DNS resolution failure
-7. Use troubleshooting commands from SOP-015
+1. **Sites Page:** Identify offline site
+2. **Site Detail:** Check last check-in time
+3. **Verify:** Network connectivity at client
+4. **Check:** Appliance power status
+5. **Review:** Appliance logs via SSH
+6. **Escalate:** Contact client if needed
 
-### Workflow 4: Adding Client Credentials
+### User Management
 
-1. Navigate to `/sites/{site_id}`
-2. Scroll to Credentials section
-3. Click **"+ Add Credential"**
-4. Select appropriate type:
-   - **Router:** Network equipment access
-   - **Active Directory:** Windows domain
-   - **EHR:** Electronic Health Record system
-   - **Backup:** Backup service credentials
-   - **Other:** Custom credentials
-5. Enter all required fields
-6. Click **"Add Credential"**
-7. Verify credential appears in list
+1. **Users Page:** Click "+ Invite User"
+2. **Enter:** Email, role, display name
+3. **Send:** Invite email sent automatically
+4. **User:** Clicks link to set password
+5. **Verify:** User appears in active list
+
+### Partner Approval (OAuth)
+
+1. **Partners Page:** View Pending Approvals
+2. **Review:** Partner company and email domain
+3. **Approve:** Click approve button
+4. **Notify:** Partner receives access email
+5. **Alternative:** Reject if suspicious
 
 ---
 
@@ -259,46 +524,38 @@ This manual provides detailed instructions for using the Central Command dashboa
 
 | Shortcut | Action |
 |----------|--------|
-| `Cmd+K` | Open command palette |
+| `Cmd+K` / `Ctrl+K` | Open command palette |
 | `g h` | Go to home/overview |
 | `g s` | Go to sites |
 | `g o` | Go to onboarding |
 | `g i` | Go to incidents |
-| `?` | Show keyboard shortcuts |
+| `g u` | Go to users |
+| `g f` | Go to fleet updates |
+| `?` | Show shortcuts help |
 
 ---
 
 ## API Quick Reference
 
-### Sites API
+### Authentication
+
+All API requests require Bearer token:
 
 ```bash
-# List all sites
-curl https://api.osiriscare.net/api/sites
-
-# Get site details
-curl https://api.osiriscare.net/api/sites/{site_id}
-
-# Create site
-curl -X POST https://api.osiriscare.net/api/sites \
-  -H "Content-Type: application/json" \
-  -d '{"clinic_name": "Acme Dental", "tier": "mid"}'
-
-# Update site stage
-curl -X PUT https://api.osiriscare.net/api/sites/{site_id} \
-  -H "Content-Type: application/json" \
-  -d '{"onboarding_stage": "shipped"}'
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  https://api.osiriscare.net/api/sites
 ```
 
-### Onboarding API
+### Common Endpoints
 
-```bash
-# Get pipeline data
-curl https://api.osiriscare.net/api/onboarding/pipeline
-
-# Get metrics
-curl https://api.osiriscare.net/api/onboarding/metrics
-```
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/sites` | GET | List all sites |
+| `/api/sites/{id}` | GET | Get site detail |
+| `/api/fleet/status` | GET | Fleet overview |
+| `/api/incidents` | GET | List incidents |
+| `/api/users` | GET | List admin users |
+| `/api/partners` | GET | List partners |
 
 ---
 
@@ -307,40 +564,76 @@ curl https://api.osiriscare.net/api/onboarding/metrics
 ### Dashboard Not Loading
 
 1. Check API health: `curl https://api.osiriscare.net/health`
-2. Clear browser cache
+2. Clear browser cache (Cmd+Shift+R)
 3. Check browser console for errors
 4. Verify network connectivity
+5. Try incognito/private window
 
 ### Data Not Updating
 
-1. Check if using stale browser tab
-2. Hard refresh: `Cmd+Shift+R`
-3. Check API response times
-4. Verify database connectivity
+1. Hard refresh: `Cmd+Shift+R`
+2. Check if polling is working (network tab)
+3. Verify API is responding
+4. Check for JavaScript errors in console
 
-### Create Site Fails
+### User Cannot Log In
 
-1. Check for required fields (clinic_name)
-2. Verify API connectivity
-3. Check browser console for error details
-4. Review server logs if needed
+1. Verify username is correct
+2. Check account is not disabled
+3. Verify password meets requirements
+4. Check for account lockout (5 failed attempts)
+5. Reset password via invite if needed
+
+### Invite Email Not Received
+
+1. Check spam/junk folders
+2. Verify email address is correct
+3. Check SMTP configuration
+4. Resend invite from Users page
+5. Verify mail server logs
+
+---
+
+## Security Notes
+
+### Password Requirements
+
+- Minimum 12 characters
+- Must include: uppercase, lowercase, digit, special character
+- Cannot be in common password list
+- Cannot be similar to username
+
+### Session Security
+
+- Sessions expire after 24 hours
+- Account locks after 5 failed attempts (15 min)
+- All actions logged to audit trail
+- HTTPS required for all connections
+
+### Credential Storage
+
+- All credentials encrypted with AES-256
+- Never displayed in plain text
+- Audit logged on access
+- Rotated on suspicion of compromise
 
 ---
 
 ## Related Documents
 
 - [SOP-015: Sites & Appliance Management](SOP-015_SITES_APPLIANCE_MANAGEMENT.md)
-- [SOP-010: Client Onboarding](../CLIENT_ONBOARDING_SOP.md)
-- [ARCHITECTURE.md](../ARCHITECTURE.md)
+- [Partner Dashboard Guide](../partner/PARTNER_DASHBOARD_GUIDE.md)
+- [Client Portal Documentation](../client/CLIENT_PORTAL_GUIDE.md)
+- [Fleet Updates](../ZERO_FRICTION_UPDATES.md)
+- [Learning System](../LEARNING_SYSTEM.md)
 
 ---
 
-**End of Manual**
-
-**Document Version:** 1.0
-**Last Updated:** 2025-12-31
-**Next Review:** 2026-03-31
+**Document Version:** 2.0
+**Last Updated:** 2026-01-24
+**Next Review:** 2026-04-24
 **Owner:** MSP Operations Team
 
 **Change Log:**
-- 2025-12-31: v1.0 - Initial version created
+- 2026-01-24: v2.0 - Complete rewrite with all new pages (Session 68)
+- 2025-12-31: v1.0 - Initial version
