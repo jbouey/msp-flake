@@ -539,6 +539,12 @@ async def revoke_invite(
     if status != "pending":
         raise HTTPException(status_code=400, detail=f"Invite is already {status}")
 
+    # Delete any existing revoked invites for this email to avoid unique constraint violation
+    await db.execute(
+        text("DELETE FROM admin_user_invites WHERE email = :email AND status = 'revoked'"),
+        {"email": email}
+    )
+
     # Update status to revoked
     await db.execute(
         text("UPDATE admin_user_invites SET status = 'revoked' WHERE id = :id"),
