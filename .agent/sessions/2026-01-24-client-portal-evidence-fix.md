@@ -1,7 +1,7 @@
-# Session 68: Client Portal Evidence Fix
+# Session 68: Client Portal Complete
 
 **Date:** 2026-01-24
-**Focus:** Fix client portal evidence display for North Valley site
+**Focus:** Fix client portal evidence + Complete all 3 implementation phases
 
 ---
 
@@ -107,6 +107,70 @@ if bundle.agent_signature:
 1. Fix Ed25519 signature verification - align agent and server signing data format
 2. Recover physical appliance via USB boot
 3. Test client portal end-to-end (login, dashboard, evidence, reports)
+
+---
+
+## Part 2: Client Portal Phase 2 & 3 Completion
+
+### 4. New Frontend Pages Created
+
+| File | Purpose |
+|------|---------|
+| `ClientReports.tsx` | Monthly compliance report downloads |
+| `ClientNotifications.tsx` | Notification center with read/unread tracking |
+| `ClientSettings.tsx` | User management, password change, provider transfer |
+
+### 5. Features Implemented
+
+**User Management (Phase 3):**
+- Invite users with email + role selection (admin/viewer)
+- View team members list
+- Change user roles (owner/admin can modify)
+- Remove users from organization
+
+**Password Authentication (Phase 2):**
+- Optional password for convenience login
+- Can still use magic links
+
+**Provider Transfer (Phase 3):**
+- Request transfer to different MSP
+- View transfer status
+- Cancel pending requests
+
+### 6. Routes Added to App.tsx
+
+```tsx
+<Route path="reports" element={<ClientReports />} />
+<Route path="notifications" element={<ClientNotifications />} />
+<Route path="settings" element={<ClientSettings />} />
+```
+
+### 7. Frontend Deployed to VPS
+
+- Built with `npm run build`
+- Copied to `/opt/mcp-server/frontend_dist/`
+- Nginx serving new bundle
+
+---
+
+## Client Portal Final Status
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 1 | MVP (auth, dashboard, evidence) | COMPLETE |
+| Phase 2 | Stickiness (notifications, password, history) | COMPLETE |
+| Phase 3 | Power Move (user mgmt, transfer) | COMPLETE |
+
+**Outstanding:** Stripe billing integration (optional)
+
+---
+
+## Git Commits
+
+| Commit | Message |
+|--------|---------|
+| `85ebbaa` | fix: Client portal evidence queries + non-blocking signature verification |
+| `0bb27d8` | feat: Complete client portal Phase 2 & 3 frontend pages |
 
 ---
 

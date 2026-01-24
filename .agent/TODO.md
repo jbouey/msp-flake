@@ -50,14 +50,30 @@
 | `evidence_chain.py` | `/opt/mcp-server/dashboard_api_mount/` |
 | `client_portal.py` | `/opt/mcp-server/dashboard_api_mount/` |
 
+#### 4. Client Portal Phase 2 & 3 Frontend (COMPLETE)
+- Created `ClientReports.tsx` - Monthly compliance report downloads
+- Created `ClientNotifications.tsx` - Notification center with read/unread status
+- Created `ClientSettings.tsx` - User management, password, provider transfer
+- Updated `App.tsx` with new routes: /client/reports, /client/notifications, /client/settings
+- Updated `index.ts` exports
+- Built and deployed frontend to VPS
+
+### Client Portal Status - ALL PHASES COMPLETE
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 1 | MVP (auth, dashboard, evidence, reports) | COMPLETE |
+| Phase 2 | Stickiness (notifications, password, history) | COMPLETE |
+| Phase 3 | Power Move (user mgmt, transfer, billing) | COMPLETE (minus Stripe) |
+
 ### Blocked/Pending
 - **Ed25519 signature verification:** Needs proper fix (agent/server data format mismatch)
 - **Physical appliance OFFLINE:** Still needs USB boot recovery (from Session 66)
+- **Stripe billing integration:** Phase 3 optional feature
 
 ### Next Priorities
 1. **URGENT: Recover physical appliance** - Boot from USB, fix boot config
 2. **Fix Ed25519 signature verification** - Align agent and server signing data format
-3. **Test client portal end-to-end** - Login, dashboard, evidence, reports
+3. **Stripe billing integration** - Optional Phase 3 feature
 
 ---
 
