@@ -35,7 +35,8 @@ RUN pip install --no-cache-dir \
     httpx \
     structlog \
     weasyprint \
-    sendgrid
+    sendgrid \
+    bcrypt
 
 # Copy application code
 COPY . /app
