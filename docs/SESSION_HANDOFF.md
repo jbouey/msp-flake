@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-23 (Session 66 Continued - A/B Partition Install Attempted)
-**Current State:** Phase 13 Zero-Touch Updates, **ISO v44**, Full Coverage Healing, **Go Agent Deployed to ALL 3 VMs**, **Partner Admin Router Fixed**, **Partner Admin Auth Headers Fixed**, **PHYSICAL APPLIANCE OFFLINE - NEEDS USB RECOVERY**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
+**Last Updated:** 2026-01-23 (Session 67 - Partner Portal Fixes + OTA USB Update Pattern)
+**Current State:** Phase 13 Zero-Touch Updates, **ISO v46**, Full Coverage Healing, **Go Agent Deployed to ALL 3 VMs**, **Partner Admin Router Fixed**, **Partner Admin Auth Headers Fixed**, **Partner Portal Blank Page Fix**, **Google OAuth Button Text Fix**, **OTA USB Update Pattern Established**, **PHYSICAL APPLIANCE OFFLINE - NEEDS USB RECOVERY**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
 
 ---
 
@@ -10,7 +10,7 @@
 The physical appliance (192.168.88.246) is **OFFLINE** after a failed A/B partition install attempt.
 
 **Recovery Required:**
-1. Boot from USB with v45 ISO
+1. Boot from USB with v46 ISO
 2. Either: reinstall properly, or run from live ISO with data partition mounted
 3. Config backup exists on data partition (sda4)
 
@@ -20,8 +20,8 @@ The physical appliance (192.168.88.246) is **OFFLINE** after a failed A/B partit
 
 | Component | Status | Version |
 |-----------|--------|---------|
-| Agent | v1.0.45 | Stable |
-| ISO | v44 | Available |
+| Agent | v1.0.46 | Stable |
+| ISO | v46 | Available |
 | Tests | 834 + 24 Go tests | Healthy |
 | **Physical Appliance** | **⚠️ OFFLINE** | Needs USB recovery |
 | A/B Partition System | **DESIGNED** | Needs custom initramfs for partition boot |
@@ -33,12 +33,63 @@ The physical appliance (192.168.88.246) is **OFFLINE** after a failed A/B partit
 | **Go Agent** | **DEPLOYED to ALL 3 VMs** | DC, WS, SRV - gRPC Working |
 | gRPC | **VERIFIED WORKING** | Drift → L1 → Runbook |
 | Active Healing | **ENABLED** | HEALING_DRY_RUN=false |
-| Partner Portal | **OAUTH WORKING** | Google + Microsoft login |
+| Partner Portal | **WORKING** | API key login verified |
 | **Partner Admin** | **ROUTER FIXED** | Pending approvals, oauth-config working |
 | Domain Whitelisting | **CONFIG UI DEPLOYED** | Auto-approve by domain |
 | Claude Code Skills | **9 SKILL FILES** | Auto-loading per task type |
 | Evidence Security | **HARDENED** | Ed25519 verify + OTS validation |
 | Learning System | **OPERATIONAL** | Resolution recording fixed |
+| **Google OAuth** | **DISABLED** | Client under Google review |
+
+---
+
+## Session 67 (2026-01-23) - Partner Portal Fixes + OTA USB Update Pattern
+
+### What Happened
+1. **Partner dashboard blank page fixed** - `brand_name` column was NULL causing `charAt()` error
+2. **Google OAuth button text changed** - "Google Workspace" → "Google" in PartnerLogin.tsx
+3. **Partner API key login working** - Created account for awsbouey@gmail.com via API key method
+4. **Frontend deployed to VPS** - With Google button text fix
+5. **Version sync fix** - All version files now at 1.0.46
+6. **OTA USB Update pattern discovered** - Live ISO runs from RAM, USB can be overwritten while running
+
+### Key Fixes
+| Issue | Root Cause | Solution |
+|-------|------------|----------|
+| Dashboard blank page | `brand_name` NULL | `UPDATE partners SET brand_name = 'AWS Bouey'` |
+| Wrong button text | Hardcoded "Workspace" | Edit PartnerLogin.tsx line 231 |
+| API key login fails | Hash not stored correctly | Use `hashlib.sha256(f'{API_KEY_SECRET}:{api_key}'.encode()).hexdigest()` |
+| Version mismatch | `__init__.py` at 0.2.0 | Sync all version files to 1.0.46 |
+
+### Partner Account Created
+| Field | Value |
+|-------|-------|
+| Email | awsbouey@gmail.com |
+| Partner ID | 617f1b8b-2bfe-4c86-8fea-10ca876161a4 |
+| API Key | `osk_C_1VYhgyeX5hOsacR-X4WsR6gV_jvhL8B45yCGBzi_M` |
+| Brand Name | AWS Bouey |
+
+### OTA USB Update Pattern
+**Discovery:** When running from live NixOS ISO, the root filesystem is in tmpfs (RAM). This means the USB drive can be overwritten with a new ISO while the system is running!
+
+**Pattern:**
+1. Download new ISO to /tmp (RAM)
+2. `dd if=/tmp/new-iso.iso of=/dev/sda bs=4M status=progress`
+3. Reboot
+
+**Use Case:** Remote appliance updates when physical access not possible.
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/frontend/src/partner/PartnerLogin.tsx` | Google button text |
+| `packages/compliance-agent/src/compliance_agent/__init__.py` | Version 1.0.46 |
+| `packages/compliance-agent/setup.py` | Version 1.0.46 |
+| `iso/appliance-image.nix` | Version 1.0.46 |
+
+### Blocked
+- **Physical appliance still OFFLINE** - Needs USB boot recovery
+- **Google OAuth client disabled** - Under Google review
 
 ---
 

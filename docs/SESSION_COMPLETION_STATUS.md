@@ -1,6 +1,105 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-23 (Session 66 Continued - A/B Partition Install Attempted)
+**Last Updated:** 2026-01-23 (Session 67 - Partner Portal Fixes + OTA USB Update Pattern)
+
+---
+
+## Session 67 - Partner Portal Fixes + OTA USB Update Pattern - COMPLETE
+
+**Date:** 2026-01-23
+**Status:** COMPLETE
+**Agent Version:** 1.0.46
+**ISO Version:** v46
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Fix partner dashboard blank page (brand_name NULL issue)
+2. ✅ Change Google OAuth button text ("Workspace" → "Google")
+3. ✅ Create partner account for awsbouey@gmail.com via API key
+4. ✅ Deploy frontend changes to VPS
+5. ✅ Fix version sync across __init__.py, setup.py, appliance-image.nix
+
+### Completed Tasks
+
+#### 1. Partner Dashboard Blank Page Fix
+- **Status:** COMPLETE
+- **Issue:** Dashboard showed blank white page with `TypeError: Cannot read properties of null (reading 'charAt')`
+- **Root Cause:** `brand_name` column was NULL in partners table for awsbouey@gmail.com
+- **Fix:** `UPDATE partners SET brand_name = 'AWS Bouey' WHERE contact_email = 'awsbouey@gmail.com'`
+- **Result:** Dashboard loaded correctly after fix
+
+#### 2. Google OAuth Button Text Change
+- **Status:** COMPLETE
+- **File:** `mcp-server/central-command/frontend/src/partner/PartnerLogin.tsx`
+- **Line:** 231
+- **Change:** `'Sign in with Google Workspace'` → `'Sign in with Google'`
+- **Commit:** `a8b1ad0`
+- **Result:** Button now shows "Sign in with Google"
+
+#### 3. Partner API Key Login
+- **Status:** COMPLETE
+- **Issue:** Google OAuth client disabled (under Google review)
+- **Workaround:** Created partner account using direct database + API key method
+- **Partner Details:**
+  - Email: awsbouey@gmail.com
+  - Partner ID: 617f1b8b-2bfe-4c86-8fea-10ca876161a4
+  - Brand Name: AWS Bouey
+  - API Key: `osk_C_1VYhgyeX5hOsacR-X4WsR6gV_jvhL8B45yCGBzi_M`
+- **Key Learning:** API key hash = `hashlib.sha256(f'{API_KEY_SECRET}:{api_key}'.encode()).hexdigest()`
+
+#### 4. Frontend Deployment to VPS
+- **Status:** COMPLETE
+- **Steps:**
+  1. Built frontend: `npm run build`
+  2. Uploaded dist to VPS
+  3. Rebuilt container: `docker compose up -d --build frontend`
+  4. Hard refresh required (Cmd+Shift+R) to bypass cache
+- **Result:** Google button text visible after hard refresh
+
+#### 5. Version Sync Fix
+- **Status:** COMPLETE
+- **Issue:** `__init__.py` was at `0.2.0` while setup.py was at `1.0.45`
+- **Files Updated to 1.0.46:**
+  - `packages/compliance-agent/src/compliance_agent/__init__.py`
+  - `packages/compliance-agent/setup.py`
+  - `iso/appliance-image.nix`
+
+#### 6. OTA USB Update Pattern Discovered
+- **Status:** DOCUMENTED
+- **Discovery:** Live NixOS ISO runs from tmpfs (RAM), allowing USB to be overwritten while running
+- **Pattern:** Download ISO → `dd` to USB → reboot
+- **Use Case:** Remote appliance updates when physical access not possible
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/frontend/src/partner/PartnerLogin.tsx` | Google button text change |
+| `packages/compliance-agent/src/compliance_agent/__init__.py` | Version sync to 1.0.46 |
+| `packages/compliance-agent/setup.py` | Version sync to 1.0.46 |
+| `iso/appliance-image.nix` | Version sync to 1.0.46 |
+
+### VPS Changes
+| Change | Location |
+|--------|----------|
+| Frontend dist | Updated with Google button text fix |
+| Database | `UPDATE partners SET brand_name = 'AWS Bouey'` |
+| Partner record | Created for awsbouey@gmail.com with API key |
+
+### Git Commits
+| Commit | Message |
+|--------|---------|
+| `a8b1ad0` | fix: Change Google OAuth button text from "Workspace" to plain "Google" |
+
+### Key Lessons Learned
+1. Partner `brand_name` is required for dashboard avatar initials (uses `charAt(0)`)
+2. API key authentication requires proper SHA256 hashing with secret prefix
+3. Frontend Dockerfile copies pre-built dist, need to rebuild and upload new dist
+4. Hard refresh (Cmd+Shift+R) needed to bypass browser cache after deploy
+5. NixOS live ISO tmpfs enables OTA USB update pattern
+
+### Blocked
+- **Physical appliance OFFLINE:** Still needs USB boot recovery (from Session 66)
+- **Google OAuth:** Client disabled by Google (under review)
 
 ---
 
@@ -1021,7 +1120,8 @@
 
 | Session | Date | Focus | Status | Version |
 |---------|------|-------|--------|---------|
-| **66** | 2026-01-23 | Partner Admin Auth Headers Fix | **COMPLETE** | v1.0.45 |
+| **67** | 2026-01-23 | Partner Portal Fixes + OTA USB Update Pattern | **COMPLETE** | v1.0.46 |
+| 66 | 2026-01-23 | Partner Admin Auth Headers Fix | COMPLETE | v1.0.45 |
 | 65 | 2026-01-23 | Comprehensive Security Audit | COMPLETE | v1.0.45 |
 | 64 | 2026-01-23 | Go Agent Full Deployment | COMPLETE | v1.0.45 |
 | 63 | 2026-01-23 | Production Healing + Learning Loop | COMPLETE | v1.0.45 |
@@ -1059,9 +1159,10 @@
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 66 complete (Partner Admin Auth Headers Fix)
-- `.agent/CONTEXT.md` - Updated with Session 66 changes
-- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 66
-- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 66 details
+- `.agent/TODO.md` - Session 67 complete (Partner Portal Fixes + OTA USB Update Pattern)
+- `.agent/CONTEXT.md` - Updated with Session 67 changes
+- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 67
+- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 67 details
 - `docs/LEARNING_SYSTEM.md` - Updated with resolution recording requirements
 - `.claude/skills/` - 9 skill files for Claude Code knowledge retention (Session 59)
+- `IMPLEMENTATION-STATUS.md` - Updated with Session 67 accomplishments
