@@ -142,13 +142,29 @@ Physical Appliance (NixOS)
     └── React frontend (static files)
 ```
 
+## Appliance Image Integration
+
+**File:** `iso/appliance-image.nix`
+
+Added:
+- `network-scanner` package build (Python + nmap + ldap3)
+- `local-portal` package build (FastAPI + reportlab)
+- `local-portal-frontend` package build (React + Vite)
+- `network-scanner.service` - systemd service with CAP_NET_RAW
+- `network-scanner-daily.timer` - 2 AM daily scan
+- `local-portal.service` - systemd service on port 8083
+- Firewall ports 8082 and 8083
+- Updated MOTD with Local Portal URL
+- `/var/lib/msp/exports` directory
+
 ## Next Steps
 
-1. **Integration Test:** Deploy to physical appliance
-2. **ISO Update:** Add modules to appliance-image.nix
+1. **Build ISO:** `nix build .#appliance-iso` on VPS
+2. **Deploy:** OTA USB update to physical appliance
 3. **Central Command UI:** Add device inventory view to dashboard
 4. **Documentation:** Create user guide for local portal
 
 ## Commits
 
-(Pending - implementation complete, ready for commit)
+- `975341a` - feat: Add network-scanner and local-portal packages
+- (pending) - feat: Integrate network-scanner and local-portal into appliance image
