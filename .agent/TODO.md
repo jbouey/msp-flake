@@ -128,24 +128,68 @@
 
 ---
 
+## Session 69 (2026-01-24) - Network Scanner & Local Portal
+
+### Accomplishments
+
+#### Network Scanner & Local Portal Implementation - COMPLETE
+- **network-scanner package:** 92 tests passing
+  - Device discovery (AD, ARP, nmap, Go agent)
+  - Medical device detection (DICOM/HL7 ports)
+  - Device classification (workstation, server, network, printer, medical)
+  - SQLite database with WAL mode
+  - API endpoints for scan triggering
+
+- **local-portal package:** 23 tests passing
+  - FastAPI backend with device inventory APIs
+  - React frontend matching Central Command design
+  - CSV/PDF export generation
+  - Medical device opt-in workflow
+  - Central Command sync service
+
+- **NixOS Modules:**
+  - `modules/network-scanner.nix` - Systemd service with daily timer
+  - `modules/local-portal.nix` - Systemd service with nginx integration
+
+- **Central Command Sync:**
+  - `backend/device_sync.py` - Receive device inventory
+  - `backend/routes/device_sync.py` - REST endpoints
+  - Database migration for `discovered_devices` table
+
+### Key Decisions
+| Decision | Choice |
+|----------|--------|
+| Medical Devices | **EXCLUDE COMPLETELY** by default |
+| Scanner Credentials | Separate from healer (blast radius) |
+| Local Portal UI | React (matching Central Command) |
+| Daily Scan Time | 2 AM |
+
+### Test Results
+- network-scanner: 92 tests passing
+- local-portal: 23 tests passing
+- Total: 115 tests
+
+---
+
 ## Next Session Priorities
 
-### 1. Stripe Billing Integration (Optional)
+### 1. Integration Test on Physical Appliance
+**Status:** READY
+**Details:**
+- Update appliance-image.nix to import new modules
+- Build ISO with network-scanner and local-portal
+- Deploy and test device discovery
+
+### 2. Central Command Device UI
+**Status:** READY
+**Details:**
+- Add device inventory view to admin dashboard
+- Show fleet-wide device summary
+- Medical device visibility
+
+### 3. Stripe Billing Integration (Optional)
 **Status:** DEFERRED
 **Details:** User indicated they will handle Stripe integration
-
-### 2. Create v47 Release for Remote Update Test
-**Status:** READY
-**Details:**
-- Create new release in Fleet Updates dashboard
-- Test remote ISO update to physical appliance
-- Verify download → verify → apply → reboot → health gate flow
-
-### 3. Deploy Agent v1.0.47 to Appliance
-**Status:** READY
-**Details:**
-- Agent includes proper signature verification protocol
-- Can deploy via OTA update once v47 release created
 
 ---
 
