@@ -20,11 +20,44 @@ interface TransferStatus {
   reason: string;
 }
 
+interface BillingInfo {
+  has_subscription: boolean;
+  status: string;
+  message?: string;
+  plan?: {
+    name: string;
+    amount: number;
+    currency: string;
+    interval: string;
+  };
+  current_period_end?: string;
+  cancel_at_period_end?: boolean;
+  payment_method?: {
+    type: string;
+    brand: string;
+    last4: string;
+    exp_month: number;
+    exp_year: number;
+  };
+}
+
+interface Invoice {
+  id: string;
+  number: string;
+  amount_due: number;
+  amount_paid: number;
+  currency: string;
+  status: string;
+  created: string;
+  invoice_pdf: string;
+  hosted_invoice_url: string;
+}
+
 export const ClientSettings: React.FC = () => {
   const navigate = useNavigate();
   const { isAuthenticated, isLoading, user } = useClient();
 
-  const [activeTab, setActiveTab] = useState<'users' | 'password' | 'transfer'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'password' | 'transfer' | 'billing'>('users');
   const [users, setUsers] = useState<OrgUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +78,12 @@ export const ClientSettings: React.FC = () => {
   const [transferReason, setTransferReason] = useState('');
   const [requesting, setRequesting] = useState(false);
 
+  // Billing
+  const [billingInfo, setBillingInfo] = useState<BillingInfo | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingAvailable, setBillingAvailable] = useState(true);
+
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       navigate('/client/login', { replace: true });
@@ -55,8 +94,25 @@ export const ClientSettings: React.FC = () => {
     if (isAuthenticated) {
       fetchUsers();
       fetchTransferStatus();
+      fetchBillingInfo();
     }
   }, [isAuthenticated]);
+
+  // Check for billing query params (success/cancelled from Stripe checkout)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const billingStatus = params.get('billing');
+    if (billingStatus === 'success') {
+      setSuccess('Subscription activated successfully!');
+      setActiveTab('billing');
+      // Remove query params
+      window.history.replaceState({}, '', '/client/settings');
+      fetchBillingInfo();
+    } else if (billingStatus === 'cancelled') {
+      setActiveTab('billing');
+      window.history.replaceState({}, '', '/client/settings');
+    }
+  }, []);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -241,6 +297,88 @@ export const ClientSettings: React.FC = () => {
     }
   };
 
+  const fetchBillingInfo = async () => {
+    setBillingLoading(true);
+    try {
+      const response = await fetch('/api/client/billing', { credentials: 'include' });
+      if (response.status === 503) {
+        // Billing not available
+        setBillingAvailable(false);
+        return;
+      }
+      if (response.ok) {
+        const data = await response.json();
+        setBillingInfo(data);
+        setBillingAvailable(true);
+        // Also fetch invoices if subscription exists
+        if (data.has_subscription) {
+          fetchInvoices();
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch billing:', e);
+      setBillingAvailable(false);
+    } finally {
+      setBillingLoading(false);
+    }
+  };
+
+  const fetchInvoices = async () => {
+    try {
+      const response = await fetch('/api/client/billing/invoices', { credentials: 'include' });
+      if (response.ok) {
+        const data = await response.json();
+        setInvoices(data.invoices || []);
+      }
+    } catch (e) {
+      console.error('Failed to fetch invoices:', e);
+    }
+  };
+
+  const handleStartSubscription = async () => {
+    setError(null);
+    try {
+      const response = await fetch('/api/client/billing/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Redirect to Stripe Checkout
+        window.location.href = data.checkout_url;
+      } else {
+        const data = await response.json();
+        setError(data.detail || 'Failed to start checkout');
+      }
+    } catch (e) {
+      setError('Failed to start checkout');
+    }
+  };
+
+  const handleManageBilling = async () => {
+    setError(null);
+    try {
+      const response = await fetch('/api/client/billing/portal', {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Redirect to Stripe Customer Portal
+        window.location.href = data.portal_url;
+      } else {
+        const data = await response.json();
+        setError(data.detail || 'Failed to open billing portal');
+      }
+    } catch (e) {
+      setError('Failed to open billing portal');
+    }
+  };
+
   const canManageUsers = user?.role === 'owner' || user?.role === 'admin';
 
   if (isLoading) {
@@ -315,6 +453,18 @@ export const ClientSettings: React.FC = () => {
               }`}
             >
               Transfer Provider
+            </button>
+          )}
+          {user?.role === 'owner' && billingAvailable && (
+            <button
+              onClick={() => setActiveTab('billing')}
+              className={`pb-2 px-1 font-medium ${
+                activeTab === 'billing'
+                  ? 'text-teal-600 border-b-2 border-teal-600'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Billing
             </button>
           )}
         </div>
@@ -495,6 +645,160 @@ export const ClientSettings: React.FC = () => {
                   </button>
                 </form>
               </>
+            )}
+          </div>
+        )}
+
+        {/* Billing Tab */}
+        {activeTab === 'billing' && user?.role === 'owner' && billingAvailable && (
+          <div className="space-y-6">
+            {billingLoading ? (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
+                <div className="w-8 h-8 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto" />
+              </div>
+            ) : billingInfo?.has_subscription ? (
+              <>
+                {/* Current Plan */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                  <h2 className="text-lg font-medium mb-4">Current Plan</h2>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {billingInfo.plan?.name || 'OsirisCare Compliance'}
+                      </p>
+                      <p className="text-gray-500">
+                        ${billingInfo.plan?.amount}/{billingInfo.plan?.interval}
+                      </p>
+                      {billingInfo.current_period_end && (
+                        <p className="text-sm text-gray-500 mt-2">
+                          {billingInfo.cancel_at_period_end ? 'Cancels' : 'Renews'} on{' '}
+                          {new Date(billingInfo.current_period_end).toLocaleDateString()}
+                        </p>
+                      )}
+                    </div>
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                      billingInfo.status === 'active'
+                        ? 'bg-green-100 text-green-800'
+                        : billingInfo.status === 'trialing'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-yellow-100 text-yellow-800'
+                    }`}>
+                      {billingInfo.status === 'active' ? 'Active' :
+                       billingInfo.status === 'trialing' ? 'Trial' :
+                       billingInfo.status}
+                    </span>
+                  </div>
+
+                  {billingInfo.payment_method && (
+                    <div className="mt-4 pt-4 border-t border-gray-200">
+                      <p className="text-sm text-gray-500">Payment Method</p>
+                      <p className="font-medium">
+                        {billingInfo.payment_method.brand.toUpperCase()} •••• {billingInfo.payment_method.last4}
+                        <span className="text-gray-500 ml-2">
+                          Expires {billingInfo.payment_method.exp_month}/{billingInfo.payment_method.exp_year}
+                        </span>
+                      </p>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleManageBilling}
+                    className="mt-4 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                  >
+                    Manage Subscription
+                  </button>
+                </div>
+
+                {/* Invoices */}
+                {invoices.length > 0 && (
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-200">
+                      <h2 className="text-lg font-medium">Recent Invoices</h2>
+                    </div>
+                    <div className="divide-y divide-gray-200">
+                      {invoices.map((invoice) => (
+                        <div key={invoice.id} className="p-4 flex items-center justify-between">
+                          <div>
+                            <p className="font-medium text-gray-900">{invoice.number}</p>
+                            <p className="text-sm text-gray-500">
+                              {new Date(invoice.created).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <span className={`px-2 py-1 text-xs rounded ${
+                              invoice.status === 'paid'
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {invoice.status}
+                            </span>
+                            <span className="font-medium">
+                              ${invoice.amount_paid.toFixed(2)} {invoice.currency}
+                            </span>
+                            {invoice.invoice_pdf && (
+                              <a
+                                href={invoice.invoice_pdf}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-teal-600 hover:text-teal-700"
+                              >
+                                Download
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              /* No subscription - show signup */
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 max-w-lg">
+                <h2 className="text-lg font-medium mb-4">Subscribe to OsirisCare</h2>
+                <p className="text-gray-500 mb-6">
+                  Get full access to compliance monitoring, evidence management, and audit-ready reports.
+                </p>
+
+                <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                  <p className="text-2xl font-bold text-gray-900">
+                    Starting at $200<span className="text-base font-normal text-gray-500">/month</span>
+                  </p>
+                  <ul className="mt-4 space-y-2 text-sm text-gray-600">
+                    <li className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-teal-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                      Continuous HIPAA compliance monitoring
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-teal-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                      Automatic evidence collection
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-teal-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                      7-year audit trail retention
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-teal-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                      Monthly compliance reports
+                    </li>
+                  </ul>
+                </div>
+
+                <button
+                  onClick={handleStartSubscription}
+                  className="w-full px-6 py-3 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium"
+                >
+                  Start Subscription
+                </button>
+              </div>
             )}
           </div>
         )}
