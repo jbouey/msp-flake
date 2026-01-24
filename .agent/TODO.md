@@ -1,7 +1,83 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-23 (Session 66 Continued - A/B Partition Install Attempted)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.45, ISO v44, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed**, **Physical Appliance OFFLINE - Needs USB Recovery**)
+**Last Updated:** 2026-01-23 (Session 67 - Partner Portal Fixes + OTA USB Update Pattern)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.46, ISO v46, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed**, **Partner Portal Blank Page Fix**, **Google OAuth Button Text Fix**, **OTA USB Update Pattern Established**, **Physical Appliance OFFLINE - Needs USB Recovery**)
+
+---
+
+## Session 67 (2026-01-23) - Partner Portal Fixes + OTA USB Update Pattern
+
+### Session Goals
+1. ✅ Fix partner dashboard blank page (brand_name NULL issue)
+2. ✅ Change Google OAuth button text ("Workspace" → plain "Google")
+3. ✅ Create partner account for awsbouey@gmail.com via API key
+4. ✅ Deploy frontend changes to VPS
+5. ✅ Fix version sync across __init__.py, setup.py, appliance-image.nix
+
+### Accomplishments
+
+#### 1. Partner Dashboard Blank Page Fix (COMPLETE)
+- **Issue:** Dashboard showed blank white page with error `TypeError: Cannot read properties of null (reading 'charAt')`
+- **Root Cause:** `brand_name` column was NULL in the partners table
+- **Fix:** `UPDATE partners SET brand_name = 'AWS Bouey' WHERE contact_email = 'awsbouey@gmail.com'`
+- **Result:** Dashboard loaded correctly after fix
+
+#### 2. Google OAuth Button Text Change (COMPLETE)
+- **File:** `mcp-server/central-command/frontend/src/partner/PartnerLogin.tsx` line 231
+- **Change:** `'Sign in with Google Workspace'` → `'Sign in with Google'`
+- **Commit:** `a8b1ad0`
+- **Deployed:** Rebuilt frontend and uploaded to VPS
+
+#### 3. Partner API Key Login (COMPLETE)
+- **Issue:** Google OAuth client disabled (under review by Google)
+- **Workaround:** Created partner account using API key method
+- **Partner Details:**
+  - Email: awsbouey@gmail.com
+  - Partner ID: 617f1b8b-2bfe-4c86-8fea-10ca876161a4
+  - API Key: `osk_C_1VYhgyeX5hOsacR-X4WsR6gV_jvhL8B45yCGBzi_M`
+- **Key Lesson:** API key hashing uses `hashlib.sha256(f'{API_KEY_SECRET}:{api_key}'.encode()).hexdigest()`
+
+#### 4. Frontend Deployment to VPS (COMPLETE)
+- Built frontend with `npm run build`
+- Uploaded dist to VPS
+- Rebuilt container: `docker compose up -d --build frontend`
+- Required hard refresh (Cmd+Shift+R) to see changes
+
+#### 5. Version Sync Fix (COMPLETE)
+- **Issue:** `__init__.py` was at `0.2.0` while setup.py was at `1.0.45`
+- **Fix:** Synchronized all version files to `1.0.46`:
+  - `packages/compliance-agent/src/compliance_agent/__init__.py`
+  - `packages/compliance-agent/setup.py`
+  - `iso/appliance-image.nix`
+
+#### 6. OTA USB Update Pattern Established
+- **Discovery:** Live NixOS ISO runs from tmpfs (RAM), allowing USB to be overwritten while running
+- **Pattern:** Download ISO to RAM → dd to USB → reboot
+- **Use Case:** Remote appliance updates when physical access not possible
+
+### Files Modified This Session
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/frontend/src/partner/PartnerLogin.tsx` | Google button text change |
+| `packages/compliance-agent/src/compliance_agent/__init__.py` | Version sync to 1.0.46 |
+| `packages/compliance-agent/setup.py` | Version sync to 1.0.46 |
+| `iso/appliance-image.nix` | Version sync to 1.0.46 |
+
+### VPS Changes This Session
+| Change | Location |
+|--------|----------|
+| Frontend dist | Updated with Google button text fix |
+| Database | `UPDATE partners SET brand_name = 'AWS Bouey'` |
+| Partner created | awsbouey@gmail.com with API key |
+
+### Blocked/Pending
+- **Physical appliance OFFLINE:** Still needs USB boot recovery (from Session 66)
+- **Google OAuth:** Client disabled by Google (under review)
+
+### Next Priorities
+1. **URGENT: Recover physical appliance** - Boot from USB, fix boot config
+2. **Build ISO v46** - With version 1.0.46 agent
+3. **Test partner portal login** - With awsbouey@gmail.com account
 
 ---
 
