@@ -765,8 +765,18 @@ async def get_evidence_detail(bundle_id: str, user: dict = Depends(require_clien
 
         # Extract hipaa_control from checks JSONB
         hipaa_control = None
-        if bundle["checks"] and len(bundle["checks"]) > 0:
-            hipaa_control = bundle["checks"][0].get("hipaa_control")
+        checks = bundle["checks"]
+        # asyncpg may return JSONB as string - parse if needed
+        if isinstance(checks, str):
+            import json
+            try:
+                checks = json.loads(checks)
+            except (json.JSONDecodeError, TypeError):
+                checks = []
+        if checks and len(checks) > 0:
+            check_item = checks[0]
+            if isinstance(check_item, dict):
+                hipaa_control = check_item.get("hipaa_control")
 
         return {
             "bundle": {
