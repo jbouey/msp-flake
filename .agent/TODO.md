@@ -1,7 +1,7 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-24 (Session 68 - Client Portal Evidence Fix)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.46, ISO v46, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed**, **Partner Portal Blank Page Fix**, **Google OAuth Button Text Fix**, **OTA USB Update Pattern Established**, **Client Portal Evidence Database Fix**, **Physical Appliance OFFLINE - Needs USB Recovery**)
+**Last Updated:** 2026-01-24 (Session 68 continued - Ed25519 Signature Fix)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.47, ISO v46, **A/B Partition Update System IMPLEMENTED**, Fleet Updates UI, Healing Tier Toggle, Rollout Management, Full Coverage Enabled, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Learning Loop Runbook Mapping Fix**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed**, **Partner Portal Blank Page Fix**, **Google OAuth Button Text Fix**, **OTA USB Update Pattern Established**, **Client Portal Evidence Database Fix**, **Physical Appliance ONLINE**, **Ed25519 Signature Verification Protocol Fixed**)
 
 ---
 
@@ -65,15 +65,27 @@
 | Phase 2 | Stickiness (notifications, password, history) | COMPLETE |
 | Phase 3 | Power Move (user mgmt, transfer, billing) | COMPLETE (minus Stripe) |
 
-### Blocked/Pending
-- **Ed25519 signature verification:** Needs proper fix (agent/server data format mismatch)
-- **Physical appliance OFFLINE:** Still needs USB boot recovery (from Session 66)
-- **Stripe billing integration:** Phase 3 optional feature
+#### 5. Ed25519 Signature Verification Protocol Fix (COMPLETE)
+- **Issue:** Signature verification failing due to serialization mismatch between agent and server
+- **Root Cause:** JSON serialization produced slightly different output on agent vs server
+- **Solution:** Agent now includes `signed_data` field with the exact JSON string it signed
+- **Files Modified:**
+  - `packages/compliance-agent/src/compliance_agent/appliance_client.py` - Include signed_data in payload
+  - `mcp-server/central-command/backend/evidence_chain.py` - Accept signed_data field for verification
+- **Status:** Server deployed, agent needs OTA update to v1.0.47
+
+#### 6. Physical Appliance Recovery (COMPLETE)
+- **Issue:** Appliance was marked as OFFLINE from Session 66
+- **Status:** Appliance is now reachable at 192.168.88.246
+- **Verification:** Healing enabled, agent running, evidence being submitted
+
+### Pending
+- **Stripe billing integration:** Phase 3 optional feature (not requested)
+- **Agent OTA update to v1.0.47:** Needed for proper signature verification
 
 ### Next Priorities
-1. **URGENT: Recover physical appliance** - Boot from USB, fix boot config
-2. **Fix Ed25519 signature verification** - Align agent and server signing data format
-3. **Stripe billing integration** - Optional Phase 3 feature
+1. **Deploy agent v1.0.47 to appliance** - Via OTA update
+2. **Stripe billing integration** - Optional Phase 3 feature
 
 ---
 

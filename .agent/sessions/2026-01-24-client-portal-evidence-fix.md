@@ -94,19 +94,68 @@ if bundle.agent_signature:
 
 ---
 
-## Outstanding Issues
+## Part 3: Session 68 Continuation - Ed25519 Signature Fix
 
-1. **Ed25519 Signature Verification:** The agent and server serialize data differently when signing/verifying. Need to align the data format to enable proper cryptographic verification.
+### 5. Physical Appliance Recovery (COMPLETE)
 
-2. **Physical Appliance Offline:** Still needs USB boot recovery from Session 66.
+**Status:** Appliance is now ONLINE at 192.168.88.246
+
+**Actions:**
+- Verified appliance reachable via SSH
+- Checked config - healing was enabled
+- Restarted compliance-agent service
+- Confirmed evidence submission working
+
+### 6. Ed25519 Signature Verification Protocol Fix (COMPLETE)
+
+**Problem:** Signature verification consistently failing despite agent and server using same signing structure.
+
+**Root Cause:** JSON serialization produces subtly different output when:
+- Data goes through network transmission and Pydantic parsing
+- Floating point numbers, datetime formatting, or nested object ordering may differ
+
+**Solution:** Agent now includes the exact `signed_data` JSON string alongside the signature:
+
+**Agent (appliance_client.py):**
+```python
+# Build signed_data as string
+signed_data_str = json.dumps({...}, sort_keys=True)
+signature = signer.sign(signed_data_str)
+
+# Include both in payload
+payload["agent_signature"] = signature.hex()
+payload["signed_data"] = signed_data_str  # Exact string that was signed
+```
+
+**Server (evidence_chain.py):**
+```python
+# Use signed_data from bundle if provided (eliminates mismatch)
+if bundle.signed_data:
+    signed_data = bundle.signed_data.encode('utf-8')
+else:
+    # Legacy: reconstruct from fields
+    signed_data = json.dumps({...}, sort_keys=True).encode('utf-8')
+
+verify_ed25519_signature(signed_data, bundle.agent_signature, public_key)
+```
+
+**Status:** Server deployed (v1.0.47), agent needs OTA update
+
+---
+
+## Outstanding Issues (Updated)
+
+1. ~~Ed25519 Signature Verification~~ - **FIXED** (awaiting agent OTA update)
+2. ~~Physical Appliance Offline~~ - **FIXED** (now online at 192.168.88.246)
+3. **Agent OTA Update:** Need to deploy v1.0.47 to appliance for signature fix
 
 ---
 
 ## Next Steps
 
-1. Fix Ed25519 signature verification - align agent and server signing data format
-2. Recover physical appliance via USB boot
-3. Test client portal end-to-end (login, dashboard, evidence, reports)
+1. Deploy agent v1.0.47 to appliance via OTA update
+2. Verify signature verification working with new protocol
+3. Optional: Stripe billing integration (Phase 3)
 
 ---
 
@@ -171,13 +220,23 @@ if bundle.agent_signature:
 |--------|---------|
 | `85ebbaa` | fix: Client portal evidence queries + non-blocking signature verification |
 | `0bb27d8` | feat: Complete client portal Phase 2 & 3 frontend pages |
+| `b6db981` | docs: Session 68 complete |
+| `b3a3e4e` | fix: Ed25519 signature verification - include signed_data in payload |
 
 ---
 
 ## Key Learning
 
+### Database Tables
 The system has two different tables for evidence/compliance data:
 - `evidence_bundles` - older table with `appliance_id`, `outcome`, `timestamp_start`, `hipaa_controls[]`
 - `compliance_bundles` - current table with `site_id`, `check_result`, `checked_at`, `checks` JSONB
 
 New code should use `compliance_bundles` table directly via `site_id`.
+
+### Ed25519 Signature Verification
+When signing JSON data, include the exact signed string in the payload to avoid serialization mismatches:
+- JSON can serialize differently across languages/libraries (key ordering, float precision, datetime format)
+- Even with `sort_keys=True`, nested objects or Pydantic parsing can alter the structure
+- Solution: Include `signed_data` field containing the exact JSON string that was signed
+- Server verifies against provided string rather than reconstructing it
