@@ -5,6 +5,7 @@
 //
 // Features:
 // - 6 compliance checks: BitLocker, Defender, Patches, Firewall, ScreenLock, RMM
+// - Real-time Windows Event Log monitoring (<1s detection vs 5min polling)
 // - gRPC streaming for efficient communication
 // - SQLite offline queue for network resilience
 // - mTLS for secure appliance communication
@@ -23,6 +24,7 @@ import (
 
 	"github.com/osiriscare/agent/internal/checks"
 	"github.com/osiriscare/agent/internal/config"
+	"github.com/osiriscare/agent/internal/eventlog"
 	"github.com/osiriscare/agent/internal/transport"
 	pb "github.com/osiriscare/agent/proto"
 )
@@ -120,6 +122,41 @@ func main() {
 	}
 	if offlineQueue != nil {
 		defer offlineQueue.Close()
+	}
+
+	// Initialize Windows Event Log watcher for real-time detection
+	// This provides <1 second detection vs 5 minute polling
+	hostname := checks.GetHostname()
+	eventWatcher := eventlog.NewWatcher(hostname, func(event *eventlog.ComplianceEvent) {
+		log.Printf("[REALTIME] Compliance event detected: %s (channel: %s)", event.CheckType, event.Channel)
+
+		// Convert to drift event
+		agentID := ""
+		if regResp != nil {
+			agentID = regResp.AgentId
+		}
+		driftEvent := event.ConvertToDriftEvent(agentID, hostname)
+
+		// Send immediately via gRPC
+		if grpcClient != nil && grpcClient.IsConnected() {
+			if err := grpcClient.SendDrift(ctx, driftEvent); err != nil {
+				log.Printf("[REALTIME] Failed to send event, queueing: %v", err)
+				if offlineQueue != nil {
+					offlineQueue.Enqueue(driftEvent)
+				}
+			} else {
+				log.Printf("[REALTIME] Drift event sent: %s", event.CheckType)
+			}
+		} else if offlineQueue != nil {
+			offlineQueue.Enqueue(driftEvent)
+		}
+	})
+
+	// Start event log monitoring
+	if err := eventWatcher.Start(); err != nil {
+		log.Printf("Failed to start event log watcher: %v (polling will still work)", err)
+	} else {
+		defer eventWatcher.Stop()
 	}
 
 	// Main loop
