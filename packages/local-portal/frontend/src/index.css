@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    @apply bg-background-primary text-label-primary;
+  }
+}
+
+@layer components {
+  /* Glass card effect - matching Central Command */
+  .glass-card {
+    @apply bg-background-secondary rounded-ios-lg shadow-card;
+    backdrop-filter: blur(20px) saturate(180%);
+    transition: all 0.2s ease-in-out;
+  }
+
+  .glass-card:hover {
+    @apply shadow-card-hover;
+  }
+
+  /* Status badges */
+  .status-badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .status-compliant {
+    @apply bg-green-100 text-health-healthy;
+  }
+
+  .status-drifted {
+    @apply bg-orange-100 text-health-warning;
+  }
+
+  .status-unknown {
+    @apply bg-gray-100 text-label-tertiary;
+  }
+
+  .status-excluded {
+    @apply bg-purple-100 text-ios-purple;
+  }
+
+  /* Device type badges */
+  .device-badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  }
+
+  .device-workstation {
+    @apply bg-blue-100 text-ios-blue;
+  }
+
+  .device-server {
+    @apply bg-indigo-100 text-ios-indigo;
+  }
+
+  .device-network {
+    @apply bg-teal-100 text-ios-teal;
+  }
+
+  .device-printer {
+    @apply bg-gray-100 text-label-secondary;
+  }
+
+  .device-medical {
+    @apply bg-red-100 text-health-critical;
+  }
+
+  .device-unknown {
+    @apply bg-gray-100 text-label-tertiary;
+  }
+
+  /* Button styles */
+  .btn-primary {
+    @apply px-4 py-2 bg-accent-primary text-white rounded-ios-sm font-medium;
+    @apply hover:bg-blue-600 transition-colors;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-background-tertiary text-label-primary rounded-ios-sm font-medium;
+    @apply hover:bg-gray-200 transition-colors border border-separator-medium;
+  }
+
+  /* KPI Card */
+  .kpi-card {
+    @apply glass-card p-4 flex flex-col items-center justify-center text-center;
+  }
+
+  .kpi-value {
+    @apply text-3xl font-bold text-label-primary;
+  }
+
+  .kpi-label {
+    @apply text-sm text-label-secondary mt-1;
+  }
+}
