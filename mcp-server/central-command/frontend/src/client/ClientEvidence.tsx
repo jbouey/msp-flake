@@ -15,7 +15,7 @@ interface EvidenceBundle {
 
 export const ClientEvidence: React.FC = () => {
   const navigate = useNavigate();
-  const { user, isAuthenticated, isLoading } = useClient();
+  const { isAuthenticated, isLoading } = useClient();
 
   const [evidence, setEvidence] = useState<EvidenceBundle[]>([]);
   const [total, setTotal] = useState(0);
