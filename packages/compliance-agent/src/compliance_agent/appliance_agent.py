@@ -99,9 +99,15 @@ from .grpc_server import (
     serve as grpc_serve,
 )
 
+# Import compliance_pb2 for HealCommand creation (if gRPC available)
+try:
+    from . import compliance_pb2
+except ImportError:
+    compliance_pb2 = None
+
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.32"
+VERSION = "1.0.49"
 
 
 async def run_command(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
@@ -1053,16 +1059,70 @@ class ApplianceAgent:
             "stderr": stderr[:500]
         }
 
+    # Mapping from runbook IDs to Go agent heal commands
+    # Only runbooks that the Go agent can execute locally
+    GO_AGENT_RUNBOOK_MAP = {
+        "RB-WIN-SEC-001": {"check_type": "firewall", "action": "enable"},
+        "RB-WIN-SEC-003": {"check_type": "screenlock", "action": "configure"},
+        "RB-WIN-SEC-005": {"check_type": "bitlocker", "action": "enable"},
+        "RB-WIN-SEC-006": {"check_type": "defender", "action": "start"},
+    }
+
     async def _heal_run_windows_runbook(
         self, params: Dict[str, Any], incident: Optional[Incident]
     ) -> Dict[str, Any]:
-        """Execute a Windows runbook via WinRM."""
+        """Execute a Windows runbook via Go agent (fast) or WinRM (fallback)."""
         runbook_id = params.get("runbook_id")
         target_host = params.get("target_host")
         phases = params.get("phases", ["remediate", "verify"])
 
         if not runbook_id:
             return {"error": "runbook_id required"}
+
+        # === Go Agent Fast Path ===
+        # Check if we can route this heal through a connected Go agent (~10ms vs ~8s)
+        if (
+            GRPC_AVAILABLE
+            and compliance_pb2 is not None
+            and self.agent_registry is not None
+            and target_host
+            and runbook_id in self.GO_AGENT_RUNBOOK_MAP
+        ):
+            # Check if a Go agent is connected for this hostname
+            if self.agent_registry.has_agent_for_host(target_host):
+                heal_spec = self.GO_AGENT_RUNBOOK_MAP[runbook_id]
+                command_id = f"heal-{uuid.uuid4().hex[:12]}"
+
+                # Create HealCommand protobuf message
+                heal_command = compliance_pb2.HealCommand(
+                    command_id=command_id,
+                    check_type=heal_spec["check_type"],
+                    action=heal_spec["action"],
+                    params={},
+                    timeout_seconds=60,
+                )
+
+                # Queue the command for delivery on next heartbeat
+                queued = self.agent_registry.queue_heal_command(target_host, heal_command)
+                if queued:
+                    logger.info(
+                        f"Routed heal via Go agent: {target_host}/{runbook_id} "
+                        f"→ {heal_spec['check_type']}/{heal_spec['action']} "
+                        f"(command_id={command_id})"
+                    )
+                    return {
+                        "action": "run_windows_runbook",
+                        "runbook_id": runbook_id,
+                        "target": target_host,
+                        "method": "go_agent",
+                        "command_id": command_id,
+                        "success": True,
+                        "queued": True,
+                        "note": "Heal command queued for Go agent (10ms vs 8s WinRM)",
+                    }
+
+        # === WinRM Fallback Path ===
+        # No Go agent available, use WinRM (slower but works without agent deployment)
 
         # Find target - try to match hostname, fallback to first available
         target = None
@@ -1131,6 +1191,7 @@ class ApplianceAgent:
                 "action": "run_windows_runbook",
                 "runbook_id": runbook_id,
                 "target": target.hostname,
+                "method": "winrm",  # Distinguish from go_agent path
                 "phases": phases,
                 "success": overall_success,
                 "phase_details": phase_details,

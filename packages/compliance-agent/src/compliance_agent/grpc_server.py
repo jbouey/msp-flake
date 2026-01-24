@@ -38,29 +38,36 @@ class AgentState:
     def __init__(self, agent_id: str, hostname: str, tier: int):
         self.agent_id = agent_id
         self.hostname = hostname
+        self.hostname_lower = hostname.lower()  # For case-insensitive lookup
         self.tier = tier
         self.connected_at = datetime.now(timezone.utc)
         self.last_heartbeat = datetime.now(timezone.utc)
         self.drift_count = 0
         self.rmm_agents: list = []
+        self.pending_commands: list = []  # Queue of HealCommands waiting for agent
 
 
 class AgentRegistry:
-    """Registry of connected Go agents."""
+    """Registry of connected Go agents with command queue support."""
 
     def __init__(self):
         self.agents: Dict[str, AgentState] = {}
+        self._hostname_index: Dict[str, str] = {}  # hostname_lower -> agent_id
         self._config_version = 1
 
     def register(self, state: AgentState):
         """Register an agent."""
         self.agents[state.agent_id] = state
+        self._hostname_index[state.hostname_lower] = state.agent_id
         logger.info(f"Registered Go agent {state.agent_id} ({state.hostname})")
 
     def unregister(self, agent_id: str):
         """Unregister an agent."""
         if agent_id in self.agents:
             hostname = self.agents[agent_id].hostname
+            hostname_lower = self.agents[agent_id].hostname_lower
+            if hostname_lower in self._hostname_index:
+                del self._hostname_index[hostname_lower]
             del self.agents[agent_id]
             logger.info(f"Unregistered Go agent {agent_id} ({hostname})")
 
@@ -71,6 +78,35 @@ class AgentRegistry:
     def get_agent(self, agent_id: str) -> Optional[AgentState]:
         """Get agent state by ID."""
         return self.agents.get(agent_id)
+
+    def get_agent_by_hostname(self, hostname: str) -> Optional[AgentState]:
+        """Get agent state by hostname (case-insensitive)."""
+        agent_id = self._hostname_index.get(hostname.lower())
+        if agent_id:
+            return self.agents.get(agent_id)
+        return None
+
+    def has_agent_for_host(self, hostname: str) -> bool:
+        """Check if a Go agent is connected for the given hostname."""
+        return hostname.lower() in self._hostname_index
+
+    def queue_heal_command(self, hostname: str, command: Any) -> bool:
+        """Queue a heal command for an agent. Returns True if agent found."""
+        agent = self.get_agent_by_hostname(hostname)
+        if agent:
+            agent.pending_commands.append(command)
+            logger.info(f"Queued heal command {command.command_id} for {hostname}")
+            return True
+        return False
+
+    def pop_pending_commands(self, agent_id: str) -> list:
+        """Get and clear pending commands for an agent."""
+        agent = self.agents.get(agent_id)
+        if agent and agent.pending_commands:
+            commands = agent.pending_commands
+            agent.pending_commands = []
+            return commands
+        return []
 
     def config_version_changed(self, agent_id: str) -> bool:
         """Check if config version changed since agent registered."""
@@ -143,6 +179,14 @@ if GRPC_AVAILABLE:
                 check_config={},
             )
 
+        # Mapping from Go agent check types to heal actions for immediate response
+        GO_AGENT_HEAL_MAP = {
+            "firewall": {"action": "enable", "timeout": 60},
+            "defender": {"action": "start", "timeout": 60},
+            "bitlocker": {"action": "enable", "timeout": 120},
+            "screenlock": {"action": "configure", "timeout": 30},
+        }
+
         def ReportDrift(self, request_iterator, context):
             """Handle streaming drift events from agent."""
             for event in request_iterator:
@@ -157,14 +201,32 @@ if GRPC_AVAILABLE:
                     agent.drift_count += 1
                     agent.last_heartbeat = datetime.now(timezone.utc)
 
-                # Route failed checks to healing engine
+                # Build heal command for immediate execution (if applicable)
+                heal_command = None
+                if not event.passed and event.check_type in self.GO_AGENT_HEAL_MAP:
+                    heal_spec = self.GO_AGENT_HEAL_MAP[event.check_type]
+                    command_id = f"drift-heal-{uuid.uuid4().hex[:12]}"
+                    heal_command = compliance_pb2.HealCommand(
+                        command_id=command_id,
+                        check_type=event.check_type,
+                        action=heal_spec["action"],
+                        params={},
+                        timeout_seconds=heal_spec["timeout"],
+                    )
+                    logger.info(
+                        f"Immediate heal command for {event.hostname}: "
+                        f"{event.check_type}/{heal_spec['action']} (id={command_id})"
+                    )
+
+                # Also route failed checks to healing engine for tracking/evidence
                 if not event.passed:
                     self._route_drift_to_healing_sync(event)
 
-                # Acknowledge receipt
+                # Acknowledge receipt with optional immediate heal command
                 yield compliance_pb2.DriftAck(
                     event_id=f"{event.agent_id}-{event.timestamp}",
                     received=True,
+                    heal_command=heal_command,  # Go agent executes immediately if set
                 )
 
         def ReportHealing(self, request, context):
@@ -184,7 +246,7 @@ if GRPC_AVAILABLE:
             )
 
         def Heartbeat(self, request, context):
-            """Handle agent heartbeats."""
+            """Handle agent heartbeats and deliver pending commands."""
             agent = self.registry.get_agent(request.agent_id)
             if agent:
                 agent.last_heartbeat = datetime.now(timezone.utc)
@@ -193,9 +255,18 @@ if GRPC_AVAILABLE:
             # Check if config changed (triggers re-registration)
             config_changed = self.registry.config_version_changed(request.agent_id)
 
+            # Get any pending heal commands for this agent
+            pending_commands = self.registry.pop_pending_commands(request.agent_id)
+            if pending_commands:
+                logger.info(
+                    f"Delivering {len(pending_commands)} heal commands to "
+                    f"{request.agent_id} via heartbeat"
+                )
+
             return compliance_pb2.HeartbeatResponse(
                 acknowledged=True,
                 config_changed=config_changed,
+                pending_commands=pending_commands,
             )
 
         def ReportRMMStatus(self, request, context):
