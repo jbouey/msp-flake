@@ -795,20 +795,12 @@ class ApplianceAgent:
                         "dry_run": self._healing_dry_run,
                     }
 
-                # Compute hash and sign the evidence data
+                # Compute hash of the evidence data
                 evidence_json = json.dumps(evidence_data, sort_keys=True)
                 bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
 
-                # Sign the bundle if signer is available
-                agent_signature = None
-                if self.signer:
-                    try:
-                        signature_bytes = self.signer.sign(evidence_json)
-                        agent_signature = signature_bytes.hex()
-                    except Exception as e:
-                        logger.warning(f"Failed to sign evidence bundle: {e}")
-
                 # Upload to Central Command (with deduplication)
+                # Signing happens in client where full payload is constructed
                 check_status = check_result.get("status", "unknown")
                 if self._should_submit_evidence(check_name, check_status):
                     bundle_id = await self.client.submit_evidence(
@@ -817,14 +809,14 @@ class ApplianceAgent:
                         check_result=check_status,
                         evidence_data=evidence_data,
                         hipaa_control=hipaa_controls.get(check_name),
-                        agent_signature=agent_signature
+                        signer=self.signer  # Pass signer to client for signing
                     )
 
                     if bundle_id:
-                        logger.debug(f"Evidence uploaded: {check_name} -> {bundle_id} (signed={agent_signature is not None})")
+                        logger.debug(f"Evidence uploaded: {check_name} -> {bundle_id} (signed={self.signer is not None})")
 
-                    # Store locally as well (with signature)
-                    await self._store_local_evidence(bundle_id, evidence_data, agent_signature)
+                    # Store locally as well
+                    await self._store_local_evidence(bundle_id, evidence_data)
 
         except Exception as e:
             logger.error(f"Drift detection failed: {e}")
@@ -1653,16 +1645,7 @@ try {
                     evidence_json = json.dumps(evidence_data, sort_keys=True)
                     bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
 
-                    # Sign if signer available
-                    agent_signature = None
-                    if self.signer:
-                        try:
-                            signature_bytes = self.signer.sign(evidence_json)
-                            agent_signature = signature_bytes.hex()
-                        except Exception as e:
-                            logger.warning(f"Failed to sign Windows evidence: {e}")
-
-                    # Submit with deduplication
+                    # Submit with deduplication (signing happens in client)
                     windows_check_type = f"windows_{check_name}"
                     if self._should_submit_evidence(windows_check_type, status):
                         await self.client.submit_evidence(
@@ -1672,7 +1655,7 @@ try {
                             evidence_data=evidence_data,
                             host=target.hostname,
                             hipaa_control="164.312(b)",  # Audit controls
-                            agent_signature=agent_signature
+                            signer=self.signer
                         )
 
                         logger.debug(f"Windows check {check_name} on {target.hostname}: {status}")
@@ -1766,16 +1749,7 @@ try {
                 evidence_json = json.dumps(evidence_data, sort_keys=True)
                 bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
 
-                # Sign if signer available
-                agent_signature = None
-                if self.signer:
-                    try:
-                        signature_bytes = self.signer.sign(evidence_json)
-                        agent_signature = signature_bytes.hex()
-                    except Exception as e:
-                        logger.warning(f"Failed to sign Linux evidence: {e}")
-
-                # Submit with deduplication
+                # Submit with deduplication (signing happens in client)
                 linux_check_type = f"linux_{drift.check_type}"
                 linux_result = "pass" if drift.compliant else "fail"
                 if self._should_submit_evidence(linux_check_type, linux_result):
@@ -1786,7 +1760,7 @@ try {
                         evidence_data=evidence_data,
                         host=drift.target,
                         hipaa_control=drift.hipaa_controls[0] if drift.hipaa_controls else "164.312(b)",
-                        agent_signature=agent_signature
+                        signer=self.signer
                     )
 
                     logger.debug(f"Linux {drift.runbook_id} on {drift.target}: {linux_result}")
@@ -1903,16 +1877,7 @@ try {
                 evidence_json = json.dumps(evidence_data, sort_keys=True)
                 bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
 
-                # Sign if signer available
-                agent_signature = None
-                if self.signer:
-                    try:
-                        signature_bytes = self.signer.sign(evidence_json)
-                        agent_signature = signature_bytes.hex()
-                    except Exception as e:
-                        logger.warning(f"Failed to sign network posture evidence: {e}")
-
-                # Submit with deduplication
+                # Submit with deduplication (signing happens in client)
                 network_result = "pass" if result.compliant else "fail"
                 if self._should_submit_evidence("network", network_result):
                     await self.client.submit_evidence(
@@ -1922,7 +1887,7 @@ try {
                         evidence_data=evidence_data,
                         host=result.target,
                         hipaa_control=result.hipaa_controls[0] if result.hipaa_controls else "164.312(e)(1)",
-                        agent_signature=agent_signature
+                        signer=self.signer
                     )
 
                 status = "compliant" if result.compliant else f"drifted ({len(result.drift_items)} issues)"
@@ -2106,15 +2071,7 @@ try {
                 summary_json = json.dumps(summary, sort_keys=True)
                 summary_hash = hashlib.sha256(summary_json.encode()).hexdigest()
 
-                # Sign if signer available
-                agent_signature = None
-                if self.signer:
-                    try:
-                        signature_bytes = self.signer.sign(summary_json)
-                        agent_signature = signature_bytes.hex()
-                    except Exception as e:
-                        logger.warning(f"Failed to sign workstation evidence: {e}")
-
+                # Submit with deduplication (signing happens in client)
                 compliance_rate = summary.get("overall_compliance_rate", 0)
                 check_result = "pass" if compliance_rate >= 80 else "fail"
 
@@ -2126,7 +2083,7 @@ try {
                         evidence_data=summary,
                         host=f"site:{self.config.site_id}",
                         hipaa_control="164.312(a)(2)(iv)",  # Encryption/decryption
-                        agent_signature=agent_signature,
+                        signer=self.signer,
                     )
 
                 # Log summary
