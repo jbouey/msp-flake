@@ -1,6 +1,6 @@
 # Session Handoff - 2026-01-24
 
-**Session:** 66 Final - OTA USB Update Working
+**Session:** 67 - Partner Portal Testing & Fixes
 **Agent Version:** v1.0.46
 **ISO Version:** v46
 **Last Updated:** 2026-01-24
@@ -19,9 +19,37 @@
 | Fleet Updates | **DEPLOYED** | v46 release added |
 | Go Agents | **ALL 3 VMs** | DC, WS, SRV deployed |
 | gRPC | **WORKING** | Drift → L1 → Runbook verified |
-| Partner Portal | **SECURED** | Admin auth added, OAuth working |
-| Dashboard | **WORKING** | Frontend updated |
+| Partner Portal | **WORKING** | API key auth tested, dashboard fixed |
+| Dashboard | **WORKING** | Google button text fixed |
 | Evidence Pipeline | **SECURED** | Ed25519 signatures required |
+
+---
+
+## Session 67 Accomplishments
+
+### 1. Partner Dashboard Blank Page Fixed
+- **Issue:** Dashboard showed blank white page after login
+- **Root Cause:** `brand_name` column was NULL, causing `charAt()` error for avatar initials
+- **Fix:** Set `brand_name = 'AWS Bouey'` in partners table
+- Dashboard now loads correctly with stats and provision code button
+
+### 2. Partner Account Created (API Key Method)
+- **Email:** awsbouey@gmail.com
+- **Partner ID:** 617f1b8b-2bfe-4c86-8fea-10ca876161a4
+- **API Key:** `osk_C_1VYhgyeX5hOsacR-X4WsR6gV_jvhL8B45yCGBzi_M`
+- **Note:** API key hashing uses `hashlib.sha256(f'{API_KEY_SECRET}:{api_key}'.encode()).hexdigest()`
+
+### 3. Google OAuth Button Text Fixed
+- Changed "Sign in with Google Workspace" → "Sign in with Google"
+- File: `mcp-server/central-command/frontend/src/partner/PartnerLogin.tsx`
+- Commit: `a8b1ad0`
+- Frontend rebuilt and deployed to VPS
+
+### 4. Google OAuth Client Status
+- **Current:** OAuth client `325576460306-...` is disabled in Google Cloud Console
+- **Impact:** Google OAuth signup/login not working
+- **Workaround:** API key authentication works
+- **TODO:** Re-enable Google OAuth client or create new one for non-Workspace Google accounts
 
 ---
 
@@ -99,18 +127,22 @@ reboot
 
 ## Next Session Priorities
 
-### Priority 1: Test Partner OAuth Signup Flow
-- Test Google OAuth partner signup
-- Test Microsoft OAuth partner signup
+### Priority 1: Fix Google OAuth Client
+- Re-enable Google OAuth client in Google Cloud Console
+- Or create new OAuth client for regular Google accounts (not Workspace)
+- Test full OAuth signup flow
+
+### Priority 2: Test Partner OAuth Signup Flow
+- Test Microsoft OAuth partner signup (should work)
 - Verify domain whitelisting auto-approval
 - Verify pending partner approval workflow
 
-### Priority 2: Set Up Persistent Data Partition
+### Priority 3: Set Up Persistent Data Partition
 - Physical appliance runs from live USB (tmpfs)
 - Config/data lost on reboot unless saved to HDD
 - Create data partition on sda for `/var/lib/msp`
 
-### Priority 3: A/B Partition System (Deferred)
+### Priority 4: A/B Partition System (Deferred)
 - NixOS ISO initramfs doesn't support partition-based boot
 - Would need custom initramfs to implement proper A/B
 - OTA USB update is working alternative for now
