@@ -1,0 +1,331 @@
+// +build windows
+
+// Package eventlog provides real-time Windows Event Log monitoring for compliance events.
+// This replaces polling with instant detection (<1 second vs 5 minutes).
+package eventlog
+
+import (
+	"context"
+	"log"
+	"sync"
+	"syscall"
+	"time"
+	"unsafe"
+
+	pb "github.com/osiriscare/agent/proto"
+)
+
+// Windows Event Log API
+var (
+	wevtapi                    = syscall.NewLazyDLL("wevtapi.dll")
+	procEvtSubscribe           = wevtapi.NewProc("EvtSubscribe")
+	procEvtClose               = wevtapi.NewProc("EvtClose")
+	procEvtRender              = wevtapi.NewProc("EvtRender")
+	procEvtCreateRenderContext = wevtapi.NewProc("EvtCreateRenderContext")
+)
+
+// Event subscription flags
+const (
+	EvtSubscribeToFutureEvents      = 1
+	EvtSubscribeStartAtOldestRecord = 2
+	EvtRenderEventValues            = 0
+	EvtRenderEventXml               = 1
+)
+
+// ComplianceEvent represents a detected compliance-relevant event
+type ComplianceEvent struct {
+	CheckType    string
+	Passed       bool
+	Expected     string
+	Actual       string
+	HIPAAControl string
+	EventID      uint32
+	Channel      string
+	Timestamp    time.Time
+}
+
+// EventCallback is called when a compliance event is detected
+type EventCallback func(event *ComplianceEvent)
+
+// Watcher monitors Windows Event Log for compliance-relevant events
+type Watcher struct {
+	subscriptions []uintptr
+	callback      EventCallback
+	hostname      string
+	mu            sync.Mutex
+	running       bool
+	ctx           context.Context
+	cancel        context.CancelFunc
+}
+
+// EventChannel defines which events to watch in a specific channel
+type EventChannel struct {
+	Name   string   // e.g., "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall"
+	Query  string   // XPath query for filtering events
+	Events []uint32 // Event IDs to watch
+}
+
+// ComplianceChannels defines all channels to monitor for HIPAA compliance
+var ComplianceChannels = []EventChannel{
+	// Firewall events
+	{
+		Name:   "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
+		Query:  "*[System[(EventID=2003 or EventID=2004 or EventID=2005 or EventID=2006)]]",
+		Events: []uint32{2003, 2004, 2005, 2006}, // Firewall profile/rule changes
+	},
+	// Windows Defender events
+	{
+		Name:   "Microsoft-Windows-Windows Defender/Operational",
+		Query:  "*[System[(EventID=5001 or EventID=5010 or EventID=5012)]]",
+		Events: []uint32{5001, 5010, 5012}, // Defender disabled/config changes
+	},
+	// Security events (failed logins, lockouts, privilege use)
+	{
+		Name:   "Security",
+		Query:  "*[System[(EventID=4625 or EventID=4740 or EventID=4672 or EventID=4719)]]",
+		Events: []uint32{4625, 4740, 4672, 4719},
+	},
+	// System events (service state changes)
+	{
+		Name:   "System",
+		Query:  "*[System[(EventID=7036 or EventID=7040)]]",
+		Events: []uint32{7036, 7040}, // Service start/stop, startup type change
+	},
+	// BitLocker events
+	{
+		Name:   "Microsoft-Windows-BitLocker/BitLocker Management",
+		Query:  "*[System[(EventID=24620 or EventID=24621)]]",
+		Events: []uint32{24620, 24621}, // Protection status changes
+	},
+}
+
+// NewWatcher creates a new event log watcher
+func NewWatcher(hostname string, callback EventCallback) *Watcher {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Watcher{
+		subscriptions: make([]uintptr, 0),
+		callback:      callback,
+		hostname:      hostname,
+		ctx:           ctx,
+		cancel:        cancel,
+	}
+}
+
+// Start begins monitoring event logs
+func (w *Watcher) Start() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.running {
+		return nil
+	}
+
+	log.Println("[EventLog] Starting Windows Event Log monitoring...")
+
+	for _, channel := range ComplianceChannels {
+		if err := w.subscribeChannel(channel); err != nil {
+			log.Printf("[EventLog] Warning: Failed to subscribe to %s: %v", channel.Name, err)
+			// Continue with other channels
+		} else {
+			log.Printf("[EventLog] Subscribed to: %s", channel.Name)
+		}
+	}
+
+	w.running = true
+	log.Printf("[EventLog] Monitoring %d event channels for real-time compliance detection", len(w.subscriptions))
+	return nil
+}
+
+// subscribeChannel subscribes to events from a specific channel
+func (w *Watcher) subscribeChannel(channel EventChannel) error {
+	channelPath, err := syscall.UTF16PtrFromString(channel.Name)
+	if err != nil {
+		return err
+	}
+
+	query, err := syscall.UTF16PtrFromString(channel.Query)
+	if err != nil {
+		return err
+	}
+
+	// Create callback context
+	callbackData := &channelCallbackData{
+		watcher: w,
+		channel: channel,
+	}
+
+	// Subscribe to events
+	handle, _, callErr := procEvtSubscribe.Call(
+		0,                                        // Session (0 = local)
+		0,                                        // SignalEvent (not used with callback)
+		uintptr(unsafe.Pointer(channelPath)),    // ChannelPath
+		uintptr(unsafe.Pointer(query)),          // Query
+		0,                                        // Bookmark (not used)
+		uintptr(unsafe.Pointer(callbackData)),   // Context for callback
+		syscall.NewCallback(eventCallback),       // Callback function
+		uintptr(EvtSubscribeToFutureEvents),     // Flags
+	)
+
+	if handle == 0 {
+		return callErr
+	}
+
+	w.subscriptions = append(w.subscriptions, handle)
+	return nil
+}
+
+// channelCallbackData is passed to the Windows callback
+type channelCallbackData struct {
+	watcher *Watcher
+	channel EventChannel
+}
+
+// eventCallback is the Windows event callback function
+func eventCallback(action, userContext, event uintptr) uintptr {
+	if action != 1 { // EvtSubscribeActionDeliver
+		return 0
+	}
+
+	data := (*channelCallbackData)(unsafe.Pointer(userContext))
+	if data == nil || data.watcher == nil {
+		return 0
+	}
+
+	// Parse the event and check if it's compliance-relevant
+	compEvent := data.watcher.parseEvent(event, data.channel)
+	if compEvent != nil && data.watcher.callback != nil {
+		data.watcher.callback(compEvent)
+	}
+
+	return 0
+}
+
+// parseEvent extracts compliance information from a Windows event
+func (w *Watcher) parseEvent(eventHandle uintptr, channel EventChannel) *ComplianceEvent {
+	// Get event XML for parsing
+	var bufferSize uint32 = 65536
+	buffer := make([]uint16, bufferSize)
+	var bufferUsed, propertyCount uint32
+
+	ret, _, _ := procEvtRender.Call(
+		0, // Context
+		eventHandle,
+		uintptr(EvtRenderEventXml),
+		uintptr(bufferSize*2),
+		uintptr(unsafe.Pointer(&buffer[0])),
+		uintptr(unsafe.Pointer(&bufferUsed)),
+		uintptr(unsafe.Pointer(&propertyCount)),
+	)
+
+	if ret == 0 {
+		// Failed to render, create basic event
+		return w.createBasicEvent(channel)
+	}
+
+	// Parse XML to extract EventID
+	// For now, return based on channel type
+	return w.createBasicEvent(channel)
+}
+
+// createBasicEvent creates a compliance event based on the channel
+func (w *Watcher) createBasicEvent(channel EventChannel) *ComplianceEvent {
+	event := &ComplianceEvent{
+		Channel:   channel.Name,
+		Timestamp: time.Now(),
+		Passed:    false, // Events we monitor are typically failures/changes
+	}
+
+	// Determine check type and HIPAA control based on channel
+	switch {
+	case contains(channel.Name, "Firewall"):
+		event.CheckType = "firewall"
+		event.Expected = "Enabled"
+		event.Actual = "Changed/Disabled"
+		event.HIPAAControl = "164.312(e)(1)"
+	case contains(channel.Name, "Defender"):
+		event.CheckType = "defender"
+		event.Expected = "Real-time protection enabled"
+		event.Actual = "Protection disabled or changed"
+		event.HIPAAControl = "164.308(a)(5)(ii)(B)"
+	case contains(channel.Name, "BitLocker"):
+		event.CheckType = "bitlocker"
+		event.Expected = "Protection enabled"
+		event.Actual = "Protection status changed"
+		event.HIPAAControl = "164.312(a)(2)(iv)"
+	case channel.Name == "Security":
+		event.CheckType = "security_audit"
+		event.Expected = "Normal activity"
+		event.Actual = "Security event detected"
+		event.HIPAAControl = "164.312(b)"
+	case channel.Name == "System":
+		event.CheckType = "service_status"
+		event.Expected = "Services running"
+		event.Actual = "Service state changed"
+		event.HIPAAControl = "164.308(a)(1)"
+	default:
+		event.CheckType = "unknown"
+	}
+
+	return event
+}
+
+// Stop stops monitoring event logs
+func (w *Watcher) Stop() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if !w.running {
+		return
+	}
+
+	w.cancel()
+
+	// Close all subscriptions
+	for _, handle := range w.subscriptions {
+		procEvtClose.Call(handle)
+	}
+	w.subscriptions = nil
+	w.running = false
+
+	log.Println("[EventLog] Stopped Windows Event Log monitoring")
+}
+
+// IsRunning returns whether the watcher is running
+func (w *Watcher) IsRunning() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.running
+}
+
+// Helper function
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// ConvertToDriftEvent converts a ComplianceEvent to a protobuf DriftEvent
+func (e *ComplianceEvent) ConvertToDriftEvent(agentID, hostname string) *pb.DriftEvent {
+	return &pb.DriftEvent{
+		AgentId:      agentID,
+		Hostname:     hostname,
+		CheckType:    e.CheckType,
+		Passed:       e.Passed,
+		Expected:     e.Expected,
+		Actual:       e.Actual,
+		HipaaControl: e.HIPAAControl,
+		Timestamp:    e.Timestamp.Unix(),
+		Metadata: map[string]string{
+			"source":    "eventlog",
+			"channel":   e.Channel,
+			"real_time": "true",
+		},
+	}
+}
