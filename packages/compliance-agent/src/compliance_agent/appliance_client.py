@@ -282,23 +282,29 @@ class CentralCommandClient:
         }
 
         # Sign the payload if signer is provided (matches server-side verification)
+        signed_data_str = None
         if signer and not agent_signature:
             try:
                 # Build the exact structure the server expects for verification
-                signed_data = json.dumps({
+                signed_data_str = json.dumps({
                     "site_id": self.config.site_id,
                     "checked_at": timestamp.isoformat(),
                     "checks": checks,
                     "summary": summary
                 }, sort_keys=True)
-                signature_bytes = signer.sign(signed_data)
+                logger.debug(f"SIGNING DATA: {signed_data_str[:200]}...")
+                signature_bytes = signer.sign(signed_data_str)
                 agent_signature = signature_bytes.hex()
+                logger.debug(f"SIGNATURE: {agent_signature[:40]}...")
             except Exception as e:
                 logger.warning(f"Failed to sign evidence bundle: {e}")
 
-        # Include agent signature if available
+        # Include agent signature and signed_data if available
         if agent_signature:
             payload["agent_signature"] = agent_signature
+            # Include the exact signed data so server can verify against it
+            if signed_data_str:
+                payload["signed_data"] = signed_data_str
 
         status, response = await self._request(
             'POST',

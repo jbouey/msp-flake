@@ -162,6 +162,7 @@ class EvidenceBundleSubmit(BaseModel):
     # Signing
     agent_signature: Optional[str] = Field(None, description="Ed25519 signature from agent")
     agent_public_key: Optional[str] = Field(None, description="Agent's public key (hex)")
+    signed_data: Optional[str] = Field(None, description="Exact JSON string that was signed (for verification)")
 
     # NTP verification (for timestamp integrity)
     ntp_verification: Optional[Dict[str, Any]] = Field(None, description="Multi-source NTP verification")
@@ -402,16 +403,23 @@ async def submit_evidence(
         )
 
     # Verify the Ed25519 signature
-    # The signed data is the core bundle content that the agent signs
-    signed_data = json.dumps({
-        "site_id": site_id,
-        "checked_at": bundle.checked_at.isoformat(),
-        "checks": bundle.checks,
-        "summary": bundle.summary
-    }, sort_keys=True).encode('utf-8')
+    # Use the signed_data from the bundle if provided (eliminates serialization mismatch)
+    # Otherwise, reconstruct from fields (legacy support)
+    if bundle.signed_data:
+        # Agent provided the exact string it signed - use that
+        signed_data = bundle.signed_data.encode('utf-8')
+        logger.debug(f"Using agent-provided signed_data for verification")
+    else:
+        # Legacy: reconstruct signed data from fields (may have serialization differences)
+        signed_data = json.dumps({
+            "site_id": site_id,
+            "checked_at": bundle.checked_at.isoformat(),
+            "checks": bundle.checks,
+            "summary": bundle.summary
+        }, sort_keys=True).encode('utf-8')
+        logger.debug(f"Reconstructing signed_data from bundle fields (legacy)")
 
-    # TEMPORARY: Skip signature verification due to serialization mismatch
-    # TODO: Fix agent/server signing data format to match exactly
+    # Verify signature if present
     if bundle.agent_signature:
         is_valid = verify_ed25519_signature(
             data=signed_data,
@@ -419,13 +427,12 @@ async def submit_evidence(
             public_key_hex=site_row.agent_public_key
         )
         if not is_valid:
+            # Log warning but continue (non-blocking for now)
             logger.warning(f"Evidence signature mismatch for site={site_id} (continuing anyway)")
         else:
             logger.info(f"Evidence signature verified for site={site_id}")
     else:
         logger.warning(f"No agent signature for evidence from site={site_id}")
-
-    logger.info(f"Evidence signature verified for site={site_id}")
 
     # Generate bundle_id if not provided
     import uuid
