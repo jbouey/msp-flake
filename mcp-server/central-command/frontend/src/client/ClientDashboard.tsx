@@ -343,7 +343,7 @@ export const ClientDashboard: React.FC = () => {
         </div>
 
         {/* Quick Links */}
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-6">
           <Link
             to="/client/evidence"
             className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:border-teal-300 transition"
@@ -392,6 +392,23 @@ export const ClientDashboard: React.FC = () => {
               <div>
                 <h3 className="font-semibold text-gray-900">Account Settings</h3>
                 <p className="text-sm text-gray-500">Manage users and preferences</p>
+              </div>
+            </div>
+          </Link>
+
+          <Link
+            to="/client/help"
+            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:border-teal-300 transition"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900">Help & Docs</h3>
+                <p className="text-sm text-gray-500">How-to guides and FAQs</p>
               </div>
             </div>
           </Link>
