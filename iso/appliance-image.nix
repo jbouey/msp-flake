@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.47";  # Session 68 - Ed25519 signature verification fix
+    version = "1.0.48";  # Session 69 - Network Scanner & Local Portal
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
