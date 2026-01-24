@@ -21,7 +21,7 @@ import { PortalDashboard } from './portal/PortalDashboard';
 import { PortalLogin } from './portal/PortalLogin';
 import { PortalVerify } from './portal/PortalVerify';
 import { PartnerProvider, PartnerLogin, PartnerDashboard } from './partner';
-import { ClientProvider, ClientLogin, ClientVerify, ClientDashboard, ClientEvidence, ClientReports, ClientNotifications, ClientSettings } from './client';
+import { ClientProvider, ClientLogin, ClientVerify, ClientDashboard, ClientEvidence, ClientReports, ClientNotifications, ClientSettings, ClientHelp } from './client';
 
 // Create a client for React Query
 const queryClient = new QueryClient({
@@ -238,6 +238,7 @@ const App: React.FC = () => {
                     <Route path="reports" element={<ClientReports />} />
                     <Route path="notifications" element={<ClientNotifications />} />
                     <Route path="settings" element={<ClientSettings />} />
+                    <Route path="help" element={<ClientHelp />} />
                     <Route path="*" element={<ClientLogin />} />
                   </Routes>
                 </ClientProvider>
