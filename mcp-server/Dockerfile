@@ -36,7 +36,8 @@ RUN pip install --no-cache-dir \
     structlog \
     weasyprint \
     sendgrid \
-    bcrypt
+    bcrypt \
+    minio
 
 # Copy application code
 COPY . /app
