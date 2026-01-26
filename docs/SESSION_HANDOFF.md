@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-26 (Session 70 - Partner Compliance & Phase 2 Local Resilience)
-**Current State:** Phase 13 Zero-Touch Updates, **ISO v47**, Full Coverage Healing, **Partner Compliance Framework Management (10 frameworks)**, **Phase 2 Local Resilience (Delegated Authority)**, **Go Agent Deployed to ALL 3 VMs**, **Client Portal COMPLETE (All Phases)**, **Client Portal Help Documentation**, **Partner Portal Blank Page Fix**, **PHYSICAL APPLIANCE ONLINE**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
+**Last Updated:** 2026-01-26 (Session 71 - Exception Management & IDOR Security Fixes)
+**Current State:** Phase 13 Zero-Touch Updates, **ISO v47**, Full Coverage Healing, **Exception Management System**, **IDOR Security Fixes**, **Partner Compliance Framework Management (10 frameworks)**, **Phase 2 Local Resilience (Delegated Authority)**, **Go Agent Deployed to ALL 3 VMs**, **Client Portal COMPLETE (All Phases)**, **Client Portal Help Documentation**, **Partner Portal Blank Page Fix**, **PHYSICAL APPLIANCE ONLINE**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
 
 ---
 
@@ -22,13 +22,55 @@
 | **Go Agent** | **DEPLOYED to ALL 3 VMs** | DC, WS, SRV - gRPC Working |
 | gRPC | **VERIFIED WORKING** | Drift → L1 → Runbook |
 | Active Healing | **ENABLED** | HEALING_DRY_RUN=false |
-| Partner Portal | **WORKING** | API key login verified |
+| Partner Portal | **WORKING** | All 5 tabs functional |
+| **Exception Management** | **DEPLOYED** | IDOR security fixes applied |
 | **Partner Compliance** | **10 FRAMEWORKS** | HIPAA, SOC2, PCI-DSS, NIST CSF, etc. |
 | **Local Resilience** | **PHASE 2 COMPLETE** | Delegated signing, offline audit, SMS alerts |
 | **Client Portal** | **ALL PHASES COMPLETE** | Auth, dashboard, evidence, reports, users, help |
 | Evidence Security | **HARDENED** | Ed25519 verify + OTS validation |
 | Learning System | **OPERATIONAL** | Resolution recording fixed |
 | **Google OAuth** | **DISABLED** | Client under Google review |
+
+---
+
+## Session 71 (2026-01-26) - Exception Management & IDOR Security Fixes
+
+### What Happened
+1. **Exception Management System** - Complete implementation with all 9 API endpoints
+2. **Production Deployment** - Frontend and backend deployed to VPS
+3. **Portal Testing** - Black box and white box testing of partner and client portals
+4. **IDOR Security Fixes** - Critical security vulnerabilities patched
+
+### Exception Management Features
+| Feature | Description |
+|---------|-------------|
+| Create Exception | Request compliance exception for specific controls |
+| View Exceptions | List all exceptions for partner's sites |
+| Update Status | Approve/deny/expire exceptions |
+| Control Granularity | Exceptions at individual control level |
+| Audit Trail | Full history of exception requests |
+
+### IDOR Security Fixes (CRITICAL)
+| Vulnerability | Fix Applied |
+|---------------|-------------|
+| Missing site ownership verification | Added `verify_site_ownership()` on all endpoints |
+| Missing exception ownership verification | Added `verify_exception_ownership()` with JOIN |
+| Predictable exception IDs | Changed to UUID-based IDs (`EXC-{uuid}`) |
+| No security logging | Added IDOR attempt detection with warning logs |
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/main.py` | Added exceptions_router import and registration |
+| `mcp-server/central-command/backend/exceptions_api.py` | IDOR security fixes |
+| `mcp-server/central-command/frontend/src/partner/PartnerExceptionManagement.tsx` | Removed unused import |
+
+### Git Commits
+| Commit | Message |
+|--------|---------|
+| `26d7657` | feat: Compliance exception management for partners and clients |
+| `746c19d` | fix: Remove unused useEffect import |
+| `94ba147` | security: Fix IDOR vulnerabilities in exceptions API |
 
 ---
 
