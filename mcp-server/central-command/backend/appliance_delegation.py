@@ -25,7 +25,7 @@ except ImportError:
     NACL_AVAILABLE = False
 
 from .fleet import get_pool
-from .admin_auth import require_admin
+from .auth import require_admin
 
 logger = logging.getLogger(__name__)
 
