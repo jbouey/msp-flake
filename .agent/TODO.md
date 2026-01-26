@@ -1,7 +1,70 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-24 (Session 68 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.47, **ISO v47 DEPLOYED**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.47**)
+**Last Updated:** 2026-01-26 (Session 70 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.48, **ISO v47 DEPLOYED**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.47**)
+
+---
+
+## Session 70 (2026-01-26) - COMPLETE
+
+### Session Goals
+1. ✅ Complete Partner Compliance Framework Management
+2. ✅ Implement Phase 2 Local Resilience (Delegated Authority)
+
+### Accomplishments
+
+#### 1. Partner Compliance Framework Management - COMPLETE
+- **Backend Bug Fix:** Fixed `partner_row` query outside `async with` block in `compliance_frameworks.py`
+- **VPS Deployment:** Updated `main.py` on VPS with compliance_frameworks_router and partner_compliance_router
+- **Database Migration:** Created compliance_controls and control_runbook_mapping tables
+- **Frontend Component:** Created `PartnerComplianceSettings.tsx` - comprehensive UI for:
+  - Framework usage dashboard
+  - Default compliance settings form (industry, tier, frameworks)
+  - Industry preset quick-apply buttons (Healthcare, Finance, Technology, Defense, etc.)
+  - Per-site compliance configuration modal
+- **Dashboard Integration:** Added "Compliance" tab to `PartnerDashboard.tsx`
+- **10 Compliance Frameworks Supported:** HIPAA, SOC2, PCI-DSS, NIST CSF, NIST 800-171, SOX, GDPR, CMMC, ISO 27001, CIS Controls
+
+#### 2. Phase 2 Local Resilience Implementation - COMPLETE
+- **DelegatedSigningKey:** Ed25519 keys delegated from Central Command for offline signing
+  - Key storage in `/var/lib/msp/keys/`
+  - Request delegation from Central Command via API
+  - Sign evidence bundles during offline mode
+- **UrgentCloudRetry:** Priority queue for critical incidents when cloud unavailable
+  - SQLite-backed priority queue
+  - Exponential backoff with jitter (1s → 64s)
+  - SMS fallback via Twilio integration
+  - Automatic retry when cloud connectivity restored
+- **OfflineAuditTrail:** Tamper-evident hash chain with Ed25519 signatures
+  - SQLite-backed audit log
+  - Hash chain integrity verification
+  - Automatic sync to cloud when connectivity returns
+  - Batch upload support
+- **SMSAlerter:** Twilio integration for critical escalation SMS
+  - Async HTTP client
+  - Configurable Twilio credentials
+- **Updated LocalResilienceManager:**
+  - Phase 1: runbooks, frameworks, evidence_queue, site_config
+  - Phase 2: signing_key, urgent_retry, audit_trail, sms_alerter
+  - New methods: log_l1_action, escalate_to_cloud, verify_audit_integrity, sign_evidence
+
+### Files Modified This Session
+
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/compliance_frameworks.py` | Fixed partner_row async bug |
+| `mcp-server/server.py` | Added compliance_frameworks imports |
+| `mcp-server/central-command/frontend/src/partner/PartnerDashboard.tsx` | Added Compliance tab |
+| `mcp-server/central-command/frontend/src/partner/PartnerComplianceSettings.tsx` | NEW - Partner compliance UI |
+| `packages/compliance-agent/src/compliance_agent/local_resilience.py` | Added Phase 2 classes |
+
+### VPS Changes This Session
+
+| Change | Location |
+|--------|----------|
+| main.py imports | `/opt/mcp-server/app/main.py` (added compliance routers) |
+| Database migration | compliance_controls, control_runbook_mapping tables |
+| Frontend dist | `/opt/mcp-server/frontend_dist/` |
 
 ---
 
@@ -173,22 +236,38 @@
 
 ## Next Session Priorities
 
-### 1. Build and Deploy Updated ISO
+### 1. Phase 3 Local Resilience - Operational Intelligence
+**Status:** READY TO START
+**Details:**
+- Smart sync scheduling (low-bandwidth periods)
+- Predictive runbook caching based on incident patterns
+- Local metrics aggregation and reporting
+- Coverage tier optimization recommendations
+
+### 2. Build and Deploy Updated ISO (v48)
 **Status:** READY
 **Details:**
-- `iso/appliance-image.nix` now includes network-scanner and local-portal
+- Agent v1.0.48 with Phase 1 + Phase 2 Local Resilience
+- `iso/appliance-image.nix` includes network-scanner and local-portal
 - Ports 8082 (scanner API) and 8083 (local portal) configured
 - Build ISO on VPS: `nix build .#appliance-iso`
 - Deploy to physical appliance via OTA USB update
 
-### 2. Central Command Device UI
+### 3. Central Command Device UI
 **Status:** READY
 **Details:**
 - Add device inventory view to admin dashboard
 - Show fleet-wide device summary
 - Medical device visibility
 
-### 3. Stripe Billing Integration (Optional)
+### 4. Central Command Delegation API
+**Status:** NEEDS IMPLEMENTATION
+**Details:**
+- `/api/appliances/{id}/delegated-key` endpoint for key delegation
+- `/api/appliances/{id}/audit-trail` endpoint for syncing offline audit logs
+- `/api/appliances/{id}/urgent-escalations` endpoint for processing retry queue
+
+### 5. Stripe Billing Integration (Optional)
 **Status:** DEFERRED
 **Details:** User indicated they will handle Stripe integration
 

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { usePartner } from './PartnerContext';
 import { PartnerBilling } from './PartnerBilling';
+import { PartnerComplianceSettings } from './PartnerComplianceSettings';
 
 interface Site {
   site_id: string;
@@ -32,7 +33,7 @@ export const PartnerDashboard: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { partner, apiKey, isAuthenticated, isLoading, logout } = usePartner();
 
-  const [activeTab, setActiveTab] = useState<'sites' | 'provisions' | 'billing'>('sites');
+  const [activeTab, setActiveTab] = useState<'sites' | 'provisions' | 'billing' | 'compliance'>('sites');
 
   // Handle billing redirect from Stripe
   useEffect(() => {
@@ -283,6 +284,16 @@ export const PartnerDashboard: React.FC = () => {
             }`}
           >
             Billing
+          </button>
+          <button
+            onClick={() => setActiveTab('compliance')}
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+              activeTab === 'compliance'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Compliance
           </button>
         </div>
       </div>
@@ -552,6 +563,10 @@ export const PartnerDashboard: React.FC = () => {
 
         {activeTab === 'billing' && (
           <PartnerBilling />
+        )}
+
+        {activeTab === 'compliance' && (
+          <PartnerComplianceSettings />
         )}
       </div>
     </div>

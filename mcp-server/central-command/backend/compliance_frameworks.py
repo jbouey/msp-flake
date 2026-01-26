@@ -25,10 +25,12 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
+from .partners import require_partner
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/frameworks", tags=["compliance-frameworks"])
+partner_router = APIRouter(prefix="/api/partners/me", tags=["partner-compliance"])
 
 
 # =============================================================================
@@ -80,6 +82,37 @@ class UpdateSiteFrameworks(BaseModel):
     enabled_frameworks: List[str]
     industry: Optional[str] = None
     coverage_tier: Optional[str] = None
+
+
+class PartnerComplianceDefaults(BaseModel):
+    """Partner-level default compliance settings."""
+    default_frameworks: List[str] = Field(default_factory=list)
+    default_industry: str = "healthcare"
+    default_coverage_tier: str = "standard"
+    industry_presets: Dict[str, List[str]] = Field(default_factory=dict)
+
+
+class UpdatePartnerDefaults(BaseModel):
+    """Request to update partner's default compliance settings."""
+    default_frameworks: Optional[List[str]] = None
+    default_industry: Optional[str] = None
+    default_coverage_tier: Optional[str] = None
+    industry_presets: Optional[Dict[str, List[str]]] = None
+
+
+# Industry presets - recommended frameworks by industry
+INDUSTRY_PRESETS = {
+    "healthcare": ["hipaa", "nist_csf"],
+    "finance": ["sox", "pci_dss", "nist_csf"],
+    "technology": ["soc2", "nist_csf"],
+    "retail": ["pci_dss", "nist_csf"],
+    "government": ["nist_800_171", "nist_csf"],
+    "defense": ["cmmc", "nist_800_171"],
+    "legal": ["nist_csf", "gdpr"],
+    "education": ["nist_csf"],
+    "manufacturing": ["nist_csf", "iso_27001"],
+    "general": ["nist_csf", "cis"],
+}
 
 
 # =============================================================================
@@ -411,6 +444,343 @@ async def update_site_compliance_config(
 
 
 # =============================================================================
+# PARTNER COMPLIANCE MANAGEMENT
+# =============================================================================
+
+@partner_router.get("/compliance/defaults")
+async def get_partner_compliance_defaults(
+    partner=Depends(require_partner)
+) -> Dict[str, Any]:
+    """Get partner's default compliance settings.
+
+    Partners can set defaults that apply to all new sites.
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT
+                default_frameworks, default_industry,
+                default_coverage_tier, industry_presets
+            FROM partners
+            WHERE id = $1
+        """, partner['id'])
+
+    defaults = PartnerComplianceDefaults(
+        default_frameworks=row["default_frameworks"] or ["hipaa"],
+        default_industry=row["default_industry"] or "healthcare",
+        default_coverage_tier=row["default_coverage_tier"] or "standard",
+        industry_presets=row["industry_presets"] or INDUSTRY_PRESETS,
+    )
+
+    return {
+        "defaults": defaults.dict(),
+        "available_frameworks": [
+            {
+                "id": fw_id,
+                "name": meta["name"],
+                "description": meta["description"],
+                "industries": meta["industries"],
+            }
+            for fw_id, meta in FRAMEWORK_METADATA.items()
+        ],
+        "industry_presets": INDUSTRY_PRESETS,
+    }
+
+
+@partner_router.put("/compliance/defaults")
+async def update_partner_compliance_defaults(
+    update: UpdatePartnerDefaults,
+    partner=Depends(require_partner)
+) -> Dict[str, Any]:
+    """Update partner's default compliance settings."""
+    pool = await get_pool()
+
+    # Validate frameworks if provided
+    if update.default_frameworks:
+        invalid = [f for f in update.default_frameworks if f not in FRAMEWORK_METADATA]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid frameworks: {invalid}"
+            )
+
+    # Validate industry presets if provided
+    if update.industry_presets:
+        for industry, frameworks in update.industry_presets.items():
+            invalid = [f for f in frameworks if f not in FRAMEWORK_METADATA]
+            if invalid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid frameworks in preset '{industry}': {invalid}"
+                )
+
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE partners SET
+                default_frameworks = COALESCE($2, default_frameworks),
+                default_industry = COALESCE($3, default_industry),
+                default_coverage_tier = COALESCE($4, default_coverage_tier),
+                industry_presets = COALESCE($5, industry_presets),
+                updated_at = NOW()
+            WHERE id = $1
+        """,
+            partner['id'],
+            update.default_frameworks,
+            update.default_industry,
+            update.default_coverage_tier,
+            json.dumps(update.industry_presets) if update.industry_presets else None,
+        )
+
+    logger.info(f"Partner {partner['id']} updated compliance defaults")
+
+    return {
+        "status": "updated",
+        "message": "Default compliance settings updated",
+    }
+
+
+@partner_router.get("/sites/{site_id}/compliance")
+async def get_partner_site_compliance(
+    site_id: str,
+    partner=Depends(require_partner)
+) -> Dict[str, Any]:
+    """Get compliance configuration for a partner's site."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        site = await conn.fetchrow("""
+            SELECT
+                s.site_id, s.clinic_name, s.tier, s.industry,
+                s.enabled_frameworks, s.runbook_overrides,
+                s.check_schedule, s.alert_config, s.status
+            FROM sites s
+            WHERE s.site_id = $1 AND s.partner_id = $2
+        """, site_id, partner['id'])
+
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Get partner defaults for comparison
+        partner_row = await conn.fetchrow("""
+            SELECT default_frameworks, default_industry, industry_presets
+            FROM partners WHERE id = $1
+        """, partner['id'])
+
+    # Determine effective frameworks
+    enabled = site["enabled_frameworks"]
+    using_defaults = False
+    if not enabled:
+        # Use industry preset or partner default
+        industry = site["industry"] or partner_row["default_industry"] or "healthcare"
+        presets = partner_row["industry_presets"] or INDUSTRY_PRESETS
+        enabled = presets.get(industry, INDUSTRY_PRESETS.get(industry, ["nist_csf"]))
+        using_defaults = True
+
+    return {
+        "site_id": site["site_id"],
+        "site_name": site["clinic_name"],
+        "status": site["status"],
+        "compliance": {
+            "enabled_frameworks": enabled,
+            "using_defaults": using_defaults,
+            "industry": site["industry"],
+            "coverage_tier": site["tier"] or "standard",
+            "runbook_overrides": site["runbook_overrides"] or {},
+            "check_schedule": site["check_schedule"] or {},
+        },
+        "available_frameworks": [
+            {
+                "id": fw_id,
+                "name": meta["name"],
+                "description": meta["description"],
+                "enabled": fw_id in enabled,
+            }
+            for fw_id, meta in FRAMEWORK_METADATA.items()
+        ],
+    }
+
+
+@partner_router.put("/sites/{site_id}/compliance")
+async def update_partner_site_compliance(
+    site_id: str,
+    update: UpdateSiteFrameworks,
+    partner=Depends(require_partner)
+) -> Dict[str, Any]:
+    """Update compliance configuration for a partner's site.
+
+    Partners can enable/disable frameworks for their sites.
+    """
+    # Validate frameworks
+    invalid = [f for f in update.enabled_frameworks if f not in FRAMEWORK_METADATA]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid frameworks: {invalid}. Valid: {list(FRAMEWORK_METADATA.keys())}"
+        )
+
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Verify site belongs to partner
+        site = await conn.fetchrow("""
+            SELECT site_id, clinic_name FROM sites
+            WHERE site_id = $1 AND partner_id = $2
+        """, site_id, partner['id'])
+
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Update configuration
+        await conn.execute("""
+            UPDATE sites SET
+                enabled_frameworks = $2,
+                industry = COALESCE($3, industry),
+                tier = COALESCE($4, tier),
+                updated_at = NOW()
+            WHERE site_id = $1
+        """,
+            site_id,
+            update.enabled_frameworks,
+            update.industry,
+            update.coverage_tier,
+        )
+
+    logger.info(f"Partner {partner['id']} updated site {site_id} frameworks: {update.enabled_frameworks}")
+
+    return {
+        "status": "updated",
+        "site_id": site_id,
+        "site_name": site["clinic_name"],
+        "enabled_frameworks": update.enabled_frameworks,
+        "industry": update.industry,
+        "coverage_tier": update.coverage_tier,
+    }
+
+
+@partner_router.get("/sites/compliance/summary")
+async def get_partner_sites_compliance_summary(
+    partner=Depends(require_partner)
+) -> Dict[str, Any]:
+    """Get compliance summary for all partner sites.
+
+    Shows which frameworks are enabled across the partner's portfolio.
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Get all sites with their frameworks
+        sites = await conn.fetch("""
+            SELECT
+                s.site_id, s.clinic_name, s.industry, s.tier,
+                s.enabled_frameworks, s.status
+            FROM sites s
+            WHERE s.partner_id = $1
+            ORDER BY s.clinic_name
+        """, partner['id'])
+
+        # Get partner defaults
+        partner_row = await conn.fetchrow("""
+            SELECT default_frameworks, default_industry, industry_presets
+            FROM partners WHERE id = $1
+        """, partner['id'])
+
+    # Calculate summary
+    framework_counts = {}
+    industry_counts = {}
+    sites_data = []
+
+    presets = partner_row["industry_presets"] or INDUSTRY_PRESETS
+
+    for site in sites:
+        industry = site["industry"] or partner_row["default_industry"] or "healthcare"
+        frameworks = site["enabled_frameworks"]
+
+        if not frameworks:
+            frameworks = presets.get(industry, INDUSTRY_PRESETS.get(industry, ["nist_csf"]))
+
+        # Count frameworks
+        for fw in frameworks:
+            framework_counts[fw] = framework_counts.get(fw, 0) + 1
+
+        # Count industries
+        industry_counts[industry] = industry_counts.get(industry, 0) + 1
+
+        sites_data.append({
+            "site_id": site["site_id"],
+            "site_name": site["clinic_name"],
+            "industry": industry,
+            "tier": site["tier"] or "standard",
+            "frameworks": frameworks,
+            "status": site["status"],
+        })
+
+    return {
+        "total_sites": len(sites),
+        "framework_distribution": framework_counts,
+        "industry_distribution": industry_counts,
+        "sites": sites_data,
+    }
+
+
+@partner_router.post("/sites/{site_id}/compliance/apply-preset")
+async def apply_industry_preset(
+    site_id: str,
+    industry: str,
+    partner=Depends(require_partner)
+) -> Dict[str, Any]:
+    """Apply an industry preset to a site.
+
+    Quick way to configure a site with recommended frameworks for an industry.
+    """
+    pool = await get_pool()
+
+    # Get partner's presets (or use defaults)
+    async with pool.acquire() as conn:
+        partner_row = await conn.fetchrow("""
+            SELECT industry_presets FROM partners WHERE id = $1
+        """, partner['id'])
+
+        presets = partner_row["industry_presets"] or INDUSTRY_PRESETS
+
+        if industry not in presets and industry not in INDUSTRY_PRESETS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown industry: {industry}. Available: {list(presets.keys())}"
+            )
+
+        frameworks = presets.get(industry, INDUSTRY_PRESETS.get(industry))
+
+        # Verify site belongs to partner
+        site = await conn.fetchrow("""
+            SELECT site_id, clinic_name FROM sites
+            WHERE site_id = $1 AND partner_id = $2
+        """, site_id, partner['id'])
+
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Apply preset
+        await conn.execute("""
+            UPDATE sites SET
+                enabled_frameworks = $2,
+                industry = $3,
+                updated_at = NOW()
+            WHERE site_id = $1
+        """, site_id, frameworks, industry)
+
+    logger.info(f"Applied {industry} preset to site {site_id}: {frameworks}")
+
+    return {
+        "status": "applied",
+        "site_id": site_id,
+        "site_name": site["clinic_name"],
+        "industry": industry,
+        "enabled_frameworks": frameworks,
+    }
+
+
+# =============================================================================
 # DATABASE MIGRATION
 # =============================================================================
 
@@ -456,4 +826,10 @@ CREATE TABLE IF NOT EXISTS control_runbook_mapping (
     is_primary BOOLEAN DEFAULT TRUE,
     UNIQUE(framework_id, control_id, runbook_id)
 );
+
+-- Partner compliance defaults
+ALTER TABLE partners ADD COLUMN IF NOT EXISTS default_frameworks TEXT[];
+ALTER TABLE partners ADD COLUMN IF NOT EXISTS default_industry TEXT DEFAULT 'healthcare';
+ALTER TABLE partners ADD COLUMN IF NOT EXISTS default_coverage_tier TEXT DEFAULT 'standard';
+ALTER TABLE partners ADD COLUMN IF NOT EXISTS industry_presets JSONB DEFAULT '{}';
 """
