@@ -56,6 +56,7 @@ from dashboard_api.oauth_login import public_router as oauth_public_router, rout
 from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router
 from dashboard_api.billing import router as billing_router
 from dashboard_api.exceptions_api import router as exceptions_router
+from dashboard_api.appliance_delegation import router as appliance_delegation_router
 
 # ============================================================================
 # Configuration
@@ -368,6 +369,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not create exceptions tables: {e}")
 
+    # Create appliance delegation tables if needed
+    try:
+        from dashboard_api.appliance_delegation import create_delegation_tables
+        from dashboard_api.fleet import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await create_delegation_tables(conn)
+        logger.info("Appliance delegation tables ready")
+    except Exception as e:
+        logger.warning(f"Could not create delegation tables: {e}")
+
     # Ensure default admin user exists
     try:
         from dashboard_api.auth import ensure_default_admin
@@ -457,6 +469,7 @@ app.include_router(partner_auth_router, prefix="/api")  # Partner OAuth login en
 app.include_router(partner_admin_router, prefix="/api")  # Partner admin endpoints (pending, oauth-config)
 app.include_router(billing_router)  # Stripe billing for partners
 app.include_router(exceptions_router)  # Compliance exceptions management
+app.include_router(appliance_delegation_router)  # Appliance delegation (signing keys, audit, escalations)
 
 # Serve agent update packages (only if directory exists)
 _agent_packages_dir = Path("/opt/mcp-server/agent-packages")

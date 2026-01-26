@@ -20,7 +20,7 @@ import asyncio
 import logging
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass, field, asdict
@@ -1614,6 +1614,948 @@ class SMSAlerter:
 
 
 # =============================================================================
+# PHASE 3: SMART SYNC SCHEDULER
+# =============================================================================
+
+@dataclass
+class SyncWindow:
+    """A time window for sync operations."""
+    start_hour: int  # 0-23
+    end_hour: int    # 0-23
+    priority: str    # "preferred", "acceptable", "avoid"
+    bandwidth_weight: float  # 0.0-1.0, lower = better for syncing
+
+
+class SmartSyncScheduler:
+    """Optimizes sync timing based on bandwidth usage patterns.
+
+    Learns optimal sync windows by:
+    1. Tracking bandwidth usage patterns by hour/day
+    2. Identifying low-bandwidth periods
+    3. Scheduling bulk syncs during off-peak times
+    4. Allowing urgent syncs anytime
+    """
+
+    def __init__(self, db_path: Path = LOCAL_DB_PATH):
+        self.db_path = db_path
+        self._init_db()
+
+        # Default sync windows (can be overridden by learned patterns)
+        self._default_windows = [
+            SyncWindow(0, 6, "preferred", 0.2),    # 12am-6am: best
+            SyncWindow(6, 8, "acceptable", 0.5),   # 6am-8am: morning ramp
+            SyncWindow(8, 17, "avoid", 0.9),       # 8am-5pm: business hours
+            SyncWindow(17, 19, "acceptable", 0.6), # 5pm-7pm: evening ramp
+            SyncWindow(19, 24, "preferred", 0.3),  # 7pm-12am: good
+        ]
+
+    def _init_db(self):
+        """Initialize bandwidth tracking tables."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bandwidth_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                hour INTEGER NOT NULL,
+                day_of_week INTEGER NOT NULL,
+                bytes_sent INTEGER,
+                bytes_received INTEGER,
+                sync_duration_ms INTEGER,
+                success INTEGER
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_bandwidth_hour
+            ON bandwidth_samples(hour, day_of_week)
+        """)
+        conn.commit()
+        conn.close()
+
+    def record_sync(
+        self,
+        bytes_sent: int,
+        bytes_received: int,
+        duration_ms: int,
+        success: bool
+    ):
+        """Record a sync operation for pattern learning."""
+        now = datetime.now(timezone.utc)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            INSERT INTO bandwidth_samples
+            (timestamp, hour, day_of_week, bytes_sent, bytes_received,
+             sync_duration_ms, success)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            now.isoformat(),
+            now.hour,
+            now.weekday(),
+            bytes_sent,
+            bytes_received,
+            duration_ms,
+            1 if success else 0,
+        ))
+        conn.commit()
+        conn.close()
+
+    def get_optimal_sync_window(self) -> Dict[str, Any]:
+        """Determine the best time window for the next sync.
+
+        Returns:
+            Dict with recommended window info
+        """
+        now = datetime.now(timezone.utc)
+        current_hour = now.hour
+
+        # Check learned patterns first
+        conn = sqlite3.connect(self.db_path)
+
+        # Get average sync performance by hour (last 30 days)
+        cursor = conn.execute("""
+            SELECT hour,
+                   AVG(sync_duration_ms) as avg_duration,
+                   AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) as success_rate,
+                   COUNT(*) as sample_count
+            FROM bandwidth_samples
+            WHERE timestamp > datetime('now', '-30 days')
+            GROUP BY hour
+            HAVING sample_count >= 5
+            ORDER BY avg_duration ASC
+        """)
+        learned_patterns = {row[0]: {
+            "avg_duration": row[1],
+            "success_rate": row[2],
+            "sample_count": row[3],
+        } for row in cursor.fetchall()}
+        conn.close()
+
+        # Score each upcoming hour (next 24 hours)
+        hour_scores = []
+        for offset in range(24):
+            check_hour = (current_hour + offset) % 24
+
+            # Base score from default windows
+            base_score = 0.5
+            for window in self._default_windows:
+                if window.start_hour <= check_hour < window.end_hour:
+                    base_score = window.bandwidth_weight
+                    break
+
+            # Adjust based on learned patterns
+            if check_hour in learned_patterns:
+                pattern = learned_patterns[check_hour]
+                # Lower duration and higher success = better score
+                learned_score = (1 - pattern["success_rate"]) * 0.5 + \
+                               (pattern["avg_duration"] / 60000) * 0.5  # Normalize to ~1 for 1 min
+                # Blend with base score (weight learned more if we have samples)
+                weight = min(pattern["sample_count"] / 30, 0.8)  # Max 80% learned
+                final_score = base_score * (1 - weight) + learned_score * weight
+            else:
+                final_score = base_score
+
+            hour_scores.append({
+                "hour": check_hour,
+                "offset_hours": offset,
+                "score": final_score,
+                "learned_data": learned_patterns.get(check_hour),
+            })
+
+        # Sort by score (lower is better) but prefer sooner
+        hour_scores.sort(key=lambda x: (x["score"], x["offset_hours"]))
+        best = hour_scores[0]
+
+        return {
+            "recommended_hour": best["hour"],
+            "wait_hours": best["offset_hours"],
+            "score": best["score"],
+            "is_now_optimal": best["offset_hours"] == 0,
+            "learned_patterns": len(learned_patterns),
+            "all_scores": hour_scores[:6],  # Top 6 options
+        }
+
+    def should_sync_now(self, priority: str = "normal") -> bool:
+        """Determine if we should sync right now.
+
+        Args:
+            priority: "urgent" always syncs, "normal" checks window, "bulk" waits for optimal
+
+        Returns:
+            True if sync should proceed
+        """
+        if priority == "urgent":
+            return True
+
+        window = self.get_optimal_sync_window()
+
+        if priority == "bulk":
+            # Only sync during optimal windows
+            return window["is_now_optimal"] and window["score"] < 0.4
+
+        # Normal: sync if score is acceptable
+        return window["score"] < 0.7
+
+
+# =============================================================================
+# PHASE 3: PREDICTIVE RUNBOOK CACHE
+# =============================================================================
+
+class PredictiveRunbookCache:
+    """Predicts and pre-caches runbooks based on incident patterns.
+
+    Analyzes:
+    1. Incident frequency by type
+    2. Time-of-day incident patterns
+    3. Seasonal/monthly patterns
+    4. Correlated incident sequences (A often follows B)
+
+    Then pre-caches runbooks likely to be needed soon.
+    """
+
+    def __init__(self, db_path: Path = LOCAL_DB_PATH, runbook_cache: Optional[LocalRunbookCache] = None):
+        self.db_path = db_path
+        self.runbook_cache = runbook_cache
+        self._init_db()
+
+    def _init_db(self):
+        """Initialize incident pattern tracking tables."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS incident_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                incident_type TEXT NOT NULL,
+                runbook_id TEXT,
+                hour INTEGER,
+                day_of_week INTEGER,
+                day_of_month INTEGER,
+                resolved_by TEXT  -- "l1", "l2", "l3"
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_incident_type
+            ON incident_patterns(incident_type)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_incident_hour
+            ON incident_patterns(hour, day_of_week)
+        """)
+        conn.commit()
+        conn.close()
+
+    def record_incident(
+        self,
+        incident_type: str,
+        runbook_id: Optional[str] = None,
+        resolved_by: str = "l1"
+    ):
+        """Record an incident for pattern learning."""
+        now = datetime.now(timezone.utc)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            INSERT INTO incident_patterns
+            (timestamp, incident_type, runbook_id, hour, day_of_week,
+             day_of_month, resolved_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            now.isoformat(),
+            incident_type,
+            runbook_id,
+            now.hour,
+            now.weekday(),
+            now.day,
+            resolved_by,
+        ))
+        conn.commit()
+        conn.close()
+
+    def get_predicted_runbooks(self, lookahead_hours: int = 24) -> List[Dict[str, Any]]:
+        """Predict which runbooks are likely to be needed soon.
+
+        Args:
+            lookahead_hours: How far ahead to predict
+
+        Returns:
+            List of runbook IDs with probability scores
+        """
+        now = datetime.now(timezone.utc)
+        predictions = {}
+
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+
+        # Pattern 1: Hour-of-day patterns (last 30 days)
+        for offset in range(lookahead_hours):
+            check_hour = (now.hour + offset) % 24
+            cursor = conn.execute("""
+                SELECT runbook_id, COUNT(*) as count
+                FROM incident_patterns
+                WHERE runbook_id IS NOT NULL
+                  AND hour = ?
+                  AND timestamp > datetime('now', '-30 days')
+                GROUP BY runbook_id
+                ORDER BY count DESC
+                LIMIT 10
+            """, (check_hour,))
+
+            for row in cursor.fetchall():
+                rb_id = row["runbook_id"]
+                if rb_id not in predictions:
+                    predictions[rb_id] = {"runbook_id": rb_id, "score": 0, "reasons": []}
+                # Decay score by offset (sooner = more important)
+                score_boost = row["count"] * (1 - offset / (lookahead_hours * 2))
+                predictions[rb_id]["score"] += score_boost
+                if row["count"] >= 3:
+                    predictions[rb_id]["reasons"].append(
+                        f"Hour {check_hour}: {row['count']} incidents in 30d"
+                    )
+
+        # Pattern 2: Day-of-week patterns
+        for offset_days in range(min(lookahead_hours // 24 + 1, 7)):
+            check_dow = (now.weekday() + offset_days) % 7
+            cursor = conn.execute("""
+                SELECT runbook_id, COUNT(*) as count
+                FROM incident_patterns
+                WHERE runbook_id IS NOT NULL
+                  AND day_of_week = ?
+                  AND timestamp > datetime('now', '-90 days')
+                GROUP BY runbook_id
+                ORDER BY count DESC
+                LIMIT 5
+            """, (check_dow,))
+
+            for row in cursor.fetchall():
+                rb_id = row["runbook_id"]
+                if rb_id not in predictions:
+                    predictions[rb_id] = {"runbook_id": rb_id, "score": 0, "reasons": []}
+                predictions[rb_id]["score"] += row["count"] * 0.5
+                if row["count"] >= 5:
+                    day_name = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][check_dow]
+                    predictions[rb_id]["reasons"].append(
+                        f"{day_name}: {row['count']} incidents in 90d"
+                    )
+
+        # Pattern 3: Recent high-frequency incidents (velocity)
+        cursor = conn.execute("""
+            SELECT runbook_id, COUNT(*) as count
+            FROM incident_patterns
+            WHERE runbook_id IS NOT NULL
+              AND timestamp > datetime('now', '-7 days')
+            GROUP BY runbook_id
+            ORDER BY count DESC
+            LIMIT 5
+        """)
+
+        for row in cursor.fetchall():
+            rb_id = row["runbook_id"]
+            if rb_id not in predictions:
+                predictions[rb_id] = {"runbook_id": rb_id, "score": 0, "reasons": []}
+            predictions[rb_id]["score"] += row["count"] * 2  # High weight for recent
+            if row["count"] >= 2:
+                predictions[rb_id]["reasons"].append(
+                    f"Recent velocity: {row['count']} in 7d"
+                )
+
+        conn.close()
+
+        # Sort by score and return top predictions
+        result = sorted(predictions.values(), key=lambda x: -x["score"])
+        return result[:20]  # Top 20 predictions
+
+    async def pre_cache_predicted(
+        self,
+        api_url: str,
+        site_id: str,
+        api_key: str
+    ) -> Dict[str, Any]:
+        """Pre-cache predicted runbooks from Central Command.
+
+        Returns:
+            Results of pre-caching operation
+        """
+        if not self.runbook_cache:
+            return {"status": "no_cache", "message": "Runbook cache not configured"}
+
+        predictions = self.get_predicted_runbooks()
+
+        if not predictions:
+            return {"status": "no_predictions", "cached": 0}
+
+        cached = 0
+        already_cached = 0
+        failed = 0
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {"X-API-Key": api_key}
+
+                for pred in predictions[:10]:  # Cache top 10
+                    rb_id = pred["runbook_id"]
+
+                    # Check if already cached
+                    if self.runbook_cache.get_runbook(rb_id):
+                        already_cached += 1
+                        continue
+
+                    # Fetch from cloud
+                    url = f"{api_url}/api/runbooks/{rb_id}"
+                    async with session.get(url, headers=headers) as resp:
+                        if resp.status == 200:
+                            rb_data = await resp.json()
+                            checksum = hashlib.sha256(
+                                json.dumps(rb_data, sort_keys=True).encode()
+                            ).hexdigest()[:16]
+                            await self.runbook_cache._store_runbook(rb_data, checksum)
+                            cached += 1
+                            logger.info(f"Pre-cached runbook {rb_id} (score={pred['score']:.1f})")
+                        else:
+                            failed += 1
+
+        except Exception as e:
+            logger.error(f"Pre-cache failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+        return {
+            "status": "success",
+            "cached": cached,
+            "already_cached": already_cached,
+            "failed": failed,
+            "predictions_analyzed": len(predictions),
+        }
+
+
+# =============================================================================
+# PHASE 3: LOCAL METRICS AGGREGATOR
+# =============================================================================
+
+@dataclass
+class MetricsSummary:
+    """Aggregated metrics summary."""
+    period_start: str
+    period_end: str
+    total_incidents: int
+    incidents_by_type: Dict[str, int]
+    incidents_by_severity: Dict[str, int]
+    l1_resolution_rate: float
+    l2_resolution_rate: float
+    l3_escalation_rate: float
+    mean_resolution_time_ms: float
+    evidence_collected: int
+    compliance_checks_passed: int
+    compliance_checks_failed: int
+
+
+class LocalMetricsAggregator:
+    """Aggregates and reports local operational metrics.
+
+    Collects:
+    - Incident counts and resolution rates
+    - Healing success rates by tier
+    - Evidence collection stats
+    - Compliance check results
+    - Resource utilization
+
+    Provides hourly, daily, and weekly rollups.
+    """
+
+    def __init__(self, db_path: Path = LOCAL_DB_PATH):
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self):
+        """Initialize metrics tables."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS metrics_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                metric_type TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                value REAL NOT NULL,
+                tags TEXT  -- JSON tags for filtering
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_metrics_type_time
+            ON metrics_events(metric_type, timestamp)
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS metrics_rollups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                period TEXT NOT NULL,  -- "hourly", "daily", "weekly"
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                metric_type TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                count INTEGER,
+                sum_value REAL,
+                avg_value REAL,
+                min_value REAL,
+                max_value REAL,
+                UNIQUE(period, period_start, metric_type, metric_name)
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def record_metric(
+        self,
+        metric_type: str,
+        metric_name: str,
+        value: float,
+        tags: Optional[Dict[str, str]] = None
+    ):
+        """Record a metric event."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            INSERT INTO metrics_events (timestamp, metric_type, metric_name, value, tags)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            datetime.now(timezone.utc).isoformat(),
+            metric_type,
+            metric_name,
+            value,
+            json.dumps(tags) if tags else None,
+        ))
+        conn.commit()
+        conn.close()
+
+    def record_incident_resolution(
+        self,
+        incident_type: str,
+        severity: str,
+        resolution_tier: str,  # "l1", "l2", "l3"
+        resolution_time_ms: int,
+        success: bool
+    ):
+        """Record incident resolution metrics."""
+        self.record_metric("incident", "resolution", 1 if success else 0, {
+            "incident_type": incident_type,
+            "severity": severity,
+            "tier": resolution_tier,
+        })
+        self.record_metric("incident", "resolution_time", resolution_time_ms, {
+            "incident_type": incident_type,
+            "tier": resolution_tier,
+        })
+
+    def record_compliance_check(
+        self,
+        framework: str,
+        control_id: str,
+        passed: bool
+    ):
+        """Record compliance check result."""
+        self.record_metric("compliance", "check_result", 1 if passed else 0, {
+            "framework": framework,
+            "control_id": control_id,
+        })
+
+    def compute_rollup(self, period: str = "hourly") -> Dict[str, Any]:
+        """Compute metrics rollup for a period.
+
+        Args:
+            period: "hourly", "daily", or "weekly"
+
+        Returns:
+            Rollup computation result
+        """
+        conn = sqlite3.connect(self.db_path)
+
+        # Determine time range
+        now = datetime.now(timezone.utc)
+        if period == "hourly":
+            period_start = now.replace(minute=0, second=0, microsecond=0)
+            period_end = period_start
+        elif period == "daily":
+            period_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            period_end = period_start
+        else:  # weekly
+            days_since_monday = now.weekday()
+            period_start = (now - timedelta(days=days_since_monday)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            period_end = period_start
+
+        # Compute aggregates for each metric type
+        cursor = conn.execute("""
+            SELECT metric_type, metric_name,
+                   COUNT(*) as count,
+                   SUM(value) as sum_value,
+                   AVG(value) as avg_value,
+                   MIN(value) as min_value,
+                   MAX(value) as max_value
+            FROM metrics_events
+            WHERE timestamp >= ?
+            GROUP BY metric_type, metric_name
+        """, (period_start.isoformat(),))
+
+        rollups = []
+        for row in cursor.fetchall():
+            # Insert or update rollup
+            conn.execute("""
+                INSERT OR REPLACE INTO metrics_rollups
+                (period, period_start, period_end, metric_type, metric_name,
+                 count, sum_value, avg_value, min_value, max_value)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                period,
+                period_start.isoformat(),
+                now.isoformat(),
+                row[0], row[1], row[2], row[3], row[4], row[5], row[6],
+            ))
+            rollups.append({
+                "metric_type": row[0],
+                "metric_name": row[1],
+                "count": row[2],
+                "sum": row[3],
+                "avg": row[4],
+                "min": row[5],
+                "max": row[6],
+            })
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "period": period,
+            "period_start": period_start.isoformat(),
+            "computed_at": now.isoformat(),
+            "metrics": rollups,
+        }
+
+    def get_summary(self, hours: int = 24) -> MetricsSummary:
+        """Get a summary of metrics for the given period."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+        # Get incident counts
+        cursor = conn.execute("""
+            SELECT tags, COUNT(*) as count
+            FROM metrics_events
+            WHERE metric_type = 'incident' AND metric_name = 'resolution'
+              AND timestamp >= ?
+            GROUP BY tags
+        """, (cutoff,))
+
+        incidents_by_type = {}
+        incidents_by_severity = {}
+        tier_counts = {"l1": 0, "l2": 0, "l3": 0}
+        total_incidents = 0
+
+        for row in cursor.fetchall():
+            if row["tags"]:
+                tags = json.loads(row["tags"])
+                incident_type = tags.get("incident_type", "unknown")
+                severity = tags.get("severity", "unknown")
+                tier = tags.get("tier", "unknown")
+
+                incidents_by_type[incident_type] = incidents_by_type.get(incident_type, 0) + row["count"]
+                incidents_by_severity[severity] = incidents_by_severity.get(severity, 0) + row["count"]
+                if tier in tier_counts:
+                    tier_counts[tier] += row["count"]
+                total_incidents += row["count"]
+
+        # Get resolution times
+        cursor = conn.execute("""
+            SELECT AVG(value) as avg_time
+            FROM metrics_events
+            WHERE metric_type = 'incident' AND metric_name = 'resolution_time'
+              AND timestamp >= ?
+        """, (cutoff,))
+        avg_time = cursor.fetchone()["avg_time"] or 0
+
+        # Get compliance checks
+        cursor = conn.execute("""
+            SELECT SUM(CASE WHEN value = 1 THEN 1 ELSE 0 END) as passed,
+                   SUM(CASE WHEN value = 0 THEN 1 ELSE 0 END) as failed
+            FROM metrics_events
+            WHERE metric_type = 'compliance' AND metric_name = 'check_result'
+              AND timestamp >= ?
+        """, (cutoff,))
+        compliance = cursor.fetchone()
+
+        # Get evidence count
+        cursor = conn.execute("""
+            SELECT COUNT(*) as count
+            FROM metrics_events
+            WHERE metric_type = 'evidence'
+              AND timestamp >= ?
+        """, (cutoff,))
+        evidence = cursor.fetchone()["count"]
+
+        conn.close()
+
+        # Calculate rates
+        total_resolved = tier_counts["l1"] + tier_counts["l2"] + tier_counts["l3"]
+
+        return MetricsSummary(
+            period_start=cutoff,
+            period_end=datetime.now(timezone.utc).isoformat(),
+            total_incidents=total_incidents,
+            incidents_by_type=incidents_by_type,
+            incidents_by_severity=incidents_by_severity,
+            l1_resolution_rate=tier_counts["l1"] / total_resolved if total_resolved > 0 else 0,
+            l2_resolution_rate=tier_counts["l2"] / total_resolved if total_resolved > 0 else 0,
+            l3_escalation_rate=tier_counts["l3"] / total_resolved if total_resolved > 0 else 0,
+            mean_resolution_time_ms=avg_time,
+            evidence_collected=evidence,
+            compliance_checks_passed=compliance["passed"] or 0 if compliance else 0,
+            compliance_checks_failed=compliance["failed"] or 0 if compliance else 0,
+        )
+
+    async def report_to_cloud(
+        self,
+        api_url: str,
+        site_id: str,
+        api_key: str
+    ) -> Dict[str, Any]:
+        """Report aggregated metrics to Central Command."""
+        summary = self.get_summary(24)  # Last 24 hours
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+                url = f"{api_url}/api/sites/{site_id}/metrics"
+
+                payload = asdict(summary)
+
+                async with session.post(url, headers=headers, json=payload) as resp:
+                    if resp.status in (200, 201):
+                        logger.info(f"Reported metrics to cloud: {summary.total_incidents} incidents")
+                        return {"status": "success", "reported": True}
+                    else:
+                        return {"status": "failed", "http_status": resp.status}
+
+        except Exception as e:
+            logger.error(f"Failed to report metrics: {e}")
+            return {"status": "error", "error": str(e)}
+
+
+# =============================================================================
+# PHASE 3: COVERAGE TIER OPTIMIZER
+# =============================================================================
+
+@dataclass
+class TierRecommendation:
+    """Coverage tier recommendation."""
+    current_tier: str
+    recommended_tier: str
+    confidence: float  # 0-1
+    reasons: List[str]
+    estimated_l1_rate_change: float  # Percentage point change
+    estimated_cost_impact: str  # "increase", "decrease", "same"
+
+
+class CoverageTierOptimizer:
+    """Recommends optimal coverage tier based on incident patterns.
+
+    Analyzes:
+    - L1 vs L2 vs L3 resolution rates
+    - Incident types that escape L1
+    - Cost of L2/L3 escalations
+    - Framework requirements
+
+    Recommends tier upgrades/downgrades.
+    """
+
+    TIER_CAPABILITIES = {
+        "basic": {
+            "l1_rules": 10,
+            "runbooks": ["critical"],
+            "description": "Critical incidents only",
+        },
+        "standard": {
+            "l1_rules": 20,
+            "runbooks": ["critical", "high"],
+            "description": "Critical and high priority incidents",
+        },
+        "full": {
+            "l1_rules": 50,
+            "runbooks": ["critical", "high", "medium", "low"],
+            "description": "Comprehensive coverage",
+        },
+    }
+
+    def __init__(self, db_path: Path = LOCAL_DB_PATH, metrics: Optional[LocalMetricsAggregator] = None):
+        self.db_path = db_path
+        self.metrics = metrics
+        self._init_db()
+
+    def _init_db(self):
+        """Initialize tier analysis tables."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tier_analysis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                current_tier TEXT NOT NULL,
+                l1_rate REAL,
+                l2_rate REAL,
+                l3_rate REAL,
+                incident_types_escaping TEXT,  -- JSON list
+                recommendation TEXT,
+                applied INTEGER DEFAULT 0
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def analyze_tier_effectiveness(self, current_tier: str) -> TierRecommendation:
+        """Analyze current tier effectiveness and recommend changes.
+
+        Args:
+            current_tier: Current coverage tier ("basic", "standard", "full")
+
+        Returns:
+            Tier recommendation with justification
+        """
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+
+        # Get last 30 days of incident data
+        cursor = conn.execute("""
+            SELECT incident_type, runbook_id, resolved_by, COUNT(*) as count
+            FROM incident_patterns
+            WHERE timestamp > datetime('now', '-30 days')
+            GROUP BY incident_type, resolved_by
+        """)
+
+        tier_counts = {"l1": 0, "l2": 0, "l3": 0}
+        escaping_types = []  # Incident types that escape to L2/L3
+
+        for row in cursor.fetchall():
+            resolved_by = row["resolved_by"]
+            if resolved_by in tier_counts:
+                tier_counts[resolved_by] += row["count"]
+
+            # Track types escaping L1
+            if resolved_by in ("l2", "l3") and row["count"] >= 3:
+                escaping_types.append({
+                    "incident_type": row["incident_type"],
+                    "count": row["count"],
+                    "tier": resolved_by,
+                })
+
+        conn.close()
+
+        total = sum(tier_counts.values())
+        if total == 0:
+            return TierRecommendation(
+                current_tier=current_tier,
+                recommended_tier=current_tier,
+                confidence=0.5,
+                reasons=["Insufficient data (no incidents in 30 days)"],
+                estimated_l1_rate_change=0,
+                estimated_cost_impact="same",
+            )
+
+        l1_rate = tier_counts["l1"] / total
+        l2_rate = tier_counts["l2"] / total
+        l3_rate = tier_counts["l3"] / total
+
+        # Decision logic
+        reasons = []
+        recommended_tier = current_tier
+        l1_rate_change = 0
+        cost_impact = "same"
+        confidence = 0.7
+
+        # Check if we should upgrade
+        if current_tier == "basic":
+            if l3_rate > 0.15:  # More than 15% going to L3
+                recommended_tier = "standard"
+                reasons.append(f"High L3 escalation rate ({l3_rate:.1%}) - standard tier would add more L1 rules")
+                l1_rate_change = 0.10  # Estimate 10% improvement
+                cost_impact = "increase"
+                confidence = 0.8
+            elif l2_rate > 0.25:  # More than 25% needing LLM
+                recommended_tier = "standard"
+                reasons.append(f"High L2 rate ({l2_rate:.1%}) - standard tier includes more runbooks")
+                l1_rate_change = 0.08
+                cost_impact = "increase"
+                confidence = 0.75
+
+        elif current_tier == "standard":
+            if l3_rate > 0.10:  # More than 10% going to L3
+                recommended_tier = "full"
+                reasons.append(f"L3 escalation rate ({l3_rate:.1%}) above threshold")
+                l1_rate_change = 0.08
+                cost_impact = "increase"
+                confidence = 0.75
+            elif l1_rate > 0.90 and l3_rate < 0.02:  # Very high L1, low L3
+                recommended_tier = "basic"
+                reasons.append(f"Excellent L1 rate ({l1_rate:.1%}) - basic tier may suffice")
+                l1_rate_change = -0.05  # Slight decrease expected
+                cost_impact = "decrease"
+                confidence = 0.65
+
+        elif current_tier == "full":
+            if l1_rate > 0.85 and l3_rate < 0.05:  # High L1, low L3
+                recommended_tier = "standard"
+                reasons.append(f"Strong L1 performance ({l1_rate:.1%}) - could reduce to standard")
+                l1_rate_change = -0.05
+                cost_impact = "decrease"
+                confidence = 0.6
+
+        # Add escaping incident types to reasons
+        if escaping_types and recommended_tier != current_tier:
+            top_escaping = sorted(escaping_types, key=lambda x: -x["count"])[:3]
+            for esc in top_escaping:
+                reasons.append(
+                    f"'{esc['incident_type']}' frequently escapes to {esc['tier'].upper()} ({esc['count']} in 30d)"
+                )
+
+        # If no changes recommended, explain why
+        if recommended_tier == current_tier:
+            reasons.append(f"Current tier is appropriate: L1={l1_rate:.1%}, L2={l2_rate:.1%}, L3={l3_rate:.1%}")
+
+        # Store analysis
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            INSERT INTO tier_analysis
+            (timestamp, current_tier, l1_rate, l2_rate, l3_rate,
+             incident_types_escaping, recommendation)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.now(timezone.utc).isoformat(),
+            current_tier,
+            l1_rate,
+            l2_rate,
+            l3_rate,
+            json.dumps(escaping_types),
+            recommended_tier,
+        ))
+        conn.commit()
+        conn.close()
+
+        return TierRecommendation(
+            current_tier=current_tier,
+            recommended_tier=recommended_tier,
+            confidence=confidence,
+            reasons=reasons,
+            estimated_l1_rate_change=l1_rate_change,
+            estimated_cost_impact=cost_impact,
+        )
+
+    def get_tier_history(self, days: int = 90) -> List[Dict[str, Any]]:
+        """Get tier analysis history."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+
+        cursor = conn.execute("""
+            SELECT * FROM tier_analysis
+            WHERE timestamp > datetime('now', ? || ' days')
+            ORDER BY timestamp DESC
+        """, (f"-{days}",))
+
+        history = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return history
+
+
+# =============================================================================
 # SITE CONFIGURATION
 # =============================================================================
 
@@ -1719,6 +2661,12 @@ class LocalResilienceManager:
     - Urgent cloud retry for critical incidents
     - Offline audit trail with tamper detection
     - SMS alerting for cloud-unreachable critical incidents
+
+    Phase 3 additions:
+    - Smart sync scheduling (low-bandwidth periods)
+    - Predictive runbook caching
+    - Local metrics aggregation
+    - Coverage tier optimization
     """
 
     def __init__(self, data_dir: Path = LOCAL_DATA_DIR):
@@ -1740,6 +2688,18 @@ class LocalResilienceManager:
         )
         self.sms_alerter = SMSAlerter()
 
+        # Phase 3: Operational intelligence
+        self.sync_scheduler = SmartSyncScheduler(data_dir / "local.db")
+        self.predictive_cache = PredictiveRunbookCache(
+            data_dir / "local.db",
+            runbook_cache=self.runbooks
+        )
+        self.metrics = LocalMetricsAggregator(data_dir / "local.db")
+        self.tier_optimizer = CoverageTierOptimizer(
+            data_dir / "local.db",
+            metrics=self.metrics
+        )
+
         # Cloud connectivity state
         self._cloud_reachable = False
         self._last_cloud_contact = None
@@ -1749,7 +2709,8 @@ class LocalResilienceManager:
         api_url: str,
         site_id: str,
         api_key: str,
-        appliance_id: Optional[str] = None
+        appliance_id: Optional[str] = None,
+        force: bool = False
     ) -> Dict[str, Any]:
         """Perform full sync with Central Command.
 
@@ -1761,7 +2722,18 @@ class LocalResilienceManager:
         5. (Phase 2) Request delegated signing key if needed
         6. (Phase 2) Process pending escalations
         7. (Phase 2) Sync audit trail
+        8. (Phase 3) Predictive runbook pre-caching
+        9. (Phase 3) Report metrics to cloud
+        10. (Phase 3) Record sync for bandwidth learning
+
+        Args:
+            api_url: Central Command API URL
+            site_id: Site identifier
+            api_key: API key for auth
+            appliance_id: Appliance ID for key delegation
+            force: Force sync even if not optimal time
         """
+        start_time = time.time()
         results = {
             "site_config": None,
             "frameworks": None,
@@ -1770,8 +2742,21 @@ class LocalResilienceManager:
             "signing_key": None,
             "escalations": None,
             "audit_sync": None,
+            "predictive_cache": None,
+            "metrics_report": None,
+            "tier_analysis": None,
             "cloud_reachable": False,
+            "sync_scheduled": True,
         }
+
+        # (Phase 3) Check if we should sync now
+        if not force and not self.sync_scheduler.should_sync_now("normal"):
+            optimal = self.sync_scheduler.get_optimal_sync_window()
+            results["sync_scheduled"] = False
+            results["recommended_sync_hour"] = optimal["recommended_hour"]
+            results["wait_hours"] = optimal["wait_hours"]
+            logger.info(f"Skipping sync - optimal window in {optimal['wait_hours']}h")
+            return results
 
         # 1. Sync site config
         config_ok = await self.site_config.sync_from_cloud(api_url, site_id, api_key)
@@ -1779,6 +2764,8 @@ class LocalResilienceManager:
 
         if not config_ok:
             results["cloud_reachable"] = False
+            # Record failed sync for learning
+            self.sync_scheduler.record_sync(0, 0, int((time.time() - start_time) * 1000), False)
             return results
 
         self._cloud_reachable = True
@@ -1822,10 +2809,40 @@ class LocalResilienceManager:
         audit_result = await self.audit_trail.sync_to_cloud(api_url, api_key)
         results["audit_sync"] = audit_result
 
+        # 8. (Phase 3) Predictive runbook pre-caching
+        pred_result = await self.predictive_cache.pre_cache_predicted(
+            api_url, site_id, api_key
+        )
+        results["predictive_cache"] = pred_result
+
+        # 9. (Phase 3) Report metrics to cloud
+        metrics_result = await self.metrics.report_to_cloud(api_url, site_id, api_key)
+        results["metrics_report"] = metrics_result
+
+        # 10. (Phase 3) Analyze tier effectiveness
+        tier_rec = self.tier_optimizer.analyze_tier_effectiveness(tier)
+        results["tier_analysis"] = {
+            "current_tier": tier_rec.current_tier,
+            "recommended_tier": tier_rec.recommended_tier,
+            "confidence": tier_rec.confidence,
+            "reasons": tier_rec.reasons,
+        }
+
+        # Record successful sync for bandwidth learning
+        duration_ms = int((time.time() - start_time) * 1000)
+        bytes_estimate = len(json.dumps(results)) * 10  # Rough estimate
+        self.sync_scheduler.record_sync(bytes_estimate, bytes_estimate, duration_ms, True)
+
         return results
 
     def get_status(self) -> Dict[str, Any]:
         """Get current local resilience status."""
+        # Get Phase 3 sync window info
+        sync_window = self.sync_scheduler.get_optimal_sync_window()
+
+        # Get current tier for tier analysis
+        current_tier = self.site_config.config.coverage_tier if self.site_config.config else "basic"
+
         return {
             # Phase 1
             "cloud_reachable": self._cloud_reachable,
@@ -1841,6 +2858,19 @@ class LocalResilienceManager:
             "pending_escalations": self.urgent_retry.get_pending_count(),
             "audit_trail": self.audit_trail.get_stats(),
             "sms_alerting_enabled": self.sms_alerter.is_enabled,
+            # Phase 3
+            "sync_scheduler": {
+                "optimal_hour": sync_window["recommended_hour"],
+                "is_now_optimal": sync_window["is_now_optimal"],
+                "learned_patterns": sync_window["learned_patterns"],
+            },
+            "predictive_cache": {
+                "predictions": len(self.predictive_cache.get_predicted_runbooks()),
+            },
+            "metrics_summary": asdict(self.metrics.get_summary(24)),
+            "tier_optimizer": {
+                "current_tier": current_tier,
+            },
         }
 
     async def queue_evidence(
