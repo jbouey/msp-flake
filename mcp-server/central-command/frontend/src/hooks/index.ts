@@ -47,6 +47,10 @@ export {
   useUpdateGoAgentTier,
   useTriggerGoAgentCheck,
   useRemoveGoAgent,
+  // Device inventory hooks
+  useSiteDevices,
+  useSiteDeviceSummary,
+  useSiteMedicalDevices,
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';

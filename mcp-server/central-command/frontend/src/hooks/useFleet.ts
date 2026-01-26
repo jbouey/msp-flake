@@ -3,8 +3,8 @@
  */
 
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi } from '../utils/api';
-import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi } from '../utils/api';
+import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice } from '../utils/api';
 import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary } from '../types';
 
 // Polling interval in milliseconds (60 seconds - reduced from 30s to prevent flickering)
@@ -646,5 +646,62 @@ export function useRemoveGoAgent() {
     onSuccess: (_, { siteId }) => {
       queryClient.invalidateQueries({ queryKey: ['goAgents', siteId] });
     },
+  });
+}
+
+// =============================================================================
+// DEVICE INVENTORY HOOKS (Network scanner discovered devices)
+// =============================================================================
+
+/**
+ * Hook for fetching discovered devices for a site
+ */
+export function useSiteDevices(
+  siteId: string | null,
+  params?: {
+    device_type?: string;
+    compliance_status?: string;
+    include_medical?: boolean;
+    limit?: number;
+    offset?: number;
+  }
+) {
+  return useQuery<SiteDevicesResponse>({
+    queryKey: ['devices', siteId, params],
+    queryFn: () => devicesApi.getSiteDevices(siteId!, params),
+    enabled: !!siteId,
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for fetching device summary for a site
+ */
+export function useSiteDeviceSummary(siteId: string | null) {
+  return useQuery<SiteDeviceSummary>({
+    queryKey: ['devices', siteId, 'summary'],
+    queryFn: () => devicesApi.getSiteSummary(siteId!),
+    enabled: !!siteId,
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+  });
+}
+
+/**
+ * Hook for fetching medical devices for a site
+ */
+export function useSiteMedicalDevices(siteId: string | null, limit?: number, offset?: number) {
+  return useQuery<{
+    site_id: string;
+    medical_devices: DiscoveredDevice[];
+    total: number;
+    note: string;
+  }>({
+    queryKey: ['devices', siteId, 'medical', limit, offset],
+    queryFn: () => devicesApi.getMedicalDevices(siteId!, limit, offset),
+    enabled: !!siteId,
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: STALE_TIME,
   });
 }

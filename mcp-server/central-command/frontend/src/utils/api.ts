@@ -1034,4 +1034,118 @@ export const fleetUpdatesApi = {
     }),
 };
 
+// =============================================================================
+// DEVICES API (Network scanner device inventory)
+// =============================================================================
+
+export interface DiscoveredDevice {
+  id: number;
+  appliance_id: number;
+  local_device_id: string;
+  hostname: string | null;
+  ip_address: string;
+  mac_address: string | null;
+  device_type: string;
+  os_name: string | null;
+  os_version: string | null;
+  medical_device: boolean;
+  scan_policy: string;
+  manually_opted_in: boolean;
+  compliance_status: string;
+  open_ports: number[];
+  discovery_source: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  last_scan_at: string | null;
+  sync_created_at: string;
+  sync_updated_at: string;
+  appliance_hostname: string;
+  site_id: string;
+}
+
+export interface DeviceCounts {
+  total: number;
+  compliant: number;
+  drifted: number;
+  unknown: number;
+  medical: number;
+  workstations: number;
+  servers: number;
+  network_devices: number;
+  printers: number;
+}
+
+export interface SiteDevicesResponse {
+  site_id: string;
+  devices: DiscoveredDevice[];
+  counts: DeviceCounts;
+  pagination: {
+    limit: number;
+    offset: number;
+    total: number;
+  };
+}
+
+export interface SiteDeviceSummary {
+  site_id: string;
+  total_devices: number;
+  compliance_rate: number;
+  by_compliance: {
+    compliant: number;
+    drifted: number;
+    unknown: number;
+  };
+  by_type: {
+    workstations: number;
+    servers: number;
+    network: number;
+    printers: number;
+  };
+  medical_devices: {
+    total: number;
+    excluded_by_default: boolean;
+  };
+}
+
+export const devicesApi = {
+  // Get all devices for a site with filters
+  getSiteDevices: (
+    siteId: string,
+    params?: {
+      device_type?: string;
+      compliance_status?: string;
+      include_medical?: boolean;
+      limit?: number;
+      offset?: number;
+    }
+  ) => {
+    const query = new URLSearchParams();
+    if (params?.device_type) query.set('device_type', params.device_type);
+    if (params?.compliance_status) query.set('compliance_status', params.compliance_status);
+    if (params?.include_medical !== undefined) query.set('include_medical', String(params.include_medical));
+    if (params?.limit) query.set('limit', String(params.limit));
+    if (params?.offset) query.set('offset', String(params.offset));
+    const queryString = query.toString();
+    return fetchSitesApi<SiteDevicesResponse>(`/devices/sites/${siteId}${queryString ? `?${queryString}` : ''}`);
+  },
+
+  // Get device summary for a site
+  getSiteSummary: (siteId: string) =>
+    fetchSitesApi<SiteDeviceSummary>(`/devices/sites/${siteId}/summary`),
+
+  // Get medical devices for a site
+  getMedicalDevices: (siteId: string, limit?: number, offset?: number) => {
+    const query = new URLSearchParams();
+    if (limit) query.set('limit', String(limit));
+    if (offset) query.set('offset', String(offset));
+    const queryString = query.toString();
+    return fetchSitesApi<{
+      site_id: string;
+      medical_devices: DiscoveredDevice[];
+      total: number;
+      note: string;
+    }>(`/devices/sites/${siteId}/medical${queryString ? `?${queryString}` : ''}`);
+  },
+};
+
 export { ApiError };
