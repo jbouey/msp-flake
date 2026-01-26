@@ -50,7 +50,7 @@ from dashboard_api.users import router as users_router
 from dashboard_api.integrations.api import router as integrations_router, public_router as integrations_public_router
 from dashboard_api.frameworks import router as frameworks_router
 from dashboard_api.fleet_updates import router as fleet_updates_router
-from dashboard_api.routes.device_sync import router as device_sync_router
+from dashboard_api.device_sync import device_sync_router
 from dashboard_api.email_alerts import create_notification_with_email
 from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
 from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router
