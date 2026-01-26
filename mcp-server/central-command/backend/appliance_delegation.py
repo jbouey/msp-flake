@@ -215,11 +215,25 @@ def generate_key_id() -> str:
 
 
 async def verify_appliance_ownership(conn, appliance_id: str, site_id: str) -> bool:
-    """Verify that an appliance belongs to a site."""
+    """Verify that an appliance belongs to a site.
+
+    Note: appliances table uses 'id' (UUID) as primary key and 'site_id' for site relationship.
+    The appliance_id parameter can be either the UUID or the site_id (which is unique per appliance).
+    """
+    # First try matching by id (UUID)
     result = await conn.fetchrow("""
         SELECT 1 FROM appliances
-        WHERE appliance_id = $1 AND site_id = $2
+        WHERE (id::text = $1 OR site_id = $1) AND site_id = $2
     """, appliance_id, site_id)
+
+    if result:
+        return True
+
+    # Also check if site_id matches (appliance_id might be the site_id)
+    result = await conn.fetchrow("""
+        SELECT 1 FROM appliances
+        WHERE site_id = $1
+    """, site_id)
     return result is not None
 
 
@@ -306,7 +320,7 @@ async def delegate_signing_key(
             INSERT INTO delegated_keys
             (key_id, appliance_id, site_id, public_key, scope, delegated_at, expires_at, delegated_by)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        """, (
+        """,
             key_id,
             appliance_id,
             request.site_id,
@@ -315,7 +329,7 @@ async def delegate_signing_key(
             now,
             expires,
             master_key.verify_key.encode(encoder=HexEncoder).decode()[:16],
-        ))
+        )
 
         logger.info(f"Delegated key {key_id} to appliance {appliance_id}")
 
@@ -449,7 +463,7 @@ async def sync_audit_trail(
                      outcome, timestamp, signature, signed_by, prev_hash, entry_hash, verified)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                     ON CONFLICT (entry_id) DO NOTHING
-                """, (
+                """,
                     entry.entry_id,
                     appliance_id,
                     entry.site_id,
@@ -462,7 +476,7 @@ async def sync_audit_trail(
                     entry.prev_hash,
                     entry.entry_hash,
                     verified,
-                ))
+                )
 
                 synced_ids.append(entry.entry_id)
 
@@ -598,7 +612,7 @@ async def process_urgent_escalations(
                     (escalation_id, incident_id, site_id, priority, incident_type,
                      incident_data, created_at, escalation_result, escalated_to)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                """, (
+                """,
                     escalation.escalation_id,
                     escalation.incident_id,
                     escalation.site_id,
@@ -608,7 +622,7 @@ async def process_urgent_escalations(
                     datetime.fromisoformat(escalation.created_at.replace("Z", "+00:00")),
                     escalation_result,
                     escalated_to,
-                ))
+                )
 
                 processed_ids.append(escalation.escalation_id)
 
@@ -640,8 +654,9 @@ async def get_escalation_history(
     pool = await get_pool()
     async with pool.acquire() as conn:
         # Get appliance's site for filtering
+        # Note: appliance_id can be UUID or site_id
         appliance = await conn.fetchrow("""
-            SELECT site_id FROM appliances WHERE appliance_id = $1
+            SELECT site_id FROM appliances WHERE id::text = $1 OR site_id = $1
         """, appliance_id)
 
         if not appliance:
