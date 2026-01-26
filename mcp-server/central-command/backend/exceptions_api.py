@@ -2,16 +2,21 @@
 Compliance Exception Management API.
 
 Endpoints for partners and clients to manage compliance exceptions.
+
+Security: All endpoints verify ownership before allowing access.
 """
 
+import uuid
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Path
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
 from .partners import require_partner
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/exceptions", tags=["Exceptions"])
 
@@ -104,6 +109,79 @@ def get_max_duration(tier: str) -> int:
     }.get(tier, 30)
 
 
+def generate_exception_id() -> str:
+    """Generate a secure, non-enumerable exception ID."""
+    return f"EXC-{uuid.uuid4().hex[:12].upper()}"
+
+
+async def verify_site_ownership(conn, partner: dict, site_id: str) -> bool:
+    """
+    Verify that a partner owns or has access to a site.
+
+    Security: Prevents IDOR attacks by ensuring partners can only
+    access sites they own.
+    """
+    partner_id = partner.get("id")
+    if not partner_id:
+        return False
+
+    # Check if site belongs to this partner
+    result = await conn.fetchrow("""
+        SELECT 1 FROM sites
+        WHERE site_id = $1 AND partner_id = $2
+    """, site_id, partner_id)
+
+    return result is not None
+
+
+async def verify_exception_ownership(conn, partner: dict, exception_id: str) -> dict:
+    """
+    Verify that a partner owns an exception (via site ownership).
+
+    Returns the exception row if owned, raises 403/404 otherwise.
+    Security: Prevents IDOR attacks on exception resources.
+    """
+    partner_id = partner.get("id")
+    if not partner_id:
+        raise HTTPException(status_code=403, detail="Invalid partner session")
+
+    # Get exception and verify site ownership in one query
+    row = await conn.fetchrow("""
+        SELECT e.* FROM compliance_exceptions e
+        JOIN sites s ON e.site_id = s.site_id
+        WHERE e.id = $1 AND s.partner_id = $2
+    """, exception_id, partner_id)
+
+    if not row:
+        # Check if exception exists at all (for better error messages)
+        exists = await conn.fetchrow(
+            "SELECT 1 FROM compliance_exceptions WHERE id = $1",
+            exception_id
+        )
+        if exists:
+            # Exception exists but partner doesn't own it
+            logger.warning(
+                f"IDOR attempt: partner {partner_id} tried to access exception {exception_id}"
+            )
+            raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(status_code=404, detail="Exception not found")
+
+    return row
+
+
+async def require_site_access(conn, partner: dict, site_id: str):
+    """
+    Verify site access or raise 403.
+
+    Security: Use this before any operation that requires site access.
+    """
+    if not await verify_site_ownership(conn, partner, site_id):
+        logger.warning(
+            f"IDOR attempt: partner {partner.get('id')} tried to access site {site_id}"
+        )
+        raise HTTPException(status_code=403, detail="Access denied to this site")
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -119,6 +197,8 @@ async def create_exception(
     Permissions:
     - Partner admins can create site-wide exceptions (90 days max)
     - Client admins can create device-specific exceptions (30 days max)
+
+    Security: Verifies partner owns the site before creating exception.
     """
     pool = await get_pool()
 
@@ -132,11 +212,14 @@ async def create_exception(
         duration = max_days
 
     now = datetime.now(timezone.utc)
-    exception_id = f"EXC-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
+    exception_id = generate_exception_id()  # Secure UUID-based ID
 
     partner_email = partner.get("email", partner.get("name", "unknown"))
 
     async with pool.acquire() as conn:
+        # SECURITY: Verify partner owns this site
+        await require_site_access(conn, partner, request.site_id)
+
         # Check if similar exception already exists
         existing = await conn.fetchrow("""
             SELECT id FROM compliance_exceptions
@@ -147,7 +230,7 @@ async def create_exception(
         if existing:
             raise HTTPException(
                 status_code=409,
-                detail=f"Active exception already exists: {existing['id']}"
+                detail="An active exception already exists for this item"
             )
 
         # Create the exception
@@ -190,10 +273,17 @@ async def list_exceptions(
     active_only: bool = Query(True),
     partner: dict = Depends(require_partner),
 ):
-    """List all exceptions for a site."""
+    """
+    List all exceptions for a site.
+
+    Security: Verifies partner owns the site before returning exceptions.
+    """
     pool = await get_pool()
 
     async with pool.acquire() as conn:
+        # SECURITY: Verify partner owns this site
+        await require_site_access(conn, partner, site_id)
+
         query = "SELECT * FROM compliance_exceptions WHERE site_id = $1"
         params = [site_id]
 
@@ -212,10 +302,17 @@ async def get_exception_summary(
     site_id: str,
     partner: dict = Depends(require_partner),
 ):
-    """Get summary of exceptions for a site."""
+    """
+    Get summary of exceptions for a site.
+
+    Security: Verifies partner owns the site before returning summary.
+    """
     pool = await get_pool()
 
     async with pool.acquire() as conn:
+        # SECURITY: Verify partner owns this site
+        await require_site_access(conn, partner, site_id)
+
         rows = await conn.fetch(
             "SELECT * FROM compliance_exceptions WHERE site_id = $1",
             site_id
@@ -256,58 +353,77 @@ async def get_expiring_exceptions(
     site_id: Optional[str] = None,
     partner: dict = Depends(require_partner),
 ):
-    """Get exceptions expiring within the specified days."""
+    """
+    Get exceptions expiring within the specified days.
+
+    Security: Only returns exceptions for sites owned by the partner.
+    """
     pool = await get_pool()
+    partner_id = partner.get("id")
 
     cutoff = datetime.now(timezone.utc) + timedelta(days=days)
 
     async with pool.acquire() as conn:
-        query = """
-            SELECT * FROM compliance_exceptions
-            WHERE is_active = true AND expiration_date <= $1
-        """
-        params = [cutoff]
-
+        # SECURITY: Only get exceptions for sites this partner owns
         if site_id:
-            query += " AND site_id = $2"
-            params.append(site_id)
-
-        query += " ORDER BY expiration_date ASC"
-
-        rows = await conn.fetch(query, *params)
+            # Verify partner owns this specific site
+            await require_site_access(conn, partner, site_id)
+            query = """
+                SELECT e.* FROM compliance_exceptions e
+                WHERE e.is_active = true AND e.expiration_date <= $1
+                AND e.site_id = $2
+                ORDER BY e.expiration_date ASC
+            """
+            rows = await conn.fetch(query, cutoff, site_id)
+        else:
+            # Get all expiring exceptions for all sites owned by this partner
+            query = """
+                SELECT e.* FROM compliance_exceptions e
+                JOIN sites s ON e.site_id = s.site_id
+                WHERE e.is_active = true AND e.expiration_date <= $1
+                AND s.partner_id = $2
+                ORDER BY e.expiration_date ASC
+            """
+            rows = await conn.fetch(query, cutoff, partner_id)
 
     return [_row_to_response(row) for row in rows]
 
 
 @router.get("/{exception_id}", response_model=ExceptionResponse)
 async def get_exception(
-    exception_id: str,
+    exception_id: str = Path(..., description="Exception ID"),
     partner: dict = Depends(require_partner),
 ):
-    """Get a specific exception by ID."""
+    """
+    Get a specific exception by ID.
+
+    Security: Verifies partner owns the exception's site.
+    """
     pool = await get_pool()
 
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT * FROM compliance_exceptions WHERE id = $1",
-            exception_id
-        )
-
-    if not row:
-        raise HTTPException(status_code=404, detail="Exception not found")
+        # SECURITY: Verify partner owns this exception
+        row = await verify_exception_ownership(conn, partner, exception_id)
 
     return _row_to_response(row)
 
 
 @router.get("/{exception_id}/audit", response_model=List[dict])
 async def get_exception_audit_log(
-    exception_id: str,
+    exception_id: str = Path(..., description="Exception ID"),
     partner: dict = Depends(require_partner),
 ):
-    """Get audit log for an exception."""
+    """
+    Get audit log for an exception.
+
+    Security: Verifies partner owns the exception's site.
+    """
     pool = await get_pool()
 
     async with pool.acquire() as conn:
+        # SECURITY: Verify partner owns this exception
+        await verify_exception_ownership(conn, partner, exception_id)
+
         rows = await conn.fetch("""
             SELECT action, performed_by, performed_at, notes
             FROM exception_audit_log
@@ -320,11 +436,18 @@ async def get_exception_audit_log(
 
 @router.post("/{exception_id}/renew", response_model=ExceptionResponse)
 async def renew_exception(
-    exception_id: str,
-    request: RenewExceptionRequest,
+    exception_id: str = Path(..., description="Exception ID"),
+    request: RenewExceptionRequest = None,
     partner: dict = Depends(require_partner),
 ):
-    """Renew an exception for another period."""
+    """
+    Renew an exception for another period.
+
+    Security: Verifies partner owns the exception's site.
+    """
+    if request is None:
+        request = RenewExceptionRequest()
+
     pool = await get_pool()
 
     tier = get_approval_tier(partner)
@@ -338,14 +461,8 @@ async def renew_exception(
     expiration = now + timedelta(days=duration)
 
     async with pool.acquire() as conn:
-        # Get existing exception
-        existing = await conn.fetchrow(
-            "SELECT * FROM compliance_exceptions WHERE id = $1",
-            exception_id
-        )
-
-        if not existing:
-            raise HTTPException(status_code=404, detail="Exception not found")
+        # SECURITY: Verify partner owns this exception
+        existing = await verify_exception_ownership(conn, partner, exception_id)
 
         if not existing["is_active"]:
             raise HTTPException(status_code=400, detail="Cannot renew revoked exception")
@@ -369,24 +486,22 @@ async def renew_exception(
 
 @router.post("/{exception_id}/revoke", response_model=ExceptionResponse)
 async def revoke_exception(
-    exception_id: str,
-    request: RevokeExceptionRequest,
+    exception_id: str = Path(..., description="Exception ID"),
+    request: RevokeExceptionRequest = ...,
     partner: dict = Depends(require_partner),
 ):
-    """Revoke (deactivate) an exception."""
+    """
+    Revoke (deactivate) an exception.
+
+    Security: Verifies partner owns the exception's site.
+    """
     pool = await get_pool()
 
     now = datetime.now(timezone.utc)
 
     async with pool.acquire() as conn:
-        # Check if exception exists
-        existing = await conn.fetchrow(
-            "SELECT * FROM compliance_exceptions WHERE id = $1",
-            exception_id
-        )
-
-        if not existing:
-            raise HTTPException(status_code=404, detail="Exception not found")
+        # SECURITY: Verify partner owns this exception
+        existing = await verify_exception_ownership(conn, partner, exception_id)
 
         if not existing["is_active"]:
             raise HTTPException(status_code=400, detail="Exception already revoked")
@@ -410,9 +525,9 @@ async def revoke_exception(
 
 @router.get("/check/{site_id}/{scope_type}/{item_id}")
 async def check_exception_exists(
-    site_id: str,
-    scope_type: str,
-    item_id: str,
+    site_id: str = Path(..., description="Site ID"),
+    scope_type: str = Path(..., description="Scope type (runbook, check, control)"),
+    item_id: str = Path(..., description="Item ID"),
     hostname: Optional[str] = None,
     partner: dict = Depends(require_partner),
 ):
@@ -421,12 +536,17 @@ async def check_exception_exists(
 
     Used by the agent to determine if alerts should be suppressed
     or remediation should be skipped.
+
+    Security: Verifies partner owns the site.
     """
     pool = await get_pool()
 
     now = datetime.now(timezone.utc)
 
     async with pool.acquire() as conn:
+        # SECURITY: Verify partner owns this site
+        await require_site_access(conn, partner, site_id)
+
         # Find matching active exception
         rows = await conn.fetch("""
             SELECT * FROM compliance_exceptions
