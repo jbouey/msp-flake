@@ -487,6 +487,214 @@ $Settings = $Adapters | Select-Object Description, TcpipNetbiosOptions
 
 
 # =============================================================================
+# RB-NET-SECURITY-001: Network Security Posture Verification
+# =============================================================================
+
+RUNBOOK_NET_SECURITY = WindowsRunbook(
+    id="RB-NET-SECURITY-001",
+    name="Network Security Posture Verification",
+    description="Verify network security controls including segmentation, encryption, and monitoring",
+    version="1.0",
+    hipaa_controls=["164.312(e)(1)", "164.312(e)(2)(ii)"],
+    severity="high",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=30,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
+
+    detect_script=r'''
+# Comprehensive network security posture check
+$Result = @{
+    Drifted = $false
+    Issues = @()
+    FirewallProfiles = @()
+    NetworkConnections = @()
+    TLSSettings = @{}
+    ListeningPorts = @()
+}
+
+# Check firewall on all profiles
+$Profiles = Get-NetFirewallProfile
+foreach ($Profile in $Profiles) {
+    $ProfileInfo = @{
+        Name = $Profile.Name
+        Enabled = $Profile.Enabled
+        DefaultInbound = $Profile.DefaultInboundAction.ToString()
+        DefaultOutbound = $Profile.DefaultOutboundAction.ToString()
+        LogAllowed = $Profile.LogAllowed
+        LogBlocked = $Profile.LogBlocked
+    }
+    $Result.FirewallProfiles += $ProfileInfo
+
+    if (-not $Profile.Enabled) {
+        $Result.Drifted = $true
+        $Result.Issues += "Firewall disabled on $($Profile.Name) profile"
+    }
+
+    # Check for permissive inbound default
+    if ($Profile.DefaultInboundAction -eq "Allow") {
+        $Result.Issues += "Warning: Default inbound action is ALLOW on $($Profile.Name)"
+    }
+}
+
+# Check TLS settings
+$TLSPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols"
+$TLSVersions = @("SSL 2.0", "SSL 3.0", "TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3")
+$WeakProtocols = @("SSL 2.0", "SSL 3.0", "TLS 1.0", "TLS 1.1")
+
+foreach ($Version in $TLSVersions) {
+    $ServerPath = "$TLSPath\$Version\Server"
+    $Enabled = (Get-ItemProperty -Path $ServerPath -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+    $Result.TLSSettings[$Version] = @{
+        Enabled = if ($null -eq $Enabled) { "Default" } else { $Enabled }
+    }
+
+    # Weak protocols should be disabled
+    if ($Version -in $WeakProtocols -and $Enabled -ne 0) {
+        $Result.Drifted = $true
+        $Result.Issues += "$Version should be disabled"
+    }
+}
+
+# Check for suspicious listening ports
+$Listeners = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+    Select-Object LocalPort, OwningProcess
+$SuspiciousPorts = @(21, 23, 69, 137, 138, 139, 445, 3389)  # FTP, Telnet, TFTP, NetBIOS, SMB, RDP
+
+foreach ($Listener in $Listeners) {
+    $Process = Get-Process -Id $Listener.OwningProcess -ErrorAction SilentlyContinue
+    $PortInfo = @{
+        Port = $Listener.LocalPort
+        ProcessName = $Process.ProcessName
+        ProcessId = $Listener.OwningProcess
+    }
+    $Result.ListeningPorts += $PortInfo
+
+    if ($Listener.LocalPort -in $SuspiciousPorts) {
+        $Result.Issues += "Warning: Port $($Listener.LocalPort) is listening ($($Process.ProcessName))"
+    }
+}
+
+# Check SMB encryption
+try {
+    $SMBConfig = Get-SmbServerConfiguration
+    $Result.SMBEncryption = @{
+        EncryptData = $SMBConfig.EncryptData
+        RejectUnencryptedAccess = $SMBConfig.RejectUnencryptedAccess
+    }
+    if (-not $SMBConfig.EncryptData) {
+        $Result.Issues += "SMB encryption not enabled"
+    }
+} catch {
+    $Result.SMBEncryption = @{ Error = $_.Exception.Message }
+}
+
+# Check IPsec policies
+$IPsecRules = Get-NetIPsecRule -ErrorAction SilentlyContinue
+$Result.IPsecRuleCount = @($IPsecRules).Count
+
+$Result.IssueCount = $Result.Issues.Count
+$Result | ConvertTo-Json -Depth 4
+''',
+
+    remediate_script=r'''
+# Remediate network security issues
+$Result = @{ Success = $false; Actions = @() }
+
+try {
+    # Enable firewall on all profiles
+    $Profiles = Get-NetFirewallProfile
+    foreach ($Profile in $Profiles) {
+        if (-not $Profile.Enabled) {
+            Set-NetFirewallProfile -Name $Profile.Name -Enabled True
+            $Result.Actions += "Enabled firewall on $($Profile.Name)"
+        }
+    }
+
+    # Set default inbound to Block
+    Set-NetFirewallProfile -All -DefaultInboundAction Block -DefaultOutboundAction Allow
+    $Result.Actions += "Set default inbound action to Block"
+
+    # Enable firewall logging
+    Set-NetFirewallProfile -All -LogBlocked True -LogAllowed False
+    $Result.Actions += "Enabled blocked connection logging"
+
+    # Disable weak TLS/SSL protocols
+    $TLSPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols"
+    $WeakProtocols = @("SSL 2.0", "SSL 3.0", "TLS 1.0", "TLS 1.1")
+
+    foreach ($Protocol in $WeakProtocols) {
+        $ServerPath = "$TLSPath\$Protocol\Server"
+        $ClientPath = "$TLSPath\$Protocol\Client"
+
+        foreach ($Path in @($ServerPath, $ClientPath)) {
+            if (-not (Test-Path $Path)) {
+                New-Item -Path $Path -Force | Out-Null
+            }
+            Set-ItemProperty -Path $Path -Name "Enabled" -Value 0 -Type DWord
+            Set-ItemProperty -Path $Path -Name "DisabledByDefault" -Value 1 -Type DWord
+        }
+        $Result.Actions += "Disabled $Protocol"
+    }
+
+    # Enable TLS 1.2 and 1.3
+    foreach ($Protocol in @("TLS 1.2", "TLS 1.3")) {
+        $ServerPath = "$TLSPath\$Protocol\Server"
+        $ClientPath = "$TLSPath\$Protocol\Client"
+
+        foreach ($Path in @($ServerPath, $ClientPath)) {
+            if (-not (Test-Path $Path)) {
+                New-Item -Path $Path -Force | Out-Null
+            }
+            Set-ItemProperty -Path $Path -Name "Enabled" -Value 1 -Type DWord
+            Set-ItemProperty -Path $Path -Name "DisabledByDefault" -Value 0 -Type DWord
+        }
+        $Result.Actions += "Enabled $Protocol"
+    }
+
+    # Enable SMB encryption
+    try {
+        Set-SmbServerConfiguration -EncryptData $true -Force
+        $Result.Actions += "Enabled SMB encryption"
+    } catch {
+        $Result.Actions += "SMB encryption: $($_.Exception.Message)"
+    }
+
+    $Result.Success = $true
+    $Result.Message = "Network security hardened"
+    $Result.Warning = "Some changes require reboot to take full effect"
+} catch {
+    $Result.Error = $_.Exception.Message
+}
+
+$Result | ConvertTo-Json -Depth 2
+''',
+
+    verify_script=r'''
+$FirewallOk = (Get-NetFirewallProfile | Where-Object { -not $_.Enabled }).Count -eq 0
+
+# Check TLS 1.0 is disabled
+$TLS10Path = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
+$TLS10Enabled = (Get-ItemProperty -Path $TLS10Path -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+$TLSOk = ($TLS10Enabled -eq 0)
+
+@{
+    FirewallEnabled = $FirewallOk
+    WeakTLSDisabled = $TLSOk
+    Verified = ($FirewallOk -and $TLSOk)
+} | ConvertTo-Json
+''',
+
+    timeout_seconds=180,
+    requires_reboot=True,
+    disruptive=False,
+    evidence_fields=["FirewallProfiles", "TLSSettings", "ListeningPorts", "SMBEncryption", "Issues"]
+)
+
+
+# =============================================================================
 # Network Runbooks Registry
 # =============================================================================
 
@@ -495,4 +703,5 @@ NETWORK_RUNBOOKS: Dict[str, WindowsRunbook] = {
     "RB-WIN-NET-002": RUNBOOK_NIC_RESET,
     "RB-WIN-NET-003": RUNBOOK_NETWORK_PROFILE,
     "RB-WIN-NET-004": RUNBOOK_NETBIOS,
+    "RB-NET-SECURITY-001": RUNBOOK_NET_SECURITY,
 }

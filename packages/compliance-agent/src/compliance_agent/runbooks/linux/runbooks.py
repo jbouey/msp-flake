@@ -656,6 +656,422 @@ LIN_MAC_001 = LinuxRunbook(
 
 
 # =============================================================================
+# TIME SYNCHRONIZATION RUNBOOKS
+# =============================================================================
+
+LIN_NTP_001 = LinuxRunbook(
+    id="LIN-NTP-001",
+    name="NTP Time Synchronization",
+    description="Ensure time synchronization is configured and active",
+    hipaa_controls=["164.312(b)", "164.308(a)(1)(ii)(D)"],
+    check_type="time_sync",
+    severity="high",
+    detect_script='''
+        # Check for chrony or ntpd
+        SYNC_STATUS="NOT_CONFIGURED"
+        TIME_DRIFT=0
+
+        if command -v chronyc &>/dev/null; then
+            if systemctl is-active chronyd &>/dev/null; then
+                SYNC_STATUS=$(chronyc tracking 2>/dev/null | grep "Leap status" | awk '{print $4}')
+                TIME_DRIFT=$(chronyc tracking 2>/dev/null | grep "System time" | awk '{print $4}')
+                if [ "$SYNC_STATUS" = "Normal" ]; then
+                    echo "COMPLIANT:chrony_synced,drift=${TIME_DRIFT}s"
+                    exit 0
+                fi
+            fi
+        fi
+
+        if command -v ntpq &>/dev/null; then
+            if systemctl is-active ntpd &>/dev/null || systemctl is-active ntp &>/dev/null; then
+                PEERS=$(ntpq -p 2>/dev/null | grep -c "^\*")
+                if [ "$PEERS" -gt 0 ]; then
+                    echo "COMPLIANT:ntp_synced,peers=$PEERS"
+                    exit 0
+                fi
+            fi
+        fi
+
+        # Check systemd-timesyncd
+        if systemctl is-active systemd-timesyncd &>/dev/null; then
+            SYNC=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null)
+            if [ "$SYNC" = "yes" ]; then
+                echo "COMPLIANT:timesyncd_synced"
+                exit 0
+            fi
+        fi
+
+        echo "DRIFT:time_not_synchronized"
+        exit 1
+    ''',
+    remediate_ubuntu='''
+        # Install and configure chrony
+        apt-get update -qq
+        apt-get install -y chrony
+
+        # Configure NTP servers
+        cat > /etc/chrony/chrony.conf << 'NTPEOF'
+# Use public NTP servers
+server 0.pool.ntp.org iburst
+server 1.pool.ntp.org iburst
+server 2.pool.ntp.org iburst
+server 3.pool.ntp.org iburst
+
+# Record the rate at which the system clock gains/losses time.
+driftfile /var/lib/chrony/chrony.drift
+
+# Allow system clock to be stepped in first 3 updates
+makestep 1.0 3
+
+# Enable kernel synchronization of real-time clock
+rtcsync
+
+# Log measurements
+logdir /var/log/chrony
+NTPEOF
+
+        systemctl enable chronyd
+        systemctl restart chronyd
+
+        # Force immediate sync
+        chronyc makestep 2>/dev/null || true
+
+        echo "REMEDIATED:chrony_configured"
+    ''',
+    remediate_rhel='''
+        # Install and configure chrony
+        yum install -y chrony
+
+        # Configure NTP servers
+        cat > /etc/chrony.conf << 'NTPEOF'
+server 0.pool.ntp.org iburst
+server 1.pool.ntp.org iburst
+server 2.pool.ntp.org iburst
+server 3.pool.ntp.org iburst
+driftfile /var/lib/chrony/drift
+makestep 1.0 3
+rtcsync
+logdir /var/log/chrony
+NTPEOF
+
+        systemctl enable chronyd
+        systemctl restart chronyd
+        chronyc makestep 2>/dev/null || true
+
+        echo "REMEDIATED:chrony_configured"
+    ''',
+    verify_script='''
+        if command -v chronyc &>/dev/null && systemctl is-active chronyd &>/dev/null; then
+            SYNC=$(chronyc tracking 2>/dev/null | grep "Leap status" | awk '{print $4}')
+            if [ "$SYNC" = "Normal" ]; then
+                echo "VERIFIED:chrony_synced"
+                exit 0
+            fi
+        fi
+        echo "VERIFY_FAILED"
+        exit 1
+    ''',
+    l1_auto_heal=True,
+    timeout_seconds=120
+)
+
+
+# =============================================================================
+# INTEGRITY MONITORING RUNBOOKS
+# =============================================================================
+
+LIN_INTEGRITY_001 = LinuxRunbook(
+    id="LIN-INTEGRITY-001",
+    name="File Integrity Monitoring",
+    description="Ensure file integrity monitoring (AIDE) is installed and configured",
+    hipaa_controls=["164.312(c)(1)", "164.312(c)(2)", "164.312(b)"],
+    check_type="integrity",
+    severity="high",
+    detect_script='''
+        # Check for AIDE
+        if command -v aide &>/dev/null; then
+            if [ -f /var/lib/aide/aide.db ]; then
+                # Check if database is recent (within 30 days)
+                DB_AGE=$(find /var/lib/aide/aide.db -mtime -30 2>/dev/null | wc -l)
+                if [ "$DB_AGE" -gt 0 ]; then
+                    echo "COMPLIANT:aide_configured"
+                    exit 0
+                else
+                    echo "DRIFT:aide_db_stale"
+                    exit 1
+                fi
+            else
+                echo "DRIFT:aide_db_missing"
+                exit 1
+            fi
+        fi
+
+        # Check for Samhain
+        if command -v samhain &>/dev/null; then
+            if systemctl is-active samhain &>/dev/null; then
+                echo "COMPLIANT:samhain_active"
+                exit 0
+            fi
+        fi
+
+        # Check for OSSEC
+        if [ -d /var/ossec ]; then
+            if systemctl is-active ossec-hids &>/dev/null; then
+                echo "COMPLIANT:ossec_active"
+                exit 0
+            fi
+        fi
+
+        echo "DRIFT:no_integrity_monitoring"
+        exit 1
+    ''',
+    remediate_ubuntu='''
+        # Install AIDE
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y aide aide-common
+
+        # Configure AIDE
+        cat > /etc/aide/aide.conf.d/99_local.conf << 'AIDEEOF'
+# Monitor critical directories
+/etc NORMAL
+/bin NORMAL
+/sbin NORMAL
+/usr/bin NORMAL
+/usr/sbin NORMAL
+/lib NORMAL
+/lib64 NORMAL
+
+# Monitor boot files
+/boot NORMAL
+
+# Monitor configuration files
+!/etc/mtab
+!/etc/adjtime
+
+# Log directories (monitor existence, not content changes)
+/var/log DIR
+
+# Exclude noisy directories
+!/proc
+!/sys
+!/dev
+!/run
+!/tmp
+!/var/cache
+!/var/tmp
+AIDEEOF
+
+        # Initialize AIDE database
+        aideinit --yes 2>/dev/null || aide --init
+
+        # Move new database to active
+        if [ -f /var/lib/aide/aide.db.new ]; then
+            mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+        fi
+
+        # Setup daily cron
+        cat > /etc/cron.daily/aide << 'CRONEOF'
+#!/bin/bash
+/usr/bin/aide --check --config /etc/aide/aide.conf | mail -s "AIDE Report: $(hostname)" root 2>/dev/null || true
+CRONEOF
+        chmod +x /etc/cron.daily/aide
+
+        echo "REMEDIATED:aide_installed"
+    ''',
+    remediate_rhel='''
+        # Install AIDE
+        yum install -y aide
+
+        # Configure AIDE
+        cat >> /etc/aide.conf << 'AIDEEOF'
+# Additional local monitoring
+/etc NORMAL
+/bin NORMAL
+/sbin NORMAL
+/usr/bin NORMAL
+/usr/sbin NORMAL
+AIDEEOF
+
+        # Initialize AIDE database
+        aide --init
+
+        # Move new database to active
+        mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz 2>/dev/null || true
+
+        # Setup daily cron
+        echo "0 5 * * * root /usr/sbin/aide --check" >> /etc/crontab
+
+        echo "REMEDIATED:aide_installed"
+    ''',
+    verify_script='''
+        if command -v aide &>/dev/null && [ -f /var/lib/aide/aide.db ]; then
+            echo "VERIFIED:aide_configured"
+            exit 0
+        fi
+        echo "VERIFY_FAILED"
+        exit 1
+    ''',
+    l1_auto_heal=False,  # FIM setup can be disruptive - L2
+    l2_llm_eligible=True,
+    timeout_seconds=300
+)
+
+
+# =============================================================================
+# INCIDENT RESPONSE RUNBOOKS
+# =============================================================================
+
+LIN_IR_001 = LinuxRunbook(
+    id="LIN-IR-001",
+    name="Incident Response Readiness",
+    description="Verify incident response tools and logging are properly configured",
+    hipaa_controls=["164.308(a)(6)", "164.312(b)"],
+    check_type="incident_response",
+    severity="high",
+    detect_script='''
+        RESULT="COMPLIANT"
+        ISSUES=""
+
+        # Check if critical logs exist and are being written
+        if [ -f /var/log/auth.log ] || [ -f /var/log/secure ]; then
+            LOG_FILE=$(ls /var/log/auth.log /var/log/secure 2>/dev/null | head -1)
+            LOG_AGE=$(find "$LOG_FILE" -mmin -60 2>/dev/null | wc -l)
+            if [ "$LOG_AGE" -eq 0 ]; then
+                RESULT="DRIFT"
+                ISSUES="$ISSUES auth_log_stale"
+            fi
+        else
+            RESULT="DRIFT"
+            ISSUES="$ISSUES auth_log_missing"
+        fi
+
+        # Check if auditd is running
+        if ! systemctl is-active auditd &>/dev/null; then
+            RESULT="DRIFT"
+            ISSUES="$ISSUES auditd_not_running"
+        fi
+
+        # Check for log rotation
+        if [ ! -f /etc/logrotate.d/rsyslog ] && [ ! -f /etc/logrotate.d/syslog ]; then
+            ISSUES="$ISSUES logrotate_not_configured"
+        fi
+
+        # Check for remote syslog (optional but recommended)
+        if grep -q "^[^#]*@" /etc/rsyslog.conf /etc/rsyslog.d/*.conf 2>/dev/null; then
+            echo "INFO: Remote syslog configured"
+        fi
+
+        # Check for forensic tools
+        TOOLS_INSTALLED=0
+        for tool in tcpdump strace lsof netstat ss; do
+            if command -v $tool &>/dev/null; then
+                TOOLS_INSTALLED=$((TOOLS_INSTALLED + 1))
+            fi
+        done
+
+        if [ "$TOOLS_INSTALLED" -lt 3 ]; then
+            ISSUES="$ISSUES forensic_tools_missing"
+        fi
+
+        if [ "$RESULT" = "COMPLIANT" ]; then
+            echo "COMPLIANT:ir_ready"
+            exit 0
+        else
+            echo "DRIFT:$ISSUES"
+            exit 1
+        fi
+    ''',
+    remediate_ubuntu='''
+        apt-get update -qq
+
+        # Install forensic and IR tools
+        apt-get install -y \
+            tcpdump \
+            strace \
+            lsof \
+            net-tools \
+            iproute2 \
+            auditd \
+            rsyslog
+
+        # Ensure auditd is running
+        systemctl enable auditd
+        systemctl start auditd
+
+        # Ensure rsyslog is running
+        systemctl enable rsyslog
+        systemctl start rsyslog
+
+        # Configure log retention (90 days minimum for HIPAA)
+        cat > /etc/logrotate.d/hipaa-retention << 'LOGEOF'
+/var/log/auth.log
+/var/log/syslog
+/var/log/messages
+{
+    rotate 90
+    daily
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate 2>/dev/null || true
+    endscript
+}
+LOGEOF
+
+        echo "REMEDIATED:ir_tools_installed"
+    ''',
+    remediate_rhel='''
+        yum install -y \
+            tcpdump \
+            strace \
+            lsof \
+            net-tools \
+            iproute \
+            audit \
+            rsyslog
+
+        systemctl enable auditd
+        systemctl start auditd
+        systemctl enable rsyslog
+        systemctl start rsyslog
+
+        # Configure 90-day retention
+        sed -i 's/^rotate.*/rotate 90/' /etc/logrotate.conf
+
+        echo "REMEDIATED:ir_tools_installed"
+    ''',
+    verify_script='''
+        OK=true
+
+        if ! systemctl is-active auditd &>/dev/null; then
+            OK=false
+        fi
+
+        if ! systemctl is-active rsyslog &>/dev/null; then
+            OK=false
+        fi
+
+        if ! command -v tcpdump &>/dev/null; then
+            OK=false
+        fi
+
+        if $OK; then
+            echo "VERIFIED:ir_ready"
+            exit 0
+        else
+            echo "VERIFY_FAILED"
+            exit 1
+        fi
+    ''',
+    l1_auto_heal=True,
+    timeout_seconds=180
+)
+
+
+# =============================================================================
 # RUNBOOK REGISTRY
 # =============================================================================
 
@@ -685,6 +1101,12 @@ RUNBOOKS: Dict[str, LinuxRunbook] = {
     "LIN-ACCT-002": LIN_ACCT_002,
     # MAC
     "LIN-MAC-001": LIN_MAC_001,
+    # Time Sync
+    "LIN-NTP-001": LIN_NTP_001,
+    # Integrity
+    "LIN-INTEGRITY-001": LIN_INTEGRITY_001,
+    # Incident Response
+    "LIN-IR-001": LIN_IR_001,
 }
 
 
