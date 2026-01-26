@@ -58,30 +58,67 @@ class UpdateSubscription(BaseModel):
 
 
 # =============================================================================
-# SUBSCRIPTION PLANS
+# PRICING MODEL - Per-Appliance with Endpoint Tiers
 # =============================================================================
 
-# Define subscription tiers with Stripe Price IDs
-# These should be created in Stripe Dashboard and IDs stored here or in env
-SUBSCRIPTION_PLANS = {
-    "starter": {
-        "name": "Starter",
-        "price_monthly": 200,
-        "sites_included": 3,
-        "features": ["Basic compliance monitoring", "Email alerts", "Monthly reports"],
+# Per-endpoint pricing (auto-scales with deployment)
+ENDPOINT_PRICE_MONTHLY = 20  # $20/endpoint/month
+
+# Appliance tier pricing (alternative to per-endpoint)
+APPLIANCE_TIERS = {
+    "clinic": {
+        "name": "Clinic",
+        "price_monthly": 400,
+        "max_endpoints": 25,
+        "description": "Small healthcare practices",
+        "features": [
+            "HIPAA compliance monitoring",
+            "Automated evidence generation",
+            "Self-healing infrastructure",
+            "Network discovery",
+            "Medical device protection",
+            "24/7 drift detection",
+            "Monthly compliance reports",
+        ],
     },
-    "professional": {
-        "name": "Professional",
-        "price_monthly": 500,
-        "sites_included": 10,
-        "features": ["Advanced monitoring", "24/7 alerts", "Weekly reports", "API access"],
+    "practice": {
+        "name": "Practice",
+        "price_monthly": 800,
+        "max_endpoints": 100,
+        "description": "Medium healthcare organizations",
+        "features": [
+            "Everything in Clinic tier",
+            "Multi-server management",
+            "Advanced remediation playbooks",
+            "Weekly compliance reports",
+            "Priority support",
+            "Custom runbook configuration",
+        ],
     },
     "enterprise": {
         "name": "Enterprise",
         "price_monthly": 1500,
-        "sites_included": 50,
-        "features": ["Unlimited sites", "Custom integrations", "Dedicated support", "SLA"],
+        "max_endpoints": None,  # Unlimited
+        "description": "Large healthcare networks",
+        "features": [
+            "Everything in Practice tier",
+            "Unlimited endpoints",
+            "Dedicated support channel",
+            "Custom integrations",
+            "SLA guarantee",
+            "On-site deployment assistance",
+            "Executive compliance dashboard",
+        ],
     },
+}
+
+# Value comparison for sales
+VALUE_COMPARISON = {
+    "traditional_msp_monitoring": {"monthly": 2500, "description": "MSP labor (15-20 hrs @ $150/hr)"},
+    "hipaa_compliance_consulting": {"monthly": 500, "description": "Compliance consulting (amortized)"},
+    "incident_response": {"monthly": 1000, "description": "Incident response/remediation"},
+    "audit_preparation": {"monthly": 400, "description": "Audit prep & evidence (amortized)"},
+    "total_traditional": {"monthly": 4400, "description": "Total traditional cost"},
 }
 
 
@@ -584,7 +621,64 @@ async def get_billing_config():
     """Get public billing configuration (publishable key, etc.)."""
     return {
         "stripe_publishable_key": STRIPE_PUBLISHABLE_KEY,
-        "plans": SUBSCRIPTION_PLANS,
+        "pricing_model": "per_appliance",
+        "endpoint_price_monthly": ENDPOINT_PRICE_MONTHLY,
+        "appliance_tiers": APPLIANCE_TIERS,
+        "value_comparison": VALUE_COMPARISON,
+        "currency": "usd",
+    }
+
+
+@router.get("/calculate")
+async def calculate_pricing(
+    num_appliances: int = 1,
+    endpoints_per_appliance: int = 25,
+    pricing_model: str = "tier",  # "tier" or "per_endpoint"
+):
+    """Calculate pricing based on deployment size.
+
+    Args:
+        num_appliances: Number of appliances to deploy
+        endpoints_per_appliance: Average endpoints per appliance
+        pricing_model: "tier" for appliance tiers, "per_endpoint" for $20/endpoint
+    """
+    total_endpoints = num_appliances * endpoints_per_appliance
+
+    if pricing_model == "per_endpoint":
+        monthly_cost = total_endpoints * ENDPOINT_PRICE_MONTHLY
+        annual_cost = monthly_cost * 12
+        recommended_tier = None
+    else:
+        # Determine tier based on endpoints per appliance
+        if endpoints_per_appliance <= 25:
+            tier = APPLIANCE_TIERS["clinic"]
+            tier_key = "clinic"
+        elif endpoints_per_appliance <= 100:
+            tier = APPLIANCE_TIERS["practice"]
+            tier_key = "practice"
+        else:
+            tier = APPLIANCE_TIERS["enterprise"]
+            tier_key = "enterprise"
+
+        monthly_cost = tier["price_monthly"] * num_appliances
+        annual_cost = monthly_cost * 12
+        recommended_tier = tier_key
+
+    # Calculate savings vs traditional
+    traditional_monthly = VALUE_COMPARISON["total_traditional"]["monthly"] * num_appliances
+    savings_monthly = traditional_monthly - monthly_cost
+    savings_percent = round((savings_monthly / traditional_monthly) * 100, 1)
+
+    return {
+        "num_appliances": num_appliances,
+        "total_endpoints": total_endpoints,
+        "pricing_model": pricing_model,
+        "recommended_tier": recommended_tier,
+        "monthly_cost": monthly_cost,
+        "annual_cost": annual_cost,
+        "traditional_monthly_cost": traditional_monthly,
+        "monthly_savings": savings_monthly,
+        "savings_percent": savings_percent,
         "currency": "usd",
     }
 
