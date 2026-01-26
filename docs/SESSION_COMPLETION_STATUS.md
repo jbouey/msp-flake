@@ -1,6 +1,133 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-26 (Session 70 - Partner Compliance & Phase 2 Local Resilience)
+**Last Updated:** 2026-01-26 (Session 71 - Exception Management & IDOR Security Fixes)
+
+---
+
+## Session 71 - Exception Management & IDOR Security Fixes - COMPLETE
+
+**Date:** 2026-01-26
+**Status:** COMPLETE
+**Agent Version:** 1.0.48
+**ISO Version:** v47
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Complete Exception Management implementation
+2. ✅ Deploy to production (frontend + backend)
+3. ✅ Black/white box test partner and client portals
+4. ✅ Fix IDOR security vulnerabilities
+
+### Completed Tasks
+
+#### 1. Exception Management System
+- **Status:** COMPLETE
+- **File:** `mcp-server/central-command/backend/exceptions_api.py`
+- **Router Registration:** Added to `mcp-server/main.py`
+- **Database Migration:** `create_exceptions_tables()` called in lifespan startup
+- **Features:**
+  - Create compliance exceptions for specific controls
+  - View exceptions with filtering by site/status
+  - Update exception status (approve/deny/expire)
+  - Control-level granularity
+  - Full audit trail
+
+#### 2. TypeScript Build Error Fixed
+- **Status:** COMPLETE
+- **Issue:** `useEffect` declared but never used
+- **File:** `mcp-server/central-command/frontend/src/partner/PartnerExceptionManagement.tsx`
+- **Fix:** Removed unused import
+- **Commit:** `746c19d`
+
+#### 3. Production Deployment
+- **Status:** COMPLETE
+- **Frontend:** Built and deployed to `/opt/mcp-server/frontend_dist/`
+- **Backend:** Deployed `main.py` to `/opt/mcp-server/app/main.py`
+- **Database:** Exception tables created via migration
+- **Docker:** Container restarted to apply changes
+
+#### 4. Portal Testing (Black Box & White Box)
+- **Status:** COMPLETE
+- **Partner Portal:**
+  - All 5 tabs working: Sites, Provisions, Billing, Compliance, Exceptions
+  - Exceptions tab loads with data table and "New Exception" button
+  - Compliance tab shows industry selector and coverage tiers
+- **Client Portal:**
+  - Passwordless login page renders correctly
+  - Magic link authentication flow functional
+- **Security Audit:** Identified IDOR vulnerabilities in exceptions API
+
+#### 5. IDOR Security Vulnerabilities Fixed (CRITICAL)
+- **Status:** COMPLETE
+- **Severity:** CRITICAL
+- **File:** `mcp-server/central-command/backend/exceptions_api.py`
+- **Vulnerabilities Fixed:**
+
+##### Missing Site Ownership Verification
+- **Issue:** Partners could access exceptions for sites they don't own
+- **Fix:** Added `verify_site_ownership()` function with JOIN query
+- **Affected Endpoints:** All 9 exception endpoints
+
+##### Missing Exception Ownership Verification
+- **Issue:** Partners could modify exceptions they don't own
+- **Fix:** Added `verify_exception_ownership()` with JOIN to sites table
+- **Implementation:** Returns exception row only if partner owns the site
+
+##### Predictable Exception IDs
+- **Issue:** Timestamp-based IDs (`EXC-20260126...`) were enumerable
+- **Fix:** Changed to UUID-based IDs (`EXC-{uuid.hex[:12]}`)
+- **Function:** `generate_exception_id()` now uses `uuid.uuid4()`
+
+##### Security Logging
+- **Issue:** No logging for unauthorized access attempts
+- **Fix:** Added warning logs for IDOR attempt detection
+- **Implementation:** Logs partner ID and attempted resource ID
+
+### Security Functions Added
+```python
+def generate_exception_id() -> str:
+    """Generate a secure, non-enumerable exception ID."""
+    return f"EXC-{uuid.uuid4().hex[:12].upper()}"
+
+async def verify_site_ownership(conn, partner: dict, site_id: str) -> bool:
+    """Verify that a partner owns or has access to a site."""
+    # JOIN query to check partner_id matches
+
+async def verify_exception_ownership(conn, partner: dict, exception_id: str) -> dict:
+    """Verify that a partner owns an exception (via site ownership)."""
+    # JOIN exceptions to sites, verify partner owns the site
+
+async def require_site_access(conn, partner: dict, site_id: str):
+    """Verify site access or raise 403."""
+    # Helper that raises HTTPException on unauthorized access
+```
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/main.py` | Added exceptions_router import and registration |
+| `mcp-server/central-command/backend/exceptions_api.py` | Import fixes + IDOR security fixes |
+| `mcp-server/central-command/frontend/src/partner/PartnerExceptionManagement.tsx` | Removed unused useEffect import |
+
+### VPS Changes
+| Change | Location |
+|--------|----------|
+| main.py | `/opt/mcp-server/app/main.py` (added exceptions router) |
+| Frontend dist | `/opt/mcp-server/frontend_dist/` |
+| Database | `compliance_exceptions` table created |
+
+### Git Commits
+| Commit | Message |
+|--------|---------|
+| `26d7657` | feat: Compliance exception management for partners and clients |
+| `746c19d` | fix: Remove unused useEffect import |
+| `94ba147` | security: Fix IDOR vulnerabilities in exceptions API |
+
+### Key Lessons Learned
+1. Always verify resource ownership in multi-tenant APIs
+2. UUIDs are more secure than timestamp-based IDs for enumeration protection
+3. JOIN queries are effective for verifying nested ownership (exception → site → partner)
+4. Security logging helps detect and investigate attack attempts
 
 ---
 

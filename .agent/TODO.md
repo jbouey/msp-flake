@@ -1,7 +1,90 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-26 (Session 70 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.48, **ISO v47 DEPLOYED**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.47**)
+**Last Updated:** 2026-01-26 (Session 71 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.48, **ISO v47 DEPLOYED**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Exception Management System**, **IDOR Security Fixes**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.47**)
+
+---
+
+## Session 71 (2026-01-26) - COMPLETE
+
+### Session Goals
+1. ✅ Complete Exception Management implementation (from previous context)
+2. ✅ Deploy to production (frontend + backend)
+3. ✅ Black/white box test partner and client portals
+4. ✅ Fix IDOR security vulnerabilities
+
+### Accomplishments
+
+#### 1. Exception Management System - COMPLETE
+- **Router Registration:** Added `exceptions_router` to `mcp-server/main.py`
+- **Import Fixes:** Fixed exceptions_api.py imports (`.fleet` for get_pool, `.partners` for require_partner)
+- **Database Migration:** `create_exceptions_tables()` called in lifespan startup
+- **Frontend:** PartnerExceptionManagement.tsx component fully functional
+- **Features:**
+  - Create/view/update compliance exceptions
+  - Request new exceptions from partner dashboard
+  - Approve/deny exception requests
+  - Exception status tracking (pending, approved, denied, expired)
+  - Control-level exception granularity
+
+#### 2. TypeScript Build Error Fixed
+- **Issue:** `useEffect` declared but never used in PartnerExceptionManagement.tsx
+- **Fix:** Removed unused import
+- **Commit:** `746c19d`
+
+#### 3. Production Deployment - COMPLETE
+- **Frontend:** Built and deployed to `/opt/mcp-server/frontend_dist/`
+- **Backend:** Deployed main.py to `/opt/mcp-server/app/main.py`
+- **Database:** Exception tables created via migration
+- **Docker:** Container restarted to pick up changes
+
+#### 4. Portal Testing (Black Box & White Box) - COMPLETE
+- **Partner Portal Testing:**
+  - All 5 tabs working: Sites, Provisions, Billing, Compliance, Exceptions
+  - Exceptions tab loads with table and "New Exception" button
+  - Compliance tab shows industry selector and coverage tiers
+- **Client Portal Testing:**
+  - Passwordless login page renders correctly
+  - Magic link flow functional
+- **White Box Security Audit:** Identified IDOR vulnerabilities
+
+#### 5. IDOR Security Vulnerabilities Fixed - CRITICAL
+- **Issue:** Authenticated partners could access/modify exceptions for sites they don't own
+- **Vulnerabilities Fixed:**
+  - Missing site ownership verification on all 9 endpoints
+  - Predictable timestamp-based exception IDs (enumerable)
+  - No rate limiting (not fixed this session)
+- **Security Functions Added:**
+  - `generate_exception_id()` - UUID-based non-enumerable IDs
+  - `verify_site_ownership()` - JOIN query to verify partner owns site
+  - `verify_exception_ownership()` - Verifies partner owns exception via site
+  - `require_site_access()` - Helper that raises 403 on unauthorized access
+- **Security Logging:** Added IDOR attempt detection with warning logs
+- **Commit:** `94ba147`
+
+### Files Modified This Session
+
+| File | Change |
+|------|--------|
+| `mcp-server/main.py` | Added exceptions_router import and registration |
+| `mcp-server/central-command/backend/exceptions_api.py` | Fixed imports, added IDOR security fixes |
+| `mcp-server/central-command/frontend/src/partner/PartnerExceptionManagement.tsx` | Removed unused useEffect import |
+
+### VPS Changes This Session
+
+| Change | Location |
+|--------|----------|
+| main.py | `/opt/mcp-server/app/main.py` (added exceptions router) |
+| Frontend dist | `/opt/mcp-server/frontend_dist/` |
+| Database | compliance_exceptions table created |
+
+### Git Commits This Session
+
+| Commit | Message |
+|--------|---------|
+| `26d7657` | feat: Compliance exception management for partners and clients |
+| `746c19d` | fix: Remove unused useEffect import |
+| `94ba147` | security: Fix IDOR vulnerabilities in exceptions API |
 
 ---
 
