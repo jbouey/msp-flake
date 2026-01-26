@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { usePartner } from './PartnerContext';
+import { PartnerBilling } from './PartnerBilling';
 
 interface Site {
   site_id: string;
@@ -28,9 +29,18 @@ interface Provision {
 
 export const PartnerDashboard: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { partner, apiKey, isAuthenticated, isLoading, logout } = usePartner();
 
-  const [activeTab, setActiveTab] = useState<'sites' | 'provisions'>('sites');
+  const [activeTab, setActiveTab] = useState<'sites' | 'provisions' | 'billing'>('sites');
+
+  // Handle billing redirect from Stripe
+  useEffect(() => {
+    const billingStatus = searchParams.get('billing');
+    if (billingStatus === 'success' || billingStatus === 'canceled') {
+      setActiveTab('billing');
+    }
+  }, [searchParams]);
   const [sites, setSites] = useState<Site[]>([]);
   const [provisions, setProvisions] = useState<Provision[]>([]);
   const [loading, setLoading] = useState(true);
@@ -263,6 +273,16 @@ export const PartnerDashboard: React.FC = () => {
             }`}
           >
             Provision Codes ({provisions.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('billing')}
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+              activeTab === 'billing'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Billing
           </button>
         </div>
       </div>
@@ -528,6 +548,10 @@ export const PartnerDashboard: React.FC = () => {
               )}
             </div>
           </div>
+        )}
+
+        {activeTab === 'billing' && (
+          <PartnerBilling />
         )}
       </div>
     </div>
