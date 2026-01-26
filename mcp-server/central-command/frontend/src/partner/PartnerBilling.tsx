@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { usePartner } from './PartnerContext';
 
-interface SubscriptionPlan {
+interface ApplianceTier {
   name: string;
   price_monthly: number;
-  sites_included: number;
+  max_endpoints: number | null;
+  description: string;
   features: string[];
 }
 
@@ -58,7 +59,10 @@ interface BillingStatus {
 
 interface BillingConfig {
   stripe_publishable_key: string;
-  plans: Record<string, SubscriptionPlan>;
+  pricing_model: string;
+  endpoint_price_monthly: number;
+  appliance_tiers: Record<string, ApplianceTier>;
+  value_comparison: Record<string, { monthly: number; description: string }>;
   currency: string;
 }
 
@@ -361,58 +365,92 @@ export const PartnerBilling: React.FC = () => {
               </div>
             </div>
           ) : (
-            /* No Subscription - Show Plans */
+            /* No Subscription - Show Appliance Tiers */
             <div>
-              <p className="text-gray-600 mb-6">
-                Subscribe to OsirisCare to access compliance monitoring, automated healing, and HIPAA evidence generation.
+              <p className="text-gray-600 mb-2">
+                Deploy OsirisCare appliances for automated HIPAA compliance, self-healing infrastructure, and audit-ready evidence.
+              </p>
+              <p className="text-sm text-gray-500 mb-6">
+                Per-appliance pricing • Each site/domain requires one appliance
               </p>
 
               {billingConfig && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {Object.entries(billingConfig.plans).map(([key, plan]) => (
-                    <div
-                      key={key}
-                      className={`border-2 rounded-xl p-6 ${
-                        key === 'professional' ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-200'
-                      }`}
-                    >
-                      {key === 'professional' && (
-                        <span className="inline-block px-3 py-1 text-xs font-semibold text-indigo-600 bg-indigo-100 rounded-full mb-4">
-                          Most Popular
-                        </span>
-                      )}
-                      <h4 className="text-xl font-bold text-gray-900">{plan.name}</h4>
-                      <div className="mt-2 mb-4">
-                        <span className="text-3xl font-bold text-gray-900">${plan.price_monthly}</span>
-                        <span className="text-gray-500">/month</span>
+                <>
+                  {/* Value Comparison Banner */}
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+                    <div className="flex items-center gap-3">
+                      <svg className="w-6 h-6 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div>
+                        <p className="font-medium text-green-800">Save up to 80% vs. Traditional MSP + Compliance</p>
+                        <p className="text-sm text-green-700">
+                          Traditional cost: ~${billingConfig.value_comparison.total_traditional?.monthly.toLocaleString()}/mo per site
+                        </p>
                       </div>
-                      <p className="text-sm text-gray-500 mb-4">
-                        Up to {plan.sites_included} sites included
-                      </p>
-                      <ul className="space-y-2 mb-6">
-                        {plan.features.map((feature, i) => (
-                          <li key={i} className="flex items-center gap-2 text-sm text-gray-600">
-                            <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                            {feature}
-                          </li>
-                        ))}
-                      </ul>
-                      <button
-                        onClick={() => handleSubscribe(`price_${key}_monthly`)}
-                        disabled={actionLoading}
-                        className={`w-full py-2 px-4 font-medium rounded-lg transition disabled:opacity-50 ${
-                          key === 'professional'
-                            ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                            : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                    </div>
+                  </div>
+
+                  {/* Appliance Tiers */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {Object.entries(billingConfig.appliance_tiers).map(([key, tier]) => (
+                      <div
+                        key={key}
+                        className={`border-2 rounded-xl p-6 ${
+                          key === 'practice' ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-200'
                         }`}
                       >
-                        {actionLoading ? 'Loading...' : 'Subscribe'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                        {key === 'practice' && (
+                          <span className="inline-block px-3 py-1 text-xs font-semibold text-indigo-600 bg-indigo-100 rounded-full mb-4">
+                            Most Popular
+                          </span>
+                        )}
+                        <h4 className="text-xl font-bold text-gray-900">{tier.name}</h4>
+                        <p className="text-sm text-gray-500 mb-2">{tier.description}</p>
+                        <div className="mt-2 mb-4">
+                          <span className="text-3xl font-bold text-gray-900">${tier.price_monthly}</span>
+                          <span className="text-gray-500">/mo per appliance</span>
+                        </div>
+                        <p className="text-sm text-gray-600 mb-4 font-medium">
+                          {tier.max_endpoints ? `Up to ${tier.max_endpoints} endpoints` : 'Unlimited endpoints'}
+                        </p>
+                        <ul className="space-y-2 mb-6">
+                          {tier.features.slice(0, 5).map((feature, i) => (
+                            <li key={i} className="flex items-center gap-2 text-sm text-gray-600">
+                              <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                              {feature}
+                            </li>
+                          ))}
+                          {tier.features.length > 5 && (
+                            <li className="text-sm text-indigo-600 font-medium">
+                              +{tier.features.length - 5} more features
+                            </li>
+                          )}
+                        </ul>
+                        <button
+                          onClick={() => handleSubscribe(`price_appliance_${key}_monthly`)}
+                          disabled={actionLoading}
+                          className={`w-full py-2 px-4 font-medium rounded-lg transition disabled:opacity-50 ${
+                            key === 'practice'
+                              ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                              : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                          }`}
+                        >
+                          {actionLoading ? 'Loading...' : 'Get Started'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Per-Endpoint Alternative */}
+                  <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-gray-600">
+                      <span className="font-medium">Alternative:</span> Pay ${billingConfig.endpoint_price_monthly}/endpoint/month for usage-based pricing that scales automatically.
+                    </p>
+                  </div>
+                </>
               )}
             </div>
           )}
