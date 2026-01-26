@@ -55,6 +55,7 @@ from dashboard_api.email_alerts import create_notification_with_email
 from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
 from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router
 from dashboard_api.billing import router as billing_router
+from dashboard_api.exceptions_api import router as exceptions_router
 
 # ============================================================================
 # Configuration
@@ -356,6 +357,17 @@ async def lifespan(app: FastAPI):
         result = await conn.execute(text("SELECT 1"))
         logger.info("Database connected")
 
+    # Create exceptions tables if needed
+    try:
+        from dashboard_api.exceptions_api import create_exceptions_tables
+        from dashboard_api.fleet import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await create_exceptions_tables(conn)
+        logger.info("Exceptions tables ready")
+    except Exception as e:
+        logger.warning(f"Could not create exceptions tables: {e}")
+
     # Ensure default admin user exists
     try:
         from dashboard_api.auth import ensure_default_admin
@@ -444,6 +456,7 @@ app.include_router(oauth_admin_router, prefix="/api")  # OAuth admin endpoints
 app.include_router(partner_auth_router, prefix="/api")  # Partner OAuth login endpoints
 app.include_router(partner_admin_router, prefix="/api")  # Partner admin endpoints (pending, oauth-config)
 app.include_router(billing_router)  # Stripe billing for partners
+app.include_router(exceptions_router)  # Compliance exceptions management
 
 # Serve agent update packages (only if directory exists)
 _agent_packages_dir = Path("/opt/mcp-server/agent-packages")
