@@ -74,6 +74,36 @@ checks:
           category: "Data Recovery"
           required: true
 
+      nist_800_171:
+        - control_id: "3.8.9"
+          control_name: "Protect the confidentiality of backup CUI"
+          category: "Media Protection"
+          required: true
+
+      sox:
+        - control_id: "ITGC.4.1"
+          control_name: "Backup and Recovery Procedures"
+          category: "Computer Operations"
+          required: true
+
+      gdpr:
+        - control_id: "Art.32.1.c"
+          control_name: "Ability to restore availability and access to personal data"
+          category: "Security of Processing"
+          required: true
+
+      cmmc:
+        - control_id: "RE.2.137"
+          control_name: "Regularly perform and test data back-ups"
+          category: "Level 2 - Advanced"
+          required: true
+
+      iso_27001:
+        - control_id: "A.8.13"
+          control_name: "Information backup"
+          category: "Technological Controls"
+          required: true
+
   # ---------------------------------------------------------------------------
   # ENCRYPTION AT REST
   # ---------------------------------------------------------------------------
@@ -123,6 +153,36 @@ checks:
         - control_id: "CIS.3.11"
           control_name: "Encrypt Sensitive Data at Rest"
           category: "Data Protection"
+          required: true
+
+      nist_800_171:
+        - control_id: "3.13.16"
+          control_name: "Protect the confidentiality of CUI at rest"
+          category: "System and Communications Protection"
+          required: true
+
+      sox:
+        - control_id: "ITGC.3.2"
+          control_name: "Data Encryption Controls"
+          category: "Access Controls"
+          required: true
+
+      gdpr:
+        - control_id: "Art.32.1.a"
+          control_name: "Encryption of personal data"
+          category: "Security of Processing"
+          required: true
+
+      cmmc:
+        - control_id: "SC.3.177"
+          control_name: "Employ FIPS-validated cryptography when used to protect CUI"
+          category: "Level 3 - Expert"
+          required: true
+
+      iso_27001:
+        - control_id: "A.8.24"
+          control_name: "Use of cryptography"
+          category: "Technological Controls"
           required: true
 
   # ---------------------------------------------------------------------------
@@ -180,6 +240,36 @@ checks:
           category: "Network Monitoring and Defense"
           required: true
 
+      nist_800_171:
+        - control_id: "3.13.1"
+          control_name: "Monitor, control, and protect communications at boundaries"
+          category: "System and Communications Protection"
+          required: true
+
+      sox:
+        - control_id: "ITGC.3.3"
+          control_name: "Network Security Controls"
+          category: "Access Controls"
+          required: true
+
+      gdpr:
+        - control_id: "Art.32.1.b"
+          control_name: "Ability to ensure ongoing confidentiality, integrity, availability"
+          category: "Security of Processing"
+          required: true
+
+      cmmc:
+        - control_id: "SC.1.175"
+          control_name: "Monitor, control, and protect organizational communications"
+          category: "Level 1 - Foundational"
+          required: true
+
+      iso_27001:
+        - control_id: "A.8.20"
+          control_name: "Networks security"
+          category: "Technological Controls"
+          required: true
+
   # ---------------------------------------------------------------------------
   # ANTIVIRUS / ANTI-MALWARE
   # ---------------------------------------------------------------------------
@@ -230,6 +320,36 @@ checks:
         - control_id: "CIS.10.1"
           control_name: "Deploy and Maintain Anti-Malware Software"
           category: "Malware Defenses"
+          required: true
+
+      nist_800_171:
+        - control_id: "3.14.2"
+          control_name: "Provide protection from malicious code"
+          category: "System and Information Integrity"
+          required: true
+
+      sox:
+        - control_id: "ITGC.3.4"
+          control_name: "Malware Protection"
+          category: "Access Controls"
+          required: true
+
+      gdpr:
+        - control_id: "Art.32.1.b"
+          control_name: "Ensure ongoing security of processing systems"
+          category: "Security of Processing"
+          required: true
+
+      cmmc:
+        - control_id: "SI.1.210"
+          control_name: "Identify, report, and correct information and flaws"
+          category: "Level 1 - Foundational"
+          required: true
+
+      iso_27001:
+        - control_id: "A.8.7"
+          control_name: "Protection against malware"
+          category: "Technological Controls"
           required: true
 
   # ---------------------------------------------------------------------------
@@ -284,6 +404,36 @@ checks:
         - control_id: "CIS.7.1"
           control_name: "Establish and Maintain Vulnerability Management Process"
           category: "Continuous Vulnerability Management"
+          required: true
+
+      nist_800_171:
+        - control_id: "3.14.1"
+          control_name: "Identify, report, and correct flaws in a timely manner"
+          category: "System and Information Integrity"
+          required: true
+
+      sox:
+        - control_id: "ITGC.2.1"
+          control_name: "Change Management - Patch Installation"
+          category: "Change Management"
+          required: true
+
+      gdpr:
+        - control_id: "Art.32.1.d"
+          control_name: "Regular testing, assessing and evaluating security measures"
+          category: "Security of Processing"
+          required: true
+
+      cmmc:
+        - control_id: "SI.2.214"
+          control_name: "Monitor security of organizational systems"
+          category: "Level 2 - Advanced"
+          required: true
+
+      iso_27001:
+        - control_id: "A.8.8"
+          control_name: "Management of technical vulnerabilities"
+          category: "Technological Controls"
           required: true
 
   # ---------------------------------------------------------------------------
@@ -352,6 +502,44 @@ checks:
         - control_id: "CIS.8.5"
           control_name: "Collect Detailed Audit Logs"
           category: "Audit Log Management"
+          required: true
+
+      nist_800_171:
+        - control_id: "3.3.1"
+          control_name: "Create and retain system audit logs and records"
+          category: "Audit and Accountability"
+          required: true
+        - control_id: "3.3.2"
+          control_name: "Ensure actions of individual users can be traced"
+          category: "Audit and Accountability"
+          required: true
+
+      sox:
+        - control_id: "ITGC.4.2"
+          control_name: "Audit Trail and Logging"
+          category: "Computer Operations"
+          required: true
+
+      gdpr:
+        - control_id: "Art.30"
+          control_name: "Records of processing activities"
+          category: "Data Protection by Design"
+          required: true
+
+      cmmc:
+        - control_id: "AU.2.041"
+          control_name: "Ensure actions of individual users can be traced"
+          category: "Level 2 - Advanced"
+          required: true
+
+      iso_27001:
+        - control_id: "A.8.15"
+          control_name: "Logging"
+          category: "Technological Controls"
+          required: true
+        - control_id: "A.8.16"
+          control_name: "Monitoring activities"
+          category: "Technological Controls"
           required: true
 
   # ---------------------------------------------------------------------------
@@ -428,6 +616,48 @@ checks:
           category: "Access Control Management"
           required: true
 
+      nist_800_171:
+        - control_id: "3.1.1"
+          control_name: "Limit system access to authorized users"
+          category: "Access Control"
+          required: true
+        - control_id: "3.5.3"
+          control_name: "Use multifactor authentication for local and network access"
+          category: "Identification and Authentication"
+          required: true
+
+      sox:
+        - control_id: "ITGC.3.1"
+          control_name: "Logical Access Controls"
+          category: "Access Controls"
+          required: true
+
+      gdpr:
+        - control_id: "Art.32.1.b"
+          control_name: "Ensure ongoing confidentiality of processing systems"
+          category: "Security of Processing"
+          required: true
+
+      cmmc:
+        - control_id: "AC.1.001"
+          control_name: "Limit information system access to authorized users"
+          category: "Level 1 - Foundational"
+          required: true
+        - control_id: "IA.2.078"
+          control_name: "Enforce minimum password complexity"
+          category: "Level 2 - Advanced"
+          required: true
+
+      iso_27001:
+        - control_id: "A.8.2"
+          control_name: "Privileged access rights"
+          category: "Technological Controls"
+          required: true
+        - control_id: "A.8.5"
+          control_name: "Secure authentication"
+          category: "Technological Controls"
+          required: true
+
   # ---------------------------------------------------------------------------
   # NETWORK SECURITY
   # ---------------------------------------------------------------------------
@@ -485,6 +715,44 @@ checks:
           category: "Network Infrastructure Management"
           required: true
 
+      nist_800_171:
+        - control_id: "3.13.5"
+          control_name: "Implement subnetworks for publicly accessible components"
+          category: "System and Communications Protection"
+          required: true
+        - control_id: "3.13.6"
+          control_name: "Deny network traffic by default"
+          category: "System and Communications Protection"
+          required: true
+
+      sox:
+        - control_id: "ITGC.3.5"
+          control_name: "Network Segmentation and Monitoring"
+          category: "Access Controls"
+          required: true
+
+      gdpr:
+        - control_id: "Art.32.1.a"
+          control_name: "Pseudonymisation and encryption of personal data"
+          category: "Security of Processing"
+          required: true
+
+      cmmc:
+        - control_id: "SC.2.179"
+          control_name: "Use encrypted sessions for wireless connections"
+          category: "Level 2 - Advanced"
+          required: true
+
+      iso_27001:
+        - control_id: "A.8.21"
+          control_name: "Security of network services"
+          category: "Technological Controls"
+          required: true
+        - control_id: "A.8.22"
+          control_name: "Segregation of networks"
+          category: "Technological Controls"
+          required: true
+
   # ---------------------------------------------------------------------------
   # TIME SYNCHRONIZATION
   # ---------------------------------------------------------------------------
@@ -524,6 +792,36 @@ checks:
         - control_id: "CIS.8.4"
           control_name: "Standardize Time Synchronization"
           category: "Audit Log Management"
+          required: true
+
+      nist_800_171:
+        - control_id: "3.3.7"
+          control_name: "Provide audit record reduction and report generation"
+          category: "Audit and Accountability"
+          required: true
+
+      sox:
+        - control_id: "ITGC.4.3"
+          control_name: "System Time Synchronization"
+          category: "Computer Operations"
+          required: true
+
+      gdpr:
+        - control_id: "Art.30.2.g"
+          control_name: "General description of technical security measures"
+          category: "Data Protection by Design"
+          required: false
+
+      cmmc:
+        - control_id: "AU.2.042"
+          control_name: "Create and retain audit records"
+          category: "Level 2 - Advanced"
+          required: true
+
+      iso_27001:
+        - control_id: "A.8.17"
+          control_name: "Clock synchronization"
+          category: "Technological Controls"
           required: true
 
   # ---------------------------------------------------------------------------
@@ -577,6 +875,44 @@ checks:
         - control_id: "CIS.4.1"
           control_name: "Establish and Maintain Secure Configuration Process"
           category: "Secure Configuration"
+          required: true
+
+      nist_800_171:
+        - control_id: "3.14.6"
+          control_name: "Monitor organizational systems to detect attacks and indicators"
+          category: "System and Information Integrity"
+          required: true
+        - control_id: "3.14.7"
+          control_name: "Identify unauthorized use of organizational systems"
+          category: "System and Information Integrity"
+          required: true
+
+      sox:
+        - control_id: "ITGC.4.4"
+          control_name: "System Integrity Monitoring"
+          category: "Computer Operations"
+          required: true
+
+      gdpr:
+        - control_id: "Art.32.1.b"
+          control_name: "Ensure ongoing integrity of processing systems"
+          category: "Security of Processing"
+          required: true
+
+      cmmc:
+        - control_id: "SI.2.216"
+          control_name: "Monitor organizational systems"
+          category: "Level 2 - Advanced"
+          required: true
+
+      iso_27001:
+        - control_id: "A.8.9"
+          control_name: "Configuration management"
+          category: "Technological Controls"
+          required: true
+        - control_id: "A.8.16"
+          control_name: "Monitoring activities"
+          category: "Technological Controls"
           required: true
 
   # ---------------------------------------------------------------------------
@@ -634,6 +970,48 @@ checks:
         - control_id: "CIS.17.1"
           control_name: "Designate Personnel to Manage Incident Handling"
           category: "Incident Response Management"
+          required: true
+
+      nist_800_171:
+        - control_id: "3.6.1"
+          control_name: "Establish incident-handling capability"
+          category: "Incident Response"
+          required: true
+        - control_id: "3.6.2"
+          control_name: "Track, document, and report incidents"
+          category: "Incident Response"
+          required: true
+
+      sox:
+        - control_id: "ITGC.4.5"
+          control_name: "Incident Management Procedures"
+          category: "Computer Operations"
+          required: true
+
+      gdpr:
+        - control_id: "Art.33"
+          control_name: "Notification of personal data breach to supervisory authority"
+          category: "Data Breach Notification"
+          required: true
+        - control_id: "Art.34"
+          control_name: "Communication of personal data breach to data subject"
+          category: "Data Breach Notification"
+          required: true
+
+      cmmc:
+        - control_id: "IR.2.092"
+          control_name: "Establish incident-handling capability"
+          category: "Level 2 - Advanced"
+          required: true
+
+      iso_27001:
+        - control_id: "A.5.24"
+          control_name: "Information security incident management planning"
+          category: "Organizational Controls"
+          required: true
+        - control_id: "A.5.26"
+          control_name: "Response to information security incidents"
+          category: "Organizational Controls"
           required: true
 
 
@@ -712,6 +1090,83 @@ frameworks:
       - "Foundational Controls (IG2)"
       - "Organizational Controls (IG3)"
 
+  nist_800_171:
+    name: "NIST SP 800-171"
+    version: "Rev 2"
+    description: "Protecting Controlled Unclassified Information in Nonfederal Systems"
+    regulatory_body: "NIST"
+    industry: "defense"
+    documentation_url: "https://csrc.nist.gov/publications/detail/sp/800-171/rev-2/final"
+    categories:
+      - "Access Control (AC)"
+      - "Awareness and Training (AT)"
+      - "Audit and Accountability (AU)"
+      - "Configuration Management (CM)"
+      - "Identification and Authentication (IA)"
+      - "Incident Response (IR)"
+      - "Maintenance (MA)"
+      - "Media Protection (MP)"
+      - "Personnel Security (PS)"
+      - "Physical Protection (PE)"
+      - "Risk Assessment (RA)"
+      - "Security Assessment (CA)"
+      - "System and Communications Protection (SC)"
+      - "System and Information Integrity (SI)"
+
+  sox:
+    name: "Sarbanes-Oxley Act"
+    version: "Section 404"
+    description: "Financial reporting internal controls and IT governance"
+    regulatory_body: "SEC/PCAOB"
+    industry: "finance"
+    documentation_url: "https://www.sec.gov/spotlight/sarbanes-oxley.htm"
+    categories:
+      - "IT General Controls (ITGC)"
+      - "Application Controls"
+      - "Change Management"
+      - "Access Controls"
+      - "Computer Operations"
+
+  gdpr:
+    name: "General Data Protection Regulation"
+    version: "2016/679"
+    description: "European Union data protection and privacy regulation"
+    regulatory_body: "European Commission"
+    industry: "europe"
+    documentation_url: "https://gdpr.eu/"
+    categories:
+      - "Lawfulness of Processing"
+      - "Data Subject Rights"
+      - "Data Protection by Design"
+      - "Security of Processing"
+      - "Data Breach Notification"
+      - "Data Protection Impact Assessment"
+
+  cmmc:
+    name: "Cybersecurity Maturity Model Certification"
+    version: "2.0"
+    description: "Defense contractor cybersecurity maturity requirements"
+    regulatory_body: "DoD"
+    industry: "defense"
+    documentation_url: "https://dodcio.defense.gov/CMMC/"
+    categories:
+      - "Level 1 - Foundational"
+      - "Level 2 - Advanced"
+      - "Level 3 - Expert"
+
+  iso_27001:
+    name: "ISO/IEC 27001"
+    version: "2022"
+    description: "Information security management system international standard"
+    regulatory_body: "ISO/IEC"
+    industry: "international"
+    documentation_url: "https://www.iso.org/standard/27001"
+    categories:
+      - "Organizational Controls (A.5)"
+      - "People Controls (A.6)"
+      - "Physical Controls (A.7)"
+      - "Technological Controls (A.8)"
+
 
 # =============================================================================
 # INDUSTRY RECOMMENDATIONS
@@ -723,6 +1178,7 @@ industry_recommendations:
     recommended:
       - "hipaa"
       - "nist_csf"
+      - "soc2"
     description: "Medical clinics, hospitals, health tech, covered entities"
 
   technology:
@@ -730,6 +1186,7 @@ industry_recommendations:
     recommended:
       - "soc2"
       - "nist_csf"
+      - "iso_27001"
     description: "SaaS, software companies, IT service providers"
 
   retail:
@@ -737,6 +1194,7 @@ industry_recommendations:
     recommended:
       - "pci_dss"
       - "soc2"
+      - "gdpr"
     description: "Stores, e-commerce, payment processing"
 
   finance:
@@ -744,6 +1202,7 @@ industry_recommendations:
     recommended:
       - "soc2"
       - "pci_dss"
+      - "sox"
       - "nist_csf"
     description: "RIAs, financial services, banking, fintech"
 
@@ -752,7 +1211,32 @@ industry_recommendations:
     recommended:
       - "nist_csf"
       - "cis"
+      - "nist_800_171"
     description: "Federal, state, local government agencies"
+
+  defense:
+    primary: "cmmc"
+    recommended:
+      - "cmmc"
+      - "nist_800_171"
+      - "nist_csf"
+    description: "Defense contractors, DIB, CUI handlers"
+
+  europe:
+    primary: "gdpr"
+    recommended:
+      - "gdpr"
+      - "iso_27001"
+      - "soc2"
+    description: "EU operations, data processors, international companies"
+
+  international:
+    primary: "iso_27001"
+    recommended:
+      - "iso_27001"
+      - "soc2"
+      - "gdpr"
+    description: "Global operations, multi-national compliance"
 
   general:
     primary: "nist_csf"

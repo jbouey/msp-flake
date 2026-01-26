@@ -1458,6 +1458,177 @@ $LSAProtection = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control
 
 
 # =============================================================================
+# RB-WIN-ACCESS-001: Comprehensive Access Control Verification
+# =============================================================================
+
+RUNBOOK_ACCESS_CONTROL = WindowsRunbook(
+    id="RB-WIN-ACCESS-001",
+    name="Access Control Verification",
+    description="Verify access controls including MFA, password policies, and account management",
+    version="1.0",
+    hipaa_controls=["164.312(d)", "164.312(a)(1)", "164.312(a)(2)(i)"],
+    severity="high",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=30,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
+
+    detect_script=r'''
+# Comprehensive access control verification
+$Result = @{
+    Drifted = $false
+    Issues = @()
+    PasswordPolicy = @{}
+    AccountLockout = @{}
+    MFAStatus = @{}
+    PrivilegedAccounts = @()
+}
+
+# Check password policy
+$NetAccounts = net accounts 2>&1
+foreach ($Line in $NetAccounts) {
+    if ($Line -match "Minimum password length:\s*(\d+)") {
+        $Result.PasswordPolicy.MinLength = [int]$Matches[1]
+        if ([int]$Matches[1] -lt 12) {
+            $Result.Drifted = $true
+            $Result.Issues += "Password min length < 12 characters"
+        }
+    }
+    if ($Line -match "Maximum password age.*:\s*(\d+|Unlimited)") {
+        $Result.PasswordPolicy.MaxAge = $Matches[1]
+        if ($Matches[1] -eq "Unlimited" -or [int]$Matches[1] -gt 90) {
+            $Result.Drifted = $true
+            $Result.Issues += "Password max age > 90 days or unlimited"
+        }
+    }
+    if ($Line -match "Lockout threshold:\s*(\d+|Never)") {
+        $Result.AccountLockout.Threshold = $Matches[1]
+        if ($Matches[1] -eq "Never" -or [int]$Matches[1] -eq 0 -or [int]$Matches[1] -gt 5) {
+            $Result.Drifted = $true
+            $Result.Issues += "Account lockout threshold not configured (should be 3-5)"
+        }
+    }
+}
+
+# Check for local admin accounts
+$AdminGroup = [ADSI]"WinNT://./Administrators,group"
+$Admins = @($AdminGroup.Invoke("Members")) | ForEach-Object {
+    $Path = ([ADSI]$_).Path
+    $Name = $Path.Split("/")[-1]
+    @{ Name = $Name; Type = if ($Path -match "WinNT://[^/]+/[^/]+$") { "Local" } else { "Domain" } }
+}
+$Result.PrivilegedAccounts = $Admins
+$LocalAdmins = @($Admins | Where-Object { $_.Type -eq "Local" })
+if ($LocalAdmins.Count -gt 2) {
+    $Result.Drifted = $true
+    $Result.Issues += "More than 2 local admin accounts found ($($LocalAdmins.Count))"
+}
+
+# Check for disabled accounts that should be removed
+$DisabledLocalUsers = Get-LocalUser | Where-Object { -not $_.Enabled -and $_.LastLogon -lt (Get-Date).AddDays(-90) }
+if ($DisabledLocalUsers.Count -gt 0) {
+    $Result.Issues += "$($DisabledLocalUsers.Count) stale disabled accounts found"
+}
+
+# Check password complexity via secedit
+$TempCfg = "$env:TEMP\secpol_check.cfg"
+secedit /export /cfg $TempCfg /areas SECURITYPOLICY 2>&1 | Out-Null
+if (Test-Path $TempCfg) {
+    $SecPol = Get-Content $TempCfg
+    $Complexity = ($SecPol | Select-String "PasswordComplexity\s*=\s*1") -ne $null
+    $Result.PasswordPolicy.ComplexityEnabled = $Complexity
+    if (-not $Complexity) {
+        $Result.Drifted = $true
+        $Result.Issues += "Password complexity not enabled"
+    }
+    Remove-Item $TempCfg -Force -ErrorAction SilentlyContinue
+}
+
+# Check for Windows Hello / MFA indicators
+try {
+    $CredProvider = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\*" -ErrorAction SilentlyContinue
+    $Result.MFAStatus.WindowsHelloConfigured = (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{D6886603-9D2F-4EB2-B667-1971041FA96B}")
+} catch {
+    $Result.MFAStatus.WindowsHelloConfigured = $false
+}
+
+$Result | ConvertTo-Json -Depth 4
+''',
+
+    remediate_script=r'''
+# Remediate access control issues
+$Result = @{ Success = $false; Actions = @() }
+
+try {
+    # Set minimum password length to 12
+    net accounts /minpwlen:12 2>&1 | Out-Null
+    $Result.Actions += "Set minimum password length to 12"
+
+    # Set maximum password age to 90 days
+    net accounts /maxpwage:90 2>&1 | Out-Null
+    $Result.Actions += "Set maximum password age to 90 days"
+
+    # Set account lockout threshold to 5
+    net accounts /lockoutthreshold:5 2>&1 | Out-Null
+    $Result.Actions += "Set account lockout threshold to 5"
+
+    # Set lockout duration to 30 minutes
+    net accounts /lockoutduration:30 2>&1 | Out-Null
+    $Result.Actions += "Set account lockout duration to 30 minutes"
+
+    # Enable password complexity via secedit
+    $CfgFile = "$env:TEMP\secpol_fix.cfg"
+    $DbFile = "$env:TEMP\secpol_fix.sdb"
+    @"
+[Unicode]
+Unicode=yes
+[System Access]
+PasswordComplexity = 1
+MinimumPasswordLength = 12
+MaximumPasswordAge = 90
+MinimumPasswordAge = 1
+PasswordHistorySize = 12
+"@ | Set-Content $CfgFile
+
+    secedit /configure /db $DbFile /cfg $CfgFile /areas SECURITYPOLICY 2>&1 | Out-Null
+    $Result.Actions += "Configured password complexity and policy via secedit"
+
+    Remove-Item $CfgFile, $DbFile -Force -ErrorAction SilentlyContinue
+
+    $Result.Success = $true
+    $Result.Message = "Access control policies configured"
+} catch {
+    $Result.Error = $_.Exception.Message
+}
+
+$Result | ConvertTo-Json -Depth 2
+''',
+
+    verify_script=r'''
+$NetAccounts = net accounts 2>&1
+$MinLength = 0
+$LockoutThreshold = 0
+foreach ($Line in $NetAccounts) {
+    if ($Line -match "Minimum password length:\s*(\d+)") { $MinLength = [int]$Matches[1] }
+    if ($Line -match "Lockout threshold:\s*(\d+)") { $LockoutThreshold = [int]$Matches[1] }
+}
+@{
+    MinPasswordLength = $MinLength
+    LockoutThreshold = $LockoutThreshold
+    Verified = ($MinLength -ge 12 -and $LockoutThreshold -ge 3 -and $LockoutThreshold -le 5)
+} | ConvertTo-Json
+''',
+
+    timeout_seconds=120,
+    requires_reboot=False,
+    disruptive=False,
+    evidence_fields=["PasswordPolicy", "AccountLockout", "MFAStatus", "PrivilegedAccounts", "Issues"]
+)
+
+
+# =============================================================================
 # Security Runbooks Registry
 # =============================================================================
 
@@ -1475,4 +1646,5 @@ SECURITY_RUNBOOKS: Dict[str, WindowsRunbook] = {
     "RB-WIN-SEC-011": RUNBOOK_UAC_ENFORCEMENT,
     "RB-WIN-SEC-012": RUNBOOK_EVENT_LOG_PROTECTION,
     "RB-WIN-SEC-013": RUNBOOK_CREDENTIAL_GUARD,
+    "RB-WIN-ACCESS-001": RUNBOOK_ACCESS_CONTROL,
 }
