@@ -4,6 +4,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { usePartner } from './PartnerContext';
 import { PartnerBilling } from './PartnerBilling';
 import { PartnerComplianceSettings } from './PartnerComplianceSettings';
+import { PartnerExceptionManagement } from './PartnerExceptionManagement';
 
 interface Site {
   site_id: string;
@@ -33,7 +34,7 @@ export const PartnerDashboard: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { partner, apiKey, isAuthenticated, isLoading, logout } = usePartner();
 
-  const [activeTab, setActiveTab] = useState<'sites' | 'provisions' | 'billing' | 'compliance'>('sites');
+  const [activeTab, setActiveTab] = useState<'sites' | 'provisions' | 'billing' | 'compliance' | 'exceptions'>('sites');
 
   // Handle billing redirect from Stripe
   useEffect(() => {
@@ -294,6 +295,16 @@ export const PartnerDashboard: React.FC = () => {
             }`}
           >
             Compliance
+          </button>
+          <button
+            onClick={() => setActiveTab('exceptions')}
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+              activeTab === 'exceptions'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Exceptions
           </button>
         </div>
       </div>
@@ -567,6 +578,12 @@ export const PartnerDashboard: React.FC = () => {
 
         {activeTab === 'compliance' && (
           <PartnerComplianceSettings />
+        )}
+
+        {activeTab === 'exceptions' && (
+          <PartnerExceptionManagement
+            sites={sites.map(s => ({ id: s.site_id, name: s.clinic_name }))}
+          />
         )}
       </div>
     </div>
