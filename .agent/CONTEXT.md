@@ -1,8 +1,8 @@
 # Malachor MSP Compliance Platform - Agent Context
 
-**Last Updated:** 2026-01-24 (Session 68 - Complete)
-**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.47, **ISO v46**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **A/B Partition Update System DESIGNED**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, **Go Agent Deployed to ALL 3 VMs (DC/WS/SRV)**, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Partner Admin Router Fixed**, **Claude Code Skills System (9 skill files)**, **Blockchain Evidence Security Hardening (Ed25519 verification + OTS validation)**, **Learning System Resolution Recording Fix (auto_healer.py)**, **Production Healing Mode ENABLED (dry_run=false)**, **Learning Loop Runbook Mapping Fix**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed (VPS Deployed)**, **Partner Portal Blank Page Fix (brand_name NULL)**, **Google OAuth Button Text Fix**, **OTA USB Update Pattern Established**, **Client Portal Evidence Database Fix (compliance_bundles table)**, **Physical Appliance ONLINE**)
-**Test Status:** 834 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.46, 43 total runbooks (27 Windows + 16 Linux), **A/B partition update system with health gate**, **GRUB boot configuration**, **Automatic rollback on 3 failed boots**, Fleet Updates UI tested (create releases, rollouts, pause/resume/advance), **Full Coverage Healing Mode enabled** (21 rules on physical appliance), Test release v44 created with staged rollout, **Go Agent running on ALL 3 VMs** (NVDC01, NVWS01, NVSRV01), gRPC drift events → L1 rules → Windows runbooks VERIFIED, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, **Learning flywheel NOW OPERATIONAL** (resolution recording fixed), Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, **Chaos Lab Healing-First** (EXECUTION_PLAN_v2.sh with ENABLE_RESTORES=false), **Full Spectrum Chaos Test** (5 attack categories), Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, **Active healing enabled (HEALING_DRY_RUN=false in config.yaml)**, L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage), asyncpg syntax fixes deployed to VPS, api_base_url bug fixed in appliance_agent.py, chaos lab WS credentials fixed (localadmin), **Clock drift fixes via Basic auth**, **Credential format fix (.\\ for local accounts)**, **CHECK_TYPE_TO_RUNBOOK mapping added to learning_loop.py**, **Partner admin router registered in main.py**
+**Last Updated:** 2026-01-26 (Session 70 - Complete)
+**Phase:** Phase 13 - Zero-Touch Update System (Agent v1.0.48, **ISO v47**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management (10 frameworks)**, **Phase 2 Local Resilience (Delegated Authority)**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **A/B Partition Update System DESIGNED**, Fleet Updates UI DEPLOYED, Rollout Management WORKING, **Full Coverage Healing ENABLED**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate (5/5)**, 43 Runbooks, **Go Agent Deployed to ALL 3 VMs (DC/WS/SRV)**, gRPC Integration Working, **All 3 VMs (DC/WS/SRV) WinRM Working**, asyncpg Syntax Fixes Deployed, **Partner Portal OAuth Fixed**, **Domain Whitelisting Config UI**, **Partner Admin Router Fixed**, **Claude Code Skills System (9 skill files)**, **Blockchain Evidence Security Hardening (Ed25519 verification + OTS validation)**, **Learning System Resolution Recording Fix (auto_healer.py)**, **Production Healing Mode ENABLED (dry_run=false)**, **Learning Loop Runbook Mapping Fix**, **Comprehensive Security Audit - 3 CRITICAL Fixes**, **Partner Admin Auth Headers Fixed (VPS Deployed)**, **Partner Portal Blank Page Fix (brand_name NULL)**, **Google OAuth Button Text Fix**, **OTA USB Update Pattern Established**, **Client Portal Evidence Database Fix (compliance_bundles table)**, **Physical Appliance ONLINE**)
+**Test Status:** 834 passed (compliance-agent tests) + 24 Go agent tests, agent v1.0.48, 43 total runbooks (27 Windows + 16 Linux), **Phase 2 Local Resilience** (delegated signing, urgent retry, offline audit trail, SMS alerting), **Partner Compliance Framework Management** (10 frameworks, industry presets), **A/B partition update system with health gate**, **GRUB boot configuration**, **Automatic rollback on 3 failed boots**, Fleet Updates UI tested (create releases, rollouts, pause/resume/advance), **Full Coverage Healing Mode enabled** (21 rules on physical appliance), Test release v44 created with staged rollout, **Go Agent running on ALL 3 VMs** (NVDC01, NVWS01, NVSRV01), gRPC drift events → L1 rules → Windows runbooks VERIFIED, OpenTimestamps blockchain anchoring, Linux drift detection + SSH-based remediation, RBAC user management, **Learning flywheel NOW OPERATIONAL** (resolution recording fixed), Multi-Framework Compliance (HIPAA, SOC 2, PCI DSS, NIST CSF, CIS Controls, NIST 800-171, SOX, GDPR, CMMC, ISO 27001), Cloud Integrations (AWS, Google Workspace, Okta, Azure AD, Microsoft Security), L1 JSON Rule Loading from Central Command, Network compliance check (Drata/Vanta style), 8 extended check type labels, **Chaos Lab Healing-First** (EXECUTION_PLAN_v2.sh with ENABLE_RESTORES=false), **Full Spectrum Chaos Test** (5 attack categories), Workstation Compliance (AD discovery + 5 WMI checks), RMM Comparison Engine, Workstation Discovery Config Fields, $params_Hostname variable injection fix, Go Agent gRPC push-based architecture, VM network fixes, AD/DNS verified, svc.monitoring WinRM access, 21 workstation cadence unit tests, firewall port 50051 for gRPC, gRPC fully implemented (Python server + Go client), L1 platform-specific healing rules, comprehensive security runbooks (13 total), ISO v40 gRPC server verified working, **Active healing enabled (HEALING_DRY_RUN=false in config.yaml)**, L2 scenario categories for learning data collection, Comprehensive security audit (13 fixes), Healing tier toggle (standard/full_coverage), asyncpg syntax fixes deployed to VPS, api_base_url bug fixed in appliance_agent.py, chaos lab WS credentials fixed (localadmin), **Clock drift fixes via Basic auth**, **Credential format fix (.\\ for local accounts)**, **CHECK_TYPE_TO_RUNBOOK mapping added to learning_loop.py**, **Partner admin router registered in main.py**
 
 ---
 
@@ -546,6 +546,70 @@ A HIPAA compliance automation platform for small-to-mid healthcare practices (4-
 - **Location (VPS):** `/root/msp-iso-build/result-iso-v40/iso/osiriscare-appliance.iso`
 - **Agent:** compliance-agent v1.0.40 with gRPC server + Active Healing
 - **Status:** Superseded by v43
+
+### Session 70 Changes (2026-01-26) - Partner Compliance & Phase 2 Local Resilience
+
+#### Partner Compliance Framework Management - COMPLETE
+- **10 Compliance Frameworks:** HIPAA, SOC2, PCI-DSS, NIST CSF, NIST 800-171, SOX, GDPR, CMMC, ISO 27001, CIS Controls
+- **Industry Presets:** Healthcare, Finance, Technology, Defense, Retail, Government, etc.
+- **Backend:** Fixed `compliance_frameworks.py` bug (partner_row outside async with)
+- **VPS Deployment:** Updated `main.py` with compliance routers
+- **Database:** Created compliance_controls and control_runbook_mapping tables
+- **Frontend:** Created `PartnerComplianceSettings.tsx` with:
+  - Framework usage dashboard
+  - Default compliance settings (industry, tier, frameworks)
+  - Industry preset quick-apply buttons
+  - Per-site compliance configuration modal
+- **Dashboard:** Added "Compliance" tab to `PartnerDashboard.tsx`
+
+#### Phase 2 Local Resilience Implementation - COMPLETE
+- **DelegatedSigningKey class:**
+  - Ed25519 key management for offline signing
+  - Request delegation from Central Command
+  - Key storage in `/var/lib/msp/keys/`
+  - Sign evidence bundles when offline
+- **UrgentCloudRetry class:**
+  - SQLite-backed priority queue
+  - Exponential backoff with jitter (1s → 64s)
+  - SMS fallback via Twilio
+  - Automatic retry when cloud returns
+- **OfflineAuditTrail class:**
+  - Tamper-evident hash chain with Ed25519 signatures
+  - SQLite-backed audit log
+  - Hash chain integrity verification
+  - Batch sync to cloud
+- **SMSAlerter class:**
+  - Twilio integration for critical escalations
+  - Async HTTP client
+- **LocalResilienceManager updated:**
+  - Phase 1: runbooks, frameworks, evidence_queue, site_config
+  - Phase 2: signing_key, urgent_retry, audit_trail, sms_alerter
+  - New methods: log_l1_action, escalate_to_cloud, verify_audit_integrity, sign_evidence
+
+#### Local Resilience Architecture
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Local Resilience Manager                  │
+│                                                              │
+│  Phase 1 Components:                                         │
+│  ├── LocalRunbookCache      - Cached runbooks for L1        │
+│  ├── LocalFrameworkCache    - Compliance framework mappings  │
+│  ├── EvidenceQueue          - Offline evidence storage       │
+│  └── SiteConfigManager      - Site configuration             │
+│                                                              │
+│  Phase 2 Components (Delegated Authority):                   │
+│  ├── DelegatedSigningKey    - Ed25519 offline signing       │
+│  ├── UrgentCloudRetry       - Priority queue with backoff   │
+│  ├── OfflineAuditTrail      - Tamper-evident hash chain     │
+│  └── SMSAlerter             - Twilio SMS fallback           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Coverage Tiers
+- **Basic Compliance:** Compliance runbooks only (L1 handles most scenarios)
+- **Full Coverage:** All OS-relevant runbooks (comprehensive protection)
+
+---
 
 ### Session 66 Continued Changes (2026-01-23) - A/B Partition Install Attempted
 - **Lab Network Back Online:**

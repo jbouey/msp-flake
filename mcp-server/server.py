@@ -178,6 +178,7 @@ try:
     from dashboard_api.evidence_chain import router as evidence_chain_router
     from dashboard_api.fleet_updates import router as fleet_updates_router
     from dashboard_api.client_portal import public_router as client_auth_router, auth_router as client_portal_router
+    from dashboard_api.compliance_frameworks import router as compliance_frameworks_router, partner_router as partner_compliance_router
     app.include_router(dashboard_router)
     app.include_router(auth_router)  # Admin authentication endpoints
     app.include_router(users_router)  # User management (RBAC)
@@ -201,7 +202,9 @@ try:
     app.include_router(fleet_updates_router)  # Fleet updates and rollout management
     app.include_router(client_auth_router, prefix="/api")  # Client portal auth (magic link, login)
     app.include_router(client_portal_router, prefix="/api")  # Client portal endpoints
-    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users, frameworks, integrations, evidence_chain, fleet_updates, client_portal)")
+    app.include_router(compliance_frameworks_router)  # Multi-framework compliance management
+    app.include_router(partner_compliance_router)  # Partner compliance settings
+    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users, frameworks, integrations, evidence_chain, fleet_updates, client_portal, compliance_frameworks)")
 except ImportError as e:
     print(f"⚠ Could not import central-command routers: {e}")
 

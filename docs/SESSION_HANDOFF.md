@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-24 (Session 68 - Client Portal Help Documentation)
-**Current State:** Phase 13 Zero-Touch Updates, **ISO v46**, Full Coverage Healing, **Go Agent Deployed to ALL 3 VMs**, **Client Portal COMPLETE (All Phases)**, **Client Portal Help Documentation**, **Partner Portal Blank Page Fix**, **PHYSICAL APPLIANCE ONLINE**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
+**Last Updated:** 2026-01-26 (Session 70 - Partner Compliance & Phase 2 Local Resilience)
+**Current State:** Phase 13 Zero-Touch Updates, **ISO v47**, Full Coverage Healing, **Partner Compliance Framework Management (10 frameworks)**, **Phase 2 Local Resilience (Delegated Authority)**, **Go Agent Deployed to ALL 3 VMs**, **Client Portal COMPLETE (All Phases)**, **Client Portal Help Documentation**, **Partner Portal Blank Page Fix**, **PHYSICAL APPLIANCE ONLINE**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
 
 ---
 
@@ -9,8 +9,8 @@
 
 | Component | Status | Version |
 |-----------|--------|---------|
-| Agent | v1.0.47 | Stable |
-| ISO | v46 | Available |
+| Agent | v1.0.48 | Stable |
+| ISO | v47 | Available |
 | Tests | 834 + 24 Go tests | Healthy |
 | Physical Appliance | **ONLINE** | 192.168.88.246 |
 | A/B Partition System | **DESIGNED** | Needs custom initramfs for partition boot |
@@ -23,10 +23,51 @@
 | gRPC | **VERIFIED WORKING** | Drift → L1 → Runbook |
 | Active Healing | **ENABLED** | HEALING_DRY_RUN=false |
 | Partner Portal | **WORKING** | API key login verified |
+| **Partner Compliance** | **10 FRAMEWORKS** | HIPAA, SOC2, PCI-DSS, NIST CSF, etc. |
+| **Local Resilience** | **PHASE 2 COMPLETE** | Delegated signing, offline audit, SMS alerts |
 | **Client Portal** | **ALL PHASES COMPLETE** | Auth, dashboard, evidence, reports, users, help |
 | Evidence Security | **HARDENED** | Ed25519 verify + OTS validation |
 | Learning System | **OPERATIONAL** | Resolution recording fixed |
 | **Google OAuth** | **DISABLED** | Client under Google review |
+
+---
+
+## Session 70 (2026-01-26) - Partner Compliance & Phase 2 Local Resilience
+
+### What Happened
+1. **Partner Compliance Framework Management** - Complete partner UI for 10 compliance frameworks
+2. **Phase 2 Local Resilience** - Delegated authority for offline operations
+
+### Partner Compliance Framework Management
+| Framework | Description |
+|-----------|-------------|
+| HIPAA | Healthcare privacy/security |
+| SOC2 | Service organization controls |
+| PCI-DSS | Payment card industry |
+| NIST CSF | Cybersecurity framework |
+| NIST 800-171 | CUI protection |
+| SOX | Financial reporting controls |
+| GDPR | EU data protection |
+| CMMC | Defense contractor security |
+| ISO 27001 | Information security management |
+| CIS Controls | Critical security controls |
+
+### Phase 2 Local Resilience Components
+| Component | Purpose |
+|-----------|---------|
+| DelegatedSigningKey | Ed25519 keys from Central Command for offline signing |
+| UrgentCloudRetry | Priority queue with exponential backoff, SMS fallback |
+| OfflineAuditTrail | Tamper-evident hash chain with Ed25519 signatures |
+| SMSAlerter | Twilio integration for critical escalation SMS |
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `compliance_frameworks.py` | Fixed partner_row async bug |
+| `server.py` | Added compliance_frameworks imports |
+| `PartnerDashboard.tsx` | Added Compliance tab |
+| `PartnerComplianceSettings.tsx` | NEW - Partner compliance UI |
+| `local_resilience.py` | Added Phase 2 classes |
 
 ---
 
