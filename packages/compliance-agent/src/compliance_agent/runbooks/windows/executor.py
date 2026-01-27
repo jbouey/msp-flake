@@ -40,6 +40,7 @@ class WindowsTarget:
     use_ssl: bool = True  # HTTPS by default - credentials encrypted in transit
     verify_ssl: bool = True  # Always validate server certificates
     transport: str = "ntlm"  # ntlm, kerberos, certificate
+    ip_address: str = ""  # IP address for target matching (incidents use IPs)
 
 
 @dataclass
