@@ -1,7 +1,110 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-27 (Session 74 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.48, **ISO v48 BUILT**, **Learning System Partner Promotion Workflow COMPLETE**, **Learning System Bidirectional Sync COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.47**)
+**Last Updated:** 2026-01-27 (Session 75 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.49, **ISO v48 BUILT**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.47**)
+
+---
+
+## Session 75 (2026-01-27) - COMPLETE
+
+### Session Goals
+1. ✅ Complete production readiness audit
+2. ✅ Fix critical security issues
+3. ✅ Verify learning system sync working
+4. ✅ Fix infrastructure issues on physical appliance
+
+### Accomplishments
+
+#### 1. Production Readiness Audit - COMPLETE
+- **Created `docs/PRODUCTION_READINESS_AUDIT.md`** - Comprehensive 10-section audit document
+  - Environment Variables & Secrets
+  - Clock Synchronization (NTP)
+  - DNS Resolution
+  - File Permissions
+  - TLS Certificate Status
+  - Database Connection Pooling
+  - Async/Blocking Code Review
+  - Rate Limits & External Services
+  - Systemd Service Ordering
+  - Proto & Contract Drift
+- **Created `scripts/prod-health-check.sh`** - Automated health check script
+  - 7 check categories: API, TLS, Local Code, VPS, Appliance, Database, Services
+  - Quick mode (--quick) for local-only checks
+  - CI mode (--ci) for strict error handling
+  - Fixed macOS `wc -l` whitespace bug
+
+#### 2. CRITICAL Security Fix - VPS Signing Key - COMPLETE
+- **Issue:** `/opt/mcp-server/secrets/signing.key` had 644 permissions (world-readable)
+- **Impact:** Anyone with server access could sign orders
+- **Fix Applied:**
+  - `chmod 600 /opt/mcp-server/secrets/signing.key`
+  - `chown 1000:1000 /opt/mcp-server/secrets/signing.key` (container user UID)
+- **Verified:** Permissions now rw------- with correct ownership
+
+#### 3. STATE_DIR Path Mismatch Fix - COMPLETE
+- **Issue:** Read-only file system error for `/var/lib/msp-compliance-agent`
+- **Root Cause:** Python code defaults to `/var/lib/msp-compliance-agent`, appliance uses `/var/lib/msp`
+- **Immediate Fix:** Created symlink on appliance
+- **Permanent Fix:**
+  - Added `STATE_DIR=/var/lib/msp` environment variable to NixOS configs
+  - Updated `iso/appliance-disk-image.nix` and `iso/appliance-image.nix`
+  - Added environment variable override support to `appliance_config.py`
+
+#### 4. Healing DRY-RUN Mode Fix - COMPLETE
+- **Issue:** Healing stuck in DRY-RUN mode despite `HEALING_DRY_RUN=false` env var
+- **Root Cause:** `appliance_config.py` only loaded from YAML, ignored env vars
+- **Fix:** Added environment variable override support:
+  ```python
+  env_overrides = {
+      'healing_dry_run': os.environ.get('HEALING_DRY_RUN'),
+      'state_dir': os.environ.get('STATE_DIR'),
+      'log_level': os.environ.get('LOG_LEVEL'),
+  }
+  ```
+
+#### 5. Execution Telemetry Datetime Fix - COMPLETE
+- **Issue:** 500 errors on `/api/agent/executions` endpoint
+- **Root Cause:** PostgreSQL asyncpg requires datetime objects, received ISO strings
+- **Fix:** Added `parse_iso_timestamp()` helper function to `mcp-server/main.py`
+- **Result:** Execution telemetry now recording (200 OK)
+
+#### 6. Learning Sync Verification - COMPLETE
+- Pattern sync: Working (8 patterns in `aggregated_pattern_stats`)
+- Execution telemetry: Working (200 OK responses)
+- Promoted rules sync: Working (returns YAML to agents)
+- Full data flywheel operational
+
+### Files Created This Session
+
+| File | Description |
+|------|-------------|
+| `docs/PRODUCTION_READINESS_AUDIT.md` | NEW - 10-section production audit (~373 lines) |
+| `scripts/prod-health-check.sh` | NEW - Automated health check script (~315 lines) |
+
+### Files Modified This Session
+
+| File | Change |
+|------|--------|
+| `iso/appliance-disk-image.nix` | Added STATE_DIR environment variable |
+| `iso/appliance-image.nix` | Added STATE_DIR environment variable |
+| `packages/compliance-agent/src/compliance_agent/appliance_config.py` | Added env var override support |
+| `mcp-server/main.py` | Added parse_iso_timestamp() helper for datetime parsing |
+
+### VPS Changes (Applied Directly)
+
+| Change | Location | Status |
+|--------|----------|--------|
+| signing.key permissions | `/opt/mcp-server/secrets/` | ✅ Fixed (600, 1000:1000) |
+| main.py datetime fix | `/opt/mcp-server/app/` | ✅ Applied, container rebuilt |
+
+### Git Commits
+
+| Hash | Description |
+|------|-------------|
+| `8b712ea` | feat: Production readiness audit and health check script |
+| `328549e` | fix: Mark critical signing.key permission issue as resolved |
+| `3c97d01` | fix: Add STATE_DIR env var and environment override support |
+| `8f029ef` | fix: Parse ISO timestamp strings in execution telemetry endpoint |
 
 ---
 
