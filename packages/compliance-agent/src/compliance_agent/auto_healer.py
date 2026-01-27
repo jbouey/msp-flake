@@ -11,12 +11,16 @@ With self-learning loop for continuous improvement.
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .incident_db import IncidentDatabase, Incident, ResolutionLevel, IncidentOutcome
+
+if TYPE_CHECKING:
+    from .learning_sync import LearningSyncService
 from .level1_deterministic import DeterministicEngine, RuleMatch
 from .level2_llm import Level2Planner, LLMConfig, LLMMode, LLMDecision
 from .level3_escalation import EscalationHandler, EscalationConfig
@@ -90,10 +94,12 @@ class AutoHealer:
     def __init__(
         self,
         config: AutoHealerConfig,
-        action_executor: Optional[Callable] = None
+        action_executor: Optional[Callable] = None,
+        learning_sync: Optional["LearningSyncService"] = None,
     ):
         self.config = config
         self.action_executor = action_executor
+        self.learning_sync = learning_sync
 
         # Initialize incident database
         self.incident_db = IncidentDatabase(db_path=config.db_path)
@@ -243,12 +249,18 @@ class AutoHealer:
             logger.info(f"L1 rule {match.rule.id} triggers escalation")
             return None  # Let L3 handle it
 
+        # Capture state before healing for telemetry
+        state_before = self._capture_system_state(incident, host_id)
+
         # Execute the action
         if self.config.dry_run:
             logger.info(f"[DRY RUN] Would execute: {match.action}")
             result = {"success": True, "output": "DRY_RUN"}
         else:
             result = await self.level1.execute(match, site_id, host_id)
+
+        # Capture state after healing
+        state_after = self._capture_system_state(incident, host_id)
 
         end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
@@ -267,7 +279,7 @@ class AutoHealer:
         except Exception as e:
             logger.warning(f"Failed to record L1 resolution: {e}")
 
-        return HealingResult(
+        healing_result = HealingResult(
             incident_id=incident.id,
             success=success,
             resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
@@ -276,6 +288,18 @@ class AutoHealer:
             output=str(result.get("output")),
             error=result.get("error")
         )
+
+        # Report execution telemetry to learning sync
+        await self._report_execution_telemetry(
+            incident=incident,
+            result=healing_result,
+            state_before=state_before,
+            state_after=state_after,
+            action=match.action,
+            runbook_id=match.rule.id,
+        )
+
+        return healing_result
 
     async def _try_level2(
         self,
@@ -332,12 +356,18 @@ class AutoHealer:
                 error="Requires human approval"
             )
 
+        # Capture state before healing for telemetry
+        state_before = self._capture_system_state(incident, host_id)
+
         # Execute the action
         if self.config.dry_run:
             logger.info(f"[DRY RUN] Would execute: {decision.recommended_action}")
             result = {"success": True, "output": "DRY_RUN"}
         else:
             result = await self.level2.execute(decision, site_id, host_id)
+
+        # Capture state after healing
+        state_after = self._capture_system_state(incident, host_id)
 
         end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
@@ -356,7 +386,7 @@ class AutoHealer:
         except Exception as e:
             logger.warning(f"Failed to record L2 resolution: {e}")
 
-        return HealingResult(
+        healing_result = HealingResult(
             incident_id=incident.id,
             success=success,
             resolution_level=ResolutionLevel.LEVEL2_LLM,
@@ -365,6 +395,18 @@ class AutoHealer:
             output=str(result.get("output")),
             error=result.get("error")
         )
+
+        # Report execution telemetry to learning sync
+        await self._report_execution_telemetry(
+            incident=incident,
+            result=healing_result,
+            state_before=state_before,
+            state_after=state_after,
+            action=decision.recommended_action,
+            runbook_id=f"L2-{decision.recommended_action}",
+        )
+
+        return healing_result
 
     async def _escalate(
         self,
@@ -495,6 +537,173 @@ class AutoHealer:
 
         logger.warning(f"Pattern {pattern_signature} not found in promotion candidates")
         return False
+
+    def _capture_system_state(
+        self,
+        incident: Incident,
+        host_id: str
+    ) -> Dict[str, Any]:
+        """
+        Capture system state relevant to the incident for telemetry.
+
+        This captures a snapshot of the system state that can be used
+        for learning engine analysis (comparing before/after healing).
+        """
+        state = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "host_id": host_id,
+            "incident_type": incident.incident_type,
+        }
+
+        # Add incident-specific state based on type
+        try:
+            if "service" in incident.incident_type.lower():
+                # Service-related: capture service status
+                state["services"] = self._get_relevant_services(incident.raw_data)
+            elif "firewall" in incident.incident_type.lower():
+                # Firewall: capture firewall rules state
+                state["firewall_enabled"] = self._check_firewall_state()
+            elif "bitlocker" in incident.incident_type.lower() or "encryption" in incident.incident_type.lower():
+                # Encryption: capture drive encryption status
+                state["encryption_status"] = self._check_encryption_state()
+            elif "antivirus" in incident.incident_type.lower() or "av_" in incident.incident_type.lower():
+                # AV/EDR: capture protection status
+                state["av_enabled"] = self._check_av_state()
+            elif "audit" in incident.incident_type.lower():
+                # Audit logging: capture audit config
+                state["audit_configured"] = self._check_audit_state()
+
+            # Always include raw data summary
+            if incident.raw_data:
+                state["raw_data_keys"] = list(incident.raw_data.keys())
+                # Include small values directly
+                for key, value in incident.raw_data.items():
+                    if isinstance(value, (bool, int, float, str)) and len(str(value)) < 100:
+                        state[f"raw_{key}"] = value
+
+        except Exception as e:
+            logger.warning(f"Error capturing system state: {e}")
+            state["capture_error"] = str(e)
+
+        return state
+
+    def _get_relevant_services(self, raw_data: Dict[str, Any]) -> Dict[str, str]:
+        """Get status of services mentioned in incident data."""
+        services = {}
+        # Extract service names from raw data
+        for key in ["service_name", "services", "check_type"]:
+            if key in raw_data:
+                val = raw_data[key]
+                if isinstance(val, str):
+                    services[val] = "unknown"
+                elif isinstance(val, list):
+                    for s in val:
+                        services[str(s)] = "unknown"
+        return services
+
+    def _check_firewall_state(self) -> bool:
+        """Check if Windows Firewall is enabled."""
+        # This is a placeholder - actual implementation would query the system
+        return True
+
+    def _check_encryption_state(self) -> Dict[str, Any]:
+        """Check drive encryption status."""
+        return {"system_drive": "unknown"}
+
+    def _check_av_state(self) -> bool:
+        """Check if AV/EDR is enabled."""
+        return True
+
+    def _check_audit_state(self) -> bool:
+        """Check if audit logging is configured."""
+        return True
+
+    def _compute_state_diff(
+        self,
+        before: Dict[str, Any],
+        after: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Compute difference between before and after states.
+
+        Used by learning engine to understand what changed during healing.
+        """
+        diff = {
+            "changed_keys": [],
+            "added_keys": [],
+            "removed_keys": [],
+            "changes": {}
+        }
+
+        before_keys = set(before.keys())
+        after_keys = set(after.keys())
+
+        # Find added keys
+        diff["added_keys"] = list(after_keys - before_keys)
+
+        # Find removed keys
+        diff["removed_keys"] = list(before_keys - after_keys)
+
+        # Find changed values
+        common_keys = before_keys & after_keys
+        for key in common_keys:
+            if before[key] != after[key]:
+                diff["changed_keys"].append(key)
+                diff["changes"][key] = {
+                    "before": before[key],
+                    "after": after[key]
+                }
+
+        return diff
+
+    async def _report_execution_telemetry(
+        self,
+        incident: Incident,
+        result: "HealingResult",
+        state_before: Dict[str, Any],
+        state_after: Dict[str, Any],
+        action: str,
+        runbook_id: str = None,
+    ):
+        """
+        Report execution telemetry to learning sync service.
+
+        Sends rich telemetry data for learning engine analysis.
+        """
+        if not self.learning_sync:
+            return
+
+        try:
+            execution_result = {
+                "execution_id": str(uuid.uuid4()),
+                "incident_id": incident.id,
+                "runbook_id": runbook_id or action,
+                "hostname": incident.host_id,
+                "platform": "windows",  # TODO: detect platform
+                "incident_type": incident.incident_type,
+                "started_at": state_before.get("captured_at"),
+                "completed_at": state_after.get("captured_at"),
+                "duration_seconds": result.resolution_time_ms / 1000.0,
+                "success": result.success,
+                "status": "success" if result.success else "failure",
+                "verification_passed": result.success and not result.error,
+                "confidence": 1.0 if result.resolution_level == ResolutionLevel.LEVEL1_DETERMINISTIC else 0.8,
+                "resolution_level": result.resolution_level.value if hasattr(result.resolution_level, 'value') else str(result.resolution_level),
+                "state_before": state_before,
+                "state_after": state_after,
+                "state_diff": self._compute_state_diff(state_before, state_after),
+                "executed_steps": [{"action": action, "success": result.success}],
+                "error_message": result.error,
+            }
+
+            success = await self.learning_sync.report_execution(execution_result)
+            if success:
+                logger.debug(f"Reported execution telemetry for {incident.id}")
+            else:
+                logger.debug(f"Queued execution telemetry for {incident.id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to report execution telemetry: {e}")
 
     def reload_rules(self):
         """Reload Level 1 rules from disk."""

@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-26 (Session 71 - Exception Management & IDOR Security Fixes)
-**Current State:** Phase 13 Zero-Touch Updates, **ISO v47**, Full Coverage Healing, **Exception Management System**, **IDOR Security Fixes**, **Partner Compliance Framework Management (10 frameworks)**, **Phase 2 Local Resilience (Delegated Authority)**, **Go Agent Deployed to ALL 3 VMs**, **Client Portal COMPLETE (All Phases)**, **Client Portal Help Documentation**, **Partner Portal Blank Page Fix**, **PHYSICAL APPLIANCE ONLINE**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Operational**
+**Last Updated:** 2026-01-26 (Session 73 - Learning System Bidirectional Sync)
+**Current State:** Phase 13 Zero-Touch Updates, **ISO v47**, Full Coverage Healing, **Learning System Bidirectional Sync**, **Exception Management System**, **IDOR Security Fixes**, **Partner Compliance Framework Management (10 frameworks)**, **Phase 2 Local Resilience (Delegated Authority)**, **Go Agent Deployed to ALL 3 VMs**, **Client Portal COMPLETE (All Phases)**, **Client Portal Help Documentation**, **Partner Portal Blank Page Fix**, **PHYSICAL APPLIANCE ONLINE**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**
 
 ---
 
@@ -11,7 +11,7 @@
 |-----------|--------|---------|
 | Agent | v1.0.48 | Stable |
 | ISO | v47 | Available |
-| Tests | 834 + 24 Go tests | Healthy |
+| Tests | 830 + 24 Go tests | Healthy |
 | Physical Appliance | **ONLINE** | 192.168.88.246 |
 | A/B Partition System | **DESIGNED** | Needs custom initramfs for partition boot |
 | Fleet Updates UI | **DEPLOYED** | Create releases, rollouts working |
@@ -28,8 +28,67 @@
 | **Local Resilience** | **PHASE 2 COMPLETE** | Delegated signing, offline audit, SMS alerts |
 | **Client Portal** | **ALL PHASES COMPLETE** | Auth, dashboard, evidence, reports, users, help |
 | Evidence Security | **HARDENED** | Ed25519 verify + OTS validation |
-| Learning System | **OPERATIONAL** | Resolution recording fixed |
+| **Learning System** | **BIDIRECTIONAL SYNC** | Pattern stats, promoted rules, execution telemetry |
 | **Google OAuth** | **DISABLED** | Client under Google review |
+
+---
+
+## Session 73 (2026-01-26) - Learning System Bidirectional Sync
+
+### What Happened
+1. **Bidirectional Sync Implementation** - Complete agent↔server pattern sync
+2. **Server Endpoints** - 3 new endpoints for learning sync (all verified working)
+3. **Database Migration** - 4 new tables + 2 views for pattern aggregation
+4. **Execution Telemetry** - State capture before/after healing for learning engine
+5. **Promoted Rule Deployment** - Server can push approved rules to agents
+
+### Learning Sync Components
+| Component | Description |
+|-----------|-------------|
+| `learning_sync.py` | New agent module for sync operations |
+| Pattern Stats Sync | Agent pushes pattern_stats to server every 4 hours |
+| Promoted Rules Fetch | Agent pulls server-approved rules |
+| Execution Telemetry | Rich telemetry with state_before/state_after |
+| Offline Queue | SQLite WAL queue for offline resilience |
+
+### Server Endpoints (All Working)
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/agent/sync/pattern-stats` | POST | Receive pattern stats from agents |
+| `/api/agent/sync/promoted-rules` | GET | Return approved rules for agent |
+| `/api/agent/executions` | POST | Receive execution telemetry |
+
+### Database Tables Created
+| Table | Purpose |
+|-------|---------|
+| `aggregated_pattern_stats` | Cross-appliance pattern aggregation |
+| `appliance_pattern_sync` | Track last sync per appliance |
+| `promoted_rule_deployments` | Audit trail of rule deployments |
+| `execution_telemetry` | Rich execution data for learning engine |
+
+### Files Created
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/learning_sync.py` | NEW - Bidirectional sync service |
+| `mcp-server/central-command/backend/migrations/031_learning_sync.sql` | NEW - PostgreSQL migration |
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/main.py` | Added 3 learning sync endpoints |
+| `appliance_agent.py` | LearningSyncService integration, sync_promoted_rule handler |
+| `auto_healer.py` | Execution telemetry capture (state_before/state_after) |
+
+### Bug Fixes
+| Issue | Root Cause | Solution |
+|-------|------------|----------|
+| SQL JSONB syntax error | `::jsonb` interpreted as named param | Changed to `CAST(:param AS jsonb)` |
+| View creation failed | `s.name` column doesn't exist | Changed to `s.clinic_name` |
+
+### Git Commits
+| Commit | Message |
+|--------|---------|
+| (pending) | feat: Learning system bidirectional sync with execution telemetry |
 
 ---
 

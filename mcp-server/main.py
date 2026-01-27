@@ -1368,6 +1368,322 @@ async def report_agent_pattern(report: PatternReportInput, db: AsyncSession = De
 
 
 # ============================================================================
+# LEARNING SYSTEM SYNC ENDPOINTS
+# Bidirectional sync between agents and Central Command for learning data
+# ============================================================================
+
+class PatternStatSync(BaseModel):
+    """Single pattern stat from agent."""
+    pattern_signature: str
+    total_occurrences: int
+    l1_resolutions: int
+    l2_resolutions: int
+    l3_resolutions: int
+    success_count: int
+    total_resolution_time_ms: float
+    last_seen: str
+    recommended_action: Optional[str] = None
+    promotion_eligible: bool = False
+
+
+class PatternStatsRequest(BaseModel):
+    """Batch pattern stats sync request from agent."""
+    site_id: str
+    appliance_id: str
+    synced_at: str
+    pattern_stats: List[PatternStatSync]
+
+
+@app.post("/api/agent/sync/pattern-stats")
+async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Receive pattern statistics from agent for cross-appliance aggregation.
+
+    This endpoint is called periodically (every 4 hours) by appliances to sync
+    their local pattern_stats table to Central Command. Stats are aggregated
+    across all appliances at a site for promotion decisions.
+    """
+    accepted = 0
+    merged = 0
+
+    for stat in request.pattern_stats:
+        try:
+            # Check if pattern exists in aggregated stats
+            result = await db.execute(
+                text("""
+                    SELECT id, total_occurrences, l1_resolutions, l2_resolutions, l3_resolutions,
+                           success_count, total_resolution_time_ms
+                    FROM aggregated_pattern_stats
+                    WHERE site_id = :site_id AND pattern_signature = :sig
+                """),
+                {"site_id": request.site_id, "sig": stat.pattern_signature}
+            )
+            existing = result.fetchone()
+
+            if existing:
+                # Merge stats (take max of each counter to handle idempotent syncs)
+                await db.execute(text("""
+                    UPDATE aggregated_pattern_stats
+                    SET total_occurrences = GREATEST(total_occurrences, :occ),
+                        l1_resolutions = GREATEST(l1_resolutions, :l1),
+                        l2_resolutions = GREATEST(l2_resolutions, :l2),
+                        l3_resolutions = GREATEST(l3_resolutions, :l3),
+                        success_count = GREATEST(success_count, :sc),
+                        total_resolution_time_ms = GREATEST(total_resolution_time_ms, :time),
+                        success_rate = CASE
+                            WHEN GREATEST(total_occurrences, :occ) > 0
+                            THEN (GREATEST(success_count, :sc)::FLOAT / GREATEST(total_occurrences, :occ)) * 100
+                            ELSE 0
+                        END,
+                        avg_resolution_time_ms = CASE
+                            WHEN GREATEST(total_occurrences, :occ) > 0
+                            THEN GREATEST(total_resolution_time_ms, :time) / GREATEST(total_occurrences, :occ)
+                            ELSE 0
+                        END,
+                        recommended_action = COALESCE(:action, recommended_action),
+                        promotion_eligible = :eligible,
+                        last_seen = GREATEST(last_seen, :last_seen::timestamptz),
+                        last_synced_at = NOW()
+                    WHERE site_id = :site_id AND pattern_signature = :sig
+                """), {
+                    "site_id": request.site_id,
+                    "sig": stat.pattern_signature,
+                    "occ": stat.total_occurrences,
+                    "l1": stat.l1_resolutions,
+                    "l2": stat.l2_resolutions,
+                    "l3": stat.l3_resolutions,
+                    "sc": stat.success_count,
+                    "time": stat.total_resolution_time_ms,
+                    "action": stat.recommended_action,
+                    "eligible": stat.promotion_eligible,
+                    "last_seen": stat.last_seen,
+                })
+                merged += 1
+            else:
+                # Insert new pattern
+                success_rate = (stat.success_count / stat.total_occurrences * 100) if stat.total_occurrences > 0 else 0
+                avg_time = stat.total_resolution_time_ms / stat.total_occurrences if stat.total_occurrences > 0 else 0
+
+                await db.execute(text("""
+                    INSERT INTO aggregated_pattern_stats (
+                        site_id, pattern_signature, total_occurrences, l1_resolutions,
+                        l2_resolutions, l3_resolutions, success_count, total_resolution_time_ms,
+                        success_rate, avg_resolution_time_ms, recommended_action, promotion_eligible,
+                        first_seen, last_seen, last_synced_at
+                    ) VALUES (
+                        :site_id, :sig, :occ, :l1, :l2, :l3, :sc, :time,
+                        :rate, :avg, :action, :eligible,
+                        :last_seen::timestamptz, :last_seen::timestamptz, NOW()
+                    )
+                """), {
+                    "site_id": request.site_id,
+                    "sig": stat.pattern_signature,
+                    "occ": stat.total_occurrences,
+                    "l1": stat.l1_resolutions,
+                    "l2": stat.l2_resolutions,
+                    "l3": stat.l3_resolutions,
+                    "sc": stat.success_count,
+                    "time": stat.total_resolution_time_ms,
+                    "rate": success_rate,
+                    "avg": avg_time,
+                    "action": stat.recommended_action,
+                    "eligible": stat.promotion_eligible,
+                    "last_seen": stat.last_seen,
+                })
+                accepted += 1
+
+        except Exception as e:
+            logger.warning(f"Failed to sync pattern {stat.pattern_signature}: {e}")
+            continue
+
+    # Record sync event
+    await db.execute(text("""
+        INSERT INTO appliance_pattern_sync (appliance_id, site_id, synced_at, patterns_received, patterns_merged, sync_status)
+        VALUES (:appliance_id, :site_id, NOW(), :received, :merged, 'success')
+        ON CONFLICT (appliance_id) DO UPDATE SET
+            synced_at = NOW(),
+            patterns_received = :received,
+            patterns_merged = :merged,
+            sync_status = 'success'
+    """), {
+        "appliance_id": request.appliance_id,
+        "site_id": request.site_id,
+        "received": len(request.pattern_stats),
+        "merged": merged,
+    })
+
+    await db.commit()
+
+    logger.info(f"Pattern sync from {request.appliance_id}: {accepted} new, {merged} merged")
+    return {
+        "accepted": accepted,
+        "merged": merged,
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+class PromotedRuleResponse(BaseModel):
+    """Promoted rule for agent deployment."""
+    rule_id: str
+    pattern_signature: str
+    rule_yaml: str
+    promoted_at: str
+    promoted_by: str
+    source: str = "server_promoted"
+
+
+@app.get("/api/agent/sync/promoted-rules")
+async def get_promoted_rules(
+    site_id: str,
+    since: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Return server-approved promoted rules for agent deployment.
+
+    Agents call this periodically to fetch rules that have been approved
+    on the central dashboard but not yet deployed to the appliance.
+    """
+    # Parse since timestamp
+    since_dt = datetime.fromisoformat(since.replace('Z', '+00:00')) if since else datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    # Get approved promotion candidates with rule details
+    result = await db.execute(text("""
+        SELECT
+            lpc.id,
+            lpc.pattern_signature,
+            lpc.recommended_action,
+            lpc.approved_at,
+            COALESCE(au.username, 'system') as approved_by,
+            p.proposed_rule as rule_yaml
+        FROM learning_promotion_candidates lpc
+        LEFT JOIN admin_users au ON au.id = lpc.approved_by
+        LEFT JOIN patterns p ON p.pattern_signature = lpc.pattern_signature
+        WHERE lpc.site_id = :site_id
+          AND lpc.approval_status = 'approved'
+          AND lpc.approved_at > :since
+        ORDER BY lpc.approved_at DESC
+    """), {"site_id": site_id, "since": since_dt})
+
+    rows = result.fetchall()
+    rules = []
+
+    for row in rows:
+        rule_id = f"L1-PROMOTED-{row.pattern_signature[:8].upper()}"
+
+        # Generate rule YAML if not already stored
+        rule_yaml = row.rule_yaml
+        if not rule_yaml:
+            rule_yaml = f"""id: {rule_id}
+name: "Promoted: {row.recommended_action}"
+description: "Server-approved L2->L1 promotion"
+conditions:
+  pattern_signature: "{row.pattern_signature}"
+action: "{row.recommended_action}"
+enabled: true
+priority: 50
+source: server_promoted
+promoted_at: "{row.approved_at.isoformat() if row.approved_at else datetime.now(timezone.utc).isoformat()}"
+"""
+
+        rules.append({
+            "rule_id": rule_id,
+            "pattern_signature": row.pattern_signature,
+            "rule_yaml": rule_yaml,
+            "promoted_at": row.approved_at.isoformat() if row.approved_at else datetime.now(timezone.utc).isoformat(),
+            "promoted_by": row.approved_by,
+            "source": "server_promoted",
+        })
+
+    logger.info(f"Returning {len(rules)} promoted rules for site {site_id}")
+    return {
+        "rules": rules,
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+class ExecutionTelemetryInput(BaseModel):
+    """Execution telemetry from agent."""
+    site_id: str
+    execution: dict
+    reported_at: str
+
+
+@app.post("/api/agent/executions")
+async def report_execution_telemetry(request: ExecutionTelemetryInput, db: AsyncSession = Depends(get_db)):
+    """
+    Receive rich execution telemetry from agents for learning engine.
+
+    This data feeds the learning system to analyze runbook effectiveness,
+    identify patterns for improvement, and track healing outcomes.
+    """
+    exec_data = request.execution
+
+    try:
+        await db.execute(text("""
+            INSERT INTO execution_telemetry (
+                execution_id, incident_id, site_id, appliance_id, runbook_id, hostname, platform, incident_type,
+                started_at, completed_at, duration_seconds,
+                success, status, verification_passed, confidence, resolution_level,
+                state_before, state_after, state_diff, executed_steps,
+                error_message, error_step, failure_type, retry_count,
+                evidence_bundle_id, created_at
+            ) VALUES (
+                :exec_id, :incident_id, :site_id, :appliance_id, :runbook_id, :hostname, :platform, :incident_type,
+                :started_at, :completed_at, :duration,
+                :success, :status, :verification, :confidence, :resolution_level,
+                CAST(:state_before AS jsonb), CAST(:state_after AS jsonb), CAST(:state_diff AS jsonb), CAST(:executed_steps AS jsonb),
+                :error_msg, :error_step, :failure_type, :retry_count,
+                :evidence_id, NOW()
+            )
+            ON CONFLICT (execution_id) DO UPDATE SET
+                success = EXCLUDED.success,
+                state_after = EXCLUDED.state_after,
+                state_diff = EXCLUDED.state_diff,
+                error_message = EXCLUDED.error_message,
+                failure_type = EXCLUDED.failure_type
+        """), {
+            "exec_id": exec_data.get("execution_id"),
+            "incident_id": exec_data.get("incident_id"),
+            "site_id": request.site_id,
+            "appliance_id": exec_data.get("appliance_id", "unknown"),
+            "runbook_id": exec_data.get("runbook_id"),
+            "hostname": exec_data.get("hostname", "unknown"),
+            "platform": exec_data.get("platform"),
+            "incident_type": exec_data.get("incident_type"),
+            "started_at": exec_data.get("started_at"),
+            "completed_at": exec_data.get("completed_at"),
+            "duration": exec_data.get("duration_seconds"),
+            "success": exec_data.get("success", False),
+            "status": exec_data.get("status"),
+            "verification": exec_data.get("verification_passed"),
+            "confidence": exec_data.get("confidence", 0.0),
+            "resolution_level": exec_data.get("resolution_level"),
+            "state_before": json.dumps(exec_data.get("state_before", {})),
+            "state_after": json.dumps(exec_data.get("state_after", {})),
+            "state_diff": json.dumps(exec_data.get("state_diff", {})),
+            "executed_steps": json.dumps(exec_data.get("executed_steps", [])),
+            "error_msg": exec_data.get("error_message"),
+            "error_step": exec_data.get("error_step"),
+            "failure_type": exec_data.get("failure_type"),
+            "retry_count": exec_data.get("retry_count", 0),
+            "evidence_id": exec_data.get("evidence_bundle_id"),
+        })
+
+        await db.commit()
+
+        logger.info(f"Execution telemetry recorded: {exec_data.get('execution_id')} (success={exec_data.get('success')})")
+        return {
+            "status": "recorded",
+            "execution_id": exec_data.get("execution_id"),
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to record execution telemetry: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to record telemetry: {e}")
+
+
+# ============================================================================
 # WORM Evidence Upload Endpoint (Proxy Mode)
 # ============================================================================
 
