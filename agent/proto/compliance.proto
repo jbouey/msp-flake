@@ -66,13 +66,26 @@ message DriftEvent {
 }
 
 // DriftAck acknowledges receipt of a drift event
+// Can optionally include a heal command for the agent to execute immediately
 message DriftAck {
   string event_id = 1;
   bool received = 2;
   string error = 3;
+
+  // Optional heal command - if set, agent should execute this heal
+  HealCommand heal_command = 4;
 }
 
-// HealingResult reports the outcome of self-healing
+// HealCommand tells Go agent to execute a specific remediation
+message HealCommand {
+  string command_id = 1;          // Unique ID for tracking
+  string check_type = 2;          // firewall, defender, bitlocker, screenlock, patches
+  string action = 3;              // enable, start, configure, etc.
+  map<string, string> params = 4; // Action-specific parameters
+  int64 timeout_seconds = 5;      // Max execution time (default 60)
+}
+
+// HealingResult reports the outcome of self-healing or commanded healing
 message HealingResult {
   string agent_id = 1;
   string hostname = 2;
@@ -81,6 +94,7 @@ message HealingResult {
   string error_message = 5;
   int64 timestamp = 6;
   map<string, string> artifacts = 7;  // e.g., bitlocker recovery key
+  string command_id = 8;              // If responding to HealCommand, include its ID
 }
 
 // HealingAck acknowledges healing result
@@ -97,10 +111,11 @@ message HeartbeatRequest {
   int32 healing_count = 4;    // Number of healing attempts
 }
 
-// HeartbeatResponse can signal config changes
+// HeartbeatResponse can signal config changes and pending commands
 message HeartbeatResponse {
   bool acknowledged = 1;
-  bool config_changed = 2;    // If true, agent should re-register
+  bool config_changed = 2;           // If true, agent should re-register
+  repeated HealCommand pending_commands = 3;  // Commands queued for this agent
 }
 
 // RMMStatusReport reports detected RMM tools
