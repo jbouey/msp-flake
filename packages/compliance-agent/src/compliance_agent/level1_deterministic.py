@@ -274,6 +274,23 @@ class DeterministicEngine:
                 except Exception as e:
                     logger.error(f"Failed to load synced rules from {json_file}: {e}")
 
+            # Load promoted rules from subdirectory (from Learning System)
+            # These are auto-generated from successful L2 patterns
+            promoted_dir = self.rules_dir / "promoted"
+            if promoted_dir.exists():
+                for rule_file in promoted_dir.glob("*.yaml"):
+                    try:
+                        self._load_rule_file(rule_file)
+                        logger.debug(f"Loaded promoted rule: {rule_file.name}")
+                    except Exception as e:
+                        logger.error(f"Failed to load promoted rule {rule_file}: {e}")
+                for rule_file in promoted_dir.glob("*.yml"):
+                    try:
+                        self._load_rule_file(rule_file)
+                        logger.debug(f"Loaded promoted rule: {rule_file.name}")
+                    except Exception as e:
+                        logger.error(f"Failed to load promoted rule {rule_file}: {e}")
+
         # Sort by priority (lower = higher priority)
         self.rules.sort(key=lambda r: r.priority)
 

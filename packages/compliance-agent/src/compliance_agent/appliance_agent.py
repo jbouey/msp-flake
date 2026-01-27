@@ -3114,9 +3114,9 @@ Environment="PYTHONPATH={overlay_dir}"
         logger.info(f"Deployed promoted rule: {rule_id} to {rule_file}")
 
         # Reload L1 engine if available
-        if self.auto_healer and hasattr(self.auto_healer, 'l1_engine'):
+        if self.auto_healer and hasattr(self.auto_healer, 'level1'):
             try:
-                await self.auto_healer.l1_engine.reload_rules()
+                self.auto_healer.level1.reload_rules()
                 logger.info(f"Reloaded L1 rules after deploying {rule_id}")
             except Exception as e:
                 logger.warning(f"Failed to reload L1 rules: {e}")
