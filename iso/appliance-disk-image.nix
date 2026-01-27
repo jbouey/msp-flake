@@ -77,6 +77,19 @@ in
   system.stateVersion = "24.05";
 
   # ============================================================================
+  # Filesystem configuration for disk image
+  # ============================================================================
+  fileSystems."/" = {
+    device = "/dev/disk/by-label/nixos";
+    fsType = "ext4";
+  };
+
+  fileSystems."/boot" = {
+    device = "/dev/disk/by-label/ESP";
+    fsType = "vfat";
+  };
+
+  # ============================================================================
   # Boot configuration for installed system (not live ISO)
   # ============================================================================
   boot = {
