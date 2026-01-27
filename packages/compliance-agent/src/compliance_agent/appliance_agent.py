@@ -54,6 +54,7 @@ from .level1_deterministic import DeterministicEngine
 from .level2_llm import Level2Planner, LLMConfig, LLMMode
 from .level3_escalation import EscalationHandler, EscalationConfig
 from .learning_loop import SelfLearningSystem, PromotionConfig
+from .learning_sync import LearningSyncService
 from .ntp_verify import NTPVerifier, verify_time_for_evidence
 
 # Workstation discovery and compliance
@@ -347,6 +348,11 @@ class ApplianceAgent:
         self._last_promotion_check = datetime.min.replace(tzinfo=timezone.utc)
         self._promotion_check_interval = getattr(config, 'promotion_check_interval', 3600)  # Hourly default
         self._auto_promote = getattr(config, 'auto_promote', False)  # Require human approval by default
+
+        # Learning sync service for bidirectional server communication
+        self.learning_sync: Optional[LearningSyncService] = None
+        self._last_learning_sync = datetime.min.replace(tzinfo=timezone.utc)
+        self._learning_sync_interval = getattr(config, 'learning_sync_interval', 14400)  # 4 hours default
 
         # Dual-mode sensor support
         self._sensor_enabled = getattr(config, 'sensor_enabled', True)
@@ -711,7 +717,11 @@ class ApplianceAgent:
         if self.learning_system:
             await self._maybe_check_promotions()
 
-        # 10. Process pending orders (remote commands/updates)
+        # 10. Learning system sync (pattern stats + promoted rules)
+        if self.learning_sync:
+            await self._maybe_sync_learning()
+
+        # 11. Process pending orders (remote commands/updates)
         await self._process_pending_orders()
 
     async def _get_compliance_summary(self) -> dict:
@@ -910,6 +920,21 @@ class ApplianceAgent:
             f"Learning system initialized (auto_promote={self._auto_promote}, "
             f"check_interval={self._promotion_check_interval}s)"
         )
+
+        # Initialize learning sync service for bidirectional server communication
+        self.learning_sync = LearningSyncService(
+            client=self.client,
+            incident_db=self.incident_db,
+            site_id=self.config.site_id,
+            appliance_id=self._get_appliance_id(),
+            promoted_rules_dir=self.config.rules_dir / "promoted"
+        )
+        logger.info(
+            f"Learning sync service initialized (interval={self._learning_sync_interval}s)"
+        )
+
+        # Wire up learning_sync to auto_healer for execution telemetry
+        self.auto_healer.learning_sync = self.learning_sync
 
         logger.info(f"Healing system initialized (L1 rules from {self.config.rules_dir})")
 
@@ -2557,7 +2582,54 @@ try {
                 logger.warning(f"Failed to report promotion status: {response}")
 
         except Exception as e:
-            logger.error(f"Error reporting promotions to Central Command: {e}")
+            logger.warning(f"Failed to report promotions to Central Command: {e}")
+
+    def _get_appliance_id(self) -> str:
+        """Get unique appliance identifier (site_id-mac)."""
+        mac = get_mac_address()
+        return f"{self.config.site_id}-{mac}"
+
+    async def _maybe_sync_learning(self):
+        """
+        Sync learning system data with Central Command periodically.
+
+        Syncs pattern_stats to server and fetches approved promoted rules.
+        Default interval: 4 hours.
+        """
+        now = datetime.now(timezone.utc)
+        elapsed = (now - self._last_learning_sync).total_seconds()
+
+        if elapsed < self._learning_sync_interval:
+            return
+
+        self._last_learning_sync = now
+        logger.info("Running scheduled learning system sync...")
+
+        try:
+            report = await self.learning_sync.sync()
+
+            if report.get("patterns_synced"):
+                logger.info(f"Pattern stats synced: {report.get('patterns_count', 0)} patterns")
+
+            if report.get("rules_fetched") and report.get("rules_count", 0) > 0:
+                logger.info(f"Fetched {report['rules_count']} promoted rules from server")
+                # Reload L1 engine to pick up new rules
+                if self.auto_healer and self.auto_healer.level1:
+                    try:
+                        self.auto_healer.level1.reload_rules()
+                        logger.info("L1 rules reloaded after promoted rules sync")
+                    except Exception as e:
+                        logger.warning(f"Failed to reload L1 rules: {e}")
+
+            if report.get("offline_queue_items", 0) > 0:
+                logger.info(f"Processed {report['offline_queue_items']} items from offline queue")
+
+            if report.get("errors"):
+                for err in report["errors"]:
+                    logger.warning(f"Learning sync error: {err}")
+
+        except Exception as e:
+            logger.error(f"Learning system sync failed: {e}")
 
     # =========================================================================
     # Order Processing (remote commands and updates)
@@ -2622,6 +2694,7 @@ try {
             'deploy_linux_sensor': self._handle_deploy_linux_sensor,
             'remove_linux_sensor': self._handle_remove_linux_sensor,
             'sensor_status': self._handle_sensor_status,
+            'sync_promoted_rule': self._handle_sync_promoted_rule,
         }
 
         handler = handlers.get(order_type)
@@ -3003,6 +3076,57 @@ Environment="PYTHONPATH={overlay_dir}"
             },
             "total_active_sensors": combined_stats.get("total_active_sensors", 0),
             "all_sensor_hostnames": combined_stats.get("all_sensor_hostnames", []),
+        }
+
+    async def _handle_sync_promoted_rule(self, params: Dict) -> Dict:
+        """
+        Handle server-pushed promoted rule deployment.
+
+        This is called when Central Command approves an L2→L1 promotion
+        and pushes the new rule to this appliance.
+
+        Parameters:
+            rule_id: Unique rule identifier (e.g., L1-PROMOTED-ABC12345)
+            pattern_signature: SHA256[:16] of the pattern
+            rule_yaml: Full YAML content of the rule
+            promoted_at: ISO timestamp when promoted
+            promoted_by: Email of approver
+        """
+        rule_id = params.get('rule_id')
+        rule_yaml = params.get('rule_yaml')
+
+        if not rule_id or not rule_yaml:
+            raise ValueError("rule_id and rule_yaml are required")
+
+        # Deploy rule to promoted rules directory
+        promoted_dir = self.config.rules_dir / "promoted"
+        promoted_dir.mkdir(parents=True, exist_ok=True)
+
+        rule_file = promoted_dir / f"{rule_id}.yaml"
+
+        # Check if already deployed
+        if rule_file.exists():
+            logger.info(f"Promoted rule {rule_id} already exists, skipping")
+            return {"status": "already_deployed", "rule_id": rule_id}
+
+        # Write the rule
+        rule_file.write_text(rule_yaml)
+        logger.info(f"Deployed promoted rule: {rule_id} to {rule_file}")
+
+        # Reload L1 engine if available
+        if self.auto_healer and hasattr(self.auto_healer, 'l1_engine'):
+            try:
+                await self.auto_healer.l1_engine.reload_rules()
+                logger.info(f"Reloaded L1 rules after deploying {rule_id}")
+            except Exception as e:
+                logger.warning(f"Failed to reload L1 rules: {e}")
+
+        return {
+            "status": "deployed",
+            "rule_id": rule_id,
+            "pattern_signature": params.get('pattern_signature'),
+            "promoted_at": params.get('promoted_at'),
+            "promoted_by": params.get('promoted_by'),
         }
 
     async def _handle_update_iso(self, params: Dict) -> Dict:

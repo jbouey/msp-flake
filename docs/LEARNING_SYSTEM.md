@@ -64,6 +64,106 @@ This ensures the `pattern_stats` table tracks:
 
 ---
 
+## Bidirectional Sync (Session 73)
+
+The learning system now supports full bidirectional synchronization between agents (SQLite) and Central Command (PostgreSQL).
+
+### Agent → Server Sync
+
+**Pattern Stats Push (every 4 hours):**
+```
+POST /api/agent/sync/pattern-stats
+{
+  "site_id": "north-valley-dental",
+  "appliance_id": "north-valley-dental-00:11:22:33:44:55",
+  "synced_at": "2026-01-27T04:00:00Z",
+  "pattern_stats": [
+    {
+      "pattern_signature": "abc12345...",
+      "total_occurrences": 15,
+      "l1_resolutions": 12,
+      "l2_resolutions": 2,
+      "l3_resolutions": 1,
+      "success_count": 14,
+      "total_resolution_time_ms": 45000.0,
+      "recommended_action": "RB-WIN-FIREWALL-001",
+      "promotion_eligible": true
+    }
+  ]
+}
+```
+
+**Execution Telemetry (after each healing):**
+```
+POST /api/agent/executions
+{
+  "site_id": "north-valley-dental",
+  "execution": {
+    "execution_id": "uuid",
+    "runbook_id": "RB-WIN-FIREWALL-001",
+    "incident_id": "INC-123",
+    "hostname": "NVDC01",
+    "success": true,
+    "state_before": {"firewall_enabled": false},
+    "state_after": {"firewall_enabled": true},
+    "state_diff": {"changed_keys": ["firewall_enabled"]},
+    "duration_seconds": 2.5
+  }
+}
+```
+
+### Server → Agent Sync
+
+**Promoted Rules Pull:**
+```
+GET /api/agent/sync/promoted-rules?site_id=north-valley-dental&since=2026-01-26T00:00:00Z
+
+Response:
+{
+  "rules": [
+    {
+      "rule_id": "L1-PROMOTED-ABC12345",
+      "pattern_signature": "abc12345...",
+      "rule_yaml": "id: L1-PROMOTED-ABC12345\nname: ...",
+      "promoted_at": "2026-01-27T00:00:00Z",
+      "promoted_by": "admin@site.com"
+    }
+  ]
+}
+```
+
+**Server-Pushed Rule (via command):**
+```python
+# Server sends command via poll_commands()
+{
+  "command_type": "sync_promoted_rule",
+  "params": {
+    "rule_id": "L1-PROMOTED-ABC12345",
+    "rule_yaml": "...",
+    "promoted_at": "...",
+    "promoted_by": "..."
+  }
+}
+```
+
+### Database Tables (PostgreSQL)
+
+| Table | Purpose |
+|-------|---------|
+| `aggregated_pattern_stats` | Cross-appliance pattern aggregation |
+| `appliance_pattern_sync` | Track last sync per appliance |
+| `promoted_rule_deployments` | Audit trail of rule deployments |
+| `execution_telemetry` | Rich execution data for learning engine |
+
+### Offline Queue
+
+When Central Command is unreachable, operations are queued locally:
+- SQLite WAL mode for durability
+- Exponential backoff (2^n minutes, max 60)
+- Automatic replay when connectivity returns
+
+---
+
 ## Architecture Overview
 
 ```
