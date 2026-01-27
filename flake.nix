@@ -165,7 +165,7 @@
         default = logWatcherModule;
       };
 
-      # OsirisCare Appliance ISO
+      # OsirisCare Appliance ISO (live boot)
       nixosConfigurations.osiriscare-appliance = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
@@ -173,6 +173,34 @@
           ./iso/appliance-image.nix
         ];
       };
+
+      # OsirisCare Appliance Disk Image (for permanent installation)
+      nixosConfigurations.osiriscare-appliance-disk = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          ./iso/appliance-disk-image.nix
+        ];
+      };
+
+      # Raw disk image for writing to SSD/USB (20GB, GPT, EFI)
+      packages.x86_64-linux.appliance-disk-image =
+        let
+          pkgs = import nixpkgs { system = "x86_64-linux"; };
+          config = (nixpkgs.lib.nixosSystem {
+            system = "x86_64-linux";
+            modules = [ ./iso/appliance-disk-image.nix ];
+          }).config;
+        in
+        import "${nixpkgs}/nixos/lib/make-disk-image.nix" {
+          inherit pkgs config;
+          inherit (pkgs) lib;
+          format = "raw";
+          diskSize = 20 * 1024;  # 20GB
+          partitionTableType = "efi";
+          # Create ESP partition for EFI boot
+          additionalSpace = "1G";  # Extra space for updates
+          copyChannel = false;
+        };
 
       # Example NixOS host (VM/container) using the module
       nixosConfigurations.log-watcher-test = nixpkgs.lib.nixosSystem {
