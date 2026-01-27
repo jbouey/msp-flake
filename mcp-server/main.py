@@ -1549,51 +1549,33 @@ async def get_promoted_rules(
     # Parse since timestamp
     since_dt = datetime.fromisoformat(since.replace('Z', '+00:00')) if since else datetime(1970, 1, 1, tzinfo=timezone.utc)
 
-    # Get approved promotion candidates with rule details
+    # Get promoted rules from promoted_rules table (created by learning_api.py approval)
     result = await db.execute(text("""
         SELECT
-            lpc.id,
-            lpc.pattern_signature,
-            lpc.recommended_action,
-            lpc.approved_at,
-            COALESCE(au.username, 'system') as approved_by,
-            p.proposed_rule as rule_yaml
-        FROM learning_promotion_candidates lpc
-        LEFT JOIN admin_users au ON au.id = lpc.approved_by
-        LEFT JOIN patterns p ON p.pattern_signature = lpc.pattern_signature
-        WHERE lpc.site_id = :site_id
-          AND lpc.approval_status = 'approved'
-          AND lpc.approved_at > :since
-        ORDER BY lpc.approved_at DESC
+            pr.rule_id,
+            pr.pattern_signature,
+            pr.rule_yaml,
+            pr.promoted_at,
+            COALESCE(au.email, 'system') as promoted_by,
+            pr.notes
+        FROM promoted_rules pr
+        LEFT JOIN admin_users au ON au.id = pr.promoted_by
+        WHERE pr.site_id = :site_id
+          AND pr.status = 'active'
+          AND pr.promoted_at > :since
+        ORDER BY pr.promoted_at DESC
     """), {"site_id": site_id, "since": since_dt})
 
     rows = result.fetchall()
     rules = []
 
     for row in rows:
-        rule_id = f"L1-PROMOTED-{row.pattern_signature[:8].upper()}"
-
-        # Generate rule YAML if not already stored
-        rule_yaml = row.rule_yaml
-        if not rule_yaml:
-            rule_yaml = f"""id: {rule_id}
-name: "Promoted: {row.recommended_action}"
-description: "Server-approved L2->L1 promotion"
-conditions:
-  pattern_signature: "{row.pattern_signature}"
-action: "{row.recommended_action}"
-enabled: true
-priority: 50
-source: server_promoted
-promoted_at: "{row.approved_at.isoformat() if row.approved_at else datetime.now(timezone.utc).isoformat()}"
-"""
-
         rules.append({
-            "rule_id": rule_id,
+            "rule_id": row.rule_id,
             "pattern_signature": row.pattern_signature,
-            "rule_yaml": rule_yaml,
-            "promoted_at": row.approved_at.isoformat() if row.approved_at else datetime.now(timezone.utc).isoformat(),
-            "promoted_by": row.approved_by,
+            "rule_yaml": row.rule_yaml,
+            "promoted_at": row.promoted_at.isoformat() if row.promoted_at else datetime.now(timezone.utc).isoformat(),
+            "promoted_by": row.promoted_by or "system",
             "source": "server_promoted",
         })
 

@@ -372,6 +372,7 @@ async def approve_candidate(
                 pattern_signature,
                 site_id,
                 site_name,
+                check_type,
                 total_occurrences,
                 success_rate,
                 recommended_action
