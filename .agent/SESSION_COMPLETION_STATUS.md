@@ -1,85 +1,88 @@
-# Session 68 Completion Status
+# Session 75 Completion Status
 
-**Date:** 2026-01-24
-**Session:** 68 - Complete
-**Agent Version:** v1.0.46
-**ISO Version:** v46
+**Date:** 2026-01-27
+**Session:** 75 - Complete
+**Agent Version:** v1.0.49
+**ISO Version:** v48
 **Status:** COMPLETE
 
 ---
 
-## Session 68 Accomplishments
+## Session 75 Accomplishments
 
-### 1. Client Portal Help Documentation
-
-| Task | Status | Details |
-|------|--------|---------|
-| ClientHelp.tsx creation | DONE | 627 lines with visual components |
-| EvidenceChainDiagram | DONE | Blockchain hash chain visualization |
-| DashboardWalkthrough | DONE | Annotated dashboard mockup |
-| EvidenceDownloadSteps | DONE | Step-by-step audit guide |
-| AuditorExplanation | DONE | "What to Tell Your Auditor" section |
-| Dashboard quick link | DONE | Help & Docs card added |
-| JSONB bug fix | DONE | asyncpg returns strings, not objects |
-
-### 2. Google OAuth Verification
+### 1. Production Readiness Audit
 
 | Task | Status | Details |
 |------|--------|---------|
-| Partner login page | DONE | Clicked "Sign in with Google" button |
-| OAuth redirect | DONE | Successfully redirected to Google |
-| OAuth parameters | VERIFIED | Client ID, redirect URI, PKCE, scopes all correct |
-| OAuth flow | WORKING | Full flow operational |
+| PRODUCTION_READINESS_AUDIT.md creation | DONE | 10-section audit (373 lines) |
+| prod-health-check.sh creation | DONE | Automated health check (315 lines) |
+| Environment Variables audit | DONE | No hardcoded secrets |
+| Clock Synchronization audit | DONE | VPS and appliance NTP verified |
+| DNS Resolution audit | DONE | Both systems resolve correctly |
+| File Permissions audit | DONE | Signing key secured |
+| TLS Certificate audit | DONE | Valid ~63 days |
+| Database Connection audit | DONE | Pool settings configured |
+| Async/Blocking Code audit | DONE | No blocking calls |
+| Service Ordering audit | DONE | Correct dependencies |
+| Proto/Contract Drift audit | DONE | Protos in sync |
 
-### 3. User Invite Revoke Bug Fix
+### 2. CRITICAL Security Fix
 
 | Task | Status | Details |
 |------|--------|---------|
-| Identify issue | DONE | HTTP 500 when revoking Jayla's invite |
-| Root cause | DONE | Unique constraint on (email, status) |
-| Code fix | DONE | Delete existing revoked invites before update |
-| Deploy fix | DONE | scp + docker restart on VPS |
-| Test fix | DONE | Revoke now works without error |
+| Identify signing key issue | DONE | 644 permissions (world-readable) |
+| Fix permissions | DONE | Changed to 600 |
+| Fix ownership | DONE | Changed to 1000:1000 (container UID) |
+| Verify fix | DONE | ls -la confirms correct permissions |
+| Update audit document | DONE | Marked as FIXED |
 
-### 4. Comprehensive Documentation
+### 3. Infrastructure Fixes
 
-| Document | Status | Lines |
-|----------|--------|-------|
-| Partner Dashboard Guide | NEW | ~350 |
-| Client Portal Guide | NEW | ~300 |
-| Admin Dashboard Docs | REWRITTEN | ~640 |
+| Task | Status | Details |
+|------|--------|---------|
+| STATE_DIR path mismatch | DONE | Added env var to NixOS configs |
+| Environment override support | DONE | Updated appliance_config.py |
+| Healing DRY-RUN stuck | DONE | Config now respects env vars |
+| Execution telemetry 500s | DONE | Added datetime parser |
+
+### 4. Learning Sync Verification
+
+| Task | Status | Details |
+|------|--------|---------|
+| Pattern sync | VERIFIED | 8 patterns in aggregated_pattern_stats |
+| Execution telemetry | VERIFIED | 200 OK responses |
+| Promoted rules sync | VERIFIED | Returns YAML to agents |
+| Data flywheel | OPERATIONAL | Full loop working |
 
 ---
 
 ## Files Modified This Session
 
-### Backend Files:
-1. `mcp-server/central-command/backend/client_portal.py` - JSONB parsing fix
-2. `mcp-server/central-command/backend/users.py` - Revoke invite unique constraint fix
+### New Files:
+1. `docs/PRODUCTION_READINESS_AUDIT.md` - 10-section production audit
+2. `scripts/prod-health-check.sh` - Automated health check script
+3. `.agent/sessions/2026-01-27-session75-production-readiness.md` - Session log
 
-### Frontend Files:
-1. `mcp-server/central-command/frontend/src/client/ClientHelp.tsx` - NEW
-2. `mcp-server/central-command/frontend/src/client/ClientDashboard.tsx` - Help & Docs quick link
-3. `mcp-server/central-command/frontend/src/client/index.ts` - ClientHelp export
-4. `mcp-server/central-command/frontend/src/App.tsx` - /client/help route
+### Modified Files:
+1. `iso/appliance-disk-image.nix` - Added STATE_DIR env var
+2. `iso/appliance-image.nix` - Added STATE_DIR env var
+3. `packages/compliance-agent/src/compliance_agent/appliance_config.py` - Env var override
+4. `mcp-server/main.py` - parse_iso_timestamp() helper
 
-### Documentation:
-1. `docs/partner/PARTNER_DASHBOARD_GUIDE.md` - NEW
-2. `docs/client/CLIENT_PORTAL_GUIDE.md` - NEW
-3. `docs/sop/OP-004_DASHBOARD_ADMINISTRATION.md` - Complete rewrite
-4. `docs/partner/README.md` - Link to new guide
-5. `.agent/TODO.md` - Session 68 complete
-6. `.agent/CONTEXT.md` - Header updated
-7. `.claude/skills/frontend.md` - Client portal structure
+### Documentation Updated:
+1. `.agent/TODO.md` - Session 75 complete
+2. `IMPLEMENTATION-STATUS.md` - Session 75 status
+3. `.agent/SESSION_HANDOFF.md` - Current state
+4. `.agent/SESSION_COMPLETION_STATUS.md` - This file
 
 ---
 
 ## VPS Changes This Session
 
-| Change | Location |
-|--------|----------|
-| Frontend dist | `/opt/mcp-server/frontend_dist/` |
-| users.py fix | `/opt/mcp-server/dashboard_api_mount/users.py` |
+| Change | Location | Method |
+|--------|----------|--------|
+| signing.key permissions | `/opt/mcp-server/secrets/` | SSH chmod/chown |
+| main.py datetime fix | `/opt/mcp-server/app/` | Docker rebuild |
 
 ---
 
@@ -87,13 +90,11 @@
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| VPS API | DEPLOYED | User invite fix applied |
-| Frontend | DEPLOYED | ClientHelp.tsx live |
-| Client Portal | ALL PHASES COMPLETE | Phase 1-3 + Help Docs |
-| Partner Portal | WORKING | OAuth + API key auth verified |
-| Google OAuth | WORKING | Full flow verified |
-| Physical Appliance | Online | 192.168.88.246, v1.0.46 |
-| VM Appliance | Online | 192.168.88.247, v1.0.44 |
+| VPS API | DEPLOYED | Datetime fix applied |
+| VPS Signing Key | SECURED | 600 permissions |
+| Physical Appliance | Online | 192.168.88.246, healing active |
+| VM Appliance | Online | 192.168.88.247 |
+| Learning Sync | Working | Full flywheel operational |
 
 ---
 
@@ -101,20 +102,31 @@
 
 | Commit | Message |
 |--------|---------|
-| `c0b3881` | feat: Add help documentation page to client portal |
-| `12dcb45` | docs: Session 68 complete - Client Portal Help Documentation |
-| `54ca894` | docs: Comprehensive documentation update for all portals |
+| `8b712ea` | feat: Production readiness audit and health check script |
+| `328549e` | fix: Mark critical signing.key permission issue as resolved |
+| `3c97d01` | fix: Add STATE_DIR env var and environment override support |
+| `8f029ef` | fix: Parse ISO timestamp strings in execution telemetry endpoint |
 
 ---
 
-## Client Portal Status
+## System Status
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| Phase 1 | MVP (auth, dashboard, evidence, reports) | ✅ COMPLETE |
-| Phase 2 | Stickiness (notifications, password, history) | ✅ COMPLETE |
-| Phase 3 | Power Move (user mgmt, transfer) | ✅ COMPLETE (minus Stripe) |
-| Help Docs | Documentation with visuals for auditors | ✅ COMPLETE |
+| Metric | Status |
+|--------|--------|
+| Production Readiness | **READY** |
+| Critical Issues | 0 (1 fixed) |
+| Warning Issues | 3 |
+| API Health | Healthy |
+| TLS Certificate | Valid ~63 days |
+| Tests Passing | 839 + 24 Go |
+
+---
+
+## Warning Issues (Non-Blocking)
+
+1. **SQLite tools missing on appliance** - Can't verify DB integrity
+2. **Windows lab VMs unreachable** - May be powered off
+3. **TLS cert expires ~63 days** - Verify auto-renewal configured
 
 ---
 
@@ -122,9 +134,10 @@
 
 | Priority | Task | Notes |
 |----------|------|-------|
-| DEFERRED | Stripe Billing Integration | User will handle |
-| High | Create v47 Release | For remote update test |
-| High | Deploy Agent v1.0.47 | Via OTA update to appliance |
+| High | Deploy ISO v49 | Includes all env var fixes |
+| Medium | Verify TLS auto-renewal | docker exec caddy reload |
+| Medium | Add sqlite3 to appliance | For database diagnostics |
+| Low | Start Windows VMs | Currently unreachable |
 
 ---
 
@@ -132,14 +145,14 @@
 
 | Metric | Target | Actual | Status |
 |--------|--------|--------|--------|
-| Client Portal Phases | All | 3/3 + Help | DONE |
-| Google OAuth | Working | Verified | DONE |
-| User invite bug | Fixed | Fixed | DONE |
-| Documentation | Complete | All 3 portals | DONE |
-| Tests passing | All | 834 + 24 Go | DONE |
+| Production audit | Complete | 10 sections | DONE |
+| Critical issues | 0 | 0 (1 fixed) | DONE |
+| Learning sync | Working | Verified | DONE |
+| Healing active | Yes | Yes | DONE |
+| Documentation | Updated | All files | DONE |
 
 ---
 
 **Session Status:** COMPLETE
 **Handoff Ready:** YES
-**Next Session:** Create v47 release and test remote ISO update
+**Next Session:** Deploy ISO v49, verify TLS auto-renewal
