@@ -222,10 +222,12 @@ in
     };
 
     environment = {
-      SCANNER_DB_PATH = "/var/lib/msp/devices.db";
-      SCANNER_API_PORT = "8082";
-      SCANNER_DAILY_SCAN_HOUR = "2";
-      SCANNER_EXCLUDE_MEDICAL = "1";
+      DB_PATH = "/var/lib/msp/devices.db";
+      # API port is 8081, Go agent listener is api_port+1 = 8082
+      # local-portal uses 8083
+      API_PORT = "8081";
+      DAILY_SCAN_HOUR = "2";
+      # Medical devices are excluded by default in config
     };
   };
 
@@ -256,7 +258,8 @@ in
 
     environment = {
       SCANNER_DB_PATH = "/var/lib/msp/devices.db";
-      SCANNER_API_URL = "http://127.0.0.1:8082";
+      # Scanner API is on 8081 (Go agent listener is 8082)
+      SCANNER_API_URL = "http://127.0.0.1:8081";
       EXPORT_DIR = "/var/lib/msp/exports";
     };
   };
@@ -279,7 +282,9 @@ in
     useDHCP = true;
     firewall = {
       enable = true;
-      allowedTCPPorts = [ 80 22 8080 50051 8082 8083 ];
+      # 80=status, 22=ssh, 8080=compliance-agent, 50051=grpc
+      # 8081=scanner-api, 8082=go-agent, 8083=local-portal
+      allowedTCPPorts = [ 80 22 8080 50051 8081 8082 8083 ];
       allowedUDPPorts = [ 5353 ];
     };
   };
