@@ -57,6 +57,7 @@ from dashboard_api.partner_auth import public_router as partner_auth_router, adm
 from dashboard_api.billing import router as billing_router
 from dashboard_api.exceptions_api import router as exceptions_router
 from dashboard_api.appliance_delegation import router as appliance_delegation_router
+from dashboard_api.learning_api import partner_learning_router
 
 # ============================================================================
 # Configuration
@@ -470,6 +471,7 @@ app.include_router(partner_admin_router, prefix="/api")  # Partner admin endpoin
 app.include_router(billing_router)  # Stripe billing for partners
 app.include_router(exceptions_router)  # Compliance exceptions management
 app.include_router(appliance_delegation_router)  # Appliance delegation (signing keys, audit, escalations)
+app.include_router(partner_learning_router)  # Partner learning management (promotions, rules)
 
 # Serve agent update packages (only if directory exists)
 _agent_packages_dir = Path("/opt/mcp-server/agent-packages")
