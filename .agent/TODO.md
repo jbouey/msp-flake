@@ -1,7 +1,96 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-27 (Session 73 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.48, **ISO v48 BUILT**, **Learning System Bidirectional Sync COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.47**)
+**Last Updated:** 2026-01-27 (Session 74 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.48, **ISO v48 BUILT**, **Learning System Partner Promotion Workflow COMPLETE**, **Learning System Bidirectional Sync COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.47**)
+
+---
+
+## Session 74 (2026-01-27) - COMPLETE
+
+### Session Goals
+1. ✅ Deploy learning promotion workflow to VPS
+2. ✅ Test with real pattern data
+3. ✅ Fix database constraints for approval workflow
+4. ✅ End-to-end approval verification
+
+### Accomplishments
+
+#### 1. Partner Learning API - COMPLETE
+- **8 API Endpoints (learning_api.py ~350 lines):**
+  - `GET /api/partners/me/learning/stats` - Dashboard statistics
+  - `GET /api/partners/me/learning/candidates` - Promotion-eligible patterns
+  - `GET /api/partners/me/learning/candidates/{id}` - Pattern details
+  - `POST /api/partners/me/learning/candidates/{id}/approve` - Approve for L1
+  - `POST /api/partners/me/learning/candidates/{id}/reject` - Reject with reason
+  - `GET /api/partners/me/learning/promoted-rules` - Active rules list
+  - `PATCH /api/partners/me/learning/promoted-rules/{id}/status` - Toggle status
+  - `GET /api/partners/me/learning/execution-history` - Recent executions
+
+#### 2. Database Migration (032_learning_promotion.sql) - COMPLETE
+- **`promoted_rules` table** - Stores generated L1 rules from pattern promotions
+- **`v_partner_promotion_candidates` view** - Partner-scoped candidates with site info
+- **`v_partner_learning_stats` view** - Dashboard statistics aggregation
+- **Unique constraint** - `learning_promotion_candidates_site_pattern_unique`
+- **Nullable columns** - 6 columns made nullable for dashboard-initiated approvals
+
+#### 3. Frontend Component (PartnerLearning.tsx ~500 lines) - COMPLETE
+- Stats cards: Pending Candidates, Active L1 Rules, L1 Resolution Rate, Avg Success Rate
+- Promotion candidates table with approve/reject buttons
+- Approval modal with custom rule name and notes fields
+- Promoted rules list with enable/disable toggle
+- Empty states for new partners
+
+#### 4. VPS Deployment Architecture Discovery - DOCUMENTED
+- **Critical Finding:** Docker compose volume mounts override built images
+- **Backend mount:** `/opt/mcp-server/dashboard_api_mount/` → `/app/dashboard_api`
+- **Frontend mount:** `/opt/mcp-server/frontend_dist/` → `/usr/share/nginx/html`
+- **Deploy pattern:** Copy files to host mount paths, NOT to built image paths
+
+#### 5. Database Fixes Applied to VPS
+- Added unique constraint: `learning_promotion_candidates_site_pattern_unique`
+- Made 6 columns nullable for dashboard approvals:
+  - `appliance_id`, `recommended_action`, `confidence_score`
+  - `success_rate`, `total_occurrences`, `l2_resolutions`
+
+#### 6. End-to-End Verification - SUCCESS
+- **Test data:** 3 candidates with real pattern stats for AWS Bouey partner
+- **Approval test:** Pattern approved with custom name "Print Spooler Auto-Restart"
+- **Rule generated:** `L1-PROMOTED-PRINT-SP` created in `promoted_rules` table
+- **Stats verified:** API returns correct counts (pending: 2, active: 1)
+
+### Files Created This Session
+
+| File | Description |
+|------|-------------|
+| `mcp-server/central-command/backend/learning_api.py` | NEW - Partner learning management API (~350 lines) |
+| `mcp-server/central-command/backend/migrations/032_learning_promotion.sql` | NEW - Learning promotion tables + views (~93 lines) |
+| `mcp-server/central-command/frontend/src/partner/PartnerLearning.tsx` | NEW - Learning tab UI (~500 lines) |
+
+### Files Modified This Session
+
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/main.py` | Added learning_router import and registration |
+| `mcp-server/central-command/frontend/src/partner/PartnerDashboard.tsx` | Added Learning tab |
+| `mcp-server/central-command/frontend/src/partner/index.ts` | Added PartnerLearning export |
+
+### VPS Deployment
+
+| Change | Location | Status |
+|--------|----------|--------|
+| learning_api.py | `/opt/mcp-server/dashboard_api_mount/` | ✅ Deployed |
+| 032_learning_promotion.sql | PostgreSQL `mcp` database | ✅ Applied |
+| PartnerLearning.tsx + bundle | `/opt/mcp-server/frontend_dist/` | ✅ Deployed |
+| Container | dashboard-api | ✅ Restarted |
+
+### Endpoint Verification
+
+| Endpoint | Method | Response | Status |
+|----------|--------|----------|--------|
+| `/api/partners/me/learning/stats` | GET | `{"pending_candidates":2,"active_promoted_rules":1,...}` | ✅ 200 |
+| `/api/partners/me/learning/candidates` | GET | `[{pattern_signature, success_rate, ...}]` | ✅ 200 |
+| `/api/partners/me/learning/candidates/{id}/approve` | POST | `{"message":"Pattern approved..."}` | ✅ 200 |
+| `/api/partners/me/learning/promoted-rules` | GET | `[{rule_id: "L1-PROMOTED-PRINT-SP", ...}]` | ✅ 200 |
 
 ---
 

@@ -164,6 +164,91 @@ When Central Command is unreachable, operations are queued locally:
 
 ---
 
+## Partner Promotion Workflow (Session 74)
+
+The learning system now includes a complete partner-facing workflow for reviewing and approving L2→L1 pattern promotions.
+
+### Partner Learning Dashboard
+
+Partners access the Learning tab in their dashboard to:
+1. View promotion-eligible patterns across their sites
+2. Approve patterns to generate new L1 rules
+3. Reject patterns with documented reasons
+4. Manage active promoted rules (enable/disable)
+5. View execution history and resolution statistics
+
+### API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/partners/me/learning/stats` | GET | Dashboard statistics (pending, active, rates) |
+| `/api/partners/me/learning/candidates` | GET | Promotion-eligible patterns |
+| `/api/partners/me/learning/candidates/{id}` | GET | Pattern details with history |
+| `/api/partners/me/learning/candidates/{id}/approve` | POST | Approve and generate L1 rule |
+| `/api/partners/me/learning/candidates/{id}/reject` | POST | Reject with reason |
+| `/api/partners/me/learning/promoted-rules` | GET | Active promoted rules list |
+| `/api/partners/me/learning/promoted-rules/{id}/status` | PATCH | Toggle rule status |
+| `/api/partners/me/learning/execution-history` | GET | Recent healing executions |
+
+### Approval Request Body
+
+```json
+{
+  "custom_rule_name": "Print Spooler Auto-Restart",
+  "notes": "Approved after 15 successful L2 resolutions"
+}
+```
+
+### Generated Rule Format
+
+```yaml
+id: L1-PROMOTED-PRINT-SP
+name: Print Spooler Auto-Restart
+description: Auto-generated from pattern promotion
+check_type: windows_service
+status: ["warning", "fail", "error"]
+action: run_runbook:RB-WIN-SERVICES-001
+priority: 5
+```
+
+### Database Tables (032_learning_promotion.sql)
+
+| Table | Purpose |
+|-------|---------|
+| `promoted_rules` | Stores generated L1 rules with YAML content |
+| `v_partner_promotion_candidates` | Partner-scoped candidates view |
+| `v_partner_learning_stats` | Dashboard statistics aggregation |
+
+### Rule Generation Flow
+
+```
+1. Pattern meets promotion criteria (5+ occurrences, 90%+ success)
+   ↓
+2. Appears in Partner Learning Dashboard as candidate
+   ↓
+3. Partner reviews pattern details and execution history
+   ↓
+4. Partner approves with custom name and notes
+   ↓
+5. System generates L1 rule YAML with appropriate action
+   ↓
+6. Rule stored in promoted_rules table
+   ↓
+7. Rule deployed to agents via sync mechanism
+   ↓
+8. Future incidents match L1 rule (instant, free)
+```
+
+### VPS Deployment Note
+
+**Critical:** The VPS uses Docker compose volume mounts that override built images:
+- Backend: `/opt/mcp-server/dashboard_api_mount/` → `/app/dashboard_api`
+- Frontend: `/opt/mcp-server/frontend_dist/` → `/usr/share/nginx/html`
+
+Deploy files to host mount paths, not to image build paths.
+
+---
+
 ## Architecture Overview
 
 ```

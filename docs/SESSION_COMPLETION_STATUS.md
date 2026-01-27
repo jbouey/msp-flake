@@ -1,6 +1,161 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-26 (Session 73 - Learning System Bidirectional Sync)
+**Last Updated:** 2026-01-27 (Session 74 - Learning System Partner Promotion Workflow)
+
+---
+
+## Session 74 - Learning System Partner Promotion Workflow - COMPLETE
+
+**Date:** 2026-01-27
+**Status:** COMPLETE
+**Agent Version:** 1.0.48
+**ISO Version:** v48
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Deploy partner learning promotion workflow to VPS
+2. ✅ Create frontend component for learning management
+3. ✅ Test approval workflow with real pattern data
+4. ✅ Fix database constraints for approval operations
+5. ✅ Document VPS deployment architecture
+
+### Completed Tasks
+
+#### 1. Partner Learning API (learning_api.py)
+- **Status:** COMPLETE
+- **File:** `mcp-server/central-command/backend/learning_api.py` (~350 lines)
+- **Endpoints (8 total):**
+  - `GET /api/partners/me/learning/stats` - Dashboard statistics
+  - `GET /api/partners/me/learning/candidates` - Promotion-eligible patterns
+  - `GET /api/partners/me/learning/candidates/{id}` - Pattern details
+  - `POST /api/partners/me/learning/candidates/{id}/approve` - Approve for L1
+  - `POST /api/partners/me/learning/candidates/{id}/reject` - Reject with reason
+  - `GET /api/partners/me/learning/promoted-rules` - Active rules list
+  - `PATCH /api/partners/me/learning/promoted-rules/{id}/status` - Toggle status
+  - `GET /api/partners/me/learning/execution-history` - Recent executions
+
+#### 2. Database Migration (032_learning_promotion.sql)
+- **Status:** COMPLETE
+- **File:** `mcp-server/central-command/backend/migrations/032_learning_promotion.sql` (~93 lines)
+- **Tables:**
+  - `promoted_rules` - Stores generated L1 rules from pattern promotions
+- **Views:**
+  - `v_partner_promotion_candidates` - Partner-scoped candidates with site info
+  - `v_partner_learning_stats` - Dashboard statistics aggregation
+- **Constraints Added:**
+  - `learning_promotion_candidates_site_pattern_unique` - Required for ON CONFLICT upsert
+- **Columns Made Nullable:**
+  - `appliance_id`, `recommended_action`, `confidence_score`
+  - `success_rate`, `total_occurrences`, `l2_resolutions`
+  - Reason: Dashboard-initiated approvals don't have appliance context
+
+#### 3. Frontend Component (PartnerLearning.tsx)
+- **Status:** COMPLETE
+- **File:** `mcp-server/central-command/frontend/src/partner/PartnerLearning.tsx` (~500 lines)
+- **Features:**
+  - Stats cards: Pending Candidates, Active L1 Rules, L1 Resolution Rate, Avg Success Rate
+  - Promotion candidates table with approve/reject buttons
+  - Approval modal with custom rule name and notes fields
+  - Promoted rules list with enable/disable toggle
+  - Empty states for new partners
+  - Execution history timeline
+
+#### 4. VPS Deployment Architecture Discovery (CRITICAL)
+- **Status:** DOCUMENTED
+- **Finding:** Docker compose volume mounts override built images
+- **Backend Mount:** `/opt/mcp-server/dashboard_api_mount/` → `/app/dashboard_api` (container)
+- **Frontend Mount:** `/opt/mcp-server/frontend_dist/` → `/usr/share/nginx/html` (container)
+- **Deploy Pattern:** Copy files to HOST mount paths, not to image build paths
+- **Previous Error:** Files copied to `./app/dashboard_api/` were overridden by volume mount
+
+#### 5. End-to-End Testing
+- **Status:** COMPLETE
+- **Test Data Created:**
+  - 3 test sites for AWS Bouey partner
+  - Pattern data in `aggregated_pattern_stats` table
+  - Execution telemetry records
+- **Approval Test:**
+  - Pattern approved with custom name "Print Spooler Auto-Restart"
+  - Rule generated: `L1-PROMOTED-PRINT-SP`
+  - Rule YAML correctly populated
+- **Stats Verified:**
+  - API returns correct counts (pending: 2, active: 1)
+  - Stats calculation working correctly
+
+### Bug Fixes Applied
+
+#### InvalidColumnReferenceError
+- **Issue:** `there is no unique or exclusion constraint matching the ON CONFLICT specification`
+- **Root Cause:** Missing unique constraint on `(site_id, pattern_signature)`
+- **Fix:** Added `learning_promotion_candidates_site_pattern_unique` constraint
+
+#### NotNullViolationError
+- **Issue:** `null value in column "appliance_id" of relation "learning_promotion_candidates"`
+- **Root Cause:** Dashboard approvals don't have appliance context like agent-reported candidates
+- **Fix:** Made 6 columns nullable (appliance_id, recommended_action, confidence_score, success_rate, total_occurrences, l2_resolutions)
+
+#### ModuleNotFoundError
+- **Issue:** `No module named 'dashboard_api.learning_api'`
+- **Root Cause:** Docker compose volume mounts override built image
+- **Fix:** Deploy to `/opt/mcp-server/dashboard_api_mount/` not `./app/dashboard_api/`
+
+### Files Created
+| File | Lines | Purpose |
+|------|-------|---------|
+| `mcp-server/central-command/backend/learning_api.py` | ~350 | Partner learning management API |
+| `mcp-server/central-command/backend/migrations/032_learning_promotion.sql` | ~93 | Database migration |
+| `mcp-server/central-command/frontend/src/partner/PartnerLearning.tsx` | ~500 | Learning tab UI |
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/main.py` | Added learning_router import and registration |
+| `mcp-server/central-command/frontend/src/partner/PartnerDashboard.tsx` | Added Learning tab |
+| `mcp-server/central-command/frontend/src/partner/index.ts` | Added PartnerLearning export |
+
+### VPS Deployment
+| Item | Location | Status |
+|------|----------|--------|
+| learning_api.py | `/opt/mcp-server/dashboard_api_mount/` | ✅ Deployed |
+| 032_learning_promotion.sql | PostgreSQL `mcp` database | ✅ Applied |
+| Frontend bundle | `/opt/mcp-server/frontend_dist/` | ✅ Deployed |
+| Container restart | dashboard-api | ✅ Restarted |
+
+### API Testing Results
+```bash
+# Stats endpoint
+curl -H "X-API-Key: $KEY" "https://dashboard.osiriscare.net/api/partners/me/learning/stats"
+# Returns: {"pending_candidates":2,"active_promoted_rules":1,...}
+
+# Candidates endpoint
+curl -H "X-API-Key: $KEY" "https://dashboard.osiriscare.net/api/partners/me/learning/candidates"
+# Returns: [{pattern_signature, success_rate, ...}, ...]
+
+# Approve endpoint
+curl -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"custom_rule_name":"Test Rule","notes":"Testing"}' \
+  "https://dashboard.osiriscare.net/api/partners/me/learning/candidates/{id}/approve"
+# Returns: {"message":"Pattern approved and L1 rule generated","rule_id":"L1-PROMOTED-..."}
+
+# Promoted rules endpoint
+curl -H "X-API-Key: $KEY" "https://dashboard.osiriscare.net/api/partners/me/learning/promoted-rules"
+# Returns: [{rule_id: "L1-PROMOTED-PRINT-SP", status: "active", ...}]
+```
+
+### Learning System Status After Session 74
+| Component | Before | After |
+|-----------|--------|-------|
+| Partner UI | None | Full learning dashboard with approval workflow |
+| Approval Workflow | Not implemented | Working end-to-end with rule generation |
+| Rule Generation | Manual only | Automated from pattern promotion |
+| Stats Display | Server-only | Partner dashboard with metrics |
+| Database Constraints | Missing | Proper unique constraints for upsert |
+
+### Key Lessons Learned
+1. VPS Docker compose volume mounts override built image paths - must deploy to host mount paths
+2. Dashboard-initiated operations need different database constraints than agent-initiated ones
+3. Columns should be nullable when data source varies (agent vs dashboard)
+4. Rule ID generation should be meaningful (L1-PROMOTED-{ABBREV} pattern)
 
 ---
 
@@ -1641,7 +1796,8 @@ async def require_site_access(conn, partner: dict, site_id: str):
 
 | Session | Date | Focus | Status | Version |
 |---------|------|-------|--------|---------|
-| **73** | 2026-01-26 | Learning System Bidirectional Sync | **COMPLETE** | v1.0.48 |
+| **74** | 2026-01-27 | Learning System Partner Promotion Workflow | **COMPLETE** | v1.0.48 |
+| **73** | 2026-01-27 | Learning System Bidirectional Sync | **COMPLETE** | v1.0.48 |
 | **70** | 2026-01-26 | Partner Compliance & Phase 2 Local Resilience | **COMPLETE** | v1.0.48 |
 | **68** | 2026-01-24 | Client Portal Help Documentation | **COMPLETE** | v1.0.47 |
 | 67 | 2026-01-23 | Partner Portal Fixes + OTA USB Update Pattern | COMPLETE | v1.0.46 |
@@ -1683,11 +1839,14 @@ async def require_site_access(conn, partner: dict, site_id: str):
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 73 complete (Learning System Bidirectional Sync)
-- `.agent/CONTEXT.md` - Updated with Session 73 changes
-- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 73
-- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 73 details
-- `docs/LEARNING_SYSTEM.md` - Updated with bidirectional sync section
-- `packages/compliance-agent/src/compliance_agent/learning_sync.py` - NEW module
-- `mcp-server/central-command/backend/migrations/031_learning_sync.sql` - NEW migration
+- `.agent/TODO.md` - Session 74 complete (Learning System Partner Promotion Workflow)
+- `.agent/CONTEXT.md` - Updated with Session 74 changes
+- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 74
+- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 74 details
+- `docs/LEARNING_SYSTEM.md` - Updated with partner promotion workflow section
+- `mcp-server/central-command/backend/learning_api.py` - NEW module (Session 74)
+- `mcp-server/central-command/backend/migrations/032_learning_promotion.sql` - NEW migration (Session 74)
+- `mcp-server/central-command/frontend/src/partner/PartnerLearning.tsx` - NEW component (Session 74)
+- `packages/compliance-agent/src/compliance_agent/learning_sync.py` - NEW module (Session 73)
+- `mcp-server/central-command/backend/migrations/031_learning_sync.sql` - NEW migration (Session 73)
 - `.claude/skills/` - 9 skill files for Claude Code knowledge retention (Session 59)
