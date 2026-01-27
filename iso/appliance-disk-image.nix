@@ -1,0 +1,486 @@
+# iso/appliance-disk-image.nix
+# Builds a raw disk image for permanent installation on HP T640 or similar
+# Unlike the live ISO, this puts the nix store on ext4 (not squashfs)
+# Supports A/B partition updates and persistent storage
+
+{ config, pkgs, lib, modulesPath, ... }:
+
+let
+  # Build the compliance-agent package
+  compliance-agent = pkgs.python311Packages.buildPythonApplication {
+    pname = "compliance-agent";
+    version = "1.0.48";
+    src = ../packages/compliance-agent;
+
+    propagatedBuildInputs = with pkgs.python311Packages; [
+      aiohttp
+      asyncssh
+      cryptography
+      pydantic
+      pydantic-settings
+      fastapi
+      uvicorn
+      jinja2
+      pywinrm
+      pyyaml
+      grpcio
+      grpcio-tools
+    ];
+
+    doCheck = false;
+  };
+
+  # Build the network-scanner package (EYES)
+  network-scanner = pkgs.python311Packages.buildPythonApplication {
+    pname = "network-scanner";
+    version = "0.1.0";
+    src = ../packages/network-scanner;
+
+    propagatedBuildInputs = with pkgs.python311Packages; [
+      aiohttp
+      pydantic
+      pyyaml
+      python-nmap
+      ldap3
+    ];
+
+    doCheck = false;
+  };
+
+  # Build the local-portal package (WINDOW)
+  local-portal = pkgs.python311Packages.buildPythonApplication {
+    pname = "local-portal";
+    version = "0.1.0";
+    src = ../packages/local-portal;
+
+    propagatedBuildInputs = with pkgs.python311Packages; [
+      fastapi
+      uvicorn
+      aiohttp
+      pydantic
+      python-multipart
+      reportlab
+    ];
+
+    doCheck = false;
+  };
+in
+{
+  imports = [
+    "${modulesPath}/profiles/base.nix"
+    ./configuration.nix
+    ./local-status.nix
+  ];
+
+  # System identification
+  networking.hostName = lib.mkDefault "osiriscare-appliance";
+  system.stateVersion = "24.05";
+
+  # ============================================================================
+  # Boot configuration for installed system (not live ISO)
+  # ============================================================================
+  boot = {
+    loader = {
+      grub = {
+        enable = true;
+        device = "nodev";  # EFI mode
+        efiSupport = true;
+        efiInstallAsRemovable = true;  # Works without NVRAM access
+      };
+      efi.canTouchEfiVariables = false;
+      timeout = 3;
+    };
+
+    # Kernel params
+    kernelParams = [ "console=tty1" "quiet" ];
+
+    # Essential kernel modules for HP T640 and common hardware
+    initrd.availableKernelModules = [
+      "ahci" "xhci_pci" "ehci_pci" "usbhid" "usb_storage" "sd_mod"
+      "nvme" "sata_nv" "sata_via"
+      "virtio_pci" "virtio_blk" "virtio_net"  # For VM testing
+      "ext4" "vfat"
+    ];
+
+    # No squashfs needed - we're installed on ext4
+    supportedFilesystems = [ "ext4" "vfat" ];
+  };
+
+  # No GUI - headless operation
+  services.xserver.enable = false;
+
+  # Auto-login to console (for debugging)
+  services.getty.autologinUser = lib.mkForce "root";
+
+  # Show IP address on login
+  environment.etc."motd".text = ''
+
+    ╔═══════════════════════════════════════════════════════════╗
+    ║           OsirisCare Compliance Appliance                 ║
+    ║                 (Installed System)                        ║
+    ╚═══════════════════════════════════════════════════════════╝
+
+    Access via: ssh root@osiriscare-appliance.local
+    Status page: http://osiriscare-appliance.local
+    Local Portal: http://osiriscare-appliance.local:8083
+
+    Run 'ip addr' to see IP addresses
+    Run 'journalctl -u compliance-agent -f' to watch agent
+
+  '';
+
+  # ============================================================================
+  # Health Gate Service (A/B Update Verification)
+  # ============================================================================
+  systemd.services.msp-health-gate = {
+    description = "MSP Boot Health Gate";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "compliance-agent.service" ];
+    after = [ "network-online.target" "local-fs.target" "msp-auto-provision.service" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${compliance-agent}/bin/health-gate";
+      TimeoutStartSec = "90s";
+      WorkingDirectory = "/var/lib/msp";
+      StandardOutput = "journal";
+      StandardError = "journal";
+      SyslogIdentifier = "msp-health-gate";
+    };
+  };
+
+  # ============================================================================
+  # Full Compliance Agent
+  # ============================================================================
+  systemd.services.compliance-agent = {
+    description = "OsirisCare Compliance Agent";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "msp-auto-provision.service" "msp-health-gate.service" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${compliance-agent}/bin/compliance-agent-appliance";
+      Restart = "always";
+      RestartSec = "10s";
+      WorkingDirectory = "/var/lib/msp";
+      StandardOutput = "journal";
+      StandardError = "journal";
+      SyslogIdentifier = "compliance-agent";
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      ReadWritePaths = [ "/var/lib/msp" ];
+      NoNewPrivileges = true;
+    };
+
+    environment = {
+      HEALING_DRY_RUN = "false";
+    };
+  };
+
+  # ============================================================================
+  # Network Scanner Service (EYES)
+  # ============================================================================
+  systemd.services.network-scanner = {
+    description = "MSP Network Scanner (EYES) - Device Discovery";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "msp-auto-provision.service" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${network-scanner}/bin/network-scanner";
+      Restart = "always";
+      RestartSec = "30s";
+      WorkingDirectory = "/var/lib/msp";
+      StandardOutput = "journal";
+      StandardError = "journal";
+      SyslogIdentifier = "network-scanner";
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      ReadWritePaths = [ "/var/lib/msp" ];
+      NoNewPrivileges = true;
+      AmbientCapabilities = [ "CAP_NET_RAW" "CAP_NET_ADMIN" ];
+      CapabilityBoundingSet = [ "CAP_NET_RAW" "CAP_NET_ADMIN" ];
+    };
+
+    environment = {
+      SCANNER_DB_PATH = "/var/lib/msp/devices.db";
+      SCANNER_API_PORT = "8082";
+      SCANNER_DAILY_SCAN_HOUR = "2";
+      SCANNER_EXCLUDE_MEDICAL = "1";
+    };
+  };
+
+  # ============================================================================
+  # Local Portal Service (WINDOW)
+  # ============================================================================
+  systemd.services.local-portal = {
+    description = "MSP Local Portal (WINDOW) - Device Transparency UI";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "network-scanner.service" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${local-portal}/bin/local-portal --port 8083 --host 0.0.0.0";
+      Restart = "always";
+      RestartSec = "10s";
+      WorkingDirectory = "/var/lib/msp";
+      StandardOutput = "journal";
+      StandardError = "journal";
+      SyslogIdentifier = "local-portal";
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      ReadWritePaths = [ "/var/lib/msp" ];
+      NoNewPrivileges = true;
+    };
+
+    environment = {
+      SCANNER_DB_PATH = "/var/lib/msp/devices.db";
+      SCANNER_API_URL = "http://127.0.0.1:8082";
+      EXPORT_DIR = "/var/lib/msp/exports";
+    };
+  };
+
+  # ============================================================================
+  # Minimal packages
+  # ============================================================================
+  environment.systemPackages = with pkgs; [
+    vim curl htop
+    iproute2 iputils dnsutils
+    nmap arp-scan
+    compliance-agent network-scanner local-portal
+    jq yq
+  ];
+
+  # ============================================================================
+  # Networking
+  # ============================================================================
+  networking = {
+    useDHCP = true;
+    firewall = {
+      enable = true;
+      allowedTCPPorts = [ 80 22 8080 50051 8082 8083 ];
+      allowedUDPPorts = [ 5353 ];
+    };
+  };
+
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
+    publish = {
+      enable = true;
+      addresses = true;
+      workstation = true;
+    };
+  };
+
+  # ============================================================================
+  # Time sync - CRITICAL for compliance timestamps
+  # ============================================================================
+  services.chrony = {
+    enable = true;
+    servers = [ "time.nist.gov" "pool.ntp.org" ];
+  };
+
+  # ============================================================================
+  # Persistent storage
+  # ============================================================================
+
+  # For installed system, /var/lib/msp is on the main filesystem
+  # Create directories on activation
+  system.activationScripts.mspDirs = ''
+    mkdir -p /var/lib/msp/evidence
+    mkdir -p /var/lib/msp/queue
+    mkdir -p /var/lib/msp/rules
+    mkdir -p /var/lib/msp/rules/promoted
+    mkdir -p /var/lib/msp/update
+    mkdir -p /var/lib/msp/update/downloads
+    mkdir -p /var/lib/msp/exports
+    mkdir -p /etc/msp/certs
+    chmod 700 /var/lib/msp /etc/msp/certs
+  '';
+
+  # ============================================================================
+  # SSH for emergency access
+  # ============================================================================
+  services.openssh = {
+    enable = true;
+    settings = {
+      PermitRootLogin = lib.mkForce "prohibit-password";
+      PasswordAuthentication = lib.mkForce false;
+      KbdInteractiveAuthentication = lib.mkForce false;
+    };
+  };
+
+  users.users.root.openssh.authorizedKeys.keys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
+  ];
+
+  # ============================================================================
+  # Reduce image size
+  # ============================================================================
+  documentation.enable = false;
+  documentation.man.enable = false;
+  documentation.nixos.enable = false;
+  programs.command-not-found.enable = false;
+
+  # ============================================================================
+  # Auto-Provisioning Service (same as ISO version)
+  # ============================================================================
+  systemd.services.msp-auto-provision = {
+    description = "MSP Appliance Auto-Provisioning";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "local-fs.target" ];
+    wants = [ "network-online.target" ];
+    before = [ "compliance-agent.service" ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+
+    script = ''
+      set -e
+      CONFIG_PATH="/var/lib/msp/config.yaml"
+      LOG_FILE="/var/lib/msp/provision.log"
+      API_URL="https://api.osiriscare.net"
+
+      log() {
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
+      }
+
+      mkdir -p /var/lib/msp
+
+      if [ -f "$CONFIG_PATH" ]; then
+        log "Config already exists, skipping provisioning"
+        exit 0
+      fi
+
+      log "=== Starting Auto-Provisioning ==="
+
+      # Check USB drives for config
+      log "Checking USB drives for config.yaml..."
+      USB_CONFIG_FOUND=false
+      for dev in /dev/sd[a-z][0-9] /dev/disk/by-label/*; do
+        [ -e "$dev" ] || continue
+        MOUNT_POINT="/tmp/msp-usb-$$"
+        mkdir -p "$MOUNT_POINT"
+        if mount -o ro "$dev" "$MOUNT_POINT" 2>/dev/null; then
+          for cfg_path in \
+            "$MOUNT_POINT/config.yaml" \
+            "$MOUNT_POINT/msp/config.yaml" \
+            "$MOUNT_POINT/osiriscare/config.yaml"; do
+            if [ -f "$cfg_path" ]; then
+              log "Found config at $cfg_path"
+              cp "$cfg_path" "$CONFIG_PATH"
+              chmod 600 "$CONFIG_PATH"
+              USB_CONFIG_FOUND=true
+              break
+            fi
+          done
+          umount "$MOUNT_POINT" 2>/dev/null || true
+        fi
+        rmdir "$MOUNT_POINT" 2>/dev/null || true
+        [ "$USB_CONFIG_FOUND" = true ] && break
+      done
+
+      if [ "$USB_CONFIG_FOUND" = true ]; then
+        log "Provisioning complete via USB"
+        exit 0
+      fi
+
+      log "No USB config found, attempting MAC-based provisioning..."
+
+      # Get primary MAC address
+      MAC_ADDR=""
+      for iface in /sys/class/net/eth* /sys/class/net/en* /sys/class/net/*; do
+        [ -e "$iface" ] || continue
+        IFACE_NAME=$(basename "$iface")
+        [ "$IFACE_NAME" = "lo" ] && continue
+        [ -f "$iface/address" ] || continue
+        CANDIDATE=$(cat "$iface/address")
+        [ "$CANDIDATE" = "00:00:00:00:00:00" ] && continue
+        MAC_ADDR="$CANDIDATE"
+        log "Using interface $IFACE_NAME with MAC $MAC_ADDR"
+        break
+      done
+
+      if [ -z "$MAC_ADDR" ]; then
+        log "ERROR: Could not determine MAC address"
+      else
+        MAC_ENCODED=$(echo "$MAC_ADDR" | sed 's/:/%3A/g')
+        PROVISION_URL="$API_URL/api/provision/$MAC_ENCODED"
+
+        MAX_RETRIES=6
+        RETRY_DELAY=10
+        for attempt in $(seq 1 $MAX_RETRIES); do
+          log "Attempt $attempt/$MAX_RETRIES: Fetching config..."
+          HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
+            --connect-timeout 15 --max-time 45 "$PROVISION_URL" 2>/dev/null || echo "000")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
+              ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
+              chmod 600 "$CONFIG_PATH"
+              log "SUCCESS: Provisioning complete via MAC lookup"
+              rm -f /tmp/provision-response.json
+              exit 0
+            fi
+          elif [ "$HTTP_CODE" = "404" ]; then
+            log "MAC not registered (HTTP 404). Register: $MAC_ADDR"
+            break
+          fi
+          rm -f /tmp/provision-response.json
+          sleep $RETRY_DELAY
+        done
+      fi
+
+      log "Auto-provisioning failed - manual configuration required"
+      log "Options: 1) Insert USB with config.yaml  2) Register MAC in dashboard"
+    '';
+  };
+
+  # ============================================================================
+  # First-boot setup
+  # ============================================================================
+  systemd.services.msp-first-boot = {
+    description = "MSP Appliance First Boot Setup";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "msp-auto-provision.service" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+
+    script = ''
+      MARKER="/var/lib/msp/.initialized"
+      CONFIG_PATH="/var/lib/msp/config.yaml"
+
+      if [ -f "$MARKER" ]; then
+        exit 0
+      fi
+
+      echo "=== MSP Compliance Appliance First Boot Setup ==="
+
+      if [ -f "$CONFIG_PATH" ]; then
+        SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH")
+        if [ -n "$SITE_ID" ]; then
+          hostnamectl set-hostname "$SITE_ID"
+          echo "Hostname set to: $SITE_ID"
+        fi
+      fi
+
+      touch "$MARKER"
+      echo "=== First Boot Setup Complete ==="
+    '';
+  };
+}
