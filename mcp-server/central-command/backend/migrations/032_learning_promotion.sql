@@ -41,6 +41,29 @@ BEGIN
     END IF;
 END $$;
 
+-- Add unique constraint for upsert on approval (site_id + pattern_signature)
+-- This allows ON CONFLICT to work when updating approval status from dashboard
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'learning_promotion_candidates_site_pattern_unique'
+    ) THEN
+        ALTER TABLE learning_promotion_candidates
+        ADD CONSTRAINT learning_promotion_candidates_site_pattern_unique
+        UNIQUE (site_id, pattern_signature);
+    END IF;
+END $$;
+
+-- Make columns nullable for dashboard-initiated approvals
+-- (dashboard approvals don't have appliance context like agent-reported candidates)
+ALTER TABLE learning_promotion_candidates ALTER COLUMN appliance_id DROP NOT NULL;
+ALTER TABLE learning_promotion_candidates ALTER COLUMN recommended_action DROP NOT NULL;
+ALTER TABLE learning_promotion_candidates ALTER COLUMN confidence_score DROP NOT NULL;
+ALTER TABLE learning_promotion_candidates ALTER COLUMN success_rate DROP NOT NULL;
+ALTER TABLE learning_promotion_candidates ALTER COLUMN total_occurrences DROP NOT NULL;
+ALTER TABLE learning_promotion_candidates ALTER COLUMN l2_resolutions DROP NOT NULL;
+
 -- View: Partner-scoped promotion candidates with site info
 CREATE OR REPLACE VIEW v_partner_promotion_candidates AS
 SELECT
