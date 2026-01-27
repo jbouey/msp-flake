@@ -1603,6 +1603,17 @@ async def report_execution_telemetry(request: ExecutionTelemetryInput, db: Async
     """
     exec_data = request.execution
 
+    # Parse ISO timestamps to datetime objects for PostgreSQL
+    def parse_iso_timestamp(ts):
+        if ts is None:
+            return None
+        if isinstance(ts, datetime):
+            return ts
+        try:
+            return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            return None
+
     try:
         await db.execute(text("""
             INSERT INTO execution_telemetry (
@@ -1635,8 +1646,8 @@ async def report_execution_telemetry(request: ExecutionTelemetryInput, db: Async
             "hostname": exec_data.get("hostname", "unknown"),
             "platform": exec_data.get("platform"),
             "incident_type": exec_data.get("incident_type"),
-            "started_at": exec_data.get("started_at"),
-            "completed_at": exec_data.get("completed_at"),
+            "started_at": parse_iso_timestamp(exec_data.get("started_at")),
+            "completed_at": parse_iso_timestamp(exec_data.get("completed_at")),
             "duration": exec_data.get("duration_seconds"),
             "success": exec_data.get("success", False),
             "status": exec_data.get("status"),
