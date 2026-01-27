@@ -9,6 +9,7 @@ Config file location: /var/lib/msp/config.yaml
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
@@ -200,5 +201,23 @@ def load_appliance_config(config_path: Optional[Path] = None) -> ApplianceConfig
 
     if config_dict is None:
         raise ValueError(f"Config file is empty: {config_path}")
+
+    # Environment variable overrides (for systemd service configuration)
+    env_overrides = {
+        'healing_dry_run': os.environ.get('HEALING_DRY_RUN'),
+        'state_dir': os.environ.get('STATE_DIR'),
+        'log_level': os.environ.get('LOG_LEVEL'),
+    }
+
+    for key, value in env_overrides.items():
+        if value is not None:
+            # Convert string to appropriate type
+            if key == 'healing_dry_run':
+                config_dict[key] = value.lower() not in ('false', '0', 'no')
+            elif key == 'state_dir':
+                config_dict[key] = Path(value)
+            else:
+                config_dict[key] = value
+            logger.info(f"Environment override: {key}={config_dict[key]}")
 
     return ApplianceConfig(**config_dict)
