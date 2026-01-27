@@ -1,7 +1,7 @@
 # Session Handoff - MSP Compliance Platform
 
-**Last Updated:** 2026-01-26 (Session 73 - Learning System Bidirectional Sync)
-**Current State:** Phase 13 Zero-Touch Updates, **ISO v47**, Full Coverage Healing, **Learning System Bidirectional Sync**, **Exception Management System**, **IDOR Security Fixes**, **Partner Compliance Framework Management (10 frameworks)**, **Phase 2 Local Resilience (Delegated Authority)**, **Go Agent Deployed to ALL 3 VMs**, **Client Portal COMPLETE (All Phases)**, **Client Portal Help Documentation**, **Partner Portal Blank Page Fix**, **PHYSICAL APPLIANCE ONLINE**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**
+**Last Updated:** 2026-01-27 (Session 74 - Learning System Partner Promotion Workflow)
+**Current State:** Phase 13 Zero-Touch Updates, **ISO v48**, Full Coverage Healing, **Learning System Partner Promotion COMPLETE**, **Learning System Bidirectional Sync**, **Exception Management System**, **IDOR Security Fixes**, **Partner Compliance Framework Management (10 frameworks)**, **Phase 2 Local Resilience (Delegated Authority)**, **Go Agent Deployed to ALL 3 VMs**, **Client Portal COMPLETE (All Phases)**, **Client Portal Help Documentation**, **Partner Portal Blank Page Fix**, **PHYSICAL APPLIANCE ONLINE**, **Chaos Lab Healing-First Approach**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**
 
 ---
 
@@ -10,7 +10,7 @@
 | Component | Status | Version |
 |-----------|--------|---------|
 | Agent | v1.0.48 | Stable |
-| ISO | v47 | Available |
+| ISO | v48 | Available |
 | Tests | 830 + 24 Go tests | Healthy |
 | Physical Appliance | **ONLINE** | 192.168.88.246 |
 | A/B Partition System | **DESIGNED** | Needs custom initramfs for partition boot |
@@ -22,18 +22,90 @@
 | **Go Agent** | **DEPLOYED to ALL 3 VMs** | DC, WS, SRV - gRPC Working |
 | gRPC | **VERIFIED WORKING** | Drift → L1 → Runbook |
 | Active Healing | **ENABLED** | HEALING_DRY_RUN=false |
-| Partner Portal | **WORKING** | All 5 tabs functional |
+| Partner Portal | **WORKING** | All 6 tabs functional (Sites, Provisions, Billing, Compliance, Exceptions, **Learning**) |
 | **Exception Management** | **DEPLOYED** | IDOR security fixes applied |
 | **Partner Compliance** | **10 FRAMEWORKS** | HIPAA, SOC2, PCI-DSS, NIST CSF, etc. |
 | **Local Resilience** | **PHASE 2 COMPLETE** | Delegated signing, offline audit, SMS alerts |
 | **Client Portal** | **ALL PHASES COMPLETE** | Auth, dashboard, evidence, reports, users, help |
 | Evidence Security | **HARDENED** | Ed25519 verify + OTS validation |
-| **Learning System** | **BIDIRECTIONAL SYNC** | Pattern stats, promoted rules, execution telemetry |
+| **Learning System** | **PARTNER PROMOTION COMPLETE** | Pattern stats, approval workflow, rule generation |
 | **Google OAuth** | **DISABLED** | Client under Google review |
 
 ---
 
-## Session 73 (2026-01-26) - Learning System Bidirectional Sync
+## Session 74 (2026-01-27) - Learning System Partner Promotion Workflow
+
+### What Happened
+1. **Partner Learning API** - 8 endpoints for learning management
+2. **Frontend Component** - PartnerLearning.tsx with approval workflow
+3. **Database Migration** - 032_learning_promotion.sql with tables and views
+4. **VPS Deployment Architecture** - Discovered volume mount structure
+5. **End-to-End Testing** - Verified approval → rule generation flow
+
+### Partner Learning Features
+| Feature | Description |
+|---------|-------------|
+| Stats Dashboard | Pending candidates, active rules, resolution rates |
+| Candidates List | Promotion-eligible patterns sorted by success rate |
+| Approval Modal | Custom rule name and notes fields |
+| Promoted Rules | Toggle enable/disable, view rule YAML |
+| Execution History | Recent healing executions |
+
+### New API Endpoints
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/partners/me/learning/stats` | GET | Dashboard statistics |
+| `/api/partners/me/learning/candidates` | GET | Promotion-eligible patterns |
+| `/api/partners/me/learning/candidates/{id}` | GET | Pattern details |
+| `/api/partners/me/learning/candidates/{id}/approve` | POST | Approve for L1 |
+| `/api/partners/me/learning/candidates/{id}/reject` | POST | Reject with reason |
+| `/api/partners/me/learning/promoted-rules` | GET | Active rules list |
+| `/api/partners/me/learning/promoted-rules/{id}/status` | PATCH | Toggle status |
+| `/api/partners/me/learning/execution-history` | GET | Recent executions |
+
+### Database Changes
+| Table/View | Purpose |
+|------------|---------|
+| `promoted_rules` | Stores generated L1 rules from approvals |
+| `v_partner_promotion_candidates` | Partner-scoped candidates view |
+| `v_partner_learning_stats` | Dashboard stats aggregation |
+
+### Critical VPS Discovery
+**Docker Compose Volume Mounts Override Built Images:**
+- Backend API files: `/opt/mcp-server/dashboard_api_mount/` (NOT `./app/dashboard_api/`)
+- Frontend dist: `/opt/mcp-server/frontend_dist/`
+- Both mounted into containers at runtime
+- **Deploy pattern:** Copy files to host mount paths
+
+### Database Fixes Applied
+| Issue | Fix |
+|-------|-----|
+| ON CONFLICT needs unique constraint | Added `learning_promotion_candidates_site_pattern_unique` |
+| Dashboard approvals don't have appliance context | Made 6 columns nullable |
+
+### End-to-End Verification
+- Created test pattern data for AWS Bouey partner
+- Approved pattern with custom name "Print Spooler Auto-Restart"
+- Rule generated: `L1-PROMOTED-PRINT-SP`
+- Stats API correctly shows 2 pending, 1 active
+
+### Files Created
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/learning_api.py` | NEW - 8 API endpoints (~350 lines) |
+| `mcp-server/central-command/backend/migrations/032_learning_promotion.sql` | NEW - Tables and views (~93 lines) |
+| `mcp-server/central-command/frontend/src/partner/PartnerLearning.tsx` | NEW - Learning tab UI (~500 lines) |
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/main.py` | Added learning_router |
+| `mcp-server/central-command/frontend/src/partner/PartnerDashboard.tsx` | Added Learning tab |
+| `mcp-server/central-command/frontend/src/partner/index.ts` | Added PartnerLearning export |
+
+---
+
+## Session 73 (2026-01-27) - Learning System Bidirectional Sync
 
 ### What Happened
 1. **Bidirectional Sync Implementation** - Complete agent↔server pattern sync
