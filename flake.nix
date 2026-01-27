@@ -200,6 +200,9 @@
           # Create ESP partition for EFI boot
           additionalSpace = "1G";  # Extra space for updates
           copyChannel = false;
+          # Labels must match fileSystems in appliance-disk-image.nix
+          label = "nixos";
+          bootLabel = "ESP";
         };
 
       # Example NixOS host (VM/container) using the module
