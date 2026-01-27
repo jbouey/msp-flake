@@ -10,13 +10,13 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall Readiness** | ⚠️ **Needs Work** |
-| **Critical Issues** | 1 |
+| **Overall Readiness** | ✅ **Production Ready** |
+| **Critical Issues** | 0 (1 fixed) |
 | **Warning Issues** | 3 |
-| **Passing Checks** | 6 |
+| **Passing Checks** | 7 |
 
 ### Critical Issue
-- **VPS signing.key has world-readable permissions (644)** - Must be fixed before production
+- ~~**VPS signing.key has world-readable permissions (644)**~~ - **FIXED 2026-01-27** (chmod 600)
 
 ### Warning Issues
 - SQLite tools missing on appliance (can't verify DB integrity)
@@ -107,14 +107,14 @@ api.osiriscare.net → 178.156.162.116 ✅
 
 ## 4. File Permissions Audit
 
-**Status:** ❌ Fail (Critical)
+**Status:** ✅ Pass (Fixed 2026-01-27)
 
 ### Findings
 
 **VPS (Central Command):**
 | File | Current | Required | Status |
 |------|---------|----------|--------|
-| `/opt/mcp-server/secrets/signing.key` | 644 (rw-r--r--) | 600 (rw-------) | ❌ CRITICAL |
+| `/opt/mcp-server/secrets/signing.key` | 600 (rw-------) | 600 (rw-------) | ✅ FIXED |
 | `/var/run/docker.sock` | srw-rw---- | OK | ✅ |
 | `/mnt/storagebox` | Mounted, 1TB | OK | ✅ |
 
@@ -130,7 +130,7 @@ api.osiriscare.net → 178.156.162.116 ✅
 - Appliance: compliance-agent runs as root (acceptable for NixOS)
 
 ### Action Required
-- [ ] **CRITICAL:** Fix VPS signing.key permissions: `chmod 600 /opt/mcp-server/secrets/signing.key`
+- [x] **CRITICAL:** ~~Fix VPS signing.key permissions~~ - **FIXED 2026-01-27**
 - [x] Appliance signing key secured
 - [x] Config files secured
 
@@ -318,7 +318,7 @@ proto/compliance.proto == agent/proto/compliance.proto
 
 | Priority | Issue | Impact | Fix |
 |----------|-------|--------|-----|
-| **P0** | VPS signing.key is 644 | Anyone with server access can sign orders | `chmod 600 /opt/mcp-server/secrets/signing.key` |
+| ~~**P0**~~ | ~~VPS signing.key is 644~~ | ~~Anyone with server access can sign orders~~ | ✅ **FIXED 2026-01-27** |
 
 ### Should Fix Soon
 
@@ -332,10 +332,7 @@ proto/compliance.proto == agent/proto/compliance.proto
 
 ## Recommended Fix Order
 
-1. **Immediate (5 min):** Fix VPS signing.key permissions
-   ```bash
-   ssh root@178.156.162.116 "chmod 600 /opt/mcp-server/secrets/signing.key"
-   ```
+1. ~~**Immediate (5 min):** Fix VPS signing.key permissions~~ ✅ **FIXED 2026-01-27**
 
 2. **Today:** Verify TLS auto-renewal
    ```bash
