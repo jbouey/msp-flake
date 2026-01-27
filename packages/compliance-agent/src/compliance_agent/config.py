@@ -7,8 +7,8 @@ Validates all required settings and provides typed access.
 
 import os
 from pathlib import Path
-from typing import Optional, List
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from typing import Any, Optional, List
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict, ValidationInfo
 from datetime import time
 
 
@@ -126,7 +126,7 @@ class AgentConfig(BaseModel):
     )
 
     @model_validator(mode='after')
-    def set_evidence_dir(self):
+    def set_evidence_dir(self) -> 'AgentConfig':
         """Set evidence_dir from state_dir if not explicitly provided."""
         if self.evidence_dir is None and self.state_dir:
             self.evidence_dir = self.state_dir / 'evidence'
@@ -311,21 +311,21 @@ class AgentConfig(BaseModel):
 
     @field_validator('deployment_mode')
     @classmethod
-    def validate_deployment_mode(cls, v):
+    def validate_deployment_mode(cls, v: str) -> str:
         if v not in ['reseller', 'direct']:
             raise ValueError('deployment_mode must be reseller or direct')
         return v
 
     @field_validator('reseller_id')
     @classmethod
-    def validate_reseller_id(cls, v, info):
+    def validate_reseller_id(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
         if info.data.get('deployment_mode') == 'reseller' and not v:
             raise ValueError('reseller_id required when deployment_mode=reseller')
         return v
 
     @field_validator('maintenance_window')
     @classmethod
-    def validate_maintenance_window(cls, v):
+    def validate_maintenance_window(cls, v: str) -> str:
         import re
         if not re.match(r'^\d{2}:\d{2}-\d{2}:\d{2}$', v):
             raise ValueError('maintenance_window must be HH:MM-HH:MM format')
@@ -333,35 +333,35 @@ class AgentConfig(BaseModel):
 
     @field_validator('baseline_path', 'client_cert_file', 'client_key_file', 'signing_key_file')
     @classmethod
-    def validate_file_exists(cls, v):
+    def validate_file_exists(cls, v: Any) -> Path:
         if v and not Path(v).exists():
             raise ValueError(f'File does not exist: {v}')
         return Path(v)
 
     @field_validator('log_level')
     @classmethod
-    def validate_log_level(cls, v):
+    def validate_log_level(cls, v: str) -> str:
         if v not in ['DEBUG', 'INFO', 'WARNING', 'ERROR']:
             raise ValueError('log_level must be DEBUG, INFO, WARNING, or ERROR')
         return v
 
     @field_validator('worm_mode')
     @classmethod
-    def validate_worm_mode(cls, v):
+    def validate_worm_mode(cls, v: str) -> str:
         if v not in ['proxy', 'direct']:
             raise ValueError('worm_mode must be proxy or direct')
         return v
 
     @field_validator('worm_s3_bucket')
     @classmethod
-    def validate_worm_s3_bucket(cls, v, info):
+    def validate_worm_s3_bucket(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
         if info.data.get('worm_enabled') and info.data.get('worm_mode') == 'direct' and not v:
             raise ValueError('worm_s3_bucket required when worm_mode=direct')
         return v
 
     @field_validator('l2_mode')
     @classmethod
-    def validate_l2_mode(cls, v):
+    def validate_l2_mode(cls, v: str) -> str:
         if v not in ['openai', 'ollama', 'hybrid']:
             raise ValueError('l2_mode must be openai, ollama, or hybrid')
         return v
@@ -499,4 +499,4 @@ def load_config() -> AgentConfig:
         'learning_auto_promote': os.environ.get('LEARNING_AUTO_PROMOTE', 'false').lower() == 'true',
     }
 
-    return AgentConfig(**config_dict)
+    return AgentConfig(**config_dict)  # type: ignore[arg-type]

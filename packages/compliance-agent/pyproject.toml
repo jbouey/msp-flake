@@ -1,0 +1,154 @@
+[project]
+name = "compliance-agent"
+version = "1.0.49"
+description = "HIPAA Compliance Agent for NixOS Appliance"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9.0",
+    "asyncssh>=2.14.0",
+    "cryptography>=41.0.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "jinja2>=3.1.0",
+    "pywinrm>=0.4.3",
+    "pyyaml>=6.0.0",
+    "grpcio>=1.60.0",
+    "grpcio-tools>=1.60.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "mypy>=1.0.0",
+    "types-PyYAML>=6.0.0",
+    "types-requests>=2.31.0",
+]
+
+[project.scripts]
+compliance-agent = "compliance_agent.agent:main"
+compliance-agent-appliance = "compliance_agent.appliance_agent:main"
+compliance-web = "compliance_agent.web_ui:main"
+compliance-provision = "compliance_agent.provisioning:main"
+health-gate = "compliance_agent.health_gate:main"
+osiris-update = "compliance_agent.update_agent:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+compliance_agent = ["web_templates/*.html", "rules/*.yaml"]
+
+# =============================================================================
+# MYPY CONFIGURATION
+# =============================================================================
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = false  # Enable gradually
+check_untyped_defs = true
+ignore_missing_imports = true
+show_error_codes = true
+pretty = true
+
+# Per-module overrides for strict files (core types only)
+[[tool.mypy.overrides]]
+module = [
+    "compliance_agent._types",
+    "compliance_agent.models",
+]
+disallow_untyped_defs = true
+strict = true
+
+# Config has type ignores for env loading
+[[tool.mypy.overrides]]
+module = "compliance_agent.config"
+disallow_untyped_defs = true
+warn_return_any = false
+
+# Ignore third-party modules without stubs
+[[tool.mypy.overrides]]
+module = [
+    "winrm.*",
+    "asyncssh.*",
+    "grpc.*",
+    "grpcio.*",
+    "google.protobuf.*",
+    "nacl.*",
+    "minio.*",
+]
+ignore_missing_imports = true
+ignore_errors = true
+
+# Ignore generated gRPC files
+[[tool.mypy.overrides]]
+module = [
+    "compliance_agent.compliance_pb2",
+    "compliance_agent.compliance_pb2_grpc",
+]
+ignore_errors = true
+
+# Files that need gradual typing (not yet fully typed)
+[[tool.mypy.overrides]]
+module = [
+    "compliance_agent.incident_db",
+    "compliance_agent.offline_queue",
+    "compliance_agent.evidence",
+    "compliance_agent.healing",
+    "compliance_agent.drift",
+    "compliance_agent.learning_loop",
+    "compliance_agent.auto_healer",
+    "compliance_agent.level1_deterministic",
+    "compliance_agent.level2_llm",
+    "compliance_agent.level3_escalation",
+    "compliance_agent.grpc_server",
+    "compliance_agent.appliance_agent",
+    "compliance_agent.windows_collector",
+    "compliance_agent.web_ui",
+    "compliance_agent.sensor_linux",
+    "compliance_agent.runbooks.*",
+]
+disallow_untyped_defs = false
+check_untyped_defs = false
+
+# =============================================================================
+# PYTEST CONFIGURATION
+# =============================================================================
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning:asyncio.*:",
+    "ignore::DeprecationWarning:grpc.*:",
+]
+
+# =============================================================================
+# COVERAGE CONFIGURATION
+# =============================================================================
+[tool.coverage.run]
+source = ["src/compliance_agent"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/compliance_pb2*.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

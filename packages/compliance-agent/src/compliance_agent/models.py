@@ -6,7 +6,7 @@ Defines evidence bundle schema and related types per CLAUDE.md requirements.
 
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field, field_validator, field_serializer, ConfigDict
+from pydantic import BaseModel, Field, field_validator, field_serializer, ConfigDict, ValidationInfo
 import uuid
 
 
@@ -231,7 +231,7 @@ class EvidenceBundle(BaseModel):
 
     @field_validator('timestamp_end')
     @classmethod
-    def validate_end_after_start(cls, v, info):
+    def validate_end_after_start(cls, v: datetime, info: ValidationInfo) -> datetime:
         """Ensure end timestamp is after start timestamp."""
         if 'timestamp_start' in info.data and v < info.data['timestamp_start']:
             raise ValueError('timestamp_end must be after timestamp_start')
@@ -239,7 +239,7 @@ class EvidenceBundle(BaseModel):
 
     @field_validator('reseller_id')
     @classmethod
-    def validate_reseller_id_if_needed(cls, v, info):
+    def validate_reseller_id_if_needed(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
         """Require reseller_id if deployment_mode=reseller."""
         if info.data.get('deployment_mode') == 'reseller' and not v:
             raise ValueError('reseller_id required when deployment_mode=reseller')
@@ -247,7 +247,7 @@ class EvidenceBundle(BaseModel):
 
     @field_validator('check')
     @classmethod
-    def validate_check_type(cls, v):
+    def validate_check_type(cls, v: str) -> str:
         """Validate check type."""
         valid_checks = [
             'patching',
