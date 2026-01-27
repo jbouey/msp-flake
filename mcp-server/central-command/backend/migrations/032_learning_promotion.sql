@@ -64,6 +64,16 @@ ALTER TABLE learning_promotion_candidates ALTER COLUMN success_rate DROP NOT NUL
 ALTER TABLE learning_promotion_candidates ALTER COLUMN total_occurrences DROP NOT NULL;
 ALTER TABLE learning_promotion_candidates ALTER COLUMN l2_resolutions DROP NOT NULL;
 
+-- Add check_type column to aggregated_pattern_stats for rule generation
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'aggregated_pattern_stats'
+                   AND column_name = 'check_type') THEN
+        ALTER TABLE aggregated_pattern_stats ADD COLUMN check_type VARCHAR(100);
+    END IF;
+END $$;
+
 -- View: Partner-scoped promotion candidates with site info
 CREATE OR REPLACE VIEW v_partner_promotion_candidates AS
 SELECT
@@ -72,6 +82,7 @@ SELECT
     s.clinic_name as site_name,
     s.partner_id,
     aps.pattern_signature,
+    aps.check_type,
     aps.total_occurrences,
     aps.l1_resolutions,
     aps.l2_resolutions,
