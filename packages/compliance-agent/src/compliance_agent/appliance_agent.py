@@ -386,9 +386,10 @@ class ApplianceAgent:
                     password=target_cfg.get('password', ''),
                     use_ssl=target_cfg.get('use_ssl', False),
                     transport=target_cfg.get('transport', 'ntlm'),
+                    ip_address=target_cfg.get('ip_address', target_cfg.get('ip', '')),
                 )
                 self.windows_targets.append(target)
-                logger.info(f"Added Windows target: {target.hostname}")
+                logger.info(f"Added Windows target: {target.hostname} (ip={target.ip_address})")
             except Exception as e:
                 logger.warning(f"Invalid Windows target config: {e}")
 
@@ -1149,12 +1150,25 @@ class ApplianceAgent:
         # === WinRM Fallback Path ===
         # No Go agent available, use WinRM (slower but works without agent deployment)
 
-        # Find target - try to match hostname, fallback to first available
+        # Find target - try to match by IP, hostname, or short name
         target = None
         if target_host:
-            # Try exact match first
+            target_host_upper = target_host.upper()
+            target_host_short = target_host.split('.')[0].upper()
             for t in self.windows_targets:
-                if t.hostname == target_host or t.hostname.split('.')[0].upper() == target_host.split('.')[0].upper():
+                # Check IP address match (incidents typically use IPs)
+                if t.ip_address and t.ip_address == target_host:
+                    target = t
+                    break
+                # Check hostname match (exact or short name)
+                if t.hostname == target_host:
+                    target = t
+                    break
+                if t.hostname.split('.')[0].upper() == target_host_short:
+                    target = t
+                    break
+                # Check if hostname IS the IP (some configs use IP as hostname)
+                if t.hostname == target_host:
                     target = t
                     break
 
@@ -1162,7 +1176,7 @@ class ApplianceAgent:
         if not target and self.windows_targets:
             target = self.windows_targets[0]
             if target_host:
-                logger.debug(f"Target host '{target_host}' not found in windows_targets, using fallback: {target.hostname}")
+                logger.warning(f"Target host '{target_host}' not found in windows_targets, using fallback: {target.hostname} (ip={target.ip_address})")
 
         if not target:
             return {"error": "No Windows target available"}
@@ -1414,6 +1428,7 @@ class ApplianceAgent:
                     use_ssl=target_cfg.get('use_ssl', False),
                     port=5986 if target_cfg.get('use_ssl') else 5985,
                     transport='ntlm',
+                    ip_address=target_cfg.get('ip_address', target_cfg.get('ip', '')),
                 )
                 new_targets.append(target)
             except Exception as e:
@@ -2333,6 +2348,7 @@ try {
         for s in result.reachable_servers:
             new_windows_targets.append({
                 "hostname": s.fqdn or s.ip_address or s.hostname,
+                "ip_address": s.ip_address or "",  # Store IP for target matching
                 "username": creds['username'],
                 "password": creds['password'],
             })
@@ -2349,6 +2365,7 @@ try {
                         use_ssl=False,
                         port=5985,
                         transport='ntlm',
+                        ip_address=target_dict.get('ip_address', ''),
                     )
                     self.windows_targets.append(target)
                 except Exception as e:
