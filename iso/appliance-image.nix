@@ -182,6 +182,7 @@ in
     # Enable active healing (not dry-run) for learning data collection
     environment = {
       HEALING_DRY_RUN = "false";
+      STATE_DIR = "/var/lib/msp";
     };
   };
 
