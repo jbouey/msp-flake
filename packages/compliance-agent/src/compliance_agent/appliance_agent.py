@@ -978,6 +978,7 @@ class ApplianceAgent:
             "restart_service": self._heal_restart_service,
             "run_command": self._heal_run_command,
             "run_windows_runbook": self._heal_run_windows_runbook,
+            "run_linux_runbook": self._heal_run_linux_runbook,
             "escalate": self._heal_escalate,
         }
 
@@ -1259,6 +1260,85 @@ class ApplianceAgent:
             return {"error": f"Windows executor not available: {e}", "success": False}
         except Exception as e:
             logger.error(f"Windows runbook execution failed: {e}")
+            return {"error": str(e), "success": False}
+
+    async def _heal_run_linux_runbook(
+        self, params: Dict[str, Any], incident: Optional[Incident]
+    ) -> Dict[str, Any]:
+        """Execute a Linux runbook via SSH."""
+        runbook_id = params.get("runbook_id")
+        target_host = params.get("target_host")
+        phases = params.get("phases", ["remediate", "verify"])
+
+        if not runbook_id:
+            return {"error": "runbook_id required", "success": False}
+
+        # Find target in linux_targets
+        target = None
+        if target_host:
+            for t in self.linux_targets:
+                if t.hostname == target_host or t.hostname.split('.')[0] == target_host:
+                    target = t
+                    break
+
+        if not target:
+            logger.warning(f"Linux target not found: {target_host}")
+            return {"error": f"Linux target not found: {target_host}", "success": False}
+
+        try:
+            from .runbooks.linux.executor import LinuxExecutor
+
+            executor = LinuxExecutor(targets=[target])
+
+            logger.info(f"Executing Linux runbook {runbook_id} on {target.hostname}, phases={phases}")
+
+            results = await executor.run_runbook(
+                target,
+                runbook_id,
+                phases=phases,
+                collect_evidence=True
+            )
+
+            # Analyze results
+            overall_success = all(r.success for r in results if r.phase in phases)
+            phase_details = [
+                {
+                    "phase": r.phase,
+                    "success": r.success,
+                    "output": r.output,
+                    "error": r.error,
+                    "duration": r.duration_seconds
+                }
+                for r in results
+            ]
+
+            # Log details and extract error from failed phases
+            first_error = None
+            if not overall_success:
+                for result in results:
+                    if not result.success:
+                        logger.warning(
+                            f"  Phase '{result.phase}' failed: error={result.error}, "
+                            f"output={str(result.output)[:200]}"
+                        )
+                        if first_error is None:
+                            first_error = result.error or f"Phase '{result.phase}' failed"
+
+            return {
+                "action": "run_linux_runbook",
+                "runbook_id": runbook_id,
+                "target": target.hostname,
+                "method": "ssh",
+                "phases": phases,
+                "success": overall_success,
+                "phase_details": phase_details,
+                "error": first_error
+            }
+
+        except ImportError as e:
+            return {"error": f"Linux executor not available: {e}", "success": False}
+        except Exception as e:
+            logger.error(f"Linux runbook execution failed: {e}")
             return {"error": str(e), "success": False}
 
     async def _heal_escalate(

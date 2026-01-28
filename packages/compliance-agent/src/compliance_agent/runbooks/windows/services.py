@@ -292,10 +292,11 @@ $Result | ConvertTo-Json
 $IsDC = (Get-WmiObject Win32_ComputerSystem).DomainRole -ge 4
 $Service = Get-Service -Name "Spooler" -ErrorAction SilentlyContinue
 $Expected = if ($IsDC) { "Stopped" } else { "Running" }
+$ActualStatus = if ($Service) { $Service.Status.ToString() } else { "NotFound" }
 @{
-    Status = if ($Service) { $Service.Status.ToString() } else { "NotFound" }
+    Status = $ActualStatus
     Expected = $Expected
-    Verified = ($Service.Status.ToString() -eq $Expected)
+    Verified = ($ActualStatus -eq $Expected)
 } | ConvertTo-Json
 ''',
 

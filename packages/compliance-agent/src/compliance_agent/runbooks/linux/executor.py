@@ -219,8 +219,20 @@ class LinuxExecutor:
             self._connection_cache[cache_key] = conn
             self._connection_timestamps[cache_key] = datetime.now(timezone.utc)
             return conn
+        except asyncssh.PermissionDenied as e:
+            logger.error(f"SSH authentication failed to {target.hostname}: {e}")
+            raise
+        except asyncssh.HostKeyNotVerifiable as e:
+            logger.error(f"SSH host key verification failed for {target.hostname}: {e}")
+            raise
+        except asyncssh.ConnectionLost as e:
+            logger.error(f"SSH connection lost to {target.hostname}: {e}")
+            raise
+        except asyncssh.Error as e:
+            logger.error(f"SSH error connecting to {target.hostname}: {e}")
+            raise
         except Exception as e:
-            logger.error(f"SSH connection failed to {target.hostname}: {e}")
+            logger.error(f"Unexpected error connecting to {target.hostname}: {type(e).__name__}: {e}")
             raise
 
     def invalidate_connection(self, hostname: str):
@@ -308,18 +320,25 @@ class LinuxExecutor:
             start_time = datetime.now(timezone.utc)
 
             try:
+                import asyncssh  # For specific exception handling
                 conn = await self._get_connection(target)
 
-                # Wrap with sudo if needed
+                # Wrap with sudo if needed and execute
+                # Use base64 encoding to avoid shell quoting issues
+                import base64
+                encoded_script = base64.b64encode(script.encode()).decode()
+
                 if use_sudo and target.username != "root":
                     if target.sudo_password:
-                        script = f"echo '{target.sudo_password}' | sudo -S bash -c '{script}'"
+                        cmd = f"echo '{target.sudo_password}' | sudo -S bash -c \"$(echo {encoded_script} | base64 -d)\""
                     else:
-                        script = f"sudo bash -c '{script}'"
+                        cmd = f"sudo bash -c \"$(echo {encoded_script} | base64 -d)\""
+                else:
+                    cmd = f"bash -c \"$(echo {encoded_script} | base64 -d)\""
 
                 # Execute command
                 result = await asyncio.wait_for(
-                    conn.run(f"bash -c '{script}'", check=False),
+                    conn.run(cmd, check=False),
                     timeout=timeout
                 )
 
@@ -355,12 +374,26 @@ class LinuxExecutor:
                 last_error = f"Execution timed out after {timeout}s"
                 logger.warning(f"Timeout on {target.hostname}, attempt {attempt + 1}/{retries + 1}")
 
+            except asyncssh.PermissionDenied as e:
+                last_error = f"SSH authentication failed: {e}"
+                logger.error(f"Auth failure on {target.hostname}: {e}")
+                self.invalidate_connection(target.hostname)
+                # Don't retry auth failures - they won't succeed
+                break
+
+            except asyncssh.ConnectionLost as e:
+                last_error = f"SSH connection lost: {e}"
+                logger.warning(f"Connection lost on {target.hostname}: {e}, attempt {attempt + 1}/{retries + 1}")
+                self.invalidate_connection(target.hostname)
+
+            except asyncssh.Error as e:
+                last_error = f"SSH error: {e}"
+                logger.warning(f"SSH error on {target.hostname}: {e}, attempt {attempt + 1}/{retries + 1}")
+                self.invalidate_connection(target.hostname)
+
             except Exception as e:
                 last_error = str(e)
-                logger.warning(f"Error on {target.hostname}: {e}, attempt {attempt + 1}/{retries + 1}")
-                # Invalidate connection on SSH errors
-                if "ssh" in str(e).lower() or "connection" in str(e).lower():
-                    self.invalidate_connection(target.hostname)
+                logger.warning(f"Unexpected error on {target.hostname}: {e}, attempt {attempt + 1}/{retries + 1}")
 
             # Wait before retrying
             if attempt < retries:
@@ -464,6 +497,10 @@ class LinuxExecutor:
 
             except Exception as e:
                 duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+                # Categorize error type for better debugging
+                error_type = type(e).__name__
+                error_msg = f"{error_type}: {str(e)}"
+                logger.error(f"Runbook {runbook_id} phase {phase} failed on {target.hostname}: {error_msg}")
                 result = LinuxExecutionResult(
                     success=False,
                     runbook_id=runbook_id,
@@ -471,7 +508,7 @@ class LinuxExecutor:
                     phase=phase,
                     output={},
                     duration_seconds=duration,
-                    error=str(e),
+                    error=error_msg,
                     hipaa_controls=runbook.hipaa_controls,
                     distro=distro
                 )
