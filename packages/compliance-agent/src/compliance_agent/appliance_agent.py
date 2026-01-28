@@ -1154,21 +1154,21 @@ class ApplianceAgent:
         target = None
         if target_host:
             target_host_upper = target_host.upper()
-            target_host_short = target_host.split('.')[0].upper()
+            # Check if target_host looks like an IP address
+            is_ip = all(c.isdigit() or c == '.' for c in target_host) and target_host.count('.') == 3
+            target_host_short = target_host.split('.')[0].upper() if not is_ip else None
+
             for t in self.windows_targets:
                 # Check IP address match (incidents typically use IPs)
                 if t.ip_address and t.ip_address == target_host:
                     target = t
                     break
-                # Check hostname match (exact or short name)
+                # Check hostname match (exact)
                 if t.hostname == target_host:
                     target = t
                     break
-                if t.hostname.split('.')[0].upper() == target_host_short:
-                    target = t
-                    break
-                # Check if hostname IS the IP (some configs use IP as hostname)
-                if t.hostname == target_host:
+                # Check short name match (only for hostnames, not IPs)
+                if target_host_short and t.hostname.split('.')[0].upper() == target_host_short:
                     target = t
                     break
 
