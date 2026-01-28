@@ -1,10 +1,10 @@
 # Session Handoff - 2026-01-28
 
-**Session:** 77 - L1 RULES FIXED
+**Session:** 78 - VPS Telemetry & Rule Sync Fixes
 **Agent Version:** v1.0.49
 **ISO Version:** v49 (pending rebuild with all fixes)
 **Last Updated:** 2026-01-28
-**System Status:** L1 Rules & Healing FIXED
+**System Status:** ✅ ALL SYSTEMS OPERATIONAL
 
 ---
 
@@ -19,6 +19,40 @@
 | Target Routing | **FIXED** | IP-based matching working |
 | VPS L1 Rules | **UPDATED** | host_id regex for Windows-only |
 | API | **HEALTHY** | https://api.osiriscare.net/health |
+
+---
+
+## Session 78 - VPS Telemetry & Rule Sync Fixes
+
+### Issues Fixed
+
+1. **Execution telemetry 500 error** - VPS `main.py` wasn't parsing ISO datetime strings
+   - Added `parse_iso_to_datetime()` helper function
+   - `started_at` and `completed_at` now properly converted to datetime objects
+
+2. **L1-TEST-RULE-001 invalid rule** - Kept re-syncing from VPS
+   - Deleted from `promoted_rules` database table
+   - Cleaned up from appliance `/var/lib/msp/rules/promoted/`
+
+3. **L1-NIXOS-FW-001 `not_regex` error** - VPS used unsupported operator
+   - Changed VPS rule from `host_id not_regex` to `platform eq nixos`
+   - Now matches baseline rule in `l1_baseline.json`
+
+4. **Pattern-stats 500 cascade error** - Stuck SQL transaction
+   - Restarted mcp-server to clear transaction state
+
+### Verified Working
+```
+POST /api/agent/executions → 200 OK (was 500)
+POST /agent/patterns → 200 OK
+POST /api/agent/sync/pattern-stats → 200 OK (was 500)
+NixOS firewall → L1-NIXOS-FW-001 → escalate (correct!)
+```
+
+### VPS Changes Applied
+- `/opt/mcp-server/app/main.py` - Added datetime helper, fixed L1-NIXOS-FW-001
+- `promoted_rules` table - Deleted invalid L1-TEST-RULE-001
+- Container restarted multiple times
 
 ---
 
