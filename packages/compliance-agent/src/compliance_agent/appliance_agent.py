@@ -1632,6 +1632,10 @@ class ApplianceAgent:
                 ("password_policy", "net accounts | Select-String 'password|lockout'"),
                 ("bitlocker_status", "Get-BitLockerVolume -MountPoint C: -ErrorAction SilentlyContinue | Select-Object MountPoint,ProtectionStatus | ConvertTo-Json"),
                 ("audit_policy", "auditpol /get /subcategory:'Logon'"),
+                # Critical Windows Services check
+                ("service_w32time", "Get-Service W32Time -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
+                ("service_dns", "Get-Service DNS -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
+                ("service_spooler", "Get-Service Spooler -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
                 # Windows Server Backup check (requires Windows Server Backup feature)
                 ("backup_status", """
 try {
@@ -1750,6 +1754,26 @@ try {
                                 status = "fail"
                         except Exception:
                             status = "fail" if check_result.status_code != 0 else status
+
+                    elif check_name.startswith("service_") and check_result.status_code == 0:
+                        # Check if critical Windows service is running
+                        try:
+                            import json as json_module
+                            service_data = json_module.loads(output)
+                            service_status = service_data.get("Status", 0)
+                            # Status: 1=Stopped, 2=StartPending, 3=StopPending, 4=Running
+                            if service_status == 4 or service_status == "Running":
+                                status = "pass"
+                            elif service_status in [0, 1, "Stopped"] or not service_data:
+                                status = "fail"
+                            else:
+                                status = "warning"  # Starting/Stopping
+                        except Exception:
+                            # Service might not exist (e.g., DNS on non-DC)
+                            if "Cannot find any service" in output or not output.strip():
+                                status = "pass"  # Service not installed, not a failure
+                            else:
+                                status = "fail"
 
                     # Submit as evidence
                     evidence_data = {

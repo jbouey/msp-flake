@@ -440,5 +440,50 @@
     "cooldown_seconds": 300,
     "max_retries": 2,
     "source": "builtin"
+  },
+  {
+    "id": "L1-SVC-W32TIME-001",
+    "name": "Windows Time Service Recovery",
+    "description": "Restart W32Time service when stopped",
+    "conditions": [
+      {"field": "check_type", "operator": "in", "value": ["service_w32time", "windows_service_w32time"]},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SVC-004", "phases": ["remediate", "verify"]},
+    "severity": "high",
+    "cooldown_seconds": 300,
+    "max_retries": 3,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-SVC-DNS-001",
+    "name": "DNS Server Service Recovery",
+    "description": "Restart DNS Server service when stopped",
+    "conditions": [
+      {"field": "check_type", "operator": "in", "value": ["service_dns", "windows_service_dns"]},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SVC-001", "phases": ["remediate", "verify"]},
+    "severity": "critical",
+    "cooldown_seconds": 300,
+    "max_retries": 3,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-SVC-SPOOLER-001",
+    "name": "Print Spooler Service Recovery",
+    "description": "Restart Print Spooler service when stopped",
+    "conditions": [
+      {"field": "check_type", "operator": "in", "value": ["service_spooler", "windows_service_spooler"]},
+      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SVC-003", "phases": ["remediate", "verify"]},
+    "severity": "medium",
+    "cooldown_seconds": 300,
+    "max_retries": 2,
+    "source": "builtin"
   }
 ]
