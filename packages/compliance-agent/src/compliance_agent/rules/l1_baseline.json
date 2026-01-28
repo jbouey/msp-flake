@@ -263,9 +263,10 @@
   {
     "id": "L1-BITLOCKER-001",
     "name": "BitLocker Status Recovery",
-    "description": "Resume BitLocker protection if suspended",
+    "description": "Resume BitLocker protection if suspended (Windows only)",
     "conditions": [
-      {"field": "check_type", "operator": "in", "value": ["bitlocker", "encryption"]},
+      {"field": "check_type", "operator": "in", "value": ["bitlocker", "bitlocker_status", "encryption"]},
+      {"field": "host_id", "operator": "regex", "value": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"},
       {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
     ],
     "actions": ["run_windows_runbook"],
@@ -295,7 +296,7 @@
     "name": "Backup Verification Alert",
     "description": "Escalate when backup is stale or failing",
     "conditions": [
-      {"field": "check_type", "operator": "eq", "value": "backup"},
+      {"field": "check_type", "operator": "in", "value": ["backup", "backup_status", "windows_backup_status"]},
       {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
     "actions": ["escalate"],
