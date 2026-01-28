@@ -49,10 +49,11 @@
   {
     "id": "L1-FIREWALL-001",
     "name": "Windows Firewall Recovery",
-    "description": "Re-enable Windows Firewall when disabled (Windows only)",
+    "description": "Re-enable Windows Firewall when disabled (Windows only - must be IP-based host)",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "firewall"},
       {"field": "platform", "operator": "ne", "value": "nixos"},
+      {"field": "host_id", "operator": "regex", "value": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"},
       {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
     ],
     "actions": ["run_windows_runbook"],
@@ -66,9 +67,10 @@
   {
     "id": "L1-FIREWALL-002",
     "name": "Windows Firewall Status Recovery",
-    "description": "Re-enable Windows Firewall when status check fails",
+    "description": "Re-enable Windows Firewall when status check fails (Windows only - must be IP-based host)",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "firewall_status"},
+      {"field": "host_id", "operator": "regex", "value": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"},
       {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
     ],
     "actions": ["run_windows_runbook"],

@@ -1,10 +1,10 @@
-# Session Handoff - 2026-01-27
+# Session Handoff - 2026-01-28
 
-**Session:** 75 - Complete
+**Session:** 76 - COMPLETE
 **Agent Version:** v1.0.49
-**ISO Version:** v48
-**Last Updated:** 2026-01-27
-**System Status:** Production Ready
+**ISO Version:** v49 (needs rebuild with fix)
+**Last Updated:** 2026-01-28
+**System Status:** Healing Target Routing FIXED ✅
 
 ---
 
@@ -12,14 +12,58 @@
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Agent | v1.0.49 | Running on physical appliance |
-| ISO | v48 | Built with all fixes |
-| Physical Appliance | **ONLINE** | 192.168.88.246, healing active |
-| Tests | 839 + 24 Go | All passing |
+| Agent | v1.0.49 | Running with bind mount fix |
+| ISO | v49 | Needs rebuild to include f87872a |
+| Physical Appliance | **ONLINE** | 192.168.88.246 |
+| Healing | **FIXED** | Target routing now works correctly |
 | VPS Signing Key | **SECURED** | 600 permissions, UID 1000 |
 | Learning Sync | **VERIFIED** | Full data flywheel operational |
 | API | **HEALTHY** | https://api.osiriscare.net/health |
-| TLS Certificate | **VALID** | Expires Mar 31 (~63 days) |
+| TLS Certificate | **VALID** | Expires Mar 31 (~62 days) |
+
+---
+
+## Session 76 - Target Routing Bug FIXED
+
+### Bug Summary
+- **Symptom:** Healing actions going to wrong VM (always first target .244)
+- **Root Cause #1:** Server didn't return `ip_address` in windows_targets
+- **Root Cause #2:** Short name matching on IPs - "192" matched all targets
+
+### Fixes Applied
+
+#### 1. Server Fix (VPS)
+- File: `/opt/mcp-server/dashboard_api_mount/sites.py` line 1470
+- Added `"ip_address": hostname,` to windows_targets response
+- Restarted mcp-server container
+
+#### 2. Agent Fix (Commit f87872a)
+- File: `appliance_agent.py` lines 1153-1173
+- Detect if target_host is IP address, skip short name matching
+- Previously: "192.168.88.251".split('.')[0] = "192" matched all targets
+- Now: IP addresses use exact ip_address/hostname match only
+
+### Deployment Method
+- Used bind mount overlay (NixOS is read-only)
+- `/var/lib/msp/nix-overlay/appliance_agent.py` → Nix store path
+- Agent restarted to pick up changes
+
+### Verified Working
+```
+Windows check failed on 192.168.88.251 → Executes on 192.168.88.251 ✓
+Windows check failed on 192.168.88.250 → Executes on 192.168.88.250 ✓
+Windows check failed on 192.168.88.244 → Executes on 192.168.88.244 ✓
+```
+
+### Remaining Issue
+- Local firewall checks (osiriscare-appliance) still trigger Windows runbooks
+- L1 rule L1-FIREWALL-001/002 matches local incidents, should be Windows-only
+- Not critical - wrong target but healing still works
+
+### Next Steps
+1. **Rebuild ISO v50** with commit f87872a
+2. **Update chaos lab** to run diversity tests
+3. **Fix L1 firewall rules** to only match Windows incidents
 
 ---
 

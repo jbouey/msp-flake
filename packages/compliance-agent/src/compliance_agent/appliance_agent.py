@@ -1028,6 +1028,24 @@ class ApplianceAgent:
         elif action.startswith("run_runbook:"):
             # Auto-promoted L1 rules use run_runbook:<RUNBOOK_ID> format
             runbook_id = action.split(":", 1)[1]
+
+            # Map AUTO-* format to proper RB-WIN-* runbook IDs
+            # (Legacy promoted rules may use AUTO-<CHECK_TYPE> format)
+            if runbook_id.startswith("AUTO-"):
+                from .learning_loop import CHECK_TYPE_TO_RUNBOOK
+                auto_check_type = runbook_id[5:].lower().replace("_", "")  # AUTO-BITLOCKER_STATUS -> bitlockerstatus
+                # Try exact match first, then partial matches
+                mapped_id = CHECK_TYPE_TO_RUNBOOK.get(auto_check_type)
+                if not mapped_id:
+                    # Try with underscores preserved
+                    auto_check_type_underscore = runbook_id[5:].lower()  # AUTO-BITLOCKER_STATUS -> bitlocker_status
+                    mapped_id = CHECK_TYPE_TO_RUNBOOK.get(auto_check_type_underscore)
+                if mapped_id:
+                    logger.info(f"Mapped legacy runbook '{runbook_id}' to '{mapped_id}'")
+                    runbook_id = mapped_id
+                else:
+                    logger.warning(f"Could not map AUTO-* runbook '{runbook_id}' to valid runbook ID")
+
             logger.info(f"Executing auto-promoted rule runbook: {runbook_id}")
             runbook_params = {
                 **params,
