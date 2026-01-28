@@ -297,7 +297,7 @@ async def handle_sensor_drift(event: SensorDriftEvent):
             return
 
         # Import here to avoid circular imports
-        from .models import Incident
+        from .incident_db import Incident
         from datetime import datetime, timezone
         import uuid
 
@@ -375,7 +375,7 @@ async def handle_sensor_drift(event: SensorDriftEvent):
         logger.error(f"Error healing sensor drift: {e}", exc_info=True)
         if _l3_escalation and _config:
             try:
-                from .models import Incident
+                from .incident_db import Incident
                 incident = Incident(
                     id=f"SENS-ERR-{event.hostname[:8]}",
                     site_id=_config.site_id,
