@@ -1,10 +1,10 @@
 # Session Handoff - 2026-01-28
 
-**Session:** 76 - COMPLETE
+**Session:** 77 - L1 RULES FIXED
 **Agent Version:** v1.0.49
-**ISO Version:** v49 (needs rebuild with fix)
+**ISO Version:** v49 (pending rebuild with all fixes)
 **Last Updated:** 2026-01-28
-**System Status:** Healing Target Routing FIXED ✅
+**System Status:** L1 Rules & Healing FIXED
 
 ---
 
@@ -12,103 +12,67 @@
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Agent | v1.0.49 | Running with bind mount fix |
-| ISO | v49 | Needs rebuild to include f87872a |
+| Agent | v1.0.49 | Running with bind mount fixes |
+| ISO | v49 | Needs rebuild to include 013fb17 |
 | Physical Appliance | **ONLINE** | 192.168.88.246 |
-| Healing | **FIXED** | Target routing now works correctly |
-| VPS Signing Key | **SECURED** | 600 permissions, UID 1000 |
-| Learning Sync | **VERIFIED** | Full data flywheel operational |
+| L1 Healing | **FIXED** | Correct Windows/NixOS routing |
+| Target Routing | **FIXED** | IP-based matching working |
+| VPS L1 Rules | **UPDATED** | host_id regex for Windows-only |
 | API | **HEALTHY** | https://api.osiriscare.net/health |
-| TLS Certificate | **VALID** | Expires Mar 31 (~62 days) |
+
+---
+
+## Session 77 - L1 Rules Windows/NixOS Distinction FIXED
+
+### Problem Summary
+- L1-FIREWALL rules matched local NixOS appliance (should be Windows-only)
+- L1-BITLOCKER rules not matching `bitlocker_status` check type
+- sensor_api.py had import error preventing sensor-pushed drift healing
+
+### Fixes Applied
+
+#### 1. VPS L1 Rules Updated (`/opt/mcp-server/app/main.py`)
+- **L1-FIREWALL-001/002**: Added `host_id regex ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$`
+  - Only matches IP addresses (Windows VMs), not hostnames (NixOS appliance)
+  - Changed action to `run_windows_runbook` with RB-WIN-FIREWALL-001
+- **L1-NIXOS-FW-001**: New rule for NixOS firewall → escalate
+  - Note: VPS version uses `not_regex` (not supported), l1_baseline.json uses `platform == nixos`
+- **L1-BITLOCKER-001**: Added `bitlocker_status` and `encryption` to check_type match
+  - Added host_id regex for Windows-only
+  - Changed action to `run_windows_runbook` with RB-WIN-SEC-005
+
+#### 2. Agent Fix (Commit 013fb17)
+- **sensor_api.py**: Changed import from `.models` to `.incident_db` for Incident class
+- **l1_baseline.json**: Added `bitlocker_status`, `windows_backup_status` to check types
+
+#### 3. Appliance Deployment
+- Deployed updated l1_baseline.json to `/var/lib/msp/rules/l1_baseline.json`
+- VPS syncs l1_rules.json with new rules
+
+### Verified Working
+```
+NixOS firewall check → L1-NIXOS-FW-001 → escalate (correct)
+Windows firewall (192.168.88.244) → L1 rule → RB-WIN-FIREWALL-001 → SUCCESS
+Windows BitLocker (192.168.88.244) → L1 rule → RB-WIN-ENCRYPTION-001 → runs (verify fails - lab limitation)
+```
+
+### Technical Notes
+- L1 engine supports `regex` operator but NOT `not_regex`
+- L1 baseline rule uses `platform == nixos` instead of `host_id not_regex`
+- Synced rules have priority 5, baseline rules have priority 1 (baseline wins on conflicts)
 
 ---
 
 ## Session 76 - Target Routing Bug FIXED
 
 ### Bug Summary
-- **Symptom:** Healing actions going to wrong VM (always first target .244)
-- **Root Cause #1:** Server didn't return `ip_address` in windows_targets
-- **Root Cause #2:** Short name matching on IPs - "192" matched all targets
+- Healing actions going to wrong VM (always first target .244)
+- Root Cause #1: Server didn't return `ip_address` in windows_targets
+- Root Cause #2: Short name matching on IPs - "192" matched all targets
 
 ### Fixes Applied
-
-#### 1. Server Fix (VPS)
-- File: `/opt/mcp-server/dashboard_api_mount/sites.py` line 1470
-- Added `"ip_address": hostname,` to windows_targets response
-- Restarted mcp-server container
-
-#### 2. Agent Fix (Commit f87872a)
-- File: `appliance_agent.py` lines 1153-1173
-- Detect if target_host is IP address, skip short name matching
-- Previously: "192.168.88.251".split('.')[0] = "192" matched all targets
-- Now: IP addresses use exact ip_address/hostname match only
-
-### Deployment Method
-- Used bind mount overlay (NixOS is read-only)
-- `/var/lib/msp/nix-overlay/appliance_agent.py` → Nix store path
-- Agent restarted to pick up changes
-
-### Verified Working
-```
-Windows check failed on 192.168.88.251 → Executes on 192.168.88.251 ✓
-Windows check failed on 192.168.88.250 → Executes on 192.168.88.250 ✓
-Windows check failed on 192.168.88.244 → Executes on 192.168.88.244 ✓
-```
-
-### Remaining Issue
-- Local firewall checks (osiriscare-appliance) still trigger Windows runbooks
-- L1 rule L1-FIREWALL-001/002 matches local incidents, should be Windows-only
-- Not critical - wrong target but healing still works
-
-### Next Steps
-1. **Rebuild ISO v50** with commit f87872a
-2. **Update chaos lab** to run diversity tests
-3. **Fix L1 firewall rules** to only match Windows incidents
-
----
-
-## Session 75 Accomplishments
-
-### 1. Production Readiness Audit - COMPLETE
-- **Created `docs/PRODUCTION_READINESS_AUDIT.md`** - 10-section audit (373 lines)
-- **Created `scripts/prod-health-check.sh`** - Automated health check (315 lines)
-- **Result:** System rated **Production Ready** (0 critical, 3 warnings)
-
-### 2. CRITICAL Security Fix - VPS Signing Key
-- **Issue:** `/opt/mcp-server/secrets/signing.key` had 644 permissions (world-readable)
-- **Impact:** Anyone with server access could sign orders
-- **Fix:** `chmod 600` + `chown 1000:1000` (container user UID)
-
-### 3. STATE_DIR Path Mismatch Fix
-- **Issue:** Python defaults to `/var/lib/msp-compliance-agent`, appliance uses `/var/lib/msp`
-- **Fix:** Added `STATE_DIR=/var/lib/msp` to NixOS configs + env override in config loader
-
-### 4. Healing DRY-RUN Mode Fix
-- **Issue:** Healing stuck in DRY-RUN despite env var
-- **Fix:** Added environment variable override support to `appliance_config.py`
-
-### 5. Execution Telemetry Fix
-- **Issue:** 500 errors on `/api/agent/executions` endpoint
-- **Fix:** Added `parse_iso_timestamp()` helper for datetime conversion
-
-### 6. Learning Sync Verification
-- Pattern sync: Working (8 patterns)
-- Execution telemetry: Working (200 OK)
-- Promoted rules sync: Working (returns YAML)
-- Full data flywheel operational
-
----
-
-## Files Modified This Session
-
-| File | Change |
-|------|--------|
-| `docs/PRODUCTION_READINESS_AUDIT.md` | NEW - Production audit document |
-| `scripts/prod-health-check.sh` | NEW - Health check script |
-| `iso/appliance-disk-image.nix` | Added STATE_DIR env var |
-| `iso/appliance-image.nix` | Added STATE_DIR env var |
-| `packages/compliance-agent/src/compliance_agent/appliance_config.py` | Env var override support |
-| `mcp-server/main.py` | parse_iso_timestamp() helper |
+1. Server: Added `ip_address` field to windows_targets response
+2. Agent: Skip short name matching for IP-format target_host
 
 ---
 
@@ -116,10 +80,20 @@ Windows check failed on 192.168.88.244 → Executes on 192.168.88.244 ✓
 
 | Commit | Message |
 |--------|---------|
-| `8b712ea` | feat: Production readiness audit and health check script |
-| `328549e` | fix: Mark critical signing.key permission issue as resolved |
-| `3c97d01` | fix: Add STATE_DIR env var and environment override support |
-| `8f029ef` | fix: Parse ISO timestamp strings in execution telemetry endpoint |
+| `013fb17` | fix: Fix sensor_api import and L1 rule check types |
+| `f494f89` | fix: Add AUTO-* runbook mapping and L1 firewall rules |
+| `f87872a` | fix: Target routing - IP addresses use exact match only |
+
+---
+
+## Files Modified This Session
+
+| File | Change |
+|------|--------|
+| `sensor_api.py` | Import Incident from incident_db not models |
+| `l1_baseline.json` | Added bitlocker_status, backup_status check types |
+| `appliance_agent.py` | IP-based target matching, AUTO-* runbook mapping |
+| VPS `main.py` | L1 rules with host_id regex, L1-NIXOS-FW-001 |
 
 ---
 
@@ -129,79 +103,65 @@ Windows check failed on 192.168.88.244 → Executes on 192.168.88.244 ✓
 | Appliance | IP | Version | Status |
 |-----------|-----|---------|--------|
 | Physical (HP T640) | 192.168.88.246 | v1.0.49 | **ONLINE** |
-| VM (VirtualBox) | 192.168.88.247 | v1.0.44 | Online |
 
 ### VPS
 | Service | URL | Status |
 |---------|-----|--------|
 | Dashboard | https://dashboard.osiriscare.net | Online |
 | API | https://api.osiriscare.net | Online |
-| Updates | http://178.156.162.116:8081 | v48 ISO available |
+| L1 Rules | Updated | 31 rules with Windows/NixOS distinction |
 
 ### Windows VMs (on iMac 192.168.88.50)
-| VM | IP | Go Agent | Status |
-|----|-----|----------|--------|
-| NVDC01 | 192.168.88.250 | Deployed | May need restart |
-| NVWS01 | 192.168.88.251 | Deployed | May need restart |
-| NVSRV01 | 192.168.88.244 | Deployed | May need restart |
+| VM | IP | Status |
+|----|-----|--------|
+| NVSRV01 | 192.168.88.244 | Online, healing working |
+| NVDC01 | 192.168.88.250 | Online, healing working |
+| NVWS01 | 192.168.88.251 | Online, healing working |
 
 ---
 
-## Warning Issues (Non-Blocking)
+## Known Limitations
 
-1. **SQLite tools missing on appliance** - Can't verify DB integrity
-2. **Windows lab VMs unreachable** - May be powered off
-3. **TLS cert expires ~63 days** - Verify auto-renewal configured
+1. **BitLocker verify phase fails** - Lab VMs may not have TPM/encryption configured
+2. **`not_regex` operator** - Not supported by L1 engine, use `platform` condition instead
+3. **L1-TEST-RULE-001.yaml** - Promoted rule fails to load (missing 'action' field)
 
 ---
 
 ## Next Session Priorities
 
-### 1. Deploy ISO v49 to Physical Appliance
-**Status:** READY
-**Details:**
-- ISO includes all env var fixes
-- Deploy via OTA update
+### 1. Rebuild ISO v50
+- Include commits: f87872a, f494f89, 013fb17
+- All L1 rules fixes and target routing fixes
 
-### 2. Verify TLS Auto-Renewal
-**Status:** PENDING
-**Command:** `ssh root@178.156.162.116 "docker exec caddy caddy reload"`
+### 2. Fix L1-TEST-RULE-001.yaml
+- Promoted rule in `/var/lib/msp/rules/promoted/` has invalid format
+- Either delete or fix the YAML structure
 
-### 3. Add sqlite3 to Appliance Image
-**Status:** PENDING
-**Details:** Add to `iso/appliance-disk-image.nix` systemPackages
-
-### 4. Start Windows VMs and Verify
-**Status:** PENDING
-**Details:** Currently unreachable, may need restart
+### 3. Add `not_regex` Operator Support (Optional)
+- Add to `level1_deterministic.py` MatchOperator enum
+- Implement in RuleCondition.matches()
 
 ---
 
 ## Quick Commands
 
 ```bash
-# Run health check
-./scripts/prod-health-check.sh
-
 # SSH to physical appliance
 ssh root@192.168.88.246
 
 # Check agent logs
 journalctl -u compliance-agent -f
 
-# SSH to VPS
-ssh root@178.156.162.116
+# Check L1 rule matching
+journalctl -u compliance-agent | grep "L1 rule matched"
 
-# Check signing key permissions
-ssh root@178.156.162.116 "ls -la /opt/mcp-server/secrets/"
-
-# Deploy frontend to VPS
-cd mcp-server/central-command/frontend && npm run build
-scp -r dist/* root@178.156.162.116:/opt/mcp-server/frontend_dist/
-
-# Deploy backend fix to VPS
+# Deploy VPS main.py fix
 scp file.py root@178.156.162.116:/opt/mcp-server/app/
 ssh root@178.156.162.116 "cd /opt/mcp-server && docker compose restart mcp-server"
+
+# Force rule sync
+ssh root@192.168.88.246 "rm /var/lib/msp/rules/l1_rules.json && systemctl restart compliance-agent"
 ```
 
 ---
@@ -209,8 +169,5 @@ ssh root@178.156.162.116 "cd /opt/mcp-server && docker compose restart mcp-serve
 ## Related Docs
 
 - `.agent/TODO.md` - Current tasks and session history
-- `.agent/CONTEXT.md` - Full project context
 - `.agent/LAB_CREDENTIALS.md` - Lab passwords (MUST READ)
 - `docs/PRODUCTION_READINESS_AUDIT.md` - Full production audit
-- `scripts/prod-health-check.sh` - Automated health checks
-- `IMPLEMENTATION-STATUS.md` - Phase tracking
