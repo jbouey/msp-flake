@@ -258,11 +258,12 @@ class TestCategoryRunbooks:
         """Test network category has expected runbooks."""
         from compliance_agent.runbooks.windows.network import NETWORK_RUNBOOKS
 
-        assert len(NETWORK_RUNBOOKS) == 4
+        assert len(NETWORK_RUNBOOKS) == 5
         assert "RB-WIN-NET-001" in NETWORK_RUNBOOKS  # DNS Client
         assert "RB-WIN-NET-002" in NETWORK_RUNBOOKS  # NIC Reset
         assert "RB-WIN-NET-003" in NETWORK_RUNBOOKS  # Network Profile
         assert "RB-WIN-NET-004" in NETWORK_RUNBOOKS  # NetBIOS
+        assert "RB-NET-SECURITY-001" in NETWORK_RUNBOOKS  # Network Security
 
     def test_storage_category(self):
         """Test storage category has expected runbooks."""
