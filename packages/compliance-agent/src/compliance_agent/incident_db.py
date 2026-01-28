@@ -137,7 +137,7 @@ class IncidentDatabase:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS promoted_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pattern_signature TEXT NOT NULL,
+                pattern_signature TEXT NOT NULL UNIQUE,
                 rule_yaml TEXT NOT NULL,
                 promoted_at TEXT NOT NULL,
                 promoted_from_incidents TEXT NOT NULL,
@@ -300,18 +300,21 @@ class IncidentDatabase:
             outcome.value, resolution_time_ms, incident_id
         ))
 
-        # Update pattern stats
-        level_column = {
-            ResolutionLevel.LEVEL1_DETERMINISTIC: "l1_resolutions",
-            ResolutionLevel.LEVEL2_LLM: "l2_resolutions",
-            ResolutionLevel.LEVEL3_HUMAN: "l3_resolutions",
-        }.get(resolution_level, "l3_resolutions")
+        # Update pattern stats - using CASE to avoid SQL injection
+        # Map resolution level to integer for safe parameterized query
+        level_code = {
+            ResolutionLevel.LEVEL1_DETERMINISTIC: 1,
+            ResolutionLevel.LEVEL2_LLM: 2,
+            ResolutionLevel.LEVEL3_HUMAN: 3,
+        }.get(resolution_level, 3)
 
         success_increment = 1 if outcome == IncidentOutcome.SUCCESS else 0
 
-        conn.execute(f"""
+        conn.execute("""
             UPDATE pattern_stats SET
-                {level_column} = {level_column} + 1,
+                l1_resolutions = l1_resolutions + CASE WHEN ? = 1 THEN 1 ELSE 0 END,
+                l2_resolutions = l2_resolutions + CASE WHEN ? = 2 THEN 1 ELSE 0 END,
+                l3_resolutions = l3_resolutions + CASE WHEN ? = 3 THEN 1 ELSE 0 END,
                 success_count = success_count + ?,
                 total_resolution_time_ms = total_resolution_time_ms + ?,
                 recommended_action = CASE
@@ -320,6 +323,7 @@ class IncidentDatabase:
                 END
             WHERE pattern_signature = ?
         """, (
+            level_code, level_code, level_code,
             success_increment, resolution_time_ms,
             outcome.value, resolution_action, pattern_signature
         ))

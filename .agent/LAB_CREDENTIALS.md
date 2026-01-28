@@ -1,6 +1,6 @@
 # Lab Credentials
 
-**Last Updated:** 2026-01-02
+**Last Updated:** 2026-01-28
 **Environment:** North Valley Clinic Test Lab + Physical Appliance
 
 > **WARNING:** These are LAB/TEST credentials only. Never use in production.
@@ -19,6 +19,7 @@
 | Windows DC (DSRM) | NVDC01 | 192.168.88.250 | (Safe Mode) | NorthValley2024! |
 | Windows Workstation | NVWS01 | 192.168.88.251 | localadmin | NorthValley2024! |
 | Windows Workstation | NVWS01 | 192.168.88.251 | NORTHVALLEY\adminit | ClinicAdmin2024! |
+| Ubuntu Linux | northvalley-linux | 192.168.88.242 (DHCP) | osiris | NorthValley2024! |
 
 ### Domain Information
 
@@ -244,6 +245,7 @@ ssh jrelly@192.168.88.50 '/Applications/VirtualBox.app/Contents/MacOS/VBoxManage
 192.168.88.0/24 - North Valley Lab Network
 ├── 192.168.88.1   - Gateway/Router
 ├── 192.168.88.50  - iMac (VirtualBox host)
+├── 192.168.88.242 - northvalley-linux (Ubuntu 24.04 Server, DHCP)
 ├── 192.168.88.244 - NVSRV01 (Windows Server 2022 Core, domain member)
 ├── 192.168.88.246 - HP T640 Physical Appliance (physical-appliance-pilot-1aea78)
 ├── 192.168.88.247 - Lab Appliance VM (test-appliance-lab-b3c40c)

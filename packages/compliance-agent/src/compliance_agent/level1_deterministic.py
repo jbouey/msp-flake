@@ -157,7 +157,7 @@ class Rule:
         Handles format differences:
         - JSON uses 'actions' (list), Rule uses 'action' (string)
         - JSON uses 'severity' field, not 'severity_filter'
-        - Synced rules get priority 5 to override built-in rules (priority 10)
+        - Reads priority from JSON, defaults to 5 (higher than built-in priority 10)
         """
         conditions = []
         for cond in json_data.get("conditions", []):
@@ -181,7 +181,7 @@ class Rule:
             hipaa_controls=json_data.get("hipaa_controls", []),
             severity_filter=json_data.get("severity_filter"),
             enabled=json_data.get("enabled", True),
-            priority=5,  # Synced rules have higher priority than built-in (10)
+            priority=json_data.get("priority", 5),  # Read from JSON, default 5 (higher than built-in 10)
             cooldown_seconds=json_data.get("cooldown_seconds", 300),
             max_retries=json_data.get("max_retries", 1),
             source="synced"
@@ -253,22 +253,24 @@ class DeterministicEngine:
         self._load_builtin_rules()
 
         # Load custom rules from directory
+        # Sort files alphabetically for deterministic load order
         if self.rules_dir.exists():
-            for rule_file in self.rules_dir.glob("*.yaml"):
+            for rule_file in sorted(self.rules_dir.glob("*.yaml")):
                 try:
                     self._load_rule_file(rule_file)
                 except Exception as e:
                     logger.error(f"Failed to load rule file {rule_file}: {e}")
 
-            for rule_file in self.rules_dir.glob("*.yml"):
+            for rule_file in sorted(self.rules_dir.glob("*.yml")):
                 try:
                     self._load_rule_file(rule_file)
                 except Exception as e:
                     logger.error(f"Failed to load rule file {rule_file}: {e}")
 
             # Load synced rules from JSON (from Central Command)
-            # These have higher priority (5) than built-in rules (10)
-            for json_file in self.rules_dir.glob("*.json"):
+            # Default priority 5 can be overridden by setting "priority" in JSON
+            # Sort files alphabetically for deterministic load order
+            for json_file in sorted(self.rules_dir.glob("*.json")):
                 try:
                     self._load_synced_json_rules(json_file)
                 except Exception as e:
@@ -278,13 +280,13 @@ class DeterministicEngine:
             # These are auto-generated from successful L2 patterns
             promoted_dir = self.rules_dir / "promoted"
             if promoted_dir.exists():
-                for rule_file in promoted_dir.glob("*.yaml"):
+                for rule_file in sorted(promoted_dir.glob("*.yaml")):
                     try:
                         self._load_rule_file(rule_file)
                         logger.debug(f"Loaded promoted rule: {rule_file.name}")
                     except Exception as e:
                         logger.error(f"Failed to load promoted rule {rule_file}: {e}")
-                for rule_file in promoted_dir.glob("*.yml"):
+                for rule_file in sorted(promoted_dir.glob("*.yml")):
                     try:
                         self._load_rule_file(rule_file)
                         logger.debug(f"Loaded promoted rule: {rule_file.name}")
@@ -631,10 +633,12 @@ class DeterministicEngine:
             # Record in incident database
             if self.incident_db:
                 outcome = IncidentOutcome.SUCCESS if result["success"] else IncidentOutcome.FAILURE
+                # Include rule_id in resolution_action for tracking promoted rule performance
+                resolution_action = f"{match.action}:{match.rule.id}"
                 self.incident_db.resolve_incident(
                     incident_id=match.incident_id,
                     resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
-                    resolution_action=match.action,
+                    resolution_action=resolution_action,
                     outcome=outcome,
                     resolution_time_ms=result["duration_ms"]
                 )
@@ -645,10 +649,11 @@ class DeterministicEngine:
             result["completed_at"] = datetime.now(timezone.utc).isoformat()
 
             if self.incident_db:
+                resolution_action = f"{match.action}:{match.rule.id}"
                 self.incident_db.resolve_incident(
                     incident_id=match.incident_id,
                     resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
-                    resolution_action=match.action,
+                    resolution_action=resolution_action,
                     outcome=IncidentOutcome.FAILURE,
                     resolution_time_ms=int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
                 )

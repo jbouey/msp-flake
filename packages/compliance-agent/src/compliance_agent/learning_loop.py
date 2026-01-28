@@ -743,7 +743,7 @@ class SelfLearningSystem:
                     "success_rate": 1.0, "failure_rate": 0.0}
 
         # Query incidents resolved by this rule since promotion
-        # Note: This requires the incident_db to track which rule resolved each incident
+        # resolution_action format is "action:rule_id", so we match for ":rule_id" suffix
         import sqlite3
         conn = sqlite3.connect(self.incident_db.db_path)
         cursor = conn.execute('''
@@ -753,9 +753,9 @@ class SelfLearningSystem:
                 SUM(CASE WHEN outcome = 'failed' OR outcome = 'failure' THEN 1 ELSE 0 END) as failures
             FROM incidents
             WHERE resolution_level = 'L1'
-            AND resolution_action LIKE ?
+            AND (resolution_action LIKE ? OR resolution_action = ?)
             AND resolved_at >= ?
-        ''', (f'%{rule_id}%', promoted_at))
+        ''', (f'%:{rule_id}', rule_id, promoted_at))
 
         row = cursor.fetchone()
         conn.close()

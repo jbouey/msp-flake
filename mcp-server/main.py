@@ -1410,6 +1410,12 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
 
     for stat in request.pattern_stats:
         try:
+            # Parse last_seen string to datetime
+            try:
+                last_seen_dt = datetime.fromisoformat(stat.last_seen.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                last_seen_dt = datetime.now(timezone.utc)
+
             # Check if pattern exists in aggregated stats
             result = await db.execute(
                 text("""
@@ -1434,7 +1440,7 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
                         total_resolution_time_ms = GREATEST(total_resolution_time_ms, :time),
                         success_rate = CASE
                             WHEN GREATEST(total_occurrences, :occ) > 0
-                            THEN (GREATEST(success_count, :sc)::FLOAT / GREATEST(total_occurrences, :occ)) * 100
+                            THEN (CAST(GREATEST(success_count, :sc) AS FLOAT) / GREATEST(total_occurrences, :occ)) * 100
                             ELSE 0
                         END,
                         avg_resolution_time_ms = CASE
@@ -1444,7 +1450,7 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
                         END,
                         recommended_action = COALESCE(:action, recommended_action),
                         promotion_eligible = :eligible,
-                        last_seen = GREATEST(last_seen, :last_seen::timestamptz),
+                        last_seen = GREATEST(last_seen, :last_seen),
                         last_synced_at = NOW()
                     WHERE site_id = :site_id AND pattern_signature = :sig
                 """), {
@@ -1458,7 +1464,7 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
                     "time": stat.total_resolution_time_ms,
                     "action": stat.recommended_action,
                     "eligible": stat.promotion_eligible,
-                    "last_seen": stat.last_seen,
+                    "last_seen": last_seen_dt,
                 })
                 merged += 1
             else:
@@ -1475,7 +1481,7 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
                     ) VALUES (
                         :site_id, :sig, :occ, :l1, :l2, :l3, :sc, :time,
                         :rate, :avg, :action, :eligible,
-                        :last_seen::timestamptz, :last_seen::timestamptz, NOW()
+                        :first_seen, :last_seen, NOW()
                     )
                 """), {
                     "site_id": request.site_id,
@@ -1490,31 +1496,37 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
                     "avg": avg_time,
                     "action": stat.recommended_action,
                     "eligible": stat.promotion_eligible,
-                    "last_seen": stat.last_seen,
+                    "first_seen": last_seen_dt,
+                    "last_seen": last_seen_dt,
                 })
                 accepted += 1
 
         except Exception as e:
             logger.warning(f"Failed to sync pattern {stat.pattern_signature}: {e}")
+            # Rollback to clear the aborted transaction state
+            await db.rollback()
             continue
 
     # Record sync event
-    await db.execute(text("""
-        INSERT INTO appliance_pattern_sync (appliance_id, site_id, synced_at, patterns_received, patterns_merged, sync_status)
-        VALUES (:appliance_id, :site_id, NOW(), :received, :merged, 'success')
-        ON CONFLICT (appliance_id) DO UPDATE SET
-            synced_at = NOW(),
-            patterns_received = :received,
-            patterns_merged = :merged,
-            sync_status = 'success'
-    """), {
-        "appliance_id": request.appliance_id,
-        "site_id": request.site_id,
-        "received": len(request.pattern_stats),
-        "merged": merged,
-    })
-
-    await db.commit()
+    try:
+        await db.execute(text("""
+            INSERT INTO appliance_pattern_sync (appliance_id, site_id, synced_at, patterns_received, patterns_merged, sync_status)
+            VALUES (:appliance_id, :site_id, NOW(), :received, :merged, 'success')
+            ON CONFLICT (appliance_id) DO UPDATE SET
+                synced_at = NOW(),
+                patterns_received = :received,
+                patterns_merged = :merged,
+                sync_status = 'success'
+        """), {
+            "appliance_id": request.appliance_id,
+            "site_id": request.site_id,
+            "received": len(request.pattern_stats),
+            "merged": merged,
+        })
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"Failed to record sync event for {request.appliance_id}: {e}")
+        await db.rollback()
 
     logger.info(f"Pattern sync from {request.appliance_id}: {accepted} new, {merged} merged")
     return {

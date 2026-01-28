@@ -5,6 +5,73 @@
 
 ---
 
+## Session 78 (2026-01-28) - COMPLETE
+
+### Session Goals
+1. ✅ Fix Central Command learning sync (500/422 errors)
+2. ✅ Audit Linux healing system
+3. ✅ Audit learning storage system
+4. ✅ Fix all identified critical/high priority issues
+
+### Accomplishments
+
+#### 1. Central Command Learning Sync Fix (VPS `main.py`)
+- **Issue:** 500 errors from `/api/agent/sync/pattern-stats` endpoint
+- **Root Cause:** Transaction rollback not happening after SQL exceptions + asyncpg datetime handling
+- **Fixes Applied:**
+  - Added `await db.rollback()` after exceptions in sync endpoint
+  - Added `parse_iso_timestamp()` for datetime conversion (asyncpg requires datetime objects, not strings)
+- **Result:** Pattern sync: 26 completed, execution_report: 152 completed
+
+#### 2. SQL Injection Fix (`incident_db.py`)
+- **Issue:** f-string column interpolation in UPDATE statement (potential SQL injection)
+- **Root Cause:** `{level_column}` variable directly in SQL string
+- **Fix:** Changed to parameterized CASE statements with integer level_code
+- **Result:** Secure parameterized queries for all resolution level updates
+
+#### 3. UNIQUE Constraint on `promoted_rules` (`incident_db.py`)
+- **Issue:** Duplicate pattern_signature entries possible
+- **Fix:** Added `UNIQUE` constraint to pattern_signature column in CREATE TABLE
+- **Result:** Database integrity enforced for promoted rules
+
+#### 4. SSH Exception Handling (`runbooks/linux/executor.py`)
+- **Issue:** Generic exception handling for SSH errors (poor error categorization)
+- **Fix:** Added specific asyncssh exception types:
+  - `asyncssh.PermissionDenied` → Auth failure, no retry
+  - `asyncssh.ConnectionLost` → Connection dropped, invalidate cache
+  - `asyncssh.Error` → General SSH error, invalidate cache
+- **Result:** Better error diagnosis and appropriate retry behavior
+
+#### 5. Post-Promotion Stats Query Fix (`learning_loop.py`, `level1_deterministic.py`)
+- **Issue:** Fragile LIKE pattern matching could match wrong rule IDs
+- **Root Cause:** `LIKE '%{rule_id}%'` too permissive
+- **Fix:**
+  - Changed `resolution_action` format to `action:rule_id` (e.g., `restart_service:L1-WIN-SVC-001`)
+  - Query now matches suffix pattern `%:rule_id` OR exact match
+- **Result:** Reliable rule-specific performance tracking
+
+### Linux Healing Audit Results
+- **20 Linux runbooks** (15 L1 auto-heal, 5 escalate)
+- Good SSH-based async execution model with connection pooling
+- All runbooks have proper detect/remediate/verify scripts
+
+### Files Modified This Session
+
+| File | Change |
+|------|--------|
+| `mcp-server/main.py` (VPS) | Learning sync rollback + datetime parsing |
+| `incident_db.py` | SQL injection fix + UNIQUE constraint |
+| `runbooks/linux/executor.py` | Specific SSH exception handling |
+| `level1_deterministic.py` | resolution_action format with rule_id |
+| `learning_loop.py` | Post-promotion query fix |
+
+### Technical Notes
+- asyncpg requires datetime objects, not ISO strings
+- Learning data flywheel now fully operational with proper tracking
+- All 95 tests pass for modified modules
+
+---
+
 ## Session 77 (2026-01-28) - COMPLETE
 
 ### Session Goals
