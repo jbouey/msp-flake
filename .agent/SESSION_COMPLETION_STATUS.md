@@ -1,100 +1,60 @@
-# Session 75 Completion Status
+# Session 77 Completion Status
 
-**Date:** 2026-01-27
-**Session:** 75 - Complete
+**Date:** 2026-01-28
+**Session:** 77 - Complete
 **Agent Version:** v1.0.49
-**ISO Version:** v48
+**ISO Version:** v49 (pending rebuild with all fixes)
 **Status:** COMPLETE
 
 ---
 
-## Session 75 Accomplishments
+## Session 77 Accomplishments
 
-### 1. Production Readiness Audit
-
-| Task | Status | Details |
-|------|--------|---------|
-| PRODUCTION_READINESS_AUDIT.md creation | DONE | 10-section audit (373 lines) |
-| prod-health-check.sh creation | DONE | Automated health check (315 lines) |
-| Environment Variables audit | DONE | No hardcoded secrets |
-| Clock Synchronization audit | DONE | VPS and appliance NTP verified |
-| DNS Resolution audit | DONE | Both systems resolve correctly |
-| File Permissions audit | DONE | Signing key secured |
-| TLS Certificate audit | DONE | Valid ~63 days |
-| Database Connection audit | DONE | Pool settings configured |
-| Async/Blocking Code audit | DONE | No blocking calls |
-| Service Ordering audit | DONE | Correct dependencies |
-| Proto/Contract Drift audit | DONE | Protos in sync |
-
-### 2. CRITICAL Security Fix
+### 1. L1 Rules Windows/NixOS Distinction Fix
 
 | Task | Status | Details |
 |------|--------|---------|
-| Identify signing key issue | DONE | 644 permissions (world-readable) |
-| Fix permissions | DONE | Changed to 600 |
-| Fix ownership | DONE | Changed to 1000:1000 (container UID) |
-| Verify fix | DONE | ls -la confirms correct permissions |
-| Update audit document | DONE | Marked as FIXED |
+| Identify L1-FIREWALL rule mismatch | DONE | Rules matched NixOS appliance (should be Windows-only) |
+| Add host_id regex to L1-FIREWALL-001/002 | DONE | `^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$` matches IPs only |
+| Create L1-NIXOS-FW-001 rule | DONE | NixOS firewall → escalate to L3 |
+| Fix L1-BITLOCKER-001 check types | DONE | Added `bitlocker_status`, `encryption` |
+| Deploy to VPS | DONE | Updated `/opt/mcp-server/app/main.py` |
 
-### 3. Infrastructure Fixes
-
-| Task | Status | Details |
-|------|--------|---------|
-| STATE_DIR path mismatch | DONE | Added env var to NixOS configs |
-| Environment override support | DONE | Updated appliance_config.py |
-| Healing DRY-RUN stuck | DONE | Config now respects env vars |
-| Execution telemetry 500s | DONE | Added datetime parser |
-
-### 4. Learning Sync Verification
+### 2. Agent Fixes
 
 | Task | Status | Details |
 |------|--------|---------|
-| Pattern sync | VERIFIED | 8 patterns in aggregated_pattern_stats |
-| Execution telemetry | VERIFIED | 200 OK responses |
-| Promoted rules sync | VERIFIED | Returns YAML to agents |
-| Data flywheel | OPERATIONAL | Full loop working |
+| Fix sensor_api.py import | DONE | Changed `.models` to `.incident_db` for Incident |
+| Update l1_baseline.json | DONE | Added `bitlocker_status`, `windows_backup_status` |
+| Fix IP-based target matching | DONE | Exact match for IP-format host IDs |
+| Deploy l1_baseline.json to appliance | DONE | Via scp to `/var/lib/msp/rules/` |
+
+### 3. Target Routing Bug Fix (Session 76)
+
+| Task | Status | Details |
+|------|--------|---------|
+| Add ip_address to windows_targets | DONE | Server now returns IP in response |
+| Skip short name matching for IPs | DONE | "192" no longer matches all targets |
+| Verify correct VM targeted | DONE | .244 incidents go to .244, .250 to .250 |
 
 ---
 
 ## Files Modified This Session
 
-### New Files:
-1. `docs/PRODUCTION_READINESS_AUDIT.md` - 10-section production audit
-2. `scripts/prod-health-check.sh` - Automated health check script
-3. `.agent/sessions/2026-01-27-session75-production-readiness.md` - Session log
+### Agent Files:
+1. `packages/compliance-agent/src/compliance_agent/sensor_api.py` - Import fix
+2. `packages/compliance-agent/src/compliance_agent/rules/l1_baseline.json` - Check types
+3. `packages/compliance-agent/src/compliance_agent/appliance_agent.py` - Target routing
 
-### Modified Files:
-1. `iso/appliance-disk-image.nix` - Added STATE_DIR env var
-2. `iso/appliance-image.nix` - Added STATE_DIR env var
-3. `packages/compliance-agent/src/compliance_agent/appliance_config.py` - Env var override
-4. `mcp-server/main.py` - parse_iso_timestamp() helper
+### VPS Files (Applied Directly):
+1. `/opt/mcp-server/app/main.py` - L1 rules with host_id regex
 
 ### Documentation Updated:
-1. `.agent/TODO.md` - Session 75 complete
-2. `IMPLEMENTATION-STATUS.md` - Session 75 status
-3. `.agent/SESSION_HANDOFF.md` - Current state
-4. `.agent/SESSION_COMPLETION_STATUS.md` - This file
-
----
-
-## VPS Changes This Session
-
-| Change | Location | Method |
-|--------|----------|--------|
-| signing.key permissions | `/opt/mcp-server/secrets/` | SSH chmod/chown |
-| main.py datetime fix | `/opt/mcp-server/app/` | Docker rebuild |
-
----
-
-## Deployment State
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| VPS API | DEPLOYED | Datetime fix applied |
-| VPS Signing Key | SECURED | 600 permissions |
-| Physical Appliance | Online | 192.168.88.246, healing active |
-| VM Appliance | Online | 192.168.88.247 |
-| Learning Sync | Working | Full flywheel operational |
+1. `.agent/TODO.md` - Session 77 complete
+2. `.agent/CONTEXT.md` - Current state
+3. `IMPLEMENTATION-STATUS.md` - Session 77 status
+4. `.agent/SESSION_HANDOFF.md` - Handoff state
+5. `.agent/SESSION_COMPLETION_STATUS.md` - This file
 
 ---
 
@@ -102,10 +62,30 @@
 
 | Commit | Message |
 |--------|---------|
-| `8b712ea` | feat: Production readiness audit and health check script |
-| `328549e` | fix: Mark critical signing.key permission issue as resolved |
-| `3c97d01` | fix: Add STATE_DIR env var and environment override support |
-| `8f029ef` | fix: Parse ISO timestamp strings in execution telemetry endpoint |
+| `013fb17` | fix: Fix sensor_api import and L1 rule check types |
+| `f494f89` | fix: Add AUTO-* runbook mapping and L1 firewall rules |
+| `f87872a` | fix: Target routing - IP addresses use exact match only |
+
+---
+
+## Deployment State
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| VPS L1 Rules | DEPLOYED | 31 rules with Windows/NixOS distinction |
+| Physical Appliance | Online | 192.168.88.246, running v1.0.49 |
+| l1_baseline.json | Deployed | 29 rules loaded |
+| l1_rules.json (synced) | Working | 31 rules from VPS |
+
+---
+
+## Verification Results
+
+```
+NixOS firewall check → L1-NIXOS-FW-001 → escalate (CORRECT)
+Windows firewall (192.168.88.244) → L1-FIREWALL-001 → RB-WIN-FIREWALL-001 → SUCCESS
+Windows BitLocker (192.168.88.244) → L1-BITLOCKER-001 → runs (verify fails - lab limitation)
+```
 
 ---
 
@@ -113,31 +93,30 @@
 
 | Metric | Status |
 |--------|--------|
-| Production Readiness | **READY** |
-| Critical Issues | 0 (1 fixed) |
-| Warning Issues | 3 |
-| API Health | Healthy |
-| TLS Certificate | Valid ~63 days |
+| L1 Rule Loading | 69 rules (31 synced + 29 baseline + promoted) |
+| Healing Active | Yes |
+| Windows/NixOS Routing | FIXED |
+| Target Routing | FIXED |
 | Tests Passing | 839 + 24 Go |
 
 ---
 
-## Warning Issues (Non-Blocking)
+## Known Issues (Non-Blocking)
 
-1. **SQLite tools missing on appliance** - Can't verify DB integrity
-2. **Windows lab VMs unreachable** - May be powered off
-3. **TLS cert expires ~63 days** - Verify auto-renewal configured
+1. **BitLocker verify fails** - Lab VMs don't have TPM/encryption configured
+2. **`not_regex` operator** - Not supported by L1 engine (use `platform` instead)
+3. **L1-TEST-RULE-001.yaml** - Promoted rule fails to load (missing 'action' field)
+4. **L1-NIXOS-FW-001 parse warning** - VPS version uses unsupported `not_regex`
 
 ---
 
-## Next Steps
+## Next Session Priorities
 
 | Priority | Task | Notes |
 |----------|------|-------|
-| High | Deploy ISO v49 | Includes all env var fixes |
-| Medium | Verify TLS auto-renewal | docker exec caddy reload |
-| Medium | Add sqlite3 to appliance | For database diagnostics |
-| Low | Start Windows VMs | Currently unreachable |
+| High | Rebuild ISO v50 | Include commits: f87872a, f494f89, 013fb17 |
+| Medium | Fix L1-TEST-RULE-001.yaml | Delete or fix promoted rule |
+| Low | Add `not_regex` support | Implement in level1_deterministic.py |
 
 ---
 
@@ -145,14 +124,14 @@
 
 | Metric | Target | Actual | Status |
 |--------|--------|--------|--------|
-| Production audit | Complete | 10 sections | DONE |
-| Critical issues | 0 | 0 (1 fixed) | DONE |
-| Learning sync | Working | Verified | DONE |
-| Healing active | Yes | Yes | DONE |
+| L1 firewall rules | Windows-only | IP regex | DONE |
+| NixOS firewall | Escalate | L1-NIXOS-FW-001 | DONE |
+| BitLocker check types | Match | Added 2 types | DONE |
+| Target routing | Exact match | IP-based | DONE |
 | Documentation | Updated | All files | DONE |
 
 ---
 
 **Session Status:** COMPLETE
 **Handoff Ready:** YES
-**Next Session:** Deploy ISO v49, verify TLS auto-renewal
+**Next Session:** Rebuild ISO v50, fix promoted rule

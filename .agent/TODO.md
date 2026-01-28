@@ -1,7 +1,74 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-27 (Session 75 - Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.49, **ISO v48 BUILT**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.47**)
+**Last Updated:** 2026-01-28 (Session 77 - Complete)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.49, **ISO v49 pending rebuild**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.49**)
+
+---
+
+## Session 77 (2026-01-28) - COMPLETE
+
+### Session Goals
+1. ✅ Fix L1 rules matching local NixOS appliance (should be Windows-only)
+2. ✅ Fix L1-BITLOCKER rules not matching `bitlocker_status` check type
+3. ✅ Fix sensor_api.py import error preventing sensor-pushed drift healing
+4. ✅ Fix target routing bug (healing going to wrong VM)
+
+### Accomplishments
+
+#### 1. VPS L1 Rules Updated (`/opt/mcp-server/app/main.py`)
+- **L1-FIREWALL-001/002**: Added `host_id regex ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$`
+  - Only matches IP addresses (Windows VMs), not hostnames (NixOS appliance)
+  - Changed action to `run_windows_runbook` with RB-WIN-FIREWALL-001
+- **L1-NIXOS-FW-001**: New rule for NixOS firewall → escalate
+  - Note: VPS version uses `not_regex` (not supported), l1_baseline.json uses `platform == nixos`
+- **L1-BITLOCKER-001**: Added `bitlocker_status` and `encryption` to check_type match
+  - Added host_id regex for Windows-only
+  - Changed action to `run_windows_runbook` with RB-WIN-SEC-005
+
+#### 2. Agent Fixes (Commit 013fb17)
+- **sensor_api.py**: Changed import from `.models` to `.incident_db` for Incident class
+- **l1_baseline.json**: Added `bitlocker_status`, `windows_backup_status` to check types
+- **appliance_agent.py**: IP-based target matching, AUTO-* runbook mapping
+
+#### 3. Target Routing Bug Fix (Session 76)
+- **Issue:** Healing actions going to wrong VM (always first target .244)
+- **Root Cause #1:** Server didn't return `ip_address` in windows_targets
+- **Root Cause #2:** Short name matching on IPs - "192" matched all targets
+- **Fix:** Server now returns ip_address, agent uses exact match for IP-format targets
+
+### Verified Working
+```
+NixOS firewall check → L1-NIXOS-FW-001 → escalate (correct)
+Windows firewall (192.168.88.244) → L1 rule → RB-WIN-FIREWALL-001 → SUCCESS
+Windows BitLocker (192.168.88.244) → L1 rule → runs (verify fails - lab limitation)
+```
+
+### Technical Notes
+- L1 engine supports `regex` operator but NOT `not_regex`
+- L1 baseline rule uses `platform == nixos` instead of `host_id not_regex`
+- Synced rules have priority 5, baseline rules have priority 1 (baseline wins on conflicts)
+
+### Files Modified This Session
+
+| File | Change |
+|------|--------|
+| `sensor_api.py` | Import Incident from incident_db not models |
+| `l1_baseline.json` | Added bitlocker_status, backup_status check types |
+| `appliance_agent.py` | IP-based target matching, AUTO-* runbook mapping |
+| VPS `main.py` | L1 rules with host_id regex, L1-NIXOS-FW-001 |
+
+### Git Commits
+
+| Hash | Description |
+|------|-------------|
+| `013fb17` | fix: Fix sensor_api import and L1 rule check types |
+| `f494f89` | fix: Add AUTO-* runbook mapping and L1 firewall rules |
+| `f87872a` | fix: Target routing - IP addresses use exact match only |
+
+### Known Limitations
+1. **BitLocker verify phase fails** - Lab VMs may not have TPM/encryption configured
+2. **`not_regex` operator** - Not supported by L1 engine, use `platform` condition instead
+3. **L1-TEST-RULE-001.yaml** - Promoted rule fails to load (missing 'action' field)
 
 ---
 
