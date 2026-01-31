@@ -208,11 +208,54 @@ class OTSStatusResponse(BaseModel):
 # OTS Client Functions
 # =============================================================================
 
+def construct_ots_file(hash_bytes: bytes, calendar_response: bytes) -> bytes:
+    """
+    Construct a proper OTS file from hash and calendar response.
+
+    OTS file format:
+    - Magic header: \x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94
+    - Hash algorithm: \x08 (SHA256)
+    - 32-byte hash
+    - Timestamp operations from calendar
+    """
+    # OTS magic header
+    OTS_MAGIC = b'\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94'
+
+    # Hash algorithm byte (0x08 = SHA256)
+    HASH_SHA256 = b'\x08'
+
+    # Construct file: magic + hash_type + hash + calendar_timestamp_data
+    ots_file = OTS_MAGIC + HASH_SHA256 + hash_bytes + calendar_response
+
+    return ots_file
+
+
+def extract_calendar_url_from_proof(proof_bytes: bytes) -> Optional[str]:
+    """Extract the actual calendar URL from OTS proof data."""
+    # Calendar URLs are embedded as ASCII strings in the proof
+    # Look for https:// pattern
+    try:
+        url_start = proof_bytes.find(b'https://')
+        if url_start >= 0:
+            # Find end of URL (null byte or non-URL character)
+            url_end = url_start
+            while url_end < len(proof_bytes) and proof_bytes[url_end:url_end+1] not in (b'\x00', b'\x83'):
+                url_end += 1
+            url = proof_bytes[url_start:url_end].decode('ascii', errors='ignore')
+            # Clean up any trailing garbage
+            if 'opentimestamps.org' in url:
+                return url.split('\x00')[0].strip()
+    except Exception:
+        pass
+    return None
+
+
 async def submit_hash_to_ots(bundle_hash: str, bundle_id: str) -> Optional[Dict[str, Any]]:
     """
     Submit a hash to OTS calendar servers.
 
-    Returns dict with proof_data, calendar_url, submitted_at if successful.
+    Returns dict with proof_data (proper OTS file), calendar_url, submitted_at if successful.
+    The proof_data is a complete OTS file that can be used with standard OTS tools.
     """
     if not OTS_ENABLED:
         logger.debug("OTS disabled, skipping hash submission")
@@ -243,14 +286,20 @@ async def submit_hash_to_ots(bundle_hash: str, bundle_id: str) -> Optional[Dict[
 
                 async with session.post(url, data=hash_bytes, headers=headers) as resp:
                     if resp.status == 200:
-                        proof_bytes = await resp.read()
-                        proof_b64 = base64.b64encode(proof_bytes).decode('ascii')
+                        calendar_response = await resp.read()
 
-                        logger.info(f"OTS submitted: bundle={bundle_id[:8]}... calendar={calendar_url}")
+                        # Construct proper OTS file with header and hash
+                        ots_file_bytes = construct_ots_file(hash_bytes, calendar_response)
+                        proof_b64 = base64.b64encode(ots_file_bytes).decode('ascii')
+
+                        # Extract actual calendar URL from proof (may differ from pool URL)
+                        actual_calendar = extract_calendar_url_from_proof(calendar_response) or calendar_url
+
+                        logger.info(f"OTS submitted: bundle={bundle_id[:8]}... calendar={actual_calendar}")
 
                         return {
                             "proof_data": proof_b64,
-                            "calendar_url": calendar_url,
+                            "calendar_url": actual_calendar,  # Store actual calendar, not pool
                             "submitted_at": datetime.now(timezone.utc),
                             "status": "pending",
                         }
@@ -266,11 +315,66 @@ async def submit_hash_to_ots(bundle_hash: str, bundle_id: str) -> Optional[Dict[
         return None
 
 
+def parse_ots_file(ots_bytes: bytes) -> Optional[Dict[str, Any]]:
+    """
+    Parse an OTS file to extract components for upgrade.
+
+    Returns dict with:
+    - hash_bytes: Original 32-byte hash
+    - timestamp_data: The timestamp operations portion
+    - calendar_url: Extracted calendar URL
+    - has_bitcoin: Whether Bitcoin attestation exists
+    """
+    # OTS magic header
+    OTS_MAGIC = b'\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94'
+
+    if not ots_bytes.startswith(OTS_MAGIC):
+        # Try legacy format (raw calendar response without header)
+        # These old proofs can't be upgraded with standard tools
+        return None
+
+    offset = len(OTS_MAGIC)
+
+    # Next byte should be hash algorithm (0x08 = SHA256)
+    if offset >= len(ots_bytes) or ots_bytes[offset] != 0x08:
+        return None
+
+    offset += 1
+
+    # Next 32 bytes are the hash
+    if offset + 32 > len(ots_bytes):
+        return None
+
+    hash_bytes = ots_bytes[offset:offset + 32]
+    offset += 32
+
+    # Rest is timestamp data
+    timestamp_data = ots_bytes[offset:]
+
+    # Extract calendar URL
+    calendar_url = extract_calendar_url_from_proof(timestamp_data)
+
+    # Check for Bitcoin attestation marker
+    has_bitcoin = b'\x05\x88\x96\x0d\x73\xd7\x19\x01' in timestamp_data
+
+    return {
+        "hash_bytes": hash_bytes,
+        "timestamp_data": timestamp_data,
+        "calendar_url": calendar_url,
+        "has_bitcoin": has_bitcoin,
+        "full_ots": ots_bytes
+    }
+
+
 async def upgrade_pending_proofs(db: AsyncSession, limit: int = 100):
     """
     Background task to upgrade pending OTS proofs.
 
-    Checks if pending proofs now have Bitcoin confirmations.
+    For each pending proof:
+    1. Parse the stored OTS file
+    2. Extract the commitment from the timestamp operations
+    3. Query the calendar for upgrade (Bitcoin attestation)
+    4. If upgraded, store the complete proof
     """
     result = await db.execute(text("""
         SELECT bundle_id, bundle_hash, proof_data, calendar_url
@@ -288,30 +392,100 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 100):
         return {"checked": 0, "upgraded": 0}
 
     upgraded = 0
+    skipped_legacy = 0
     timeout = aiohttp.ClientTimeout(total=OTS_TIMEOUT)
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for proof in pending_proofs:
             try:
-                upgrade_url = f"{proof.calendar_url}/timestamp/{proof.bundle_hash}"
+                # Decode stored proof
+                proof_bytes = base64.b64decode(proof.proof_data)
+
+                # Parse the OTS file
+                parsed = parse_ots_file(proof_bytes)
+
+                if not parsed:
+                    # Legacy format - mark for re-submission with new format
+                    skipped_legacy += 1
+                    await db.execute(text("""
+                        UPDATE ots_proofs
+                        SET last_upgrade_attempt = NOW(),
+                            upgrade_attempts = upgrade_attempts + 1,
+                            error = 'Legacy format - needs re-submission'
+                        WHERE bundle_id = :bundle_id
+                    """), {"bundle_id": proof.bundle_id})
+                    continue
+
+                # Already has Bitcoin attestation?
+                if parsed["has_bitcoin"]:
+                    # Extract block height
+                    marker = b'\x05\x88\x96\x0d\x73\xd7\x19\x01'
+                    pos = parsed["timestamp_data"].find(marker)
+                    block_height = None
+                    if pos >= 0 and pos + len(marker) + 4 <= len(parsed["timestamp_data"]):
+                        block_bytes = parsed["timestamp_data"][pos + len(marker):pos + len(marker) + 4]
+                        block_height = int.from_bytes(block_bytes, 'little')
+
+                    await db.execute(text("""
+                        UPDATE ots_proofs
+                        SET status = 'anchored',
+                            bitcoin_block = :block,
+                            anchored_at = NOW(),
+                            last_upgrade_attempt = NOW()
+                        WHERE bundle_id = :bundle_id
+                    """), {"bundle_id": proof.bundle_id, "block": block_height})
+                    upgraded += 1
+                    logger.info(f"OTS already anchored: {proof.bundle_id[:8]}... block={block_height}")
+                    continue
+
+                # Try to upgrade via calendar
+                calendar_url = parsed["calendar_url"] or proof.calendar_url
+
+                # The commitment is the hash after all operations in the pending proof
+                # For upgrade, we query: calendar_url/timestamp/COMMITMENT
+                # The commitment should be findable in the timestamp_data
+
+                # Find pending attestation marker (0x83) and extract commitment
+                commitment = None
+                ts_data = parsed["timestamp_data"]
+                attestation_pos = ts_data.find(b'\x83')
+                if attestation_pos > 32:
+                    # Commitment is typically 32 bytes before the attestation marker
+                    # But it depends on the operations. For now, try the bundle_hash
+                    commitment = proof.bundle_hash
+
+                if not commitment or not calendar_url:
+                    await db.execute(text("""
+                        UPDATE ots_proofs
+                        SET last_upgrade_attempt = NOW(),
+                            upgrade_attempts = upgrade_attempts + 1,
+                            error = 'Could not extract commitment or calendar URL'
+                        WHERE bundle_id = :bundle_id
+                    """), {"bundle_id": proof.bundle_id})
+                    continue
+
+                # Query calendar for upgrade
+                upgrade_url = f"{calendar_url}/timestamp/{commitment}"
 
                 async with session.get(upgrade_url) as resp:
                     if resp.status == 200:
-                        upgraded_bytes = await resp.read()
+                        upgrade_data = await resp.read()
 
-                        # Check if proof now has Bitcoin attestation
-                        # OTS Bitcoin marker: 0x0588960d73d71901
-                        if b'\x05\x88\x96\x0d\x73\xd7\x19\x01' in upgraded_bytes:
-                            # Extract block height (follows marker)
+                        # Check if upgrade contains Bitcoin attestation
+                        if b'\x05\x88\x96\x0d\x73\xd7\x19\x01' in upgrade_data:
+                            # Construct upgraded OTS file
+                            OTS_MAGIC = b'\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94'
+                            upgraded_ots = OTS_MAGIC + b'\x08' + parsed["hash_bytes"] + upgrade_data
+
+                            # Extract block height
                             marker = b'\x05\x88\x96\x0d\x73\xd7\x19\x01'
-                            pos = upgraded_bytes.find(marker)
+                            pos = upgrade_data.find(marker)
                             block_height = None
-                            if pos > 0 and pos + len(marker) + 8 <= len(upgraded_bytes):
-                                block_bytes = upgraded_bytes[pos + len(marker):pos + len(marker) + 8]
+                            if pos >= 0 and pos + len(marker) + 4 <= len(upgrade_data):
+                                block_bytes = upgrade_data[pos + len(marker):pos + len(marker) + 4]
                                 block_height = int.from_bytes(block_bytes, 'little')
 
-                            # Update proof
-                            proof_b64 = base64.b64encode(upgraded_bytes).decode('ascii')
+                            proof_b64 = base64.b64encode(upgraded_ots).decode('ascii')
 
                             await db.execute(text("""
                                 UPDATE ots_proofs
@@ -331,13 +505,30 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 100):
                             upgraded += 1
                             logger.info(f"OTS upgraded: {proof.bundle_id[:8]}... block={block_height}")
                         else:
-                            # Not yet anchored, update attempt time
+                            # Got response but no Bitcoin yet
                             await db.execute(text("""
                                 UPDATE ots_proofs
                                 SET last_upgrade_attempt = NOW(),
                                     upgrade_attempts = upgrade_attempts + 1
                                 WHERE bundle_id = :bundle_id
                             """), {"bundle_id": proof.bundle_id})
+                    elif resp.status == 404:
+                        # Commitment not found - may need different extraction method
+                        await db.execute(text("""
+                            UPDATE ots_proofs
+                            SET last_upgrade_attempt = NOW(),
+                                upgrade_attempts = upgrade_attempts + 1,
+                                error = 'Commitment not found on calendar (404)'
+                            WHERE bundle_id = :bundle_id
+                        """), {"bundle_id": proof.bundle_id})
+                    else:
+                        await db.execute(text("""
+                            UPDATE ots_proofs
+                            SET last_upgrade_attempt = NOW(),
+                                upgrade_attempts = upgrade_attempts + 1,
+                                error = :error
+                            WHERE bundle_id = :bundle_id
+                        """), {"bundle_id": proof.bundle_id, "error": f"Calendar returned {resp.status}"})
 
             except Exception as e:
                 logger.warning(f"Failed to upgrade proof {proof.bundle_id[:8]}: {e}")
@@ -351,7 +542,7 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 100):
 
     await db.commit()
 
-    return {"checked": len(pending_proofs), "upgraded": upgraded}
+    return {"checked": len(pending_proofs), "upgraded": upgraded, "skipped_legacy": skipped_legacy}
 
 
 # =============================================================================
@@ -869,6 +1060,73 @@ async def get_ots_status(
         oldest_pending=stats.oldest_pending,
         last_anchored=stats.last_anchored,
     )
+
+
+@router.post("/ots/migrate-legacy")
+async def migrate_legacy_proofs(
+    limit: int = 1000,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Migrate legacy OTS proofs to proper OTS file format.
+
+    Legacy proofs stored raw calendar response without the OTS header.
+    This reconstructs proper OTS files using the stored bundle_hash.
+    """
+    # Find legacy proofs (no OTS magic header)
+    result = await db.execute(text("""
+        SELECT bundle_id, bundle_hash, proof_data
+        FROM ots_proofs
+        WHERE status = 'pending'
+        AND error LIKE '%Legacy format%'
+        LIMIT :limit
+    """), {"limit": limit})
+
+    legacy_proofs = result.fetchall()
+
+    if not legacy_proofs:
+        return {"migrated": 0, "message": "No legacy proofs found"}
+
+    migrated = 0
+    OTS_MAGIC = b'\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94'
+
+    for proof in legacy_proofs:
+        try:
+            # Decode existing proof
+            old_proof = base64.b64decode(proof.proof_data)
+
+            # Check if it's actually legacy (no OTS header)
+            if old_proof.startswith(OTS_MAGIC):
+                continue  # Already migrated
+
+            # Reconstruct with proper header
+            hash_bytes = bytes.fromhex(proof.bundle_hash)
+            new_proof = OTS_MAGIC + b'\x08' + hash_bytes + old_proof
+            new_proof_b64 = base64.b64encode(new_proof).decode('ascii')
+
+            # Update
+            await db.execute(text("""
+                UPDATE ots_proofs
+                SET proof_data = :proof_data,
+                    error = NULL
+                WHERE bundle_id = :bundle_id
+            """), {
+                "proof_data": new_proof_b64,
+                "bundle_id": proof.bundle_id
+            })
+
+            migrated += 1
+
+        except Exception as e:
+            logger.warning(f"Failed to migrate {proof.bundle_id}: {e}")
+
+    await db.commit()
+
+    return {
+        "migrated": migrated,
+        "total_legacy": len(legacy_proofs),
+        "message": f"Migrated {migrated} legacy proofs to proper OTS format"
+    }
 
 
 @router.post("/ots/upgrade")

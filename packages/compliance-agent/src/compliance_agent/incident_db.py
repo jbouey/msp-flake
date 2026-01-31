@@ -630,3 +630,135 @@ class IncidentDatabase:
         conn.close()
 
         return results
+
+    def prune_old_incidents(
+        self,
+        retention_days: int = 30,
+        keep_unresolved: bool = True
+    ) -> Dict[str, int]:
+        """
+        Prune old resolved incidents to prevent unbounded database growth.
+
+        Args:
+            retention_days: Delete resolved incidents older than this many days
+            keep_unresolved: If True, never delete unresolved incidents
+
+        Returns:
+            Dict with counts of deleted records
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+
+        conn = sqlite3.connect(self.db_path)
+
+        # Get counts before deletion for reporting
+        cursor = conn.execute("SELECT COUNT(*) FROM incidents")
+        total_before = cursor.fetchone()[0]
+
+        # Delete old learning feedback first (foreign key constraint)
+        cursor = conn.execute("""
+            DELETE FROM learning_feedback
+            WHERE incident_id IN (
+                SELECT id FROM incidents
+                WHERE created_at < ?
+                AND (resolved_at IS NOT NULL OR ? = 0)
+            )
+        """, (cutoff, 1 if keep_unresolved else 0))
+        feedback_deleted = cursor.rowcount
+
+        # Delete old incidents
+        if keep_unresolved:
+            # Only delete resolved incidents older than cutoff
+            cursor = conn.execute("""
+                DELETE FROM incidents
+                WHERE created_at < ?
+                AND resolved_at IS NOT NULL
+            """, (cutoff,))
+        else:
+            # Delete all incidents older than cutoff
+            cursor = conn.execute("""
+                DELETE FROM incidents
+                WHERE created_at < ?
+            """, (cutoff,))
+
+        incidents_deleted = cursor.rowcount
+
+        # Prune pattern_stats that have no recent incidents
+        # Keep stats if they have incidents in the last retention_days or are promotion eligible
+        cursor = conn.execute("""
+            DELETE FROM pattern_stats
+            WHERE last_seen < ?
+            AND promotion_eligible = 0
+            AND pattern_signature NOT IN (
+                SELECT DISTINCT pattern_signature FROM incidents
+            )
+        """, (cutoff,))
+        stats_deleted = cursor.rowcount
+
+        conn.commit()
+
+        # VACUUM to reclaim disk space
+        conn.execute("VACUUM")
+
+        # Get size after
+        cursor = conn.execute("SELECT COUNT(*) FROM incidents")
+        total_after = cursor.fetchone()[0]
+
+        conn.close()
+
+        result = {
+            "incidents_deleted": incidents_deleted,
+            "feedback_deleted": feedback_deleted,
+            "pattern_stats_deleted": stats_deleted,
+            "incidents_before": total_before,
+            "incidents_after": total_after,
+            "retention_days": retention_days
+        }
+
+        logger.info(
+            f"Pruned incident database: {incidents_deleted} incidents, "
+            f"{feedback_deleted} feedback entries, {stats_deleted} pattern stats "
+            f"(retention: {retention_days} days)"
+        )
+
+        return result
+
+    def get_database_stats(self) -> Dict[str, Any]:
+        """Get database size and record counts for monitoring."""
+        import os
+
+        conn = sqlite3.connect(self.db_path)
+
+        stats = {}
+
+        # File size
+        if self.db_path.exists():
+            stats["file_size_bytes"] = os.path.getsize(self.db_path)
+            stats["file_size_mb"] = round(stats["file_size_bytes"] / (1024 * 1024), 2)
+
+        # WAL file size (if exists)
+        wal_path = Path(str(self.db_path) + "-wal")
+        if wal_path.exists():
+            stats["wal_size_bytes"] = os.path.getsize(wal_path)
+            stats["wal_size_mb"] = round(stats["wal_size_bytes"] / (1024 * 1024), 2)
+
+        # Record counts
+        for table in ["incidents", "pattern_stats", "promoted_rules", "learning_feedback"]:
+            cursor = conn.execute(f"SELECT COUNT(*) FROM {table}")
+            stats[f"{table}_count"] = cursor.fetchone()[0]
+
+        # Age of oldest and newest incidents
+        cursor = conn.execute("SELECT MIN(created_at), MAX(created_at) FROM incidents")
+        row = cursor.fetchone()
+        stats["oldest_incident"] = row[0]
+        stats["newest_incident"] = row[1]
+
+        # Unresolved count
+        cursor = conn.execute("SELECT COUNT(*) FROM incidents WHERE resolved_at IS NULL")
+        stats["unresolved_count"] = cursor.fetchone()[0]
+
+        conn.close()
+
+        return stats

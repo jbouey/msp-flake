@@ -522,3 +522,170 @@ class TestMarkPromoted:
         candidates = temp_db.get_promotion_candidates()
         promoted_sigs = [c.pattern_signature for c in candidates]
         assert pattern_sig not in promoted_sigs
+
+
+class TestDatabasePruning:
+    """Tests for database pruning to prevent disk space issues."""
+
+    def test_prune_old_resolved_incidents(self, temp_db):
+        """Test that old resolved incidents are pruned."""
+        import sqlite3
+
+        # Create an old incident (manually set created_at to 60 days ago)
+        old_incident = temp_db.create_incident(
+            site_id="site-001",
+            host_id="host-001",
+            incident_type="firewall_drift",
+            severity="high",
+            raw_data={"check_type": "firewall"}
+        )
+
+        # Resolve it
+        temp_db.resolve_incident(
+            incident_id=old_incident.id,
+            resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
+            resolution_action="restore_firewall",
+            outcome=IncidentOutcome.SUCCESS,
+            resolution_time_ms=100
+        )
+
+        # Manually backdate the incident to 60 days ago
+        old_date = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+        conn = sqlite3.connect(temp_db.db_path)
+        conn.execute(
+            "UPDATE incidents SET created_at = ?, resolved_at = ? WHERE id = ?",
+            (old_date, old_date, old_incident.id)
+        )
+        conn.commit()
+        conn.close()
+
+        # Create a recent incident
+        recent_incident = temp_db.create_incident(
+            site_id="site-001",
+            host_id="host-002",
+            incident_type="firewall_drift",
+            severity="high",
+            raw_data={"check_type": "firewall"}
+        )
+        temp_db.resolve_incident(
+            incident_id=recent_incident.id,
+            resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
+            resolution_action="restore_firewall",
+            outcome=IncidentOutcome.SUCCESS,
+            resolution_time_ms=100
+        )
+
+        # Verify we have 2 incidents before prune
+        stats_before = temp_db.get_database_stats()
+        assert stats_before["incidents_count"] == 2
+
+        # Prune with 30-day retention
+        result = temp_db.prune_old_incidents(retention_days=30)
+
+        # Should have deleted the old incident
+        assert result["incidents_deleted"] == 1
+        assert result["incidents_after"] == 1
+
+        # Recent incident should still exist
+        assert temp_db.get_incident(recent_incident.id) is not None
+        # Old incident should be gone
+        assert temp_db.get_incident(old_incident.id) is None
+
+    def test_prune_keeps_unresolved_incidents(self, temp_db):
+        """Test that unresolved incidents are kept regardless of age."""
+        import sqlite3
+
+        # Create an unresolved incident
+        unresolved = temp_db.create_incident(
+            site_id="site-001",
+            host_id="host-001",
+            incident_type="encryption_drift",
+            severity="critical",
+            raw_data={"check_type": "encryption"}
+        )
+
+        # Backdate to 90 days ago but don't resolve
+        old_date = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        conn = sqlite3.connect(temp_db.db_path)
+        conn.execute(
+            "UPDATE incidents SET created_at = ? WHERE id = ?",
+            (old_date, unresolved.id)
+        )
+        conn.commit()
+        conn.close()
+
+        # Prune with 30-day retention
+        result = temp_db.prune_old_incidents(retention_days=30, keep_unresolved=True)
+
+        # Should NOT have deleted the unresolved incident
+        assert result["incidents_deleted"] == 0
+        assert temp_db.get_incident(unresolved.id) is not None
+
+    def test_get_database_stats(self, temp_db):
+        """Test database statistics retrieval."""
+        # Create some incidents
+        for i in range(5):
+            incident = temp_db.create_incident(
+                site_id="site-001",
+                host_id=f"host-{i}",
+                incident_type="test",
+                severity="low",
+                raw_data={}
+            )
+            if i < 3:  # Resolve 3 of 5
+                temp_db.resolve_incident(
+                    incident_id=incident.id,
+                    resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
+                    resolution_action="test",
+                    outcome=IncidentOutcome.SUCCESS,
+                    resolution_time_ms=100
+                )
+
+        stats = temp_db.get_database_stats()
+
+        assert stats["incidents_count"] == 5
+        assert stats["unresolved_count"] == 2
+        assert stats["file_size_mb"] >= 0
+        assert stats["oldest_incident"] is not None
+        assert stats["newest_incident"] is not None
+
+    def test_prune_clears_feedback(self, temp_db):
+        """Test that learning feedback is deleted with incidents."""
+        import sqlite3
+
+        # Create and resolve an incident with feedback
+        incident = temp_db.create_incident(
+            site_id="site-001",
+            host_id="host-001",
+            incident_type="test",
+            severity="low",
+            raw_data={}
+        )
+        temp_db.resolve_incident(
+            incident_id=incident.id,
+            resolution_level=ResolutionLevel.LEVEL2_LLM,
+            resolution_action="test",
+            outcome=IncidentOutcome.SUCCESS,
+            resolution_time_ms=100
+        )
+        temp_db.add_human_feedback(
+            incident_id=incident.id,
+            feedback_type="approved",
+            feedback_data={"notes": "Good"}
+        )
+
+        # Backdate
+        old_date = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+        conn = sqlite3.connect(temp_db.db_path)
+        conn.execute(
+            "UPDATE incidents SET created_at = ?, resolved_at = ? WHERE id = ?",
+            (old_date, old_date, incident.id)
+        )
+        conn.commit()
+        conn.close()
+
+        # Prune
+        result = temp_db.prune_old_incidents(retention_days=30)
+
+        # Feedback should also be deleted
+        assert result["feedback_deleted"] == 1

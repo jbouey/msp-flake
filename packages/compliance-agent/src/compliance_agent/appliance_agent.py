@@ -354,6 +354,11 @@ class ApplianceAgent:
         self._last_learning_sync = datetime.min.replace(tzinfo=timezone.utc)
         self._learning_sync_interval = getattr(config, 'learning_sync_interval', 14400)  # 4 hours default
 
+        # Database pruning (daily cleanup to prevent disk space issues)
+        self._last_prune_time = datetime.min.replace(tzinfo=timezone.utc)
+        self._prune_interval = getattr(config, 'prune_interval', 86400)  # 24 hours default
+        self._incident_retention_days = getattr(config, 'incident_retention_days', 30)  # Keep 30 days
+
         # Dual-mode sensor support
         self._sensor_enabled = getattr(config, 'sensor_enabled', True)
         self._sensor_port = getattr(config, 'sensor_port', 8080)
@@ -722,7 +727,10 @@ class ApplianceAgent:
         if self.learning_sync:
             await self._maybe_sync_learning()
 
-        # 11. Process pending orders (remote commands/updates)
+        # 11. Database maintenance (pruning old incidents)
+        await self._maybe_prune_database()
+
+        # 12. Process pending orders (remote commands/updates)
         await self._process_pending_orders()
 
     async def _get_compliance_summary(self) -> dict:
@@ -2769,6 +2777,53 @@ try {
 
         except Exception as e:
             logger.error(f"Learning system sync failed: {e}")
+
+    async def _maybe_prune_database(self):
+        """
+        Prune old incidents from database periodically to prevent disk space issues.
+
+        Default interval: 24 hours
+        Default retention: 30 days for resolved incidents
+        """
+        now = datetime.now(timezone.utc)
+        elapsed = (now - self._last_prune_time).total_seconds()
+
+        if elapsed < self._prune_interval:
+            return
+
+        self._last_prune_time = now
+
+        if not self.incident_db:
+            return
+
+        try:
+            # Get database stats before pruning
+            stats_before = self.incident_db.get_database_stats()
+            logger.info(
+                f"Database maintenance: {stats_before.get('incidents_count', 0)} incidents, "
+                f"{stats_before.get('file_size_mb', 0)}MB"
+            )
+
+            # Prune old resolved incidents (keep unresolved forever)
+            result = self.incident_db.prune_old_incidents(
+                retention_days=self._incident_retention_days,
+                keep_unresolved=True
+            )
+
+            if result["incidents_deleted"] > 0:
+                # Get stats after pruning
+                stats_after = self.incident_db.get_database_stats()
+                space_saved = stats_before.get('file_size_mb', 0) - stats_after.get('file_size_mb', 0)
+
+                logger.info(
+                    f"Database pruned: {result['incidents_deleted']} incidents deleted, "
+                    f"{space_saved:.1f}MB reclaimed, {stats_after.get('incidents_count', 0)} remaining"
+                )
+            else:
+                logger.debug("Database pruning: no old incidents to delete")
+
+        except Exception as e:
+            logger.error(f"Database pruning failed: {e}")
 
     # =========================================================================
     # Order Processing (remote commands and updates)
