@@ -12,14 +12,31 @@
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Agent | v1.0.51 | Includes database pruning |
-| ISO | v51 | Rollout in progress (Stage 1/3) |
-| Physical Appliance | **ONLINE** | 192.168.88.246 |
-| VM Appliance | **UPDATING** | Waiting for v51 rollout |
+| Agent | v1.0.51 | Built, rollout starting |
+| ISO | v51 | Stage 1/3 (5%), 0 updated yet |
+| Physical Appliance | **ONLINE** | v1.0.49 at 192.168.88.246 |
+| VM Appliance | **PENDING** | v49 rollout stuck (4 pending) |
 | VPS API | **HEALTHY** | https://api.osiriscare.net/health |
 | Learning Sync | **WORKING** | 24 patterns, 7,215 executions |
 | Evidence Collection | **WORKING** | 180K bundles collected |
 | OTS Anchoring | **FIXED** | Commitment computation corrected |
+| Fleet Rollouts | **STUCK** | v49/v45 pending, v51 just started |
+
+---
+
+## ⚠️ Active Issues
+
+### Stale Rollouts Not Completing
+Looking at Fleet Updates dashboard:
+- **Rollout v49** - Stage 3/3 (100%), 4 pending, 0 succeeded - **STUCK**
+- **Rollout v45** - Stage 3/3 (100%), 3 pending, 1 failed - **FAILED**
+- **Rollout v51** - Stage 1/3 (5%), 5 pending, 0 succeeded - just started
+
+**Root Cause:** Appliances appear to not be receiving or applying updates. Need to investigate:
+1. Appliance check-in mechanism
+2. Update handler (`_handle_update_iso`)
+3. Network connectivity
+4. Update agent functionality
 
 ---
 

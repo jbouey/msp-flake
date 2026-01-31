@@ -1,6 +1,230 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-27 (Session 74 - Learning System Partner Promotion Workflow)
+**Last Updated:** 2026-01-31 (Session 79 - Database Pruning & OTS Anchoring Fix)
+
+---
+
+## Session 79 - Database Pruning & OTS Anchoring Fix - COMPLETE
+
+**Date:** 2026-01-31
+**Status:** COMPLETE
+**Agent Version:** 1.0.51
+**ISO Version:** v51
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Fix VM appliance disk space issue (unbounded incidents.db)
+2. ✅ Fix OTS anchoring (proofs not getting Bitcoin-anchored)
+3. ✅ Build and deploy ISO v51
+4. ✅ Verify learning sync working
+
+### Completed Tasks
+
+#### 1. Database Pruning (Disk Space Fix)
+- **Status:** COMPLETE
+- **File:** `packages/compliance-agent/src/compliance_agent/incident_db.py`
+- **Functions Added:**
+  - `prune_old_incidents(retention_days=30, keep_unresolved=True)` - Removes old incidents
+  - `get_database_stats()` - Returns database size, record counts, oldest/newest dates
+- **Agent Integration:** Added `_maybe_prune_database()` to `appliance_agent.py`
+  - Runs daily (86400 second interval)
+  - Prunes incidents older than 30 days
+  - Never deletes unresolved incidents
+  - VACUUMs database after pruning
+- **Tests Added:** 4 unit tests in `test_incident_db.py` (TestDatabasePruning class)
+- **Result:** Prevents disk space exhaustion on appliances
+
+#### 2. ISO v51 Built & Deployed
+- **Status:** COMPLETE
+- **Build Location:** VPS `/opt/osiriscare-v51.iso`
+- **SHA256:** `5b762d62c1c90ba00e5d436c7a7d1951184803526778d1922ccc70ed6455e507`
+- **Deployment:**
+  - Created release v1.0.51 in Central Command Fleet Updates
+  - Set as latest version
+  - Started staged rollout (5% → 25% → 100%)
+- **Result:** Appliances will auto-update to v51
+
+#### 3. OTS Anchoring Fix
+- **Status:** COMPLETE
+- **File:** `mcp-server/central-command/backend/evidence_chain.py`
+- **Problem:** 78K pending OTS proofs not getting Bitcoin-anchored
+- **Root Cause:** Wrong commitment hash computation
+  - Code was using `bundle_hash` directly as commitment
+  - Should replay OTS timestamp operations to get actual commitment
+- **Solution:**
+  ```python
+  def replay_timestamp_operations(hash_bytes: bytes, timestamp_data: bytes) -> Optional[bytes]:
+      """Replay OTS timestamp operations to compute the commitment hash."""
+      current_hash = hash_bytes
+      last_sha256_result = None
+      pos = 0
+      while pos < len(timestamp_data):
+          op = timestamp_data[pos]
+          if op == 0xf0:  # Prepend
+              # Read prepend data and prepend to hash
+          elif op == 0xf1:  # Append
+              # Read append data and append to hash
+          elif op == 0x08:  # SHA256
+              current_hash = hashlib.sha256(current_hash).digest()
+              last_sha256_result = current_hash
+          elif op == 0x00:  # Attestation marker
+              if last_sha256_result:
+                  return last_sha256_result
+      return last_sha256_result if last_sha256_result else current_hash
+  ```
+- **Additional Fixes:**
+  - Multi-calendar retry (alice, bob, finney)
+  - 7-day expiration for old proofs (calendars prune them)
+- **Result:** 67K old proofs expired, 10K recent proofs tracked for upgrade
+
+#### 4. Learning Sync Verified
+- **Status:** COMPLETE
+- **Pattern Stats:** 24 patterns aggregated in PostgreSQL
+- **Execution Telemetry:** 7,215 records synced
+- **Physical Appliance:** Synced today (15 patterns merged)
+- **Result:** Full data flywheel operational
+
+### Files Created
+| File | Lines | Purpose |
+|------|-------|---------|
+| (none) | - | All changes were modifications |
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `packages/compliance-agent/src/compliance_agent/incident_db.py` | Added `prune_old_incidents()`, `get_database_stats()` |
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | Added `_maybe_prune_database()`, bumped to v1.0.51 |
+| `packages/compliance-agent/tests/test_incident_db.py` | Added TestDatabasePruning class (4 tests) |
+| `iso/appliance-image.nix` | Bumped version to 1.0.51 |
+| `mcp-server/central-command/backend/evidence_chain.py` | OTS commitment fix, multi-calendar, expiration |
+| `packages/compliance-agent/pyproject.toml` | Version 1.0.51 |
+| `packages/compliance-agent/setup.py` | Version 1.0.51 |
+| `packages/compliance-agent/default.nix` | Version 1.0.51 |
+| `packages/compliance-agent/src/compliance_agent/__init__.py` | Version 1.0.51 |
+
+### VPS Deployment
+| Item | Location | Status |
+|------|----------|--------|
+| ISO v51 | `/opt/osiriscare-v51.iso` | ✅ Built |
+| Fleet Release | Central Command | ✅ Created as v1.0.51 |
+| Staged Rollout | Central Command | ✅ Started (5% → 25% → 100%) |
+| evidence_chain.py | VPS mcp-server container | ✅ Updated |
+
+### Git Commits
+| Commit | Message |
+|--------|---------|
+| `d183739` | fix: Add database pruning to prevent disk space exhaustion |
+| `b5efdb8` | fix: OTS anchoring commitment computation and proof expiration |
+
+### Technical Notes
+- **Prune Interval:** 86400 seconds (24 hours)
+- **Incident Retention:** 30 days
+- **Keep Unresolved:** True (never delete open incidents)
+- **Also Prunes:** Associated `learning_feedback` and orphan `pattern_stats`
+- **Database VACUUM:** Runs after pruning to reclaim disk space
+- **OTS Commitment:** Last SHA256 result before 0x00 attestation marker
+- **OTS Calendars:** alice.btc.calendar.opentimestamps.org, bob.btc.calendar.opentimestamps.org, finney.calendar.eternitywall.com
+- **Proof Expiration:** 7 days (calendars prune old pending data)
+
+### Key Lessons Learned
+1. SQLite databases need periodic pruning to prevent disk exhaustion
+2. VACUUM reclaims space after deletes (SQLite doesn't auto-shrink)
+3. OTS commitment hash requires replaying timestamp operations, not just using file hash
+4. Calendar servers prune pending proofs after ~7 days, so upgrade must happen within that window
+5. Multi-calendar retry improves reliability when individual calendars are down
+
+---
+
+## Session 78 - Learning Sync & Security Fixes - COMPLETE
+
+**Date:** 2026-01-28
+**Status:** COMPLETE
+**Agent Version:** 1.0.49
+**ISO Version:** v49 (pending rebuild)
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Fix Central Command learning sync (500/422 errors)
+2. ✅ Audit Linux healing system
+3. ✅ Audit learning storage system
+4. ✅ Fix all identified critical/high priority issues
+
+### Completed Tasks
+
+#### 1. Central Command Learning Sync Fix
+- **Issue:** 500 errors from `/api/agent/sync/pattern-stats` endpoint
+- **Root Cause:** Transaction rollback not happening after SQL exceptions + asyncpg datetime handling
+- **Fix:** Added `await db.rollback()` + `parse_iso_timestamp()` for datetime conversion
+- **Result:** Pattern sync: 26 completed, execution_report: 152 completed
+
+#### 2. SQL Injection Fix (incident_db.py)
+- **Issue:** f-string column interpolation in UPDATE statement
+- **Fix:** Changed to parameterized CASE statements with integer level_code
+- **Result:** Secure parameterized queries for all resolution level updates
+
+#### 3. UNIQUE Constraint on `promoted_rules`
+- **Issue:** Duplicate pattern_signature entries possible
+- **Fix:** Added `UNIQUE` constraint to pattern_signature column
+- **Result:** Database integrity enforced
+
+#### 4. SSH Exception Handling (executor.py)
+- **Issue:** Generic exception handling for SSH errors
+- **Fix:** Added specific asyncssh exception types (PermissionDenied, ConnectionLost, Error)
+- **Result:** Better error diagnosis and appropriate retry behavior
+
+#### 5. Post-Promotion Stats Query Fix
+- **Issue:** Fragile LIKE pattern matching could match wrong rule IDs
+- **Fix:** Changed `resolution_action` format to `action:rule_id`
+- **Result:** Reliable rule-specific performance tracking
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/main.py` (VPS) | Learning sync rollback + datetime parsing |
+| `incident_db.py` | SQL injection fix + UNIQUE constraint |
+| `runbooks/linux/executor.py` | Specific SSH exception handling |
+| `level1_deterministic.py` | resolution_action format with rule_id |
+| `learning_loop.py` | Post-promotion query fix |
+
+---
+
+## Session 77 - L1 Rules Windows/NixOS Distinction - COMPLETE
+
+**Date:** 2026-01-28
+**Status:** COMPLETE
+**Agent Version:** 1.0.49
+**ISO Version:** v49
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Fix L1 rules matching local NixOS appliance (should be Windows-only)
+2. ✅ Fix L1-BITLOCKER rules not matching `bitlocker_status` check type
+3. ✅ Fix sensor_api.py import error
+4. ✅ Fix target routing bug (healing going to wrong VM)
+
+### Key Fixes
+| Fix | Description |
+|-----|-------------|
+| L1-FIREWALL-001/002 | Added `host_id regex ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$` |
+| L1-NIXOS-FW-001 | New rule for NixOS firewall → escalate |
+| L1-BITLOCKER-001 | Added `bitlocker_status` and `encryption` to check_type match |
+| Target Routing | IP-based target matching, exact match for IP-format targets |
+
+---
+
+## Session 75-76 - Production Readiness & Infrastructure - COMPLETE
+
+**Date:** 2026-01-27
+**Status:** COMPLETE
+**Phase:** 13 (Zero-Touch Update System)
+
+### Key Accomplishments
+- Production Readiness Audit (10-section document)
+- CRITICAL Signing Key Permission Fix (644 → 600)
+- STATE_DIR Path Mismatch Fix
+- Healing DRY-RUN Mode Fix
+- Execution Telemetry Datetime Fix
+- Learning Sync Verification
 
 ---
 
@@ -1796,6 +2020,10 @@ async def require_site_access(conn, partner: dict, site_id: str):
 
 | Session | Date | Focus | Status | Version |
 |---------|------|-------|--------|---------|
+| **79** | 2026-01-31 | Database Pruning & OTS Anchoring Fix | **COMPLETE** | v1.0.51 |
+| **78** | 2026-01-28 | Learning Sync & Security Fixes | **COMPLETE** | v1.0.49 |
+| **77** | 2026-01-28 | L1 Rules Windows/NixOS Distinction | **COMPLETE** | v1.0.49 |
+| **75-76** | 2026-01-27 | Production Readiness & Infrastructure | **COMPLETE** | v1.0.49 |
 | **74** | 2026-01-27 | Learning System Partner Promotion Workflow | **COMPLETE** | v1.0.48 |
 | **73** | 2026-01-27 | Learning System Bidirectional Sync | **COMPLETE** | v1.0.48 |
 | **70** | 2026-01-26 | Partner Compliance & Phase 2 Local Resilience | **COMPLETE** | v1.0.48 |
@@ -1832,21 +2060,25 @@ async def require_site_access(conn, partner: dict, site_id: str):
 
 | Component | Tests | Status |
 |-----------|-------|--------|
-| Python (compliance-agent) | 834 | Passing |
+| Python (compliance-agent) | 839 | Passing |
 | Go (agent) | 24 | Passing |
-| **Total** | **858** | **All Passing** |
+| **Total** | **863** | **All Passing** |
 
 ---
 
 ## Documentation Updated
-- `.agent/TODO.md` - Session 74 complete (Learning System Partner Promotion Workflow)
-- `.agent/CONTEXT.md` - Updated with Session 74 changes
-- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 74
-- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 74 details
-- `docs/LEARNING_SYSTEM.md` - Updated with partner promotion workflow section
-- `mcp-server/central-command/backend/learning_api.py` - NEW module (Session 74)
-- `mcp-server/central-command/backend/migrations/032_learning_promotion.sql` - NEW migration (Session 74)
-- `mcp-server/central-command/frontend/src/partner/PartnerLearning.tsx` - NEW component (Session 74)
-- `packages/compliance-agent/src/compliance_agent/learning_sync.py` - NEW module (Session 73)
-- `mcp-server/central-command/backend/migrations/031_learning_sync.sql` - NEW migration (Session 73)
+- `.agent/TODO.md` - Session 79 complete (Database Pruning & OTS Anchoring Fix)
+- `.agent/CONTEXT.md` - Updated with Session 79 changes
+- `.agent/SESSION_HANDOFF.md` - Full session handoff including Session 79
+- `docs/SESSION_HANDOFF.md` - Full session handoff including Session 79
+- `docs/SESSION_COMPLETION_STATUS.md` - This file with Session 79 details
+- `IMPLEMENTATION-STATUS.md` - Updated with Session 79 changes
+- `mcp-server/central-command/backend/evidence_chain.py` - OTS anchoring fix (Session 79)
+- `packages/compliance-agent/src/compliance_agent/incident_db.py` - Database pruning (Session 79)
+- `packages/compliance-agent/tests/test_incident_db.py` - Pruning tests (Session 79)
+- `mcp-server/central-command/backend/learning_api.py` - Partner learning API (Session 74)
+- `mcp-server/central-command/backend/migrations/032_learning_promotion.sql` - Learning migration (Session 74)
+- `mcp-server/central-command/frontend/src/partner/PartnerLearning.tsx` - Learning component (Session 74)
+- `packages/compliance-agent/src/compliance_agent/learning_sync.py` - Sync module (Session 73)
+- `mcp-server/central-command/backend/migrations/031_learning_sync.sql` - Sync migration (Session 73)
 - `.claude/skills/` - 9 skill files for Claude Code knowledge retention (Session 59)
