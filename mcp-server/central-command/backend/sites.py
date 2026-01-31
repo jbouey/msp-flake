@@ -1419,6 +1419,29 @@ async def appliance_checkin(checkin: ApplianceCheckin):
             now
         )
 
+        # === STEP 3.5: Also update appliances table for Fleet Updates ===
+        try:
+            await conn.execute("""
+                UPDATE appliances SET
+                    last_checkin = $2,
+                    agent_version = $3,
+                    nixos_version = $4,
+                    ip_address = $5::inet,
+                    status = 'active',
+                    updated_at = $2
+                WHERE site_id = $1
+            """,
+                checkin.site_id,
+                now,
+                checkin.agent_version,
+                checkin.nixos_version,
+                checkin.ip_addresses[0] if checkin.ip_addresses else None
+            )
+        except Exception as e:
+            # Don't fail checkin if fleet update fails
+            import logging
+            logging.warning(f"Failed to update appliances table: {e}")
+
         # === STEP 4: Get pending orders for this appliance ===
         order_rows = await conn.fetch("""
             SELECT order_id, order_type, parameters, priority, created_at, expires_at

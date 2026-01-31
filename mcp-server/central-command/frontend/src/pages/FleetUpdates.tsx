@@ -350,7 +350,7 @@ export const FleetUpdates: React.FC = () => {
       {/* Create Release Modal */}
       {showCreateRelease && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-bg-primary rounded-ios-xl p-6 w-full max-w-md">
+          <div className="bg-white dark:bg-gray-800 rounded-ios-xl p-6 w-full max-w-md shadow-xl">
             <h3 className="text-lg font-semibold text-label-primary mb-4">New Release</h3>
 
             <div className="space-y-4">
@@ -431,7 +431,7 @@ export const FleetUpdates: React.FC = () => {
       {/* Create Rollout Modal */}
       {showCreateRollout && selectedReleaseId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-bg-primary rounded-ios-xl p-6 w-full max-w-md">
+          <div className="bg-white dark:bg-gray-800 rounded-ios-xl p-6 w-full max-w-md shadow-xl">
             <h3 className="text-lg font-semibold text-label-primary mb-4">Start Rollout</h3>
 
             <p className="text-label-secondary mb-4">
