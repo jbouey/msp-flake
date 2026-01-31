@@ -3026,18 +3026,22 @@ class ApplianceCheckinRequest(BaseModel):
 
 @app.post("/api/appliances/checkin")
 async def appliances_checkin(req: ApplianceCheckinRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Appliance agent checkin endpoint - updates site_appliances table."""
+    """Appliance agent checkin endpoint - updates site_appliances table.
+
+    NOTE: This endpoint is typically overridden by the dashboard_api router.
+    The actual checkin handler is in dashboard_api/sites.py (appliance_checkin).
+    """
     try:
         # Build appliance_id from site_id and mac
         mac = req.mac_address or "00:00:00:00:00:00"
         appliance_id = f"{req.site_id}-{mac}"
         now = datetime.now(timezone.utc)
-        
+
         # Upsert into site_appliances
         await db.execute(text("""
             INSERT INTO site_appliances (
                 site_id, appliance_id, hostname, mac_address, ip_addresses,
-                agent_version, nixos_version, status, last_checkin, 
+                agent_version, nixos_version, status, last_checkin,
                 uptime_seconds, queue_depth, first_checkin, created_at
             ) VALUES (
                 :site_id, :appliance_id, :hostname, :mac_address, :ip_addresses,
@@ -3068,7 +3072,7 @@ async def appliances_checkin(req: ApplianceCheckinRequest, request: Request, db:
             "created_at": now,
         })
         await db.commit()
-        
+
         # Fetch Windows targets with credentials for credential-pull
         windows_targets = []
         try:
