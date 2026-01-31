@@ -1,7 +1,77 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-28 (Session 78 - VPS Fixes Complete)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.49, **ISO v49 pending rebuild**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.49**)
+**Last Updated:** 2026-01-31 (Session 79 - Database Pruning & OTS Anchoring Fix)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.51, **ISO v51**, **Database Pruning IMPLEMENTED**, **OTS Anchoring FIXED**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.51**)
+
+---
+
+## Session 79 (2026-01-31) - COMPLETE
+
+### Session Goals
+1. ✅ Fix VM appliance disk space issue (unbounded incidents.db)
+2. ✅ Fix OTS anchoring (proofs not getting Bitcoin-anchored)
+3. ✅ Build and deploy ISO v51
+4. ✅ Verify learning sync working
+
+### Accomplishments
+
+#### 1. Database Pruning (Disk Space Fix)
+- **Problem:** VM appliance disk space filling up due to unbounded `incidents.db`
+- **Solution:**
+  - Added `prune_old_incidents()` to `incident_db.py`
+  - Added `get_database_stats()` for monitoring
+  - Added `_maybe_prune_database()` to `appliance_agent.py` (runs daily)
+  - Added 4 unit tests for pruning functionality
+- **Defaults:** 30-day retention, keeps unresolved incidents, VACUUMs database
+
+#### 2. ISO v51 Built & Deployed
+- Built ISO on VPS: `/opt/osiriscare-v51.iso`
+- SHA256: `5b762d62c1c90ba00e5d436c7a7d1951184803526778d1922ccc70ed6455e507`
+- Created release v1.0.51 in Central Command
+- Started staged rollout (5% → 25% → 100%)
+
+#### 3. Learning Sync Verified
+- Pattern stats: 24 patterns aggregated
+- Execution telemetry: 7,215 records
+- Physical appliance synced today (15 patterns merged)
+
+#### 4. OTS Anchoring Fix
+- **Problem:** OTS proofs not getting Bitcoin-anchored (78K pending)
+- **Root Cause:** Wrong commitment computation (using bundle_hash instead of replaying operations)
+- **Fixes Applied:**
+  - Added `replay_timestamp_operations()` to compute correct commitment
+  - Returns last SHA256 result before attestation marker
+  - Tries multiple calendars (alice, bob, finney)
+  - Added 7-day expiration for old proofs
+- **Result:** 67K old proofs expired, 10K recent proofs tracked
+
+### Files Modified This Session
+
+| File | Change |
+|------|--------|
+| `incident_db.py` | Added prune_old_incidents(), get_database_stats() |
+| `appliance_agent.py` | Added _maybe_prune_database(), bumped to v1.0.51 |
+| `test_incident_db.py` | Added TestDatabasePruning class (4 tests) |
+| `appliance-image.nix` | Bumped to v1.0.51 |
+| `evidence_chain.py` | OTS commitment fix, multi-calendar, expiration |
+| Version files | Updated to v1.0.51 |
+
+### Git Commits
+
+| Commit | Message |
+|--------|---------|
+| `d183739` | fix: Add database pruning to prevent disk space exhaustion |
+| `b5efdb8` | fix: OTS anchoring commitment computation and proof expiration |
+
+### Technical Notes
+- `prune_interval`: 86400 seconds (24 hours)
+- `incident_retention_days`: 30 days
+- `keep_unresolved`: True (never delete open incidents)
+- Also prunes associated `learning_feedback` and orphan `pattern_stats`
+- VACUUMs database after pruning to reclaim space
+- OTS Commitment = last SHA256 result before 0x00 attestation marker
+- Calendars tried: alice, bob, finney (in order)
+- Proofs older than 7 days marked as expired
 
 ---
 
