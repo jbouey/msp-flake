@@ -1,0 +1,79 @@
+name: Deploy Central Command
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mcp-server/central-command/**'
+      - 'mcp-server/main.py'
+      - 'mcp-server/server.py'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  VPS_HOST: 178.156.162.116
+  VPS_USER: root
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mcp-server/central-command/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: mcp-server/central-command/frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: mcp-server/central-command/frontend
+        run: npm run build
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Add VPS to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy backend files
+        run: |
+          rsync -avz --delete \
+            mcp-server/central-command/backend/ \
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/dashboard_api_mount/
+
+      - name: Deploy main.py and server.py
+        run: |
+          rsync -avz \
+            mcp-server/main.py \
+            mcp-server/server.py \
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/app/
+
+      - name: Deploy frontend
+        run: |
+          rsync -avz --delete \
+            mcp-server/central-command/frontend/dist/ \
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/frontend_dist/
+
+      - name: Fix permissions and restart services
+        run: |
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
+            chmod -R 755 /opt/mcp-server/dashboard_api_mount/
+            chmod 644 /opt/mcp-server/app/main.py /opt/mcp-server/app/server.py
+            cd /opt/mcp-server
+            docker compose restart mcp-server frontend
+          EOF
+
+      - name: Verify deployment
+        run: |
+          sleep 15
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "curl -sf http://localhost:8000/health"
