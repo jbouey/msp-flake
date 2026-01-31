@@ -1,10 +1,10 @@
-# Session Handoff - 2026-01-28
+# Session Handoff - 2026-01-31
 
-**Session:** 78 - VPS Telemetry & Rule Sync Fixes
-**Agent Version:** v1.0.49
-**ISO Version:** v49 (pending rebuild with all fixes)
-**Last Updated:** 2026-01-28
-**System Status:** ✅ ALL SYSTEMS OPERATIONAL
+**Session:** 79 - Database Pruning & OTS Anchoring Fix
+**Agent Version:** v1.0.51
+**ISO Version:** v51 (deployed via Central Command)
+**Last Updated:** 2026-01-31
+**System Status:** ✅ All Systems Operational
 
 ---
 
@@ -12,139 +12,68 @@
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Agent | v1.0.49 | Running with bind mount fixes |
-| ISO | v49 | Needs rebuild to include 013fb17 |
+| Agent | v1.0.51 | Includes database pruning |
+| ISO | v51 | Rollout in progress (Stage 1/3) |
 | Physical Appliance | **ONLINE** | 192.168.88.246 |
-| L1 Healing | **FIXED** | Correct Windows/NixOS routing |
-| Target Routing | **FIXED** | IP-based matching working |
-| VPS L1 Rules | **UPDATED** | host_id regex for Windows-only |
-| API | **HEALTHY** | https://api.osiriscare.net/health |
+| VM Appliance | **UPDATING** | Waiting for v51 rollout |
+| VPS API | **HEALTHY** | https://api.osiriscare.net/health |
+| Learning Sync | **WORKING** | 24 patterns, 7,215 executions |
+| Evidence Collection | **WORKING** | 180K bundles collected |
+| OTS Anchoring | **FIXED** | Commitment computation corrected |
 
 ---
 
-## Session 78 - VPS Fixes + Comprehensive Chaos Testing
+## Session 79 - Database Pruning & OTS Fix
 
-### Issues Fixed
+### Accomplishments
 
-1. **Execution telemetry 500 error** - VPS `main.py` wasn't parsing ISO datetime strings
-   - Added `parse_iso_to_datetime()` helper function
-   - `started_at` and `completed_at` now properly converted to datetime objects
+#### 1. Database Pruning (Disk Space Fix)
+- **Problem:** VM appliance disk space filling up due to unbounded `incidents.db`
+- **Solution:**
+  - Added `prune_old_incidents()` to `incident_db.py`
+  - Added `get_database_stats()` for monitoring
+  - Added `_maybe_prune_database()` to `appliance_agent.py` (runs daily)
+  - Added 4 unit tests for pruning functionality
+- **Defaults:** 30-day retention, keeps unresolved incidents, VACUUMs database
 
-2. **L1-TEST-RULE-001 invalid rule** - Kept re-syncing from VPS
-   - Deleted from `promoted_rules` database table
-   - Cleaned up from appliance `/var/lib/msp/rules/promoted/`
+#### 2. ISO v51 Built & Deployed
+- Built ISO on VPS: `/opt/osiriscare-v51.iso`
+- SHA256: `5b762d62c1c90ba00e5d436c7a7d1951184803526778d1922ccc70ed6455e507`
+- Created release v1.0.51 in Central Command
+- Started staged rollout (5% → 25% → 100%)
 
-3. **L1-NIXOS-FW-001 `not_regex` error** - VPS used unsupported operator
-   - Changed VPS rule from `host_id not_regex` to `platform eq nixos`
-   - Now matches baseline rule in `l1_baseline.json`
+#### 3. Learning Sync Verified
+- Pattern stats: 24 patterns aggregated
+- Execution telemetry: 7,215 records
+- Physical appliance synced today (15 patterns merged)
 
-4. **Pattern-stats 500 cascade error** - Stuck SQL transaction
-   - Restarted mcp-server to clear transaction state
+#### 4. OTS Anchoring Fix
+- **Problem:** OTS proofs not getting Bitcoin-anchored (78K pending)
+- **Root Cause:** Wrong commitment computation (using bundle_hash instead of replaying operations)
+- **Fixes Applied:**
+  - Added `replay_timestamp_operations()` to compute correct commitment
+  - Returns last SHA256 result before attestation marker
+  - Tries multiple calendars (alice, bob, finney)
+  - Added 7-day expiration for old proofs
+- **Result:** 67K old proofs expired, 10K recent proofs tracked
 
-### Chaos Lab Results - 84% Heal Rate
-
-**20 Scenarios Tested Across 8 Categories:**
-
-| Category | Healed | Status |
-|----------|--------|--------|
-| Firewall (DC, WS, SRV) | 3/3 | ✅ 100% |
-| Defender (DC, WS, SRV) | 3/3 | ✅ 100% |
-| Network (SMB, NLA) | 2/2 | ✅ 100% |
-| Audit Policy | 2/2 | ✅ 100% |
-| Password Policy | 1/1 | ✅ 100% |
-| Services (W32Time, DNS) | 0/2 | ❌ Needs ISO |
-
-**Total: 11/13 verified = 84%**
-
-### Code Changes (Committed)
-- `appliance_agent.py` - Added service health checks (service_w32time, service_dns, service_spooler)
-- `l1_baseline.json` - Added L1-SVC-W32TIME-001, L1-SVC-DNS-001, L1-SVC-SPOOLER-001
-- `appliance-image.nix` - Bumped to v1.0.50
-
-### ISO v50 Status
-- ✅ Built on VPS: `/opt/osiriscare-v50.iso` (1.1GB)
-- ✅ Contains all fixes including service checks
-- 📋 Deploy when convenient (not urgent - 84% working now)
-
-### VPS Changes Applied
-- `/opt/mcp-server/app/main.py` - Added datetime helper, fixed L1-NIXOS-FW-001
-- `promoted_rules` table - Deleted invalid L1-TEST-RULE-001
-- Repo cloned to `/opt/msp-flakes` for future builds
-
----
-
-## Session 77 - L1 Rules Windows/NixOS Distinction FIXED
-
-### Problem Summary
-- L1-FIREWALL rules matched local NixOS appliance (should be Windows-only)
-- L1-BITLOCKER rules not matching `bitlocker_status` check type
-- sensor_api.py had import error preventing sensor-pushed drift healing
-
-### Fixes Applied
-
-#### 1. VPS L1 Rules Updated (`/opt/mcp-server/app/main.py`)
-- **L1-FIREWALL-001/002**: Added `host_id regex ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$`
-  - Only matches IP addresses (Windows VMs), not hostnames (NixOS appliance)
-  - Changed action to `run_windows_runbook` with RB-WIN-FIREWALL-001
-- **L1-NIXOS-FW-001**: New rule for NixOS firewall → escalate
-  - Note: VPS version uses `not_regex` (not supported), l1_baseline.json uses `platform == nixos`
-- **L1-BITLOCKER-001**: Added `bitlocker_status` and `encryption` to check_type match
-  - Added host_id regex for Windows-only
-  - Changed action to `run_windows_runbook` with RB-WIN-SEC-005
-
-#### 2. Agent Fix (Commit 013fb17)
-- **sensor_api.py**: Changed import from `.models` to `.incident_db` for Incident class
-- **l1_baseline.json**: Added `bitlocker_status`, `windows_backup_status` to check types
-
-#### 3. Appliance Deployment
-- Deployed updated l1_baseline.json to `/var/lib/msp/rules/l1_baseline.json`
-- VPS syncs l1_rules.json with new rules
-
-### Verified Working
-```
-NixOS firewall check → L1-NIXOS-FW-001 → escalate (correct)
-Windows firewall (192.168.88.244) → L1 rule → RB-WIN-FIREWALL-001 → SUCCESS
-Windows BitLocker (192.168.88.244) → L1 rule → RB-WIN-ENCRYPTION-001 → runs (verify fails - lab limitation)
-```
-
-### Technical Notes
-- L1 engine supports `regex` operator but NOT `not_regex`
-- L1 baseline rule uses `platform == nixos` instead of `host_id not_regex`
-- Synced rules have priority 5, baseline rules have priority 1 (baseline wins on conflicts)
-
----
-
-## Session 76 - Target Routing Bug FIXED
-
-### Bug Summary
-- Healing actions going to wrong VM (always first target .244)
-- Root Cause #1: Server didn't return `ip_address` in windows_targets
-- Root Cause #2: Short name matching on IPs - "192" matched all targets
-
-### Fixes Applied
-1. Server: Added `ip_address` field to windows_targets response
-2. Agent: Skip short name matching for IP-format target_host
-
----
-
-## Git Commits This Session
-
-| Commit | Message |
-|--------|---------|
-| `013fb17` | fix: Fix sensor_api import and L1 rule check types |
-| `f494f89` | fix: Add AUTO-* runbook mapping and L1 firewall rules |
-| `f87872a` | fix: Target routing - IP addresses use exact match only |
-
----
-
-## Files Modified This Session
+### Files Modified
 
 | File | Change |
 |------|--------|
-| `sensor_api.py` | Import Incident from incident_db not models |
-| `l1_baseline.json` | Added bitlocker_status, backup_status check types |
-| `appliance_agent.py` | IP-based target matching, AUTO-* runbook mapping |
-| VPS `main.py` | L1 rules with host_id regex, L1-NIXOS-FW-001 |
+| `incident_db.py` | Added prune_old_incidents(), get_database_stats() |
+| `appliance_agent.py` | Added _maybe_prune_database(), bumped to v1.0.51 |
+| `test_incident_db.py` | Added TestDatabasePruning class (4 tests) |
+| `appliance-image.nix` | Bumped to v1.0.51 |
+| `evidence_chain.py` | OTS commitment fix, multi-calendar, expiration |
+| Version files | Updated to v1.0.51 |
+
+### Git Commits
+
+| Commit | Message |
+|--------|---------|
+| `d183739` | fix: Add database pruning to prevent disk space exhaustion |
+| (pending) | fix: OTS anchoring commitment computation and expiration |
 
 ---
 
@@ -154,44 +83,30 @@ Windows BitLocker (192.168.88.244) → L1 rule → RB-WIN-ENCRYPTION-001 → run
 | Appliance | IP | Version | Status |
 |-----------|-----|---------|--------|
 | Physical (HP T640) | 192.168.88.246 | v1.0.49 | **ONLINE** |
+| VM Appliance | Unknown | Unknown | **UPDATING** |
 
-### VPS
+### VPS Services
 | Service | URL | Status |
 |---------|-----|--------|
 | Dashboard | https://dashboard.osiriscare.net | Online |
 | API | https://api.osiriscare.net | Online |
-| L1 Rules | Updated | 31 rules with Windows/NixOS distinction |
-
-### Windows VMs (on iMac 192.168.88.50)
-| VM | IP | Status |
-|----|-----|--------|
-| NVSRV01 | 192.168.88.244 | Online, healing working |
-| NVDC01 | 192.168.88.250 | Online, healing working |
-| NVWS01 | 192.168.88.251 | Online, healing working |
 
 ---
 
-## Known Limitations
+## Technical Notes
 
-1. **BitLocker verify phase fails** - Lab VMs may not have TPM/encryption configured
-2. **`not_regex` operator** - Not supported by L1 engine, use `platform` condition instead
-3. **L1-TEST-RULE-001.yaml** - Promoted rule fails to load (missing 'action' field)
+### Database Pruning
+- `prune_interval`: 86400 seconds (24 hours)
+- `incident_retention_days`: 30 days
+- `keep_unresolved`: True (never delete open incidents)
+- Also prunes associated `learning_feedback` and orphan `pattern_stats`
+- VACUUMs database after pruning to reclaim space
 
----
-
-## Next Session Priorities
-
-### 1. Rebuild ISO v50
-- Include commits: f87872a, f494f89, 013fb17
-- All L1 rules fixes and target routing fixes
-
-### 2. Fix L1-TEST-RULE-001.yaml
-- Promoted rule in `/var/lib/msp/rules/promoted/` has invalid format
-- Either delete or fix the YAML structure
-
-### 3. Add `not_regex` Operator Support (Optional)
-- Add to `level1_deterministic.py` MatchOperator enum
-- Implement in RuleCondition.matches()
+### OTS Anchoring
+- Commitment = last SHA256 result before 0x00 attestation marker
+- Calendars tried: alice, bob, finney (in order)
+- Proofs older than 7 days marked as expired (calendars prune them)
+- Upgrade job should run hourly for best results
 
 ---
 
@@ -201,18 +116,17 @@ Windows BitLocker (192.168.88.244) → L1 rule → RB-WIN-ENCRYPTION-001 → run
 # SSH to physical appliance
 ssh root@192.168.88.246
 
-# Check agent logs
-journalctl -u compliance-agent -f
+# Check agent logs for pruning
+journalctl -u compliance-agent | grep -i prune
 
-# Check L1 rule matching
-journalctl -u compliance-agent | grep "L1 rule matched"
+# Check database size
+ls -lh /var/lib/msp/*.db
 
-# Deploy VPS main.py fix
-scp file.py root@178.156.162.116:/opt/mcp-server/app/
-ssh root@178.156.162.116 "cd /opt/mcp-server && docker compose restart mcp-server"
+# Trigger OTS upgrade on VPS
+curl -X POST 'https://api.osiriscare.net/api/evidence/ots/upgrade?limit=100'
 
-# Force rule sync
-ssh root@192.168.88.246 "rm /var/lib/msp/rules/l1_rules.json && systemctl restart compliance-agent"
+# Check OTS status
+ssh root@178.156.162.116 "docker exec mcp-postgres psql -U mcp -d mcp -c 'SELECT status, COUNT(*) FROM ots_proofs GROUP BY status;'"
 ```
 
 ---

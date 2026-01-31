@@ -250,6 +250,102 @@ def extract_calendar_url_from_proof(proof_bytes: bytes) -> Optional[str]:
     return None
 
 
+def replay_timestamp_operations(hash_bytes: bytes, timestamp_data: bytes) -> Optional[bytes]:
+    """
+    Replay OTS timestamp operations to compute the commitment hash.
+
+    OTS operations transform the original hash step by step. The commitment
+    is the LAST SHA256 result before reaching the attestation marker.
+
+    Operation bytes:
+    - 0xf0 XX: prepend (followed by length byte, then data)
+    - 0xf1 XX: append (followed by length byte, then data)
+    - 0x08: SHA256
+    - 0x67: SHA1
+    - 0x20: RIPEMD160
+    - 0x83: pending attestation (marks end of operations for a calendar)
+    - 0x00: attestation marker (Bitcoin or pending attestation follows)
+
+    Returns the commitment hash (last SHA256 result) or None if parsing fails.
+    """
+    current_hash = hash_bytes
+    last_sha256_result = None  # Track last SHA256 for commitment
+    pos = 0
+
+    try:
+        while pos < len(timestamp_data):
+            op = timestamp_data[pos]
+            pos += 1
+
+            if op == 0xf0:  # Prepend
+                if pos >= len(timestamp_data):
+                    break
+                length = timestamp_data[pos]
+                pos += 1
+                if pos + length > len(timestamp_data):
+                    break
+                prepend_data = timestamp_data[pos:pos + length]
+                pos += length
+                current_hash = prepend_data + current_hash
+
+            elif op == 0xf1:  # Append
+                if pos >= len(timestamp_data):
+                    break
+                length = timestamp_data[pos]
+                pos += 1
+                if pos + length > len(timestamp_data):
+                    break
+                append_data = timestamp_data[pos:pos + length]
+                pos += length
+                current_hash = current_hash + append_data
+
+            elif op == 0x08:  # SHA256
+                current_hash = hashlib.sha256(current_hash).digest()
+                last_sha256_result = current_hash  # Track this as potential commitment
+
+            elif op == 0x67:  # SHA1
+                current_hash = hashlib.sha1(current_hash).digest()
+
+            elif op == 0x20:  # RIPEMD160
+                import hashlib as hl
+                h = hl.new('ripemd160')
+                h.update(current_hash)
+                current_hash = h.digest()
+
+            elif op == 0x00:  # Attestation marker (0x00 followed by type)
+                # The commitment is the LAST SHA256 result, not current state
+                # (current state may have prepend/append data added after last SHA256)
+                if last_sha256_result:
+                    return last_sha256_result
+                return current_hash if len(current_hash) == 32 else None
+
+            elif op == 0x83:  # Pending attestation (standalone, rare)
+                if last_sha256_result:
+                    return last_sha256_result
+                return current_hash if len(current_hash) == 32 else None
+
+            elif op == 0xff:  # Fork (multiple paths)
+                continue
+
+            else:
+                # Unknown operation - skip if looks like length prefix
+                if op <= 0x20:
+                    if pos + op <= len(timestamp_data):
+                        pos += op
+                else:
+                    logger.debug(f"Unknown OTS operation: 0x{op:02x} at position {pos-1}")
+                    break
+
+        # Return last SHA256 result as commitment, or current if no SHA256 was done
+        if last_sha256_result:
+            return last_sha256_result
+        return current_hash if len(current_hash) == 32 else None
+
+    except Exception as e:
+        logger.warning(f"Failed to replay OTS operations: {e}")
+        return None
+
+
 async def submit_hash_to_ots(bundle_hash: str, bundle_id: str) -> Optional[Dict[str, Any]]:
     """
     Submit a hash to OTS calendar servers.
@@ -376,12 +472,23 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 100):
     3. Query the calendar for upgrade (Bitcoin attestation)
     4. If upgraded, store the complete proof
     """
+    # First, expire very old proofs that can't be upgraded (calendars prune after ~7 days)
+    await db.execute(text("""
+        UPDATE ots_proofs
+        SET status = 'expired',
+            error = 'Calendar retention exceeded - proof too old to upgrade'
+        WHERE status = 'pending'
+        AND submitted_at < NOW() - INTERVAL '7 days'
+    """))
+
+    # Now fetch recent pending proofs to upgrade
     result = await db.execute(text("""
         SELECT bundle_id, bundle_hash, proof_data, calendar_url
         FROM ots_proofs
         WHERE status = 'pending'
-        AND submitted_at < NOW() - INTERVAL '1 hour'
-        AND (last_upgrade_attempt IS NULL OR last_upgrade_attempt < NOW() - INTERVAL '1 hour')
+        AND submitted_at > NOW() - INTERVAL '7 days'
+        AND submitted_at < NOW() - INTERVAL '2 hours'
+        AND (last_upgrade_attempt IS NULL OR last_upgrade_attempt < NOW() - INTERVAL '30 minutes')
         ORDER BY submitted_at ASC
         LIMIT :limit
     """), {"limit": limit})
@@ -441,94 +548,120 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 100):
                 # Try to upgrade via calendar
                 calendar_url = parsed["calendar_url"] or proof.calendar_url
 
-                # The commitment is the hash after all operations in the pending proof
-                # For upgrade, we query: calendar_url/timestamp/COMMITMENT
-                # The commitment should be findable in the timestamp_data
+                # Compute the commitment by replaying timestamp operations
+                # The commitment is NOT the original hash - it's the result of
+                # applying all operations until reaching the pending attestation
+                commitment_bytes = replay_timestamp_operations(
+                    parsed["hash_bytes"],
+                    parsed["timestamp_data"]
+                )
 
-                # Find pending attestation marker (0x83) and extract commitment
-                commitment = None
-                ts_data = parsed["timestamp_data"]
-                attestation_pos = ts_data.find(b'\x83')
-                if attestation_pos > 32:
-                    # Commitment is typically 32 bytes before the attestation marker
-                    # But it depends on the operations. For now, try the bundle_hash
-                    commitment = proof.bundle_hash
+                if commitment_bytes:
+                    commitment = commitment_bytes.hex()
+                    logger.debug(f"Computed commitment: {commitment[:16]}... from hash {proof.bundle_hash[:16]}...")
+                else:
+                    commitment = None
 
-                if not commitment or not calendar_url:
+                if not commitment:
                     await db.execute(text("""
                         UPDATE ots_proofs
                         SET last_upgrade_attempt = NOW(),
                             upgrade_attempts = upgrade_attempts + 1,
-                            error = 'Could not extract commitment or calendar URL'
+                            error = 'Could not compute commitment from timestamp operations'
                         WHERE bundle_id = :bundle_id
                     """), {"bundle_id": proof.bundle_id})
                     continue
 
-                # Query calendar for upgrade
-                upgrade_url = f"{calendar_url}/timestamp/{commitment}"
+                # Try multiple calendar URLs - the extracted one plus known calendars
+                # Pool URLs won't work for upgrade, so prioritize actual calendar URLs
+                calendar_urls_to_try = []
+                if calendar_url and 'pool' not in calendar_url:
+                    calendar_urls_to_try.append(calendar_url)
 
-                async with session.get(upgrade_url) as resp:
-                    if resp.status == 200:
-                        upgrade_data = await resp.read()
+                # Add known actual calendar URLs (not pools)
+                known_calendars = [
+                    "https://alice.btc.calendar.opentimestamps.org",
+                    "https://bob.btc.calendar.opentimestamps.org",
+                    "https://finney.calendar.eternitywall.com",
+                ]
+                for cal in known_calendars:
+                    if cal not in calendar_urls_to_try:
+                        calendar_urls_to_try.append(cal)
 
-                        # Check if upgrade contains Bitcoin attestation
-                        if b'\x05\x88\x96\x0d\x73\xd7\x19\x01' in upgrade_data:
-                            # Construct upgraded OTS file
-                            OTS_MAGIC = b'\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94'
-                            upgraded_ots = OTS_MAGIC + b'\x08' + parsed["hash_bytes"] + upgrade_data
+                # Try each calendar URL
+                upgrade_success = False
+                last_error = "No calendars available"
 
-                            # Extract block height
-                            marker = b'\x05\x88\x96\x0d\x73\xd7\x19\x01'
-                            pos = upgrade_data.find(marker)
-                            block_height = None
-                            if pos >= 0 and pos + len(marker) + 4 <= len(upgrade_data):
-                                block_bytes = upgrade_data[pos + len(marker):pos + len(marker) + 4]
-                                block_height = int.from_bytes(block_bytes, 'little')
+                for try_calendar_url in calendar_urls_to_try:
+                    upgrade_url = f"{try_calendar_url}/timestamp/{commitment}"
 
-                            proof_b64 = base64.b64encode(upgraded_ots).decode('ascii')
+                    try:
+                        async with session.get(upgrade_url) as resp:
+                            if resp.status == 200:
+                                upgrade_data = await resp.read()
 
-                            await db.execute(text("""
-                                UPDATE ots_proofs
-                                SET status = 'anchored',
-                                    proof_data = :proof_data,
-                                    bitcoin_block = :block,
-                                    anchored_at = NOW(),
-                                    last_upgrade_attempt = NOW(),
-                                    upgrade_attempts = upgrade_attempts + 1
-                                WHERE bundle_id = :bundle_id
-                            """), {
-                                "proof_data": proof_b64,
-                                "block": block_height,
-                                "bundle_id": proof.bundle_id,
-                            })
+                                # Check if upgrade contains Bitcoin attestation
+                                if b'\x05\x88\x96\x0d\x73\xd7\x19\x01' in upgrade_data:
+                                    # Construct upgraded OTS file
+                                    OTS_MAGIC = b'\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94'
+                                    upgraded_ots = OTS_MAGIC + b'\x08' + parsed["hash_bytes"] + upgrade_data
 
-                            upgraded += 1
-                            logger.info(f"OTS upgraded: {proof.bundle_id[:8]}... block={block_height}")
-                        else:
-                            # Got response but no Bitcoin yet
-                            await db.execute(text("""
-                                UPDATE ots_proofs
-                                SET last_upgrade_attempt = NOW(),
-                                    upgrade_attempts = upgrade_attempts + 1
-                                WHERE bundle_id = :bundle_id
-                            """), {"bundle_id": proof.bundle_id})
-                    elif resp.status == 404:
-                        # Commitment not found - may need different extraction method
-                        await db.execute(text("""
-                            UPDATE ots_proofs
-                            SET last_upgrade_attempt = NOW(),
-                                upgrade_attempts = upgrade_attempts + 1,
-                                error = 'Commitment not found on calendar (404)'
-                            WHERE bundle_id = :bundle_id
-                        """), {"bundle_id": proof.bundle_id})
-                    else:
-                        await db.execute(text("""
-                            UPDATE ots_proofs
-                            SET last_upgrade_attempt = NOW(),
-                                upgrade_attempts = upgrade_attempts + 1,
-                                error = :error
-                            WHERE bundle_id = :bundle_id
-                        """), {"bundle_id": proof.bundle_id, "error": f"Calendar returned {resp.status}"})
+                                    # Extract block height
+                                    marker = b'\x05\x88\x96\x0d\x73\xd7\x19\x01'
+                                    pos = upgrade_data.find(marker)
+                                    block_height = None
+                                    if pos >= 0 and pos + len(marker) + 4 <= len(upgrade_data):
+                                        block_bytes = upgrade_data[pos + len(marker):pos + len(marker) + 4]
+                                        block_height = int.from_bytes(block_bytes, 'little')
+
+                                    proof_b64 = base64.b64encode(upgraded_ots).decode('ascii')
+
+                                    await db.execute(text("""
+                                        UPDATE ots_proofs
+                                        SET status = 'anchored',
+                                            proof_data = :proof_data,
+                                            bitcoin_block = :block,
+                                            calendar_url = :calendar_url,
+                                            anchored_at = NOW(),
+                                            last_upgrade_attempt = NOW(),
+                                            upgrade_attempts = upgrade_attempts + 1,
+                                            error = NULL
+                                        WHERE bundle_id = :bundle_id
+                                    """), {
+                                        "proof_data": proof_b64,
+                                        "block": block_height,
+                                        "bundle_id": proof.bundle_id,
+                                        "calendar_url": try_calendar_url,
+                                    })
+
+                                    upgraded += 1
+                                    upgrade_success = True
+                                    logger.info(f"OTS upgraded: {proof.bundle_id[:8]}... block={block_height} via {try_calendar_url}")
+                                    break  # Success, stop trying other calendars
+                                else:
+                                    # Got response but no Bitcoin attestation yet - not anchored
+                                    last_error = f"No Bitcoin attestation yet from {try_calendar_url}"
+                                    continue  # Try next calendar
+                            elif resp.status == 404:
+                                # Commitment not found on this calendar - try next
+                                last_error = f"Commitment not found on {try_calendar_url}"
+                                continue
+                            else:
+                                last_error = f"{try_calendar_url} returned {resp.status}"
+                                continue
+                    except aiohttp.ClientError as e:
+                        last_error = f"Connection error to {try_calendar_url}: {str(e)[:100]}"
+                        continue
+
+                # After trying all calendars, update the proof status
+                if not upgrade_success:
+                    await db.execute(text("""
+                        UPDATE ots_proofs
+                        SET last_upgrade_attempt = NOW(),
+                            upgrade_attempts = upgrade_attempts + 1,
+                            error = :error
+                        WHERE bundle_id = :bundle_id
+                    """), {"bundle_id": proof.bundle_id, "error": last_error})
 
             except Exception as e:
                 logger.warning(f"Failed to upgrade proof {proof.bundle_id[:8]}: {e}")
@@ -542,7 +675,18 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 100):
 
     await db.commit()
 
-    return {"checked": len(pending_proofs), "upgraded": upgraded, "skipped_legacy": skipped_legacy}
+    # Get count of expired proofs
+    expired_result = await db.execute(text("""
+        SELECT COUNT(*) FROM ots_proofs WHERE status = 'expired'
+    """))
+    expired_count = expired_result.scalar() or 0
+
+    return {
+        "checked": len(pending_proofs),
+        "upgraded": upgraded,
+        "skipped_legacy": skipped_legacy,
+        "total_expired": expired_count
+    }
 
 
 # =============================================================================
