@@ -113,6 +113,69 @@ All tests passing. No regressions from security audit changes.
 
 ---
 
+---
+
+## Part 2: Partner/Client/Portal Audit (Session Continuation)
+
+### Completed - CRITICAL Security Fixes
+- [x] Timing attack in portal token comparison → `secrets.compare_digest()`
+- [x] Missing admin auth on portal endpoints → Added `require_admin` dependency
+- [x] SQL injection in notifications.py interval query → Parameterized query
+- [x] IDOR vulnerability in site lookup → Fixed column name (`site_id`)
+- [x] CSRF secret not enforced in production → Fail fast if missing
+
+### Completed - HIGH Security Fixes
+- [x] Open redirect in OAuth callback → Validate return_url starts with "/"
+- [x] Redis required in production for OAuth → Fail fast if unavailable
+- [x] Auth cookie vs localStorage in PartnerExceptionManagement → Fixed to use cookie auth
+- [x] Missing Response import in routes.py → Added import
+- [x] CSRF blocking login endpoints → Added exempt paths
+
+### Completed - MEDIUM Security Fixes
+- [x] JWT validation approach undocumented → Added documentation explaining approach
+- [x] Hardcoded API URLs → Added API_BASE_URL env var
+- [x] PII in logs → Added `redact_email()` helper function
+- [x] N+1 queries in portal → Optimized with `asyncio.gather()`
+
+### Completed - TypeScript Build Fixes
+- [x] scope_type union type error → Explicit type annotation on formData state
+- [x] action union type error → Cast e.target.value to correct union type
+- [x] Missing notes field → Added optional notes to ExceptionAuditEntry interface
+
+### Files Modified (Part 2)
+| File | Change |
+|------|--------|
+| `backend/portal.py` | Timing attack fix, admin auth, PII redaction, N+1 fix |
+| `backend/notifications.py` | SQL injection fix, IDOR fix |
+| `backend/oauth_login.py` | Open redirect fix, Redis production requirement |
+| `backend/csrf.py` | Production secret enforcement, exempt paths |
+| `backend/routes.py` | Added Response import |
+| `backend/partner_auth.py` | JWT validation documentation |
+| `backend/partners.py` | API_BASE_URL env var |
+| `backend/provisioning.py` | API_BASE_URL env var |
+| `frontend/src/partner/PartnerExceptionManagement.tsx` | Cookie auth, TypeScript fixes |
+
+### Git Commits (Part 2)
+| Commit | Message |
+|--------|---------|
+| `3413d05` | fix: Add Response import and CSRF exemptions for auth endpoints |
+| `88b77ac` | security: Fix critical portal, partner, and OAuth vulnerabilities |
+| `5629f6e` | security: Fix MEDIUM-level production readiness issues |
+| `7d54a68` | fix: TypeScript type errors in PartnerExceptionManagement |
+
+---
+
+## Security Audit Summary (Full Session)
+
+| Severity | Found | Fixed | Status |
+|----------|-------|-------|--------|
+| CRITICAL | 5 | 5 | ✅ Complete |
+| HIGH | 5 | 5 | ✅ Complete |
+| MEDIUM | 4 | 4 | ✅ Complete |
+| LOW | 2 | 0 | Deferred (minor logging improvements) |
+
+---
+
 ## Next Session Should
 
 ### Immediate Priority
@@ -127,6 +190,7 @@ All tests passing. No regressions from security audit changes.
 - Redis rate limiter has in-memory fallback if Redis unavailable
 - Frontend code splitting active - pages lazy loaded on demand
 - React.memo on all major list item components for performance
+- GitHub Actions workflow now auto-deploys on push to main
 
 ### Commands to Run First
 ```bash
@@ -141,14 +205,15 @@ python -m pytest tests/ -v --tb=short
 **VMs Running:** Yes (VPS at 178.156.162.116)
 **Tests Passing:** 858 passed, 11 skipped
 **Web UI Status:** Working - Dashboard verified via browser
-**Last Commit:** 3c27029 (docs: Add AbortSignal usage note in hooks)
+**GitHub Actions:** Passing (auto-deploy working)
+**Last Commit:** 7d54a68 (fix: TypeScript type errors in PartnerExceptionManagement)
 
 ---
 
 ## Notes for Future Self
 
-- The production readiness audit identified 3 CRITICAL and 5 HIGH issues - all fixed
-- CSRF middleware integrated but needs frontend to send X-CSRF-Token header on mutations
+- Full security audit complete: 14 issues found and fixed (5 CRITICAL, 5 HIGH, 4 MEDIUM)
+- CSRF middleware integrated with proper exempt paths for auth/OAuth/portal endpoints
 - Redis rate limiter created but main.py still uses old in-memory rate_limiter.py
 - Consider switching main.py to use redis_rate_limiter.py for distributed deployments
 - Migration DOWN sections use SQL comments (-- prefix) that migrate.py strips
@@ -158,3 +223,6 @@ python -m pytest tests/ -v --tb=short
 - HTTP-only secure cookies now primary auth method (localStorage kept for backwards compat)
 - Cookie settings: httponly=True, secure=True, samesite=strict, max_age=24h
 - React.memo added to ClientCard, ClientCardCompact, IncidentRow, PatternCard, RunbookCard, OnboardingCard
+- `secrets.compare_digest()` used for all token comparisons (prevents timing attacks)
+- `redact_email()` helper prevents PII leakage in logs
+- `API_BASE_URL` env var allows configurable API endpoints

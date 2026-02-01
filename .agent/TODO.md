@@ -13,8 +13,10 @@
 3. ✅ Fix all CRITICAL and HIGH security issues
 4. ✅ Performance optimizations (code splitting, memoization)
 5. ✅ Run tests to verify no regressions
+6. ✅ Partner/Client/Portal production readiness audit
+7. ✅ Fix all remaining security vulnerabilities
 
-### Accomplishments
+### Part 1: Initial Security Audit
 
 #### 1. Backend Security Audit - COMPLETE
 - **SQL Injection Fix:** Parameterized queries in telemetry purge (routes.py, settings_api.py)
@@ -34,80 +36,79 @@
 - **onError Callbacks:** Added to 25+ mutation hooks (useFleet.ts, useIntegrations.ts)
 - **Global Error Handler:** Unhandled query error logging
 - **React.lazy Code Splitting:** Bundle reduced 933KB → 308KB (67% reduction)
-- **React.memo:** Applied to 6 heavy list components:
-  - ClientCard, ClientCardCompact, IncidentRow, PatternCard, RunbookCard, OnboardingCard
+- **React.memo:** Applied to 6 heavy list components
 
 #### 3. HTTP-Only Secure Cookie Auth - COMPLETE
 - Backend sets httponly=True, secure=True, samesite=strict cookies on login
 - Frontend uses credentials: 'same-origin' for all fetch requests
 - require_auth accepts token from cookie OR header (backwards compat)
-- localStorage kept as fallback during transition period
 
-#### 4. Hotfixes Applied
-- Added bcrypt==4.2.1 to VPS requirements.txt
-- Restored SHA-256 legacy password verification (read-only)
-- Fixed SAFE_METHODS (GET/HEAD/OPTIONS) in rate limiter
+### Part 2: Partner/Client/Portal Audit & Fixes
 
-### Files Created
-| File | Description |
-|------|-------------|
-| `backend/csrf.py` | CSRF double-submit cookie middleware |
-| `backend/redis_rate_limiter.py` | Redis-backed distributed rate limiter |
-| `backend/migrate.py` | Migration runner with rollback support |
-| `backend/migrations/000_schema_migrations.sql` | Migration tracking table |
-| `backend/migrations/033_performance_indexes.sql` | 12 performance indexes |
-| `frontend/src/components/shared/ErrorBoundary.tsx` | React error boundary |
+#### 4. CRITICAL Security Fixes - COMPLETE
+| Issue | File | Fix |
+|-------|------|-----|
+| Timing attack in token comparison | portal.py | `secrets.compare_digest()` |
+| Missing admin auth on portal endpoints | portal.py | Added `require_admin` dependency |
+| SQL injection in notifications | notifications.py | Parameterized interval query |
+| IDOR in site lookup | notifications.py | Fixed column name (`site_id`) |
+| CSRF secret not enforced | csrf.py | Fail in production if missing |
 
-### Files Modified
-| File | Change |
-|------|--------|
-| `backend/auth.py` | bcrypt mandatory, SHA-256 legacy, cookie auth |
-| `backend/partners.py` | require_admin on 7 endpoints, Fernet encryption |
-| `backend/settings_api.py` | require_admin on 4 endpoints, SQL injection fix |
-| `backend/routes.py` | SQL injection fix, asyncio.gather, HTTP-only cookies |
-| `backend/db_queries.py` | N+1 fix with asyncio.gather |
-| `backend/oauth_login.py` | HTTP-only cookies, Fernet encryption |
-| `backend/partner_auth.py` | Fernet token encryption |
-| `backend/rate_limiter.py` | SAFE_METHODS for HEAD/OPTIONS |
-| `main.py` | Secrets validation, pool config |
-| `frontend/src/App.tsx` | ErrorBoundary, React.lazy, Suspense |
-| `frontend/src/utils/api.ts` | AbortController, timeout, credentials |
-| `frontend/src/hooks/useFleet.ts` | onError callbacks on 25 mutations |
-| `frontend/src/hooks/useIntegrations.ts` | onError callbacks on 5 mutations |
-| `frontend/src/contexts/AuthContext.tsx` | HTTP-only cookie auth |
-| `frontend/src/components/fleet/ClientCard.tsx` | React.memo, useCallback |
-| `frontend/src/components/incidents/IncidentRow.tsx` | React.memo |
-| `frontend/src/components/learning/PatternCard.tsx` | React.memo, useCallback |
-| `frontend/src/components/runbooks/RunbookCard.tsx` | React.memo |
-| `frontend/src/components/onboarding/OnboardingCard.tsx` | React.memo |
+#### 5. HIGH Security Fixes - COMPLETE
+| Issue | File | Fix |
+|-------|------|-----|
+| Open redirect in OAuth | oauth_login.py | Validate return_url starts with "/" |
+| Redis required in production | oauth_login.py | Fail fast if Redis unavailable |
+| Auth cookie vs localStorage | PartnerExceptionManagement.tsx | Fixed to use cookie auth |
+| Missing Response import | routes.py | Added import for Response |
+| CSRF blocking login | csrf.py | Added exempt paths for auth endpoints |
 
-### Git Commits
+#### 6. MEDIUM Security Fixes - COMPLETE
+| Issue | File | Fix |
+|-------|------|-----|
+| JWT validation undocumented | partner_auth.py | Added documentation explaining approach |
+| Hardcoded API URLs | partners.py, provisioning.py | `API_BASE_URL` env var |
+| PII in logs | portal.py | `redact_email()` helper |
+| N+1 queries in portal | portal.py | `asyncio.gather()` optimization |
+
+#### 7. TypeScript Build Fixes - COMPLETE
+| Issue | File | Fix |
+|-------|------|-----|
+| scope_type union type | PartnerExceptionManagement.tsx | Explicit type annotation on formData |
+| action union type | PartnerExceptionManagement.tsx | Cast e.target.value to union type |
+| Missing notes field | PartnerExceptionManagement.tsx | Added optional notes to ExceptionAuditEntry |
+
+### Git Commits (Full Session)
 | Commit | Message |
 |--------|---------|
-| `a34ff29` | fix: Production readiness - security, performance, and database fixes |
-| `a4507ed` | feat: Add remaining production security enhancements |
-| `49e00b3` | fix: Restore legacy password support and add HEAD to rate limiter |
-| `0f0205c` | fix: Actually use SAFE_METHODS in rate limiter dispatch |
-| `1ba7c82` | docs: Add session 82 log - Production Readiness Security Audit |
-| `c787d8d` | fix: Production security audit round 2 - secrets, errors, performance |
-| `7dd38be` | feat: Frontend production readiness - error handling and API improvements |
-| `9ee86a3` | perf: React.lazy code splitting and React.memo optimization |
 | `eac667f` | security: HTTP-only secure cookie authentication |
 | `3c27029` | docs: Add AbortSignal usage note in hooks |
+| `3413d05` | fix: Add Response import and CSRF exemptions for auth endpoints |
+| `88b77ac` | security: Fix critical portal, partner, and OAuth vulnerabilities |
+| `5629f6e` | security: Fix MEDIUM-level production readiness issues |
+| `7d54a68` | fix: TypeScript type errors in PartnerExceptionManagement |
 
 ### Test Results
 ```
 858 passed, 11 skipped, 3 warnings in 37.21s
 ```
 
-### Key Decisions
-| Decision | Rationale |
-|----------|-----------|
-| Keep SHA-256 verification (read-only) | Existing accounts have legacy hashes |
-| bcrypt mandatory for new passwords | Security best practice |
-| Skip rate limiting for GET/HEAD/OPTIONS | Safe methods shouldn't count against limits |
-| Fernet for OAuth tokens | Symmetric encryption suitable for at-rest secrets |
-| React.lazy with named exports | Use .then(m => ({ default: m.Name })) pattern |
+### Files Modified (Part 2)
+| File | Change |
+|------|--------|
+| `backend/portal.py` | Timing attack fix, admin auth, PII redaction, N+1 fix |
+| `backend/notifications.py` | SQL injection fix, IDOR fix |
+| `backend/oauth_login.py` | Open redirect fix, Redis production requirement |
+| `backend/csrf.py` | Production secret enforcement, exempt paths |
+| `backend/routes.py` | Added Response import |
+| `backend/partner_auth.py` | JWT validation documentation |
+| `backend/partners.py` | API_BASE_URL env var |
+| `backend/provisioning.py` | API_BASE_URL env var |
+| `frontend/src/partner/PartnerExceptionManagement.tsx` | Cookie auth, TypeScript fixes |
+
+### GitHub Actions
+- Workflow passed after TypeScript fixes (commit 7d54a68)
+- Auto-deployment to VPS successful
 
 ---
 

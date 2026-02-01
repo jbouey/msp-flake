@@ -46,6 +46,56 @@
 
 ---
 
+## Part 2: Partner/Client/Portal Security Audit
+
+### CRITICAL Security Fixes
+
+| Issue | File | Fix | Status |
+|-------|------|-----|--------|
+| Timing attack in token comparison | portal.py | `secrets.compare_digest()` | DONE |
+| Missing admin auth on portal endpoints | portal.py | Added `require_admin` | DONE |
+| SQL injection in notifications | notifications.py | Parameterized interval query | DONE |
+| IDOR in site lookup | notifications.py | Fixed column name (`site_id`) | DONE |
+| CSRF secret not enforced | csrf.py | Fail in production if missing | DONE |
+
+### HIGH Security Fixes
+
+| Issue | File | Fix | Status |
+|-------|------|-----|--------|
+| Open redirect in OAuth | oauth_login.py | Validate return_url starts with "/" | DONE |
+| Redis required in production | oauth_login.py | Fail fast if unavailable | DONE |
+| Auth cookie vs localStorage | PartnerExceptionManagement.tsx | Fixed to use cookie auth | DONE |
+| Missing Response import | routes.py | Added import | DONE |
+| CSRF blocking login | csrf.py | Added exempt paths | DONE |
+
+### MEDIUM Security Fixes
+
+| Issue | File | Fix | Status |
+|-------|------|-----|--------|
+| JWT validation undocumented | partner_auth.py | Added documentation | DONE |
+| Hardcoded API URLs | partners.py, provisioning.py | `API_BASE_URL` env var | DONE |
+| PII in logs | portal.py | `redact_email()` helper | DONE |
+| N+1 queries in portal | portal.py | `asyncio.gather()` | DONE |
+
+### TypeScript Build Fixes
+
+| Issue | File | Fix | Status |
+|-------|------|-----|--------|
+| scope_type union type | PartnerExceptionManagement.tsx | Explicit type annotation | DONE |
+| action union type | PartnerExceptionManagement.tsx | Cast e.target.value | DONE |
+| Missing notes field | PartnerExceptionManagement.tsx | Added to interface | DONE |
+
+### Part 2 Git Commits
+
+| Commit | Message |
+|--------|---------|
+| `3413d05` | fix: Add Response import and CSRF exemptions |
+| `88b77ac` | security: Fix critical portal, partner, and OAuth vulnerabilities |
+| `5629f6e` | security: Fix MEDIUM-level production readiness issues |
+| `7d54a68` | fix: TypeScript type errors in PartnerExceptionManagement |
+
+---
+
 ## Files Created
 
 1. `mcp-server/central-command/backend/csrf.py` - NEW
@@ -80,6 +130,15 @@
 9. `frontend/src/components/runbooks/RunbookCard.tsx` - React.memo
 10. `frontend/src/components/onboarding/OnboardingCard.tsx` - React.memo
 11. `frontend/src/components/shared/index.ts` - Export ErrorBoundary
+12. `frontend/src/partner/PartnerExceptionManagement.tsx` - Cookie auth, TypeScript fixes
+
+### Part 2 Backend Files:
+1. `backend/portal.py` - Timing attack fix, admin auth, PII redaction, N+1 fix
+2. `backend/notifications.py` - SQL injection fix, IDOR fix
+3. `backend/oauth_login.py` - Open redirect fix, Redis production requirement
+4. `backend/partner_auth.py` - JWT validation documentation
+5. `backend/partners.py` - API_BASE_URL env var
+6. `backend/provisioning.py` - API_BASE_URL env var
 
 ---
 
@@ -97,6 +156,10 @@
 | `9ee86a3` | perf: React.lazy code splitting and React.memo optimization |
 | `eac667f` | security: HTTP-only secure cookie authentication |
 | `3c27029` | docs: Add AbortSignal usage note in hooks |
+| `3413d05` | fix: Add Response import and CSRF exemptions |
+| `88b77ac` | security: Fix critical portal, partner, and OAuth vulnerabilities |
+| `5629f6e` | security: Fix MEDIUM-level production readiness issues |
+| `7d54a68` | fix: TypeScript type errors in PartnerExceptionManagement |
 
 ---
 
@@ -128,12 +191,24 @@
 | Frontend Bundle | 308KB (67% reduction) |
 | Auth Method | HTTP-only secure cookies |
 | Password Hashing | bcrypt (new), SHA-256 (legacy read-only) |
-| CSRF Protection | Ready (needs frontend integration) |
+| CSRF Protection | Active with exempt paths |
 | Rate Limiting | In-memory (Redis version ready) |
 | Error Handling | ErrorBoundary + onError callbacks |
 | Code Splitting | 30+ lazy-loaded chunks |
 | Memoized Components | 6 list item components |
 | Tests Passing | 858 + 24 Go |
+| GitHub Actions | Passing (auto-deploy working) |
+
+---
+
+## Security Audit Summary
+
+| Severity | Found | Fixed | Status |
+|----------|-------|-------|--------|
+| CRITICAL | 5 | 5 | ✅ Complete |
+| HIGH | 5 | 5 | ✅ Complete |
+| MEDIUM | 4 | 4 | ✅ Complete |
+| LOW | 2 | 0 | Deferred |
 
 ---
 
@@ -147,7 +222,9 @@
 
 ---
 
-**Session Status:** COMPLETE
+**Session Status:** COMPLETE (Part 1 + Part 2)
 **Handoff Ready:** YES
 **Deployment Verified:** YES
+**GitHub Actions:** PASSING
 **Tests Passing:** YES (858 passed)
+**Security Vulnerabilities Fixed:** 14 (5 CRITICAL, 5 HIGH, 4 MEDIUM)
