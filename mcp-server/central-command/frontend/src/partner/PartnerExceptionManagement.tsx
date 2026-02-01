@@ -42,11 +42,41 @@ interface Site {
   name: string;
 }
 
-// API functions
+interface ExceptionCreateRequest {
+  site_id: string;
+  scope_type: 'runbook' | 'check' | 'control';
+  item_id: string;
+  reason: string;
+  compensating_control?: string;
+  device_filter?: string;
+  duration_days: number;
+  action: 'suppress_alert' | 'skip_remediation' | 'both';
+}
+
+interface ExceptionRenewRequest {
+  duration_days: number;
+  reason: string;
+}
+
+interface ExceptionAuditEntry {
+  id: string;
+  action: string;
+  performed_by: string;
+  performed_at: string;
+  details: Record<string, unknown>;
+}
+
+// API functions - uses cookie-based auth (OAuth session) or partner_api_key
+const getAuthHeaders = (): Record<string, string> => {
+  const apiKey = localStorage.getItem('partner_api_key');
+  return apiKey ? { 'X-API-Key': apiKey } : {};
+};
+
 const api = {
   async getExceptions(siteId: string, activeOnly = true): Promise<ComplianceException[]> {
     const res = await fetch(`/api/exceptions?site_id=${siteId}&active_only=${activeOnly}`, {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      credentials: 'include',  // Include session cookies for OAuth
+      headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error('Failed to fetch exceptions');
     return res.json();
@@ -54,18 +84,20 @@ const api = {
 
   async getSummary(siteId: string): Promise<ExceptionSummary> {
     const res = await fetch(`/api/exceptions/summary?site_id=${siteId}`, {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      credentials: 'include',
+      headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error('Failed to fetch summary');
     return res.json();
   },
 
-  async createException(data: any): Promise<ComplianceException> {
+  async createException(data: ExceptionCreateRequest): Promise<ComplianceException> {
     const res = await fetch('/api/exceptions', {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        ...getAuthHeaders()
       },
       body: JSON.stringify(data)
     });
@@ -76,12 +108,13 @@ const api = {
     return res.json();
   },
 
-  async renewException(id: string, data: any): Promise<ComplianceException> {
+  async renewException(id: string, data: ExceptionRenewRequest): Promise<ComplianceException> {
     const res = await fetch(`/api/exceptions/${id}/renew`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        ...getAuthHeaders()
       },
       body: JSON.stringify(data)
     });
@@ -92,9 +125,10 @@ const api = {
   async revokeException(id: string, reason: string): Promise<ComplianceException> {
     const res = await fetch(`/api/exceptions/${id}/revoke`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        ...getAuthHeaders()
       },
       body: JSON.stringify({ reason })
     });
@@ -102,9 +136,10 @@ const api = {
     return res.json();
   },
 
-  async getAuditLog(id: string): Promise<any[]> {
+  async getAuditLog(id: string): Promise<ExceptionAuditEntry[]> {
     const res = await fetch(`/api/exceptions/${id}/audit`, {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      credentials: 'include',
+      headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error('Failed to fetch audit log');
     return res.json();

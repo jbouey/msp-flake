@@ -23,7 +23,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Tuple, List
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 import httpx
 from fastapi import APIRouter, Request, HTTPException, Depends, Query
@@ -170,8 +170,13 @@ async def get_redis_client():
             from server import redis_client
             return redis_client
         except (ImportError, AttributeError):
-            # Fallback: create a simple in-memory state store
-            logger.warning("Redis not available, using in-memory state store (not recommended for production)")
+            # SECURITY: In production, Redis is required for OAuth state management
+            if os.getenv("ENVIRONMENT", "development") == "production":
+                raise RuntimeError(
+                    "Redis is required for OAuth in production. "
+                    "Configure REDIS_URL environment variable."
+                )
+            logger.warning("Redis not available, using in-memory state store (dev mode only)")
             return None
 
 
@@ -702,8 +707,11 @@ async def oauth_callback(
     # Handle error from provider
     if error:
         logger.warning(f"OAuth error from provider: {error} - {error_description}")
+        # SECURITY: URL-encode error parameters to prevent injection
+        safe_error = quote(str(error), safe='')
+        safe_desc = quote(str(error_description or ''), safe='')
         return RedirectResponse(
-            url=f"{FRONTEND_BASE_URL}/login?oauth_error={error}&error_description={error_description or ''}"
+            url=f"{FRONTEND_BASE_URL}/login?oauth_error={safe_error}&error_description={safe_desc}"
         )
 
     if not code or not state:
@@ -724,8 +732,14 @@ async def oauth_callback(
 
     provider = state_data["provider"]
     code_verifier = state_data["code_verifier"]
-    return_url = state_data.get("return_url") or "/"
     link_to_user_id = state_data.get("link_to_user_id")
+
+    # SECURITY: Validate return_url to prevent open redirect
+    return_url = state_data.get("return_url") or "/"
+    if not return_url.startswith("/"):
+        # Only allow relative paths to prevent open redirect to external domains
+        logger.warning(f"Invalid return_url in OAuth state: {return_url}")
+        return_url = "/"
 
     async_session = await get_db_session()
     ip_address = request.client.host if request.client else None

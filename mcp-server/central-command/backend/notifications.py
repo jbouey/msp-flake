@@ -254,9 +254,9 @@ async def get_site_overrides(
     pool = await get_pool()
 
     async with pool.acquire() as conn:
-        # Verify partner owns this site
+        # Verify partner owns this site (use site_id column, not id)
         site = await conn.fetchrow("""
-            SELECT * FROM sites WHERE id = $1 AND partner_id = $2
+            SELECT * FROM sites WHERE site_id = $1 AND partner_id = $2
         """, site_id, partner['id'])
 
         if not site:
@@ -282,9 +282,9 @@ async def update_site_overrides(
     pool = await get_pool()
 
     async with pool.acquire() as conn:
-        # Verify partner owns this site
+        # Verify partner owns this site (use site_id column, not id)
         site = await conn.fetchrow("""
-            SELECT * FROM sites WHERE id = $1 AND partner_id = $2
+            SELECT * FROM sites WHERE site_id = $1 AND partner_id = $2
         """, site_id, partner['id'])
 
         if not site:
@@ -510,8 +510,8 @@ async def get_sla_metrics(
                 COUNT(*) FILTER (WHERE priority = 'low') as low_count
             FROM escalation_tickets
             WHERE partner_id = $1
-            AND created_at > NOW() - INTERVAL '{days} days'
-        """, partner['id'])
+            AND created_at > NOW() - ($2 * INTERVAL '1 day')
+        """, partner['id'], days)
 
         total = metrics['total_tickets'] or 0
         breaches = metrics['sla_breaches'] or 0

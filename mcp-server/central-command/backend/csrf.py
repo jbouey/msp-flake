@@ -22,7 +22,17 @@ from starlette.responses import Response
 logger = logging.getLogger(__name__)
 
 # Get secret for HMAC signing of tokens
-CSRF_SECRET = os.getenv("CSRF_SECRET", os.getenv("SESSION_TOKEN_SECRET", ""))
+# SECURITY: In production, require CSRF_SECRET or SESSION_TOKEN_SECRET
+CSRF_SECRET = os.getenv("CSRF_SECRET") or os.getenv("SESSION_TOKEN_SECRET") or ""
+
+# Warn if no secret configured (should fail in production)
+if not CSRF_SECRET:
+    if os.getenv("ENVIRONMENT", "development") == "production":
+        raise RuntimeError(
+            "CSRF_SECRET or SESSION_TOKEN_SECRET must be set in production. "
+            "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
+    logger.warning("CSRF_SECRET not configured - CSRF token signing disabled (dev mode only)")
 
 
 def generate_csrf_token() -> str:

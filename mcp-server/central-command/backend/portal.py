@@ -33,6 +33,7 @@ from .db_queries import (
     get_control_results_for_site,
     CATEGORY_CHECKS,
 )
+from .auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -531,8 +532,11 @@ class LegacyTokenValidateRequest(BaseModel):
 
 
 @router.post("/sites/{site_id}/generate-token", response_model=TokenResponse)
-async def generate_portal_token(site_id: str):
-    """Generate magic link token for client portal access (admin use)."""
+async def generate_portal_token(site_id: str, user: dict = Depends(require_admin)):
+    """Generate magic link token for client portal access (admin use).
+
+    Requires admin authentication.
+    """
     # Generate 64-char token
     token = secrets.token_urlsafe(48)
 
@@ -556,10 +560,17 @@ async def request_magic_link(site_id: str, request: MagicLinkRequest):
     session_mgr = await get_session_manager()
 
     # Check if email is authorized for this site
+    # SECURITY: If no contact configured, reject the request (don't allow any email)
     authorized_email = await session_mgr.get_site_contact(site_id)
-    if authorized_email and request.email.lower() != authorized_email.lower():
+    if not authorized_email:
+        logger.warning(f"No contact configured for site {site_id}, rejecting magic link request")
+        return MagicLinkResponse(
+            message="If this email is registered, you will receive a link shortly.",
+            email_sent=False
+        )
+    if request.email.lower() != authorized_email.lower():
         # Don't reveal if email is wrong - just say "check your email"
-        logger.warning(f"Unauthorized email {request.email} for site {site_id}")
+        logger.warning(f"Unauthorized email attempt for site {site_id}")
         return MagicLinkResponse(
             message="If this email is registered, you will receive a link shortly.",
             email_sent=False
@@ -752,7 +763,8 @@ async def validate_session(
     # Fallback to token auth (legacy)
     if token:
         stored_token = await session_mgr.get_portal_token(site_id)
-        if stored_token and stored_token == token:
+        # SECURITY: Use constant-time comparison to prevent timing attacks
+        if stored_token and secrets.compare_digest(stored_token, token):
             return {"method": "token"}
 
     raise HTTPException(status_code=403, detail="Invalid or expired session")
@@ -762,7 +774,8 @@ async def validate_token(site_id: str, token: str) -> bool:
     """Validate portal access token (legacy support)."""
     session_mgr = await get_session_manager()
     stored_token = await session_mgr.get_portal_token(site_id)
-    if not stored_token or stored_token != token:
+    # SECURITY: Use constant-time comparison to prevent timing attacks
+    if not stored_token or not secrets.compare_digest(stored_token, token):
         raise HTTPException(status_code=403, detail="Invalid portal token")
     return True
 
@@ -780,11 +793,14 @@ async def logout(response: Response, portal_session: Optional[str] = Cookie(None
 
 
 @router.post("/sites/{site_id}/contacts")
-async def set_site_contact_endpoint(site_id: str, email: EmailStr):
-    """Set authorized contact email for a site (admin only)."""
+async def set_site_contact_endpoint(site_id: str, email: EmailStr, user: dict = Depends(require_admin)):
+    """Set authorized contact email for a site (admin only).
+
+    Requires admin authentication.
+    """
     session_mgr = await get_session_manager()
     await session_mgr.set_site_contact(site_id, email.lower())
-    logger.info(f"Set contact for site {site_id}: {email}")
+    logger.info(f"Admin {user.get('username')} set contact for site {site_id}")
     return {"status": "updated", "site_id": site_id, "email": email}
 
 
