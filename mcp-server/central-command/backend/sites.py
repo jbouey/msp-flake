@@ -305,16 +305,33 @@ async def get_pending_orders(site_id: str, appliance_id: str):
     """Get pending orders for an appliance."""
     pool = await get_pool()
 
+    # Normalize MAC format - try both colon and hyphen variants
+    # appliance_id format: site_id-MAC (e.g., test-site-08:00:27:98:FD:84)
+    parts = appliance_id.rsplit('-', 6)  # Split off MAC (last 6 parts if hyphen-separated)
+    if len(parts) >= 7:
+        # MAC is hyphen-separated: site-name-08-00-27-98-FD-84
+        site_prefix = '-'.join(parts[:-6])
+        mac_parts = parts[-6:]
+        mac_colon = ':'.join(mac_parts)
+        mac_hyphen = '-'.join(mac_parts)
+        appliance_id_colon = f"{site_prefix}-{mac_colon}"
+        appliance_id_hyphen = f"{site_prefix}-{mac_hyphen}"
+    else:
+        # Try splitting by colon in MAC portion
+        appliance_id_colon = appliance_id
+        # Convert colons to hyphens for alternate format
+        appliance_id_hyphen = appliance_id.replace(':', '-')
+
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT order_id, order_type, parameters, priority, 
+            SELECT order_id, order_type, parameters, priority,
                    created_at, expires_at
             FROM admin_orders
-            WHERE appliance_id = $1 AND site_id = $2 
+            WHERE (appliance_id = $1 OR appliance_id = $2) AND site_id = $3
             AND status = 'pending'
             AND expires_at > NOW()
             ORDER BY priority DESC, created_at ASC
-        """, appliance_id, site_id)
+        """, appliance_id_colon, appliance_id_hyphen, site_id)
 
         return {
             "site_id": site_id,
