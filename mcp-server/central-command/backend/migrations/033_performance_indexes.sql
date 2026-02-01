@@ -80,3 +80,16 @@ COMMIT;
 COMMENT ON INDEX idx_compliance_bundles_site_time IS 'Added for production readiness - compliance score lookups';
 COMMENT ON INDEX idx_incidents_appliance_id IS 'Added for production readiness - incident JOIN performance';
 COMMENT ON INDEX idx_admin_orders_site_status IS 'Added for production readiness - healing metrics queries';
+
+-- DOWN
+-- DROP INDEX IF EXISTS idx_compliance_bundles_site_time;
+-- DROP INDEX IF EXISTS idx_compliance_bundles_site_id;
+-- DROP INDEX IF EXISTS idx_incidents_appliance_id;
+-- DROP INDEX IF EXISTS idx_incidents_reported_at;
+-- DROP INDEX IF EXISTS idx_incidents_site_time_status;
+-- DROP INDEX IF EXISTS idx_admin_orders_site_status;
+-- DROP INDEX IF EXISTS idx_admin_orders_pending;
+-- DROP INDEX IF EXISTS idx_site_appliances_site_id;
+-- DROP INDEX IF EXISTS idx_site_appliances_status;
+-- DROP INDEX IF EXISTS idx_patterns_status;
+-- DROP INDEX IF EXISTS idx_execution_telemetry_created_at;

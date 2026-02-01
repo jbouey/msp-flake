@@ -38,6 +38,7 @@ from typing import Dict
 
 from .fleet import get_pool
 from .auth import require_admin
+from .oauth_login import encrypt_secret, decrypt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -296,9 +297,9 @@ async def upsert_partner_from_oauth(
             WHERE auth_provider = $1 AND oauth_subject = $2
         """, provider, subject)
 
-        # Encrypt tokens (simple base64 for now - in production use Fernet)
-        access_token_enc = base64.b64encode(tokens.get("access_token", "").encode()).decode() if tokens.get("access_token") else None
-        refresh_token_enc = base64.b64encode(tokens.get("refresh_token", "").encode()).decode() if tokens.get("refresh_token") else None
+        # SECURITY: Encrypt tokens with Fernet before storage
+        access_token_enc = encrypt_secret(tokens.get("access_token", "")) if tokens.get("access_token") else None
+        refresh_token_enc = encrypt_secret(tokens.get("refresh_token", "")) if tokens.get("refresh_token") else None
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens.get("expires_in", 3600))
 
         if existing:
@@ -313,8 +314,8 @@ async def upsert_partner_from_oauth(
                     last_login_at = NOW()
                 WHERE id = $6
             """, email, name,
-                access_token_enc.encode() if access_token_enc else None,
-                refresh_token_enc.encode() if refresh_token_enc else None,
+                access_token_enc,   # Already bytes from encrypt_secret
+                refresh_token_enc,  # Already bytes from encrypt_secret
                 expires_at, existing['id'])
 
             if existing['status'] != 'active':
@@ -372,8 +373,8 @@ async def upsert_partner_from_oauth(
                 tenant_id,
                 email,
                 name,
-                access_token_enc.encode() if access_token_enc else None,
-                refresh_token_enc.encode() if refresh_token_enc else None,
+                access_token_enc if access_token_enc else None,
+                refresh_token_enc if refresh_token_enc else None,
                 expires_at,
                 pending_approval,
                 not pending_approval and is_domain_allowed(email, allowed_domains)

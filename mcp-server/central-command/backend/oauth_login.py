@@ -802,9 +802,20 @@ async def oauth_callback(
             session_token = await create_session(db, existing_user["id"], ip_address, user_agent)
             await log_oauth_audit(db, existing_user["id"], existing_user["username"], "OAUTH_LOGIN_SUCCESS", {"provider": provider}, ip_address)
 
-            return RedirectResponse(
-                url=f"{FRONTEND_BASE_URL}/auth/oauth/success?token={session_token}&return_url={return_url}"
+            # SECURITY: Set session token as HTTP-only cookie instead of URL param
+            response = RedirectResponse(
+                url=f"{FRONTEND_BASE_URL}/auth/oauth/success?return_url={return_url}"
             )
+            response.set_cookie(
+                "session_token",
+                session_token,
+                max_age=86400,      # 24 hours
+                httponly=True,      # Not accessible via JavaScript
+                secure=os.getenv("ENVIRONMENT", "development") == "production",
+                samesite="lax",     # Allow top-level navigation
+                path="/",
+            )
+            return response
 
         # No existing OAuth identity - check if email exists
         existing_email_user = await find_user_by_email(db, user_info.email)
@@ -843,9 +854,20 @@ async def oauth_callback(
         session_token = await create_session(db, user_id, ip_address, user_agent)
         await log_oauth_audit(db, user_id, user_info.email, "OAUTH_LOGIN_SUCCESS", {"provider": provider, "new_user": True}, ip_address)
 
-        return RedirectResponse(
-            url=f"{FRONTEND_BASE_URL}/auth/oauth/success?token={session_token}&return_url={return_url}"
+        # SECURITY: Set session token as HTTP-only cookie instead of URL param
+        response = RedirectResponse(
+            url=f"{FRONTEND_BASE_URL}/auth/oauth/success?return_url={return_url}"
         )
+        response.set_cookie(
+            "session_token",
+            session_token,
+            max_age=86400,      # 24 hours
+            httponly=True,      # Not accessible via JavaScript
+            secure=os.getenv("ENVIRONMENT", "development") == "production",
+            samesite="lax",     # Allow top-level navigation
+            path="/",
+        )
+        return response
 
 
 # =============================================================================

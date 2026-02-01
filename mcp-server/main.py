@@ -459,6 +459,14 @@ try:
 except ImportError:
     logger.warning("Security headers middleware not available - continuing without security headers")
 
+# CSRF middleware - SECURITY: Protect against cross-site request forgery
+try:
+    from dashboard_api.csrf import CSRFMiddleware
+    app.add_middleware(CSRFMiddleware)
+    logger.info("CSRF middleware enabled")
+except ImportError:
+    logger.warning("CSRF middleware not available - continuing without CSRF protection")
+
 # Include dashboard API routes
 app.include_router(dashboard_router)
 app.include_router(auth_router)
