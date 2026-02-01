@@ -1063,17 +1063,10 @@ async def get_runbooks_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
     total_avg_time = totals.avg_time_ms or 0
 
     runbooks = []
-    first_runbook = True
     for row in rows:
         exec_count = row.execution_count or 0
         success_count = row.success_count or 0
         success_rate = (success_count / exec_count * 100) if exec_count > 0 else 0.0
-
-        # Add total telemetry stats to first runbook so frontend totals are correct
-        if first_runbook and total_exec_count > 0:
-            exec_count = total_exec_count
-            success_rate = total_success_rate
-            first_runbook = False
 
         # Map severity to level (all are L1 deterministic)
         level = "L1"

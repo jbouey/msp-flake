@@ -18,3 +18,4 @@ export { SiteGoAgents } from './SiteGoAgents';
 export { SiteDevices } from './SiteDevices';
 export { RMMComparison } from './RMMComparison';
 export { IntegrationError } from './IntegrationError';
+export { Settings } from './Settings';

@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
-import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, SiteWorkstations, SiteGoAgents, SiteDevices, RMMComparison, IntegrationError, Documentation, Partners, Notifications, NotificationSettings, Incidents } from './pages';
+import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, SiteWorkstations, SiteGoAgents, SiteDevices, RMMComparison, IntegrationError, Documentation, Partners, Notifications, NotificationSettings, Incidents, Settings } from './pages';
 import FleetUpdates from './pages/FleetUpdates';
 import Users from './pages/Users';
 import FrameworkConfig from './pages/FrameworkConfig';
@@ -50,6 +50,7 @@ const pageTitles: Record<string, string> = {
   '/reports': 'Reports',
   '/audit-logs': 'Audit Logs',
   '/settings/oauth': 'OAuth Settings',
+  '/settings': 'Settings',
   '/docs': 'Documentation',
 };
 
@@ -151,6 +152,7 @@ const AppLayout: React.FC = () => {
             <Route path="/runbook-config" element={<RunbookConfig />} />
             <Route path="/learning" element={<Learning />} />
             <Route path="/audit-logs" element={<AuditLogs />} />
+            <Route path="/settings" element={<Settings />} />
             <Route path="/settings/oauth" element={<AdminOAuthSettings />} />
             <Route path="/fleet-updates" element={<FleetUpdates />} />
             <Route path="/docs" element={<Documentation />} />

@@ -27,10 +27,14 @@ class RunbookInfo(BaseModel):
     category: str
     check_type: str
     severity: str = "medium"
+    level: str = "L1"  # Resolution level for frontend compatibility
     is_disruptive: bool = False
     requires_maintenance_window: bool = False
     hipaa_controls: List[str] = []
     version: str = "1.0"
+    execution_count: int = 0
+    success_rate: float = 0.0
+    avg_execution_time_ms: int = 0
 
 
 class RunbookConfigStatus(BaseModel):
@@ -102,23 +106,34 @@ async def list_all_runbooks(
     category: Optional[str] = Query(None, description="Filter by category"),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all available runbooks from the catalog."""
+    """List all available runbooks from the catalog with execution statistics."""
+    # Build base query with execution stats from telemetry via mapping table
+    base_query = """
+        WITH telemetry_stats AS (
+            SELECT
+                COALESCE(m.runbook_id, et.runbook_id) as runbook_id,
+                COUNT(*) as exec_count,
+                COUNT(*) FILTER (WHERE et.success = true) as success_count,
+                AVG(et.duration_seconds * 1000) FILTER (WHERE et.duration_seconds IS NOT NULL) as avg_time_ms
+            FROM execution_telemetry et
+            LEFT JOIN runbook_id_mapping m ON m.l1_rule_id = et.runbook_id
+            GROUP BY COALESCE(m.runbook_id, et.runbook_id)
+        )
+        SELECT
+            r.runbook_id, r.name, r.description, r.category, r.check_type, r.severity,
+            r.is_disruptive, r.requires_maintenance_window, r.hipaa_controls, r.version,
+            COALESCE(ts.exec_count, 0) as execution_count,
+            COALESCE(ts.success_count, 0) as success_count,
+            COALESCE(ts.avg_time_ms, 0) as avg_time_ms
+        FROM runbooks r
+        LEFT JOIN telemetry_stats ts ON ts.runbook_id = r.runbook_id
+    """
+
     if category:
-        query = text("""
-            SELECT runbook_id, name, description, category, check_type, severity,
-                   is_disruptive, requires_maintenance_window, hipaa_controls, version
-            FROM runbooks
-            WHERE category = :category
-            ORDER BY runbook_id
-        """)
+        query = text(base_query + " WHERE r.category = :category ORDER BY r.runbook_id")
         result = await db.execute(query, {"category": category})
     else:
-        query = text("""
-            SELECT runbook_id, name, description, category, check_type, severity,
-                   is_disruptive, requires_maintenance_window, hipaa_controls, version
-            FROM runbooks
-            ORDER BY category, runbook_id
-        """)
+        query = text(base_query + " ORDER BY r.category, r.runbook_id")
         result = await db.execute(query)
 
     rows = result.fetchall()
@@ -133,7 +148,10 @@ async def list_all_runbooks(
             is_disruptive=row.is_disruptive,
             requires_maintenance_window=row.requires_maintenance_window or False,
             hipaa_controls=row.hipaa_controls or [],
-            version=row.version or "1.0"
+            version=row.version or "1.0",
+            execution_count=row.execution_count or 0,
+            success_rate=round((row.success_count / row.execution_count * 100), 1) if row.execution_count > 0 else 0.0,
+            avg_execution_time_ms=int(row.avg_time_ms or 0)
         )
         for row in rows
     ]

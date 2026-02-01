@@ -1629,3 +1629,122 @@ async def get_audit_logs(
     # Note: In production, add role check middleware
     logs = await auth_module.get_audit_logs(db, limit=limit)
     return {"logs": logs}
+
+
+# =============================================================================
+# ADMIN SETTINGS ENDPOINTS
+# =============================================================================
+
+class SystemSettingsModel(BaseModel):
+    """System-wide settings."""
+    # Display
+    timezone: str = "America/New_York"
+    date_format: str = "MM/DD/YYYY"
+    # Session
+    session_timeout_minutes: int = 60
+    require_2fa: bool = False
+    # Fleet
+    auto_update_enabled: bool = True
+    update_window_start: str = "02:00"
+    update_window_end: str = "06:00"
+    rollout_percentage: int = 5
+    # Data Retention
+    telemetry_retention_days: int = 90
+    incident_retention_days: int = 365
+    audit_log_retention_days: int = 730
+    # Notifications
+    email_notifications_enabled: bool = True
+    slack_notifications_enabled: bool = False
+    escalation_timeout_minutes: int = 60
+    # API
+    api_rate_limit: int = 100
+    webhook_timeout_seconds: int = 30
+
+
+async def ensure_settings_table(db: AsyncSession):
+    """Ensure the system_settings table exists."""
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS system_settings (
+            id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+            settings JSONB NOT NULL DEFAULT '{}',
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_by VARCHAR(255)
+        )
+    """))
+    await db.execute(text("""
+        INSERT INTO system_settings (id, settings)
+        VALUES (1, '{}')
+        ON CONFLICT (id) DO NOTHING
+    """))
+    await db.commit()
+
+
+@router.get("/admin/settings", response_model=SystemSettingsModel)
+async def get_system_settings(db: AsyncSession = Depends(get_db)):
+    """Get current system settings."""
+    await ensure_settings_table(db)
+
+    result = await db.execute(text(
+        "SELECT settings FROM system_settings WHERE id = 1"
+    ))
+    row = result.fetchone()
+
+    if row and row.settings:
+        defaults = SystemSettingsModel()
+        stored = row.settings if isinstance(row.settings, dict) else {}
+        return SystemSettingsModel(**{**defaults.model_dump(), **stored})
+
+    return SystemSettingsModel()
+
+
+@router.put("/admin/settings", response_model=SystemSettingsModel)
+async def update_system_settings(
+    settings: SystemSettingsModel,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update system settings."""
+    await ensure_settings_table(db)
+
+    import json
+    await db.execute(
+        text("""
+            UPDATE system_settings
+            SET settings = :settings::jsonb,
+                updated_at = NOW()
+            WHERE id = 1
+        """),
+        {"settings": json.dumps(settings.model_dump())}
+    )
+    await db.commit()
+
+    return settings
+
+
+@router.post("/admin/settings/purge-telemetry")
+async def purge_old_telemetry(db: AsyncSession = Depends(get_db)):
+    """Purge telemetry data older than retention period."""
+    settings = await get_system_settings(db)
+    retention_days = settings.telemetry_retention_days
+
+    result = await db.execute(text(f"""
+        DELETE FROM execution_telemetry
+        WHERE created_at < NOW() - INTERVAL '{retention_days} days'
+    """))
+    await db.commit()
+
+    return {"deleted": result.rowcount, "retention_days": retention_days}
+
+
+@router.post("/admin/settings/reset-learning")
+async def reset_learning_data(db: AsyncSession = Depends(get_db)):
+    """Reset all learning data (patterns and L1 rules)."""
+    patterns_result = await db.execute(text("DELETE FROM patterns"))
+    rules_result = await db.execute(text(
+        "DELETE FROM l1_rules WHERE promoted_from_l2 = true"
+    ))
+    await db.commit()
+
+    return {
+        "patterns_deleted": patterns_result.rowcount,
+        "rules_deleted": rules_result.rowcount
+    }
