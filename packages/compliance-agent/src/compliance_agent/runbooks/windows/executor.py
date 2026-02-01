@@ -10,8 +10,9 @@ Features:
 - Evidence collection for compliance
 - Timeout handling with graceful cleanup
 - Pre/post state capture for audit trails
+- PHI/PII scrubbing for HIPAA compliance
 
-Version: 2.0
+Version: 2.1
 """
 
 import asyncio
@@ -22,6 +23,13 @@ from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 
 from .runbooks import WindowsRunbook, PS_HELPERS
+
+# PHI scrubber for HIPAA compliance - scrub sensitive data from output
+try:
+    from compliance_agent.phi_scrubber import PHIScrubber
+    _phi_scrubber = PHIScrubber(hash_redacted=True)
+except ImportError:
+    _phi_scrubber = None
 
 logger = logging.getLogger(__name__)
 
@@ -294,17 +302,34 @@ class WindowsExecutor:
         # Execute PowerShell script
         result = session.run_ps(script)
 
+        std_out = result.std_out.decode('utf-8', errors='replace') if result.std_out else ""
+        std_err = result.std_err.decode('utf-8', errors='replace') if result.std_err else ""
+
+        # PHI scrubbing for HIPAA compliance
+        phi_scrubbed = False
+        if _phi_scrubber:
+            std_out_scrubbed, out_result = _phi_scrubber.scrub(std_out)
+            std_err_scrubbed, err_result = _phi_scrubber.scrub(std_err)
+            std_out = std_out_scrubbed
+            std_err = std_err_scrubbed
+            phi_scrubbed = out_result.phi_scrubbed or err_result.phi_scrubbed
+
         output = {
             "status_code": result.status_code,
-            "std_out": result.std_out.decode('utf-8', errors='replace') if result.std_out else "",
-            "std_err": result.std_err.decode('utf-8', errors='replace') if result.std_err else "",
-            "success": result.status_code == 0
+            "std_out": std_out,
+            "std_err": std_err,
+            "success": result.status_code == 0,
+            "phi_scrubbed": phi_scrubbed,
         }
 
         # Try to parse JSON output
         if output["std_out"]:
             try:
-                output["parsed"] = json.loads(output["std_out"])
+                parsed = json.loads(output["std_out"])
+                # Scrub parsed JSON dict as well
+                if _phi_scrubber and isinstance(parsed, dict):
+                    parsed, _ = _phi_scrubber.scrub_dict(parsed)
+                output["parsed"] = parsed
             except json.JSONDecodeError:
                 output["parsed"] = None
 

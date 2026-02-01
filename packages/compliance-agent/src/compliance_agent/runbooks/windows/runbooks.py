@@ -460,20 +460,25 @@ $Result | ConvertTo-Json -Depth 2
 
     remediate_script=r'''
 # Configure audit policy for HIPAA compliance
-$Commands = @(
-    "auditpol /set /subcategory:`"Logon`" /success:enable /failure:enable",
-    "auditpol /set /subcategory:`"Logoff`" /success:enable",
-    "auditpol /set /subcategory:`"Account Lockout`" /success:enable /failure:enable",
-    "auditpol /set /subcategory:`"User Account Management`" /success:enable /failure:enable",
-    "auditpol /set /subcategory:`"Security Group Management`" /success:enable /failure:enable",
-    "auditpol /set /subcategory:`"Process Creation`" /success:enable /failure:enable",
-    "auditpol /set /subcategory:`"Audit Policy Change`" /success:enable /failure:enable"
+# Using direct auditpol calls instead of Invoke-Expression for security
+$Policies = @(
+    @{ Subcategory = "Logon"; Success = $true; Failure = $true },
+    @{ Subcategory = "Logoff"; Success = $true; Failure = $false },
+    @{ Subcategory = "Account Lockout"; Success = $true; Failure = $true },
+    @{ Subcategory = "User Account Management"; Success = $true; Failure = $true },
+    @{ Subcategory = "Security Group Management"; Success = $true; Failure = $true },
+    @{ Subcategory = "Process Creation"; Success = $true; Failure = $true },
+    @{ Subcategory = "Audit Policy Change"; Success = $true; Failure = $true }
 )
 
 $Results = @()
-foreach ($Cmd in $Commands) {
-    $Output = Invoke-Expression $Cmd 2>&1
-    $Results += @{ Command = $Cmd; Result = $LASTEXITCODE }
+foreach ($Policy in $Policies) {
+    $SuccessArg = if ($Policy.Success) { "/success:enable" } else { "/success:disable" }
+    $FailureArg = if ($Policy.Failure) { "/failure:enable" } else { "/failure:disable" }
+    $Args = @("/set", "/subcategory:`"$($Policy.Subcategory)`"", $SuccessArg, $FailureArg)
+
+    $Proc = Start-Process -FilePath "auditpol.exe" -ArgumentList $Args -NoNewWindow -Wait -PassThru
+    $Results += @{ Subcategory = $Policy.Subcategory; ExitCode = $Proc.ExitCode }
 }
 
 # Ensure Security log is properly sized (at least 1GB)
@@ -484,7 +489,7 @@ if ($Log.MaximumSizeInBytes -lt 1GB) {
 
 @{
     CommandsExecuted = $Results.Count
-    Success = ($Results | Where-Object { $_.Result -ne 0 }).Count -eq 0
+    Success = ($Results | Where-Object { $_.ExitCode -ne 0 }).Count -eq 0
 } | ConvertTo-Json
 ''',
 

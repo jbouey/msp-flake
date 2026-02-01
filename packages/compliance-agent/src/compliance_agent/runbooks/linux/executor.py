@@ -19,11 +19,17 @@ import asyncio
 import logging
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass, field
 
+from compliance_agent.phi_scrubber import PHIScrubber
+
 logger = logging.getLogger(__name__)
+
+# Initialize PHI scrubber for output sanitization
+_phi_scrubber = PHIScrubber(hash_redacted=True)
 
 
 @dataclass
@@ -330,28 +336,49 @@ class LinuxExecutor:
 
                 if use_sudo and target.username != "root":
                     if target.sudo_password:
-                        cmd = f"echo '{target.sudo_password}' | sudo -S bash -c \"$(echo {encoded_script} | base64 -d)\""
+                        # SECURITY: Use stdin for sudo password instead of command line
+                        # This prevents password exposure in process listings and logs
+                        # The -S flag reads password from stdin
+                        cmd = f"sudo -S bash -c \"$(echo {encoded_script} | base64 -d)\""
+                        # Pass password via stdin during execution
+                        result = await asyncio.wait_for(
+                            conn.run(cmd, check=False, input=target.sudo_password + "\n"),
+                            timeout=timeout
+                        )
                     else:
                         cmd = f"sudo bash -c \"$(echo {encoded_script} | base64 -d)\""
+                        result = await asyncio.wait_for(
+                            conn.run(cmd, check=False),
+                            timeout=timeout
+                        )
                 else:
                     cmd = f"bash -c \"$(echo {encoded_script} | base64 -d)\""
-
-                # Execute command
-                result = await asyncio.wait_for(
-                    conn.run(cmd, check=False),
-                    timeout=timeout
-                )
+                    result = await asyncio.wait_for(
+                        conn.run(cmd, check=False),
+                        timeout=timeout
+                    )
 
                 duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 
+                # Scrub PHI/PII from output before processing
+                stdout_scrubbed, stdout_result = _phi_scrubber.scrub(result.stdout or "")
+                stderr_scrubbed, stderr_result = _phi_scrubber.scrub(result.stderr or "")
+
+                if stdout_result.phi_scrubbed or stderr_result.phi_scrubbed:
+                    logger.info(
+                        f"PHI scrubbed from output: stdout={stdout_result.patterns_matched}, "
+                        f"stderr={stderr_result.patterns_matched}"
+                    )
+
                 output = {
-                    "stdout": result.stdout or "",
-                    "stderr": result.stderr or "",
+                    "stdout": stdout_scrubbed,
+                    "stderr": stderr_scrubbed,
                     "exit_code": result.exit_status,
                     "success": result.exit_status == 0,
+                    "phi_scrubbed": stdout_result.phi_scrubbed or stderr_result.phi_scrubbed,
                 }
 
-                # Try to parse JSON from stdout
+                # Try to parse JSON from stdout (after scrubbing)
                 if output["stdout"]:
                     try:
                         output["parsed"] = json.loads(output["stdout"])

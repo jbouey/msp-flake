@@ -151,21 +151,26 @@ $Result | ConvertTo-Json -Depth 2
 
     remediate_script=r'''
 # Configure HIPAA-required audit policies
-$Commands = @(
-    "auditpol /set /subcategory:`"Logon`" /success:enable /failure:enable",
-    "auditpol /set /subcategory:`"Logoff`" /success:enable",
-    "auditpol /set /subcategory:`"Account Lockout`" /success:enable /failure:enable",
-    "auditpol /set /subcategory:`"User Account Management`" /success:enable /failure:enable",
-    "auditpol /set /subcategory:`"Security Group Management`" /success:enable /failure:enable",
-    "auditpol /set /subcategory:`"Audit Policy Change`" /success:enable /failure:enable",
-    "auditpol /set /subcategory:`"Authentication Policy Change`" /success:enable",
-    "auditpol /set /subcategory:`"Sensitive Privilege Use`" /success:enable /failure:enable"
+# Using direct auditpol calls instead of Invoke-Expression for security
+$Policies = @(
+    @{ Subcategory = "Logon"; Success = $true; Failure = $true },
+    @{ Subcategory = "Logoff"; Success = $true; Failure = $false },
+    @{ Subcategory = "Account Lockout"; Success = $true; Failure = $true },
+    @{ Subcategory = "User Account Management"; Success = $true; Failure = $true },
+    @{ Subcategory = "Security Group Management"; Success = $true; Failure = $true },
+    @{ Subcategory = "Audit Policy Change"; Success = $true; Failure = $true },
+    @{ Subcategory = "Authentication Policy Change"; Success = $true; Failure = $false },
+    @{ Subcategory = "Sensitive Privilege Use"; Success = $true; Failure = $true }
 )
 
 $Results = @()
-foreach ($Cmd in $Commands) {
-    $Output = Invoke-Expression $Cmd 2>&1
-    $Results += @{ Command = $Cmd.Split('"')[1]; ExitCode = $LASTEXITCODE }
+foreach ($Policy in $Policies) {
+    $SuccessArg = if ($Policy.Success) { "/success:enable" } else { "/success:disable" }
+    $FailureArg = if ($Policy.Failure) { "/failure:enable" } else { "/failure:disable" }
+    $Args = @("/set", "/subcategory:`"$($Policy.Subcategory)`"", $SuccessArg, $FailureArg)
+
+    $Proc = Start-Process -FilePath "auditpol.exe" -ArgumentList $Args -NoNewWindow -Wait -PassThru
+    $Results += @{ Subcategory = $Policy.Subcategory; ExitCode = $Proc.ExitCode }
 }
 
 $FailedCount = ($Results | Where-Object { $_.ExitCode -ne 0 }).Count
