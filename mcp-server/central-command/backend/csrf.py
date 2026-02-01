@@ -96,6 +96,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/agent/",           # Agent sync endpoints use API-key auth
         "/api/partners/auth/",   # Partner login/logout
         "/api/portal/",          # Portal uses magic links, not cookies
+        "/api/fleet/",           # Fleet updates - admin auth protected
     )
 
     # Safe methods that don't require CSRF validation
