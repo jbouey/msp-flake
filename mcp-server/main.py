@@ -66,10 +66,18 @@ from dashboard_api.learning_api import partner_learning_router
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://mcp:mcp@localhost/mcp")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minio")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minio-password")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "evidence")
 MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
+
+# SECURITY: Secrets must be provided via environment variables (no defaults)
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
+if not MINIO_ACCESS_KEY or not MINIO_SECRET_KEY:
+    # Allow dev mode with defaults, but warn
+    if os.getenv("ENVIRONMENT", "development") == "production":
+        raise RuntimeError("MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be set in production")
+    MINIO_ACCESS_KEY = MINIO_ACCESS_KEY or "minio"
+    MINIO_SECRET_KEY = MINIO_SECRET_KEY or "minio-password"
 
 SIGNING_KEY_FILE = Path(os.getenv("SIGNING_KEY_FILE", "/app/secrets/signing.key"))
 RUNBOOK_DIR = Path(os.getenv("RUNBOOK_DIR", "/app/runbooks"))
@@ -117,7 +125,14 @@ logger = structlog.get_logger()
 # Database Setup
 # ============================================================================
 
-engine = create_async_engine(DATABASE_URL, echo=False, pool_size=10, max_overflow=20)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_size=20,           # Increased for production load
+    max_overflow=30,        # Allow burst capacity
+    pool_recycle=3600,      # Recycle stale connections after 1 hour
+    pool_pre_ping=True,     # Verify connections before use
+)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 async def get_db():

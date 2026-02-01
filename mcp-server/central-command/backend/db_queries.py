@@ -481,19 +481,28 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
 
 
 async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any]]:
-    """Get compliance scores for all sites that have compliance data."""
+    """Get compliance scores for all sites that have compliance data.
+
+    Uses asyncio.gather to parallelize queries instead of sequential N+1 pattern.
+    """
+    import asyncio
+
     # Get all sites with compliance data
     result = await db.execute(text("""
         SELECT DISTINCT site_id FROM compliance_bundles
     """))
-
     site_ids = [row.site_id for row in result.fetchall()]
 
-    scores = {}
-    for site_id in site_ids:
-        scores[site_id] = await get_compliance_scores_for_site(db, site_id)
+    if not site_ids:
+        return {}
 
-    return scores
+    # Parallel fetch: get all scores concurrently instead of sequential loop
+    async def get_score(site_id: str) -> tuple:
+        return site_id, await get_compliance_scores_for_site(db, site_id)
+
+    results = await asyncio.gather(*[get_score(sid) for sid in site_ids])
+
+    return {site_id: scores for site_id, scores in results}
 
 
 # =============================================================================

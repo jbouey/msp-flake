@@ -24,13 +24,14 @@ SESSION_DURATION_HOURS = 24
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 15
 
-# Try to import bcrypt, fall back to hashlib if not available
+# SECURITY: bcrypt is mandatory for password hashing
 try:
     import bcrypt
-    HAS_BCRYPT = True
 except ImportError:
-    HAS_BCRYPT = False
-    logger.warning("bcrypt not installed, using SHA-256 fallback (less secure)")
+    raise RuntimeError(
+        "bcrypt library is required for secure password hashing. "
+        "Install with: pip install bcrypt"
+    )
 
 
 def validate_password_complexity(password: str) -> Tuple[bool, Optional[str]]:
@@ -98,28 +99,17 @@ def validate_password_complexity(password: str) -> Tuple[bool, Optional[str]]:
 
 
 def hash_password(password: str) -> str:
-    """Hash a password for storage."""
-    if HAS_BCRYPT:
-        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    else:
-        # SHA-256 fallback with salt
-        salt = secrets.token_hex(16)
-        hash_val = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
-        return f"sha256${salt}${hash_val}"
+    """Hash a password for storage using bcrypt."""
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    """Verify a password against its hash."""
-    if HAS_BCRYPT and password_hash.startswith("$2"):
-        return bcrypt.checkpw(password.encode(), password_hash.encode())
-    elif password_hash.startswith("sha256$"):
-        parts = password_hash.split("$")
-        if len(parts) != 3:
-            return False
-        _, salt, stored_hash = parts
-        computed = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
-        return secrets.compare_digest(computed, stored_hash)
-    return False
+    """Verify a password against its bcrypt hash."""
+    if not password_hash.startswith("$2"):
+        # Legacy SHA-256 hashes no longer supported for security
+        logger.warning("Rejecting legacy non-bcrypt password hash")
+        return False
+    return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
 def generate_session_token() -> str:

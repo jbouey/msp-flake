@@ -7,9 +7,14 @@ This module uses the central database when available, falling back
 to mock data for demo/development purposes.
 """
 
+import asyncio
+import json
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Query, HTTPException, Request, Depends
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
@@ -223,9 +228,11 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
     if not site:
         raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
 
-    # Get real compliance scores and healing metrics for this site
-    site_compliance = await get_compliance_scores_for_site(db, site_id)
-    site_healing = await get_healing_metrics_for_site(db, site_id)
+    # Get real compliance scores and healing metrics for this site (parallel)
+    site_compliance, site_healing = await asyncio.gather(
+        get_compliance_scores_for_site(db, site_id),
+        get_healing_metrics_for_site(db, site_id)
+    )
 
     if site_compliance.get("has_data"):
         patching = site_compliance.get("patching") or 0
@@ -272,11 +279,10 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
         ip_addr = None
         if a.ip_addresses:
             try:
-                import json
                 ips = json.loads(a.ip_addresses) if isinstance(a.ip_addresses, str) else a.ip_addresses
                 ip_addr = ips[0] if ips else None
-            except:
-                pass
+            except (json.JSONDecodeError, TypeError, IndexError) as e:
+                logger.debug(f"Failed to parse IP addresses for appliance: {e}")
 
         appliance_overall = float(checkin_freshness) * 0.4 + compliance_score * 0.6
 
@@ -352,9 +358,11 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
 @router.get("/fleet/{site_id}/appliances", response_model=List[Appliance])
 async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)):
     """Get all appliances for a client."""
-    # Get real compliance scores and healing metrics for this site
-    site_compliance = await get_compliance_scores_for_site(db, site_id)
-    site_healing = await get_healing_metrics_for_site(db, site_id)
+    # Get real compliance scores and healing metrics for this site (parallel)
+    site_compliance, site_healing = await asyncio.gather(
+        get_compliance_scores_for_site(db, site_id),
+        get_healing_metrics_for_site(db, site_id)
+    )
 
     if site_compliance.get("has_data"):
         patching = site_compliance.get("patching") or 0
@@ -391,10 +399,10 @@ async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)
         ip_addr = None
         if a.ip_addresses:
             try:
-                import json
                 ips = json.loads(a.ip_addresses) if isinstance(a.ip_addresses, str) else a.ip_addresses
                 ip_addr = ips[0] if ips else None
-            except: pass
+            except (json.JSONDecodeError, TypeError, IndexError) as e:
+                logger.debug(f"Failed to parse IP addresses for appliance: {e}")
 
         appliance_overall = float(checkin_freshness) * 0.4 + compliance_score * 0.6
 
@@ -994,9 +1002,9 @@ async def get_onboarding_pipeline(db: AsyncSession = Depends(get_db)):
         blockers = []
         if row.blockers:
             try:
-                import json
                 blockers = json.loads(row.blockers) if isinstance(row.blockers, str) else row.blockers
-            except: pass
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.debug(f"Failed to parse blockers JSON: {e}")
 
         prospects.append(OnboardingClient(
             id=int(row.row_id),
@@ -1738,10 +1746,11 @@ async def purge_old_telemetry(db: AsyncSession = Depends(get_db)):
     settings = await get_system_settings(db)
     retention_days = settings.telemetry_retention_days
 
-    result = await db.execute(text(f"""
-        DELETE FROM execution_telemetry
-        WHERE created_at < NOW() - INTERVAL '{retention_days} days'
-    """))
+    # SECURITY: Use parameterized query to prevent SQL injection
+    result = await db.execute(
+        text("DELETE FROM execution_telemetry WHERE created_at < NOW() - INTERVAL '1 day' * :days"),
+        {"days": retention_days}
+    )
     await db.commit()
 
     return {"deleted": result.rowcount, "retention_days": retention_days}

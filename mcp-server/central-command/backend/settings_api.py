@@ -5,11 +5,16 @@ Settings are stored in a single-row table for easy retrieval.
 """
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel
+
+try:
+    from .auth import require_admin
+except ImportError:
+    from auth import require_admin
 
 
 router = APIRouter(prefix="/api/admin/settings", tags=["settings"])
@@ -81,8 +86,8 @@ async def ensure_settings_table(db: AsyncSession):
 
 
 @router.get("", response_model=SystemSettings)
-async def get_settings(db: AsyncSession = Depends(get_db)):
-    """Get current system settings."""
+async def get_settings(db: AsyncSession = Depends(get_db), admin: Dict[str, Any] = Depends(require_admin)):
+    """Get current system settings (admin only)."""
     await ensure_settings_table(db)
 
     result = await db.execute(text(
@@ -102,9 +107,10 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
 @router.put("", response_model=SystemSettings)
 async def update_settings(
     settings: SystemSettings,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    admin: Dict[str, Any] = Depends(require_admin)
 ):
-    """Update system settings."""
+    """Update system settings (admin only)."""
     await ensure_settings_table(db)
 
     await db.execute(
@@ -122,18 +128,16 @@ async def update_settings(
 
 
 @router.post("/purge-telemetry")
-async def purge_old_telemetry(db: AsyncSession = Depends(get_db)):
-    """Purge telemetry data older than retention period."""
+async def purge_old_telemetry(db: AsyncSession = Depends(get_db), admin: Dict[str, Any] = Depends(require_admin)):
+    """Purge telemetry data older than retention period (admin only)."""
     # Get current retention setting
     settings = await get_settings(db)
     retention_days = settings.telemetry_retention_days
 
+    # SECURITY: Use parameterized query to prevent SQL injection
     result = await db.execute(
-        text("""
-            DELETE FROM execution_telemetry
-            WHERE created_at < NOW() - INTERVAL ':days days'
-            RETURNING id
-        """.replace(':days', str(retention_days)))
+        text("DELETE FROM execution_telemetry WHERE created_at < NOW() - INTERVAL '1 day' * :days RETURNING id"),
+        {"days": retention_days}
     )
     deleted = len(result.fetchall())
     await db.commit()
@@ -142,8 +146,8 @@ async def purge_old_telemetry(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/reset-learning")
-async def reset_learning_data(db: AsyncSession = Depends(get_db)):
-    """Reset all learning data (patterns and L1 rules)."""
+async def reset_learning_data(db: AsyncSession = Depends(get_db), admin: Dict[str, Any] = Depends(require_admin)):
+    """Reset all learning data (patterns and L1 rules) (admin only)."""
     # Delete patterns
     patterns_result = await db.execute(text("DELETE FROM patterns RETURNING id"))
     patterns_deleted = len(patterns_result.fetchall())

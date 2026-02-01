@@ -22,16 +22,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .fleet import get_pool
+from .auth import require_admin
 
 logger = logging.getLogger(__name__)
 
-# Try to import bcrypt, fall back to HMAC-SHA256 if not available
+# SECURITY: bcrypt is required
 try:
     import bcrypt
-    HAS_BCRYPT = True
 except ImportError:
-    HAS_BCRYPT = False
-    logger.warning("bcrypt not installed for partners.py, using HMAC-SHA256 fallback")
+    raise RuntimeError("bcrypt library required. Install with: pip install bcrypt")
 
 # Try to import qrcode for QR generation
 try:
@@ -619,7 +618,7 @@ async def get_provision_qr_by_code(
 # =============================================================================
 
 @router.post("")
-async def create_partner(partner: PartnerCreate):
+async def create_partner(partner: PartnerCreate, admin: dict = Depends(require_admin)):
     """Create a new partner (admin only)."""
     pool = await get_pool()
 
@@ -667,7 +666,7 @@ async def create_partner(partner: PartnerCreate):
 
 
 @router.get("")
-async def list_partners(status: Optional[str] = None):
+async def list_partners(status: Optional[str] = None, admin: dict = Depends(require_admin)):
     """List all partners (admin only)."""
     pool = await get_pool()
 
@@ -721,7 +720,7 @@ async def list_partners(status: Optional[str] = None):
 # =============================================================================
 
 @router.get("/{partner_id}")
-async def get_partner(partner_id: str):
+async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
     """Get partner details (admin only)."""
     pool = await get_pool()
 
@@ -790,7 +789,7 @@ async def get_partner(partner_id: str):
 
 
 @router.put("/{partner_id}")
-async def update_partner(partner_id: str, update: PartnerUpdate):
+async def update_partner(partner_id: str, update: PartnerUpdate, admin: dict = Depends(require_admin)):
     """Update partner info (admin only)."""
     pool = await get_pool()
 
@@ -867,7 +866,7 @@ async def update_partner(partner_id: str, update: PartnerUpdate):
 
 
 @router.post("/{partner_id}/regenerate-key")
-async def regenerate_api_key(partner_id: str):
+async def regenerate_api_key(partner_id: str, admin: dict = Depends(require_admin)):
     """Regenerate partner API key (admin only)."""
     pool = await get_pool()
 
@@ -893,8 +892,8 @@ async def regenerate_api_key(partner_id: str):
 
 
 @router.post("/{partner_id}/users")
-async def create_partner_user(partner_id: str, user: PartnerUserCreate):
-    """Create a user for a partner."""
+async def create_partner_user(partner_id: str, user: PartnerUserCreate, admin: dict = Depends(require_admin)):
+    """Create a user for a partner (admin only)."""
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -940,8 +939,8 @@ async def create_partner_user(partner_id: str, user: PartnerUserCreate):
 
 
 @router.post("/{partner_id}/users/{user_id}/magic-link")
-async def generate_user_magic_link(partner_id: str, user_id: str):
-    """Generate a new magic login link for a partner user."""
+async def generate_user_magic_link(partner_id: str, user_id: str, admin: dict = Depends(require_admin)):
+    """Generate a new magic login link for a partner user (admin only)."""
     pool = await get_pool()
 
     magic_token = generate_magic_token()
