@@ -4,6 +4,7 @@ Provides functions to query real data from PostgreSQL.
 Falls back to mock data when database is empty.
 """
 
+import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy import text
@@ -188,51 +189,62 @@ async def get_events_from_db(
 
 
 async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
-    """Get learning loop statistics."""
-    # Count L1 rules
-    l1_result = await db.execute(text("SELECT COUNT(*) FROM l1_rules WHERE enabled = true"))
-    l1_count = l1_result.scalar() or 0
-    
-    # Count patterns
-    patterns_result = await db.execute(text("SELECT COUNT(*) FROM patterns WHERE status = 'pending'"))
-    pending_patterns = patterns_result.scalar() or 0
-    
-    promoted_result = await db.execute(text(
-        "SELECT COUNT(*) FROM patterns WHERE status = 'promoted' AND promoted_at > NOW() - INTERVAL '30 days'"
-    ))
-    recently_promoted = promoted_result.scalar() or 0
-    
-    # Count from BOTH incidents table AND execution_telemetry
-    # incidents table has resolution_tier, execution_telemetry has resolution_level
-    tier_result = await db.execute(text("""
-        WITH combined_tiers AS (
-            SELECT resolution_tier as tier FROM incidents
-            WHERE reported_at > NOW() - INTERVAL '30 days'
-            AND resolution_tier IS NOT NULL
-            UNION ALL
-            SELECT resolution_level as tier FROM execution_telemetry
+    """Get learning loop statistics using parallel queries."""
+
+    async def get_l1_count():
+        result = await db.execute(text("SELECT COUNT(*) FROM l1_rules WHERE enabled = true"))
+        return result.scalar() or 0
+
+    async def get_pending_patterns():
+        result = await db.execute(text("SELECT COUNT(*) FROM patterns WHERE status = 'pending'"))
+        return result.scalar() or 0
+
+    async def get_recently_promoted():
+        result = await db.execute(text(
+            "SELECT COUNT(*) FROM patterns WHERE status = 'promoted' AND promoted_at > NOW() - INTERVAL '30 days'"
+        ))
+        return result.scalar() or 0
+
+    async def get_tier_counts():
+        result = await db.execute(text("""
+            WITH combined_tiers AS (
+                SELECT resolution_tier as tier FROM incidents
+                WHERE reported_at > NOW() - INTERVAL '30 days'
+                AND resolution_tier IS NOT NULL
+                UNION ALL
+                SELECT resolution_level as tier FROM execution_telemetry
+                WHERE created_at > NOW() - INTERVAL '30 days'
+                AND resolution_level IS NOT NULL
+            )
+            SELECT tier, COUNT(*) as count
+            FROM combined_tiers
+            GROUP BY tier
+        """))
+        return {row.tier: row.count for row in result.fetchall()}
+
+    async def get_success_stats():
+        result = await db.execute(text("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE success = true) as successful
+            FROM execution_telemetry
             WHERE created_at > NOW() - INTERVAL '30 days'
-            AND resolution_level IS NOT NULL
-        )
-        SELECT tier, COUNT(*) as count
-        FROM combined_tiers
-        GROUP BY tier
-    """))
-    tier_counts = {row.tier: row.count for row in tier_result.fetchall()}
+        """))
+        return result.fetchone()
+
+    # Run all queries in parallel
+    l1_count, pending_patterns, recently_promoted, tier_counts, success_row = await asyncio.gather(
+        get_l1_count(),
+        get_pending_patterns(),
+        get_recently_promoted(),
+        get_tier_counts(),
+        get_success_stats(),
+    )
 
     total_resolved = sum(tier_counts.values()) or 1
     l1_rate = (tier_counts.get("L1", 0) / total_resolved) * 100
     l2_rate = (tier_counts.get("L2", 0) / total_resolved) * 100
 
-    # Calculate success rate from execution_telemetry
-    success_result = await db.execute(text("""
-        SELECT
-            COUNT(*) as total,
-            COUNT(*) FILTER (WHERE success = true) as successful
-        FROM execution_telemetry
-        WHERE created_at > NOW() - INTERVAL '30 days'
-    """))
-    success_row = success_result.fetchone()
     total_executions = success_row.total or 1
     success_rate = (success_row.successful / total_executions) * 100
 
@@ -283,46 +295,54 @@ async def get_promotion_candidates_from_db(db: AsyncSession) -> List[Dict[str, A
 
 
 async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
-    """Get global statistics."""
-    # Count sites (clients)
-    site_result = await db.execute(text("""
-        SELECT COUNT(*) as total FROM sites
-    """))
-    site_row = site_result.fetchone()
+    """Get global statistics using parallel queries."""
 
-    # Count appliances from site_appliances table
-    appliance_result = await db.execute(text("""
-        SELECT
-            COUNT(*) as total,
-            COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online
-        FROM site_appliances
-    """))
-    appliance_row = appliance_result.fetchone()
-    
-    # Count incidents
-    incident_result = await db.execute(text("""
-        SELECT
-            COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '24 hours') as day,
-            COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '7 days') as week,
-            COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '30 days') as month,
-            COUNT(*) FILTER (WHERE resolution_tier = 'L1' AND status = 'resolved') as l1,
-            COUNT(*) FILTER (WHERE resolution_tier = 'L2' AND status = 'resolved') as l2,
-            COUNT(*) FILTER (WHERE resolution_tier = 'L3' AND status = 'resolved') as l3,
-            COUNT(*) FILTER (WHERE status = 'resolved') as total_resolved
-        FROM incidents
-        WHERE reported_at > NOW() - INTERVAL '30 days'
-    """))
-    inc_row = incident_result.fetchone()
+    async def get_site_count():
+        result = await db.execute(text("SELECT COUNT(*) as total FROM sites"))
+        return result.fetchone()
 
-    # Calculate compliance score from recent compliance bundles (pass rate)
-    compliance_result = await db.execute(text("""
-        SELECT
-            COUNT(*) FILTER (WHERE check_result = 'pass') as passed,
-            COUNT(*) as total
-        FROM compliance_bundles
-        WHERE created_at > NOW() - INTERVAL '24 hours'
-    """))
-    comp_row = compliance_result.fetchone()
+    async def get_appliance_stats():
+        result = await db.execute(text("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online
+            FROM site_appliances
+        """))
+        return result.fetchone()
+
+    async def get_incident_stats():
+        result = await db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '24 hours') as day,
+                COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '7 days') as week,
+                COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '30 days') as month,
+                COUNT(*) FILTER (WHERE resolution_tier = 'L1' AND status = 'resolved') as l1,
+                COUNT(*) FILTER (WHERE resolution_tier = 'L2' AND status = 'resolved') as l2,
+                COUNT(*) FILTER (WHERE resolution_tier = 'L3' AND status = 'resolved') as l3,
+                COUNT(*) FILTER (WHERE status = 'resolved') as total_resolved
+            FROM incidents
+            WHERE reported_at > NOW() - INTERVAL '30 days'
+        """))
+        return result.fetchone()
+
+    async def get_compliance_stats():
+        result = await db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE check_result = 'pass') as passed,
+                COUNT(*) as total
+            FROM compliance_bundles
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+        """))
+        return result.fetchone()
+
+    # Run all queries in parallel
+    site_row, appliance_row, inc_row, comp_row = await asyncio.gather(
+        get_site_count(),
+        get_appliance_stats(),
+        get_incident_stats(),
+        get_compliance_stats(),
+    )
+
     compliance_score = round((comp_row.passed or 0) / max(comp_row.total or 1, 1) * 100, 1)
 
     # Calculate connectivity score from appliance checkins

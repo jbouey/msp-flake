@@ -390,7 +390,8 @@ async def receive_device_sync(report: DeviceSyncReport) -> DeviceSyncResponse:
     try:
         return await sync_devices(report)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Device sync failed: {e}")
+        raise HTTPException(status_code=500, detail="Device sync failed. Please try again.")
 
 
 @device_sync_router.get("/sites/{site_id}")

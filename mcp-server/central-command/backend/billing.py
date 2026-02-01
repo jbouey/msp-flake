@@ -336,7 +336,7 @@ async def create_checkout_session(
 
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error creating checkout session: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Payment processing failed. Please try again.")
 
 
 @router.post("/portal")
@@ -368,7 +368,7 @@ async def create_customer_portal_session(partner=Depends(require_partner)):
 
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error creating portal session: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Billing portal unavailable. Please try again.")
 
 
 @router.get("/invoices")
@@ -416,7 +416,7 @@ async def list_invoices(
 
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error listing invoices: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Failed to retrieve invoices. Please try again.")
 
 
 @router.post("/subscription/cancel")
@@ -458,7 +458,7 @@ async def cancel_subscription(partner=Depends(require_partner)):
 
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error canceling subscription: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Failed to cancel subscription. Please try again.")
 
 
 @router.post("/subscription/reactivate")
@@ -496,7 +496,7 @@ async def reactivate_subscription(partner=Depends(require_partner)):
 
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error reactivating subscription: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Failed to reactivate subscription. Please try again.")
 
 
 # =============================================================================

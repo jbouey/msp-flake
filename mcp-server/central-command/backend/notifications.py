@@ -600,7 +600,8 @@ async def create_escalation(request: EscalationRequest):
         return result
 
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        logger.warning(f"Escalation validation error: {e}")
+        raise HTTPException(status_code=404, detail="Resource not found")
     except Exception as e:
         logger.error(f"Escalation failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Escalation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Escalation failed. Please try again.")

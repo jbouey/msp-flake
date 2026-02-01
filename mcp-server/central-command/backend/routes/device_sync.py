@@ -4,8 +4,11 @@ Endpoints for receiving device inventory from appliance network scanners
 and providing fleet-wide device visibility.
 """
 
+import logging
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Query
+
+logger = logging.getLogger(__name__)
 
 from ..device_sync import (
     DeviceSyncReport,
@@ -29,7 +32,8 @@ async def receive_device_sync(report: DeviceSyncReport) -> DeviceSyncResponse:
     try:
         return await sync_devices(report)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Device sync failed: {e}")
+        raise HTTPException(status_code=500, detail="Device sync failed. Please try again.")
 
 
 @router.get("/sites/{site_id}")

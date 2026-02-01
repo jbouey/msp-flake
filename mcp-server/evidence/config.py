@@ -35,7 +35,7 @@ class EvidenceConfig:
     ))
 
     # Cosign password (for production, use SOPS/Vault)
-    COSIGN_PASSWORD = os.getenv('COSIGN_PASSWORD', 'production-password-change-in-real-deployment')
+    COSIGN_PASSWORD = os.getenv('COSIGN_PASSWORD', '')  # Required for signing
 
     # Client ID (will be passed at runtime, this is just default for testing)
     DEFAULT_CLIENT_ID = os.getenv('MCP_CLIENT_ID', 'test-client-001')

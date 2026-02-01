@@ -34,7 +34,7 @@ from database import init_database, get_store, IncidentStore
 
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "mcp-redis-password")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")  # Required in production
 RUNBOOK_DIR = Path(os.getenv("RUNBOOK_DIR", "/var/lib/mcp-server/runbooks"))
 EVIDENCE_DIR = Path(os.getenv("EVIDENCE_DIR", "/var/lib/mcp-server/evidence"))
 DATABASE_DIR = Path(os.getenv("DATABASE_DIR", "/var/lib/mcp-server"))

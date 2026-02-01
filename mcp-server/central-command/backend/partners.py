@@ -1114,10 +1114,9 @@ async def add_site_credentials(
         if not site:
             raise HTTPException(status_code=404, detail="Site not found")
 
-        # Encrypt password (in production, use Fernet with key from env)
-        # For now, we'll store base64 encoded (NOT SECURE - placeholder)
-        import base64
-        encrypted = base64.b64encode(credential.password.encode()).decode()
+        # Encrypt password using Fernet
+        from .oauth_login import encrypt_secret
+        encrypted = encrypt_secret(credential.password)
 
         # Check if this is the first credential (make it primary)
         existing = await conn.fetchval("""

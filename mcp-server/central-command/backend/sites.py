@@ -600,7 +600,8 @@ async def add_credential(site_id: str, cred: CredentialCreate, user: dict = Depe
                 'message': 'Credential added. Appliances will receive it on next check-in.',
             }
         except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            logger.error(f"Failed to add credential: {e}")
+            raise HTTPException(status_code=400, detail="Failed to add credential. Please check your input.")
 
 
 @router.delete("/{site_id}/credentials/{credential_id}")

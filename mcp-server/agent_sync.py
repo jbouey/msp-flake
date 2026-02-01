@@ -50,7 +50,7 @@ def compute_rules_version(rules: List[RuleSync]) -> str:
     """Compute a version hash of the rules for change detection."""
     import hashlib
     content = "".join(f"{r.rule_id}:{r.version}" for r in sorted(rules, key=lambda x: x.rule_id))
-    return hashlib.md5(content.encode()).hexdigest()[:16]
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
 def get_rules_for_agent(store, site_id: str = None) -> List[RuleSync]:
