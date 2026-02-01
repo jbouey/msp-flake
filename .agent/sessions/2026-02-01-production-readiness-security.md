@@ -118,8 +118,8 @@ Login: Verified working via browser
 ### Immediate Priority
 1. Run full test suite to verify no regressions
 2. Consider migrating legacy SHA-256 passwords to bcrypt on next login
-3. Add AbortSignal usage in React Query hooks for proper cancellation
-4. Remove localStorage fallback after confirming cookie auth works in production
+3. Remove localStorage fallback after confirming cookie auth works in production
+4. (Optional) Refactor API functions to accept { signal } for request cancellation
 
 ### Context Needed
 - VPS requirements.txt now has bcrypt==4.2.1 added manually

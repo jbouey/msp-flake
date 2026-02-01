@@ -11,6 +11,11 @@ import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalSta
 const POLLING_INTERVAL = 60_000;
 const STALE_TIME = 30_000; // Consider data fresh for 30 seconds
 
+// NOTE: React Query provides an AbortSignal through queryFn context.
+// To enable request cancellation, update API functions to accept { signal } options
+// and pass it like: queryFn: ({ signal }) => api.getData({ signal })
+// The fetchApi/fetchSitesApi functions already support signal via FetchApiOptions.
+
 /**
  * Helper to log mutation errors consistently
  */
