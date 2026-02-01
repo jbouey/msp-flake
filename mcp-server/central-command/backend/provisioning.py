@@ -374,9 +374,12 @@ async def get_provision_by_mac(mac_address: str):
     async with pool.acquire() as conn:
         # Check the appliance_provisioning table for MAC-based auto-provision
         provision = await conn.fetchrow("""
-            SELECT site_id, api_key
-            FROM appliance_provisioning
-            WHERE UPPER(mac_address) = $1
+            SELECT ap.site_id, ap.api_key,
+                   COALESCE(ap.ssh_authorized_keys, '{}') as appliance_keys,
+                   COALESCE(s.ssh_authorized_keys, '{}') as site_keys
+            FROM appliance_provisioning ap
+            LEFT JOIN sites s ON s.site_id = ap.site_id
+            WHERE UPPER(ap.mac_address) = $1
         """, mac)
 
         if provision:
@@ -387,10 +390,17 @@ async def get_provision_by_mac(mac_address: str):
                 WHERE UPPER(mac_address) = $1
             """, mac)
 
+            # Merge appliance-specific and site-level SSH keys
+            ssh_keys = list(set(
+                list(provision['appliance_keys'] or []) +
+                list(provision['site_keys'] or [])
+            ))
+
             return {
                 "site_id": provision['site_id'],
                 "api_key": provision['api_key'],
-                "api_endpoint": API_BASE_URL
+                "api_endpoint": API_BASE_URL,
+                "ssh_authorized_keys": ssh_keys
             }
 
         # MAC not found
