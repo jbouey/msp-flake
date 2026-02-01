@@ -62,20 +62,26 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     - Validates X-CSRF-Token header matches cookie on POST/PUT/DELETE/PATCH
     """
 
-    # Paths exempt from CSRF (API-key authenticated, webhooks, etc.)
+    # Paths exempt from CSRF (API-key authenticated, webhooks, login, etc.)
     EXEMPT_PATHS = {
         "/health",
-        "/api/appliances/checkin",  # Appliance API-key auth
+        "/api/auth/login",           # Login doesn't have CSRF cookie yet
+        "/api/auth/logout",          # Logout should always work
+        "/api/appliances/checkin",   # Appliance API-key auth
         "/api/appliances/order",
         "/api/appliances/evidence",
         "/api/partners/claim",       # Appliance provision
         "/api/webhook",              # Webhooks have their own auth
     }
 
-    # Exempt path prefixes (for API-key authenticated endpoints)
+    # Exempt path prefixes (for API-key authenticated, OAuth, agent endpoints)
     EXEMPT_PREFIXES = (
         "/api/appliances/",
         "/api/webhook/",
+        "/api/oauth/",           # OAuth callbacks don't have CSRF
+        "/api/agent/",           # Agent sync endpoints use API-key auth
+        "/api/partners/auth/",   # Partner login/logout
+        "/api/portal/",          # Portal uses magic links, not cookies
     )
 
     # Safe methods that don't require CSRF validation
