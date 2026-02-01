@@ -301,7 +301,7 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
     
     # Count incidents
     incident_result = await db.execute(text("""
-        SELECT 
+        SELECT
             COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '24 hours') as day,
             COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '7 days') as week,
             COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '30 days') as month,
@@ -313,15 +313,31 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
         WHERE reported_at > NOW() - INTERVAL '30 days'
     """))
     inc_row = incident_result.fetchone()
-    
+
+    # Calculate compliance score from recent compliance bundles (pass rate)
+    compliance_result = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE check_result = 'pass') as passed,
+            COUNT(*) as total
+        FROM compliance_bundles
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+    """))
+    comp_row = compliance_result.fetchone()
+    compliance_score = round((comp_row.passed or 0) / max(comp_row.total or 1, 1) * 100, 1)
+
+    # Calculate connectivity score from appliance checkins
+    total_appliances = appliance_row.total or 0
+    online_appliances = appliance_row.online or 0
+    connectivity_score = round(online_appliances / max(total_appliances, 1) * 100, 1)
+
     total_resolved = inc_row.total_resolved or 1
-    
+
     return {
         "total_clients": site_row.total or 0,
         "total_appliances": appliance_row.total or 0,
         "online_appliances": appliance_row.online or 0,
-        "avg_compliance_score": 0.0,  # TODO: Calculate from evidence bundles
-        "avg_connectivity_score": 0.0,  # TODO: Calculate from checkin data
+        "avg_compliance_score": compliance_score,
+        "avg_connectivity_score": connectivity_score,
         "incidents_24h": inc_row.day or 0,
         "incidents_7d": inc_row.week or 0,
         "incidents_30d": inc_row.month or 0,
