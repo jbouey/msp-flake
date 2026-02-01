@@ -64,6 +64,7 @@ interface ExceptionAuditEntry {
   performed_by: string;
   performed_at: string;
   details: Record<string, unknown>;
+  notes?: string;
 }
 
 // API functions - uses cookie-based auth (OAuth session) or partner_api_key
@@ -396,7 +397,17 @@ function CreateExceptionModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    site_id: string;
+    scope_type: 'runbook' | 'check' | 'control';
+    item_id: string;
+    device_filter: string;
+    reason: string;
+    compensating_control: string;
+    risk_accepted_by: string;
+    duration_days: number;
+    action: 'suppress_alert' | 'skip_remediation' | 'both';
+  }>({
     site_id: siteId,
     scope_type: 'runbook',
     item_id: '',
@@ -441,7 +452,7 @@ function CreateExceptionModal({
                 <label className="block text-sm font-medium text-gray-700 mb-1">Scope Type</label>
                 <select
                   value={formData.scope_type}
-                  onChange={(e) => setFormData({ ...formData, scope_type: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, scope_type: e.target.value as 'runbook' | 'check' | 'control' })}
                   className="w-full rounded-md border-gray-300 shadow-sm"
                   required
                 >
@@ -539,7 +550,7 @@ function CreateExceptionModal({
               <label className="block text-sm font-medium text-gray-700 mb-1">Action</label>
               <select
                 value={formData.action}
-                onChange={(e) => setFormData({ ...formData, action: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, action: e.target.value as 'suppress_alert' | 'skip_remediation' | 'both' })}
                 className="w-full rounded-md border-gray-300 shadow-sm"
               >
                 <option value="both">Suppress Alert + Skip Remediation</option>
