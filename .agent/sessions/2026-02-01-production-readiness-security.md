@@ -196,14 +196,54 @@ All tests passing. No regressions from security audit changes.
 
 ---
 
+## Part 4: NixOS Image Security Audit (Session Continuation)
+
+### Completed - CRITICAL Security Fixes
+- [x] Remove hardcoded SSH keys from all configs (configuration.nix, appliance-*.nix, flake-compliance.nix)
+- [x] Remove root passwords from flake.nix and build-vm.nix
+- [x] Disable NOPASSWD sudo → require password for HIPAA audit trail
+- [x] Disable root SSH login → use msp user + sudo instead
+- [x] Disable console auto-login for physical security (HIPAA §164.310)
+
+### Completed - HIGH Security Fixes
+- [x] Local portal binds to 127.0.0.1 instead of 0.0.0.0
+- [x] Web UI examples bind to localhost (examples/*.nix)
+- [x] Add systemd hardening to health-gate service (ProtectSystem, NoNewPrivileges, ProtectKernelTunables)
+
+### Completed - MEDIUM Security Fixes
+- [x] Evidence retention default 2190 days (6 years) for HIPAA compliance
+- [x] Add assertion for minimum retention (1825 days/5 years)
+- [x] Add assertion for syslog target format validation
+- [x] Add assertion for HTTPS requirement on remote MCP URLs
+
+### Files Modified (Part 4)
+| File | Change |
+|------|--------|
+| `iso/configuration.nix` | Remove SSH keys, fix sudo rules |
+| `iso/appliance-disk-image.nix` | Remove SSH keys, disable auto-login, harden health-gate |
+| `iso/appliance-image.nix` | Disable auto-login, bind local-portal to localhost |
+| `iso/build-vm.nix` | Remove passwords, disable root SSH |
+| `flake.nix` | Remove test passwords, disable auto-login |
+| `flake-compliance.nix` | Remove SSH keys, require sudo password |
+| `examples/direct-config.nix` | Bind to localhost, fix retention |
+| `examples/reseller-config.nix` | Bind to localhost, fix retention |
+| `modules/compliance-agent.nix` | 6-year retention default, add assertions |
+
+### Git Commits (Part 4)
+| Commit | Message |
+|--------|---------|
+| `06b3e21` | security: Harden NixOS image for production deployment |
+
+---
+
 ## Security Audit Summary (Full Session)
 
 | Severity | Found | Fixed | Status |
 |----------|-------|-------|--------|
-| CRITICAL | 9 | 9 | ✅ Complete |
-| HIGH | 7 | 7 | ✅ Complete |
-| MEDIUM | 6 | 6 | ✅ Complete |
-| LOW | 2 | 0 | Deferred (minor logging improvements) |
+| CRITICAL | 14 | 14 | ✅ Complete |
+| HIGH | 10 | 10 | ✅ Complete |
+| MEDIUM | 10 | 10 | ✅ Complete |
+| LOW | 8 | 0 | Deferred (minor logging/documentation improvements) |
 
 ---
 
@@ -237,7 +277,7 @@ python -m pytest tests/ -v --tb=short
 **Tests Passing:** 858 passed, 11 skipped
 **Web UI Status:** Working - Dashboard verified via browser
 **GitHub Actions:** Passing (auto-deploy working)
-**Last Commit:** 984b890 (security: Fix learning system vulnerabilities from audit)
+**Last Commit:** 06b3e21 (security: Harden NixOS image for production deployment)
 
 ---
 
@@ -262,3 +302,9 @@ python -m pytest tests/ -v --tb=short
 - `redact_partner_id()` prevents partner ID leakage in logs
 - Learning sync queue has MAX_RETRIES=10 with permanent failure handling
 - Success rate stored as decimal (0.0-1.0) not percentage (0-100)
+- NixOS SSH keys now provisioned per-site (not hardcoded in configs)
+- Root SSH login disabled across all NixOS configs
+- Console auto-login disabled for physical security
+- NOPASSWD sudo removed - password required for audit trail
+- Evidence retention now defaults to 6 years (2190 days) for HIPAA
+- NixOS assertions enforce: minimum retention, syslog format, HTTPS for remote MCP
