@@ -43,6 +43,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 // API base URL - uses relative path to work with proxy
 const API_BASE = '/api';
 
+// HTTP-only cookies are now the preferred auth method
+// localStorage is kept only for backwards compatibility during transition
+const USE_COOKIE_AUTH = true;
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -66,17 +70,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Check for existing session on mount
   useEffect(() => {
     const validateSession = async () => {
+      // With cookie auth, we don't need a token in localStorage
+      // But check for backwards compatibility
       const token = getToken();
-      if (!token) {
-        setIsLoading(false);
-        return;
-      }
 
       try {
+        const headers: Record<string, string> = {};
+        // Only add Authorization header if not using cookie auth
+        if (!USE_COOKIE_AUTH && token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const response = await fetch(`${API_BASE}/auth/me`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          headers,
+          // Include credentials to send HTTP-only cookies
+          credentials: 'same-origin',
         });
 
         if (response.ok) {
@@ -88,7 +96,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             displayName: userData.displayName,
           });
         } else {
-          // Invalid token - clear it
+          // Invalid token/session - clear localStorage
           setToken(null);
           setUser(null);
         }
@@ -104,14 +112,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   const refreshAuditLogs = async () => {
-    const token = getToken();
-    if (!token) return;
-
     try {
+      const headers: Record<string, string> = {};
+      if (!USE_COOKIE_AUTH) {
+        const token = getToken();
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+      }
+
       const response = await fetch(`${API_BASE}/auth/audit-logs?limit=100`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers,
+        credentials: 'same-origin',
       });
 
       if (response.ok) {
@@ -130,13 +142,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         headers: {
           'Content-Type': 'application/json',
         },
+        // Include credentials to receive the HTTP-only cookie
+        credentials: 'same-origin',
         body: JSON.stringify({ username, password }),
       });
 
       const data = await response.json();
 
-      if (data.success && data.token && data.user) {
-        setToken(data.token);
+      if (data.success && data.user) {
+        // Store token in localStorage for backwards compatibility
+        // The HTTP-only cookie is the primary auth method now
+        if (data.token) {
+          setToken(data.token);
+        }
         setUser({
           id: data.user.id,
           username: data.user.username,
@@ -154,21 +172,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const logout = async () => {
-    const token = getToken();
-
-    if (token) {
-      try {
-        await fetch(`${API_BASE}/auth/logout`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-      } catch (error) {
-        console.error('Logout request failed:', error);
+    try {
+      const headers: Record<string, string> = {};
+      if (!USE_COOKIE_AUTH) {
+        const token = getToken();
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
       }
+
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        headers,
+        // Include credentials to clear the HTTP-only cookie
+        credentials: 'same-origin',
+      });
+    } catch (error) {
+      console.error('Logout request failed:', error);
     }
 
+    // Clear localStorage token (for backwards compatibility)
     setToken(null);
     setUser(null);
     setAuditLogs([]);
@@ -177,14 +200,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Set token from OAuth callback and validate session
   const setTokenFromOAuth = (token: string) => {
+    // Store token in localStorage for backwards compatibility
     setToken(token);
     // Trigger session validation to load user data
     const validateAndSetUser = async () => {
       try {
+        const headers: Record<string, string> = {};
+        if (!USE_COOKIE_AUTH) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const response = await fetch(`${API_BASE}/auth/me`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          headers,
+          credentials: 'same-origin',
         });
 
         if (response.ok) {
@@ -205,14 +233,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Fetch OAuth identities linked to current user
   const refreshOAuthIdentities = async () => {
-    const token = getToken();
-    if (!token) return;
-
     try {
+      const headers: Record<string, string> = {};
+      if (!USE_COOKIE_AUTH) {
+        const token = getToken();
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+      }
+
       const response = await fetch(`${API_BASE}/auth/oauth/identities`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers,
+        credentials: 'same-origin',
       });
 
       if (response.ok) {

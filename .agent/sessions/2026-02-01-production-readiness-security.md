@@ -31,6 +31,9 @@
 - [x] Add global error handler for unhandled query errors
 - [x] React.lazy code splitting - main bundle reduced 933KB → 308KB (67% reduction)
 - [x] React.memo on 6 heavy list components (ClientCard, IncidentRow, PatternCard, RunbookCard, OnboardingCard)
+- [x] HTTP-only secure cookie authentication (with localStorage fallback for transition)
+- [x] Backend auth endpoints updated to accept token from cookie OR header
+- [x] Frontend fetch requests include credentials: 'same-origin' for cookie auth
 
 ### Hotfixes Applied
 - [x] Added bcrypt==4.2.1 to VPS requirements.txt
@@ -84,6 +87,9 @@
 | `frontend/src/components/learning/PatternCard.tsx` | React.memo, useCallback |
 | `frontend/src/components/runbooks/RunbookCard.tsx` | React.memo |
 | `frontend/src/components/onboarding/OnboardingCard.tsx` | React.memo |
+| `frontend/src/contexts/AuthContext.tsx` | HTTP-only cookie auth, credentials: 'same-origin' |
+| `backend/routes.py` | Set HTTP-only cookie on login, clear on logout |
+| `backend/auth.py` | require_auth accepts cookie OR header token |
 
 ---
 
@@ -112,8 +118,8 @@ Login: Verified working via browser
 ### Immediate Priority
 1. Run full test suite to verify no regressions
 2. Consider migrating legacy SHA-256 passwords to bcrypt on next login
-3. Consider HTTP-only cookies for auth tokens (currently localStorage)
-4. Add AbortSignal usage in React Query hooks for proper cancellation
+3. Add AbortSignal usage in React Query hooks for proper cancellation
+4. Remove localStorage fallback after confirming cookie auth works in production
 
 ### Context Needed
 - VPS requirements.txt now has bcrypt==4.2.1 added manually
@@ -149,5 +155,6 @@ python -m pytest tests/ -v --tb=short
 - **Frontend bundle reduced from 933KB → 308KB (67% reduction) via React.lazy**
 - Code split into ~30 chunks - pages load on demand
 - API client now has AbortController support but hooks don't use signal yet
-- ErrorBoundary added but localStorage for auth tokens remains (HTTP-only cookies ideal)
+- HTTP-only secure cookies now primary auth method (localStorage kept for backwards compat)
+- Cookie settings: httponly=True, secure=True, samesite=strict, max_age=24h
 - React.memo added to ClientCard, ClientCardCompact, IncidentRow, PatternCard, RunbookCard, OnboardingCard

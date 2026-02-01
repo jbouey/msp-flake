@@ -1577,12 +1577,13 @@ class UserResponse(BaseModel):
 async def login(
     request: LoginRequest,
     http_request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db)
 ):
     """Authenticate user and return session token.
 
-    Returns:
-        Session token on success, error message on failure.
+    Sets an HTTP-only cookie for secure token storage.
+    Also returns token in body for backwards compatibility.
     """
     ip_address = http_request.client.host if http_request.client else None
     user_agent = http_request.headers.get("user-agent")
@@ -1596,6 +1597,16 @@ async def login(
     )
 
     if success:
+        # Set HTTP-only secure cookie for session
+        response.set_cookie(
+            key="session_token",
+            value=token,
+            httponly=True,
+            secure=True,  # Only sent over HTTPS
+            samesite="strict",  # Prevents CSRF
+            max_age=86400,  # 24 hours
+            path="/",
+        )
         return LoginResponse(success=True, token=token, user=result)
     else:
         return LoginResponse(success=False, error=result.get("error", "Authentication failed"))
@@ -1604,15 +1615,24 @@ async def login(
 @auth_router.post("/logout")
 async def logout(
     http_request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db)
 ):
-    """Invalidate session token."""
-    auth_header = http_request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
+    """Invalidate session token and clear cookie."""
+    # Try to get token from cookie first, then Authorization header
+    token = http_request.cookies.get("session_token")
+    if not token:
+        auth_header = http_request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+
+    if token:
         ip_address = http_request.client.host if http_request.client else None
         success = await auth_module.logout(db, token, ip_address)
+        # Clear the cookie
+        response.delete_cookie(key="session_token", path="/")
         return {"success": success}
+
     return {"success": False, "error": "No token provided"}
 
 
@@ -1621,12 +1641,22 @@ async def get_current_user(
     http_request: Request,
     db: AsyncSession = Depends(get_db)
 ):
-    """Validate session token and return current user."""
-    auth_header = http_request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
+    """Validate session token and return current user.
+
+    Accepts token from:
+    1. HTTP-only cookie (preferred, more secure)
+    2. Authorization header (backwards compatibility)
+    """
+    # Try cookie first (more secure), then Authorization header
+    token = http_request.cookies.get("session_token")
+    if not token:
+        auth_header = http_request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+
+    if not token:
         raise HTTPException(status_code=401, detail="No token provided")
 
-    token = auth_header[7:]
     user = await auth_module.validate_session(db, token)
 
     if not user:

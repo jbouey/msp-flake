@@ -461,19 +461,26 @@ async def require_auth(request: Request) -> Dict[str, Any]:
         async def protected_route(user: dict = Depends(require_auth)):
             return {"message": f"Hello {user['username']}"}
 
+    Accepts token from:
+    1. HTTP-only cookie (preferred, more secure)
+    2. Authorization header (backwards compatibility)
+
     Raises:
         HTTPException: 401 if no token or invalid token
     """
-    auth_header = request.headers.get("authorization", "")
+    # Try cookie first (more secure), then Authorization header
+    token = request.cookies.get("session_token")
+    if not token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
 
-    if not auth_header.startswith("Bearer "):
+    if not token:
         raise HTTPException(
             status_code=401,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    token = auth_header[7:]
 
     # Get database session - try multiple import paths for flexibility
     try:

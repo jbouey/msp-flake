@@ -11,10 +11,15 @@ class ApiError extends Error {
   }
 }
 
-// Get auth token from localStorage
+// Get auth token from localStorage (for backwards compatibility during migration)
+// HTTP-only cookies are now the preferred method
 function getAuthToken(): string | null {
   return localStorage.getItem('auth_token');
 }
+
+// Check if we should use cookie-based auth (preferred) or header-based auth
+// Cookie auth is more secure as tokens can't be accessed by JS
+const USE_COOKIE_AUTH = true;
 
 // Request timeout in milliseconds (30 seconds)
 const REQUEST_TIMEOUT = 30000;
@@ -53,16 +58,18 @@ function createTimeoutController(timeoutMs: number, existingSignal?: AbortSignal
 
 async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
-  const token = getAuthToken();
   const timeout = options?.timeout ?? REQUEST_TIMEOUT;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
 
-  // Add auth token if available
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  // Add auth token if not using cookie auth (backwards compatibility)
+  if (!USE_COOKIE_AUTH) {
+    const token = getAuthToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
   }
 
   // Create timeout controller
@@ -72,6 +79,8 @@ async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
+      // Include credentials to send HTTP-only cookies
+      credentials: 'same-origin',
       headers: {
         ...headers,
         ...(options?.headers as Record<string, string>),
@@ -331,16 +340,18 @@ export interface SiteCredential {
 
 async function fetchSitesApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
   const url = `/api${endpoint}`;
-  const token = getAuthToken();
   const timeout = options?.timeout ?? REQUEST_TIMEOUT;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
 
-  // Add auth token if available
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  // Add auth token if not using cookie auth (backwards compatibility)
+  if (!USE_COOKIE_AUTH) {
+    const token = getAuthToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
   }
 
   // Create timeout controller
@@ -350,6 +361,8 @@ async function fetchSitesApi<T>(endpoint: string, options?: FetchApiOptions): Pr
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
+      // Include credentials to send HTTP-only cookies
+      credentials: 'same-origin',
       headers: {
         ...headers,
         ...(options?.headers as Record<string, string>),
