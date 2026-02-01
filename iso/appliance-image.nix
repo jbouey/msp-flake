@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.51";  # Session 79 - Database pruning to fix disk space issues
+    version = "1.0.52";  # Session 83 - Runbook security fixes, PHI scrubbing, CSRF fix
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
