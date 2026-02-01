@@ -6,21 +6,44 @@ Endpoints for partners to view and manage pattern promotions:
 - Approve/reject patterns for L1 promotion
 - View promoted rules and their deployment status
 - View execution history and learning stats
+
+Security Notes:
+- All endpoints require partner authentication
+- Database operations use proper transactions with commit/rollback
+- Pattern signatures are validated (16 hex chars)
+- No PII in logs (use truncated IDs)
 """
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from asyncpg.exceptions import PostgresError
 
 from .partners import require_partner
 from .fleet import get_pool
 
 logger = logging.getLogger(__name__)
+
+# Pattern signature format: 16 hex characters
+PATTERN_SIGNATURE_REGEX = re.compile(r'^[a-fA-F0-9]{16}$')
+
+
+def validate_pattern_signature(sig: str) -> bool:
+    """Validate pattern signature format (16 hex chars)."""
+    return bool(PATTERN_SIGNATURE_REGEX.match(sig))
+
+
+def redact_partner_id(partner_id: str) -> str:
+    """Redact partner ID for safe logging."""
+    if not partner_id or len(partner_id) < 8:
+        return "***"
+    return f"{partner_id[:4]}...{partner_id[-4:]}"
 
 partner_learning_router = APIRouter(
     prefix="/api/partners/me/learning",
@@ -359,112 +382,147 @@ async def approve_candidate(
     request: ApproveRequest,
     partner=Depends(require_partner)
 ):
-    """Approve a pattern for L1 promotion."""
-    pool = await get_pool()
+    """Approve a pattern for L1 promotion.
+
+    Uses explicit transaction with rollback on failure to ensure
+    all-or-nothing promotion (rule + candidate + commands).
+    """
+    try:
+        pool = await get_pool()
+    except Exception as e:
+        logger.error(f"Database pool unavailable: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
     async with pool.acquire() as conn:
         partner_id = partner['id']
 
-        # Verify ownership and get candidate
-        candidate = await conn.fetchrow("""
-            SELECT
-                id,
-                pattern_signature,
-                site_id,
-                site_name,
-                check_type,
-                total_occurrences,
-                success_rate,
-                recommended_action
-            FROM v_partner_promotion_candidates
-            WHERE partner_id = $1 AND id::text = $2
-        """, partner_id, pattern_id)
+        # Start explicit transaction
+        transaction = conn.transaction()
+        await transaction.start()
 
-        if not candidate:
-            raise HTTPException(status_code=404, detail="Candidate not found or not owned by partner")
+        try:
+            # Verify ownership and get candidate with FOR UPDATE lock
+            candidate = await conn.fetchrow("""
+                SELECT
+                    id,
+                    pattern_signature,
+                    site_id,
+                    site_name,
+                    check_type,
+                    total_occurrences,
+                    success_rate,
+                    recommended_action
+                FROM v_partner_promotion_candidates
+                WHERE partner_id = $1 AND id::text = $2
+                FOR UPDATE
+            """, partner_id, pattern_id)
 
-        # Generate rule
-        rule = generate_rule_from_pattern(dict(candidate), request.custom_name)
-        rule_yaml = rule_to_yaml(rule)
+            if not candidate:
+                await transaction.rollback()
+                raise HTTPException(status_code=404, detail="Candidate not found or not owned by partner")
 
-        # Insert promoted rule
-        await conn.execute("""
-            INSERT INTO promoted_rules (
-                rule_id, pattern_signature, site_id, partner_id,
-                rule_yaml, rule_json, notes, promoted_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-            ON CONFLICT (rule_id) DO UPDATE SET
-                status = 'active',
-                notes = EXCLUDED.notes,
-                promoted_at = NOW()
-        """,
-            rule['id'],
-            candidate['pattern_signature'],
-            candidate['site_id'],
-            partner_id,
-            rule_yaml,
-            json.dumps(rule),
-            request.notes
-        )
+            # Validate pattern signature format
+            if not validate_pattern_signature(candidate['pattern_signature']):
+                await transaction.rollback()
+                raise HTTPException(status_code=400, detail="Invalid pattern signature format")
 
-        # Update candidate status
-        await conn.execute("""
-            INSERT INTO learning_promotion_candidates (
-                id, site_id, pattern_signature, approval_status,
-                approved_at, custom_rule_name, approval_notes
-            ) VALUES ($1, $2, $3, 'approved', NOW(), $4, $5)
-            ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
-                approval_status = 'approved',
-                approved_at = NOW(),
-                custom_rule_name = EXCLUDED.custom_rule_name,
-                approval_notes = EXCLUDED.approval_notes
-        """,
-            str(uuid.uuid4()),
-            candidate['site_id'],
-            candidate['pattern_signature'],
-            request.custom_name,
-            request.notes
-        )
+            # Generate rule
+            rule = generate_rule_from_pattern(dict(candidate), request.custom_name)
+            rule_yaml = rule_to_yaml(rule)
 
-        deployed_count = 0
-
-        # Dispatch to appliances if requested
-        if request.deploy_immediately:
-            appliances = await conn.fetch("""
-                SELECT appliance_id FROM site_appliances WHERE site_id = $1
-            """, candidate['site_id'])
-
-            for appliance in appliances:
-                await conn.execute("""
-                    INSERT INTO appliance_commands (
-                        appliance_id, command_type, params, created_at
-                    ) VALUES ($1, 'sync_promoted_rule', $2, NOW())
-                """,
-                    appliance['appliance_id'],
-                    json.dumps({
-                        "rule_id": rule['id'],
-                        "rule_yaml": rule_yaml,
-                        "promoted_at": datetime.now(timezone.utc).isoformat()
-                    })
-                )
-                deployed_count += 1
-
-            # Update deployment count
+            # Insert promoted rule
             await conn.execute("""
-                UPDATE promoted_rules
-                SET deployment_count = $1, last_deployed_at = NOW()
-                WHERE rule_id = $2
-            """, deployed_count, rule['id'])
+                INSERT INTO promoted_rules (
+                    rule_id, pattern_signature, site_id, partner_id,
+                    rule_yaml, rule_json, notes, promoted_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                ON CONFLICT (rule_id) DO UPDATE SET
+                    status = 'active',
+                    notes = EXCLUDED.notes,
+                    promoted_at = NOW()
+            """,
+                rule['id'],
+                candidate['pattern_signature'],
+                candidate['site_id'],
+                partner_id,
+                rule_yaml,
+                json.dumps(rule),
+                request.notes
+            )
 
-        logger.info(f"Pattern {candidate['pattern_signature'][:8]} promoted to rule {rule['id']} by partner {partner_id}")
+            # Update candidate status
+            await conn.execute("""
+                INSERT INTO learning_promotion_candidates (
+                    id, site_id, pattern_signature, approval_status,
+                    approved_at, custom_rule_name, approval_notes
+                ) VALUES ($1, $2, $3, 'approved', NOW(), $4, $5)
+                ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                    approval_status = 'approved',
+                    approved_at = NOW(),
+                    custom_rule_name = EXCLUDED.custom_rule_name,
+                    approval_notes = EXCLUDED.approval_notes
+            """,
+                str(uuid.uuid4()),
+                candidate['site_id'],
+                candidate['pattern_signature'],
+                request.custom_name,
+                request.notes
+            )
 
-        return {
-            "status": "approved",
-            "rule_id": rule['id'],
-            "rule_yaml": rule_yaml,
-            "deployed_to": deployed_count,
-            "message": f"Rule promoted and deployed to {deployed_count} appliances" if deployed_count else "Rule promoted (pending deployment)"
-        }
+            deployed_count = 0
+
+            # Dispatch to appliances if requested
+            if request.deploy_immediately:
+                appliances = await conn.fetch("""
+                    SELECT appliance_id FROM site_appliances WHERE site_id = $1
+                """, candidate['site_id'])
+
+                for appliance in appliances:
+                    await conn.execute("""
+                        INSERT INTO appliance_commands (
+                            appliance_id, command_type, params, created_at
+                        ) VALUES ($1, 'sync_promoted_rule', $2, NOW())
+                    """,
+                        appliance['appliance_id'],
+                        json.dumps({
+                            "rule_id": rule['id'],
+                            "rule_yaml": rule_yaml,
+                            "promoted_at": datetime.now(timezone.utc).isoformat()
+                        })
+                    )
+                    deployed_count += 1
+
+                # Update deployment count
+                await conn.execute("""
+                    UPDATE promoted_rules
+                    SET deployment_count = $1, last_deployed_at = NOW()
+                    WHERE rule_id = $2
+                """, deployed_count, rule['id'])
+
+            # Commit all changes atomically
+            await transaction.commit()
+
+            logger.info(f"Pattern {candidate['pattern_signature'][:8]} promoted to rule {rule['id']} by partner {redact_partner_id(partner_id)}")
+
+            return {
+                "status": "approved",
+                "rule_id": rule['id'],
+                "rule_yaml": rule_yaml,
+                "deployed_to": deployed_count,
+                "message": f"Rule promoted and deployed to {deployed_count} appliances" if deployed_count else "Rule promoted (pending deployment)"
+            }
+
+        except HTTPException:
+            # Re-raise HTTP exceptions (already rolled back)
+            raise
+        except PostgresError as e:
+            await transaction.rollback()
+            logger.error(f"Database error during promotion: {e}")
+            raise HTTPException(status_code=500, detail="Database error during promotion")
+        except Exception as e:
+            await transaction.rollback()
+            logger.error(f"Unexpected error during promotion: {e}")
+            raise HTTPException(status_code=500, detail="Failed to promote pattern")
 
 
 @partner_learning_router.post("/candidates/{pattern_id}/reject")
@@ -474,44 +532,68 @@ async def reject_candidate(
     partner=Depends(require_partner)
 ):
     """Reject a pattern from L1 promotion."""
-    pool = await get_pool()
+    try:
+        pool = await get_pool()
+    except Exception as e:
+        logger.error(f"Database pool unavailable: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
     async with pool.acquire() as conn:
         partner_id = partner['id']
 
-        # Verify ownership
-        candidate = await conn.fetchrow("""
-            SELECT id, pattern_signature, site_id
-            FROM v_partner_promotion_candidates
-            WHERE partner_id = $1 AND id::text = $2
-        """, partner_id, pattern_id)
+        # Start transaction
+        transaction = conn.transaction()
+        await transaction.start()
 
-        if not candidate:
-            raise HTTPException(status_code=404, detail="Candidate not found or not owned by partner")
+        try:
+            # Verify ownership
+            candidate = await conn.fetchrow("""
+                SELECT id, pattern_signature, site_id
+                FROM v_partner_promotion_candidates
+                WHERE partner_id = $1 AND id::text = $2
+            """, partner_id, pattern_id)
 
-        # Update or insert rejection
-        await conn.execute("""
-            INSERT INTO learning_promotion_candidates (
-                id, site_id, pattern_signature, approval_status,
-                rejection_reason, approved_at
-            ) VALUES ($1, $2, $3, 'rejected', $4, NOW())
-            ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
-                approval_status = 'rejected',
-                rejection_reason = EXCLUDED.rejection_reason,
-                approved_at = NOW()
-        """,
-            str(uuid.uuid4()),
-            candidate['site_id'],
-            candidate['pattern_signature'],
-            request.reason
-        )
+            if not candidate:
+                await transaction.rollback()
+                raise HTTPException(status_code=404, detail="Candidate not found or not owned by partner")
 
-        logger.info(f"Pattern {candidate['pattern_signature'][:8]} rejected by partner {partner_id}: {request.reason}")
+            # Update or insert rejection
+            await conn.execute("""
+                INSERT INTO learning_promotion_candidates (
+                    id, site_id, pattern_signature, approval_status,
+                    rejection_reason, approved_at
+                ) VALUES ($1, $2, $3, 'rejected', $4, NOW())
+                ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                    approval_status = 'rejected',
+                    rejection_reason = EXCLUDED.rejection_reason,
+                    approved_at = NOW()
+            """,
+                str(uuid.uuid4()),
+                candidate['site_id'],
+                candidate['pattern_signature'],
+                request.reason
+            )
 
-        return {
-            "status": "rejected",
-            "pattern_id": pattern_id
-        }
+            await transaction.commit()
+
+            # Don't log rejection reason (may contain PII)
+            logger.info(f"Pattern {candidate['pattern_signature'][:8]} rejected by partner {redact_partner_id(partner_id)}")
+
+            return {
+                "status": "rejected",
+                "pattern_id": pattern_id
+            }
+
+        except HTTPException:
+            raise
+        except PostgresError as e:
+            await transaction.rollback()
+            logger.error(f"Database error during rejection: {e}")
+            raise HTTPException(status_code=500, detail="Database error")
+        except Exception as e:
+            await transaction.rollback()
+            logger.error(f"Unexpected error during rejection: {e}")
+            raise HTTPException(status_code=500, detail="Failed to reject pattern")
 
 
 @partner_learning_router.get("/promoted-rules")
@@ -564,65 +646,105 @@ async def update_rule_status(
     partner=Depends(require_partner)
 ):
     """Update the status of a promoted rule."""
-    pool = await get_pool()
-
     if status not in ('active', 'disabled', 'archived'):
         raise HTTPException(status_code=400, detail="Invalid status. Must be: active, disabled, archived")
+
+    try:
+        pool = await get_pool()
+    except Exception as e:
+        logger.error(f"Database pool unavailable: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
     async with pool.acquire() as conn:
         partner_id = partner['id']
 
-        # Verify ownership and update
-        result = await conn.execute("""
-            UPDATE promoted_rules
-            SET status = $1
-            WHERE rule_id = $2 AND partner_id = $3
-        """, status, rule_id, partner_id)
+        # Start transaction
+        transaction = conn.transaction()
+        await transaction.start()
 
-        if result == "UPDATE 0":
-            raise HTTPException(status_code=404, detail="Rule not found or not owned by partner")
+        try:
+            # Verify ownership and update
+            result = await conn.execute("""
+                UPDATE promoted_rules
+                SET status = $1
+                WHERE rule_id = $2 AND partner_id = $3
+            """, status, rule_id, partner_id)
 
-        logger.info(f"Rule {rule_id} status changed to {status} by partner {partner_id}")
+            if result == "UPDATE 0":
+                await transaction.rollback()
+                raise HTTPException(status_code=404, detail="Rule not found or not owned by partner")
 
-        return {"status": "updated", "rule_id": rule_id, "new_status": status}
+            await transaction.commit()
+
+            logger.info(f"Rule {rule_id} status changed to {status} by partner {redact_partner_id(partner_id)}")
+
+            return {"status": "updated", "rule_id": rule_id, "new_status": status}
+
+        except HTTPException:
+            raise
+        except PostgresError as e:
+            await transaction.rollback()
+            logger.error(f"Database error updating rule status: {e}")
+            raise HTTPException(status_code=500, detail="Database error")
+        except Exception as e:
+            await transaction.rollback()
+            logger.error(f"Unexpected error updating rule status: {e}")
+            raise HTTPException(status_code=500, detail="Failed to update rule status")
 
 
 @partner_learning_router.get("/execution-history")
 async def get_execution_history(
     site_id: Optional[str] = Query(None, description="Filter by site"),
-    limit: int = Query(50, le=200),
+    limit: int = Query(50, le=200, ge=1),
     partner=Depends(require_partner)
 ):
     """Get recent execution history across partner's sites."""
-    pool = await get_pool()
+    try:
+        pool = await get_pool()
+    except Exception as e:
+        logger.error(f"Database pool unavailable: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
     async with pool.acquire() as conn:
         partner_id = partner['id']
 
-        # Build query
-        query = """
-            SELECT
-                et.execution_id,
-                et.incident_id,
-                et.site_id,
-                s.clinic_name as site_name,
-                et.runbook_id,
-                et.success,
-                et.resolution_level,
-                et.created_at::text
-            FROM execution_telemetry et
-            JOIN sites s ON s.site_id = et.site_id
-            WHERE s.partner_id = $1
-        """
-        params = [partner_id]
-
+        # Build query with parameterized LIMIT (avoid SQL injection)
         if site_id:
-            query += " AND et.site_id = $2"
-            params.append(site_id)
-
-        query += f" ORDER BY et.created_at DESC LIMIT {limit}"
-
-        rows = await conn.fetch(query, *params)
+            query = """
+                SELECT
+                    et.execution_id,
+                    et.incident_id,
+                    et.site_id,
+                    s.clinic_name as site_name,
+                    et.runbook_id,
+                    et.success,
+                    et.resolution_level,
+                    et.created_at::text
+                FROM execution_telemetry et
+                JOIN sites s ON s.site_id = et.site_id
+                WHERE s.partner_id = $1 AND et.site_id = $2
+                ORDER BY et.created_at DESC
+                LIMIT $3
+            """
+            rows = await conn.fetch(query, partner_id, site_id, limit)
+        else:
+            query = """
+                SELECT
+                    et.execution_id,
+                    et.incident_id,
+                    et.site_id,
+                    s.clinic_name as site_name,
+                    et.runbook_id,
+                    et.success,
+                    et.resolution_level,
+                    et.created_at::text
+                FROM execution_telemetry et
+                JOIN sites s ON s.site_id = et.site_id
+                WHERE s.partner_id = $1
+                ORDER BY et.created_at DESC
+                LIMIT $2
+            """
+            rows = await conn.fetch(query, partner_id, limit)
 
         return {
             "executions": [dict(row) for row in rows],

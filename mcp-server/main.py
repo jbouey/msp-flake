@@ -1453,6 +1453,7 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
 
             if existing:
                 # Merge stats (take max of each counter to handle idempotent syncs)
+                # NOTE: success_rate stored as decimal (0.0-1.0), not percentage
                 await db.execute(text("""
                     UPDATE aggregated_pattern_stats
                     SET total_occurrences = GREATEST(total_occurrences, :occ),
@@ -1463,7 +1464,7 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
                         total_resolution_time_ms = GREATEST(total_resolution_time_ms, :time),
                         success_rate = CASE
                             WHEN GREATEST(total_occurrences, :occ) > 0
-                            THEN (CAST(GREATEST(success_count, :sc) AS FLOAT) / GREATEST(total_occurrences, :occ)) * 100
+                            THEN CAST(GREATEST(success_count, :sc) AS FLOAT) / GREATEST(total_occurrences, :occ)
                             ELSE 0
                         END,
                         avg_resolution_time_ms = CASE
@@ -1492,7 +1493,8 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
                 merged += 1
             else:
                 # Insert new pattern
-                success_rate = (stat.success_count / stat.total_occurrences * 100) if stat.total_occurrences > 0 else 0
+                # NOTE: success_rate stored as decimal (0.0-1.0), not percentage
+                success_rate = (stat.success_count / stat.total_occurrences) if stat.total_occurrences > 0 else 0
                 avg_time = stat.total_resolution_time_ms / stat.total_occurrences if stat.total_occurrences > 0 else 0
 
                 await db.execute(text("""

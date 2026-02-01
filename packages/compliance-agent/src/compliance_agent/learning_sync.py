@@ -31,6 +31,9 @@ class LearningSyncQueue:
     failed due to connectivity issues, for replay when back online.
     """
 
+    # Maximum retry attempts before marking as dead
+    MAX_RETRIES = 10
+
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
         self._init_db()
@@ -128,7 +131,11 @@ class LearningSyncQueue:
             conn.close()
 
     def mark_failed(self, queue_id: int, error: str):
-        """Mark operation as failed, schedule retry with exponential backoff."""
+        """Mark operation as failed, schedule retry with exponential backoff.
+
+        After MAX_RETRIES attempts, marks the item as permanently failed
+        to prevent infinite retries.
+        """
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.execute(
@@ -140,6 +147,21 @@ class LearningSyncQueue:
                 return
 
             retry_count = row[0] + 1
+
+            # Check if max retries exceeded
+            if retry_count >= self.MAX_RETRIES:
+                # Mark as permanently failed
+                conn.execute('''
+                    UPDATE learning_queue
+                    SET retry_count = ?, last_error = ?, completed_at = ?,
+                        next_retry_at = NULL
+                    WHERE id = ?
+                ''', (retry_count, f"PERMANENTLY_FAILED: {error}",
+                      datetime.now(timezone.utc).isoformat(), queue_id))
+                conn.commit()
+                logger.error(f"Learning queue item {queue_id} permanently failed after {retry_count} attempts")
+                return
+
             # Exponential backoff: 2^retry_count minutes, max 60 minutes
             backoff_minutes = min(2 ** retry_count, 60)
             next_retry = datetime.now(timezone.utc) + timedelta(minutes=backoff_minutes)
@@ -151,7 +173,7 @@ class LearningSyncQueue:
             ''', (retry_count, error, next_retry.isoformat(), queue_id))
             conn.commit()
 
-            logger.warning(f"Learning queue item {queue_id} failed (attempt {retry_count}): {error}")
+            logger.warning(f"Learning queue item {queue_id} failed (attempt {retry_count}/{self.MAX_RETRIES}): {error}")
         finally:
             conn.close()
 
