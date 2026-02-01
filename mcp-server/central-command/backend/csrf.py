@@ -97,6 +97,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/partners/auth/",   # Partner login/logout
         "/api/portal/",          # Portal uses magic links, not cookies
         "/api/fleet/",           # Fleet updates - admin auth protected
+        "/api/orders/",          # Order acknowledgement from appliances
     )
 
     # Safe methods that don't require CSRF validation
