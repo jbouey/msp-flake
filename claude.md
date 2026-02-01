@@ -10,7 +10,7 @@ Auto-heal infrastructure, generate audit evidence, replace traditional MSPs at 7
 
 ## Current State
 
-**Agent Version:** v1.0.44 | **Sprint:** Phase 13 - Zero-Touch Updates
+**Agent Version:** v1.0.51 | **Session:** 81 Complete | **ISO:** v51
 
 - See `.agent/PROJECT_SUMMARY.md` for full project overview
 - See `.agent/CONTEXT.md` for session state
@@ -28,7 +28,7 @@ mcp-server/                  # Central MCP server
   central-command/           # Dashboard backend + frontend
 docs/                        # Detailed reference docs
 .agent/                      # Session tracking
-.claude/skills/              # Implementation pattern guides
+.claude/skills/              # Knowledge index + docs/
 ```
 
 ## Key Commands
@@ -59,36 +59,36 @@ python -m pytest tests/test_agent.py -v
 | `docs/DASHBOARDS.md` | Executive reporting, compliance packets |
 | `docs/PROVENANCE.md` | Signing, time sync, hash chains, SBOM |
 
-## Skills Reference
+## Knowledge Index (Passive Context)
 
-Detailed implementation patterns in `.claude/skills/`:
+Quick lookup - read full docs on demand via `.claude/skills/docs/<category>/`.
 
-| Skill | Key Patterns |
-|-------|--------------|
-| [security.md](.claude/skills/security.md) | Auth, OAuth/PKCE, secrets (SOPS), evidence signing |
-| [testing.md](.claude/skills/testing.md) | pytest async, 839 tests, fixtures, mocking |
-| [frontend.md](.claude/skills/frontend.md) | React Query, 51 hooks, API client, Tailwind |
-| [backend.md](.claude/skills/backend.md) | FastAPI routers, L1/L2/L3 healing, gRPC |
-| [database.md](.claude/skills/database.md) | PostgreSQL + SQLite, migrations, pooling |
-| [api.md](.claude/skills/api.md) | REST/gRPC patterns, TypeScript client |
-| [infrastructure.md](.claude/skills/infrastructure.md) | NixOS, A/B updates, Docker, systemd |
-| [compliance.md](.claude/skills/compliance.md) | HIPAA controls, drift checks, PHI scrubber |
-| [performance.md](.claude/skills/performance.md) | Query optimization, caching, async patterns |
+```
+AREA     | KEY PATTERNS                          | DOC PATH
+---------|---------------------------------------|----------------------------------
+auth     | bcrypt-12, PKCE, session cookie       | docs/security/security.md
+test     | @pytest.mark.asyncio, AsyncMock       | docs/testing/testing.md
+hipaa    | 6 drift checks, EvidenceBundle, L1    | docs/hipaa/compliance.md
+backend  | L1→L2→L3, FastAPI router, Depends     | docs/backend/backend.md
+db       | asyncpg pool, WAL, 26 migrations      | docs/database/database.md
+nixos    | A/B partition, health gate, nftables  | docs/nixos/infrastructure.md
+frontend | useQuery, useMutation, 51 hooks       | docs/frontend/frontend.md
+api      | /api REST, gRPC proto, OAuth flow     | docs/api/api.md
+perf     | gather, memo, virtual scroll, batch   | docs/performance/performance.md
+```
 
-**Auto-Skill Loading:** Before working on these areas, READ the corresponding skill file first:
+**Pattern Retrieval:** When working on a specific area, READ the full doc:
+- Security → `.claude/skills/docs/security/security.md`
+- Tests → `.claude/skills/docs/testing/testing.md`
+- HIPAA → `.claude/skills/docs/hipaa/compliance.md`
+- Backend → `.claude/skills/docs/backend/backend.md`
+- Database → `.claude/skills/docs/database/database.md`
+- NixOS → `.claude/skills/docs/nixos/infrastructure.md`
+- React → `.claude/skills/docs/frontend/frontend.md`
+- API → `.claude/skills/docs/api/api.md`
+- Performance → `.claude/skills/docs/performance/performance.md`
 
-| Task | Read These Skills |
-|------|-------------------|
-| Writing/fixing tests | `.claude/skills/testing.md` |
-| API endpoints (Python) | `.claude/skills/backend.md` + `.claude/skills/api.md` |
-| React components/hooks | `.claude/skills/frontend.md` |
-| Database queries/schema | `.claude/skills/database.md` |
-| HIPAA/evidence/runbooks | `.claude/skills/compliance.md` |
-| Deploy/NixOS/Docker | `.claude/skills/infrastructure.md` |
-| Auth/OAuth/secrets | `.claude/skills/security.md` |
-| Performance issues | `.claude/skills/performance.md` |
-
-This ensures consistent patterns and avoids reinventing existing solutions.
+Full compressed index: `.claude/skills/INDEX.md`
 
 ## Three-Tier Auto-Healing
 
