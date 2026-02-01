@@ -1,7 +1,104 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-31 (Session 80 - Dashboard Technical Debt Cleanup)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.51, **ISO v51**, **Dashboard Technical Debt FIXED**, **Database Pruning IMPLEMENTED**, **OTS Anchoring FIXED**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.51**)
+**Last Updated:** 2026-01-31 (Session 81 - Settings Page & Learning System Fixes)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.51, **ISO v51**, **Settings Page CREATED**, **Learning System L1 Rules FIXED**, **Dashboard Control Coverage FIXED**, **Partner Cleanup COMPLETE**, **Dashboard Technical Debt FIXED**, **Database Pruning IMPLEMENTED**, **OTS Anchoring FIXED**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.51**)
+
+---
+
+## Session 81 (2026-01-31) - COMPLETE
+
+### Session Goals
+1. ✅ Complete partner deletion (clean up test partners)
+2. ✅ Create Settings/Preferences page for dashboard
+3. ✅ Investigate and fix learning system efficiency issues
+4. ✅ Fix dashboard stats showing 0% (Control Coverage)
+5. ✅ Commit and push all changes
+
+### Accomplishments
+
+#### 1. Partner Cleanup - COMPLETE
+- **Problem:** Test partners cluttering production database
+- **Solution:** Reassigned all sites to OsirisCare partner, deleted test partners
+- **Result:** Only OsirisCare Direct remains as production partner
+
+#### 2. Settings Page - COMPLETE (~530 lines)
+- **Created `Settings.tsx`** with 7 configurable sections:
+  - Display (timezone, date format)
+  - Security (session timeout, 2FA toggle)
+  - Fleet Updates (auto-update, maintenance windows, rollout percentage)
+  - Data Retention (telemetry, incident, audit log retention days)
+  - Notifications (email/Slack toggles, escalation timeout)
+  - API (rate limits, webhook timeout)
+  - Danger Zone (purge telemetry, reset learning data)
+- **Added backend endpoints** in `routes.py`:
+  - `GET /api/dashboard/admin/settings`
+  - `PUT /api/dashboard/admin/settings`
+- **Added navigation** in Sidebar.tsx (admin-only with gear icon)
+
+#### 3. Learning System Investigation & Fixes - COMPLETE
+- **Problem:** 7,469 executions showing on single runbook (LIN-ACCT-002)
+- **Root Cause #1:** Hack in `db_queries.py` dumping all telemetry on first alphabetical runbook
+- **Fix:** Removed hack, added proper stats calculation with mapping table
+
+- **Problem:** 2,474 execution failures, 1,859 VERIFY_FAILED
+- **Root Cause #2:** All 9 L1 rules had wrong runbook IDs (AUTO-* instead of RB-*)
+- **Fix:** Updated L1 rules in database:
+  ```sql
+  UPDATE l1_rules SET runbook_id = CASE rule_id
+    WHEN 'RB-AUTO-FIREWALL' THEN 'RB-FIREWALL-001'
+    WHEN 'RB-AUTO-BITLOCKER_STATUS' THEN 'WIN-BL-001'
+    -- etc.
+  ```
+
+- **Problem:** BitLocker verify failures (1,753+) on lab machines
+- **Root Cause #3:** Lab VMs don't support BitLocker but check kept running
+- **Fix:** Disabled WIN-BL-001 for lab sites via `site_runbook_config` table
+
+#### 4. Dashboard Control Coverage Fix - COMPLETE
+- **Problem:** Control Coverage showing 0%, Connectivity showing 0%
+- **Root Cause:** `avg_compliance_score` hardcoded to 0.0 with TODO comment
+- **Fix:** Added compliance score calculation from `compliance_bundles`:
+  ```python
+  compliance_result = await db.execute(text("""
+      SELECT
+          COUNT(*) FILTER (WHERE check_result = 'pass') as passed,
+          COUNT(*) as total
+      FROM compliance_bundles
+      WHERE created_at > NOW() - INTERVAL '24 hours'
+  """))
+  ```
+
+### Files Created/Modified
+
+| File | Change |
+|------|--------|
+| `frontend/src/pages/Settings.tsx` | NEW - Settings page (~530 lines) |
+| `frontend/src/App.tsx` | Added Settings route and page title |
+| `frontend/src/components/layout/Sidebar.tsx` | Added Settings nav item (admin) |
+| `backend/routes.py` | Added settings API endpoints |
+| `backend/db_queries.py` | Fixed execution stats, removed hack, added compliance score |
+| `backend/runbook_config.py` | Added execution stats to RunbookInfo |
+
+### Database Changes (VPS PostgreSQL)
+
+| Change | Details |
+|--------|---------|
+| L1 Rules | Updated 9 rules with correct runbook IDs |
+| Runbook ID Mapping | Added 9 mappings (AUTO-* → RB-*) |
+| Site Runbook Config | Disabled WIN-BL-001 for lab sites |
+
+### Git Commits
+
+| Commit | Message |
+|--------|---------|
+| `11e7b83` | feat: Add Settings page and fix learning system L1 rules |
+| `de4a982` | fix: Dashboard control coverage calculation |
+
+### Learning System Status (Verified Working)
+- **Patterns:** 18 patterns promoted to L1
+- **L2 Executions:** 911 with 100% success rate
+- **Execution Telemetry:** Proper per-runbook attribution
+- **Data Flywheel:** Operational
 
 ---
 

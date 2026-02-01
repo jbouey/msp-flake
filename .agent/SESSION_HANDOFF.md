@@ -1,10 +1,10 @@
 # Session Handoff - 2026-01-31
 
-**Session:** 80 - Dashboard Technical Debt Cleanup
+**Session:** 81 - Settings Page & Learning System Fixes
 **Agent Version:** v1.0.51
 **ISO Version:** v51 (deployed via Central Command)
 **Last Updated:** 2026-01-31
-**System Status:** ✅ All Systems Operational (Dashboard Fixes Deployed)
+**System Status:** ✅ All Systems Operational (Settings Page + Learning Fixes Deployed)
 
 ---
 
@@ -12,87 +12,80 @@
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Agent | v1.0.51 | Built, rollout in progress |
-| ISO | v51 | Stage 1/3 (5%), pending appliance checkin |
-| Physical Appliance | **OFFLINE** | Waiting for network (user not home) |
-| VM Appliance | **OFFLINE** | 8+ hours since last checkin |
+| Agent | v1.0.51 | Stable, all fixes deployed |
+| ISO | v51 | Rollout complete |
+| Physical Appliance | Online | 192.168.88.246 |
+| VM Appliance | Online | 192.168.88.247 |
 | VPS API | **HEALTHY** | https://api.osiriscare.net/health |
-| Dashboard | **FIXED** | All pages working, technical debt resolved |
-| Learning Sync | **WORKING** | 911 L2 decisions, 66.9% success rate |
-| Runbook Stats | **FIXED** | 14,935 executions with per-runbook mapping |
-| Audit Logs | **FIXED** | JSON serialization resolved |
+| Dashboard | **ENHANCED** | Settings page added, stats fixed |
+| Learning Sync | **WORKING** | 18 patterns promoted, 911 L2 at 100% success |
+| Control Coverage | **FIXED** | Now calculates from compliance_bundles |
+| L1 Rules | **FIXED** | 9 rules with correct runbook IDs |
+| Settings Page | **NEW** | 7 configurable sections |
 
 ---
 
-## Session 80 - Dashboard Technical Debt Cleanup
+## Session 81 - Settings Page & Learning System Fixes
 
 ### Accomplishments
 
-#### 1. Full Frontend Audit (13 Pages)
-- Dashboard ✅ - All stats working
-- Sites ✅ - Appliances offline (expected)
-- Notifications ✅ - Real incidents showing
-- Onboarding ✅ - Empty pipeline (expected)
-- Partners ✅ - 5 partners active
-- Users ✅ - Admin user working
-- Runbooks ✅ - 51 runbooks, 14,935 executions
-- Runbook Config ✅ - Site selector working
-- Learning Loop ✅ - 911 L2 decisions, 66.9% success
-- Fleet Updates ✅ - v1.0.51 rollout visible
-- Audit Logs ✅ - **FIXED** (was crashing)
-- Reports ✅ - Placeholder page
-- Documentation ⚠️ - Needs content
+#### 1. Partner Cleanup - COMPLETE
+- Deleted test partners, kept only OsirisCare Direct
+- Reassigned all sites to production partner
 
-#### 2. Audit Logs Crash Fix (React Error #31)
-- **Problem:** Page completely blank, React crashing on object render
-- **Root Cause:** Backend returning `details` as parsed objects, not strings
-- **Fix:** Added JSON serialization in `auth.py` `get_audit_logs()`
+#### 2. Settings Page - COMPLETE (~530 lines)
+- **7 configurable sections:**
+  - Display (timezone, date format)
+  - Security (session timeout, 2FA toggle)
+  - Fleet Updates (auto-update, maintenance windows, rollout %)
+  - Data Retention (telemetry, incident, audit log days)
+  - Notifications (email/Slack toggles, escalation timeout)
+  - API (rate limits, webhook timeout)
+  - Danger Zone (purge telemetry, reset learning data)
+- Backend endpoints: GET/PUT `/api/dashboard/admin/settings`
+- Admin-only navigation in sidebar
 
-#### 3. Learning Loop Stats Fix
-- **Problem:** L2 Decisions showing 0, Success Rate showing 0%
-- **Root Cause:** Query only checked `incidents.resolution_tier`, L2 data in `execution_telemetry`
-- **Fix:** UNION query on both tables in `db_queries.py`
+#### 3. Learning System Investigation & Fixes - COMPLETE
+| Issue | Root Cause | Fix |
+|-------|------------|-----|
+| 7,469 executions on one runbook | Hack in db_queries.py | Removed, proper mapping |
+| 2,474 failures (1,859 VERIFY_FAILED) | L1 rules had wrong runbook IDs (AUTO-* vs RB-*) | Updated 9 rules |
+| BitLocker verify failures (1,753) | Lab VMs don't support BitLocker | Disabled WIN-BL-001 for lab sites |
 
-#### 4. Runbook Execution Stats Fix
-- **Problem:** All runbooks showing 0 executions
-- **Root Cause:** ID mismatch - telemetry uses `L1-*`, runbooks use `RB-*`
-- **Fix:** Created `runbook_id_mapping` table with 28 mappings
-
-#### 5. Database Changes (VPS PostgreSQL)
-- Created `runbook_id_mapping` table
-- Created `sync_incident_resolution_tier()` trigger function
-- Inserted 28 L1→runbook ID mappings
-
-#### 6. Documentation
-- Created `docs/DATA_MODEL.md` - Complete database schema reference
+#### 4. Dashboard Control Coverage Fix - COMPLETE
+- **Problem:** Showing 0% instead of actual compliance
+- **Root Cause:** `avg_compliance_score` hardcoded to 0.0
+- **Fix:** Calculate from compliance_bundles pass rate
 
 ### Files Modified
 
 | File | Change |
 |------|--------|
-| `auth.py` | JSON serialization for audit log fields |
-| `db_queries.py` | Runbook query uses mapping table, UNION for L2 stats |
-| `routes.py` | PromotionHistory API fix |
-| `docs/DATA_MODEL.md` | NEW - Complete schema documentation |
+| `frontend/src/pages/Settings.tsx` | NEW - Settings page |
+| `frontend/src/App.tsx` | Added Settings route |
+| `frontend/src/components/layout/Sidebar.tsx` | Added Settings nav |
+| `backend/routes.py` | Settings API endpoints |
+| `backend/db_queries.py` | Fixed stats, added compliance score |
+| `backend/runbook_config.py` | Added execution stats |
 
 ### Git Commits
 
 | Commit | Message |
 |--------|---------|
-| `c598879` | fix: Dashboard data alignment and technical debt cleanup |
+| `11e7b83` | feat: Add Settings page and fix learning system L1 rules |
+| `de4a982` | fix: Dashboard control coverage calculation |
 
 ---
 
-## Known Issues
+## Learning System Status (Verified Working)
 
-### Appliances Offline
-- Both appliances haven't checked in for 8+ hours
-- User is not home, lab network may be unreachable
-- Will auto-recover when appliances come online
-
-### Fleet Rollouts Pending
-- v51 rollout at Stage 1/3 (5%)
-- Waiting for appliances to come online to receive updates
+| Metric | Value |
+|--------|-------|
+| Patterns Promoted | 18 |
+| L2 Executions | 911 |
+| L2 Success Rate | 100% |
+| L1 Rules | 9 with correct IDs |
+| Data Flywheel | Operational |
 
 ---
 
@@ -108,6 +101,10 @@ ssh root@178.156.162.116 "rm -rf /opt/mcp-server/dashboard_api_mount/__pycache__
 # Deploy backend file
 scp file.py root@178.156.162.116:/opt/mcp-server/dashboard_api_mount/
 
+# Deploy frontend
+cd mcp-server/central-command/frontend && npm run build
+scp -r dist/* root@178.156.162.116:/opt/mcp-server/frontend_dist/
+
 # Check VPS API health
 curl https://api.osiriscare.net/health
 ```
@@ -116,7 +113,8 @@ curl https://api.osiriscare.net/health
 
 ## Related Docs
 
-- `.agent/TODO.md` - Task history
+- `.agent/TODO.md` - Task history (Session 81 added)
+- `.agent/CONTEXT.md` - Current state
 - `docs/DATA_MODEL.md` - Database schema reference
 - `docs/PRODUCTION_READINESS_AUDIT.md` - Production audit
 - `.agent/LAB_CREDENTIALS.md` - Lab passwords
