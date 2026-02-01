@@ -1195,11 +1195,23 @@ async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db)):
     """), {"site_id": site_id})
     inc_row = incident_result.fetchone()
 
+    # Calculate compliance score from compliance bundles
+    compliance_result = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE check_result = 'pass') as passed,
+            COUNT(*) as total
+        FROM compliance_bundles
+        WHERE site_id = :site_id
+          AND created_at > NOW() - INTERVAL '24 hours'
+    """), {"site_id": site_id})
+    comp_row = compliance_result.fetchone()
+    compliance_score = round((comp_row.passed or 0) / max(comp_row.total or 1, 1) * 100, 1)
+
     return ClientStats(
         site_id=site_id,
         appliance_count=app_row.total or 0,
         online_count=app_row.online or 0,
-        compliance_score=0.0,  # TODO: calculate from evidence bundles
+        compliance_score=compliance_score,
         connectivity_score=100.0 if app_row.online else 0.0,
         incidents_24h=inc_row.day or 0,
         incidents_7d=inc_row.week or 0,
