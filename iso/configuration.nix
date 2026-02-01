@@ -23,12 +23,15 @@
     isNormalUser = true;
     description = "MSP Service Account";
     extraGroups = [ "wheel" "networkmanager" ];
+    # Password set dynamically on first boot (MAC-derived emergency password)
     # SSH keys provisioned per-site via:
     # 1. USB config.yaml with ssh_authorized_keys field
-    # 2. Central provisioning API
+    # 2. Central provisioning API (includes ssh_authorized_keys in response)
     # 3. SOPS secrets (sops.secrets.ssh-authorized-keys)
     # DO NOT hardcode keys here - they belong in site-specific config
     openssh.authorizedKeys.keys = [ ];
+    # Allow password to be set dynamically by first-boot service
+    initialHashedPassword = "";
   };
 
   users.users.root = {

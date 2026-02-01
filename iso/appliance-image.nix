@@ -615,7 +615,7 @@ ISSUE
   };
 
   # ============================================================================
-  # First-boot setup (runs after provisioning)
+  # First-boot setup - SSH key provisioning and emergency access
   # ============================================================================
   systemd.services.msp-first-boot = {
     description = "MSP Appliance First Boot Setup";
@@ -631,6 +631,8 @@ ISSUE
     script = ''
       MARKER="/var/lib/msp/.initialized"
       CONFIG_PATH="/var/lib/msp/config.yaml"
+      SSH_DIR="/home/msp/.ssh"
+      CREDS_FILE="/var/lib/msp/.emergency-credentials"
 
       if [ -f "$MARKER" ]; then
         exit 0
@@ -639,14 +641,72 @@ ISSUE
       echo "=== MSP Compliance Appliance First Boot Setup ==="
       echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-      # Set hostname from config if available
+      # Get MAC address for emergency password derivation
+      MAC_ADDR=""
+      for iface in /sys/class/net/eth* /sys/class/net/en* /sys/class/net/*; do
+        [ -e "$iface" ] || continue
+        IFACE_NAME=$(basename "$iface")
+        [ "$IFACE_NAME" = "lo" ] && continue
+        [ -f "$iface/address" ] || continue
+        CANDIDATE=$(cat "$iface/address")
+        [ "$CANDIDATE" = "00:00:00:00:00:00" ] && continue
+        MAC_ADDR="$CANDIDATE"
+        break
+      done
+
+      # Generate MAC-derived emergency password (first 8 chars of SHA256)
+      # Format: osiris-XXXXXXXX where X is derived from MAC
+      if [ -n "$MAC_ADDR" ]; then
+        HASH=$(echo -n "osiriscare-emergency-$MAC_ADDR" | ${pkgs.coreutils}/bin/sha256sum | cut -c1-8)
+        EMERGENCY_PASS="osiris-$HASH"
+        echo "msp:$EMERGENCY_PASS" | ${pkgs.shadow}/bin/chpasswd
+        echo "$EMERGENCY_PASS" > "$CREDS_FILE"
+        chmod 600 "$CREDS_FILE"
+        echo "Emergency password set for msp user"
+      fi
+
+      # Set hostname and apply SSH keys from config if available
       if [ -f "$CONFIG_PATH" ]; then
         SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH")
         if [ -n "$SITE_ID" ]; then
           hostnamectl set-hostname "$SITE_ID"
           echo "Hostname set to: $SITE_ID"
         fi
+
+        # Extract and apply SSH authorized keys from config
+        SSH_KEYS=$(${pkgs.yq}/bin/yq -r '.ssh_authorized_keys // [] | .[]' "$CONFIG_PATH" 2>/dev/null)
+        if [ -n "$SSH_KEYS" ]; then
+          mkdir -p "$SSH_DIR"
+          chmod 700 "$SSH_DIR"
+          echo "$SSH_KEYS" > "$SSH_DIR/authorized_keys"
+          chmod 600 "$SSH_DIR/authorized_keys"
+          chown -R msp:users "$SSH_DIR"
+          echo "SSH keys applied from config.yaml"
+        fi
       fi
+
+      # Update MOTD with access info
+      IP_ADDR=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -1)
+      cat > /etc/motd << MOTD
+
+    ╔═══════════════════════════════════════════════════════════╗
+    ║           OsirisCare Compliance Appliance                 ║
+    ╚═══════════════════════════════════════════════════════════╝
+
+    IP Address: $IP_ADDR
+    SSH Access: ssh msp@$IP_ADDR
+    Status:     http://$IP_ADDR
+
+    Emergency console access:
+      User: msp
+      Password: See /var/lib/msp/.emergency-credentials
+               (or derive: osiris-[first 8 of sha256("osiriscare-emergency-MAC")])
+
+    To add SSH keys:
+      1. Register MAC in dashboard with your public key
+      2. Or add to /home/msp/.ssh/authorized_keys
+
+MOTD
 
       touch "$MARKER"
       echo "=== First Boot Setup Complete ==="
