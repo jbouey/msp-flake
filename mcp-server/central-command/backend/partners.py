@@ -26,6 +26,9 @@ from .auth import require_admin
 
 logger = logging.getLogger(__name__)
 
+# API endpoint from environment variable
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.osiriscare.net")
+
 # SECURITY: bcrypt is required
 try:
     import bcrypt
@@ -270,7 +273,7 @@ async def claim_provision_code(claim: ProvisionClaim):
                 "primary_color": partner['primary_color'],
                 "logo_url": partner['logo_url'],
             },
-            "api_endpoint": "https://api.osiriscare.net",
+            "api_endpoint": API_BASE_URL,
             "message": "Appliance provisioned successfully"
         }
 

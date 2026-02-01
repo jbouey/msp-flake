@@ -11,6 +11,7 @@ This module provides endpoints that are called by appliances during
 initial setup, independent of the partner API.
 """
 
+import os
 import secrets
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -19,6 +20,8 @@ from pydantic import BaseModel
 
 from .fleet import get_pool
 
+# API endpoint from environment variable
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.osiriscare.net")
 
 router = APIRouter(prefix="/api/provision", tags=["provisioning"])
 
@@ -201,7 +204,7 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
 
         # Build initial config
         config = {
-            "api_endpoint": "https://api.osiriscare.net",
+            "api_endpoint": API_BASE_URL,
             "checkin_interval_seconds": 300,  # 5 min during provisioning
             "discovery_enabled": True,
             "network_range": provision['network_range'],  # May be None
@@ -218,7 +221,7 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
             status="claimed",
             site_id=site_id,
             appliance_id=appliance_id,
-            api_endpoint="https://api.osiriscare.net",
+            api_endpoint=API_BASE_URL,
             partner={
                 "slug": partner['slug'],
                 "brand_name": partner['brand_name'],
@@ -387,7 +390,7 @@ async def get_provision_by_mac(mac_address: str):
             return {
                 "site_id": provision['site_id'],
                 "api_key": provision['api_key'],
-                "api_endpoint": "https://api.osiriscare.net"
+                "api_endpoint": API_BASE_URL
             }
 
         # MAC not found
@@ -422,7 +425,7 @@ async def get_appliance_config(appliance_id: str):
         tier = appliance['tier'] or 'standard'
 
         config = {
-            "api_endpoint": "https://api.osiriscare.net",
+            "api_endpoint": API_BASE_URL,
             "site_id": appliance['site_id'],
             "appliance_id": appliance_id,
             "tier": tier,

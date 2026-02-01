@@ -598,17 +598,30 @@ async def exchange_microsoft_code(code: str, code_verifier: str) -> tuple[dict, 
 
         profile = profile_response.json()
 
-        # Extract tenant ID from ID token (simplified - in production decode JWT properly)
+        # Extract tenant ID from ID token for logging/metadata purposes.
+        #
+        # SECURITY NOTE: We decode the ID token without verifying its signature.
+        # This is acceptable here because:
+        # 1. The tenant_id (tid claim) is used only for logging and partner metadata,
+        #    NOT for authorization decisions.
+        # 2. The access_token was already validated by Microsoft when we successfully
+        #    called the Graph API above (lines 590-598). If the token were invalid or
+        #    tampered with, that call would have failed with a 401.
+        # 3. The user's identity (subject, email, name) comes from the Graph API
+        #    response, not from the unverified ID token.
+        #
+        # For production systems where the ID token claims are used for authorization,
+        # proper JWT signature verification against Microsoft's JWKS would be required.
         tenant_id = None
         if tokens.get("id_token"):
             try:
-                # Decode JWT payload (not verified - just extracting claims)
                 payload = tokens["id_token"].split(".")[1]
                 payload += "=" * (4 - len(payload) % 4)  # Pad base64
                 claims = json.loads(base64.urlsafe_b64decode(payload))
                 tenant_id = claims.get("tid")
-            except Exception:
-                pass
+            except Exception as e:
+                # Log warning but don't fail - tenant_id is optional metadata
+                logger.warning(f"Failed to parse ID token for tenant_id extraction: {e}")
 
         user_info = {
             "provider": "microsoft",

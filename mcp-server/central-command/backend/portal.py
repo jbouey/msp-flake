@@ -10,6 +10,7 @@ Features:
 - Mobile-responsive design support
 """
 
+import asyncio
 import os
 import secrets
 import logging
@@ -36,6 +37,16 @@ from .db_queries import (
 from .auth import require_admin
 
 logger = logging.getLogger(__name__)
+
+
+def redact_email(email: str) -> str:
+    """Redact email for safe logging."""
+    if not email or '@' not in email:
+        return '***'
+    local, domain = email.rsplit('@', 1)
+    if len(local) <= 2:
+        return f"{'*' * len(local)}@{domain}"
+    return f"{local[0]}{'*' * (len(local) - 2)}{local[-1]}@{domain}"
 
 
 # =============================================================================
@@ -92,7 +103,7 @@ async def send_magic_link_email(to_email: str, site_name: str, magic_link: str) 
         True if email sent successfully, False otherwise
     """
     if not SENDGRID_AVAILABLE or not SENDGRID_API_KEY:
-        logger.warning(f"Email not configured - magic link for {site_name}: {magic_link}")
+        logger.warning(f"Email not configured - magic link generated for {site_name} (token redacted)")
         return False
 
     try:
@@ -134,7 +145,7 @@ async def send_magic_link_email(to_email: str, site_name: str, magic_link: str) 
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
 
-        logger.info(f"Magic link email sent to {to_email}, status: {response.status_code}")
+        logger.info(f"Magic link email sent to {redact_email(to_email)}, status: {response.status_code}")
         return response.status_code in (200, 201, 202)
 
     except Exception as e:
@@ -822,8 +833,22 @@ async def get_portal_data(
     """
     await validate_session(site_id, portal_session, token)
 
-    # Get site info from database
-    site_info = await get_site_info(db, site_id)
+    # Run all independent database queries in parallel to avoid N+1 pattern
+    (
+        site_info,
+        kpis_data,
+        control_results,
+        resolved_incidents,
+        evidence_bundles_data,
+    ) = await asyncio.gather(
+        get_site_info(db, site_id),
+        get_portal_kpis(db, site_id),
+        get_control_results_for_site(db, site_id, days=30),
+        get_resolved_incidents_for_site(db, site_id, days=30),
+        get_evidence_bundles_for_site(db, site_id),
+    )
+
+    # Build site from database info
     if site_info:
         site = PortalSite(
             site_id=site_info["site_id"],
@@ -840,8 +865,7 @@ async def get_portal_data(
             last_checkin=None
         )
 
-    # Get KPIs from database (historical aggregation)
-    kpis_data = await get_portal_kpis(db, site_id)
+    # Build KPIs from database (historical aggregation)
     kpis = PortalKPIs(
         compliance_pct=kpis_data["compliance_pct"],
         patch_mttr_hours=kpis_data["patch_mttr_hours"],
@@ -855,7 +879,6 @@ async def get_portal_data(
     )
 
     # Build controls from database check results (8 core controls)
-    control_results = await get_control_results_for_site(db, site_id, days=30)
     controls = []
 
     for rule_id, meta in CONTROL_METADATA.items():
@@ -905,7 +928,6 @@ async def get_portal_data(
         ))
 
     # Build incidents from database (resolved only - portal shows outcomes)
-    resolved_incidents = await get_resolved_incidents_for_site(db, site_id, days=30)
     incidents = []
     for inc in resolved_incidents:
         incidents.append(PortalIncident(
@@ -919,7 +941,6 @@ async def get_portal_data(
         ))
 
     # Build evidence bundles from database
-    evidence_bundles_data = await get_evidence_bundles_for_site(db, site_id)
     bundles = []
     for bundle in evidence_bundles_data:
         bundles.append(PortalEvidenceBundle(
