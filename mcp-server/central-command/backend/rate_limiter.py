@@ -148,6 +148,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         """Process request with rate limiting."""
         path = request.url.path
+        method = request.method
+
+        # Skip rate limiting for safe methods (GET, HEAD, OPTIONS)
+        if method in self.SAFE_METHODS:
+            return await call_next(request)
 
         # Skip rate limiting for exempt paths
         if path in self.EXEMPT_PATHS:
