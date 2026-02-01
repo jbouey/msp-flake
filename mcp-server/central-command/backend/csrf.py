@@ -82,6 +82,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/appliances/evidence",
         "/api/partners/claim",       # Appliance provision
         "/api/webhook",              # Webhooks have their own auth
+        # Agent endpoints at root level (no /api/ prefix) - use API-key auth
+        "/evidence",                 # Evidence bundle submission from appliances
+        "/incidents",                # Incident reporting from appliances
+        "/checkin",                  # Appliance checkin (if at root)
     }
 
     # Exempt path prefixes (for API-key authenticated, OAuth, agent endpoints)
