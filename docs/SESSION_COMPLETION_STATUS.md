@@ -1,6 +1,117 @@
 # Session Completion Status
 
-**Last Updated:** 2026-01-31 (Session 79 - Database Pruning & OTS Anchoring Fix)
+**Last Updated:** 2026-01-31 (Session 80 - Dashboard Technical Debt Cleanup)
+
+---
+
+## Session 80 - Dashboard Technical Debt Cleanup - COMPLETE
+
+**Date:** 2026-01-31
+**Status:** COMPLETE
+**Agent Version:** 1.0.51
+**ISO Version:** v51
+**Phase:** 13 (Zero-Touch Update System)
+
+### Objectives
+1. ✅ Full frontend audit (all 13 dashboard pages)
+2. ✅ Fix Audit Logs crash (React Error #31)
+3. ✅ Fix Learning Loop stats (L2 Decisions showing 0)
+4. ✅ Fix Runbook execution stats (all showing 0)
+5. ✅ Create data model documentation
+6. ✅ Deploy all fixes to production
+
+### Completed Tasks
+
+#### 1. Frontend Audit (13 Pages)
+- **Status:** COMPLETE
+- **Pages Tested:**
+  - Dashboard ✅ - All stats working
+  - Sites ✅ - Appliances offline (expected - lab unreachable)
+  - Notifications ✅ - Real incidents showing
+  - Onboarding ✅ - Empty pipeline (expected)
+  - Partners ✅ - 5 partners active
+  - Users ✅ - Admin user working
+  - Runbooks ✅ - 51 runbooks, 14,935 executions
+  - Runbook Config ✅ - Site selector working
+  - Learning Loop ✅ - 911 L2 decisions, 66.9% success
+  - Fleet Updates ✅ - v1.0.51 rollout visible
+  - Audit Logs ✅ - FIXED (was crashing)
+  - Reports ✅ - Placeholder page
+  - Documentation ⚠️ - Needs content
+
+#### 2. Audit Logs Crash Fix (React Error #31)
+- **Status:** COMPLETE
+- **File:** `mcp-server/central-command/backend/auth.py`
+- **Problem:** Page completely blank, React crashing trying to render objects as children
+- **Root Cause:** Backend returning `details` field as parsed JSON objects instead of strings
+- **Fix:** Added JSON serialization in `get_audit_logs()` for details/target/user fields
+- **Result:** Audit Logs page now displays correctly with 10 log entries
+
+#### 3. Learning Loop Stats Fix
+- **Status:** COMPLETE
+- **File:** `mcp-server/central-command/backend/db_queries.py`
+- **Problem:** L2 Decisions showing 0, Success Rate showing 0%
+- **Root Cause:** Query only checked `incidents.resolution_tier`, but L2 data is in `execution_telemetry.resolution_level`
+- **Data Distribution:**
+  - `incidents.resolution_tier`: L1=1089, L3=442, L2=0
+  - `execution_telemetry.resolution_level`: L1=6555, L2=911, L3=1
+- **Fix:** UNION query on both tables
+- **Result:** L2 Decisions: 911, Success Rate: 66.9%
+
+#### 4. Runbook Execution Stats Fix
+- **Status:** COMPLETE
+- **Files:** `mcp-server/central-command/backend/db_queries.py`, VPS PostgreSQL
+- **Problem:** All runbooks showing 0 executions
+- **Root Cause:** ID mismatch - execution_telemetry uses `L1-*` IDs, runbooks table uses `RB-*` IDs
+- **Fix:**
+  - Created `runbook_id_mapping` table
+  - Inserted 28 L1→runbook ID mappings
+  - Updated query to join through mapping table
+- **Result:** Total Executions: 14,935, per-runbook stats now accurate
+
+#### 5. Database Changes (VPS PostgreSQL)
+- **Status:** COMPLETE
+- **Changes Applied:**
+  - Created `runbook_id_mapping` table with l1_rule_id → runbook_id mapping
+  - Created `sync_incident_resolution_tier()` trigger function
+  - Inserted 28 runbook ID mappings
+
+#### 6. Data Model Documentation
+- **Status:** COMPLETE
+- **File:** `docs/DATA_MODEL.md` (NEW - ~350 lines)
+- **Contents:**
+  - Core table schemas (execution_telemetry, incidents, orders, runbooks, patterns)
+  - ID naming conventions with mismatch documentation
+  - Data flow diagrams
+  - Known issues and workarounds
+  - Recommended schema changes
+
+### Metrics Before/After
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Audit Logs Page | ❌ Crashed | ✅ Working |
+| L2 Decisions (30d) | 0 | 911 |
+| Success Rate | 0% | 66.9% |
+| Total Executions | 7,469 | 14,935 |
+| Avg Success Rate | 1.3% | 26.7% |
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `auth.py` | JSON serialization for audit log fields |
+| `db_queries.py` | Runbook query uses mapping table, UNION for L2 stats |
+| `routes.py` | PromotionHistory API fix |
+| `docs/DATA_MODEL.md` | NEW - Complete schema documentation |
+
+### Git Commit
+- `c598879` - fix: Dashboard data alignment and technical debt cleanup
+
+### Known Issues
+- Both appliances offline (8+ hours) - user not home, lab unreachable
+- v51 rollout pending appliance availability
+- Documentation page needs content
 
 ---
 

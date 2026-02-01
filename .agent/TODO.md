@@ -1,7 +1,67 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-31 (Session 79 - Database Pruning & OTS Anchoring Fix)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.51, **ISO v51**, **Database Pruning IMPLEMENTED**, **OTS Anchoring FIXED**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.51**)
+**Last Updated:** 2026-01-31 (Session 80 - Dashboard Technical Debt Cleanup)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.51, **ISO v51**, **Dashboard Technical Debt FIXED**, **Database Pruning IMPLEMENTED**, **OTS Anchoring FIXED**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.51**)
+
+---
+
+## Session 80 (2026-01-31) - COMPLETE
+
+### Session Goals
+1. ✅ Full frontend audit (all 13 dashboard pages)
+2. ✅ Fix Audit Logs crash (React Error #31)
+3. ✅ Fix Learning Loop stats (L2 Decisions showing 0)
+4. ✅ Fix Runbook execution stats (all showing 0)
+5. ✅ Create data model documentation
+6. ✅ Deploy all fixes to production
+
+### Accomplishments
+
+#### 1. Frontend Audit (13 Pages)
+All dashboard pages tested and verified working:
+- Dashboard, Sites, Notifications, Onboarding, Partners, Users
+- Runbooks, Runbook Config, Learning Loop, Fleet Updates
+- Audit Logs (FIXED), Reports, Documentation (needs content)
+
+#### 2. Audit Logs Crash Fix (React Error #31)
+- **Problem:** Page blank, React Error #31 - objects not valid as children
+- **Root Cause:** Backend `auth.py` returning `details` as parsed objects
+- **Fix:** Added JSON serialization in `get_audit_logs()`
+
+#### 3. Learning Loop Stats Fix
+- **Problem:** L2 Decisions: 0, Success Rate: 0%
+- **Root Cause:** Query only checked `incidents.resolution_tier` (no L2 data)
+- **Fix:** UNION query on `incidents` + `execution_telemetry`
+- **Result:** L2 Decisions: 911, Success Rate: 66.9%
+
+#### 4. Runbook Execution Stats Fix
+- **Problem:** All runbooks showing 0 executions
+- **Root Cause:** ID mismatch (L1-* vs RB-*)
+- **Fix:** Created `runbook_id_mapping` table with 28 mappings
+- **Result:** Total Executions: 14,935
+
+#### 5. Database Changes (VPS)
+- Created `runbook_id_mapping` table
+- Created `sync_incident_resolution_tier()` trigger
+- Inserted 28 L1→runbook ID mappings
+
+#### 6. Documentation
+- Created `docs/DATA_MODEL.md` - Complete database schema reference
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `auth.py` | JSON serialization for audit log fields |
+| `db_queries.py` | Runbook query uses mapping table, UNION for L2 |
+| `routes.py` | PromotionHistory API fix |
+| `docs/DATA_MODEL.md` | NEW - Schema documentation |
+
+### Git Commits
+
+| Commit | Message |
+|--------|---------|
+| `c598879` | fix: Dashboard data alignment and technical debt cleanup |
 
 ---
 
