@@ -104,12 +104,23 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    """Verify a password against its bcrypt hash."""
-    if not password_hash.startswith("$2"):
-        # Legacy SHA-256 hashes no longer supported for security
-        logger.warning("Rejecting legacy non-bcrypt password hash")
-        return False
-    return bcrypt.checkpw(password.encode(), password_hash.encode())
+    """Verify a password against its hash.
+
+    Supports both bcrypt (preferred) and legacy SHA-256 hashes.
+    New passwords should always use hash_password() which uses bcrypt.
+    """
+    if password_hash.startswith("$2"):
+        # bcrypt hash
+        return bcrypt.checkpw(password.encode(), password_hash.encode())
+    elif password_hash.startswith("sha256$"):
+        # Legacy SHA-256 hash (read-only support for migration)
+        parts = password_hash.split("$")
+        if len(parts) != 3:
+            return False
+        _, salt, stored_hash = parts
+        computed = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+        return secrets.compare_digest(computed, stored_hash)
+    return False
 
 
 def generate_session_token() -> str:

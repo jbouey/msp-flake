@@ -109,6 +109,9 @@ _rate_limiter = RateLimiter()
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """FastAPI middleware for rate limiting."""
 
+    # Safe methods exempt from rate limiting (read-only)
+    SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
     # Endpoints that are exempt from rate limiting
     EXEMPT_PATHS = {
         "/health",
