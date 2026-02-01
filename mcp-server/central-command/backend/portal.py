@@ -312,22 +312,179 @@ CONTROL_METADATA = {
 
 
 # =============================================================================
-# IN-MEMORY SESSION STORE
+# REDIS SESSION STORE (with in-memory fallback)
 # =============================================================================
 
-# Token and session management (kept in-memory for simplicity)
-# TODO: Move to Redis or database for horizontal scaling
-_portal_tokens: Dict[str, str] = {}  # site_id -> token
-_magic_links: Dict[str, Dict[str, Any]] = {}  # token -> {site_id, email, expires_at}
-_sessions: Dict[str, Dict[str, Any]] = {}  # session_id -> {site_id, created_at, expires_at}
-_site_contacts: Dict[str, str] = {}  # site_id -> email
+import json
+
+
+async def get_redis_client():
+    """Get Redis client for session management."""
+    try:
+        from main import redis_client
+        return redis_client
+    except ImportError:
+        try:
+            from server import redis_client
+            return redis_client
+        except (ImportError, AttributeError):
+            logger.warning("Redis not available, using in-memory session store")
+            return None
+
+
+class PortalSessionManager:
+    """Manages portal sessions with Redis (or in-memory fallback).
+
+    Stores:
+    - portal_tokens: site_id -> token (permanent portal tokens)
+    - magic_links: token -> {site_id, email, expires_at} (15-minute TTL)
+    - sessions: session_id -> {site_id, created_at, expires_at} (30-day TTL)
+    - site_contacts: site_id -> email
+    """
+
+    # TTLs in seconds
+    MAGIC_LINK_TTL = 15 * 60  # 15 minutes
+    SESSION_TTL = 30 * 24 * 60 * 60  # 30 days
+    PORTAL_TOKEN_TTL = 365 * 24 * 60 * 60  # 1 year
+
+    def __init__(self, redis_client=None):
+        self.redis = redis_client
+        # Fallback in-memory stores
+        self._portal_tokens: Dict[str, str] = {}
+        self._magic_links: Dict[str, Dict[str, Any]] = {}
+        self._sessions: Dict[str, Dict[str, Any]] = {}
+        self._site_contacts: Dict[str, str] = {}
+
+    def _key(self, prefix: str, id: str) -> str:
+        return f"portal:{prefix}:{id}"
+
+    # Portal tokens (site_id -> token)
+    async def set_portal_token(self, site_id: str, token: str):
+        if self.redis:
+            await self.redis.setex(
+                self._key("token", site_id),
+                self.PORTAL_TOKEN_TTL,
+                token
+            )
+        else:
+            self._portal_tokens[site_id] = token
+
+    async def get_portal_token(self, site_id: str) -> Optional[str]:
+        if self.redis:
+            return await self.redis.get(self._key("token", site_id))
+        return self._portal_tokens.get(site_id)
+
+    # Magic links (token -> data)
+    async def set_magic_link(self, token: str, site_id: str, email: str, expires_at: datetime):
+        data = json.dumps({
+            "site_id": site_id,
+            "email": email,
+            "expires_at": expires_at.isoformat()
+        })
+        if self.redis:
+            await self.redis.setex(
+                self._key("magic", token),
+                self.MAGIC_LINK_TTL,
+                data
+            )
+        else:
+            self._magic_links[token] = {
+                "site_id": site_id,
+                "email": email,
+                "expires_at": expires_at
+            }
+
+    async def get_and_delete_magic_link(self, token: str) -> Optional[Dict[str, Any]]:
+        if self.redis:
+            data = await self.redis.getdel(self._key("magic", token))
+            if data:
+                parsed = json.loads(data)
+                parsed["expires_at"] = datetime.fromisoformat(parsed["expires_at"])
+                return parsed
+            return None
+        return self._magic_links.pop(token, None)
+
+    # Sessions (session_id -> data)
+    async def set_session(self, session_id: str, site_id: str, created_at: datetime, expires_at: datetime):
+        data = json.dumps({
+            "site_id": site_id,
+            "created_at": created_at.isoformat(),
+            "expires_at": expires_at.isoformat()
+        })
+        if self.redis:
+            ttl = int((expires_at - datetime.now(timezone.utc)).total_seconds())
+            if ttl > 0:
+                await self.redis.setex(
+                    self._key("session", session_id),
+                    ttl,
+                    data
+                )
+        else:
+            self._sessions[session_id] = {
+                "site_id": site_id,
+                "created_at": created_at,
+                "expires_at": expires_at
+            }
+
+    async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        if self.redis:
+            data = await self.redis.get(self._key("session", session_id))
+            if data:
+                parsed = json.loads(data)
+                parsed["created_at"] = datetime.fromisoformat(parsed["created_at"])
+                parsed["expires_at"] = datetime.fromisoformat(parsed["expires_at"])
+                return parsed
+            return None
+        session = self._sessions.get(session_id)
+        if session and session["expires_at"] < datetime.now(timezone.utc):
+            del self._sessions[session_id]
+            return None
+        return session
+
+    async def delete_session(self, session_id: str):
+        if self.redis:
+            await self.redis.delete(self._key("session", session_id))
+        else:
+            self._sessions.pop(session_id, None)
+
+    # Site contacts (site_id -> email)
+    async def set_site_contact(self, site_id: str, email: str):
+        if self.redis:
+            await self.redis.set(self._key("contact", site_id), email)
+        else:
+            self._site_contacts[site_id] = email
+
+    async def get_site_contact(self, site_id: str) -> Optional[str]:
+        if self.redis:
+            return await self.redis.get(self._key("contact", site_id))
+        return self._site_contacts.get(site_id)
+
+
+# Global session manager instance (initialized on first use)
+_session_manager: Optional[PortalSessionManager] = None
+
+
+async def get_session_manager() -> PortalSessionManager:
+    """Get or create the session manager."""
+    global _session_manager
+    if _session_manager is None:
+        redis = await get_redis_client()
+        _session_manager = PortalSessionManager(redis)
+    return _session_manager
+
+
+# Legacy in-memory dicts for backwards compatibility during transition
+# These will be removed once all code is migrated to use PortalSessionManager
+_portal_tokens: Dict[str, str] = {}
+_magic_links: Dict[str, Dict[str, Any]] = {}
+_sessions: Dict[str, Dict[str, Any]] = {}
+_site_contacts: Dict[str, str] = {}
 
 # NOTE: Compliance data is now read from PostgreSQL (compliance_bundles table)
-# The old _compliance_data in-memory dict has been removed
 
 
 def _cleanup_expired():
-    """Remove expired magic links and sessions."""
+    """Remove expired magic links and sessions from in-memory fallback."""
     now = datetime.now(timezone.utc)
 
     # Cleanup magic links
@@ -379,8 +536,9 @@ async def generate_portal_token(site_id: str):
     # Generate 64-char token
     token = secrets.token_urlsafe(48)
 
-    # Store token (in production, save to database)
-    _portal_tokens[site_id] = token
+    # Store token in Redis (or in-memory fallback)
+    session_mgr = await get_session_manager()
+    await session_mgr.set_portal_token(site_id, token)
 
     return TokenResponse(
         portal_url=f"{PORTAL_BASE_URL}/portal/site/{site_id}?token={token}",
@@ -395,10 +553,10 @@ async def request_magic_link(site_id: str, request: MagicLinkRequest):
 
     Validates email is authorized for the site, then sends magic link.
     """
-    _cleanup_expired()
+    session_mgr = await get_session_manager()
 
     # Check if email is authorized for this site
-    authorized_email = _site_contacts.get(site_id)
+    authorized_email = await session_mgr.get_site_contact(site_id)
     if authorized_email and request.email.lower() != authorized_email.lower():
         # Don't reveal if email is wrong - just say "check your email"
         logger.warning(f"Unauthorized email {request.email} for site {site_id}")
@@ -411,11 +569,7 @@ async def request_magic_link(site_id: str, request: MagicLinkRequest):
     token = secrets.token_urlsafe(48)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=MAGIC_LINK_EXPIRY_MINUTES)
 
-    _magic_links[token] = {
-        "site_id": site_id,
-        "email": request.email,
-        "expires_at": expires_at
-    }
+    await session_mgr.set_magic_link(token, site_id, request.email, expires_at)
 
     # Build magic link URL
     magic_link = f"{PORTAL_BASE_URL}/portal/site/{site_id}?magic={token}"
@@ -441,32 +595,24 @@ async def validate_magic_link(
 
     Exchanges magic link token for httpOnly session cookie.
     """
-    _cleanup_expired()
+    session_mgr = await get_session_manager()
 
-    # Look up magic link
-    link_data = _magic_links.get(magic)
+    # Look up and consume magic link (single-use)
+    link_data = await session_mgr.get_and_delete_magic_link(magic)
     if not link_data:
         raise HTTPException(status_code=403, detail="Invalid or expired link")
 
     # Check expiry
     if datetime.now(timezone.utc) > link_data["expires_at"]:
-        del _magic_links[magic]
         raise HTTPException(status_code=403, detail="Link has expired. Please request a new one.")
 
     # Create session
     session_id = secrets.token_urlsafe(32)
     site_id = link_data["site_id"]
     now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=SESSION_EXPIRY_DAYS)
 
-    _sessions[session_id] = {
-        "site_id": site_id,
-        "email": link_data["email"],
-        "created_at": now,
-        "expires_at": now + timedelta(days=SESSION_EXPIRY_DAYS)
-    }
-
-    # Delete used magic link
-    del _magic_links[magic]
+    await session_mgr.set_session(session_id, site_id, now, expires_at)
 
     # Set httpOnly cookie
     response.set_cookie(
@@ -498,32 +644,24 @@ async def validate_magic_link_post(
     SECURITY: Token is sent in body (not URL) to avoid exposure in server logs.
     Exchanges magic link token for httpOnly session cookie.
     """
-    _cleanup_expired()
+    session_mgr = await get_session_manager()
 
-    # Look up magic link
-    link_data = _magic_links.get(request.magic_token)
+    # Look up and consume magic link (single-use)
+    link_data = await session_mgr.get_and_delete_magic_link(request.magic_token)
     if not link_data:
         raise HTTPException(status_code=403, detail="Invalid or expired link")
 
     # Check expiry
     if datetime.now(timezone.utc) > link_data["expires_at"]:
-        del _magic_links[request.magic_token]
         raise HTTPException(status_code=403, detail="Link has expired. Please request a new one.")
 
     # Create session
     session_id = secrets.token_urlsafe(32)
     site_id = link_data["site_id"]
     now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=SESSION_EXPIRY_DAYS)
 
-    _sessions[session_id] = {
-        "site_id": site_id,
-        "email": link_data["email"],
-        "created_at": now,
-        "expires_at": now + timedelta(days=SESSION_EXPIRY_DAYS)
-    }
-
-    # Delete used magic link
-    del _magic_links[request.magic_token]
+    await session_mgr.set_session(session_id, site_id, now, expires_at)
 
     # Set httpOnly cookie
     response.set_cookie(
@@ -555,21 +693,17 @@ async def validate_legacy_token(
     SECURITY: Token is sent in body (not URL) to avoid exposure in server logs.
     For clients using the old token-based auth approach.
     """
-    _cleanup_expired()
+    session_mgr = await get_session_manager()
 
     # Check legacy token
-    stored_token = _portal_tokens.get(request.site_id)
+    stored_token = await session_mgr.get_portal_token(request.site_id)
     if stored_token and secrets.compare_digest(stored_token, request.token):
         # Create session
         session_id = secrets.token_urlsafe(32)
         now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(days=SESSION_EXPIRY_DAYS)
 
-        _sessions[session_id] = {
-            "site_id": request.site_id,
-            "email": None,  # Legacy tokens don't have email
-            "created_at": now,
-            "expires_at": now + timedelta(days=SESSION_EXPIRY_DAYS)
-        }
+        await session_mgr.set_session(session_id, request.site_id, now, expires_at)
 
         # Set httpOnly cookie
         response.set_cookie(
@@ -602,37 +736,32 @@ async def validate_session(
 
     Supports both httpOnly cookie sessions and legacy token auth.
     """
-    _cleanup_expired()
+    session_mgr = await get_session_manager()
 
     # Try session cookie first (preferred)
     if portal_session:
-        session = _sessions.get(portal_session)
+        session = await session_mgr.get_session(portal_session)
         if session:
             if datetime.now(timezone.utc) < session["expires_at"]:
                 if session["site_id"] == site_id:
                     return {"method": "session", "email": session.get("email")}
             else:
                 # Expired - remove it
-                del _sessions[portal_session]
+                await session_mgr.delete_session(portal_session)
 
     # Fallback to token auth (legacy)
     if token:
-        stored_token = _portal_tokens.get(site_id)
+        stored_token = await session_mgr.get_portal_token(site_id)
         if stored_token and stored_token == token:
             return {"method": "token"}
-
-        # Also check magic links for direct access
-        link_data = _magic_links.get(token)
-        if link_data and link_data["site_id"] == site_id:
-            if datetime.now(timezone.utc) < link_data["expires_at"]:
-                return {"method": "magic_link"}
 
     raise HTTPException(status_code=403, detail="Invalid or expired session")
 
 
 async def validate_token(site_id: str, token: str) -> bool:
     """Validate portal access token (legacy support)."""
-    stored_token = _portal_tokens.get(site_id)
+    session_mgr = await get_session_manager()
+    stored_token = await session_mgr.get_portal_token(site_id)
     if not stored_token or stored_token != token:
         raise HTTPException(status_code=403, detail="Invalid portal token")
     return True
@@ -641,8 +770,9 @@ async def validate_token(site_id: str, token: str) -> bool:
 @router.post("/auth/logout")
 async def logout(response: Response, portal_session: Optional[str] = Cookie(None)):
     """Log out and clear session."""
-    if portal_session and portal_session in _sessions:
-        del _sessions[portal_session]
+    if portal_session:
+        session_mgr = await get_session_manager()
+        await session_mgr.delete_session(portal_session)
 
     response.delete_cookie("portal_session", path="/")
 
@@ -650,9 +780,10 @@ async def logout(response: Response, portal_session: Optional[str] = Cookie(None
 
 
 @router.post("/sites/{site_id}/contacts")
-async def set_site_contact(site_id: str, email: EmailStr):
+async def set_site_contact_endpoint(site_id: str, email: EmailStr):
     """Set authorized contact email for a site (admin only)."""
-    _site_contacts[site_id] = email.lower()
+    session_mgr = await get_session_manager()
+    await session_mgr.set_site_contact(site_id, email.lower())
     logger.info(f"Set contact for site {site_id}: {email}")
     return {"status": "updated", "site_id": site_id, "email": email}
 

@@ -19,6 +19,87 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/fleet", tags=["fleet-updates"])
 
 
+async def _create_update_orders_for_appliances(conn, rollout_id: UUID, stage: int):
+    """Create update_iso orders for appliances in a specific stage.
+
+    This is the key function that triggers actual updates by creating orders
+    that appliances will fetch during their next check-in cycle.
+    """
+    import uuid
+
+    # Get release info for this rollout
+    release = await conn.fetchrow(
+        """
+        SELECT rel.version, rel.iso_url, rel.sha256, rel.size_bytes,
+               r.maintenance_window
+        FROM update_rollouts r
+        JOIN update_releases rel ON r.release_id = rel.id
+        WHERE r.id = $1
+        """,
+        rollout_id
+    )
+
+    if not release:
+        logger.warning(f"No release found for rollout {rollout_id}")
+        return 0
+
+    # Get appliances that need orders - join with site_appliances to get full appliance_id (with MAC)
+    appliances = await conn.fetch(
+        """
+        SELECT au.id as update_id, a.site_id, au.appliance_id,
+               sa.appliance_id as full_appliance_id
+        FROM appliance_updates au
+        JOIN appliances a ON au.appliance_id = a.id
+        LEFT JOIN site_appliances sa ON sa.site_id = a.site_id
+        WHERE au.rollout_id = $1 AND au.stage_assigned = $2 AND au.status = 'notified'
+        """,
+        rollout_id,
+        stage
+    )
+
+    maint_window = release["maintenance_window"]
+    if isinstance(maint_window, str):
+        maint_window = json.loads(maint_window)
+
+    orders_created = 0
+    for app in appliances:
+        order_id = f"order-{uuid.uuid4().hex[:8]}"
+
+        # Use full appliance_id (with MAC) from site_appliances, fall back to site_id
+        appliance_identifier = app["full_appliance_id"] or app["site_id"]
+
+        parameters = {
+            "update_id": str(app["update_id"]),
+            "rollout_id": str(rollout_id),
+            "version": release["version"],
+            "iso_url": release["iso_url"],
+            "sha256": release["sha256"],
+            "size_bytes": release["size_bytes"],
+            "maintenance_window": maint_window,
+        }
+
+        try:
+            await conn.execute(
+                """
+                INSERT INTO admin_orders (
+                    order_id, appliance_id, site_id, order_type,
+                    parameters, priority, status, created_at, expires_at
+                ) VALUES ($1, $2, $3, 'update_iso', $4::jsonb, 1, 'pending', NOW(), NOW() + interval '7 days')
+                ON CONFLICT DO NOTHING
+                """,
+                order_id,
+                appliance_identifier,
+                app["site_id"],
+                json.dumps(parameters),
+            )
+            orders_created += 1
+            logger.info(f"Created update_iso order for {appliance_identifier}: {release['version']}")
+        except Exception as e:
+            logger.error(f"Failed to create order for {appliance_identifier}: {e}")
+
+    return orders_created
+
+
 # =============================================================================
 # MODELS
 # =============================================================================
@@ -429,6 +510,20 @@ async def create_rollout(rollout: RolloutCreate, background_tasks: BackgroundTas
                     release["version"],
                 )
 
+        # Notify stage 0 appliances immediately (they won't get an advance_stage call)
+        await conn.execute(
+            """
+            UPDATE appliance_updates
+            SET status = 'notified'
+            WHERE rollout_id = $1 AND stage_assigned = 0 AND status = 'pending'
+            """,
+            row["id"],
+        )
+
+        # Create update_iso orders for stage 0 appliances
+        orders_created = await _create_update_orders_for_appliances(conn, row["id"], 0)
+        logger.info(f"Created {orders_created} update orders for stage 0 appliances")
+
         # Audit log
         await conn.execute(
             """
@@ -565,16 +660,20 @@ async def advance_rollout_stage(rollout_id: str):
             new_stage
         )
 
+        # Create update_iso orders for appliances in new stage
+        orders_created = await _create_update_orders_for_appliances(conn, UUID(rollout_id), new_stage)
+        logger.info(f"Created {orders_created} update orders for stage {new_stage} appliances")
+
         await conn.execute(
             """
             INSERT INTO update_audit_log (event_type, rollout_id, details)
             VALUES ('rollout_stage_advanced', $1, $2)
             """,
             UUID(rollout_id),
-            json.dumps({"new_stage": new_stage}),
+            json.dumps({"new_stage": new_stage, "orders_created": orders_created}),
         )
 
-        return {"status": "ok", "message": f"Advanced to stage {new_stage}"}
+        return {"status": "ok", "message": f"Advanced to stage {new_stage}", "orders_created": orders_created}
 
 
 # =============================================================================

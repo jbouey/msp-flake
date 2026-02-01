@@ -1363,6 +1363,23 @@ async def trigger_discovery(site_id: str, partner=Depends(require_partner)):
         if not site:
             raise HTTPException(status_code=404, detail="Site not found")
 
+        # Get active appliance for this site
+        appliance = await conn.fetchrow("""
+            SELECT appliance_id FROM site_appliances
+            WHERE site_id = $1 AND status = 'online'
+            ORDER BY last_checkin DESC NULLS LAST
+            LIMIT 1
+        """, site_id)
+
+        if not appliance:
+            # Try any appliance if none online
+            appliance = await conn.fetchrow("""
+                SELECT appliance_id FROM site_appliances
+                WHERE site_id = $1
+                ORDER BY last_checkin DESC NULLS LAST
+                LIMIT 1
+            """, site_id)
+
         # Create discovery scan record
         scan = await conn.fetchrow("""
             INSERT INTO discovery_scans (site_id, scan_type, triggered_by)
@@ -1370,15 +1387,46 @@ async def trigger_discovery(site_id: str, partner=Depends(require_partner)):
             RETURNING id, started_at
         """, site['id'])
 
-        # TODO: Queue order to appliance to run discovery
-        # For now, just create the scan record
+        # Queue order to appliance to run discovery
+        if appliance:
+            import secrets
+            from datetime import timedelta
+            order_id = f"ORD-{secrets.token_hex(8).upper()}"
+            now = datetime.now(timezone.utc)
+            expires_at = now + timedelta(hours=24)  # Discovery can take time
 
-    return {
-        'scan_id': str(scan['id']),
-        'status': 'queued',
-        'started_at': scan['started_at'].isoformat(),
-        'message': 'Discovery scan queued. Appliance will run on next sync.',
-    }
+            await conn.execute("""
+                INSERT INTO admin_orders (
+                    order_id, appliance_id, site_id, order_type,
+                    parameters, priority, status, created_at, expires_at
+                ) VALUES ($1, $2, $3, 'run_discovery', $4::jsonb, 1, 'pending', $5, $6)
+            """,
+                order_id,
+                appliance['appliance_id'],
+                site_id,
+                json.dumps({
+                    'scan_id': str(scan['id']),
+                    'scan_type': 'full',
+                    'triggered_by': partner.get('email', 'partner')
+                }),
+                now,
+                expires_at
+            )
+
+            return {
+                'scan_id': str(scan['id']),
+                'order_id': order_id,
+                'status': 'queued',
+                'started_at': scan['started_at'].isoformat(),
+                'message': 'Discovery scan queued. Appliance will execute on next check-in.',
+            }
+        else:
+            return {
+                'scan_id': str(scan['id']),
+                'status': 'pending',
+                'started_at': scan['started_at'].isoformat(),
+                'message': 'Discovery scan created but no appliance available. Will execute when appliance comes online.',
+            }
 
 
 # =============================================================================

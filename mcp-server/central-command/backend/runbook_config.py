@@ -5,11 +5,13 @@ Partners can customize which runbooks are active for their managed sites.
 """
 
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Query, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel
+
+from auth import require_auth
 
 
 router = APIRouter(prefix="/api/runbooks", tags=["runbooks"])
@@ -252,7 +254,8 @@ async def update_site_runbook_config(
     site_id: str,
     runbook_id: str,
     config: RunbookConfigUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth)
 ):
     """Enable or disable a runbook for a site."""
     # Verify runbook exists
@@ -277,7 +280,7 @@ async def update_site_runbook_config(
         "site_id": site_id,
         "runbook_id": runbook_id,
         "enabled": config.enabled,
-        "modified_by": "api",  # TODO: Get from auth context
+        "modified_by": user.get("username", "api"),
         "notes": config.notes
     })
     await db.commit()
@@ -295,27 +298,30 @@ async def update_site_runbook_config(
 async def bulk_update_site_runbooks(
     site_id: str,
     updates: dict,  # {"runbook_id": enabled_bool, ...}
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth)
 ):
     """Bulk enable/disable runbooks for a site.
 
     Body: {"RB-WIN-SVC-001": true, "RB-WIN-SEC-002": false, ...}
     """
     results = []
+    modified_by = user.get("username", "api")
 
     for runbook_id, enabled in updates.items():
         query = text("""
             INSERT INTO site_runbook_config (site_id, runbook_id, enabled, modified_by, modified_at)
-            VALUES (:site_id, :runbook_id, :enabled, 'api', NOW())
+            VALUES (:site_id, :runbook_id, :enabled, :modified_by, NOW())
             ON CONFLICT (site_id, runbook_id) DO UPDATE SET
                 enabled = EXCLUDED.enabled,
-                modified_by = 'api',
+                modified_by = :modified_by,
                 modified_at = NOW()
         """)
         await db.execute(query, {
             "site_id": site_id,
             "runbook_id": runbook_id,
-            "enabled": enabled
+            "enabled": enabled,
+            "modified_by": modified_by
         })
         results.append({"runbook_id": runbook_id, "enabled": enabled})
 
@@ -328,7 +334,8 @@ async def toggle_category_for_site(
     site_id: str,
     category: str,
     enabled: bool = Query(..., description="Enable or disable all runbooks in category"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth)
 ):
     """Enable or disable all runbooks in a category for a site."""
     # Get runbooks in category
@@ -340,19 +347,21 @@ async def toggle_category_for_site(
         raise HTTPException(status_code=404, detail=f"No runbooks in category '{category}'")
 
     # Update all
+    modified_by = user.get("username", "api")
     for runbook_id in runbook_ids:
         query = text("""
             INSERT INTO site_runbook_config (site_id, runbook_id, enabled, modified_by, modified_at)
-            VALUES (:site_id, :runbook_id, :enabled, 'api', NOW())
+            VALUES (:site_id, :runbook_id, :enabled, :modified_by, NOW())
             ON CONFLICT (site_id, runbook_id) DO UPDATE SET
                 enabled = EXCLUDED.enabled,
-                modified_by = 'api',
+                modified_by = :modified_by,
                 modified_at = NOW()
         """)
         await db.execute(query, {
             "site_id": site_id,
             "runbook_id": runbook_id,
-            "enabled": enabled
+            "enabled": enabled,
+            "modified_by": modified_by
         })
 
     await db.commit()
@@ -403,7 +412,8 @@ async def update_appliance_runbook_config(
     appliance_id: str,
     runbook_id: str,
     config: RunbookConfigUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth)
 ):
     """Set appliance-level override for a runbook."""
     # Verify runbook exists
@@ -428,7 +438,7 @@ async def update_appliance_runbook_config(
         "appliance_id": appliance_id,
         "runbook_id": runbook_id,
         "enabled": config.enabled,
-        "modified_by": "api",
+        "modified_by": user.get("username", "api"),
         "notes": config.notes
     })
     await db.commit()
