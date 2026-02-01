@@ -97,8 +97,9 @@ in
   # No GUI - headless operation
   services.xserver.enable = false;
 
-  # Auto-login to console (for debugging if needed)
-  services.getty.autologinUser = lib.mkForce "root";
+  # Console login requires password for physical security (HIPAA §164.310)
+  # Auto-login disabled in production - use SSH for remote access
+  services.getty.autologinUser = lib.mkForce null;
 
   # Show IP address on login
   environment.etc."motd".text = ''
@@ -143,6 +144,16 @@ in
       StandardOutput = "journal";
       StandardError = "journal";
       SyslogIdentifier = "msp-health-gate";
+
+      # Security hardening
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      ReadWritePaths = [ "/var/lib/msp" ];
+      NoNewPrivileges = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectControlGroups = true;
     };
   };
 
@@ -259,7 +270,8 @@ in
 
     serviceConfig = {
       Type = "simple";
-      ExecStart = "${local-portal}/bin/local-portal --port 8083 --host 0.0.0.0";
+      # Bind to localhost only - use reverse proxy for network access
+      ExecStart = "${local-portal}/bin/local-portal --port 8083 --host 127.0.0.1";
       Restart = "always";
       RestartSec = "10s";
 
@@ -387,7 +399,7 @@ in
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = lib.mkForce "prohibit-password";
+      PermitRootLogin = lib.mkForce "no";  # Root SSH disabled - use msp user + sudo
       PasswordAuthentication = lib.mkForce false;
       KbdInteractiveAuthentication = lib.mkForce false;
     };

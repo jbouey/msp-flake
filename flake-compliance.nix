@@ -113,18 +113,17 @@
         # Disable the placeholder compliance-agent module
         services.compliance-agent.enable = lib.mkForce false;
 
-        # SSH keys for testing (will be provisioned per-site in production)
-        users.users.root.openssh.authorizedKeys.keys = [
-          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
-        ];
+        # SSH keys provisioned per-site via config.yaml or central API
+        # DO NOT hardcode keys - they are deployment-specific
+        users.users.root.openssh.authorizedKeys.keys = [ ];
         users.users.msp = {
           isNormalUser = true;
           extraGroups = [ "wheel" ];
-          openssh.authorizedKeys.keys = [
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
-          ];
+          # SSH keys provisioned per-site
+          openssh.authorizedKeys.keys = [ ];
         };
-        security.sudo.wheelNeedsPassword = false;
+        # Password required for sudo (HIPAA audit trail requirement)
+        security.sudo.wheelNeedsPassword = true;
 
         # Phone-home agent script embedded directly
         environment.etc."msp/phone-home.py" = {

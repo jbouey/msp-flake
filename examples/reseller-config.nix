@@ -77,10 +77,10 @@
     maintenanceWindow = "02:00-04:00"; # 2-4 AM UTC
 
     # ========================================================================
-    # Evidence Retention
+    # Evidence Retention (HIPAA requires 6-year minimum)
     # ========================================================================
     evidenceRetention = 200;
-    pruneRetentionDays = 90;
+    pruneRetentionDays = 2190;  # 6 years for HIPAA compliance
 
     # ========================================================================
     # Clock Sanity
@@ -104,7 +104,9 @@
     webUI = {
       enable = true;
       port = 8080;
-      bindAddress = "0.0.0.0"; # Accessible from local network
+      # Bind to localhost for security - use reverse proxy for network access
+      # Or configure firewall rules to restrict source IPs
+      bindAddress = "127.0.0.1";
     };
   };
 

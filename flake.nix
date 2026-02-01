@@ -216,13 +216,17 @@
 
           "${nixpkgs}/nixos/modules/virtualisation/qemu-vm.nix"
           
-         {  
-          users.users.root.initialPassword = "root";
-          services.getty.autologinUser = "root";
+         {
+          # VM test environment - password disabled, use SSH keys
+          users.users.root.hashedPassword = "!";  # Disabled - use SSH key
+          services.getty.autologinUser = null;  # No auto-login for security
           services.openssh.enable = true;
+          services.openssh.settings.PermitRootLogin = "prohibit-password";
           virtualisation.forwardPorts = [
         { from = "host"; host.port = 2222; guest.port = 22; }
           ];
+          # Add your SSH key for VM access:
+          # users.users.root.openssh.authorizedKeys.keys = [ "ssh-ed25519 YOUR_KEY" ];
         }
 
           

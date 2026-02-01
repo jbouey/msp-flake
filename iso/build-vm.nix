@@ -31,10 +31,13 @@
   networking.hostName = "nix-builder";
   networking.networkmanager.enable = true;
 
-  # SSH for remote access
+  # SSH for remote access - use SSH key authentication
   services.openssh = {
     enable = true;
-    settings.PermitRootLogin = "yes";
+    settings = {
+      PermitRootLogin = "no";  # Use builder user + sudo
+      PasswordAuthentication = false;  # SSH key only
+    };
   };
 
   # Nix settings for building
@@ -53,17 +56,19 @@
     };
   };
 
-  # Build user
+  # Build user - add your SSH key for access
   users.users.builder = {
     isNormalUser = true;
     extraGroups = [ "wheel" ];
-    initialPassword = "builder";
+    hashedPassword = "!";  # Disabled - use SSH key authentication
     openssh.authorizedKeys.keys = [
-      # Add your SSH public key here
+      # Add your SSH public key here for access
+      # Example: "ssh-ed25519 AAAA... your-key-comment"
     ];
   };
 
-  users.users.root.initialPassword = "nixos";
+  # Root password disabled - use builder user + sudo
+  users.users.root.hashedPassword = "!";
 
   # Essential packages for building
   environment.systemPackages = with pkgs; [

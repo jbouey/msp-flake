@@ -240,9 +240,13 @@ in
 
     pruneRetentionDays = mkOption {
       type = types.int;
-      default = 90;
-      example = 180;
-      description = "Never delete evidence bundles younger than N days";
+      default = 2190;  # 6 years - HIPAA minimum retention requirement
+      example = 2555;  # 7 years
+      description = ''
+        Never delete evidence bundles younger than N days.
+        HIPAA requires minimum 6-year retention (2190 days).
+        Consider archiving to WORM storage for long-term compliance.
+      '';
     };
 
     # ========================================================================
@@ -355,6 +359,21 @@ in
       {
         assertion = cfg.mcpServer.enable -> cfg.redis.enable;
         message = "Redis must be enabled when MCP server is enabled";
+      }
+      {
+        # HIPAA requires minimum 6-year retention (2190 days)
+        assertion = cfg.pruneRetentionDays >= 1825;
+        message = "pruneRetentionDays must be at least 1825 (5 years) for HIPAA compliance. Recommended: 2190 (6 years)";
+      }
+      {
+        # Validate syslog target format if configured
+        assertion = cfg.syslogTarget == null || builtins.match "[a-zA-Z0-9.-]+:[0-9]+" cfg.syslogTarget != null;
+        message = "syslogTarget must be in format host:port (e.g., syslog.example.com:514)";
+      }
+      {
+        # Remote MCP must use HTTPS
+        assertion = cfg.mcpUrl == null || builtins.match "http://127\\.0\\.0\\.1.*" cfg.mcpUrl != null || builtins.match "http://localhost.*" cfg.mcpUrl != null || builtins.match "https://.*" cfg.mcpUrl != null;
+        message = "mcpUrl must use HTTPS for remote servers. HTTP only allowed for localhost/127.0.0.1";
       }
     ];
 

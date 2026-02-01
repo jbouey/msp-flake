@@ -23,20 +23,19 @@
     isNormalUser = true;
     description = "MSP Service Account";
     extraGroups = [ "wheel" "networkmanager" ];
-    # SSH keys for remote access
-    openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE8uV6E//e4fQXlDEMoE0uADd/nAzKwqA0btaoHc28Bl macs-imac-vm-access"
-    ];
+    # SSH keys provisioned per-site via:
+    # 1. USB config.yaml with ssh_authorized_keys field
+    # 2. Central provisioning API
+    # 3. SOPS secrets (sops.secrets.ssh-authorized-keys)
+    # DO NOT hardcode keys here - they belong in site-specific config
+    openssh.authorizedKeys.keys = [ ];
   };
 
   users.users.root = {
-    # Root password disabled - use msp user + sudo
+    # Root password and SSH disabled - use msp user + sudo
     hashedPassword = "!";
-    openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE8uV6E//e4fQXlDEMoE0uADd/nAzKwqA0btaoHc28Bl macs-imac-vm-access"
-    ];
+    # Root SSH access disabled for security - use msp user instead
+    openssh.authorizedKeys.keys = [ ];
   };
 
   # ============================================================================
@@ -44,12 +43,17 @@
   # ============================================================================
   security.sudo = {
     enable = true;
-    wheelNeedsPassword = false;  # For emergency maintenance
+    wheelNeedsPassword = true;  # Password required for sudo (HIPAA compliance)
+    # MSP user can run compliance-related commands without password
+    # All other commands require password for audit trail
     extraRules = [
       {
         users = [ "msp" ];
         commands = [
-          { command = "ALL"; options = [ "NOPASSWD" ]; }
+          # Only allow specific commands without password for automation
+          { command = "/run/current-system/sw/bin/systemctl restart compliance-agent"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/systemctl status *"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/journalctl *"; options = [ "NOPASSWD" ]; }
         ];
       }
     ];
