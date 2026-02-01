@@ -1,7 +1,7 @@
 # Session 81 Completion Status
 
-**Date:** 2026-01-31
-**Session:** 81 - Settings Page & Learning System Fixes
+**Date:** 2026-01-31 - 2026-02-01
+**Session:** 81 - Settings Page, Learning Fixes & TODO Cleanup
 **Agent Version:** v1.0.51
 **ISO Version:** v51
 **Status:** COMPLETE
@@ -10,70 +10,63 @@
 
 ## Session 81 Accomplishments
 
-### 1. Partner Cleanup
+### Part 1: Settings Page & Learning System Fixes
 
 | Task | Status | Details |
 |------|--------|---------|
-| Delete test partners | DONE | Reassigned sites to OsirisCare, deleted test partners |
-| Verify FK constraints | DONE | Handled sites foreign key before deletion |
-| Keep only OsirisCare Direct | DONE | Production-ready partner list |
+| Partner cleanup | DONE | Deleted test partners, kept OsirisCare Direct |
+| Settings page creation | DONE | ~530 lines, 7 sections |
+| Learning system investigation | DONE | Found and fixed L1 rule misconfigs |
+| L1 rules fix | DONE | Updated 9 rules (AUTO-* to RB-*) |
+| BitLocker disable for lab | DONE | site_runbook_config entries |
+| Control Coverage fix | DONE | Added compliance score calculation |
 
-### 2. Settings Page Creation
-
-| Task | Status | Details |
-|------|--------|---------|
-| Create Settings.tsx | DONE | ~530 lines, 7 sections |
-| Add backend endpoints | DONE | GET/PUT /api/dashboard/admin/settings |
-| Add navigation | DONE | Sidebar with gear icon (admin-only) |
-| Add route | DONE | /settings in App.tsx |
-| Test settings persistence | DONE | Settings save and load correctly |
-
-### 3. Learning System Fixes
+### Part 2: TODO Cleanup & Infrastructure
 
 | Task | Status | Details |
 |------|--------|---------|
-| Investigate high execution count | DONE | Found hack in db_queries.py |
-| Fix runbook stats distribution | DONE | Removed hack, proper per-runbook stats |
-| Fix L1 rule runbook IDs | DONE | Updated 9 rules (AUTO-* → RB-*) |
-| Add runbook ID mappings | DONE | 9 new mappings in database |
-| Disable BitLocker for lab | DONE | site_runbook_config entries |
-
-### 4. Dashboard Stats Fix
-
-| Task | Status | Details |
-|------|--------|---------|
-| Fix Control Coverage 0% | DONE | Added compliance score calculation |
-| Query compliance_bundles | DONE | Pass rate from last 24 hours |
+| Client stats compliance | DONE | Fixed 0% in client portal |
+| Redis session store | DONE | PortalSessionManager class |
+| Auth context audit | DONE | Runbook config tracks usernames |
+| Discovery queue | DONE | Auto-queues orders to appliances |
+| Fleet updates orders | DONE | Proper update_iso order creation |
 
 ---
 
-## Files Modified This Session
+## Files Modified
 
-### Frontend Files:
+### Frontend:
 1. `mcp-server/central-command/frontend/src/pages/Settings.tsx` - NEW
 2. `mcp-server/central-command/frontend/src/App.tsx` - Route added
 3. `mcp-server/central-command/frontend/src/components/layout/Sidebar.tsx` - Nav item
 
-### Backend Files:
-1. `mcp-server/central-command/backend/routes.py` - Settings API
+### Backend:
+1. `mcp-server/central-command/backend/routes.py` - Settings API, stats fix
 2. `mcp-server/central-command/backend/db_queries.py` - Stats fixes
-3. `mcp-server/central-command/backend/runbook_config.py` - Execution stats
+3. `mcp-server/central-command/backend/portal.py` - Redis sessions
+4. `mcp-server/central-command/backend/runbook_config.py` - Auth context
+5. `mcp-server/central-command/backend/partners.py` - Discovery queue
+6. `mcp-server/central-command/backend/fleet_updates.py` - Order creation
 
-### Documentation Updated:
+### Documentation:
 1. `.agent/TODO.md` - Session 81 complete
 2. `.agent/CONTEXT.md` - Current state
-3. `IMPLEMENTATION-STATUS.md` - Session 81 status
-4. `.agent/SESSION_HANDOFF.md` - Handoff state
+3. `IMPLEMENTATION-STATUS.md` - Updated header
+4. `.agent/SESSION_HANDOFF.md` - This handoff
 5. `.agent/SESSION_COMPLETION_STATUS.md` - This file
 
 ---
 
-## Git Commits This Session
+## Git Commits
 
 | Commit | Message |
 |--------|---------|
 | `11e7b83` | feat: Add Settings page and fix learning system L1 rules |
 | `de4a982` | fix: Dashboard control coverage calculation |
+| `e04a86a` | docs: Update documentation for Session 81 |
+| `02a78eb` | fix: Calculate compliance score in client stats endpoint |
+| `474d603` | feat: Implement Redis session store, auth context, and discovery queue |
+| `6d6f57e` | fix: Fix auth import for VPS deployment |
 
 ---
 
@@ -88,72 +81,38 @@
 
 ---
 
-## Deployment State
+## Deployment Verification
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Frontend | DEPLOYED | Settings page live |
-| Backend | DEPLOYED | Settings API working |
-| L1 Rules | FIXED | 9 rules with correct IDs |
-| Runbook Mappings | ADDED | 9 ID mappings |
-| BitLocker Config | DISABLED | For lab sites only |
-
----
-
-## Verification Results
-
-```
-Settings Page: ACCESSIBLE at /settings
-Settings Save: WORKING (tested all 7 sections)
-Control Coverage: NOW CALCULATING from compliance_bundles
-Learning System: 18 patterns promoted, 911 L2 at 100% success
-L1 Rules: 9 rules with correct runbook IDs
-BitLocker: Disabled for lab sites (no more VERIFY_FAILED spam)
-```
+| Check | Status |
+|-------|--------|
+| Health endpoint | `{"status":"ok"}` |
+| Redis | Connected |
+| Database | Connected |
+| MinIO | Connected |
+| CI/CD | All 6 commits passed |
 
 ---
 
 ## System Status
 
-| Metric | Status |
-|--------|--------|
-| Settings Page | Live |
-| L1 Rules | 9 fixed |
+| Metric | Value |
+|--------|-------|
+| Settings Page | Live at /settings |
+| Redis Sessions | Active for client portal |
+| Auth Context | Tracking usernames |
+| Discovery Queue | Orders created on trigger |
 | Learning Flywheel | Operational |
-| Control Coverage | Calculating |
 | Tests Passing | 839 + 24 Go |
 
 ---
 
-## Known Issues (Non-Blocking)
+## Remaining TODOs (Optional Future Work)
 
-1. **Connectivity 0%** - Appliances may need to check in for updated stats
-2. **Documentation page** - Needs content (placeholder)
-
----
-
-## Next Session Priorities
-
-| Priority | Task | Notes |
-|----------|------|-------|
-| Low | Add Settings page unit tests | Optional enhancement |
-| Low | Documentation page content | SOPs and guides |
-| Low | Connectivity stat fix | May need appliance ping tracking |
-
----
-
-## Success Metrics
-
-| Metric | Target | Actual | Status |
-|--------|--------|--------|--------|
-| Settings page | Created | Live | DONE |
-| Partner cleanup | Complete | 1 partner | DONE |
-| L1 rules | Fixed | 9 rules | DONE |
-| Control Coverage | Calculate | From bundles | DONE |
-| Documentation | Updated | All files | DONE |
+1. **WinRM/LDAP validation** (partners.py:1176) - Real credential validation
+2. **AWS role validation** (integrations/api.py:443) - Cloud integration
 
 ---
 
 **Session Status:** COMPLETE
 **Handoff Ready:** YES
-**Next Session:** Optional enhancements (tests, documentation content)
+**Deployment Verified:** YES

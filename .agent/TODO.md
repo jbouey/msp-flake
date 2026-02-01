@@ -1,18 +1,19 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-01-31 (Session 81 - Settings Page & Learning System Fixes)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.51, **ISO v51**, **Settings Page CREATED**, **Learning System L1 Rules FIXED**, **Dashboard Control Coverage FIXED**, **Partner Cleanup COMPLETE**, **Dashboard Technical Debt FIXED**, **Database Pruning IMPLEMENTED**, **OTS Anchoring FIXED**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.51**)
+**Last Updated:** 2026-02-01 (Session 81 - Settings Page, Learning Fixes & TODO Cleanup)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.51, **ISO v51**, **Settings Page CREATED**, **Redis Session Store IMPLEMENTED**, **Auth Context Audit Trail ADDED**, **Discovery Queue Automation ADDED**, **Learning System L1 Rules FIXED**, **Dashboard Control Coverage FIXED**, **Partner Cleanup COMPLETE**, **Dashboard Technical Debt FIXED**, **Database Pruning IMPLEMENTED**, **OTS Anchoring FIXED**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Production Readiness Audit COMPLETE**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.51**)
 
 ---
 
-## Session 81 (2026-01-31) - COMPLETE
+## Session 81 (2026-01-31 - 2026-02-01) - COMPLETE
 
 ### Session Goals
 1. ✅ Complete partner deletion (clean up test partners)
 2. ✅ Create Settings/Preferences page for dashboard
 3. ✅ Investigate and fix learning system efficiency issues
 4. ✅ Fix dashboard stats showing 0% (Control Coverage)
-5. ✅ Commit and push all changes
+5. ✅ Implement remaining TODOs (Redis sessions, auth context, discovery queue)
+6. ✅ Commit and push all changes
 
 ### Accomplishments
 
@@ -87,18 +88,64 @@
 | Runbook ID Mapping | Added 9 mappings (AUTO-* → RB-*) |
 | Site Runbook Config | Disabled WIN-BL-001 for lab sites |
 
+### Part 2: TODO Cleanup & Infrastructure Improvements
+
+#### 5. Client Stats Compliance Score - COMPLETE
+- **Problem:** Client portal stats showing 0% compliance
+- **Fix:** Added compliance score calculation to `/stats/{site_id}` endpoint
+
+#### 6. Redis Session Store for Client Portal - COMPLETE
+- **Created `PortalSessionManager` class** with Redis backend
+- Automatic fallback to in-memory for development
+- Stores: portal tokens, magic links, sessions, site contacts
+- Redis keys use `portal:*` prefix with appropriate TTLs
+- Removed hardcoded in-memory dicts
+
+#### 7. Auth Context for Runbook Config - COMPLETE
+- **Added user auth** to 4 endpoints (PUT/POST)
+- `modified_by` now tracks actual username instead of "api"
+- Enables audit trail for config changes
+
+#### 8. Discovery Queue Automation - COMPLETE
+- **Trigger discovery** now queues `run_discovery` order to appliance
+- Finds active appliance for site (prefers online)
+- Creates order in `admin_orders` table with scan_id
+- Returns order_id for tracking
+
+#### 9. Fleet Updates Order Creation - COMPLETE
+- Added `_create_update_orders_for_appliances` helper
+- Proper `update_iso` orders sent to appliances during rollout
+
+### Files Modified (Part 2)
+
+| File | Change |
+|------|--------|
+| `backend/routes.py` | Client stats compliance score |
+| `backend/portal.py` | Redis session store (~150 lines added) |
+| `backend/runbook_config.py` | Auth context for audit trail |
+| `backend/partners.py` | Discovery queue automation |
+| `backend/fleet_updates.py` | Order creation helper |
+
 ### Git Commits
 
 | Commit | Message |
 |--------|---------|
 | `11e7b83` | feat: Add Settings page and fix learning system L1 rules |
 | `de4a982` | fix: Dashboard control coverage calculation |
+| `e04a86a` | docs: Update documentation for Session 81 |
+| `02a78eb` | fix: Calculate compliance score in client stats endpoint |
+| `474d603` | feat: Implement Redis session store, auth context, and discovery queue |
+| `6d6f57e` | fix: Fix auth import for VPS deployment |
 
 ### Learning System Status (Verified Working)
 - **Patterns:** 18 patterns promoted to L1
 - **L2 Executions:** 911 with 100% success rate
 - **Execution Telemetry:** Proper per-runbook attribution
 - **Data Flywheel:** Operational
+
+### Remaining TODOs (Optional Future Work)
+- WinRM/LDAP credential validation (partners.py:1176)
+- AWS role validation (integrations/api.py:443)
 
 ---
 
