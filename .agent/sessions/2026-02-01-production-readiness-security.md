@@ -29,6 +29,8 @@
 - [x] Improved QueryClient configuration with smart retry logic
 - [x] Add onError callbacks to 25+ mutation hooks
 - [x] Add global error handler for unhandled query errors
+- [x] React.lazy code splitting - main bundle reduced 933KB → 308KB (67% reduction)
+- [x] React.memo on 6 heavy list components (ClientCard, IncidentRow, PatternCard, RunbookCard, OnboardingCard)
 
 ### Hotfixes Applied
 - [x] Added bcrypt==4.2.1 to VPS requirements.txt
@@ -76,7 +78,12 @@
 | `frontend/src/utils/api.ts` | AbortController, timeout, improved error handling |
 | `frontend/src/hooks/useFleet.ts` | onError callbacks on all 25 mutations |
 | `frontend/src/hooks/useIntegrations.ts` | onError callbacks on 5 mutations |
-| `frontend/src/App.tsx` | ErrorBoundary wrapper, improved QueryClient config |
+| `frontend/src/App.tsx` | ErrorBoundary, React.lazy code splitting, Suspense |
+| `frontend/src/components/fleet/ClientCard.tsx` | React.memo, useCallback |
+| `frontend/src/components/incidents/IncidentRow.tsx` | React.memo |
+| `frontend/src/components/learning/PatternCard.tsx` | React.memo, useCallback |
+| `frontend/src/components/runbooks/RunbookCard.tsx` | React.memo |
+| `frontend/src/components/onboarding/OnboardingCard.tsx` | React.memo |
 
 ---
 
@@ -105,14 +112,15 @@ Login: Verified working via browser
 ### Immediate Priority
 1. Run full test suite to verify no regressions
 2. Consider migrating legacy SHA-256 passwords to bcrypt on next login
-3. Add React.lazy for code splitting (bundle is 933KB, should be split)
-4. Add React.memo to heavy list components
+3. Consider HTTP-only cookies for auth tokens (currently localStorage)
+4. Add AbortSignal usage in React Query hooks for proper cancellation
 
 ### Context Needed
 - VPS requirements.txt now has bcrypt==4.2.1 added manually
 - Migration runner (migrate.py) not yet tested in production
 - Redis rate limiter has in-memory fallback if Redis unavailable
-- Frontend ErrorBoundary catches render errors but not async errors in hooks
+- Frontend code splitting active - pages lazy loaded on demand
+- React.memo on all major list item components for performance
 
 ### Commands to Run First
 ```bash
@@ -138,6 +146,8 @@ python -m pytest tests/ -v --tb=short
 - Redis rate limiter created but main.py still uses old in-memory rate_limiter.py
 - Consider switching main.py to use redis_rate_limiter.py for distributed deployments
 - Migration DOWN sections use SQL comments (-- prefix) that migrate.py strips
-- Frontend bundle is 933KB - consider code splitting with React.lazy for performance
+- **Frontend bundle reduced from 933KB → 308KB (67% reduction) via React.lazy**
+- Code split into ~30 chunks - pages load on demand
 - API client now has AbortController support but hooks don't use signal yet
 - ErrorBoundary added but localStorage for auth tokens remains (HTTP-only cookies ideal)
+- React.memo added to ClientCard, ClientCardCompact, IncidentRow, PatternCard, RunbookCard, OnboardingCard

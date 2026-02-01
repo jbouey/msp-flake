@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { GlassCard, LevelBadge } from '../shared';
 import type { Runbook } from '../../types';
 
@@ -13,7 +13,7 @@ const formatTime = (ms: number): string => {
   return `${(ms / 60000).toFixed(1)}m`;
 };
 
-export const RunbookCard: React.FC<RunbookCardProps> = ({ runbook, onClick }) => {
+export const RunbookCard: React.FC<RunbookCardProps> = memo(({ runbook, onClick }) => {
   const successColor = runbook.success_rate >= 95
     ? 'text-health-healthy'
     : runbook.success_rate >= 80
@@ -74,6 +74,6 @@ export const RunbookCard: React.FC<RunbookCardProps> = ({ runbook, onClick }) =>
       </div>
     </GlassCard>
   );
-};
+});
 
 export default RunbookCard;

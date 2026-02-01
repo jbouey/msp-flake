@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo, useCallback } from 'react';
 import { GlassCard } from '../shared';
 import type { PromotionCandidate } from '../../types';
 
@@ -9,12 +9,14 @@ interface PatternCardProps {
   isPromoting?: boolean;
 }
 
-export const PatternCard: React.FC<PatternCardProps> = ({
+export const PatternCard: React.FC<PatternCardProps> = memo(({
   candidate,
   onApprove,
   onReject,
   isPromoting = false,
 }) => {
+  const handleApprove = useCallback(() => onApprove(candidate.id), [onApprove, candidate.id]);
+  const handleReject = useCallback(() => onReject(candidate.id), [onReject, candidate.id]);
   const formatTime = (ms: number): string => {
     if (ms < 1000) return `${ms}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
@@ -92,14 +94,14 @@ export const PatternCard: React.FC<PatternCardProps> = ({
         {/* Actions */}
         <div className="flex flex-col gap-2">
           <button
-            onClick={() => onApprove(candidate.id)}
+            onClick={handleApprove}
             disabled={isPromoting}
             className="btn-primary text-xs px-4 py-2 disabled:opacity-50"
           >
             Approve
           </button>
           <button
-            onClick={() => onReject(candidate.id)}
+            onClick={handleReject}
             disabled={isPromoting}
             className="btn-secondary text-xs px-4 py-2 disabled:opacity-50"
           >
@@ -109,6 +111,6 @@ export const PatternCard: React.FC<PatternCardProps> = ({
       </div>
     </GlassCard>
   );
-};
+});
 
 export default PatternCard;

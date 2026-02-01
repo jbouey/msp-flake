@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { LevelBadge } from '../shared';
 import type { Incident } from '../../types';
 
@@ -49,7 +49,7 @@ const formatTimeShort = (dateStr: string): string => {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
-export const IncidentRow: React.FC<IncidentRowProps> = ({
+export const IncidentRow: React.FC<IncidentRowProps> = memo(({
   incident,
   onClick,
   compact = false,
@@ -148,6 +148,6 @@ export const IncidentRow: React.FC<IncidentRowProps> = ({
       </div>
     </button>
   );
-};
+});
 
 export default IncidentRow;

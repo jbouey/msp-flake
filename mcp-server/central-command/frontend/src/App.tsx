@@ -1,28 +1,97 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
-import { ErrorBoundary } from './components/shared';
-import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, SiteWorkstations, SiteGoAgents, SiteDevices, RMMComparison, IntegrationError, Documentation, Partners, Notifications, NotificationSettings, Incidents, Settings } from './pages';
-import FleetUpdates from './pages/FleetUpdates';
-import Users from './pages/Users';
-import FrameworkConfig from './pages/FrameworkConfig';
-import Integrations from './pages/Integrations';
-import IntegrationSetup from './pages/IntegrationSetup';
-import IntegrationResources from './pages/IntegrationResources';
-import SetPassword from './pages/SetPassword';
-import OAuthCallback from './pages/OAuthCallback';
-import AdminOAuthSettings from './pages/AdminOAuthSettings';
+import { ErrorBoundary, Spinner } from './components/shared';
 import { useFleet, useRefreshFleet, useCommandPalette } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { PortalDashboard } from './portal/PortalDashboard';
-import { PortalLogin } from './portal/PortalLogin';
-import { PortalVerify } from './portal/PortalVerify';
-import { PartnerProvider, PartnerLogin, PartnerDashboard } from './partner';
-import { ClientProvider, ClientLogin, ClientVerify, ClientDashboard, ClientEvidence, ClientReports, ClientNotifications, ClientSettings, ClientHelp } from './client';
+
+// Critical pages - loaded immediately
+import { Dashboard, Login, Sites } from './pages';
+
+// Lazy-loaded pages - loaded on demand for code splitting
+// Uses .then() pattern to handle named exports
+const Runbooks = lazy(() => import('./pages/Runbooks').then(m => ({ default: m.Runbooks })));
+const RunbookConfig = lazy(() => import('./pages/RunbookConfig').then(m => ({ default: m.RunbookConfig })));
+const Learning = lazy(() => import('./pages/Learning').then(m => ({ default: m.Learning })));
+const Onboarding = lazy(() => import('./pages/Onboarding').then(m => ({ default: m.Onboarding })));
+const ClientDetail = lazy(() => import('./pages/ClientDetail').then(m => ({ default: m.ClientDetail })));
+const AuditLogs = lazy(() => import('./pages/AuditLogs').then(m => ({ default: m.AuditLogs })));
+const SiteDetail = lazy(() => import('./pages/SiteDetail').then(m => ({ default: m.SiteDetail })));
+const SiteWorkstations = lazy(() => import('./pages/SiteWorkstations').then(m => ({ default: m.SiteWorkstations })));
+const SiteGoAgents = lazy(() => import('./pages/SiteGoAgents').then(m => ({ default: m.SiteGoAgents })));
+const SiteDevices = lazy(() => import('./pages/SiteDevices').then(m => ({ default: m.SiteDevices })));
+const RMMComparison = lazy(() => import('./pages/RMMComparison').then(m => ({ default: m.RMMComparison })));
+const IntegrationError = lazy(() => import('./pages/IntegrationError').then(m => ({ default: m.IntegrationError })));
+const Documentation = lazy(() => import('./pages/Documentation').then(m => ({ default: m.Documentation })));
+const Partners = lazy(() => import('./pages/Partners').then(m => ({ default: m.Partners })));
+const Notifications = lazy(() => import('./pages/Notifications').then(m => ({ default: m.Notifications })));
+const NotificationSettings = lazy(() => import('./pages/NotificationSettings').then(m => ({ default: m.NotificationSettings })));
+const Incidents = lazy(() => import('./pages/Incidents').then(m => ({ default: m.Incidents })));
+const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
+// These have default exports
+const FleetUpdates = lazy(() => import('./pages/FleetUpdates'));
+const Users = lazy(() => import('./pages/Users'));
+const FrameworkConfig = lazy(() => import('./pages/FrameworkConfig'));
+const Integrations = lazy(() => import('./pages/Integrations'));
+const IntegrationSetup = lazy(() => import('./pages/IntegrationSetup'));
+const IntegrationResources = lazy(() => import('./pages/IntegrationResources'));
+const SetPassword = lazy(() => import('./pages/SetPassword'));
+const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
+const AdminOAuthSettings = lazy(() => import('./pages/AdminOAuthSettings'));
+
+// Lazy-loaded portal/partner/client modules
+const PortalDashboard = lazy(() => import('./portal/PortalDashboard').then(m => ({ default: m.PortalDashboard })));
+const PortalLogin = lazy(() => import('./portal/PortalLogin').then(m => ({ default: m.PortalLogin })));
+const PortalVerify = lazy(() => import('./portal/PortalVerify').then(m => ({ default: m.PortalVerify })));
+
+// Partner module - lazy loaded with provider
+const PartnerRoutes = lazy(() => import('./partner').then(m => ({
+  default: () => {
+    const { PartnerProvider, PartnerLogin, PartnerDashboard } = m;
+    return (
+      <PartnerProvider>
+        <Routes>
+          <Route path="login" element={<PartnerLogin />} />
+          <Route path="dashboard" element={<PartnerDashboard />} />
+          <Route path="*" element={<PartnerLogin />} />
+        </Routes>
+      </PartnerProvider>
+    );
+  }
+})));
+
+// Client module - lazy loaded with provider
+const ClientRoutes = lazy(() => import('./client').then(m => ({
+  default: () => {
+    const { ClientProvider, ClientLogin, ClientVerify, ClientDashboard, ClientEvidence, ClientReports, ClientNotifications, ClientSettings, ClientHelp } = m;
+    return (
+      <ClientProvider>
+        <Routes>
+          <Route path="login" element={<ClientLogin />} />
+          <Route path="verify" element={<ClientVerify />} />
+          <Route path="dashboard" element={<ClientDashboard />} />
+          <Route path="evidence" element={<ClientEvidence />} />
+          <Route path="reports" element={<ClientReports />} />
+          <Route path="notifications" element={<ClientNotifications />} />
+          <Route path="settings" element={<ClientSettings />} />
+          <Route path="help" element={<ClientHelp />} />
+          <Route path="*" element={<ClientLogin />} />
+        </Routes>
+      </ClientProvider>
+    );
+  }
+})));
+
+// Suspense fallback component
+const PageLoader: React.FC = () => (
+  <div className="flex items-center justify-center min-h-[400px]">
+    <Spinner size="lg" />
+  </div>
+);
 
 // Global error handler for unhandled query errors
 const handleQueryError = (error: unknown): void => {
@@ -154,36 +223,38 @@ const AppLayout: React.FC = () => {
         />
 
         <main className="p-6">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/sites" element={<Sites />} />
-            <Route path="/sites/:siteId" element={<SiteDetail />} />
-            <Route path="/sites/:siteId/frameworks" element={<FrameworkConfig />} />
-            <Route path="/sites/:siteId/workstations" element={<SiteWorkstations />} />
-            <Route path="/sites/:siteId/workstations/rmm-compare" element={<RMMComparison />} />
-            <Route path="/sites/:siteId/agents" element={<SiteGoAgents />} />
-            <Route path="/sites/:siteId/devices" element={<SiteDevices />} />
-            <Route path="/sites/:siteId/integrations" element={<Integrations />} />
-            <Route path="/sites/:siteId/integrations/setup" element={<IntegrationSetup />} />
-            <Route path="/sites/:siteId/integrations/:integrationId" element={<IntegrationResources />} />
-            <Route path="/integrations/error" element={<IntegrationError />} />
-            <Route path="/notifications" element={<Notifications />} />
-            <Route path="/incidents" element={<Incidents />} />
-            <Route path="/notification-settings" element={<NotificationSettings />} />
-            <Route path="/onboarding" element={<Onboarding />} />
-            <Route path="/partners" element={<Partners />} />
-            <Route path="/users" element={<Users />} />
-            <Route path="/runbooks" element={<Runbooks />} />
-            <Route path="/runbook-config" element={<RunbookConfig />} />
-            <Route path="/learning" element={<Learning />} />
-            <Route path="/audit-logs" element={<AuditLogs />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/settings/oauth" element={<AdminOAuthSettings />} />
-            <Route path="/fleet-updates" element={<FleetUpdates />} />
-            <Route path="/docs" element={<Documentation />} />
-            <Route path="/client/:siteId" element={<ClientDetail />} />
-            <Route path="/reports" element={<ComingSoon title="Reports" />} />
-          </Routes>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/sites" element={<Sites />} />
+              <Route path="/sites/:siteId" element={<SiteDetail />} />
+              <Route path="/sites/:siteId/frameworks" element={<FrameworkConfig />} />
+              <Route path="/sites/:siteId/workstations" element={<SiteWorkstations />} />
+              <Route path="/sites/:siteId/workstations/rmm-compare" element={<RMMComparison />} />
+              <Route path="/sites/:siteId/agents" element={<SiteGoAgents />} />
+              <Route path="/sites/:siteId/devices" element={<SiteDevices />} />
+              <Route path="/sites/:siteId/integrations" element={<Integrations />} />
+              <Route path="/sites/:siteId/integrations/setup" element={<IntegrationSetup />} />
+              <Route path="/sites/:siteId/integrations/:integrationId" element={<IntegrationResources />} />
+              <Route path="/integrations/error" element={<IntegrationError />} />
+              <Route path="/notifications" element={<Notifications />} />
+              <Route path="/incidents" element={<Incidents />} />
+              <Route path="/notification-settings" element={<NotificationSettings />} />
+              <Route path="/onboarding" element={<Onboarding />} />
+              <Route path="/partners" element={<Partners />} />
+              <Route path="/users" element={<Users />} />
+              <Route path="/runbooks" element={<Runbooks />} />
+              <Route path="/runbook-config" element={<RunbookConfig />} />
+              <Route path="/learning" element={<Learning />} />
+              <Route path="/audit-logs" element={<AuditLogs />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/settings/oauth" element={<AdminOAuthSettings />} />
+              <Route path="/fleet-updates" element={<FleetUpdates />} />
+              <Route path="/docs" element={<Documentation />} />
+              <Route path="/client/:siteId" element={<ClientDetail />} />
+              <Route path="/reports" element={<ComingSoon title="Reports" />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
 
@@ -229,57 +300,31 @@ const App: React.FC = () => {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <BrowserRouter>
-            <Routes>
-            {/* Public routes - no auth required */}
-            <Route path="/set-password" element={<SetPassword />} />
-            <Route path="/auth/oauth/success" element={<OAuthCallback />} />
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
+                {/* Public routes - no auth required */}
+                <Route path="/set-password" element={<SetPassword />} />
+                <Route path="/auth/oauth/success" element={<OAuthCallback />} />
 
-            {/* Portal routes - token or session auth */}
-            <Route path="/portal/site/:siteId" element={<PortalLogin />} />
-            <Route path="/portal/site/:siteId/dashboard" element={<PortalDashboard />} />
-            <Route path="/portal/site/:siteId/verify" element={<PortalVerify />} />
-            <Route path="/portal/site/:siteId/login" element={<PortalLogin />} />
+                {/* Portal routes - token or session auth */}
+                <Route path="/portal/site/:siteId" element={<PortalLogin />} />
+                <Route path="/portal/site/:siteId/dashboard" element={<PortalDashboard />} />
+                <Route path="/portal/site/:siteId/verify" element={<PortalVerify />} />
+                <Route path="/portal/site/:siteId/login" element={<PortalLogin />} />
 
-            {/* Partner routes - API key auth */}
-            <Route
-              path="/partner/*"
-              element={
-                <PartnerProvider>
-                  <Routes>
-                    <Route path="login" element={<PartnerLogin />} />
-                    <Route path="dashboard" element={<PartnerDashboard />} />
-                    <Route path="*" element={<PartnerLogin />} />
-                  </Routes>
-                </PartnerProvider>
-              }
-            />
+                {/* Partner routes - API key auth (lazy loaded module) */}
+                <Route path="/partner/*" element={<PartnerRoutes />} />
 
-            {/* Client routes - magic link / cookie auth */}
-            <Route
-              path="/client/*"
-              element={
-                <ClientProvider>
-                  <Routes>
-                    <Route path="login" element={<ClientLogin />} />
-                    <Route path="verify" element={<ClientVerify />} />
-                    <Route path="dashboard" element={<ClientDashboard />} />
-                    <Route path="evidence" element={<ClientEvidence />} />
-                    <Route path="reports" element={<ClientReports />} />
-                    <Route path="notifications" element={<ClientNotifications />} />
-                    <Route path="settings" element={<ClientSettings />} />
-                    <Route path="help" element={<ClientHelp />} />
-                    <Route path="*" element={<ClientLogin />} />
-                  </Routes>
-                </ClientProvider>
-              }
-            />
+                {/* Client routes - magic link / cookie auth (lazy loaded module) */}
+                <Route path="/client/*" element={<ClientRoutes />} />
 
-            {/* Admin routes - auth required */}
-            <Route path="/*" element={<AuthenticatedApp />} />
-          </Routes>
-        </BrowserRouter>
-      </AuthProvider>
-    </QueryClientProvider>
+                {/* Admin routes - auth required */}
+                <Route path="/*" element={<AuthenticatedApp />} />
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+        </AuthProvider>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 };

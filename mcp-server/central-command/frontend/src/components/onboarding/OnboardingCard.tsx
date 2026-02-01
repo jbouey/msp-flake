@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { GlassCard } from '../shared';
 import type { OnboardingClient, OnboardingStage } from '../../types';
 
@@ -37,7 +37,7 @@ const getCheckinStatusColor = (status?: string): string => {
   }
 };
 
-export const OnboardingCard: React.FC<OnboardingCardProps> = ({ client, onClick }) => {
+export const OnboardingCard: React.FC<OnboardingCardProps> = memo(({ client, onClick }) => {
   const phase = getStagePhase(client.stage);
   const isAtRisk = (client.days_in_stage ?? 0) > 7;
   const hasBlockers = (client.blockers?.length ?? 0) > 0;
@@ -134,6 +134,6 @@ export const OnboardingCard: React.FC<OnboardingCardProps> = ({ client, onClick 
       </div>
     </GlassCard>
   );
-};
+});
 
 export default OnboardingCard;

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '../shared';
 import { HealthGauge } from './HealthGauge';
@@ -8,12 +8,12 @@ interface ClientCardProps {
   client: ClientOverview;
 }
 
-export const ClientCard: React.FC<ClientCardProps> = ({ client }) => {
+export const ClientCard: React.FC<ClientCardProps> = memo(({ client }) => {
   const navigate = useNavigate();
 
-  const handleClick = () => {
+  const handleClick = useCallback(() => {
     navigate(`/client/${client.site_id}`);
-  };
+  }, [navigate, client.site_id]);
 
   return (
     <GlassCard hover onClick={handleClick} padding="md">
@@ -35,10 +35,10 @@ export const ClientCard: React.FC<ClientCardProps> = ({ client }) => {
       </div>
     </GlassCard>
   );
-};
+});
 
 // Compact variant for sidebar or lists
-export const ClientCardCompact: React.FC<ClientCardProps & { selected?: boolean; onSelect?: () => void }> = ({
+export const ClientCardCompact: React.FC<ClientCardProps & { selected?: boolean; onSelect?: () => void }> = memo(({
   client,
   selected = false,
   onSelect,
@@ -71,6 +71,6 @@ export const ClientCardCompact: React.FC<ClientCardProps & { selected?: boolean;
       )}
     </button>
   );
-};
+});
 
 export default ClientCard;
