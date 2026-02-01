@@ -670,10 +670,25 @@ async def get_promotion_candidates(db: AsyncSession = Depends(get_db)):
 async def get_promotion_history(limit: int = Query(default=20, le=100), db: AsyncSession = Depends(get_db)):
     """Get recently promoted L2->L1 rules."""
     result = await db.execute(text("""
-        SELECT pattern_id, pattern_signature, description, promoted_to_rule_id, promoted_at
-        FROM patterns
-        WHERE status = 'promoted'
-        ORDER BY promoted_at DESC
+        SELECT
+            p.pattern_id,
+            p.pattern_signature,
+            p.promoted_to_rule_id,
+            p.promoted_at,
+            COALESCE(
+                (SELECT COUNT(*) FROM execution_telemetry et
+                 WHERE et.runbook_id = p.promoted_to_rule_id
+                 AND et.created_at > p.promoted_at), 0
+            ) as executions_since,
+            COALESCE(
+                (SELECT COUNT(*) FILTER (WHERE success = true) * 100.0 / NULLIF(COUNT(*), 0)
+                 FROM execution_telemetry et
+                 WHERE et.runbook_id = p.promoted_to_rule_id
+                 AND et.created_at > p.promoted_at), 0
+            ) as success_rate
+        FROM patterns p
+        WHERE p.status = 'promoted'
+        ORDER BY p.promoted_at DESC
         LIMIT :limit
     """), {"limit": limit})
 
@@ -681,9 +696,10 @@ async def get_promotion_history(limit: int = Query(default=20, le=100), db: Asyn
         PromotionHistory(
             id=row.pattern_id,
             pattern_signature=row.pattern_signature,
-            description=row.description or "",
-            promoted_to_rule_id=row.promoted_to_rule_id,
+            rule_id=row.promoted_to_rule_id or f"L1-{row.pattern_id[:8].upper()}",
             promoted_at=row.promoted_at,
+            post_promotion_success_rate=float(row.success_rate or 0),
+            executions_since_promotion=int(row.executions_since or 0),
         )
         for row in result.fetchall()
     ]

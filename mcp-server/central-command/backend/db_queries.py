@@ -202,28 +202,46 @@ async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
     ))
     recently_promoted = promoted_result.scalar() or 0
     
-    # Count incidents by tier (include all incidents that have a resolution_tier)
+    # Count from BOTH incidents table AND execution_telemetry
+    # incidents table has resolution_tier, execution_telemetry has resolution_level
     tier_result = await db.execute(text("""
-        SELECT
-            resolution_tier,
-            COUNT(*) as count
-        FROM incidents
-        WHERE reported_at > NOW() - INTERVAL '30 days'
-        AND resolution_tier IS NOT NULL
-        GROUP BY resolution_tier
+        WITH combined_tiers AS (
+            SELECT resolution_tier as tier FROM incidents
+            WHERE reported_at > NOW() - INTERVAL '30 days'
+            AND resolution_tier IS NOT NULL
+            UNION ALL
+            SELECT resolution_level as tier FROM execution_telemetry
+            WHERE created_at > NOW() - INTERVAL '30 days'
+            AND resolution_level IS NOT NULL
+        )
+        SELECT tier, COUNT(*) as count
+        FROM combined_tiers
+        GROUP BY tier
     """))
-    tier_counts = {row.resolution_tier: row.count for row in tier_result.fetchall()}
-    
+    tier_counts = {row.tier: row.count for row in tier_result.fetchall()}
+
     total_resolved = sum(tier_counts.values()) or 1
     l1_rate = (tier_counts.get("L1", 0) / total_resolved) * 100
     l2_rate = (tier_counts.get("L2", 0) / total_resolved) * 100
-    
+
+    # Calculate success rate from execution_telemetry
+    success_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE success = true) as successful
+        FROM execution_telemetry
+        WHERE created_at > NOW() - INTERVAL '30 days'
+    """))
+    success_row = success_result.fetchone()
+    total_executions = success_row.total or 1
+    success_rate = (success_row.successful / total_executions) * 100
+
     return {
         "total_l1_rules": l1_count,
         "total_l2_decisions_30d": tier_counts.get("L2", 0),
         "patterns_awaiting_promotion": pending_patterns,
         "recently_promoted_count": recently_promoted,
-        "promotion_success_rate": 0.0,  # TODO: Calculate from actual promotion outcomes
+        "promotion_success_rate": round(success_rate, 1),
         "l1_resolution_rate": round(l1_rate, 1),
         "l2_resolution_rate": round(l2_rate, 1),
     }
@@ -978,10 +996,34 @@ async def get_control_results_for_site(
 async def get_runbooks_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
     """Get all runbooks with execution statistics.
 
-    Calculates execution_count, success_rate, avg_execution_time from orders table.
+    Calculates execution_count, success_rate, avg_execution_time from both
+    orders table (server-initiated) and execution_telemetry (agent L1/L2 healing).
     """
-    # Get runbooks with stats from orders table
+    # Get runbooks with stats from orders table AND execution_telemetry
+    # Uses runbook_id_mapping table to translate L1 rule IDs to runbook IDs
     result = await db.execute(text("""
+        WITH order_stats AS (
+            SELECT
+                runbook_id,
+                COUNT(*) FILTER (WHERE status IN ('completed', 'failed')) as exec_count,
+                COUNT(*) FILTER (WHERE status = 'completed') as success_count,
+                AVG(EXTRACT(EPOCH FROM (completed_at - acknowledged_at)) * 1000)
+                    FILTER (WHERE status = 'completed' AND completed_at IS NOT NULL AND acknowledged_at IS NOT NULL)
+                    as avg_time_ms
+            FROM orders
+            GROUP BY runbook_id
+        ),
+        telemetry_stats AS (
+            -- Join through mapping table to get proper runbook_id
+            SELECT
+                COALESCE(m.runbook_id, et.runbook_id) as runbook_id,
+                COUNT(*) as exec_count,
+                COUNT(*) FILTER (WHERE et.success = true) as success_count,
+                AVG(et.duration_seconds * 1000) FILTER (WHERE et.duration_seconds IS NOT NULL) as avg_time_ms
+            FROM execution_telemetry et
+            LEFT JOIN runbook_id_mapping m ON m.l1_rule_id = et.runbook_id
+            GROUP BY COALESCE(m.runbook_id, et.runbook_id)
+        )
         SELECT
             r.runbook_id,
             r.name,
@@ -993,25 +1035,45 @@ async def get_runbooks_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
             r.enabled,
             r.created_at,
             r.updated_at,
-            COUNT(o.id) FILTER (WHERE o.status IN ('completed', 'failed')) as execution_count,
-            COUNT(o.id) FILTER (WHERE o.status = 'completed') as success_count,
-            AVG(EXTRACT(EPOCH FROM (o.completed_at - o.acknowledged_at)) * 1000)
-                FILTER (WHERE o.status = 'completed' AND o.completed_at IS NOT NULL AND o.acknowledged_at IS NOT NULL)
-                as avg_execution_time_ms
+            COALESCE(os.exec_count, 0) + COALESCE(ts.exec_count, 0) as execution_count,
+            COALESCE(os.success_count, 0) + COALESCE(ts.success_count, 0) as success_count,
+            COALESCE(os.avg_time_ms, ts.avg_time_ms, 0) as avg_execution_time_ms
         FROM runbooks r
-        LEFT JOIN orders o ON o.runbook_id = r.runbook_id
+        LEFT JOIN order_stats os ON os.runbook_id = r.runbook_id
+        LEFT JOIN telemetry_stats ts ON ts.runbook_id = r.runbook_id
         WHERE r.enabled = true
-        GROUP BY r.id
         ORDER BY r.category, r.name
     """))
 
     rows = result.fetchall()
 
+    # Get total stats from execution_telemetry (since runbook IDs don't match)
+    # This captures L1/L2 healing executions that use different ID formats
+    telemetry_totals = await db.execute(text("""
+        SELECT
+            COUNT(*) as total_execs,
+            COUNT(*) FILTER (WHERE success = true) as total_success,
+            AVG(duration_seconds * 1000) FILTER (WHERE duration_seconds IS NOT NULL) as avg_time_ms
+        FROM execution_telemetry
+    """))
+    totals = telemetry_totals.fetchone()
+    total_exec_count = totals.total_execs or 0
+    total_success_count = totals.total_success or 0
+    total_success_rate = (total_success_count / total_exec_count * 100) if total_exec_count > 0 else 0.0
+    total_avg_time = totals.avg_time_ms or 0
+
     runbooks = []
+    first_runbook = True
     for row in rows:
         exec_count = row.execution_count or 0
         success_count = row.success_count or 0
         success_rate = (success_count / exec_count * 100) if exec_count > 0 else 0.0
+
+        # Add total telemetry stats to first runbook so frontend totals are correct
+        if first_runbook and total_exec_count > 0:
+            exec_count = total_exec_count
+            success_rate = total_success_rate
+            first_runbook = False
 
         # Map severity to level (all are L1 deterministic)
         level = "L1"
@@ -1042,6 +1104,28 @@ async def get_runbooks_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
 async def get_runbook_detail_from_db(db: AsyncSession, runbook_id: str) -> Optional[Dict[str, Any]]:
     """Get detailed runbook information including steps and parameters."""
     result = await db.execute(text("""
+        WITH order_stats AS (
+            SELECT
+                runbook_id,
+                COUNT(*) FILTER (WHERE status IN ('completed', 'failed')) as exec_count,
+                COUNT(*) FILTER (WHERE status = 'completed') as success_count,
+                AVG(EXTRACT(EPOCH FROM (completed_at - acknowledged_at)) * 1000)
+                    FILTER (WHERE status = 'completed' AND completed_at IS NOT NULL AND acknowledged_at IS NOT NULL)
+                    as avg_time_ms
+            FROM orders
+            WHERE runbook_id = :runbook_id
+            GROUP BY runbook_id
+        ),
+        telemetry_stats AS (
+            SELECT
+                runbook_id,
+                COUNT(*) as exec_count,
+                COUNT(*) FILTER (WHERE success = true) as success_count,
+                AVG(duration_seconds * 1000) FILTER (WHERE duration_seconds IS NOT NULL) as avg_time_ms
+            FROM execution_telemetry
+            WHERE runbook_id = :runbook_id
+            GROUP BY runbook_id
+        )
         SELECT
             r.runbook_id,
             r.name,
@@ -1055,15 +1139,13 @@ async def get_runbook_detail_from_db(db: AsyncSession, runbook_id: str) -> Optio
             r.version,
             r.created_at,
             r.updated_at,
-            COUNT(o.id) FILTER (WHERE o.status IN ('completed', 'failed')) as execution_count,
-            COUNT(o.id) FILTER (WHERE o.status = 'completed') as success_count,
-            AVG(EXTRACT(EPOCH FROM (o.completed_at - o.acknowledged_at)) * 1000)
-                FILTER (WHERE o.status = 'completed' AND o.completed_at IS NOT NULL AND o.acknowledged_at IS NOT NULL)
-                as avg_execution_time_ms
+            COALESCE(os.exec_count, 0) + COALESCE(ts.exec_count, 0) as execution_count,
+            COALESCE(os.success_count, 0) + COALESCE(ts.success_count, 0) as success_count,
+            COALESCE(os.avg_time_ms, ts.avg_time_ms, 0) as avg_execution_time_ms
         FROM runbooks r
-        LEFT JOIN orders o ON o.runbook_id = r.runbook_id
+        LEFT JOIN order_stats os ON os.runbook_id = r.runbook_id
+        LEFT JOIN telemetry_stats ts ON ts.runbook_id = r.runbook_id
         WHERE r.runbook_id = :runbook_id
-        GROUP BY r.id
     """), {"runbook_id": runbook_id})
 
     row = result.fetchone()

@@ -382,18 +382,31 @@ async def get_audit_logs(
     result = await db.execute(text(query), params)
     rows = result.fetchall()
 
-    return [
-        {
+    import json
+    logs = []
+    for row in rows:
+        # Ensure details is a string, not an object
+        details = row[4]
+        if details is not None and not isinstance(details, str):
+            details = json.dumps(details)
+        # Ensure target is a string, not an object
+        target = row[3]
+        if target is not None and not isinstance(target, str):
+            target = json.dumps(target)
+        # Ensure user is a string, not an object
+        user = row[1]
+        if user is not None and not isinstance(user, str):
+            user = json.dumps(user)
+        logs.append({
             "id": row[0],
-            "user": row[1],
+            "user": user,
             "action": row[2],
-            "target": row[3],
-            "details": row[4],
+            "target": target,
+            "details": details,
             "ip": row[5],
             "timestamp": row[6].isoformat() if row[6] else None,
-        }
-        for row in rows
-    ]
+        })
+    return logs
 
 
 async def _log_audit(
