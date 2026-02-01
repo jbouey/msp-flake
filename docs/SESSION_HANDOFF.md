@@ -1,6 +1,6 @@
 # Session Handoff - 2026-02-01
 
-**Session:** 81 - Settings Page, Learning Fixes & TODO Cleanup
+**Session:** 82 - Production Readiness Security Audit
 **Agent Version:** v1.0.51
 **ISO Version:** v51 (deployed via Central Command)
 **Last Updated:** 2026-02-01
@@ -17,66 +17,52 @@
 | Physical Appliance | Online | 192.168.88.246 |
 | VM Appliance | Online | 192.168.88.247 |
 | VPS API | **HEALTHY** | https://api.osiriscare.net/health |
-| Dashboard | **ENHANCED** | Settings page, Redis sessions |
-| Learning Sync | **WORKING** | 18 patterns promoted, 911 L2 at 100% |
-| Control Coverage | **FIXED** | Calculates from compliance_bundles |
-| Redis Sessions | **NEW** | Client portal uses Redis-backed sessions |
-| Auth Context | **NEW** | Runbook config tracks usernames |
-| Discovery Queue | **NEW** | Auto-queues orders to appliances |
+| Dashboard | **HARDENED** | Security audit complete, performance optimized |
+| Frontend Bundle | **67% SMALLER** | 933KB → 308KB via React.lazy |
+| Auth | **SECURE** | HTTP-only cookies, bcrypt mandatory |
+| Tests | **858 PASSED** | 11 skipped, 3 warnings |
 
 ---
 
-## Session 81 - Full Accomplishments
+## Session 82 - Full Accomplishments
 
-### Part 1: Settings Page & Learning Fixes
+### Backend Security Audit
+1. **SQL Injection Fix** - Parameterized queries in telemetry purge
+2. **bcrypt Mandatory** - All new passwords, SHA-256 read-only for legacy
+3. **require_admin** - Added to 11 unprotected admin endpoints
+4. **N+1 Query Fix** - asyncio.gather in get_all_compliance_scores
+5. **Connection Pool** - pool_size=20, pool_recycle=3600, pool_pre_ping
+6. **CSRF Protection** - Double-submit cookie middleware (csrf.py)
+7. **Fernet Encryption** - OAuth tokens encrypted at rest
+8. **Redis Rate Limiter** - Distributed rate limiting (redis_rate_limiter.py)
+9. **Migration Runner** - With rollback support (migrate.py)
+10. **Performance Indexes** - Migration 033 with 12 indexes
 
-1. **Partner Cleanup** - Deleted test partners, kept OsirisCare Direct only
-2. **Settings Page** (~530 lines) - 7 configurable sections
-3. **Learning System Fixes** - L1 rules, runbook mappings, BitLocker disable
-4. **Dashboard Control Coverage** - Calculates from compliance_bundles
+### Frontend Production Readiness
+1. **ErrorBoundary** - React error boundary component
+2. **AbortController** - Request cancellation with 30s timeout
+3. **onError Callbacks** - Added to 25+ mutation hooks
+4. **React.lazy Code Splitting** - Bundle reduced 67%
+5. **React.memo** - Applied to 6 heavy list components
+6. **HTTP-only Cookies** - Secure cookie auth (localStorage fallback)
 
-### Part 2: TODO Cleanup & Infrastructure
-
-5. **Client Stats Compliance Score** - Fixed 0% in client portal
-6. **Redis Session Store** - PortalSessionManager with Redis backend
-7. **Auth Context for Runbook Config** - Tracks username for audit trail
-8. **Discovery Queue Automation** - Queues run_discovery orders
-9. **Fleet Updates Order Creation** - Proper update_iso orders
-
-### Files Modified
-
-| File | Change |
-|------|--------|
-| `frontend/src/pages/Settings.tsx` | NEW - Settings page |
-| `frontend/src/App.tsx` | Added Settings route |
-| `frontend/src/components/layout/Sidebar.tsx` | Added Settings nav |
-| `backend/routes.py` | Settings API, client stats fix |
-| `backend/db_queries.py` | Fixed stats, compliance score |
-| `backend/portal.py` | Redis session store |
-| `backend/runbook_config.py` | Auth context |
-| `backend/partners.py` | Discovery queue |
-| `backend/fleet_updates.py` | Order creation |
-
-### Git Commits
-
-| Commit | Message |
-|--------|---------|
-| `11e7b83` | feat: Add Settings page and fix learning system L1 rules |
-| `de4a982` | fix: Dashboard control coverage calculation |
-| `e04a86a` | docs: Update documentation for Session 81 |
-| `02a78eb` | fix: Calculate compliance score in client stats endpoint |
-| `474d603` | feat: Implement Redis session store, auth context, and discovery queue |
-| `6d6f57e` | fix: Fix auth import for VPS deployment |
+### Hotfixes Applied
+- Added bcrypt==4.2.1 to VPS requirements.txt
+- Restored SHA-256 legacy password verification
+- Fixed SAFE_METHODS in rate limiter
 
 ---
 
-## VPS Health Check
+## Files Created This Session
 
-```
-{"status":"ok","redis":"connected","database":"connected","minio":"connected"}
-```
-
-All services healthy, deployment verified.
+| File | Description |
+|------|-------------|
+| `backend/csrf.py` | CSRF double-submit cookie middleware |
+| `backend/redis_rate_limiter.py` | Redis-backed distributed rate limiter |
+| `backend/migrate.py` | Migration runner with rollback support |
+| `backend/migrations/000_schema_migrations.sql` | Migration tracking table |
+| `backend/migrations/033_performance_indexes.sql` | 12 performance indexes |
+| `frontend/src/components/shared/ErrorBoundary.tsx` | React error boundary |
 
 ---
 
@@ -94,13 +80,27 @@ scp file.py root@178.156.162.116:/opt/mcp-server/dashboard_api_mount/
 
 # Check health
 curl https://api.osiriscare.net/health
+
+# Run tests
+cd packages/compliance-agent && source venv/bin/activate && python -m pytest tests/ -v --tb=short
 ```
+
+---
+
+## Next Session Priorities
+
+1. **Password Migration** - Consider migrating legacy SHA-256 to bcrypt on next login
+2. **Remove localStorage Fallback** - After confirming cookie auth works in production
+3. **CSRF Frontend Integration** - Send X-CSRF-Token header on mutations
+4. **Redis Rate Limiter** - Switch main.py from in-memory to redis_rate_limiter.py
+5. **AbortSignal in Hooks** - Full signal support in React Query queryFn
 
 ---
 
 ## Related Docs
 
-- `.agent/TODO.md` - Task history (Session 81 complete)
+- `.agent/TODO.md` - Task history (Session 82 complete)
 - `.agent/CONTEXT.md` - Current state
+- `.agent/sessions/2026-02-01-production-readiness-security.md` - Session log
 - `docs/DATA_MODEL.md` - Database schema reference
 - `.agent/LAB_CREDENTIALS.md` - Lab passwords
