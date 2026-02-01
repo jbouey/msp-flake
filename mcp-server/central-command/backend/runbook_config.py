@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel
 
-from auth import require_auth
+try:
+    from auth import require_auth
+except ImportError:
+    from .auth import require_auth
 
 
 router = APIRouter(prefix="/api/runbooks", tags=["runbooks"])
