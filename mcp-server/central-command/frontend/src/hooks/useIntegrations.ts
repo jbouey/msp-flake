@@ -20,6 +20,17 @@ const SYNC_POLLING_INTERVAL = 5_000; // 5 seconds for active sync jobs
 const STALE_TIME = 30_000;
 
 /**
+ * Helper to log mutation errors consistently
+ */
+function logMutationError(context: string, error: unknown): void {
+  // Skip logging for aborted requests
+  if (error instanceof Error && error.message.includes('cancelled')) {
+    return;
+  }
+  console.error(`Integration mutation error (${context}):`, error);
+}
+
+/**
  * Hook for fetching all integrations for a site
  */
 export function useIntegrations(
@@ -60,6 +71,7 @@ export function useCreateIntegration() {
       queryClient.invalidateQueries({ queryKey: ['integrations', siteId] });
       queryClient.invalidateQueries({ queryKey: ['integrationsHealth', siteId] });
     },
+    onError: (error) => logMutationError('createIntegration', error),
   });
 }
 
@@ -77,6 +89,7 @@ export function useDeleteIntegration() {
       queryClient.invalidateQueries({ queryKey: ['integration', siteId, integrationId] });
       queryClient.invalidateQueries({ queryKey: ['integrationsHealth', siteId] });
     },
+    onError: (error) => logMutationError('deleteIntegration', error),
   });
 }
 
@@ -113,6 +126,7 @@ export function useTriggerSync() {
     onSuccess: (_, { siteId, integrationId }) => {
       queryClient.invalidateQueries({ queryKey: ['integration', siteId, integrationId] });
     },
+    onError: (error) => logMutationError('triggerSync', error),
   });
 }
 
@@ -169,6 +183,7 @@ export function useAWSSetupInstructions() {
 export function useGenerateAWSExternalId() {
   return useMutation<{ external_id: string }, Error, void>({
     mutationFn: () => integrationsApi.generateAWSExternalId(),
+    onError: (error) => logMutationError('generateAWSExternalId', error),
   });
 }
 

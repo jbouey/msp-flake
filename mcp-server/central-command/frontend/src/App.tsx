@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
+import { ErrorBoundary } from './components/shared';
 import { Dashboard, Runbooks, RunbookConfig, Learning, Onboarding, ClientDetail, Login, AuditLogs, Sites, SiteDetail, SiteWorkstations, SiteGoAgents, SiteDevices, RMMComparison, IntegrationError, Documentation, Partners, Notifications, NotificationSettings, Incidents, Settings } from './pages';
 import FleetUpdates from './pages/FleetUpdates';
 import Users from './pages/Users';
@@ -23,12 +24,36 @@ import { PortalVerify } from './portal/PortalVerify';
 import { PartnerProvider, PartnerLogin, PartnerDashboard } from './partner';
 import { ClientProvider, ClientLogin, ClientVerify, ClientDashboard, ClientEvidence, ClientReports, ClientNotifications, ClientSettings, ClientHelp } from './client';
 
-// Create a client for React Query
+// Global error handler for unhandled query errors
+const handleQueryError = (error: unknown): void => {
+  // Don't log aborted requests
+  if (error instanceof Error && error.message.includes('cancelled')) {
+    return;
+  }
+  console.error('Query error:', error);
+};
+
+// Create a client for React Query with improved error handling
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
+      retry: (failureCount, error) => {
+        // Don't retry on 4xx errors (client errors)
+        if (error instanceof Error && 'status' in error) {
+          const status = (error as { status: number }).status;
+          if (status >= 400 && status < 500) return false;
+        }
+        // Retry up to 2 times for other errors
+        return failureCount < 2;
+      },
       refetchOnWindowFocus: false,
+      // Use error boundary for render errors
+      throwOnError: false,
+    },
+    mutations: {
+      // Don't retry mutations by default
+      retry: false,
+      onError: handleQueryError,
     },
   },
 });
@@ -200,10 +225,11 @@ const AuthenticatedApp: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <BrowserRouter>
-          <Routes>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <BrowserRouter>
+            <Routes>
             {/* Public routes - no auth required */}
             <Route path="/set-password" element={<SetPassword />} />
             <Route path="/auth/oauth/success" element={<OAuthCallback />} />
@@ -254,6 +280,7 @@ const App: React.FC = () => {
         </BrowserRouter>
       </AuthProvider>
     </QueryClientProvider>
+    </ErrorBoundary>
   );
 };
 

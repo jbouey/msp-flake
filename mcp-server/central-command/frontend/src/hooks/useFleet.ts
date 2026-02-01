@@ -12,6 +12,17 @@ const POLLING_INTERVAL = 60_000;
 const STALE_TIME = 30_000; // Consider data fresh for 30 seconds
 
 /**
+ * Helper to log mutation errors consistently
+ */
+function logMutationError(context: string, error: unknown): void {
+  // Skip logging for aborted requests
+  if (error instanceof Error && error.message.includes('cancelled')) {
+    return;
+  }
+  console.error(`Mutation error (${context}):`, error);
+}
+
+/**
  * Hook for fetching fleet overview data with polling
  */
 export function useFleet() {
@@ -178,6 +189,7 @@ export function usePromotePattern() {
       // Invalidate learning queries to refetch updated data
       queryClient.invalidateQueries({ queryKey: ['learning'] });
     },
+    onError: (error) => logMutationError('promotePattern', error),
   });
 }
 
@@ -245,6 +257,7 @@ export function useCreateSite() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sites'] });
     },
+    onError: (error) => logMutationError('createSite', error),
   });
 }
 
@@ -261,6 +274,7 @@ export function useUpdateSite() {
       queryClient.invalidateQueries({ queryKey: ['sites'] });
       queryClient.invalidateQueries({ queryKey: ['site', siteId] });
     },
+    onError: (error) => logMutationError('updateSite', error),
   });
 }
 
@@ -276,6 +290,7 @@ export function useAddCredential() {
     onSuccess: (_, { siteId }) => {
       queryClient.invalidateQueries({ queryKey: ['site', siteId] });
     },
+    onError: (error) => logMutationError('addCredential', error),
   });
 }
 
@@ -292,6 +307,7 @@ export function useUpdateHealingTier() {
       queryClient.invalidateQueries({ queryKey: ['sites'] });
       queryClient.invalidateQueries({ queryKey: ['site', siteId] });
     },
+    onError: (error) => logMutationError('updateHealingTier', error),
   });
 }
 
@@ -341,6 +357,7 @@ export function useCreateApplianceOrder() {
       queryClient.invalidateQueries({ queryKey: ['orders', siteId] });
       queryClient.invalidateQueries({ queryKey: ['site', siteId] });
     },
+    onError: (error) => logMutationError('createApplianceOrder', error),
   });
 }
 
@@ -368,6 +385,7 @@ export function useBroadcastOrder() {
       queryClient.invalidateQueries({ queryKey: ['orders', siteId] });
       queryClient.invalidateQueries({ queryKey: ['site', siteId] });
     },
+    onError: (error) => logMutationError('broadcastOrder', error),
   });
 }
 
@@ -384,6 +402,7 @@ export function useDeleteAppliance() {
       queryClient.invalidateQueries({ queryKey: ['site', siteId] });
       queryClient.invalidateQueries({ queryKey: ['sites'] });
     },
+    onError: (error) => logMutationError('deleteAppliance', error),
   });
 }
 
@@ -400,6 +419,7 @@ export function useClearStaleAppliances() {
       queryClient.invalidateQueries({ queryKey: ['site', siteId] });
       queryClient.invalidateQueries({ queryKey: ['sites'] });
     },
+    onError: (error) => logMutationError('clearStaleAppliances', error),
   });
 }
 
@@ -447,6 +467,7 @@ export function useMarkNotificationRead() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
     },
+    onError: (error) => logMutationError('markNotificationRead', error),
   });
 }
 
@@ -461,6 +482,7 @@ export function useMarkAllNotificationsRead() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
     },
+    onError: (error) => logMutationError('markAllNotificationsRead', error),
   });
 }
 
@@ -475,6 +497,7 @@ export function useDismissNotification() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
     },
+    onError: (error) => logMutationError('dismissNotification', error),
   });
 }
 
@@ -497,6 +520,7 @@ export function useCreateNotification() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
     },
+    onError: (error) => logMutationError('createNotification', error),
   });
 }
 
@@ -550,6 +574,7 @@ export function useSetSiteRunbook() {
     onSuccess: (_, { siteId }) => {
       queryClient.invalidateQueries({ queryKey: ['siteRunbooks', siteId] });
     },
+    onError: (error) => logMutationError('setSiteRunbook', error),
   });
 }
 
@@ -581,6 +606,7 @@ export function useTriggerWorkstationScan() {
     onSuccess: (_, siteId) => {
       queryClient.invalidateQueries({ queryKey: ['workstations', siteId] });
     },
+    onError: (error) => logMutationError('triggerWorkstationScan', error),
   });
 }
 
@@ -616,6 +642,7 @@ export function useUpdateGoAgentTier() {
     onSuccess: (_, { siteId }) => {
       queryClient.invalidateQueries({ queryKey: ['goAgents', siteId] });
     },
+    onError: (error) => logMutationError('updateGoAgentTier', error),
   });
 }
 
@@ -631,6 +658,7 @@ export function useTriggerGoAgentCheck() {
     onSuccess: (_, { siteId }) => {
       queryClient.invalidateQueries({ queryKey: ['goAgents', siteId] });
     },
+    onError: (error) => logMutationError('triggerGoAgentCheck', error),
   });
 }
 
@@ -646,6 +674,7 @@ export function useRemoveGoAgent() {
     onSuccess: (_, { siteId }) => {
       queryClient.invalidateQueries({ queryKey: ['goAgents', siteId] });
     },
+    onError: (error) => logMutationError('removeGoAgent', error),
   });
 }
 

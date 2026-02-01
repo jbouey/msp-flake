@@ -1,13 +1,13 @@
 # Session: 2026-02-01 - Production Readiness Security Audit
 
-**Duration:** ~2 hours
-**Focus Area:** Backend security audit, production hardening, deployment fixes
+**Duration:** ~3 hours
+**Focus Area:** Backend security audit, frontend audit, production hardening, deployment fixes
 
 ---
 
 ## What Was Done
 
-### Completed
+### Completed - Backend
 - [x] Full backend and database audit for production readiness (5 parallel agents)
 - [x] SQL injection fix in telemetry purge (routes.py, settings_api.py)
 - [x] Make bcrypt mandatory for password hashing (auth.py)
@@ -21,6 +21,14 @@
 - [x] Create Redis-backed distributed rate limiter
 - [x] Create migration runner with rollback support
 - [x] Fix deployment outage (bcrypt missing, legacy password support)
+
+### Completed - Frontend
+- [x] Full frontend comprehensive audit for production readiness (5 parallel agents)
+- [x] Create ErrorBoundary component for catching React render errors
+- [x] Add AbortController support to API client with timeout
+- [x] Improved QueryClient configuration with smart retry logic
+- [x] Add onError callbacks to 25+ mutation hooks
+- [x] Add global error handler for unhandled query errors
 
 ### Hotfixes Applied
 - [x] Added bcrypt==4.2.1 to VPS requirements.txt
@@ -42,6 +50,7 @@
 
 ## Files Modified
 
+### Backend
 | File | Change |
 |------|--------|
 | `backend/auth.py` | bcrypt mandatory, SHA-256 legacy support |
@@ -58,6 +67,16 @@
 | `main.py` | Secrets validation, pool config, CSRF middleware |
 | `migrations/000_schema_migrations.sql` | NEW - Migration tracking |
 | `migrations/033_performance_indexes.sql` | NEW - 12 indexes + DOWN section |
+
+### Frontend
+| File | Change |
+|------|--------|
+| `frontend/src/components/shared/ErrorBoundary.tsx` | NEW - Error boundary component |
+| `frontend/src/components/shared/index.ts` | Export ErrorBoundary |
+| `frontend/src/utils/api.ts` | AbortController, timeout, improved error handling |
+| `frontend/src/hooks/useFleet.ts` | onError callbacks on all 25 mutations |
+| `frontend/src/hooks/useIntegrations.ts` | onError callbacks on 5 mutations |
+| `frontend/src/App.tsx` | ErrorBoundary wrapper, improved QueryClient config |
 
 ---
 
@@ -86,12 +105,14 @@ Login: Verified working via browser
 ### Immediate Priority
 1. Run full test suite to verify no regressions
 2. Consider migrating legacy SHA-256 passwords to bcrypt on next login
-3. Review any remaining lower-priority audit items
+3. Add React.lazy for code splitting (bundle is 933KB, should be split)
+4. Add React.memo to heavy list components
 
 ### Context Needed
 - VPS requirements.txt now has bcrypt==4.2.1 added manually
 - Migration runner (migrate.py) not yet tested in production
 - Redis rate limiter has in-memory fallback if Redis unavailable
+- Frontend ErrorBoundary catches render errors but not async errors in hooks
 
 ### Commands to Run First
 ```bash
@@ -117,3 +138,6 @@ python -m pytest tests/ -v --tb=short
 - Redis rate limiter created but main.py still uses old in-memory rate_limiter.py
 - Consider switching main.py to use redis_rate_limiter.py for distributed deployments
 - Migration DOWN sections use SQL comments (-- prefix) that migrate.py strips
+- Frontend bundle is 933KB - consider code splitting with React.lazy for performance
+- API client now has AbortController support but hooks don't use signal yet
+- ErrorBoundary added but localStorage for auth tokens remains (HTTP-only cookies ideal)

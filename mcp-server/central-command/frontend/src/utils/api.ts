@@ -5,7 +5,7 @@
 const API_BASE = '/api/dashboard';
 
 class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public isAborted: boolean = false) {
     super(message);
     this.name = 'ApiError';
   }
@@ -16,9 +16,45 @@ function getAuthToken(): string | null {
   return localStorage.getItem('auth_token');
 }
 
-async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
+// Request timeout in milliseconds (30 seconds)
+const REQUEST_TIMEOUT = 30000;
+
+/**
+ * Extended fetch options with AbortSignal support
+ */
+interface FetchApiOptions extends RequestInit {
+  /** AbortSignal for request cancellation */
+  signal?: AbortSignal;
+  /** Custom timeout in milliseconds (default: 30000) */
+  timeout?: number;
+}
+
+/**
+ * Creates an AbortController with timeout
+ */
+function createTimeoutController(timeoutMs: number, existingSignal?: AbortSignal): {
+  controller: AbortController;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  // If an external signal is provided, abort when it aborts
+  const abortHandler = () => controller.abort();
+  existingSignal?.addEventListener('abort', abortHandler);
+
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    existingSignal?.removeEventListener('abort', abortHandler);
+  };
+
+  return { controller, cleanup };
+}
+
+async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
   const token = getAuthToken();
+  const timeout = options?.timeout ?? REQUEST_TIMEOUT;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -29,20 +65,33 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...headers,
-      ...(options?.headers as Record<string, string>),
-    },
-  });
+  // Create timeout controller
+  const { controller, cleanup } = createTimeoutController(timeout, options?.signal);
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        ...headers,
+        ...(options?.headers as Record<string, string>),
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new ApiError(0, 'Request was cancelled or timed out', true);
+    }
+    throw error;
+  } finally {
+    cleanup();
   }
-
-  return response.json();
 }
 
 // =============================================================================
@@ -280,9 +329,10 @@ export interface SiteCredential {
   created_at: string | null;
 }
 
-async function fetchSitesApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
+async function fetchSitesApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
   const url = `/api${endpoint}`;
   const token = getAuthToken();
+  const timeout = options?.timeout ?? REQUEST_TIMEOUT;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -293,20 +343,33 @@ async function fetchSitesApi<T>(endpoint: string, options?: RequestInit): Promis
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...headers,
-      ...(options?.headers as Record<string, string>),
-    },
-  });
+  // Create timeout controller
+  const { controller, cleanup } = createTimeoutController(timeout, options?.signal);
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        ...headers,
+        ...(options?.headers as Record<string, string>),
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new ApiError(0, 'Request was cancelled or timed out', true);
+    }
+    throw error;
+  } finally {
+    cleanup();
   }
-
-  return response.json();
 }
 
 export const sitesApi = {
