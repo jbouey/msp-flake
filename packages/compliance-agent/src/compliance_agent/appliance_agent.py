@@ -3340,10 +3340,11 @@ Environment="PYTHONPATH={overlay_dir}"
         """
         from .update_agent import UpdateAgent, UpdateInfo
 
-        # Read API key from file if configured
+        # Read API key from file if configured (use getattr for backward compatibility)
         api_key = ""
-        if self.config.mcp_api_key_file and self.config.mcp_api_key_file.exists():
-            api_key = self.config.mcp_api_key_file.read_text().strip()
+        api_key_file = getattr(self.config, 'mcp_api_key_file', None)
+        if api_key_file and api_key_file.exists():
+            api_key = api_key_file.read_text().strip()
 
         # Create update agent with config
         update_agent = UpdateAgent(

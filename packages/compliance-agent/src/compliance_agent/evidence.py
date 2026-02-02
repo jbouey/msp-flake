@@ -95,10 +95,11 @@ class EvidenceGenerator:
                 auto_upload=self.config.worm_auto_upload
             )
 
-            # Read API key if available
+            # Read API key if available (use getattr for backward compatibility)
             mcp_api_key = None
-            if self.config.mcp_api_key_file and self.config.mcp_api_key_file.exists():
-                mcp_api_key = self.config.mcp_api_key_file.read_text().strip()
+            api_key_file = getattr(self.config, 'mcp_api_key_file', None)
+            if api_key_file and api_key_file.exists():
+                mcp_api_key = api_key_file.read_text().strip()
 
             self._worm_uploader = WormUploader(
                 config=worm_config,
