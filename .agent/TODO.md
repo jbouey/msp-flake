@@ -1,7 +1,66 @@
 # Current Tasks & Priorities
 
-**Last Updated:** 2026-02-01 (Session 83 - Runbook Security Audit & Project Analysis)
-**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.51, **ISO v51**, **PRODUCTION SECURITY AUDIT COMPLETE**, **Frontend Performance Optimized (67% bundle reduction)**, **HTTP-Only Secure Cookies**, **CSRF Protection**, **Fernet OAuth Encryption**, **bcrypt Mandatory**, **React.lazy Code Splitting**, **React.memo Optimizations**, **Settings Page CREATED**, **Redis Session Store IMPLEMENTED**, **Auth Context Audit Trail ADDED**, **Discovery Queue Automation ADDED**, **Learning System L1 Rules FIXED**, **Dashboard Control Coverage FIXED**, **Partner Cleanup COMPLETE**, **Dashboard Technical Debt FIXED**, **Database Pruning IMPLEMENTED**, **OTS Anchoring FIXED**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**, **Physical Appliance v1.0.51**)
+**Last Updated:** 2026-02-01 (Session 84 - Fleet Update v52 Deployment & Compatibility Fix)
+**Sprint:** Phase 13 - Zero-Touch Update System (Agent v1.0.52 code, **ISO v52 Built**, **Fleet Updates CSRF Fixed**, **MAC Address Format Fixed**, **ApplianceConfig Compatibility Fixed**, **APPLIANCE UPDATE BLOCKED** - requires manual intervention, **PRODUCTION SECURITY AUDIT COMPLETE**, **Frontend Performance Optimized (67% bundle reduction)**, **HTTP-Only Secure Cookies**, **CSRF Protection**, **Fernet OAuth Encryption**, **bcrypt Mandatory**, **React.lazy Code Splitting**, **React.memo Optimizations**, **Settings Page CREATED**, **Redis Session Store IMPLEMENTED**, **Auth Context Audit Trail ADDED**, **Discovery Queue Automation ADDED**, **Learning System L1 Rules FIXED**, **Dashboard Control Coverage FIXED**, **Partner Cleanup COMPLETE**, **Dashboard Technical Debt FIXED**, **Database Pruning IMPLEMENTED**, **OTS Anchoring FIXED**, **L1 Rules Windows/NixOS Distinction FIXED**, **Target Routing Bug FIXED**, **Learning System Bidirectional Sync VERIFIED**, **Learning System Partner Promotion Workflow COMPLETE**, **Phase 3 Local Resilience (Operational Intelligence)**, **Central Command Delegation API**, **Exception Management System**, **IDOR Security Fixes**, **CLIENT PORTAL ALL PHASES COMPLETE**, **Partner Compliance Framework Management**, **Phase 2 Local Resilience**, **Comprehensive Documentation Update**, **Google OAuth Working**, **User Invite Revoke Fix**, **OTA USB Update Verified**, Fleet Updates UI, Healing Tier Toggle, Full Coverage Enabled, **Chaos Lab Healing Working**, **DC Firewall 100% Heal Rate**, **Claude Code Skills System**, **Blockchain Evidence Security Hardening**, **Learning System Resolution Recording Fix**, **Production Healing Mode Enabled**, **Go Agent Deployed to All 3 VMs**, **Partner Admin Router Fixed**)
+
+---
+
+## Session 84 (2026-02-01) - COMPLETE (Blocked on Manual Update)
+
+### Session Goals
+1. ✅ Deploy Fleet Update v52 via Central Command
+2. ✅ Fix CSRF issues blocking Fleet Updates API
+3. ✅ Fix MAC address format mismatch in order lookup
+4. ✅ Fix ApplianceConfig backward compatibility
+5. 🔴 **BLOCKED**: Appliances running v1.0.49 can't process update orders
+
+### Accomplishments
+
+#### 1. CSRF Exemption Fixes - COMPLETE
+- Added `/api/fleet/` to CSRF exempt paths
+- Added `/api/orders/` to CSRF exempt paths
+- Deployed to VPS and restarted mcp-server
+
+#### 2. MAC Address Format Normalization - COMPLETE
+- Fixed `get_pending_orders` in `sites.py`
+- Appliance queries with colons, DB stores with hyphens
+- Now tries both formats in SQL query
+
+#### 3. ISO URL Fix - COMPLETE
+- Copied ISO to web server: `https://updates.osiriscare.net/osiriscare-v52.iso`
+- Updated database with correct URL
+
+#### 4. ApplianceConfig Compatibility Fix - COMPLETE
+- Used `getattr()` for `mcp_api_key_file` access in:
+  - `appliance_agent.py:3343-3346`
+  - `evidence.py:98-101`
+- Allows older agents to not crash when processing orders
+
+### BLOCKING ISSUE
+**Chicken-and-egg problem**: Appliances running v1.0.49 crash when processing `update_iso` orders due to missing `mcp_api_key_file` attribute. The fix is in v1.0.52, but they need to process an update order to get v1.0.52.
+
+**Solution**: SSH to appliances and manually update code, or wait for physical appliance to be accessible.
+
+### Git Commits
+| Commit | Message |
+|--------|---------|
+| `2ca89fa` | fix: Add fleet API to CSRF exemptions |
+| `df31b46` | fix: Normalize MAC address format in pending orders lookup |
+| `a5c84d8` | fix: Add /api/orders/ to CSRF exemptions for appliance updates |
+| `862d3f3` | fix: Add backward compatibility for mcp_api_key_file config attribute |
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/csrf.py` | Added fleet/orders CSRF exemptions |
+| `mcp-server/central-command/backend/sites.py` | MAC address format normalization |
+| `packages/compliance-agent/src/compliance_agent/appliance_agent.py` | mcp_api_key_file backward compat |
+| `packages/compliance-agent/src/compliance_agent/evidence.py` | mcp_api_key_file backward compat |
+
+### Test Results
+```
+858 passed, 11 skipped, 3 warnings in 47.66s
+```
 
 ---
 
