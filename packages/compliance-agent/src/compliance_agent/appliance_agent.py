@@ -341,7 +341,7 @@ class ApplianceAgent:
         self.auto_healer: Optional[AutoHealer] = None
         self.incident_db: Optional[IncidentDatabase] = None
         self._healing_enabled = getattr(config, 'healing_enabled', True)
-        self._healing_dry_run = getattr(config, 'healing_dry_run', True)
+        # Dry run mode removed - always active healing in production
 
         # Learning system for L2->L1 promotion (data flywheel)
         self.learning_system: Optional[SelfLearningSystem] = None
@@ -444,8 +444,7 @@ class ApplianceAgent:
         if self._healing_enabled:
             try:
                 await self._init_healing_system()
-                mode = "DRY-RUN" if self._healing_dry_run else "ACTIVE"
-                logger.info(f"Three-tier healing enabled ({mode})")
+                logger.info("Three-tier healing enabled (ACTIVE)")
 
                 # Configure sensor API with healing dependencies
                 if self._sensor_enabled:
@@ -817,7 +816,6 @@ class ApplianceAgent:
                         "resolution_level": healing_result.get("resolution_level"),
                         "action_taken": healing_result.get("action_taken"),
                         "success": healing_result.get("success"),
-                        "dry_run": self._healing_dry_run,
                     }
 
                 # Compute hash of the evidence data
@@ -895,7 +893,6 @@ class ApplianceAgent:
             enable_level1=True,
             enable_level2=l2_enabled,
             enable_level3=True,
-            dry_run=self._healing_dry_run,
             # L2 LLM settings
             api_provider=getattr(self.config, 'l2_api_provider', 'anthropic'),
             api_model=getattr(self.config, 'l2_api_model', 'claude-3-5-haiku-latest'),
@@ -968,15 +965,6 @@ class ApplianceAgent:
             host_id: Target host ID (for Windows runbooks)
             incident: Optional incident object for context
         """
-        if self._healing_dry_run:
-            logger.info(f"[DRY-RUN] Would execute: {action} with params: {params}")
-            return {
-                "dry_run": True,
-                "action": action,
-                "params": params,
-                "status": "simulated_success"
-            }
-
         # Add host_id to params so handlers can use it
         if host_id:
             params = {**params, "target_host": host_id}

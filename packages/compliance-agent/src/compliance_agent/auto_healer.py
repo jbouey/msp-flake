@@ -12,7 +12,7 @@ With self-learning loop for continuous improvement.
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,8 +61,11 @@ class AutoHealerConfig:
     auto_promote_rules: bool = False
 
     # General
-    dry_run: bool = False
     log_level: str = "INFO"
+
+    # Circuit breaker for loop detection
+    max_heal_attempts_per_incident: int = 5  # Max attempts before cooldown
+    cooldown_period_minutes: int = 30  # Cooldown after max attempts
 
 
 @dataclass
@@ -158,11 +161,58 @@ class AutoHealer:
                 config=promo_config
             )
 
+        # Circuit breaker: track heal attempts to prevent runaway loops
+        # Key: (site_id, host_id, incident_type) -> (attempt_count, first_attempt_time)
+        self._heal_attempts: Dict[tuple, tuple] = {}
+        self._cooldowns: Dict[tuple, datetime] = {}
+
         logger.info(
             f"AutoHealer initialized: L1={config.enable_level1}, "
             f"L2={config.enable_level2}, L3={config.enable_level3}, "
-            f"Learning={config.enable_learning}"
+            f"Learning={config.enable_learning}, "
+            f"CircuitBreaker=max {config.max_heal_attempts_per_incident} attempts/{config.cooldown_period_minutes}min cooldown"
         )
+
+    def _is_in_cooldown(self, circuit_key: tuple) -> bool:
+        """Check if a circuit is in cooldown due to too many failures."""
+        if circuit_key not in self._cooldowns:
+            return False
+        cooldown_until = self._cooldowns[circuit_key]
+        if datetime.now(timezone.utc) >= cooldown_until:
+            # Cooldown expired, reset tracking
+            del self._cooldowns[circuit_key]
+            if circuit_key in self._heal_attempts:
+                del self._heal_attempts[circuit_key]
+            return False
+        return True
+
+    def _track_heal_attempt(self, circuit_key: tuple, attempt_time: datetime) -> None:
+        """Track a heal attempt and trigger cooldown if threshold exceeded."""
+        window_minutes = 10  # Count attempts within a 10-minute window
+
+        if circuit_key in self._heal_attempts:
+            count, first_time = self._heal_attempts[circuit_key]
+            age_minutes = (attempt_time - first_time).total_seconds() / 60
+
+            if age_minutes > window_minutes:
+                # Reset counter if window expired
+                self._heal_attempts[circuit_key] = (1, attempt_time)
+            else:
+                # Increment counter
+                new_count = count + 1
+                self._heal_attempts[circuit_key] = (new_count, first_time)
+
+                if new_count >= self.config.max_heal_attempts_per_incident:
+                    # Trigger cooldown
+                    cooldown_until = attempt_time + timedelta(minutes=self.config.cooldown_period_minutes)
+                    self._cooldowns[circuit_key] = cooldown_until
+                    logger.error(
+                        f"CIRCUIT BREAKER TRIGGERED: {circuit_key[2]} on {circuit_key[1]} "
+                        f"had {new_count} heal attempts in {age_minutes:.1f} minutes. "
+                        f"Entering {self.config.cooldown_period_minutes} minute cooldown."
+                    )
+        else:
+            self._heal_attempts[circuit_key] = (1, attempt_time)
 
     async def heal(
         self,
@@ -178,6 +228,28 @@ class AutoHealer:
         Returns the result of the healing attempt.
         """
         start_time = datetime.now(timezone.utc)
+
+        # Circuit breaker: check for runaway healing loops
+        circuit_key = (site_id, host_id, incident_type)
+        if self._is_in_cooldown(circuit_key):
+            cooldown_until = self._cooldowns[circuit_key]
+            remaining = (cooldown_until - start_time).total_seconds() / 60
+            logger.warning(
+                f"CIRCUIT BREAKER: {incident_type} on {host_id} is in cooldown. "
+                f"Skipping heal for {remaining:.1f} more minutes. "
+                f"Too many failed attempts detected - possible loop."
+            )
+            return HealingResult(
+                incident_id=f"SKIPPED-{uuid.uuid4().hex[:8]}",
+                success=False,
+                resolution_level=ResolutionLevel.LEVEL3_ESCALATION,
+                action_taken="circuit_breaker_cooldown",
+                resolution_time_ms=0,
+                error=f"Circuit breaker active: {remaining:.1f} min cooldown remaining"
+            )
+
+        # Track this heal attempt
+        self._track_heal_attempt(circuit_key, start_time)
 
         # Create incident record
         incident = self.incident_db.create_incident(
@@ -253,11 +325,7 @@ class AutoHealer:
         state_before = self._capture_system_state(incident, host_id)
 
         # Execute the action
-        if self.config.dry_run:
-            logger.info(f"[DRY RUN] Would execute: {match.action}")
-            result = {"success": True, "output": "DRY_RUN"}
-        else:
-            result = await self.level1.execute(match, site_id, host_id)
+        result = await self.level1.execute(match, site_id, host_id)
 
         # Capture state after healing
         state_after = self._capture_system_state(incident, host_id)
@@ -360,11 +428,7 @@ class AutoHealer:
         state_before = self._capture_system_state(incident, host_id)
 
         # Execute the action
-        if self.config.dry_run:
-            logger.info(f"[DRY RUN] Would execute: {decision.recommended_action}")
-            result = {"success": True, "output": "DRY_RUN"}
-        else:
-            result = await self.level2.execute(decision, site_id, host_id)
+        result = await self.level2.execute(decision, site_id, host_id)
 
         # Capture state after healing
         state_after = self._capture_system_state(incident, host_id)
@@ -735,7 +799,8 @@ def create_auto_healer(
         email_recipients=config_dict.get("email_recipients", []),
         enable_learning=config_dict.get("enable_learning", True),
         auto_promote_rules=config_dict.get("auto_promote_rules", False),
-        dry_run=config_dict.get("dry_run", False)
+        max_heal_attempts_per_incident=config_dict.get("max_heal_attempts", 5),
+        cooldown_period_minutes=config_dict.get("cooldown_minutes", 30)
     )
 
     return AutoHealer(config=config, action_executor=action_executor)

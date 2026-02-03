@@ -489,7 +489,7 @@ def load_config() -> AgentConfig:
 
         # Auto-Healing
         'healing_enabled': os.environ.get('HEALING_ENABLED', 'true').lower() == 'true',
-        'healing_dry_run': os.environ.get('HEALING_DRY_RUN', 'true').lower() == 'true',
+        'healing_dry_run': os.environ.get('HEALING_DRY_RUN', 'false').lower() == 'true',
         'l1_rules_dir': Path(os.environ.get('L1_RULES_DIR', '/etc/msp/rules')),
         'l2_enabled': os.environ.get('L2_ENABLED', 'false').lower() == 'true',
         'l2_api_key_file': Path(os.environ['L2_API_KEY_FILE']) if os.environ.get('L2_API_KEY_FILE') else None,

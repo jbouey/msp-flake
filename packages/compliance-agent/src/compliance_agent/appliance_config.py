@@ -65,8 +65,8 @@ class ApplianceConfig(BaseModel):
     )
 
     healing_dry_run: bool = Field(
-        default=True,
-        description="Dry-run mode: log healing actions without executing"
+        default=False,
+        description="Dry-run mode: log healing actions without executing (default: off for production)"
     )
 
     # L2 LLM Planner (for incidents not matched by L1 rules)

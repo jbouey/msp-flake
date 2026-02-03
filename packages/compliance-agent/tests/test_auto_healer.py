@@ -95,8 +95,7 @@ def auto_healer_config(tmp_path):
         enable_level1=True,
         enable_level2=False,  # Disable LLM for tests
         enable_level3=True,
-        enable_learning=True,
-        dry_run=True
+        enable_learning=True
     )
 
 
