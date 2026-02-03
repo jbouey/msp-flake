@@ -302,7 +302,7 @@ async def create_appliance_order(
 
 @router.get("/{site_id}/appliances/{appliance_id}/orders/pending")
 async def get_pending_orders(site_id: str, appliance_id: str):
-    """Get pending orders for an appliance."""
+    """Get pending orders for an appliance (both admin and healing orders)."""
     pool = await get_pool()
 
     # Normalize MAC format - try both colon and hyphen variants
@@ -323,6 +323,7 @@ async def get_pending_orders(site_id: str, appliance_id: str):
         appliance_id_hyphen = appliance_id.replace(':', '-')
 
     async with pool.acquire() as conn:
+        # Get admin orders
         rows = await conn.fetch("""
             SELECT order_id, order_type, parameters, priority,
                    created_at, expires_at
@@ -333,21 +334,53 @@ async def get_pending_orders(site_id: str, appliance_id: str):
             ORDER BY priority DESC, created_at ASC
         """, appliance_id_colon, appliance_id_hyphen, site_id)
 
+        orders = [
+            {
+                "order_id": row["order_id"],
+                "order_type": row["order_type"],
+                "parameters": parse_parameters(row["parameters"]),
+                "priority": row["priority"],
+                "created_at": row["created_at"].isoformat(),
+                "expires_at": row["expires_at"].isoformat(),
+            }
+            for row in rows
+        ]
+
+        # Also get healing orders from orders table
+        try:
+            healing_rows = await conn.fetch("""
+                SELECT o.order_id, o.runbook_id, o.parameters, o.issued_at, o.expires_at,
+                       i.id as incident_id
+                FROM orders o
+                JOIN appliances a ON o.appliance_id = a.id
+                LEFT JOIN incidents i ON i.order_id = o.id
+                WHERE a.site_id = $1
+                AND o.status = 'pending'
+                AND o.expires_at > NOW()
+                ORDER BY o.issued_at ASC
+            """, site_id)
+
+            for row in healing_rows:
+                params = row["parameters"] if isinstance(row["parameters"], dict) else {}
+                params["incident_id"] = str(row["incident_id"]) if row["incident_id"] else None
+                orders.append({
+                    "order_id": row["order_id"],
+                    "order_type": "healing",
+                    "runbook_id": row["runbook_id"],
+                    "parameters": params,
+                    "priority": 10,
+                    "created_at": row["issued_at"].isoformat() if row["issued_at"] else None,
+                    "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+                })
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to fetch healing orders: {e}")
+
         return {
             "site_id": site_id,
             "appliance_id": appliance_id,
-            "orders": [
-                {
-                    "order_id": row["order_id"],
-                    "order_type": row["order_type"],
-                    "parameters": parse_parameters(row["parameters"]),
-                    "priority": row["priority"],
-                    "created_at": row["created_at"].isoformat(),
-                    "expires_at": row["expires_at"].isoformat(),
-                }
-                for row in rows
-            ],
-            "count": len(rows)
+            "orders": orders,
+            "count": len(orders)
         }
 
 
@@ -1461,6 +1494,7 @@ async def appliance_checkin(checkin: ApplianceCheckin):
             logging.warning(f"Failed to update appliances table: {e}")
 
         # === STEP 4: Get pending orders for this appliance ===
+        # Check admin_orders table (fleet management orders)
         order_rows = await conn.fetch("""
             SELECT order_id, order_type, parameters, priority, created_at, expires_at
             FROM admin_orders
@@ -1481,6 +1515,37 @@ async def appliance_checkin(checkin: ApplianceCheckin):
             }
             for row in order_rows
         ]
+
+        # Also check orders table (healing orders from incidents)
+        # These are created by the MCP server when incidents are reported
+        try:
+            healing_order_rows = await conn.fetch("""
+                SELECT o.order_id, o.runbook_id, o.parameters, o.issued_at, o.expires_at,
+                       i.id as incident_id
+                FROM orders o
+                JOIN appliances a ON o.appliance_id = a.id
+                LEFT JOIN incidents i ON i.order_id = o.id
+                WHERE a.site_id = $1
+                AND o.status = 'pending'
+                AND o.expires_at > NOW()
+                ORDER BY o.issued_at ASC
+            """, checkin.site_id)
+
+            for row in healing_order_rows:
+                params = row["parameters"] if isinstance(row["parameters"], dict) else {}
+                params["incident_id"] = str(row["incident_id"]) if row["incident_id"] else None
+                pending_orders.append({
+                    "order_id": row["order_id"],
+                    "order_type": "healing",
+                    "runbook_id": row["runbook_id"],
+                    "parameters": params,
+                    "priority": 10,  # Healing orders are high priority
+                    "created_at": row["issued_at"].isoformat() if row["issued_at"] else None,
+                    "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+                })
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to fetch healing orders: {e}")
 
         # === STEP 5: Get windows targets (credential-pull) ===
         windows_targets = []

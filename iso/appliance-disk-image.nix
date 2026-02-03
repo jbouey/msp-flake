@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.48";
+    version = "1.0.52";
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
@@ -360,6 +360,100 @@ in
   documentation.man.enable = false;
   documentation.nixos.enable = false;
   programs.command-not-found.enable = false;
+
+  # ============================================================================
+  # Auto-Install Service - Zero Friction USB to Internal Drive
+  # ============================================================================
+  systemd.services.msp-auto-install = {
+    description = "MSP Appliance Auto-Install to Internal Drive";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "local-fs.target" ];
+    before = [ "msp-auto-provision.service" ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+
+    script = ''
+      set -e
+      MARKER="/var/lib/msp/.installed-to-internal"
+      LOG_FILE="/var/lib/msp/install.log"
+
+      mkdir -p /var/lib/msp
+
+      log() {
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
+      }
+
+      # Skip if already installed to internal drive
+      if [ -f "$MARKER" ]; then
+        log "Already installed to internal drive, skipping"
+        exit 0
+      fi
+
+      # Find boot device
+      BOOT_DEV=$(findmnt -n -o SOURCE / | sed 's/[0-9]*$//' | sed 's/p$//')
+      BOOT_DEV_NAME=$(basename "$BOOT_DEV")
+      log "Boot device: $BOOT_DEV"
+
+      # Check if boot device is removable (USB)
+      IS_REMOVABLE=$(cat /sys/block/$BOOT_DEV_NAME/removable 2>/dev/null || echo "0")
+
+      if [ "$IS_REMOVABLE" != "1" ]; then
+        log "Not booting from removable media, marking as installed"
+        touch "$MARKER"
+        exit 0
+      fi
+
+      log "=== Booting from USB - Starting Auto-Install ==="
+
+      # Find internal drive (prefer NVMe, then SATA)
+      INTERNAL_DEV=""
+      for dev in /dev/nvme0n1 /dev/sda /dev/sdb /dev/vda; do
+        [ -b "$dev" ] || continue
+        DEV_NAME=$(basename "$dev" | sed 's/[0-9]*$//')
+        [ "$DEV_NAME" = "$BOOT_DEV_NAME" ] && continue
+
+        # Check it's not removable
+        REMOVABLE=$(cat /sys/block/$DEV_NAME/removable 2>/dev/null || echo "1")
+        if [ "$REMOVABLE" = "0" ]; then
+          SIZE=$(blockdev --getsize64 "$dev" 2>/dev/null || echo "0")
+          # Must be at least 20GB
+          if [ "$SIZE" -gt 20000000000 ]; then
+            INTERNAL_DEV="$dev"
+            log "Found internal drive: $INTERNAL_DEV ($(numfmt --to=iec $SIZE))"
+            break
+          fi
+        fi
+      done
+
+      if [ -z "$INTERNAL_DEV" ]; then
+        log "ERROR: No suitable internal drive found"
+        exit 0
+      fi
+
+      # Get boot disk size for progress
+      BOOT_SIZE=$(blockdev --getsize64 "$BOOT_DEV")
+      log "Cloning $BOOT_DEV ($(numfmt --to=iec $BOOT_SIZE)) to $INTERNAL_DEV"
+
+      # Clone boot disk to internal drive
+      log "Starting disk clone... (this takes 2-5 minutes)"
+      ${pkgs.coreutils}/bin/dd if="$BOOT_DEV" of="$INTERNAL_DEV" bs=4M status=progress conv=fsync 2>&1 | tee -a "$LOG_FILE"
+      ${pkgs.coreutils}/bin/sync
+
+      log "Clone complete!"
+      log "=== AUTO-INSTALL COMPLETE ==="
+      log "Remove USB and reboot to start from internal drive"
+      log "Rebooting in 10 seconds..."
+
+      # Give user time to see the message on console
+      sleep 10
+
+      # Reboot to internal drive
+      ${pkgs.systemd}/bin/systemctl reboot
+    '';
+  };
 
   # ============================================================================
   # Auto-Provisioning Service (same as ISO version)
