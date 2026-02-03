@@ -10,11 +10,19 @@ Auto-heal infrastructure, generate audit evidence, replace traditional MSPs at 7
 
 ## Current State
 
-**Agent Version:** v1.0.51 | **Session:** 81 Complete | **ISO:** v51
+**Quick start:** `python3 .agent/scripts/context-manager.py status`
 
-- See `.agent/PROJECT_SUMMARY.md` for full project overview
-- See `.agent/CONTEXT.md` for session state
-- See `IMPLEMENTATION-STATUS.md` for phase tracking
+**Primary context file:** `.agent/claude-progress.json` (JSON - single source of truth)
+
+**Session management:**
+```bash
+python3 .agent/scripts/context-manager.py status       # View state
+python3 .agent/scripts/context-manager.py new-session 86 description
+python3 .agent/scripts/context-manager.py end-session
+python3 .agent/scripts/context-manager.py compact      # Archive old sessions
+```
+
+**Reference docs:** `.agent/reference/` (credentials, network, decisions)
 
 ## Directory Structure
 
