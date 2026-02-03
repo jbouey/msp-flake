@@ -397,11 +397,14 @@ in
       BOOT_DEV_NAME=$(basename "$BOOT_DEV")
       log "Boot device: $BOOT_DEV"
 
-      # Check if boot device is removable (USB)
+      # Check if boot device is on USB bus (more reliable than removable flag)
+      IS_USB=$(readlink -f /sys/block/$BOOT_DEV_NAME/device | grep -q usb && echo "1" || echo "0")
       IS_REMOVABLE=$(cat /sys/block/$BOOT_DEV_NAME/removable 2>/dev/null || echo "0")
 
-      if [ "$IS_REMOVABLE" != "1" ]; then
-        log "Not booting from removable media, marking as installed"
+      log "Boot device $BOOT_DEV_NAME: USB=$IS_USB, removable=$IS_REMOVABLE"
+
+      if [ "$IS_USB" != "1" ] && [ "$IS_REMOVABLE" != "1" ]; then
+        log "Not booting from USB/removable media, marking as installed"
         touch "$MARKER"
         exit 0
       fi
