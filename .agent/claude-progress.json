@@ -1,54 +1,75 @@
 {
   "session": 85,
-  "updated": "2026-02-03T15:00:00Z",
+  "updated": "2026-02-03T09:45:00.000000Z",
   "agent_version": "1.0.52",
   "iso_version": "v52",
-
+  "disk_image_version": "v52",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "offline",
-    "vm_appliance": "blocked"
+    "physical_appliance": "bricked_grub",
+    "vm_appliance": "healthy_iso_limited"
   },
-
-  "current_blocker": {
-    "id": "chicken-egg-update",
-    "description": "Appliances on v1.0.49 crash processing update orders (missing mcp_api_key_file). Fix is in v1.0.52 but they need update to get it.",
-    "solution": "SSH to iMac gateway, then to VM appliance, manually patch files",
-    "commands": [
-      "ssh jrelly@192.168.88.50",
-      "ssh root@192.168.88.247",
-      "# Patch appliance_agent.py and evidence.py with getattr() fix",
-      "systemctl restart msp-compliance-agent"
-    ]
-  },
-
+  "current_blocker": "Physical appliance needs v52 disk image flash (user downloading 20GB)",
   "active_tasks": [
-    {"id": 1, "task": "Manual VM appliance update", "status": "blocked", "blocker": "chicken-egg-update"},
-    {"id": 2, "task": "Verify fleet update system", "status": "pending", "depends_on": 1},
-    {"id": 3, "task": "Evidence bundles to MinIO", "status": "pending"},
-    {"id": 4, "task": "First compliance packet", "status": "pending", "depends_on": 3}
+    {
+      "id": 1,
+      "task": "Manual VM appliance update",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "task": "Verify fleet update system",
+      "status": "blocked",
+      "note": "Need physical appliance running from disk image first"
+    },
+    {
+      "id": 3,
+      "task": "Flash physical appliance with v52 disk image",
+      "status": "in_progress",
+      "note": "User downloading appliance-image-v52.img (20GB)"
+    },
+    {
+      "id": 4,
+      "task": "Evidence bundles to MinIO",
+      "status": "pending"
+    },
+    {
+      "id": 5,
+      "task": "First compliance packet",
+      "status": "pending",
+      "depends_on": 4
+    }
   ],
-
   "completed_this_session": [
-    "Removed dry_run mode from all configs (production mode default)",
-    "Added circuit breaker for healing loops (5 attempts, 30min cooldown)",
-    "Created context engineering strategy based on Anthropic research",
-    "Implemented JSON-based progress tracking"
+    "Built v52 disk image with auto-install service",
+    "Fixed healing orders bug - orders table vs admin_orders table mismatch",
+    "Deployed fix to Central Command (7358723)",
+    "Identified VM disk_space issue: ISO boot = read-only squashfs, can't prune",
+    "Physical appliance GRUB bricked during A/B update attempt - need fresh flash"
   ],
-
   "recent_commits": [
-    {"hash": "81bd9a6", "message": "fix: Remove dry_run mode and add circuit breaker for healing loops"},
-    {"hash": "ada2b0c", "message": "docs: Session 84 - Fleet Update v52 deployment and compatibility fixes"}
+    {
+      "hash": "7358723",
+      "message": "fix: Connect healing orders to appliance order polling"
+    },
+    {
+      "hash": "81bd9a6",
+      "message": "fix: Remove dry_run mode and add circuit breaker for healing loops"
+    }
   ],
-
+  "key_findings": {
+    "healing_orders_bug": "Incidents created orders in 'orders' table, appliances polled 'admin_orders' - now fixed",
+    "vm_disk_space": "VM runs from ISO (squashfs read-only) - nix-collect-garbage cannot free space",
+    "disk_image_advantage": "Disk image has ext4 root where pruning works properly"
+  },
   "quick_commands": {
     "tests": "cd packages/compliance-agent && source venv/bin/activate && python -m pytest tests/ -v --tb=short",
     "vps_ssh": "ssh root@178.156.162.116",
     "imac_ssh": "ssh jrelly@192.168.88.50",
-    "appliance_status": "ssh root@178.156.162.116 \"docker exec mcp-postgres psql -U mcp -d mcp -c 'SELECT site_id, agent_version, last_checkin FROM appliances ORDER BY last_checkin DESC'\""
+    "appliance_status": "ssh root@178.156.162.116 \"docker exec mcp-postgres psql -U mcp -d mcp -c 'SELECT site_id, agent_version, last_checkin FROM appliances ORDER BY last_checkin DESC'\"",
+    "disk_image_url": "http://178.156.162.116:8081/appliance-image-v52.img"
   },
-
   "context_files": {
     "credentials": ".agent/LAB_CREDENTIALS.md",
     "architecture": "docs/ARCHITECTURE.md",
