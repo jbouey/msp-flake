@@ -1,0 +1,58 @@
+{
+  "session": 85,
+  "updated": "2026-02-03T15:00:00Z",
+  "agent_version": "1.0.52",
+  "iso_version": "v52",
+
+  "system_health": {
+    "vps_api": "healthy",
+    "dashboard": "healthy",
+    "physical_appliance": "offline",
+    "vm_appliance": "blocked"
+  },
+
+  "current_blocker": {
+    "id": "chicken-egg-update",
+    "description": "Appliances on v1.0.49 crash processing update orders (missing mcp_api_key_file). Fix is in v1.0.52 but they need update to get it.",
+    "solution": "SSH to iMac gateway, then to VM appliance, manually patch files",
+    "commands": [
+      "ssh jrelly@192.168.88.50",
+      "ssh root@192.168.88.247",
+      "# Patch appliance_agent.py and evidence.py with getattr() fix",
+      "systemctl restart msp-compliance-agent"
+    ]
+  },
+
+  "active_tasks": [
+    {"id": 1, "task": "Manual VM appliance update", "status": "blocked", "blocker": "chicken-egg-update"},
+    {"id": 2, "task": "Verify fleet update system", "status": "pending", "depends_on": 1},
+    {"id": 3, "task": "Evidence bundles to MinIO", "status": "pending"},
+    {"id": 4, "task": "First compliance packet", "status": "pending", "depends_on": 3}
+  ],
+
+  "completed_this_session": [
+    "Removed dry_run mode from all configs (production mode default)",
+    "Added circuit breaker for healing loops (5 attempts, 30min cooldown)",
+    "Created context engineering strategy based on Anthropic research",
+    "Implemented JSON-based progress tracking"
+  ],
+
+  "recent_commits": [
+    {"hash": "81bd9a6", "message": "fix: Remove dry_run mode and add circuit breaker for healing loops"},
+    {"hash": "ada2b0c", "message": "docs: Session 84 - Fleet Update v52 deployment and compatibility fixes"}
+  ],
+
+  "quick_commands": {
+    "tests": "cd packages/compliance-agent && source venv/bin/activate && python -m pytest tests/ -v --tb=short",
+    "vps_ssh": "ssh root@178.156.162.116",
+    "imac_ssh": "ssh jrelly@192.168.88.50",
+    "appliance_status": "ssh root@178.156.162.116 \"docker exec mcp-postgres psql -U mcp -d mcp -c 'SELECT site_id, agent_version, last_checkin FROM appliances ORDER BY last_checkin DESC'\""
+  },
+
+  "context_files": {
+    "credentials": ".agent/LAB_CREDENTIALS.md",
+    "architecture": "docs/ARCHITECTURE.md",
+    "phase_status": "IMPLEMENTATION-STATUS.md",
+    "session_logs": ".agent/sessions/"
+  }
+}
