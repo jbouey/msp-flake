@@ -1,16 +1,14 @@
 # iso/appliance-image.nix
 # Builds bootable installer ISO for MSP Compliance Appliance
 #
-# ZERO FRICTION INSTALL:
-# 1. Boot from this ISO (USB/CD)
-# 2. Auto-detects internal drive
-# 3. Partitions and runs nixos-install from flake
-# 4. Reboots to installed system
-# 5. Calls home for provisioning
+# ZERO FRICTION INSTALL (2 steps):
+# 1. Write ISO to USB
+# 2. Boot target hardware → auto-installs → reboots → done
 #
+# NO NETWORK REQUIRED - the full appliance closure is bundled in the ISO
 # Works on ANY x86_64 hardware - the flake is the golden image
 
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, applianceSystem, ... }:
 
 let
   # Build the compliance-agent package
@@ -140,10 +138,8 @@ in
     script = ''
       set -e
       LOG_FILE="/tmp/msp-install.log"
-      # Primary: Install from GitHub flake (requires network)
-      # Fallback: Minimal standalone config
-      GITHUB_FLAKE="github:jbouey/msp-flake#osiriscare-appliance-disk"
-      FLAKE_TARGET="osiriscare-appliance-disk"
+      # The full appliance system is bundled in the ISO - no network needed
+      APPLIANCE_SYSTEM="${applianceSystem}"
 
       log() {
         echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
@@ -248,70 +244,18 @@ in
       log "Generating hardware configuration..."
       nixos-generate-config --root /mnt
 
-      # Run nixos-install
-      # Priority 1: GitHub flake (full appliance with compliance-agent)
-      # Priority 2: Minimal standalone config (basic NixOS, SSH only)
-      log "Running nixos-install..."
+      # Run nixos-install using the bundled appliance system
+      # NO NETWORK REQUIRED - everything is in the ISO
+      log "Installing OsirisCare Appliance from bundled system..."
+      log "System: $APPLIANCE_SYSTEM"
 
-      INSTALL_SUCCESS=false
-
-      # Try GitHub flake first (requires network connectivity)
-      log "Attempting install from GitHub flake: $GITHUB_FLAKE"
-      if timeout 10 curl -s --head https://github.com >/dev/null 2>&1; then
-        log "Network available - installing from GitHub flake..."
-        log "This downloads ~2GB and installs the full compliance appliance"
-        if nixos-install --flake "$GITHUB_FLAKE" --no-root-passwd 2>&1 | tee -a "$LOG_FILE"; then
-          INSTALL_SUCCESS=true
-          log "SUCCESS: Full appliance installed from GitHub flake"
-        else
-          log "GitHub flake install failed, falling back to minimal config"
-        fi
+      # nixos-install --system uses the pre-built closure directly
+      if nixos-install --system "$APPLIANCE_SYSTEM" --no-root-passwd 2>&1 | tee -a "$LOG_FILE"; then
+        log "SUCCESS: Full compliance appliance installed"
       else
-        log "No network - cannot fetch GitHub flake"
-      fi
-
-      # Fallback: Minimal standalone config (offline)
-      if [ "$INSTALL_SUCCESS" = false ]; then
-        log "Installing minimal standalone configuration..."
-        mkdir -p /mnt/etc/nixos
-        cat > /mnt/etc/nixos/configuration.nix << 'NIXCFG'
-{ config, pkgs, lib, ... }:
-{
-  imports = [ ./hardware-configuration.nix ];
-
-  boot.loader.grub.enable = true;
-  boot.loader.grub.device = "nodev";
-  boot.loader.grub.efiSupport = true;
-  boot.loader.grub.efiInstallAsRemovable = true;
-  boot.loader.efi.canTouchEfiVariables = false;
-
-  fileSystems."/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; };
-  fileSystems."/boot" = { device = "/dev/disk/by-label/ESP"; fsType = "vfat"; };
-
-  nixpkgs.config.allowUnfree = true;
-  hardware.enableAllFirmware = true;
-  hardware.enableRedistributableFirmware = true;
-
-  networking.useDHCP = true;
-  networking.hostName = "osiriscare-appliance";
-
-  services.openssh.enable = true;
-  services.openssh.settings.PermitRootLogin = "yes";
-
-  # Root password: osiris2024
-  users.users.root.hashedPassword = "$6$w8KL8dUxFMVF4DmE$NQX0TULi8a8pSytrYP83Xu4vz6sydv0PdtZpSe5Dd7henertz6cpJHmMgTtdQ67ijLgiHkaMuhsNDn//CS8eV1";
-
-  system.stateVersion = "24.05";
-}
-NIXCFG
-        if nixos-install --no-root-passwd 2>&1 | tee -a "$LOG_FILE"; then
-          INSTALL_SUCCESS=true
-          log "SUCCESS: Minimal system installed (SSH + root access)"
-          log "NOTE: Compliance agent not installed - run nixos-rebuild with flake after boot"
-        else
-          log "ERROR: Installation failed completely"
-          exit 1
-        fi
+        log "ERROR: Installation failed"
+        log "Check $LOG_FILE for details"
+        exit 1
       fi
 
       log ""
@@ -333,14 +277,19 @@ NIXCFG
 
     ╔═══════════════════════════════════════════════════════════╗
     ║        OsirisCare Compliance Appliance INSTALLER          ║
+    ║               ZERO-FRICTION DEPLOYMENT                    ║
     ╚═══════════════════════════════════════════════════════════╝
 
-    AUTO-INSTALL: Running in background - check:
-      journalctl -u msp-auto-install -f
+    AUTO-INSTALL is running - the full appliance is bundled in this ISO.
+    NO NETWORK REQUIRED.
 
-    Manual install:
-      Run 'ip addr' to see IP addresses
-      Run 'msp-install' to start manual installation
+    Check progress: journalctl -u msp-auto-install -f
+
+    The system will automatically:
+      1. Detect internal drive
+      2. Partition and format
+      3. Install full compliance appliance
+      4. Reboot
 
   '';
 
@@ -644,6 +593,10 @@ NIXCFG
   isoImage.isoName = lib.mkForce "osiriscare-appliance.iso";
   isoImage.makeEfiBootable = true;
   isoImage.makeUsbBootable = true;
+
+  # Bundle the full appliance system closure in the ISO
+  # This enables offline installation - no network required
+  isoImage.storeContents = [ applianceSystem ];
 
   # ============================================================================
   # Auto-Provisioning Service (USB + MAC-based)

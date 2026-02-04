@@ -165,20 +165,27 @@
         default = logWatcherModule;
       };
 
-      # OsirisCare Appliance ISO (live boot)
-      nixosConfigurations.osiriscare-appliance = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        modules = [
-          "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
-          ./iso/appliance-image.nix
-        ];
-      };
-
       # OsirisCare Appliance Disk Image (for permanent installation)
+      # This is the "golden configuration" that gets installed
       nixosConfigurations.osiriscare-appliance-disk = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
           ./iso/appliance-disk-image.nix
+        ];
+      };
+
+      # OsirisCare Installer ISO (boots and auto-installs)
+      # ZERO FRICTION: Write to USB → Boot → Done
+      # The full appliance closure is bundled - no network required
+      nixosConfigurations.osiriscare-appliance = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        specialArgs = {
+          # Pass the pre-built appliance system to bundle in the ISO
+          applianceSystem = self.nixosConfigurations.osiriscare-appliance-disk.config.system.build.toplevel;
+        };
+        modules = [
+          "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
+          ./iso/appliance-image.nix
         ];
       };
 
