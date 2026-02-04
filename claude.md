@@ -8,6 +8,48 @@ Auto-heal infrastructure, generate audit evidence, replace traditional MSPs at 7
 **Target:** 1-50 provider practices in NEPA region
 **Pricing:** $200-3000/mo based on size/tier
 
+## Zero-Friction Appliance Deployment
+
+**Golden Flake Architecture:** The NixOS flake (`flake.nix`) is the single source of truth for appliance configuration. It is hardware-agnostic and deployable to ANY x86_64 hardware via `nixos-install`.
+
+**DO NOT use `dd` disk images.** VM-built disk images cause firmware mismatches, ESP mount timeouts, and hardware-specific failures when written to different physical hardware.
+
+**Correct Deployment Flow:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Boot Installer ISO (USB)                                    │
+│     └─ iso/appliance-image.nix builds the installer             │
+│                                                                 │
+│  2. msp-auto-install service runs automatically                 │
+│     └─ Detects internal drive (skips USB/removable)             │
+│     └─ Partitions: GPT with ESP (512MB) + root (remaining)      │
+│     └─ Formats: FAT32 (ESP) + ext4 (root)                       │
+│     └─ Runs nixos-install --flake .#appliance                   │
+│                                                                 │
+│  3. Reboot to installed system                                  │
+│     └─ compliance-agent starts, calls home to Central Command   │
+│     └─ MAC address lookup provisions appliance identity         │
+│                                                                 │
+│  4. Ready for production                                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Files:**
+- `iso/appliance-image.nix` - Installer ISO with auto-install service
+- `iso/configuration.nix` - Base appliance configuration
+- `flake.nix` - Defines `nixosConfigurations.appliance`
+
+**Build & Deploy:**
+```bash
+# On VPS: Build installer ISO
+nix build .#appliance-iso
+
+# Write to USB (on Mac)
+sudo dd if=result/iso/*.iso of=/dev/diskN bs=4m status=progress
+
+# Boot target hardware from USB - installation is automatic
+```
+
 ## Current State
 
 **Quick start:** `python3 .agent/scripts/context-manager.py status`

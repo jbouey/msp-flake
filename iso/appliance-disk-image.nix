@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.52";
+    version = "1.0.55";
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
@@ -87,6 +87,7 @@ in
   fileSystems."/boot" = {
     device = "/dev/disk/by-label/ESP";
     fsType = "vfat";
+    options = [ "nofail" "x-systemd.device-timeout=10" ];  # Don't block boot if ESP is slow
   };
 
   # ============================================================================
@@ -121,6 +122,13 @@ in
 
   # No GUI - headless operation
   services.xserver.enable = false;
+
+  # ============================================================================
+  # Hardware Firmware - Support various hardware (Dell, HP, Lenovo, etc.)
+  # ============================================================================
+  nixpkgs.config.allowUnfree = true;  # Required for proprietary firmware (AMD, Intel, etc.)
+  hardware.enableAllFirmware = true;  # Includes all firmware blobs
+  hardware.enableRedistributableFirmware = true;  # Subset that's redistributable
 
   # Console login requires password for physical security (HIPAA §164.310)
   # Auto-login disabled in production - use SSH for remote access

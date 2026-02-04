@@ -1,7 +1,14 @@
 # iso/appliance-image.nix
-# Builds bootable USB image for MSP Compliance Appliance
-# Target: HP T640 Thin Client (4-8GB RAM, 32-64GB SSD)
-# RAM Budget: ~300MB total
+# Builds bootable installer ISO for MSP Compliance Appliance
+#
+# ZERO FRICTION INSTALL:
+# 1. Boot from this ISO (USB/CD)
+# 2. Auto-detects internal drive
+# 3. Partitions and runs nixos-install from flake
+# 4. Reboots to installed system
+# 5. Calls home for provisioning
+#
+# Works on ANY x86_64 hardware - the flake is the golden image
 
 { config, pkgs, lib, ... }:
 
@@ -97,24 +104,243 @@ in
   # No GUI - headless operation
   services.xserver.enable = false;
 
+  # ============================================================================
+  # Hardware Firmware - Support various hardware (Dell, HP, Lenovo, etc.)
+  # ============================================================================
+  nixpkgs.config.allowUnfree = true;  # Required for proprietary firmware (AMD, Intel, etc.)
+  hardware.enableAllFirmware = true;  # Includes all firmware blobs
+  hardware.enableRedistributableFirmware = true;  # Subset that's redistributable
+
   # Console login requires password for physical security (HIPAA §164.310)
   # Auto-login disabled in production - use SSH for remote access
   services.getty.autologinUser = lib.mkForce null;
+
+  # ============================================================================
+  # ZERO FRICTION AUTO-INSTALL SERVICE
+  # Detects internal drive, partitions, runs nixos-install from flake
+  # ============================================================================
+  systemd.services.msp-auto-install = {
+    description = "MSP Appliance Zero-Friction Auto-Install";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      StandardOutput = "journal+console";
+      StandardError = "journal+console";
+    };
+
+    path = with pkgs; [
+      util-linux parted dosfstools e2fsprogs nixos-install-tools
+      git curl coreutils gnugrep gawk
+    ];
+
+    script = ''
+      set -e
+      LOG_FILE="/tmp/msp-install.log"
+      # Primary: Install from GitHub flake (requires network)
+      # Fallback: Minimal standalone config
+      GITHUB_FLAKE="github:jbouey/msp-flake#osiriscare-appliance-disk"
+      FLAKE_TARGET="osiriscare-appliance-disk"
+
+      log() {
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
+        echo "$1"  # Also show on console
+      }
+
+      log "=== OsirisCare Zero-Friction Installer ==="
+
+      # Check if we're running from live ISO (squashfs root)
+      if ! grep -q "squashfs" /proc/mounts; then
+        log "Not running from live ISO, skipping auto-install"
+        exit 0
+      fi
+
+      # Check if already installed (marker file would exist on installed system)
+      if [ -f "/var/lib/msp/.installed" ]; then
+        log "Already installed, skipping"
+        exit 0
+      fi
+
+      log "Running from live ISO - starting auto-install..."
+
+      # Find internal drive (skip USB/removable)
+      BOOT_DEV=$(findmnt -n -o SOURCE / | sed 's/\[.*$//' | head -1)
+      log "Boot device: $BOOT_DEV"
+
+      INTERNAL_DEV=""
+      for dev in /dev/nvme0n1 /dev/sda /dev/sdb /dev/vda; do
+        [ -b "$dev" ] || continue
+        DEV_NAME=$(basename "$dev")
+
+        # Skip if this is our boot device
+        echo "$BOOT_DEV" | grep -q "$DEV_NAME" && continue
+
+        # Check if removable
+        REMOVABLE=$(cat /sys/block/$DEV_NAME/removable 2>/dev/null || echo "1")
+        [ "$REMOVABLE" = "1" ] && continue
+
+        # Check size (must be at least 16GB)
+        SIZE=$(blockdev --getsize64 "$dev" 2>/dev/null || echo "0")
+        if [ "$SIZE" -gt 16000000000 ]; then
+          INTERNAL_DEV="$dev"
+          log "Found internal drive: $INTERNAL_DEV ($(numfmt --to=iec $SIZE))"
+          break
+        fi
+      done
+
+      if [ -z "$INTERNAL_DEV" ]; then
+        log "ERROR: No suitable internal drive found"
+        log "Available drives:"
+        lsblk -d -o NAME,SIZE,TYPE,MOUNTPOINT | tee -a "$LOG_FILE"
+        exit 0  # Don't fail - allow manual intervention
+      fi
+
+      # Confirmation display
+      log ""
+      log "============================================"
+      log "  INSTALLING TO: $INTERNAL_DEV"
+      log "  THIS WILL ERASE ALL DATA ON THIS DRIVE"
+      log "============================================"
+      log ""
+      log "Starting in 10 seconds... (Ctrl+C to cancel)"
+      sleep 10
+
+      # Partition the drive
+      log "Partitioning $INTERNAL_DEV..."
+      wipefs -a "$INTERNAL_DEV"
+      parted -s "$INTERNAL_DEV" -- mklabel gpt
+      parted -s "$INTERNAL_DEV" -- mkpart ESP fat32 1MiB 512MiB
+      parted -s "$INTERNAL_DEV" -- set 1 esp on
+      parted -s "$INTERNAL_DEV" -- mkpart primary 512MiB 100%
+
+      # Wait for partitions to appear
+      sleep 2
+      partprobe "$INTERNAL_DEV"
+      sleep 2
+
+      # Determine partition names (nvme vs sda style)
+      if [[ "$INTERNAL_DEV" == *"nvme"* ]]; then
+        ESP_PART="''${INTERNAL_DEV}p1"
+        ROOT_PART="''${INTERNAL_DEV}p2"
+      else
+        ESP_PART="''${INTERNAL_DEV}1"
+        ROOT_PART="''${INTERNAL_DEV}2"
+      fi
+
+      log "ESP partition: $ESP_PART"
+      log "Root partition: $ROOT_PART"
+
+      # Format partitions
+      log "Formatting partitions..."
+      mkfs.fat -F32 -n ESP "$ESP_PART"
+      mkfs.ext4 -L nixos -F "$ROOT_PART"
+
+      # Mount for installation
+      log "Mounting partitions..."
+      mount "$ROOT_PART" /mnt
+      mkdir -p /mnt/boot
+      mount "$ESP_PART" /mnt/boot
+
+      # Generate hardware config for this specific machine
+      log "Generating hardware configuration..."
+      nixos-generate-config --root /mnt
+
+      # Run nixos-install
+      # Priority 1: GitHub flake (full appliance with compliance-agent)
+      # Priority 2: Minimal standalone config (basic NixOS, SSH only)
+      log "Running nixos-install..."
+
+      INSTALL_SUCCESS=false
+
+      # Try GitHub flake first (requires network connectivity)
+      log "Attempting install from GitHub flake: $GITHUB_FLAKE"
+      if timeout 10 curl -s --head https://github.com >/dev/null 2>&1; then
+        log "Network available - installing from GitHub flake..."
+        log "This downloads ~2GB and installs the full compliance appliance"
+        if nixos-install --flake "$GITHUB_FLAKE" --no-root-passwd 2>&1 | tee -a "$LOG_FILE"; then
+          INSTALL_SUCCESS=true
+          log "SUCCESS: Full appliance installed from GitHub flake"
+        else
+          log "GitHub flake install failed, falling back to minimal config"
+        fi
+      else
+        log "No network - cannot fetch GitHub flake"
+      fi
+
+      # Fallback: Minimal standalone config (offline)
+      if [ "$INSTALL_SUCCESS" = false ]; then
+        log "Installing minimal standalone configuration..."
+        mkdir -p /mnt/etc/nixos
+        cat > /mnt/etc/nixos/configuration.nix << 'NIXCFG'
+{ config, pkgs, lib, ... }:
+{
+  imports = [ ./hardware-configuration.nix ];
+
+  boot.loader.grub.enable = true;
+  boot.loader.grub.device = "nodev";
+  boot.loader.grub.efiSupport = true;
+  boot.loader.grub.efiInstallAsRemovable = true;
+  boot.loader.efi.canTouchEfiVariables = false;
+
+  fileSystems."/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; };
+  fileSystems."/boot" = { device = "/dev/disk/by-label/ESP"; fsType = "vfat"; };
+
+  nixpkgs.config.allowUnfree = true;
+  hardware.enableAllFirmware = true;
+  hardware.enableRedistributableFirmware = true;
+
+  networking.useDHCP = true;
+  networking.hostName = "osiriscare-appliance";
+
+  services.openssh.enable = true;
+  services.openssh.settings.PermitRootLogin = "yes";
+
+  # Root password: osiris2024
+  users.users.root.hashedPassword = "$6$w8KL8dUxFMVF4DmE$NQX0TULi8a8pSytrYP83Xu4vz6sydv0PdtZpSe5Dd7henertz6cpJHmMgTtdQ67ijLgiHkaMuhsNDn//CS8eV1";
+
+  system.stateVersion = "24.05";
+}
+NIXCFG
+        if nixos-install --no-root-passwd 2>&1 | tee -a "$LOG_FILE"; then
+          INSTALL_SUCCESS=true
+          log "SUCCESS: Minimal system installed (SSH + root access)"
+          log "NOTE: Compliance agent not installed - run nixos-rebuild with flake after boot"
+        else
+          log "ERROR: Installation failed completely"
+          exit 1
+        fi
+      fi
+
+      log ""
+      log "============================================"
+      log "  INSTALLATION COMPLETE!"
+      log "  Remove USB/ISO and reboot"
+      log "============================================"
+      log ""
+      log "Rebooting in 15 seconds..."
+      sleep 15
+
+      umount -R /mnt
+      systemctl reboot
+    '';
+  };
 
   # Show IP address on login
   environment.etc."motd".text = ''
 
     ╔═══════════════════════════════════════════════════════════╗
-    ║           OsirisCare Compliance Appliance                 ║
+    ║        OsirisCare Compliance Appliance INSTALLER          ║
     ╚═══════════════════════════════════════════════════════════╝
 
-    Access via: ssh root@osiriscare-appliance.local
-    Status page: http://osiriscare-appliance.local
-    Local Portal: http://osiriscare-appliance.local:8083
+    AUTO-INSTALL: Running in background - check:
+      journalctl -u msp-auto-install -f
 
-    Run 'ip addr' to see IP addresses
-    Run 'journalctl -u compliance-agent -f' to watch agent
-    Run 'journalctl -u network-scanner -f' to watch scanner
+    Manual install:
+      Run 'ip addr' to see IP addresses
+      Run 'msp-install' to start manual installation
 
   '';
 

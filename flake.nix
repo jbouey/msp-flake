@@ -182,7 +182,12 @@
         ];
       };
 
-      # Raw disk image for writing to SSD/USB (20GB, GPT, EFI)
+      # Installer ISO for zero-friction deployment
+      packages.x86_64-linux.appliance-iso =
+        self.nixosConfigurations.osiriscare-appliance.config.system.build.isoImage;
+
+      # Raw disk image for writing to SSD/USB (20GB, GPT, EFI) - DEPRECATED
+      # Use appliance-iso instead for proper nixos-install on any hardware
       packages.x86_64-linux.appliance-disk-image =
         let
           pkgs = import nixpkgs { system = "x86_64-linux"; };
@@ -197,11 +202,12 @@
           format = "raw";
           diskSize = 20 * 1024;  # 20GB
           partitionTableType = "efi";
-          # Create ESP partition for EFI boot
-          additionalSpace = "1G";  # Extra space for updates
+          bootSize = "512M";  # Larger boot partition for kernels
+          additionalSpace = "2G";  # Extra space for updates
+          installBootLoader = true;
           copyChannel = false;
-          # Root partition label (ESP label is set internally by make-disk-image)
           label = "nixos";
+          memSize = 2048;  # More memory for the build VM
         };
 
       # Example NixOS host (VM/container) using the module
