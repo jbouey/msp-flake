@@ -175,14 +175,10 @@
       };
 
       # OsirisCare Installer ISO (boots and auto-installs)
-      # ZERO FRICTION: Write to USB → Boot → Done
-      # The full appliance closure is bundled - no network required
+      # Currently requires network for nixos-install
+      # TODO: Bundle closure for true offline install
       nixosConfigurations.osiriscare-appliance = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
-        specialArgs = {
-          # Pass the pre-built appliance system to bundle in the ISO
-          applianceSystem = self.nixosConfigurations.osiriscare-appliance-disk.config.system.build.toplevel;
-        };
         modules = [
           "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
           ./iso/appliance-image.nix

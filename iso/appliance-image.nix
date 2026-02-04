@@ -8,7 +8,7 @@
 # NO NETWORK REQUIRED - the full appliance closure is bundled in the ISO
 # Works on ANY x86_64 hardware - the flake is the golden image
 
-{ config, pkgs, lib, applianceSystem, ... }:
+{ config, pkgs, lib, ... }:
 
 let
   # Build the compliance-agent package
@@ -138,8 +138,8 @@ in
     script = ''
       set -e
       LOG_FILE="/tmp/msp-install.log"
-      # The full appliance system is bundled in the ISO - no network needed
-      APPLIANCE_SYSTEM="${applianceSystem}"
+      # Note: Currently requires network for nixos-install
+      # TODO: Bundle full closure for offline install
 
       log() {
         echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
@@ -244,19 +244,26 @@ in
       log "Generating hardware configuration..."
       nixos-generate-config --root /mnt
 
-      # Run nixos-install using the bundled appliance system
-      # NO NETWORK REQUIRED - everything is in the ISO
-      log "Installing OsirisCare Appliance from bundled system..."
-      log "System: $APPLIANCE_SYSTEM"
+      # Install from the GitHub flake - this gets the FULL appliance with compliance-agent
+      FLAKE_URL="github:jbouey/msp-flake#osiriscare-appliance-disk"
 
-      # nixos-install --system uses the pre-built closure directly
-      if nixos-install --system "$APPLIANCE_SYSTEM" --no-root-passwd 2>&1 | tee -a "$LOG_FILE"; then
-        log "SUCCESS: Full compliance appliance installed"
+      log "Installing from flake: $FLAKE_URL"
+      log "This fetches the full appliance configuration from GitHub..."
+
+      if nixos-install --flake "$FLAKE_URL" --no-root-passwd 2>&1 | tee -a "$LOG_FILE"; then
+        log "SUCCESS: Full OsirisCare appliance installed"
       else
-        log "ERROR: Installation failed"
-        log "Check $LOG_FILE for details"
+        EXIT_CODE=$?
+        log "ERROR: nixos-install failed with exit code $EXIT_CODE"
+        log "Check network connectivity and try again"
+        log "Manual install: nixos-install --flake $FLAKE_URL --no-root-passwd"
         exit 1
       fi
+
+      # Verify installation
+      log "Verifying installation..."
+      ls -la /mnt/boot/ 2>/dev/null | tee -a "$LOG_FILE"
+      log "Nix store entries: $(ls /mnt/nix/store 2>/dev/null | wc -l)"
 
       log ""
       log "============================================"
@@ -594,9 +601,6 @@ in
   isoImage.makeEfiBootable = true;
   isoImage.makeUsbBootable = true;
 
-  # Bundle the full appliance system closure in the ISO
-  # This enables offline installation - no network required
-  isoImage.storeContents = [ applianceSystem ];
 
   # ============================================================================
   # Auto-Provisioning Service (USB + MAC-based)
