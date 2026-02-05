@@ -95,8 +95,8 @@ in
   networking.hostName = lib.mkDefault "osiriscare-appliance";
   system.stateVersion = "24.05";
 
-  # Minimal boot - fast startup
-  boot.kernelParams = [ "console=tty1" "quiet" ];
+  # Boot with serial console for debugging
+  boot.kernelParams = [ "console=tty1" "console=ttyS0,115200" ];
   boot.loader.timeout = lib.mkForce 3;
 
   # No GUI - headless operation
@@ -133,6 +133,7 @@ in
     path = with pkgs; [
       util-linux parted dosfstools e2fsprogs nixos-install-tools
       git curl coreutils gnugrep gawk
+      nix  # Required - nixos-install calls nix and nix-build internally
     ];
 
     script = ''
@@ -147,12 +148,21 @@ in
       }
 
       log "=== OsirisCare Zero-Friction Installer ==="
+      log "DEBUG: Starting installer script"
+
+      # Show all block devices
+      log "DEBUG: Available block devices:"
+      lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL | tee -a "$LOG_FILE"
 
       # Check if we're running from live ISO (squashfs root)
+      log "DEBUG: Checking /proc/mounts for squashfs..."
+      grep squashfs /proc/mounts | tee -a "$LOG_FILE" || log "DEBUG: No squashfs found"
+
       if ! grep -q "squashfs" /proc/mounts; then
         log "Not running from live ISO, skipping auto-install"
         exit 0
       fi
+      log "DEBUG: squashfs check passed"
 
       # Check if already installed (marker file would exist on installed system)
       if [ -f "/var/lib/msp/.installed" ]; then
@@ -164,26 +174,34 @@ in
 
       # Find internal drive (skip USB/removable)
       BOOT_DEV=$(findmnt -n -o SOURCE / | sed 's/\[.*$//' | head -1)
-      log "Boot device: $BOOT_DEV"
+      log "DEBUG: Boot device from findmnt: $BOOT_DEV"
 
       INTERNAL_DEV=""
-      for dev in /dev/nvme0n1 /dev/sda /dev/sdb /dev/vda; do
-        [ -b "$dev" ] || continue
+      for dev in /dev/sda /dev/sdb /dev/vda /dev/nvme0n1; do
+        log "DEBUG: Checking $dev..."
+        [ -b "$dev" ] || { log "DEBUG: $dev not a block device"; continue; }
         DEV_NAME=$(basename "$dev")
 
         # Skip if this is our boot device
-        echo "$BOOT_DEV" | grep -q "$DEV_NAME" && continue
+        if echo "$BOOT_DEV" | grep -q "$DEV_NAME"; then
+          log "DEBUG: Skipping $dev - matches boot device"
+          continue
+        fi
 
         # Check if removable
         REMOVABLE=$(cat /sys/block/$DEV_NAME/removable 2>/dev/null || echo "1")
-        [ "$REMOVABLE" = "1" ] && continue
+        log "DEBUG: $dev removable=$REMOVABLE"
+        [ "$REMOVABLE" = "1" ] && { log "DEBUG: Skipping $dev - removable"; continue; }
 
         # Check size (must be at least 16GB)
         SIZE=$(blockdev --getsize64 "$dev" 2>/dev/null || echo "0")
+        log "DEBUG: $dev size=$SIZE"
         if [ "$SIZE" -gt 16000000000 ]; then
           INTERNAL_DEV="$dev"
           log "Found internal drive: $INTERNAL_DEV ($(numfmt --to=iec $SIZE))"
           break
+        else
+          log "DEBUG: $dev too small (need >16GB)"
         fi
       done
 
@@ -576,16 +594,21 @@ in
   '';
 
   # ============================================================================
-  # SSH for emergency access only
+  # SSH for emergency access
+  # Live ISO: password enabled for debugging
+  # Installed: key-only auth
   # ============================================================================
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = lib.mkForce "no";  # Root SSH disabled - use msp user + sudo
-      PasswordAuthentication = lib.mkForce false;
+      PermitRootLogin = lib.mkForce "yes";  # Allow root SSH on live ISO for debugging
+      PasswordAuthentication = lib.mkForce true;  # Enable password on live ISO
       KbdInteractiveAuthentication = lib.mkForce false;
     };
   };
+
+  # Root password for live ISO debugging (not for installed system)
+  users.users.root.initialPassword = "osiris2024";
 
   # ============================================================================
   # Reduce image size - disable unnecessary features
