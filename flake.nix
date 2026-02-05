@@ -175,8 +175,7 @@
       };
 
       # OsirisCare Installer ISO (boots and auto-installs)
-      # Currently requires network for nixos-install
-      # TODO: Bundle closure for true offline install
+      # Requires network - nixos-install fetches flake from GitHub
       nixosConfigurations.osiriscare-appliance = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [

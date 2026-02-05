@@ -1,11 +1,12 @@
 # iso/appliance-image.nix
 # Builds bootable installer ISO for MSP Compliance Appliance
 #
-# ZERO FRICTION INSTALL (2 steps):
+# ZERO FRICTION INSTALL (3 steps):
 # 1. Write ISO to USB
-# 2. Boot target hardware → auto-installs → reboots → done
+# 2. Boot target hardware (must have internet access)
+# 3. Auto-installs from GitHub flake → reboots → done
 #
-# NO NETWORK REQUIRED - the full appliance closure is bundled in the ISO
+# REQUIRES NETWORK - nixos-install fetches the appliance flake from GitHub
 # Works on ANY x86_64 hardware - the flake is the golden image
 
 { config, pkgs, lib, ... }:
@@ -14,7 +15,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.52";  # Session 83 - Runbook security fixes, PHI scrubbing, CSRF fix
+    version = "1.0.55";  # Session 86 - Installer fixes, MSP-DATA partition
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
@@ -139,8 +140,6 @@ in
     script = ''
       set -e
       LOG_FILE="/tmp/msp-install.log"
-      # Note: Currently requires network for nixos-install
-      # TODO: Bundle full closure for offline install
 
       log() {
         echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
@@ -222,13 +221,14 @@ in
       log "Starting in 10 seconds... (Ctrl+C to cancel)"
       sleep 10
 
-      # Partition the drive
+      # Partition the drive: ESP (512MB) + MSP-DATA (2GB) + root (rest)
       log "Partitioning $INTERNAL_DEV..."
       wipefs -a "$INTERNAL_DEV"
       parted -s "$INTERNAL_DEV" -- mklabel gpt
       parted -s "$INTERNAL_DEV" -- mkpart ESP fat32 1MiB 512MiB
       parted -s "$INTERNAL_DEV" -- set 1 esp on
-      parted -s "$INTERNAL_DEV" -- mkpart primary 512MiB 100%
+      parted -s "$INTERNAL_DEV" -- mkpart MSP-DATA ext4 512MiB 2560MiB
+      parted -s "$INTERNAL_DEV" -- mkpart primary 2560MiB 100%
 
       # Wait for partitions to appear
       sleep 2
@@ -238,18 +238,22 @@ in
       # Determine partition names (nvme vs sda style)
       if [[ "$INTERNAL_DEV" == *"nvme"* ]]; then
         ESP_PART="''${INTERNAL_DEV}p1"
-        ROOT_PART="''${INTERNAL_DEV}p2"
+        DATA_PART="''${INTERNAL_DEV}p2"
+        ROOT_PART="''${INTERNAL_DEV}p3"
       else
         ESP_PART="''${INTERNAL_DEV}1"
-        ROOT_PART="''${INTERNAL_DEV}2"
+        DATA_PART="''${INTERNAL_DEV}2"
+        ROOT_PART="''${INTERNAL_DEV}3"
       fi
 
       log "ESP partition: $ESP_PART"
+      log "MSP-DATA partition: $DATA_PART"
       log "Root partition: $ROOT_PART"
 
       # Format partitions
       log "Formatting partitions..."
       mkfs.fat -F32 -n ESP "$ESP_PART"
+      mkfs.ext4 -L MSP-DATA -F "$DATA_PART"
       mkfs.ext4 -L nixos -F "$ROOT_PART"
 
       # Mount for installation
@@ -257,16 +261,18 @@ in
       mount "$ROOT_PART" /mnt
       mkdir -p /mnt/boot
       mount "$ESP_PART" /mnt/boot
+      mkdir -p /mnt/var/lib/msp
+      mount "$DATA_PART" /mnt/var/lib/msp
 
       # Generate hardware config for this specific machine
       log "Generating hardware configuration..."
       nixos-generate-config --root /mnt
 
-      # Install from the GitHub flake - this gets the FULL appliance with compliance-agent
+      # Install from the GitHub flake - fetches the full appliance with compliance-agent
       FLAKE_URL="github:jbouey/msp-flake#osiriscare-appliance-disk"
 
       log "Installing from flake: $FLAKE_URL"
-      log "This fetches the full appliance configuration from GitHub..."
+      log "Fetching appliance configuration from GitHub (requires network)..."
 
       if nixos-install --flake "$FLAKE_URL" --no-root-passwd 2>&1 | tee -a "$LOG_FILE"; then
         log "SUCCESS: Full OsirisCare appliance installed"
@@ -305,15 +311,15 @@ in
     ║               ZERO-FRICTION DEPLOYMENT                    ║
     ╚═══════════════════════════════════════════════════════════╝
 
-    AUTO-INSTALL is running - the full appliance is bundled in this ISO.
-    NO NETWORK REQUIRED.
+    AUTO-INSTALL is running. Network connection required.
+    The installer fetches the appliance configuration from GitHub.
 
     Check progress: journalctl -u msp-auto-install -f
 
     The system will automatically:
       1. Detect internal drive
-      2. Partition and format
-      3. Install full compliance appliance
+      2. Partition and format (ESP + MSP-DATA + root)
+      3. Install appliance via nixos-install (requires internet)
       4. Reboot
 
   '';
@@ -560,12 +566,11 @@ in
 
   # ============================================================================
   # Persistent storage for config, evidence, and A/B update state
-  # NOTE: These mounts are for installed systems with proper partitions
-  # Live ISO testing falls back to tmpfs
+  # NOTE: These mounts won't exist on the live ISO (nofail prevents boot failure)
+  # They apply after nixos-install when booted from the installed system
   # ============================================================================
 
-  # Data partition for persistent storage
-  # Uses partlabel for A/B scheme compatibility
+  # Data partition (2GB) for compliance evidence, config, and state
   fileSystems."/var/lib/msp" = {
     device = "/dev/disk/by-partlabel/MSP-DATA";
     fsType = "ext4";

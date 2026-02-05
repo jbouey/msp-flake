@@ -90,6 +90,14 @@ in
     options = [ "nofail" "x-systemd.device-timeout=10" ];  # Don't block boot if ESP is slow
   };
 
+  # Persistent data partition for compliance evidence, config, and state
+  fileSystems."/var/lib/msp" = {
+    device = "/dev/disk/by-partlabel/MSP-DATA";
+    fsType = "ext4";
+    options = [ "defaults" "noatime" "nofail" ];
+    neededForBoot = false;
+  };
+
   # ============================================================================
   # Boot configuration for installed system (not live ISO)
   # ============================================================================
