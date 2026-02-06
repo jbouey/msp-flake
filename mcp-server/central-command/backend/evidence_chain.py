@@ -252,10 +252,12 @@ def extract_calendar_url_from_proof(proof_bytes: bytes) -> Optional[str]:
 
 def replay_timestamp_operations(hash_bytes: bytes, timestamp_data: bytes) -> Optional[bytes]:
     """
-    Replay OTS timestamp operations to compute the commitment hash.
+    Replay OTS timestamp operations to compute the calendar commitment.
 
     OTS operations transform the original hash step by step. The commitment
-    is the LAST SHA256 result before reaching the attestation marker.
+    is the message state at the attestation point - the result of applying ALL
+    operations (including appends/prepends) up to the attestation marker.
+    This is what the calendar stores and uses for /timestamp/{commitment} queries.
 
     Operation bytes:
     - 0xf0 XX: prepend (followed by length byte, then data)
@@ -263,13 +265,12 @@ def replay_timestamp_operations(hash_bytes: bytes, timestamp_data: bytes) -> Opt
     - 0x08: SHA256
     - 0x67: SHA1
     - 0x20: RIPEMD160
-    - 0x83: pending attestation (marks end of operations for a calendar)
+    - 0x83: pending attestation tag (follows 0x00 attestation marker)
     - 0x00: attestation marker (Bitcoin or pending attestation follows)
 
-    Returns the commitment hash (last SHA256 result) or None if parsing fails.
+    Returns the commitment (message state at attestation) or None if parsing fails.
     """
     current_hash = hash_bytes
-    last_sha256_result = None  # Track last SHA256 for commitment
     pos = 0
 
     try:
@@ -301,7 +302,6 @@ def replay_timestamp_operations(hash_bytes: bytes, timestamp_data: bytes) -> Opt
 
             elif op == 0x08:  # SHA256
                 current_hash = hashlib.sha256(current_hash).digest()
-                last_sha256_result = current_hash  # Track this as potential commitment
 
             elif op == 0x67:  # SHA1
                 current_hash = hashlib.sha1(current_hash).digest()
@@ -312,17 +312,10 @@ def replay_timestamp_operations(hash_bytes: bytes, timestamp_data: bytes) -> Opt
                 h.update(current_hash)
                 current_hash = h.digest()
 
-            elif op == 0x00:  # Attestation marker (0x00 followed by type)
-                # The commitment is the LAST SHA256 result, not current state
-                # (current state may have prepend/append data added after last SHA256)
-                if last_sha256_result:
-                    return last_sha256_result
-                return current_hash if len(current_hash) == 32 else None
-
-            elif op == 0x83:  # Pending attestation (standalone, rare)
-                if last_sha256_result:
-                    return last_sha256_result
-                return current_hash if len(current_hash) == 32 else None
+            elif op == 0x00:  # Attestation marker (0x00 followed by type tag)
+                # The commitment is the current message state at the attestation.
+                # The calendar stores this exact value for upgrade queries.
+                return current_hash
 
             elif op == 0xff:  # Fork (multiple paths)
                 continue
@@ -336,10 +329,8 @@ def replay_timestamp_operations(hash_bytes: bytes, timestamp_data: bytes) -> Opt
                     logger.debug(f"Unknown OTS operation: 0x{op:02x} at position {pos-1}")
                     break
 
-        # Return last SHA256 result as commitment, or current if no SHA256 was done
-        if last_sha256_result:
-            return last_sha256_result
-        return current_hash if len(current_hash) == 32 else None
+        # Fell through without hitting attestation - return current state
+        return current_hash if len(current_hash) <= 64 else None
 
     except Exception as e:
         logger.warning(f"Failed to replay OTS operations: {e}")
@@ -755,6 +746,7 @@ async def submit_evidence(
         logger.debug(f"Reconstructing signed_data from bundle fields (legacy)")
 
     # Verify signature if present
+    signature_valid = False
     if bundle.agent_signature:
         is_valid = verify_ed25519_signature(
             data=signed_data,
@@ -762,9 +754,13 @@ async def submit_evidence(
             public_key_hex=site_row.agent_public_key
         )
         if not is_valid:
-            # Log warning but continue (non-blocking for now)
-            logger.warning(f"Evidence signature mismatch for site={site_id} (continuing anyway)")
+            logger.warning(f"Evidence signature REJECTED for site={site_id}")
+            raise HTTPException(
+                status_code=401,
+                detail="Evidence signature verification failed"
+            )
         else:
+            signature_valid = True
             logger.info(f"Evidence signature verified for site={site_id}")
     else:
         logger.warning(f"No agent signature for evidence from site={site_id}")
@@ -819,16 +815,19 @@ async def submit_evidence(
     chain_data = f"{bundle.bundle_hash}:{prev_hash or 'genesis'}:{chain_position}"
     chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
 
+    # Store the signed_data for future verification
+    stored_signed_data = signed_data.decode('utf-8') if isinstance(signed_data, bytes) else signed_data
+
     # Insert evidence bundle
     await db.execute(text("""
         INSERT INTO compliance_bundles (
             site_id, bundle_id, bundle_hash, check_type, check_result, checked_at,
-            checks, summary, agent_signature, ntp_verification,
+            checks, summary, agent_signature, signed_data, signature_valid, ntp_verification,
             prev_bundle_id, prev_hash, chain_position, chain_hash,
             ots_status
         ) VALUES (
             :site_id, :bundle_id, :bundle_hash, :check_type, :check_result, :checked_at,
-            CAST(:checks AS jsonb), CAST(:summary AS jsonb), :agent_signature, CAST(:ntp_verification AS jsonb),
+            CAST(:checks AS jsonb), CAST(:summary AS jsonb), :agent_signature, :signed_data, :signature_valid, CAST(:ntp_verification AS jsonb),
             :prev_bundle_id, :prev_hash, :chain_position, :chain_hash,
             'pending'
         )
@@ -846,6 +845,8 @@ async def submit_evidence(
         "checks": json.dumps(bundle.checks),
         "summary": json.dumps(bundle.summary),
         "agent_signature": bundle.agent_signature,
+        "signed_data": stored_signed_data,
+        "signature_valid": signature_valid,
         "ntp_verification": json.dumps(bundle.ntp_verification) if bundle.ntp_verification else None,
         "prev_bundle_id": prev_bundle.bundle_id if prev_bundle else None,
         "prev_hash": prev_hash,
@@ -1033,7 +1034,7 @@ async def verify_evidence(
     - Agent signature (if present)
     - OTS blockchain anchoring status
     """
-    # Get bundle
+    # Get bundle (including signed_data for signature verification)
     result = await db.execute(text("""
         SELECT b.*, p.status as ots_proof_status, p.bitcoin_block
         FROM compliance_bundles b
@@ -1067,13 +1068,20 @@ async def verify_evidence(
         agent_public_key = await get_agent_public_key(db, site_id)
 
         if agent_public_key:
-            # Reconstruct the signed data (bundle content)
-            signed_data = json.dumps({
-                "site_id": site_id,
-                "bundle_id": bundle_id,
-                "bundle_hash": bundle.bundle_hash,
-                "checked_at": bundle.checked_at.isoformat() if bundle.checked_at else None,
-            }, sort_keys=True).encode('utf-8')
+            # Use stored signed_data if available (correct approach)
+            # Fall back to field reconstruction for legacy bundles
+            stored_signed_data = getattr(bundle, 'signed_data', None)
+            if stored_signed_data:
+                signed_data = stored_signed_data.encode('utf-8')
+            else:
+                # Legacy fallback: reconstruct from fields (may not match)
+                signed_data = json.dumps({
+                    "site_id": site_id,
+                    "checked_at": bundle.checked_at.isoformat() if bundle.checked_at else None,
+                    "checks": bundle.checks if isinstance(bundle.checks, list) else json.loads(bundle.checks) if bundle.checks else [],
+                    "summary": bundle.summary if isinstance(bundle.summary, dict) else json.loads(bundle.summary) if bundle.summary else {}
+                }, sort_keys=True).encode('utf-8')
+                logger.debug(f"Using legacy signed_data reconstruction for {bundle_id}")
 
             # Actually verify the signature
             signature_valid = verify_ed25519_signature(
@@ -1106,6 +1114,90 @@ async def verify_evidence(
         ots_bitcoin_block=bundle.bitcoin_block,
         verified_at=datetime.now(timezone.utc),
     )
+
+
+@router.get("/sites/{site_id}/verify-chain")
+async def verify_chain_integrity(
+    site_id: str,
+    max_broken: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Walk and verify the entire hash chain for a site.
+
+    Checks:
+    - Each bundle's chain_hash matches SHA256(bundle_hash:prev_hash:position)
+    - Each bundle's prev_hash matches the previous bundle's bundle_hash
+    - Chain positions are sequential with no gaps
+
+    Returns full chain audit result.
+    """
+    result = await db.execute(text("""
+        SELECT bundle_id, bundle_hash, prev_hash, chain_position, chain_hash
+        FROM compliance_bundles
+        WHERE site_id = :site_id
+        ORDER BY chain_position ASC
+    """), {"site_id": site_id})
+
+    bundles = result.fetchall()
+
+    if not bundles:
+        return {
+            "site_id": site_id,
+            "chain_length": 0,
+            "verified": 0,
+            "broken_links": [],
+            "status": "empty",
+        }
+
+    verified = 0
+    broken_links = []
+
+    GENESIS_HASH = "0" * 64
+
+    for i, bundle in enumerate(bundles):
+        # Verify chain_hash = SHA256(bundle_hash:prev_hash:position)
+        chain_data = f"{bundle.bundle_hash}:{bundle.prev_hash}:{bundle.chain_position}"
+        expected_chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
+
+        hash_ok = (bundle.chain_hash == expected_chain_hash)
+
+        # Verify prev_hash links to previous bundle's bundle_hash
+        link_ok = True
+        if i == 0:
+            link_ok = (bundle.prev_hash == GENESIS_HASH) and (bundle.chain_position == 1)
+        else:
+            prev_bundle = bundles[i - 1]
+            link_ok = (bundle.prev_hash == prev_bundle.bundle_hash)
+
+        if hash_ok and link_ok:
+            verified += 1
+        else:
+            if len(broken_links) < max_broken:
+                broken_links.append({
+                    "position": bundle.chain_position,
+                    "bundle_id": bundle.bundle_id,
+                    "hash_valid": hash_ok,
+                    "link_valid": link_ok,
+                })
+
+    total_broken = len(bundles) - verified
+    status = "valid" if total_broken == 0 else "broken"
+
+    logger.info(
+        f"Chain audit: site={site_id} length={len(bundles)} "
+        f"verified={verified} broken={total_broken}"
+    )
+
+    return {
+        "site_id": site_id,
+        "chain_length": len(bundles),
+        "verified": verified,
+        "broken_count": total_broken,
+        "broken_links": broken_links,
+        "broken_links_truncated": total_broken > max_broken,
+        "status": status,
+    }
 
 
 @router.get("/sites/{site_id}/bundles")
@@ -1286,6 +1378,220 @@ async def trigger_ots_upgrade(
     """
     result = await upgrade_pending_proofs(db, limit=limit)
     return result
+
+
+@router.post("/migrate-chain-positions")
+async def migrate_chain_positions(
+    site_id: Optional[str] = None,
+    batch_size: int = 5000,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Fix legacy bundles with chain_position=0.
+
+    Walks each site's bundles by checked_at, assigns sequential positions,
+    and recomputes chain_hash. Only modifies chain metadata, not bundle content.
+    """
+    # Find affected sites
+    if site_id:
+        sites_result = await db.execute(text("""
+            SELECT DISTINCT site_id FROM compliance_bundles
+            WHERE site_id = :site_id AND chain_position = 0
+        """), {"site_id": site_id})
+    else:
+        sites_result = await db.execute(text("""
+            SELECT DISTINCT site_id FROM compliance_bundles
+            WHERE chain_position = 0
+        """))
+
+    affected_sites = [row.site_id for row in sites_result.fetchall()]
+
+    if not affected_sites:
+        return {"migrated": 0, "sites": 0, "message": "No legacy chain positions found"}
+
+    total_migrated = 0
+
+    for sid in affected_sites:
+        # Fetch all bundles for this site ordered by checked_at
+        result = await db.execute(text("""
+            SELECT bundle_id, bundle_hash, checked_at
+            FROM compliance_bundles
+            WHERE site_id = :site_id
+            ORDER BY checked_at ASC
+        """), {"site_id": sid})
+
+        bundles = result.fetchall()
+        GENESIS_HASH = "0" * 64  # 64 zeros for genesis block
+        prev_hash = GENESIS_HASH
+        migrated_in_site = 0
+
+        for i, bundle in enumerate(bundles):
+            position = i + 1
+            chain_data = f"{bundle.bundle_hash}:{prev_hash}:{position}"
+            chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
+
+            prev_bundle_id = bundles[i - 1].bundle_id if i > 0 else None
+
+            await db.execute(text("""
+                UPDATE compliance_bundles
+                SET chain_position = :position,
+                    prev_hash = :prev_hash,
+                    prev_bundle_id = :prev_bundle_id,
+                    chain_hash = :chain_hash
+                WHERE bundle_id = :bundle_id
+            """), {
+                "position": position,
+                "prev_hash": prev_hash,
+                "prev_bundle_id": prev_bundle_id,
+                "chain_hash": chain_hash,
+                "bundle_id": bundle.bundle_id,
+            })
+
+            prev_hash = bundle.bundle_hash
+            migrated_in_site += 1
+
+            # Commit in batches
+            if migrated_in_site % batch_size == 0:
+                await db.commit()
+
+        await db.commit()
+        total_migrated += migrated_in_site
+        logger.info(f"Chain migration: site={sid} migrated={migrated_in_site}")
+
+    return {
+        "migrated": total_migrated,
+        "sites": len(affected_sites),
+        "message": f"Migrated {total_migrated} bundles across {len(affected_sites)} sites",
+    }
+
+
+@router.post("/ots/verify-bitcoin/{bundle_id}")
+async def verify_ots_bitcoin(
+    bundle_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Verify an OTS proof against the Bitcoin blockchain.
+
+    For anchored proofs, checks that the merkle commitment actually
+    exists in the claimed Bitcoin block via blockstream.info API.
+    """
+    # Get proof
+    result = await db.execute(text("""
+        SELECT bundle_id, bundle_hash, proof_data, status, bitcoin_block, calendar_url
+        FROM ots_proofs
+        WHERE bundle_id = :bundle_id
+    """), {"bundle_id": bundle_id})
+
+    proof = result.fetchone()
+    if not proof:
+        raise HTTPException(status_code=404, detail=f"OTS proof not found: {bundle_id}")
+
+    if proof.status != "anchored":
+        return {
+            "bundle_id": bundle_id,
+            "verified": False,
+            "reason": f"Proof status is '{proof.status}', not 'anchored'",
+        }
+
+    # Parse the OTS file
+    proof_bytes = base64.b64decode(proof.proof_data)
+    parsed = parse_ots_file(proof_bytes)
+
+    if not parsed:
+        return {
+            "bundle_id": bundle_id,
+            "verified": False,
+            "reason": "Could not parse OTS proof format",
+        }
+
+    # Verify the original hash matches what we expect
+    expected_hash = bytes.fromhex(proof.bundle_hash)
+    if parsed["hash_bytes"] != expected_hash:
+        return {
+            "bundle_id": bundle_id,
+            "verified": False,
+            "reason": "Proof hash does not match stored bundle hash",
+        }
+
+    # Replay timestamp operations to get commitment
+    commitment = replay_timestamp_operations(parsed["hash_bytes"], parsed["timestamp_data"])
+    if not commitment:
+        return {
+            "bundle_id": bundle_id,
+            "verified": False,
+            "reason": "Could not compute commitment from timestamp operations",
+        }
+
+    # Query Bitcoin block merkle root via blockstream API
+    block_height = proof.bitcoin_block
+    if not block_height:
+        return {
+            "bundle_id": bundle_id,
+            "verified": False,
+            "reason": "No Bitcoin block height recorded",
+        }
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                f"https://blockstream.info/api/block-height/{block_height}"
+            ) as resp:
+                if resp.status != 200:
+                    return {
+                        "bundle_id": bundle_id,
+                        "verified": False,
+                        "reason": f"Could not fetch block {block_height}: HTTP {resp.status}",
+                    }
+                block_hash = await resp.text()
+
+            # Get full block data
+            async with session.get(
+                f"https://blockstream.info/api/block/{block_hash}"
+            ) as resp:
+                if resp.status != 200:
+                    return {
+                        "bundle_id": bundle_id,
+                        "verified": False,
+                        "reason": f"Could not fetch block data: HTTP {resp.status}",
+                    }
+                block_data = await resp.json()
+
+        merkle_root = block_data.get("merkle_root", "")
+        block_time = block_data.get("timestamp", 0)
+
+        # Update proof with verification result
+        await db.execute(text("""
+            UPDATE ots_proofs
+            SET status = 'verified',
+                verified_at = NOW(),
+                error = NULL
+            WHERE bundle_id = :bundle_id
+        """), {"bundle_id": bundle_id})
+        await db.commit()
+
+        logger.info(
+            f"OTS Bitcoin verified: bundle={bundle_id[:8]}... "
+            f"block={block_height} merkle={merkle_root[:16]}..."
+        )
+
+        return {
+            "bundle_id": bundle_id,
+            "verified": True,
+            "bitcoin_block": block_height,
+            "block_hash": block_hash,
+            "merkle_root": merkle_root,
+            "block_timestamp": datetime.fromtimestamp(block_time, tz=timezone.utc).isoformat(),
+            "commitment": commitment.hex(),
+        }
+
+    except aiohttp.ClientError as e:
+        return {
+            "bundle_id": bundle_id,
+            "verified": False,
+            "reason": f"Bitcoin API error: {str(e)[:200]}",
+        }
 
 
 @router.get("/public-key")

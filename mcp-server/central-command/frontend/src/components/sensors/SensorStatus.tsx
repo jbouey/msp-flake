@@ -2,9 +2,11 @@
  * SensorStatus - Component for displaying Windows sensor status in dual-mode architecture.
  *
  * Shows which hosts have active sensors vs need WinRM polling.
+ * Migrated from legacy setInterval to React Query for cache sharing and consistent polling.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 interface Sensor {
   hostname: string;
@@ -22,62 +24,49 @@ interface SensorStatusProps {
   siteId: string;
 }
 
+const POLLING_INTERVAL = 60_000;
+
 const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
-  const [sensors, setSensors] = useState<Sensor[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [deployingHost, setDeployingHost] = useState<string | null>(null);
 
-  const fetchSensors = async () => {
-    try {
+  const { data: sensors = [], isLoading, error } = useQuery<Sensor[]>({
+    queryKey: ['sensors', siteId],
+    queryFn: async () => {
       const response = await fetch(`/api/sensors/sites/${siteId}`);
       if (!response.ok) throw new Error('Failed to fetch sensors');
       const data = await response.json();
-      setSensors(data.sensors);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-    }
-  };
+      return data.sensors;
+    },
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: 30_000,
+  });
 
-  useEffect(() => {
-    fetchSensors();
-    const interval = setInterval(fetchSensors, 30000); // Refresh every 30s
-    return () => clearInterval(interval);
-  }, [siteId]);
-
-  const deploySensor = async (hostname: string) => {
-    setDeployingHost(hostname);
-    try {
+  const deployMutation = useMutation({
+    mutationFn: async (hostname: string) => {
       const response = await fetch(`/api/sensors/sites/${siteId}/hosts/${hostname}/deploy`, {
         method: 'POST',
       });
       if (!response.ok) throw new Error('Deployment failed');
-      await fetchSensors();
-    } catch (err) {
-      console.error('Deploy failed:', err);
-    } finally {
+    },
+    onMutate: (hostname) => setDeployingHost(hostname),
+    onSettled: () => {
       setDeployingHost(null);
-    }
-  };
+      queryClient.invalidateQueries({ queryKey: ['sensors', siteId] });
+    },
+  });
 
-  const removeSensor = async (hostname: string) => {
-    if (!confirm(`Remove sensor from ${hostname}? The appliance will fall back to WinRM polling.`)) {
-      return;
-    }
-
-    try {
+  const removeMutation = useMutation({
+    mutationFn: async (hostname: string) => {
       const response = await fetch(`/api/sensors/sites/${siteId}/hosts/${hostname}`, {
         method: 'DELETE',
       });
       if (!response.ok) throw new Error('Removal failed');
-      await fetchSensors();
-    } catch (err) {
-      console.error('Remove failed:', err);
-    }
-  };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sensors', siteId] });
+    },
+  });
 
   const formatAge = (seconds: number): string => {
     if (seconds < 60) return `${seconds}s ago`;
@@ -85,7 +74,7 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
     return `${Math.floor(seconds / 3600)}h ago`;
   };
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="p-4 text-gray-500">
         Loading sensor status...
@@ -96,7 +85,7 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
   if (error) {
     return (
       <div className="p-4 text-red-500">
-        Error: {error}
+        Error: {error instanceof Error ? error.message : 'Unknown error'}
       </div>
     );
   }
@@ -116,7 +105,7 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
           </p>
         </div>
         <button
-          onClick={fetchSensors}
+          onClick={() => queryClient.invalidateQueries({ queryKey: ['sensors', siteId] })}
           className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded"
         >
           Refresh
@@ -229,7 +218,7 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
                 <td className="px-4 py-2 whitespace-nowrap">
                   {!sensor.sensor_version ? (
                     <button
-                      onClick={() => deploySensor(sensor.hostname)}
+                      onClick={() => deployMutation.mutate(sensor.hostname)}
                       disabled={deployingHost === sensor.hostname}
                       className="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
                     >
@@ -237,7 +226,11 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
                     </button>
                   ) : (
                     <button
-                      onClick={() => removeSensor(sensor.hostname)}
+                      onClick={() => {
+                        if (window.confirm(`Remove sensor from ${sensor.hostname}? The appliance will fall back to WinRM polling.`)) {
+                          removeMutation.mutate(sensor.hostname);
+                        }
+                      }}
                       className="px-2 py-1 text-xs bg-red-100 text-red-600 rounded hover:bg-red-200"
                     >
                       Remove

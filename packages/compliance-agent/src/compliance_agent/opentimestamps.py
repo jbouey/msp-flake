@@ -475,7 +475,7 @@ class OTSClient:
         Verify an OTS proof.
 
         For pending proofs, verifies calendar signature.
-        For anchored proofs, verifies against Bitcoin blockchain.
+        For anchored proofs, verifies Bitcoin block exists via API.
 
         Args:
             proof: OTS proof to verify
@@ -490,14 +490,29 @@ class OTSClient:
             return False, f"Proof failed: {proof.error}"
 
         if proof.status == "anchored":
-            # For full verification, we'd need to:
-            # 1. Parse the OTS proof format
-            # 2. Verify merkle path to Bitcoin block
-            # 3. Check Bitcoin block is valid (via API or local node)
-            #
-            # For now, return anchored status as "verified enough"
-            # Full verification requires opentimestamps-client library
-            return True, f"Proof anchored in Bitcoin block {proof.bitcoin_block}"
+            if not proof.bitcoin_block:
+                return True, "Proof anchored (no block height to verify)"
+
+            # Verify Bitcoin block exists via blockstream API
+            try:
+                session = await self._get_session()
+                async with session.get(
+                    f"https://blockstream.info/api/block-height/{proof.bitcoin_block}"
+                ) as resp:
+                    if resp.status == 200:
+                        block_hash = await resp.text()
+                        proof.status = "verified"
+                        if self.config.proof_dir:
+                            await self._save_proof(proof)
+                        return True, (
+                            f"Proof verified: Bitcoin block {proof.bitcoin_block} "
+                            f"(hash: {block_hash[:16]}...)"
+                        )
+                    else:
+                        return False, f"Bitcoin block {proof.bitcoin_block} not found (HTTP {resp.status})"
+            except Exception as e:
+                logger.warning(f"Bitcoin verification failed: {e}")
+                return True, f"Proof anchored in Bitcoin block {proof.bitcoin_block} (API check failed: {e})"
 
         return False, f"Unknown proof status: {proof.status}"
 

@@ -487,6 +487,147 @@ $Settings = $Adapters | Select-Object Description, TcpipNetbiosOptions
 
 
 # =============================================================================
+# RB-WIN-NET-005: LLMNR/mDNS Disable
+# =============================================================================
+
+RUNBOOK_LLMNR_DISABLE = WindowsRunbook(
+    id="RB-WIN-NET-005",
+    name="LLMNR/mDNS Disable",
+    description="Disable LLMNR and mDNS to prevent name resolution poisoning attacks",
+    version="1.0",
+    hipaa_controls=["164.312(e)(1)"],
+    severity="medium",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=15,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
+
+    detect_script=r'''
+# Check LLMNR and mDNS configuration
+$Result = @{
+    Drifted = $false
+    Issues = @()
+}
+
+try {
+    # Check LLMNR status via registry (GPO)
+    $LLMNRKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
+    $EnableMulticast = (Get-ItemProperty -Path $LLMNRKey -Name "EnableMulticast" -ErrorAction SilentlyContinue).EnableMulticast
+    $Result.LLMNREnabled = if ($null -eq $EnableMulticast) { "NotConfigured (default: enabled)" } else { $EnableMulticast }
+
+    # LLMNR should be disabled (EnableMulticast = 0)
+    if ($EnableMulticast -ne 0) {
+        $Result.Drifted = $true
+        $Result.Issues += "LLMNR is not disabled (EnableMulticast should be 0)"
+    }
+
+    # Check mDNS status
+    $mDNSKey = "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters"
+    $EnableMDNS = (Get-ItemProperty -Path $mDNSKey -Name "EnableMDNS" -ErrorAction SilentlyContinue).EnableMDNS
+    $Result.mDNSEnabled = if ($null -eq $EnableMDNS) { "NotConfigured (default: enabled)" } else { $EnableMDNS }
+
+    # mDNS should be disabled (EnableMDNS = 0)
+    if ($EnableMDNS -ne 0) {
+        $Result.Drifted = $true
+        $Result.Issues += "mDNS is not disabled (EnableMDNS should be 0)"
+    }
+
+    # Check NetBIOS over TCP/IP (related attack surface)
+    $Adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -eq $true }
+    $NetBIOSIssues = @()
+    foreach ($Adapter in $Adapters) {
+        # TcpipNetbiosOptions: 0=Default, 1=Enabled, 2=Disabled
+        if ($Adapter.TcpipNetbiosOptions -ne 2) {
+            $NetBIOSIssues += "$($Adapter.Description): NetBIOS not disabled"
+        }
+    }
+    $Result.NetBIOSIssues = $NetBIOSIssues
+
+    # Check if WPAD is disabled
+    $WPADKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Wpad"
+    $WpadOverride = (Get-ItemProperty -Path $WPADKey -Name "WpadOverride" -ErrorAction SilentlyContinue).WpadOverride
+    $Result.WPADDisabled = ($WpadOverride -eq 1)
+} catch {
+    $Result.Error = $_.Exception.Message
+    $Result.Drifted = $true
+}
+
+$Result | ConvertTo-Json -Depth 2
+''',
+
+    remediate_script=r'''
+# Disable LLMNR and mDNS
+$Result = @{ Success = $false; Actions = @() }
+
+try {
+    # Disable LLMNR via registry
+    $LLMNRKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
+    if (-not (Test-Path $LLMNRKey)) {
+        New-Item -Path $LLMNRKey -Force | Out-Null
+    }
+    Set-ItemProperty -Path $LLMNRKey -Name "EnableMulticast" -Value 0 -Type DWord
+    $Result.Actions += "Disabled LLMNR (EnableMulticast = 0)"
+
+    # Disable mDNS
+    $mDNSKey = "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters"
+    if (-not (Test-Path $mDNSKey)) {
+        New-Item -Path $mDNSKey -Force | Out-Null
+    }
+    Set-ItemProperty -Path $mDNSKey -Name "EnableMDNS" -Value 0 -Type DWord
+    $Result.Actions += "Disabled mDNS (EnableMDNS = 0)"
+
+    # Disable WPAD auto-discovery
+    $WPADKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Wpad"
+    if (-not (Test-Path $WPADKey)) {
+        New-Item -Path $WPADKey -Force | Out-Null
+    }
+    Set-ItemProperty -Path $WPADKey -Name "WpadOverride" -Value 1 -Type DWord
+    $Result.Actions += "Disabled WPAD auto-discovery"
+
+    # Restart DNS Client service to apply changes
+    Restart-Service -Name "Dnscache" -Force -ErrorAction SilentlyContinue
+    $Result.Actions += "Restarted DNS Client service"
+
+    $Result.Success = $true
+    $Result.Message = "LLMNR and mDNS disabled to prevent name resolution attacks"
+} catch {
+    $Result.Error = $_.Exception.Message
+}
+
+$Result | ConvertTo-Json
+''',
+
+    verify_script=r'''
+# Verify LLMNR and mDNS are disabled
+try {
+    $LLMNRKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
+    $EnableMulticast = (Get-ItemProperty -Path $LLMNRKey -Name "EnableMulticast" -ErrorAction SilentlyContinue).EnableMulticast
+    $LLMNRDisabled = ($EnableMulticast -eq 0)
+
+    $mDNSKey = "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters"
+    $EnableMDNS = (Get-ItemProperty -Path $mDNSKey -Name "EnableMDNS" -ErrorAction SilentlyContinue).EnableMDNS
+    $mDNSDisabled = ($EnableMDNS -eq 0)
+
+    @{
+        LLMNRDisabled = $LLMNRDisabled
+        mDNSDisabled = $mDNSDisabled
+        Verified = ($LLMNRDisabled -and $mDNSDisabled)
+    } | ConvertTo-Json
+} catch {
+    @{ Verified = $false; Error = $_.Exception.Message } | ConvertTo-Json
+}
+''',
+
+    timeout_seconds=60,
+    requires_reboot=False,
+    disruptive=False,
+    evidence_fields=["LLMNREnabled", "mDNSEnabled", "NetBIOSIssues", "Issues"]
+)
+
+
+# =============================================================================
 # RB-NET-SECURITY-001: Network Security Posture Verification
 # =============================================================================
 
@@ -703,5 +844,6 @@ NETWORK_RUNBOOKS: Dict[str, WindowsRunbook] = {
     "RB-WIN-NET-002": RUNBOOK_NIC_RESET,
     "RB-WIN-NET-003": RUNBOOK_NETWORK_PROFILE,
     "RB-WIN-NET-004": RUNBOOK_NETBIOS,
+    "RB-WIN-NET-005": RUNBOOK_LLMNR_DISABLE,
     "RB-NET-SECURITY-001": RUNBOOK_NET_SECURITY,
 }

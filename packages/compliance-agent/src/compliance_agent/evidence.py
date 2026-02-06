@@ -474,7 +474,11 @@ class EvidenceGenerator:
 
         return bundle_path, signature_path, worm_uri, ots_status
 
-    async def load_evidence(self, bundle_id: str) -> Optional[EvidenceBundle]:
+    async def load_evidence(
+        self,
+        bundle_id: str,
+        verify: bool = False
+    ) -> Optional[EvidenceBundle]:
         """
         Load an evidence bundle from disk.
 
@@ -482,6 +486,7 @@ class EvidenceGenerator:
 
         Args:
             bundle_id: Bundle ID to load
+            verify: If True, verify signature after loading
 
         Returns:
             EvidenceBundle if found, None otherwise
@@ -493,7 +498,17 @@ class EvidenceGenerator:
                 if bundle_path.exists():
                     with open(bundle_path, 'r') as f:
                         data = json.load(f)
-                    return EvidenceBundle(**data)
+
+                    bundle = EvidenceBundle(**data)
+
+                    if verify:
+                        is_valid = await self.verify_evidence(bundle_path)
+                        if not is_valid:
+                            logger.warning(
+                                f"Signature verification failed for {bundle_id}"
+                            )
+
+                    return bundle
 
         logger.warning(f"Evidence bundle {bundle_id} not found")
         return None

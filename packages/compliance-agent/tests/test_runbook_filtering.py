@@ -239,7 +239,7 @@ class TestCategoryRunbooks:
         """Test security category has expected runbooks."""
         from compliance_agent.runbooks.windows.security import SECURITY_RUNBOOKS
 
-        assert len(SECURITY_RUNBOOKS) == 14
+        assert len(SECURITY_RUNBOOKS) == 17
         assert "RB-WIN-SEC-001" in SECURITY_RUNBOOKS  # Firewall
         assert "RB-WIN-SEC-002" in SECURITY_RUNBOOKS  # Audit Policy
         assert "RB-WIN-SEC-003" in SECURITY_RUNBOOKS  # Account Lockout
@@ -253,16 +253,20 @@ class TestCategoryRunbooks:
         assert "RB-WIN-SEC-011" in SECURITY_RUNBOOKS  # UAC Enforcement
         assert "RB-WIN-SEC-012" in SECURITY_RUNBOOKS  # Event Log Protection
         assert "RB-WIN-SEC-013" in SECURITY_RUNBOOKS  # Credential Guard
+        assert "RB-WIN-SEC-014" in SECURITY_RUNBOOKS  # TLS/SSL Configuration
+        assert "RB-WIN-SEC-015" in SECURITY_RUNBOOKS  # USB/Removable Media Control
+        assert "RB-WIN-SEC-016" in SECURITY_RUNBOOKS  # Screen Lock / Auto Logoff
 
     def test_network_category(self):
         """Test network category has expected runbooks."""
         from compliance_agent.runbooks.windows.network import NETWORK_RUNBOOKS
 
-        assert len(NETWORK_RUNBOOKS) == 5
+        assert len(NETWORK_RUNBOOKS) == 6
         assert "RB-WIN-NET-001" in NETWORK_RUNBOOKS  # DNS Client
         assert "RB-WIN-NET-002" in NETWORK_RUNBOOKS  # NIC Reset
         assert "RB-WIN-NET-003" in NETWORK_RUNBOOKS  # Network Profile
         assert "RB-WIN-NET-004" in NETWORK_RUNBOOKS  # NetBIOS
+        assert "RB-WIN-NET-005" in NETWORK_RUNBOOKS  # LLMNR/mDNS Disable
         assert "RB-NET-SECURITY-001" in NETWORK_RUNBOOKS  # Network Security
 
     def test_storage_category(self):

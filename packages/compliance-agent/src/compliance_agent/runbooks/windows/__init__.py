@@ -7,13 +7,15 @@ Each runbook maps to a HIPAA Security Rule control.
 Categories:
 - Core: Patching, AV, Backup, Logging, Firewall, Encryption, AD Health (7 runbooks)
 - Services: DNS, DHCP, Print Spooler, Time Service (4 runbooks)
-- Security: Firewall, Audit, Lockout, Password, BitLocker, Defender (6 runbooks)
-- Network: DNS Client, NIC, Profile, NetBIOS (4 runbooks)
+- Security: Firewall, Audit, Lockout, Password, BitLocker, Defender, TLS, USB, Screen Lock (17 runbooks)
+- Network: DNS Client, NIC, Profile, NetBIOS, LLMNR (6 runbooks)
 - Storage: Disk Cleanup, Shadow Copy, Volume Health (3 runbooks)
 - Updates: Windows Update, WSUS (2 runbooks)
-- Active Directory: Computer Account (1 runbook)
+- Active Directory: Computer Account, GPO Compliance, LAPS (3 runbooks)
+- Certificates: Certificate Expiry (1 runbook)
+- RDP: Remote Desktop Hardening (1 runbook)
 
-Total: 27 runbooks
+Total: 35 runbooks
 """
 
 from typing import Dict, List, Optional
@@ -41,6 +43,8 @@ from .network import NETWORK_RUNBOOKS
 from .storage import STORAGE_RUNBOOKS
 from .updates import UPDATES_RUNBOOKS
 from .active_directory import AD_RUNBOOKS
+from .certificates import CERT_RUNBOOKS
+from .rdp import RDP_RUNBOOKS
 
 
 # =============================================================================
@@ -52,16 +56,20 @@ ALL_RUNBOOKS: Dict[str, WindowsRunbook] = {
     **CORE_RUNBOOKS,
     # Service runbooks (4)
     **SERVICE_RUNBOOKS,
-    # Security runbooks (6)
+    # Security runbooks (17)
     **SECURITY_RUNBOOKS,
-    # Network runbooks (4)
+    # Network runbooks (6)
     **NETWORK_RUNBOOKS,
     # Storage runbooks (3)
     **STORAGE_RUNBOOKS,
     # Updates runbooks (2)
     **UPDATES_RUNBOOKS,
-    # AD runbooks (1)
+    # AD runbooks (3)
     **AD_RUNBOOKS,
+    # Certificate runbooks (1)
+    **CERT_RUNBOOKS,
+    # RDP runbooks (1)
+    **RDP_RUNBOOKS,
 }
 
 
@@ -79,7 +87,7 @@ def list_runbooks(category: Optional[str] = None) -> List[Dict]:
     List all available runbooks with metadata.
 
     Args:
-        category: Optional filter by category (services, security, network, storage, updates, ad)
+        category: Optional filter by category (services, security, network, storage, updates, ad, certificates, rdp)
     """
     runbooks = []
 
@@ -117,6 +125,10 @@ def _get_category(runbook_id: str) -> str:
         return "updates"
     elif runbook_id.startswith("RB-WIN-AD-"):
         return "ad"
+    elif runbook_id.startswith("RB-WIN-CERT-"):
+        return "certificates"
+    elif runbook_id.startswith("RB-WIN-RDP-"):
+        return "rdp"
     elif runbook_id.startswith("RB-WIN-PATCH-"):
         return "patching"
     elif runbook_id.startswith("RB-WIN-AV-"):
@@ -181,18 +193,22 @@ def get_runbooks_by_check_type(check_type: str) -> List[WindowsRunbook]:
         "unauthorized_users": ["RB-WIN-SEC-009"],
         "backdoor_user": ["RB-WIN-SEC-009"],
         "nla": ["RB-WIN-SEC-010"],
-        "rdp_security": ["RB-WIN-SEC-010"],
+        "rdp_security": ["RB-WIN-SEC-010", "RB-WIN-RDP-001"],
         "uac": ["RB-WIN-SEC-011"],
         "event_log": ["RB-WIN-SEC-012"],
         "event_log_protection": ["RB-WIN-SEC-012"],
         "credential_guard": ["RB-WIN-SEC-013"],
         "lsa_protection": ["RB-WIN-SEC-013"],
+        "tls_config": ["RB-WIN-SEC-014"],
+        "usb_control": ["RB-WIN-SEC-015"],
+        "screen_lock": ["RB-WIN-SEC-016"],
 
         # Network checks
         "dns_client": ["RB-WIN-NET-001"],
         "network_adapter": ["RB-WIN-NET-002"],
         "network_profile": ["RB-WIN-NET-003"],
         "netbios": ["RB-WIN-NET-004"],
+        "llmnr": ["RB-WIN-NET-005"],
 
         # Service checks
         "dns_service": ["RB-WIN-SVC-001"],
@@ -204,6 +220,14 @@ def get_runbooks_by_check_type(check_type: str) -> List[WindowsRunbook]:
         "ad_health": ["RB-WIN-AD-001"],
         "ad_replication": ["RB-WIN-AD-001"],
         "computer_account": ["RB-WIN-AD-002"],
+        "gpo_compliance": ["RB-WIN-AD-003"],
+        "laps": ["RB-WIN-AD-004"],
+
+        # Certificate checks
+        "certificate_expiry": ["RB-WIN-CERT-001"],
+
+        # RDP checks
+        "rdp_hardening": ["RB-WIN-RDP-001"],
 
         # Critical services (generic)
         "critical_services": ["RB-WIN-SVC-001", "RB-WIN-SVC-002", "RB-WIN-SVC-004"],
@@ -243,6 +267,8 @@ __all__ = [
     'STORAGE_RUNBOOKS',
     'UPDATES_RUNBOOKS',
     'AD_RUNBOOKS',
+    'CERT_RUNBOOKS',
+    'RDP_RUNBOOKS',
 
     # Functions
     'get_runbook',

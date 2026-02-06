@@ -92,7 +92,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
         appliance_row = await conn.fetchrow(
             """
             SELECT id FROM appliances
-            WHERE site_id = $1 AND hostname = $2
+            WHERE site_id = $1 AND host_id = $2
             """,
             report.site_id,
             report.appliance_id,
@@ -102,7 +102,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
             # Create a placeholder appliance record
             appliance_row = await conn.fetchrow(
                 """
-                INSERT INTO appliances (site_id, hostname, created_at)
+                INSERT INTO appliances (site_id, host_id, created_at)
                 VALUES ($1, $2, NOW())
                 RETURNING id
                 """,
@@ -204,18 +204,14 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
             except Exception as e:
                 errors.append(f"Device {device.device_id}: {str(e)}")
 
-        # Update appliance sync timestamp
+        # Update appliance last check-in timestamp
         await conn.execute(
             """
             UPDATE appliances SET
-                last_device_sync = NOW(),
-                device_count = $2,
-                medical_device_count = $3
+                last_checkin = NOW()
             WHERE id = $1
             """,
             appliance_db_id,
-            report.total_devices,
-            report.medical_devices,
         )
 
     status = "success"
@@ -249,7 +245,7 @@ async def get_site_devices(
     query = """
         SELECT
             d.*,
-            a.hostname as appliance_hostname,
+            a.host_id as appliance_hostname,
             a.site_id
         FROM discovered_devices d
         JOIN appliances a ON d.appliance_id = a.id
@@ -484,7 +480,7 @@ async def list_medical_devices(
             """
             SELECT
                 d.*,
-                a.hostname as appliance_hostname
+                a.host_id as appliance_hostname
             FROM discovered_devices d
             JOIN appliances a ON d.appliance_id = a.id
             WHERE a.site_id = $1 AND d.medical_device = true

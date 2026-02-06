@@ -1,16 +1,16 @@
 {
-  "session": 86,
-  "updated": "2026-02-04T02:00:00.000000Z",
+  "session": 88,
+  "updated": "2026-02-06T14:34:56.144033Z",
   "agent_version": "1.0.55",
-  "iso_version": "installer-v1",
+  "iso_version": "installer-v1.1",
   "disk_image_version": "v55 (deprecated)",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "booted_v54",
+    "physical_appliance": "booted_installer_v1.1",
     "vm_appliance": "healthy_v52"
   },
-  "current_blocker": "None - architecture pivot complete, need to test installer ISO",
+  "current_blocker": "None - installer boots on hardware, auto-install needs testing after ncurses fix",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -23,13 +23,13 @@
   "active_tasks": [
     {
       "id": 1,
-      "task": "Build and test installer ISO with msp-auto-install service",
+      "task": "Re-test installer ISO with ncurses fix on physical hardware",
       "status": "pending",
-      "note": "nix build .#appliance-iso on VPS"
+      "note": "New ISO built and downloaded to ~/Downloads/osiriscare-appliance.iso"
     },
     {
       "id": 2,
-      "task": "Boot physical hardware from installer USB, verify auto-install works",
+      "task": "Verify msp-auto-install completes successfully on physical hardware",
       "status": "pending",
       "depends_on": 1
     },
@@ -51,30 +51,43 @@
       "depends_on": 4
     }
   ],
-  "completed_this_session": [
-    "Physical appliance booted v54 with manual ESP mount",
-    "Built v55 with firmware support and nofail mount option",
-    "Architecture pivot: golden flake + nixos-install (not dd disk images)",
-    "Rewrote appliance-image.nix as proper installer ISO",
-    "Added msp-auto-install systemd service for zero-friction deployment",
-    "Fixed root password with hashedPassword (works in emergency mode)",
-    "Updated CLAUDE.md with zero-friction deployment documentation"
-  ],
+  "completed_this_session": [],
   "recent_commits": [
     {
-      "hash": "985fe5f",
-      "message": "fix: Improve USB detection for auto-install service"
+      "hash": "0c6d68f",
+      "message": "fix: Add cancel rollout, remove release buttons, wire Settings danger zone"
     },
     {
-      "hash": "7358723",
-      "message": "fix: Connect healing orders to appliance order polling"
+      "hash": "34a95b7",
+      "message": "fix: Add ncurses to install-display service path (clear command not found)"
+    },
+    {
+      "hash": "40a60e0",
+      "message": "fix: Add L2 LLM cost controls to prevent runaway API spending"
+    },
+    {
+      "hash": "a5ae966",
+      "message": "fix: Correct import paths for Docker deployment (central_command -> dashboard_api)"
+    },
+    {
+      "hash": "e6049ba",
+      "message": "fix: Partner learning API - race conditions, idempotency, locking"
+    },
+    {
+      "hash": "c328001",
+      "message": "fix: Learning loop audit - reject endpoint, error feedback, JSON safety"
+    },
+    {
+      "hash": "bcb19e9",
+      "message": "fix: Resolve dashboard live data sync issues for production readiness"
     }
   ],
   "key_findings": {
     "dd_images_broken": "VM-built disk images fail on different hardware due to ESP timeouts, firmware mismatches",
     "solution": "Use nixos-install from golden flake - hardware-agnostic",
-    "hashedPassword_required": "initialPassword doesn't work in emergency mode, use hashedPassword",
-    "nofail_mount": "ESP mount needs options = [ 'nofail' 'x-systemd.device-timeout=10' ]"
+    "install_display_needs_ncurses": "msp-install-display service needs ncurses in path for clear command",
+    "docker_import_paths": "Docker mounts backend at /app/dashboard_api/ not /app/central_command/backend/",
+    "l2_had_no_cost_controls": "Hybrid mode caused dual API calls with no budget caps, rate limits, or concurrency guards"
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",
@@ -85,7 +98,7 @@
     "6. Central Command provisions via MAC address"
   ],
   "quick_commands": {
-    "build_iso": "ssh root@178.156.162.116 'cd /root/Msp_Flakes && nix build .#appliance-iso'",
+    "build_iso": "ssh root@178.156.162.116 'cd /opt/msp-flakes && nix build .#appliance-iso'",
     "vps_ssh": "ssh root@178.156.162.116",
     "imac_ssh": "ssh jrelly@192.168.88.50",
     "appliance_status": "ssh root@178.156.162.116 \"docker exec mcp-postgres psql -U mcp -d mcp -c 'SELECT site_id, agent_version, last_checkin FROM appliances ORDER BY last_checkin DESC'\""

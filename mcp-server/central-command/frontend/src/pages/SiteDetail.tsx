@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge, ActionDropdown } from '../components/shared';
 import type { ActionItem } from '../components/shared';
 import { DeploymentProgress } from '../components/deployment';
 import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier } from '../hooks';
 import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
+import { fleetUpdatesApi, type FleetStats } from '../utils/api';
 
 /**
  * Format relative time
@@ -45,21 +47,20 @@ function formatUptime(seconds: number | null): string {
 /**
  * Appliance card component with action buttons
  */
-// Current latest agent version - update this when releasing new versions
-const LATEST_AGENT_VERSION = '1.0.18';
 const AGENT_PACKAGE_BASE_URL = 'https://api.osiriscare.net/agent-packages';
 
 const ApplianceCard: React.FC<{
   appliance: SiteAppliance;
+  latestVersion: string | null;
   onCreateOrder: (applianceId: string, orderType: OrderType, parameters?: Record<string, unknown>) => void;
   onDelete: (applianceId: string) => void;
   isLoading?: boolean;
-}> = ({ appliance, onCreateOrder, onDelete, isLoading }) => {
+}> = ({ appliance, latestVersion, onCreateOrder, onDelete, isLoading }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
 
-  // Check if agent is outdated
-  const isOutdated = appliance.agent_version && appliance.agent_version !== LATEST_AGENT_VERSION;
+  // Check if agent is outdated (only if we know the latest version)
+  const isOutdated = latestVersion && appliance.agent_version && appliance.agent_version !== latestVersion;
 
   const statusColors = {
     online: 'bg-health-healthy',
@@ -166,7 +167,7 @@ const ApplianceCard: React.FC<{
               disabled={isLoading}
               className="px-3 py-1.5 text-xs rounded-ios bg-gradient-to-r from-blue-600 to-purple-500 hover:from-blue-700 hover:to-purple-600 text-white font-medium disabled:opacity-50 transition-all shadow-sm animate-pulse"
             >
-              Push Update ({appliance.agent_version} &rarr; {LATEST_AGENT_VERSION})
+              Push Update ({appliance.agent_version} &rarr; {latestVersion})
             </button>
           )}
         </div>
@@ -223,12 +224,12 @@ const ApplianceCard: React.FC<{
             <p className="text-label-secondary text-sm mb-4">
               Update <strong>{appliance.hostname || appliance.appliance_id}</strong> from version{' '}
               <code className="bg-fill-secondary px-1 rounded">{appliance.agent_version || 'unknown'}</code> to{' '}
-              <code className="bg-fill-secondary px-1 rounded">{LATEST_AGENT_VERSION}</code>
+              <code className="bg-fill-secondary px-1 rounded">{latestVersion}</code>
             </p>
             <div className="bg-fill-secondary rounded-ios p-3 mb-4 text-sm">
               <p className="text-label-tertiary mb-1">Package URL:</p>
               <p className="text-label-primary font-mono text-xs break-all">
-                {AGENT_PACKAGE_BASE_URL}/compliance_agent-{LATEST_AGENT_VERSION}.tar.gz
+                {AGENT_PACKAGE_BASE_URL}/compliance_agent-{latestVersion}.tar.gz
               </p>
             </div>
             <div className="flex gap-3">
@@ -241,8 +242,8 @@ const ApplianceCard: React.FC<{
               <button
                 onClick={() => {
                   onCreateOrder(appliance.appliance_id, 'update_agent', {
-                    package_url: `${AGENT_PACKAGE_BASE_URL}/compliance_agent-${LATEST_AGENT_VERSION}.tar.gz`,
-                    version: LATEST_AGENT_VERSION,
+                    package_url: `${AGENT_PACKAGE_BASE_URL}/compliance_agent-${latestVersion!}.tar.gz`,
+                    version: latestVersion!,
                   });
                   setShowUpdateModal(false);
                 }}
@@ -507,6 +508,12 @@ export const SiteDetail: React.FC = () => {
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
 
   const { data: site, isLoading, error } = useSite(siteId || null);
+  const { data: fleetStats } = useQuery<FleetStats>({
+    queryKey: ['fleet-stats'],
+    queryFn: fleetUpdatesApi.getStats,
+    staleTime: 60_000,
+  });
+  const latestVersion = fleetStats?.releases.latest_version ?? null;
   const addCredential = useAddCredential();
   const createOrder = useCreateApplianceOrder();
   const broadcastOrder = useBroadcastOrder();
@@ -631,79 +638,87 @@ export const SiteDetail: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <button
-          onClick={() => navigate('/sites')}
-          className="p-2 rounded-ios hover:bg-fill-secondary transition-colors"
-        >
-          <svg className="w-5 h-5 text-label-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-semibold text-label-primary">{site.clinic_name}</h1>
-          <p className="text-label-tertiary text-sm">{site.site_id}</p>
-        </div>
-        <div className="flex items-center gap-3">
+      <div className="space-y-0">
+        {/* Row 1: Site identity + status + action */}
+        <div className="flex items-start gap-4">
+          <button
+            onClick={() => navigate('/sites')}
+            className="p-2 mt-1 rounded-ios-sm hover:bg-fill-secondary transition-colors"
+          >
+            <svg className="w-5 h-5 text-label-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-semibold text-label-primary truncate">{site.clinic_name}</h1>
+              <Badge variant={site.live_status === 'online' ? 'success' : site.live_status === 'offline' ? 'error' : 'default'}>
+                {site.live_status}
+              </Badge>
+            </div>
+            <p className="text-label-tertiary text-sm mt-0.5">{site.site_id}</p>
+          </div>
           <button
             onClick={handleGeneratePortalLink}
             disabled={isGeneratingLink}
-            className="px-3 py-1.5 text-sm bg-accent-primary hover:bg-accent-primary/90 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-accent-primary hover:bg-accent-tint rounded-ios-sm transition-colors disabled:opacity-50 whitespace-nowrap"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
             </svg>
-            {isGeneratingLink ? 'Generating...' : 'Generate Portal Link'}
+            {isGeneratingLink ? 'Generating...' : 'Portal Link'}
           </button>
+        </div>
+
+        {/* Row 2: Navigation pills */}
+        <nav className="flex items-center gap-1.5 mt-4 pt-3 border-t border-separator-light overflow-x-auto">
           <Link
-            to={`/sites/${siteId}/frameworks`}
-            className="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors flex items-center gap-2"
+            to={`/sites/${siteId}/devices`}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-ios-sm bg-separator-light text-label-primary hover:bg-separator-medium transition-colors whitespace-nowrap"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
             </svg>
-            Frameworks
+            Devices
           </Link>
           <Link
             to={`/sites/${siteId}/workstations`}
-            className="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors flex items-center gap-2"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-ios-sm bg-separator-light text-label-primary hover:bg-separator-medium transition-colors whitespace-nowrap"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
             </svg>
             Workstations
           </Link>
           <Link
             to={`/sites/${siteId}/agents`}
-            className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors flex items-center gap-2"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-ios-sm bg-separator-light text-label-primary hover:bg-separator-medium transition-colors whitespace-nowrap"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
             </svg>
             Go Agents
           </Link>
+          <div className="w-px h-5 bg-separator-medium mx-0.5 flex-shrink-0" />
           <Link
-            to={`/sites/${siteId}/devices`}
-            className="px-3 py-1.5 text-sm bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition-colors flex items-center gap-2"
+            to={`/sites/${siteId}/frameworks`}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-ios-sm bg-separator-light text-label-primary hover:bg-separator-medium transition-colors whitespace-nowrap"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
-            Devices
+            Frameworks
           </Link>
           <Link
             to={`/sites/${siteId}/integrations`}
-            className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors flex items-center gap-2"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-ios-sm bg-separator-light text-label-primary hover:bg-separator-medium transition-colors whitespace-nowrap"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             Cloud Integrations
           </Link>
-          <Badge variant={site.live_status === 'online' ? 'success' : site.live_status === 'offline' ? 'error' : 'default'}>
-            {site.live_status}
-          </Badge>
-        </div>
+        </nav>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -784,6 +799,7 @@ export const SiteDetail: React.FC = () => {
                   <ApplianceCard
                     key={appliance.appliance_id}
                     appliance={appliance}
+                    latestVersion={latestVersion}
                     onCreateOrder={handleCreateOrder}
                     onDelete={handleDeleteAppliance}
                     isLoading={isOrderLoading}

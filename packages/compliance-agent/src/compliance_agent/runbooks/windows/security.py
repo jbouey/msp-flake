@@ -1634,6 +1634,536 @@ foreach ($Line in $NetAccounts) {
 
 
 # =============================================================================
+# RB-WIN-SEC-014: TLS/SSL Configuration
+# =============================================================================
+
+RUNBOOK_TLS_CONFIG = WindowsRunbook(
+    id="RB-WIN-SEC-014",
+    name="TLS/SSL Configuration",
+    description="Ensure legacy TLS/SSL protocols are disabled and TLS 1.2+ is enforced",
+    version="1.0",
+    hipaa_controls=["164.312(e)(1)", "164.312(e)(2)(ii)"],
+    severity="high",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=30,
+        requires_maintenance_window=True,
+        allow_concurrent=True
+    ),
+
+    detect_script=r'''
+# Check TLS/SSL protocol configuration
+$Result = @{
+    Drifted = $false
+    Issues = @()
+    Protocols = @{}
+}
+
+$BasePath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols"
+
+# Protocols that must be DISABLED for HIPAA
+$LegacyProtocols = @("SSL 2.0", "SSL 3.0", "TLS 1.0", "TLS 1.1")
+
+# Protocols that must be ENABLED
+$ModernProtocols = @("TLS 1.2")
+
+try {
+    # Check legacy protocols (should be disabled)
+    foreach ($Protocol in $LegacyProtocols) {
+        $ServerPath = "$BasePath\$Protocol\Server"
+        $ClientPath = "$BasePath\$Protocol\Client"
+
+        $ServerEnabled = (Get-ItemProperty -Path $ServerPath -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+        $ServerDisabledByDefault = (Get-ItemProperty -Path $ServerPath -Name "DisabledByDefault" -ErrorAction SilentlyContinue).DisabledByDefault
+        $ClientEnabled = (Get-ItemProperty -Path $ClientPath -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+
+        $ProtocolInfo = @{
+            ServerEnabled = if ($null -eq $ServerEnabled) { "NotConfigured" } else { $ServerEnabled }
+            ServerDisabledByDefault = if ($null -eq $ServerDisabledByDefault) { "NotConfigured" } else { $ServerDisabledByDefault }
+            ClientEnabled = if ($null -eq $ClientEnabled) { "NotConfigured" } else { $ClientEnabled }
+        }
+        $Result.Protocols[$Protocol] = $ProtocolInfo
+
+        # Legacy protocol is drifted if not explicitly disabled
+        if ($ServerEnabled -ne 0 -or $ServerDisabledByDefault -ne 1) {
+            $Result.Drifted = $true
+            $Result.Issues += "$Protocol server not explicitly disabled"
+        }
+        if ($ClientEnabled -ne 0) {
+            $Result.Drifted = $true
+            $Result.Issues += "$Protocol client not explicitly disabled"
+        }
+    }
+
+    # Check modern protocols (should be enabled)
+    foreach ($Protocol in $ModernProtocols) {
+        $ServerPath = "$BasePath\$Protocol\Server"
+        $ClientPath = "$BasePath\$Protocol\Client"
+
+        $ServerEnabled = (Get-ItemProperty -Path $ServerPath -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+        $ClientEnabled = (Get-ItemProperty -Path $ClientPath -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+
+        $ProtocolInfo = @{
+            ServerEnabled = if ($null -eq $ServerEnabled) { "NotConfigured" } else { $ServerEnabled }
+            ClientEnabled = if ($null -eq $ClientEnabled) { "NotConfigured" } else { $ClientEnabled }
+        }
+        $Result.Protocols[$Protocol] = $ProtocolInfo
+
+        # TLS 1.2 should be explicitly enabled
+        if ($ServerEnabled -eq 0) {
+            $Result.Drifted = $true
+            $Result.Issues += "$Protocol server is disabled"
+        }
+    }
+
+    # Check for weak cipher suites
+    $WeakCiphers = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC4 128/128" -Name "Enabled" -ErrorAction SilentlyContinue
+    if ($null -ne $WeakCiphers -and $WeakCiphers.Enabled -ne 0) {
+        $Result.Issues += "RC4 cipher is still enabled"
+    }
+} catch {
+    $Result.Error = $_.Exception.Message
+    $Result.Drifted = $true
+}
+
+$Result | ConvertTo-Json -Depth 3
+''',
+
+    remediate_script=r'''
+# Disable legacy TLS/SSL protocols and enable TLS 1.2+
+$Result = @{ Success = $false; Actions = @() }
+
+try {
+    $BasePath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols"
+
+    # Disable legacy protocols
+    $LegacyProtocols = @("SSL 2.0", "SSL 3.0", "TLS 1.0", "TLS 1.1")
+
+    foreach ($Protocol in $LegacyProtocols) {
+        foreach ($Side in @("Server", "Client")) {
+            $Path = "$BasePath\$Protocol\$Side"
+            if (-not (Test-Path $Path)) {
+                New-Item -Path $Path -Force | Out-Null
+            }
+            Set-ItemProperty -Path $Path -Name "Enabled" -Value 0 -Type DWord
+            Set-ItemProperty -Path $Path -Name "DisabledByDefault" -Value 1 -Type DWord
+        }
+        $Result.Actions += "Disabled $Protocol (Server and Client)"
+    }
+
+    # Enable TLS 1.2
+    foreach ($Side in @("Server", "Client")) {
+        $Path = "$BasePath\TLS 1.2\$Side"
+        if (-not (Test-Path $Path)) {
+            New-Item -Path $Path -Force | Out-Null
+        }
+        Set-ItemProperty -Path $Path -Name "Enabled" -Value 1 -Type DWord
+        Set-ItemProperty -Path $Path -Name "DisabledByDefault" -Value 0 -Type DWord
+    }
+    $Result.Actions += "Enabled TLS 1.2 (Server and Client)"
+
+    # Enable TLS 1.3 if registry path is available
+    foreach ($Side in @("Server", "Client")) {
+        $Path = "$BasePath\TLS 1.3\$Side"
+        if (-not (Test-Path $Path)) {
+            New-Item -Path $Path -Force | Out-Null
+        }
+        Set-ItemProperty -Path $Path -Name "Enabled" -Value 1 -Type DWord
+        Set-ItemProperty -Path $Path -Name "DisabledByDefault" -Value 0 -Type DWord
+    }
+    $Result.Actions += "Enabled TLS 1.3 (Server and Client)"
+
+    # Disable RC4 cipher
+    $RC4Path = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC4 128/128"
+    if (-not (Test-Path $RC4Path)) {
+        New-Item -Path $RC4Path -Force | Out-Null
+    }
+    Set-ItemProperty -Path $RC4Path -Name "Enabled" -Value 0 -Type DWord
+    $Result.Actions += "Disabled RC4 cipher"
+
+    # Ensure .NET Framework uses strong crypto
+    $NetFx64 = "HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319"
+    $NetFx32 = "HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NETFramework\v4.0.30319"
+    foreach ($Path in @($NetFx64, $NetFx32)) {
+        if (Test-Path $Path) {
+            Set-ItemProperty -Path $Path -Name "SchUseStrongCrypto" -Value 1 -Type DWord
+        }
+    }
+    $Result.Actions += "Enabled .NET strong crypto"
+
+    $Result.Success = $true
+    $Result.Message = "TLS/SSL configuration hardened"
+    $Result.Warning = "Reboot required for changes to take effect"
+} catch {
+    $Result.Error = $_.Exception.Message
+}
+
+$Result | ConvertTo-Json -Depth 2
+''',
+
+    verify_script=r'''
+# Verify TLS configuration
+$BasePath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols"
+
+try {
+    # Check TLS 1.0 is disabled
+    $TLS10Enabled = (Get-ItemProperty -Path "$BasePath\TLS 1.0\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+    $TLS10Disabled = ($TLS10Enabled -eq 0)
+
+    # Check TLS 1.1 is disabled
+    $TLS11Enabled = (Get-ItemProperty -Path "$BasePath\TLS 1.1\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+    $TLS11Disabled = ($TLS11Enabled -eq 0)
+
+    # Check SSL 3.0 is disabled
+    $SSL3Enabled = (Get-ItemProperty -Path "$BasePath\SSL 3.0\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+    $SSL3Disabled = ($SSL3Enabled -eq 0)
+
+    # Check TLS 1.2 is enabled
+    $TLS12Enabled = (Get-ItemProperty -Path "$BasePath\TLS 1.2\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+    $TLS12Ok = ($TLS12Enabled -ne 0)
+
+    @{
+        TLS10Disabled = $TLS10Disabled
+        TLS11Disabled = $TLS11Disabled
+        SSL3Disabled = $SSL3Disabled
+        TLS12Enabled = $TLS12Ok
+        Verified = ($TLS10Disabled -and $TLS11Disabled -and $SSL3Disabled -and $TLS12Ok)
+    } | ConvertTo-Json
+} catch {
+    @{ Verified = $false; Error = $_.Exception.Message } | ConvertTo-Json
+}
+''',
+
+    timeout_seconds=120,
+    requires_reboot=True,
+    disruptive=False,
+    evidence_fields=["Protocols", "Issues"]
+)
+
+
+# =============================================================================
+# RB-WIN-SEC-015: USB/Removable Media Control
+# =============================================================================
+
+RUNBOOK_USB_CONTROL = WindowsRunbook(
+    id="RB-WIN-SEC-015",
+    name="USB/Removable Media Control",
+    description="Restrict USB storage devices and disable autorun to prevent data exfiltration",
+    version="1.0",
+    hipaa_controls=["164.310(d)(1)", "164.312(a)(1)"],
+    severity="medium",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=15,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
+
+    detect_script=r'''
+# Check USB storage and autorun configuration
+$Result = @{
+    Drifted = $false
+    Issues = @()
+}
+
+try {
+    # Check USBSTOR service start type
+    # 3 = Manual (default), 4 = Disabled
+    $USBSTORKey = "HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR"
+    $USBSTORStart = (Get-ItemProperty -Path $USBSTORKey -Name "Start" -ErrorAction SilentlyContinue).Start
+    $Result.USBSTORStartType = $USBSTORStart
+
+    $StartTypeName = switch ($USBSTORStart) {
+        0 { "Boot" }
+        1 { "System" }
+        2 { "Automatic" }
+        3 { "Manual" }
+        4 { "Disabled" }
+        default { "Unknown" }
+    }
+    $Result.USBSTORStartTypeName = $StartTypeName
+
+    if ($USBSTORStart -ne 4) {
+        $Result.Drifted = $true
+        $Result.Issues += "USB storage service is not disabled (current: $StartTypeName)"
+    }
+
+    # Check AutoRun/AutoPlay settings
+    $AutoRunKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    $NoDriveTypeAutoRun = (Get-ItemProperty -Path $AutoRunKey -Name "NoDriveTypeAutoRun" -ErrorAction SilentlyContinue).NoDriveTypeAutoRun
+    $Result.NoDriveTypeAutoRun = $NoDriveTypeAutoRun
+
+    # 0xFF = Disable autorun for all drive types
+    if ($NoDriveTypeAutoRun -ne 255) {
+        $Result.Drifted = $true
+        $Result.Issues += "AutoRun not fully disabled (should be 0xFF/255)"
+    }
+
+    # Check removable storage access policy (GPO)
+    $RemovableKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices"
+    $DenyAll = (Get-ItemProperty -Path "$RemovableKey\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}" -Name "Deny_All" -ErrorAction SilentlyContinue).Deny_All
+    $Result.RemovableStorageDenied = ($DenyAll -eq 1)
+
+    # Check for currently connected USB storage devices
+    $USBDevices = Get-WmiObject Win32_DiskDrive | Where-Object { $_.InterfaceType -eq "USB" }
+    $Result.ConnectedUSBDrives = @($USBDevices).Count
+    if ($USBDevices) {
+        $Result.Issues += "$(@($USBDevices).Count) USB storage device(s) currently connected"
+    }
+} catch {
+    $Result.Error = $_.Exception.Message
+    $Result.Drifted = $true
+}
+
+$Result | ConvertTo-Json -Depth 2
+''',
+
+    remediate_script=r'''
+# Disable USB storage and autorun
+$Result = @{ Success = $false; Actions = @() }
+
+try {
+    # Disable USBSTOR service (set start type to 4 = Disabled)
+    $USBSTORKey = "HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR"
+    Set-ItemProperty -Path $USBSTORKey -Name "Start" -Value 4 -Type DWord
+    $Result.Actions += "Disabled USBSTOR service (Start = 4)"
+
+    # Disable AutoRun for all drive types
+    $ExplorerKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    if (-not (Test-Path $ExplorerKey)) {
+        New-Item -Path $ExplorerKey -Force | Out-Null
+    }
+    Set-ItemProperty -Path $ExplorerKey -Name "NoDriveTypeAutoRun" -Value 255 -Type DWord
+    $Result.Actions += "Disabled AutoRun for all drive types (0xFF)"
+
+    # Disable AutoPlay
+    Set-ItemProperty -Path $ExplorerKey -Name "NoAutorun" -Value 1 -Type DWord
+    $Result.Actions += "Disabled AutoPlay"
+
+    # Set removable storage deny policy
+    $RemovableKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}"
+    if (-not (Test-Path $RemovableKey)) {
+        New-Item -Path $RemovableKey -Force | Out-Null
+    }
+    Set-ItemProperty -Path $RemovableKey -Name "Deny_All" -Value 1 -Type DWord
+    $Result.Actions += "Set removable storage deny policy"
+
+    # Also set for WPD devices (phones, cameras)
+    $WPDKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices\{6AC27878-A6FA-4155-BA85-F98F491D4F33}"
+    if (-not (Test-Path $WPDKey)) {
+        New-Item -Path $WPDKey -Force | Out-Null
+    }
+    Set-ItemProperty -Path $WPDKey -Name "Deny_All" -Value 1 -Type DWord
+    $Result.Actions += "Set WPD device deny policy"
+
+    $Result.Success = $true
+    $Result.Message = "USB storage and autorun disabled"
+} catch {
+    $Result.Error = $_.Exception.Message
+}
+
+$Result | ConvertTo-Json -Depth 2
+''',
+
+    verify_script=r'''
+# Verify USB storage restrictions
+try {
+    $USBSTORStart = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR" -Name "Start" -ErrorAction SilentlyContinue).Start
+    $AutoRun = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoDriveTypeAutoRun" -ErrorAction SilentlyContinue).NoDriveTypeAutoRun
+
+    @{
+        USBSTORDisabled = ($USBSTORStart -eq 4)
+        AutoRunDisabled = ($AutoRun -eq 255)
+        Verified = ($USBSTORStart -eq 4 -and $AutoRun -eq 255)
+    } | ConvertTo-Json
+} catch {
+    @{ Verified = $false; Error = $_.Exception.Message } | ConvertTo-Json
+}
+''',
+
+    timeout_seconds=60,
+    requires_reboot=False,
+    disruptive=False,
+    evidence_fields=["USBSTORStartType", "NoDriveTypeAutoRun", "ConnectedUSBDrives", "Issues"]
+)
+
+
+# =============================================================================
+# RB-WIN-SEC-016: Screen Lock / Auto Logoff
+# =============================================================================
+
+RUNBOOK_SCREEN_LOCK = WindowsRunbook(
+    id="RB-WIN-SEC-016",
+    name="Screen Lock / Auto Logoff",
+    description="Enforce screen saver timeout, password protection, and idle disconnect for HIPAA",
+    version="1.0",
+    hipaa_controls=["164.312(a)(2)(iii)"],
+    severity="high",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=15,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
+
+    detect_script=r'''
+# Check screen lock and auto logoff settings
+$Result = @{
+    Drifted = $false
+    Issues = @()
+}
+
+try {
+    # Check screen saver timeout (machine-level GPO)
+    $SSKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop"
+    $SSTimeout = (Get-ItemProperty -Path $SSKey -Name "ScreenSaveTimeOut" -ErrorAction SilentlyContinue).ScreenSaveTimeOut
+    $SSActive = (Get-ItemProperty -Path $SSKey -Name "ScreenSaveActive" -ErrorAction SilentlyContinue).ScreenSaveActive
+    $SSSecure = (Get-ItemProperty -Path $SSKey -Name "ScreenSaverIsSecure" -ErrorAction SilentlyContinue).ScreenSaverIsSecure
+
+    # Also check user-level (fallback)
+    if ($null -eq $SSTimeout) {
+        $UserSSKey = "HKCU:\Control Panel\Desktop"
+        $SSTimeout = (Get-ItemProperty -Path $UserSSKey -Name "ScreenSaveTimeOut" -ErrorAction SilentlyContinue).ScreenSaveTimeOut
+        $SSActive = (Get-ItemProperty -Path $UserSSKey -Name "ScreenSaveActive" -ErrorAction SilentlyContinue).ScreenSaveActive
+        $SSSecure = (Get-ItemProperty -Path $UserSSKey -Name "ScreenSaverIsSecure" -ErrorAction SilentlyContinue).ScreenSaverIsSecure
+    }
+
+    $Result.ScreenSaverTimeout = $SSTimeout
+    $Result.ScreenSaverActive = $SSActive
+    $Result.ScreenSaverSecure = $SSSecure
+
+    # HIPAA requires 15 minutes or less
+    if ($null -eq $SSTimeout -or [int]$SSTimeout -gt 900) {
+        $Result.Drifted = $true
+        $Result.Issues += "Screen saver timeout not set or exceeds 900 seconds (15 minutes)"
+    }
+
+    if ($SSActive -ne "1") {
+        $Result.Drifted = $true
+        $Result.Issues += "Screen saver is not active"
+    }
+
+    if ($SSSecure -ne "1") {
+        $Result.Drifted = $true
+        $Result.Issues += "Screen saver password protection not enabled"
+    }
+
+    # Check idle disconnect for RDP sessions
+    $TSKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+    $IdleTimeout = (Get-ItemProperty -Path $TSKey -Name "MaxIdleTime" -ErrorAction SilentlyContinue).MaxIdleTime
+    $DisconnectTimeout = (Get-ItemProperty -Path $TSKey -Name "MaxDisconnectionTime" -ErrorAction SilentlyContinue).MaxDisconnectionTime
+
+    $Result.RDPIdleTimeoutMs = $IdleTimeout
+    $Result.RDPDisconnectTimeoutMs = $DisconnectTimeout
+
+    # Idle timeout should be 15 minutes (900000 ms) or less
+    if ($null -eq $IdleTimeout -or $IdleTimeout -gt 900000 -or $IdleTimeout -eq 0) {
+        $Result.Drifted = $true
+        $Result.Issues += "RDP idle timeout not configured or exceeds 15 minutes"
+    }
+
+    # Check machine inactivity limit (local security policy)
+    $InactivityKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+    $InactivityLimit = (Get-ItemProperty -Path $InactivityKey -Name "InactivityTimeoutSecs" -ErrorAction SilentlyContinue).InactivityTimeoutSecs
+    $Result.InactivityTimeoutSecs = $InactivityLimit
+
+    if ($null -eq $InactivityLimit -or $InactivityLimit -gt 900 -or $InactivityLimit -eq 0) {
+        $Result.Drifted = $true
+        $Result.Issues += "Machine inactivity timeout not configured or exceeds 900 seconds"
+    }
+} catch {
+    $Result.Error = $_.Exception.Message
+    $Result.Drifted = $true
+}
+
+$Result | ConvertTo-Json -Depth 2
+''',
+
+    remediate_script=r'''
+# Configure screen lock and idle disconnect settings
+$Result = @{ Success = $false; Actions = @() }
+
+try {
+    # Set screen saver timeout to 900 seconds (15 minutes) via GPO registry
+    $SSKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop"
+    if (-not (Test-Path $SSKey)) {
+        New-Item -Path $SSKey -Force | Out-Null
+    }
+    Set-ItemProperty -Path $SSKey -Name "ScreenSaveTimeOut" -Value "900" -Type String
+    $Result.Actions += "Set screen saver timeout to 900 seconds (15 minutes)"
+
+    # Enable screen saver
+    Set-ItemProperty -Path $SSKey -Name "ScreenSaveActive" -Value "1" -Type String
+    $Result.Actions += "Enabled screen saver"
+
+    # Require password on resume
+    Set-ItemProperty -Path $SSKey -Name "ScreenSaverIsSecure" -Value "1" -Type String
+    $Result.Actions += "Enabled screen saver password protection"
+
+    # Configure RDP idle timeout (15 minutes = 900000 ms)
+    $TSKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+    if (-not (Test-Path $TSKey)) {
+        New-Item -Path $TSKey -Force | Out-Null
+    }
+    Set-ItemProperty -Path $TSKey -Name "MaxIdleTime" -Value 900000 -Type DWord
+    $Result.Actions += "Set RDP idle timeout to 15 minutes"
+
+    # Set disconnected session timeout to 5 minutes (300000 ms)
+    Set-ItemProperty -Path $TSKey -Name "MaxDisconnectionTime" -Value 300000 -Type DWord
+    $Result.Actions += "Set RDP disconnected session timeout to 5 minutes"
+
+    # Set machine inactivity limit
+    $InactivityKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+    Set-ItemProperty -Path $InactivityKey -Name "InactivityTimeoutSecs" -Value 900 -Type DWord
+    $Result.Actions += "Set machine inactivity timeout to 900 seconds"
+
+    $Result.Success = $true
+    $Result.Message = "Screen lock and idle disconnect configured for HIPAA compliance"
+} catch {
+    $Result.Error = $_.Exception.Message
+}
+
+$Result | ConvertTo-Json -Depth 2
+''',
+
+    verify_script=r'''
+# Verify screen lock settings
+try {
+    $SSKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop"
+    $SSTimeout = (Get-ItemProperty -Path $SSKey -Name "ScreenSaveTimeOut" -ErrorAction SilentlyContinue).ScreenSaveTimeOut
+    $SSSecure = (Get-ItemProperty -Path $SSKey -Name "ScreenSaverIsSecure" -ErrorAction SilentlyContinue).ScreenSaverIsSecure
+
+    $TSKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+    $IdleTimeout = (Get-ItemProperty -Path $TSKey -Name "MaxIdleTime" -ErrorAction SilentlyContinue).MaxIdleTime
+
+    $InactivityKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+    $InactivityLimit = (Get-ItemProperty -Path $InactivityKey -Name "InactivityTimeoutSecs" -ErrorAction SilentlyContinue).InactivityTimeoutSecs
+
+    @{
+        ScreenSaverTimeout = $SSTimeout
+        ScreenSaverSecure = $SSSecure
+        RDPIdleTimeoutMs = $IdleTimeout
+        InactivityTimeoutSecs = $InactivityLimit
+        Verified = (
+            $SSTimeout -le 900 -and
+            $SSSecure -eq "1" -and
+            $IdleTimeout -le 900000 -and $IdleTimeout -gt 0 -and
+            $InactivityLimit -le 900 -and $InactivityLimit -gt 0
+        )
+    } | ConvertTo-Json
+} catch {
+    @{ Verified = $false; Error = $_.Exception.Message } | ConvertTo-Json
+}
+''',
+
+    timeout_seconds=60,
+    requires_reboot=False,
+    disruptive=False,
+    evidence_fields=["ScreenSaverTimeout", "ScreenSaverSecure", "RDPIdleTimeoutMs", "InactivityTimeoutSecs", "Issues"]
+)
+
+
+# =============================================================================
 # Security Runbooks Registry
 # =============================================================================
 
@@ -1651,5 +2181,8 @@ SECURITY_RUNBOOKS: Dict[str, WindowsRunbook] = {
     "RB-WIN-SEC-011": RUNBOOK_UAC_ENFORCEMENT,
     "RB-WIN-SEC-012": RUNBOOK_EVENT_LOG_PROTECTION,
     "RB-WIN-SEC-013": RUNBOOK_CREDENTIAL_GUARD,
+    "RB-WIN-SEC-014": RUNBOOK_TLS_CONFIG,
+    "RB-WIN-SEC-015": RUNBOOK_USB_CONTROL,
+    "RB-WIN-SEC-016": RUNBOOK_SCREEN_LOCK,
     "RB-WIN-ACCESS-001": RUNBOOK_ACCESS_CONTROL,
 }

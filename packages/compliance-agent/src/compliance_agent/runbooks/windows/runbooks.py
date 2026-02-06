@@ -390,7 +390,7 @@ try {
         Verified = ($Age.TotalHours -lt 24)
     } | ConvertTo-Json
 } catch {
-    @{ Verified = $false, Error = $_.Exception.Message } | ConvertTo-Json
+    @{ Verified = $false; Error = $_.Exception.Message } | ConvertTo-Json
 }
 ''',
 

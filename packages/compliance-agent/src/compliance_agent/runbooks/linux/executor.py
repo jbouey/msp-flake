@@ -594,8 +594,8 @@ class LinuxExecutor:
         echo "  \\"kernel\\": \\"$(uname -r)\\","
         echo "  \\"uptime_seconds\\": $(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1),"
         echo "  \\"load_average\\": \\"$(cat /proc/loadavg | cut -d' ' -f1-3)\\","
-        echo "  \\"memory_total_mb\\": $(free -m | awk '/^Mem:/{print $2}),"
-        echo "  \\"memory_used_mb\\": $(free -m | awk '/^Mem:/{print $3}),"
+        echo "  \\"memory_total_mb\\": $(free -m | awk '/^Mem:/{print $2}'),"
+        echo "  \\"memory_used_mb\\": $(free -m | awk '/^Mem:/{print $3}'),"
         echo "  \\"disk_usage_percent\\": $(df / | awk 'NR==2{print $5}' | tr -d '%')"
         echo "}"
         '''

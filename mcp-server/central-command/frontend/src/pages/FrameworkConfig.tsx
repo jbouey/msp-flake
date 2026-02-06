@@ -196,7 +196,8 @@ export default function FrameworkConfig() {
             updated_at: new Date().toISOString(),
           }
         );
-        setScores(scoresData);
+        const scoresArray = Array.isArray(scoresData) ? scoresData : (scoresData as any)?.scores || [];
+        setScores(scoresArray);
       } catch (err) {
         console.error('Failed to load appliance config:', err);
       }

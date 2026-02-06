@@ -10,6 +10,7 @@ Production-ready FastAPI server that:
 - Integrates with MinIO for WORM storage
 """
 
+import asyncio
 import os
 import json
 import hashlib
@@ -345,6 +346,27 @@ async def check_rate_limit(site_id: str, action: str = "default") -> tuple[bool,
     return True, 0
 
 # ============================================================================
+# Background Tasks
+# ============================================================================
+
+async def _ots_upgrade_loop():
+    """Periodically upgrade pending OTS proofs (every 2 hours)."""
+    await asyncio.sleep(60)  # Wait 1 min after startup
+    while True:
+        try:
+            from dashboard_api.evidence_chain import upgrade_pending_proofs
+            async with async_session() as db:
+                result = await upgrade_pending_proofs(db, limit=200)
+                if result.get("upgraded", 0) > 0:
+                    logger.info("OTS upgrade cycle", **result)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"OTS upgrade cycle failed: {e}")
+        await asyncio.sleep(7200)  # 2 hours
+
+
+# ============================================================================
 # Lifespan Events
 # ============================================================================
 
@@ -406,14 +428,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not ensure default admin: {e}")
 
-    logger.info("MCP Server started", 
+    logger.info("MCP Server started",
                 rate_limit=f"{RATE_LIMIT_REQUESTS}/{RATE_LIMIT_WINDOW}s",
                 order_ttl=ORDER_TTL_SECONDS)
-    
+
+    # Start periodic OTS proof upgrade task
+    ots_upgrade_task = asyncio.create_task(_ots_upgrade_loop())
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down MCP Server...")
+    ots_upgrade_task.cancel()
     if redis_client:
         await redis_client.close()
     await engine.dispose()

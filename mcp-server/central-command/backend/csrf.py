@@ -98,6 +98,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/portal/",          # Portal uses magic links, not cookies
         "/api/fleet/",           # Fleet updates - admin auth protected
         "/api/orders/",          # Order acknowledgement from appliances
+        "/api/evidence/",        # Evidence chain - appliance submissions + admin ops
     )
 
     # Safe methods that don't require CSRF validation

@@ -436,6 +436,7 @@ class GlobalStats(BaseModel):
     l1_resolution_rate: float
     l2_resolution_rate: float
     l3_escalation_rate: float
+    computed_at: Optional[str] = None
 
 
 class ClientStats(BaseModel):
