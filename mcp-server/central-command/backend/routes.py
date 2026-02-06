@@ -727,6 +727,25 @@ async def promote_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
     raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
 
 
+@router.post("/learning/reject/{pattern_id}")
+async def reject_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
+    """Reject a promotion candidate, marking it as dismissed."""
+    result = await db.execute(
+        text("SELECT pattern_id, status FROM patterns WHERE pattern_id = :pid"),
+        {"pid": pattern_id}
+    )
+    pattern = result.fetchone()
+    if not pattern:
+        raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
+    await db.execute(text("""
+        UPDATE patterns SET status = 'rejected' WHERE pattern_id = :pid
+    """), {"pid": pattern_id})
+    await db.commit()
+
+    return {"status": "rejected", "pattern_id": pattern_id}
+
+
 @router.post("/patterns", response_model=PatternReportResponse)
 async def report_pattern(report: PatternReport, db: AsyncSession = Depends(get_db)):
     """Receive pattern report from agent after successful healing.

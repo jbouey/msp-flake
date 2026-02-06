@@ -12,6 +12,7 @@ export {
   usePromotionCandidates,
   usePromotionHistory,
   usePromotePattern,
+  useRejectPattern,
   useOnboardingPipeline,
   useOnboardingMetrics,
   // Sites hooks

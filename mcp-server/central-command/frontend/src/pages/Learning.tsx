@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { GlassCard, Spinner } from '../components/shared';
 import { PatternCard, PromotionTimeline } from '../components/learning';
 import {
@@ -6,6 +6,7 @@ import {
   usePromotionCandidates,
   usePromotionHistory,
   usePromotePattern,
+  useRejectPattern,
 } from '../hooks';
 
 /**
@@ -16,30 +17,42 @@ import {
  */
 export const Learning: React.FC = () => {
   const [promotingId, setPromotingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Fetch data
-  const { data: status, isLoading: isLoadingStatus } = useLearningStatus();
-  const { data: candidates = [], isLoading: isLoadingCandidates } = usePromotionCandidates();
+  const { data: status, isLoading: isLoadingStatus, isError: isStatusError } = useLearningStatus();
+  const { data: candidates = [], isLoading: isLoadingCandidates, isError: isCandidatesError } = usePromotionCandidates();
   const { data: history = [], isLoading: isLoadingHistory } = usePromotionHistory(10);
 
-  // Promote mutation
+  // Mutations
   const promoteMutation = usePromotePattern();
+  const rejectMutation = useRejectPattern();
 
-  const handleApprove = async (patternId: string) => {
+  const showFeedback = useCallback((type: 'success' | 'error', message: string) => {
+    setFeedback({ type, message });
+    setTimeout(() => setFeedback(null), 4000);
+  }, []);
+
+  const handleApprove = useCallback(async (patternId: string) => {
     setPromotingId(patternId);
     try {
-      await promoteMutation.mutateAsync(patternId);
+      const result = await promoteMutation.mutateAsync(patternId);
+      showFeedback('success', `Pattern promoted to ${result.new_rule_id}`);
     } catch (error) {
-      console.error('Failed to promote pattern:', error);
+      showFeedback('error', `Failed to promote: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setPromotingId(null);
     }
-  };
+  }, [promoteMutation, showFeedback]);
 
-  const handleReject = (patternId: string) => {
-    // In a real implementation, this would call an API to reject the candidate
-    console.log('Rejected pattern:', patternId);
-  };
+  const handleReject = useCallback(async (patternId: string) => {
+    try {
+      await rejectMutation.mutateAsync(patternId);
+      showFeedback('success', 'Pattern rejected');
+    } catch (error) {
+      showFeedback('error', `Failed to reject: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [rejectMutation, showFeedback]);
 
   const handleApproveAll = async () => {
     for (const candidate of candidates) {
@@ -49,6 +62,26 @@ export const Learning: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Feedback banner */}
+      {feedback && (
+        <div className={`px-4 py-3 rounded-lg text-sm font-medium ${
+          feedback.type === 'success'
+            ? 'bg-health-healthy/10 text-health-healthy border border-health-healthy/20'
+            : 'bg-health-critical/10 text-health-critical border border-health-critical/20'
+        }`}>
+          {feedback.message}
+        </div>
+      )}
+
+      {/* Error state */}
+      {(isStatusError || isCandidatesError) && (
+        <div className="bg-health-critical/10 border border-health-critical/20 px-4 py-3 rounded-lg">
+          <p className="text-sm text-health-critical font-medium">
+            Failed to load learning data. Check your connection and try refreshing.
+          </p>
+        </div>
+      )}
+
       {/* Stats row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <GlassCard padding="md">

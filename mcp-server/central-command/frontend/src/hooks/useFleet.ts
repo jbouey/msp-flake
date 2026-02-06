@@ -210,10 +210,24 @@ export function usePromotePattern() {
   return useMutation({
     mutationFn: (patternId: string) => learningApi.promote(patternId),
     onSuccess: () => {
-      // Invalidate learning queries to refetch updated data
       queryClient.invalidateQueries({ queryKey: ['learning'] });
     },
     onError: (error) => logMutationError('promotePattern', error),
+  });
+}
+
+/**
+ * Hook for rejecting a promotion candidate
+ */
+export function useRejectPattern() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (patternId: string) => learningApi.reject(patternId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['learning'] });
+    },
+    onError: (error) => logMutationError('rejectPattern', error),
   });
 }
 

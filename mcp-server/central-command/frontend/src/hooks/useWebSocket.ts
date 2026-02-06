@@ -33,7 +33,7 @@ function getKeysToInvalidate(event: WSEvent): string[][] {
     case 'notification_created':
       return [['notifications']];
     case 'pattern_promoted':
-      return [['learning']];
+      return [['learning', 'candidates'], ['learning', 'history'], ['learning', 'status']];
     case 'compliance_drift':
       return [['fleet'], ['events'], ['stats']];
     case 'order_status_changed':

@@ -233,6 +233,12 @@ export const learningApi = {
       `/learning/promote/${patternId}`,
       { method: 'POST' }
     ),
+
+  reject: (patternId: string) =>
+    fetchApi<{ status: string; pattern_id: string }>(
+      `/learning/reject/${patternId}`,
+      { method: 'POST' }
+    ),
 };
 
 // =============================================================================

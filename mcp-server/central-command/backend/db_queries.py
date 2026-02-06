@@ -369,6 +369,7 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
 
 async def promote_pattern_in_db(db: AsyncSession, pattern_id: str) -> Optional[str]:
     """Promote a pattern to L1 rule. Uses SELECT FOR UPDATE to prevent duplicate promotions."""
+    import json as _json
     from .websocket_manager import broadcast_event
 
     # Get pattern with row lock to prevent concurrent promotions
@@ -384,24 +385,28 @@ async def promote_pattern_in_db(db: AsyncSession, pattern_id: str) -> Optional[s
     # Create L1 rule
     rule_id = f"RB-AUTO-{pattern.pattern_signature[:8].upper()}"
 
-    await db.execute(text("""
-        INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, promoted_from_l2, enabled)
-        VALUES (:rule_id, :pattern, :runbook_id, 0.9, true, true)
-        ON CONFLICT (rule_id) DO NOTHING
-    """), {
-        "rule_id": rule_id,
-        "pattern": f'{{"incident_type": "{pattern.incident_type}"}}',
-        "runbook_id": pattern.runbook_id,
-    })
+    try:
+        await db.execute(text("""
+            INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, promoted_from_l2, enabled)
+            VALUES (:rule_id, :pattern, :runbook_id, 0.9, true, true)
+            ON CONFLICT (rule_id) DO NOTHING
+        """), {
+            "rule_id": rule_id,
+            "pattern": _json.dumps({"incident_type": pattern.incident_type}),
+            "runbook_id": pattern.runbook_id,
+        })
 
-    # Update pattern
-    await db.execute(text("""
-        UPDATE patterns
-        SET status = 'promoted', promoted_at = NOW(), promoted_to_rule_id = :rule_id
-        WHERE pattern_id = :pid
-    """), {"rule_id": rule_id, "pid": pattern_id})
+        # Update pattern status
+        await db.execute(text("""
+            UPDATE patterns
+            SET status = 'promoted', promoted_at = NOW(), promoted_to_rule_id = :rule_id
+            WHERE pattern_id = :pid
+        """), {"rule_id": rule_id, "pid": pattern_id})
 
-    await db.commit()
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
 
     # Broadcast promotion event
     try:
