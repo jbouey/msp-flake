@@ -98,13 +98,20 @@ in
 
   # Boot with serial console for debugging
   # nosoftlockup: prevent false watchdog alarms during heavy nixos-install I/O
-  boot.kernelParams = [ "console=tty1" "console=ttyS0,115200" "nosoftlockup" ];
+  # audit=0: disable kernel audit on live ISO (configuration.nix enables auditd
+  # with execve logging which causes kauditd hold queue overflow during boot)
+  boot.kernelParams = [ "console=tty1" "console=ttyS0,115200" "nosoftlockup" "audit=0" ];
   boot.loader.timeout = lib.mkForce 3;
 
   # Disable hardware watchdog on live ISO - nixos-install starves CPUs
   # The installed system (appliance-disk-image.nix) has its own watchdog config
   systemd.watchdog.runtimeTime = lib.mkForce null;
   systemd.watchdog.device = lib.mkForce null;
+
+  # Disable auditd on the live ISO - the execve audit rule floods the system
+  # The installed system gets audit from configuration.nix
+  security.auditd.enable = lib.mkForce false;
+  security.audit.enable = lib.mkForce false;
 
   # No GUI - headless operation
   services.xserver.enable = false;
