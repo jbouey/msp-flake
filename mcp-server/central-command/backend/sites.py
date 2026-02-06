@@ -958,6 +958,7 @@ class ApplianceCheckin(BaseModel):
     agent_version: Optional[str] = None
     nixos_version: Optional[str] = None
     has_local_credentials: bool = False  # If True, appliance has fresh local creds
+    agent_public_key: Optional[str] = None  # Ed25519 public key hex for evidence signing
 
 
 def normalize_mac(mac: str) -> str:
@@ -1497,6 +1498,34 @@ async def appliance_checkin(checkin: ApplianceCheckin):
             # Don't fail checkin if fleet update fails
             import logging
             logging.warning(f"Failed to update appliances table: {e}")
+
+        # === STEP 3.6: Register/update agent signing key ===
+        if checkin.agent_public_key and len(checkin.agent_public_key) == 64:
+            try:
+                existing_key = await conn.fetchval(
+                    "SELECT agent_public_key FROM sites WHERE site_id = $1",
+                    checkin.site_id
+                )
+                if existing_key != checkin.agent_public_key:
+                    await conn.execute(
+                        "UPDATE sites SET agent_public_key = $1 WHERE site_id = $2",
+                        checkin.agent_public_key, checkin.site_id
+                    )
+                    if existing_key:
+                        import logging
+                        logging.warning(
+                            f"Agent signing key ROTATED for site={checkin.site_id} "
+                            f"old={existing_key[:12]}... new={checkin.agent_public_key[:12]}..."
+                        )
+                    else:
+                        import logging
+                        logging.info(
+                            f"Agent signing key registered for site={checkin.site_id} "
+                            f"key={checkin.agent_public_key[:12]}..."
+                        )
+            except Exception as e:
+                import logging
+                logging.warning(f"Failed to register agent public key: {e}")
 
         # === STEP 4: Get pending orders for this appliance ===
         # Check admin_orders table (fleet management orders)

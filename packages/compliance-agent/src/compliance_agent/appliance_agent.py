@@ -389,6 +389,8 @@ class ApplianceAgent:
         # Only submits on state change or hourly heartbeat to reduce storage by ~99%
         self._evidence_state_cache: Dict[str, tuple] = {}
         self._evidence_heartbeat_interval = 3600  # Hourly heartbeat even if no change
+        self._evidence_failure_count = 0  # Consecutive evidence submission failures
+        self._evidence_failure_reported = False  # Whether we've already raised an incident
 
         # Initialize Windows targets from config
         for target_cfg in config.windows_targets:
@@ -430,9 +432,11 @@ class ApplianceAgent:
         self.running = True
 
         # Initialize Ed25519 signing key (generate if not exists)
+        self._public_key_hex = None
         try:
             was_generated, public_key_hex = ensure_signing_key(self._signing_key_path)
             self.signer = Ed25519Signer(self._signing_key_path)
+            self._public_key_hex = public_key_hex
             if was_generated:
                 logger.info(f"Generated new signing key, public key: {public_key_hex[:16]}...")
             else:
@@ -576,6 +580,59 @@ class ApplianceAgent:
         logger.debug(f"Evidence skip: {check_type} duplicate (elapsed: {elapsed:.0f}s)")
         return False
 
+    def _track_evidence_result(self, bundle_id: Optional[str], check_type: str) -> None:
+        """Track evidence submission success/failure for partner visibility.
+
+        After 3 consecutive failures, reports an incident so the partner
+        dashboard can surface the problem.
+        """
+        if bundle_id:
+            # Success - reset counter
+            if self._evidence_failure_count > 0:
+                logger.info(
+                    f"Evidence submission recovered after "
+                    f"{self._evidence_failure_count} failures"
+                )
+            self._evidence_failure_count = 0
+            self._evidence_failure_reported = False
+        else:
+            # Failure
+            self._evidence_failure_count += 1
+            logger.warning(
+                f"Evidence submission failed for {check_type} "
+                f"({self._evidence_failure_count} consecutive)"
+            )
+
+            # After 3 consecutive failures, report incident (once)
+            if (self._evidence_failure_count >= 3
+                    and not self._evidence_failure_reported
+                    and self.incident_db):
+                try:
+                    from ._types import Incident, Severity, now_utc
+                    incident = Incident(
+                        incident_type="evidence_submission_failure",
+                        severity=Severity.HIGH,
+                        check_type=check_type,
+                        details={
+                            "consecutive_failures": self._evidence_failure_count,
+                            "message": (
+                                f"Evidence chain broken: {self._evidence_failure_count} "
+                                f"consecutive submission failures. Evidence is not being "
+                                f"recorded on Central Command."
+                            ),
+                        },
+                        pre_state={"evidence_chain": "broken"},
+                        hipaa_controls=["164.312(b)", "164.312(c)(1)"],
+                    )
+                    self.incident_db.store(incident)
+                    self._evidence_failure_reported = True
+                    logger.error(
+                        f"Evidence chain broken incident reported: "
+                        f"{self._evidence_failure_count} failures"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to report evidence incident: {e}")
+
     async def _start_sensor_server(self):
         """
         Start the sensor API web server for dual-mode architecture.
@@ -688,7 +745,8 @@ class ApplianceAgent:
             agent_version=VERSION,
             nixos_version=get_nixos_version(),
             compliance_summary=compliance_summary,
-            has_local_credentials=has_local_creds
+            has_local_credentials=has_local_creds,
+            agent_public_key=self._public_key_hex
         )
 
         if checkin_response is not None:
@@ -848,11 +906,9 @@ class ApplianceAgent:
                         check_result=check_status,
                         evidence_data=evidence_data,
                         hipaa_control=hipaa_controls.get(check_name),
-                        signer=self.signer  # Pass signer to client for signing
+                        signer=self.signer
                     )
-
-                    if bundle_id:
-                        logger.debug(f"Evidence uploaded: {check_name} -> {bundle_id} (signed={self.signer is not None})")
+                    self._track_evidence_result(bundle_id, check_name)
 
                     # Store locally as well
                     await self._store_local_evidence(bundle_id, evidence_data)
@@ -1907,17 +1963,16 @@ try {
                     # Submit with deduplication (signing happens in client)
                     windows_check_type = f"windows_{check_name}"
                     if self._should_submit_evidence(windows_check_type, status):
-                        await self.client.submit_evidence(
+                        bid = await self.client.submit_evidence(
                             bundle_hash=bundle_hash,
                             check_type=windows_check_type,
                             check_result=status,
                             evidence_data=evidence_data,
                             host=target.hostname,
-                            hipaa_control="164.312(b)",  # Audit controls
+                            hipaa_control="164.312(b)",
                             signer=self.signer
                         )
-
-                        logger.debug(f"Windows check {check_name} on {target.hostname}: {status}")
+                        self._track_evidence_result(bid, windows_check_type)
 
                     # If check failed and healing is enabled, attempt remediation
                     # Note: AutoHealer respects dry_run mode internally
@@ -2019,7 +2074,7 @@ try {
                 linux_check_type = f"linux_{drift.check_type}"
                 linux_result = "pass" if drift.compliant else "fail"
                 if self._should_submit_evidence(linux_check_type, linux_result):
-                    await self.client.submit_evidence(
+                    bid = await self.client.submit_evidence(
                         bundle_hash=bundle_hash,
                         check_type=linux_check_type,
                         check_result=linux_result,
@@ -2028,8 +2083,7 @@ try {
                         hipaa_control=drift.hipaa_controls[0] if drift.hipaa_controls else "164.312(b)",
                         signer=self.signer
                     )
-
-                    logger.debug(f"Linux {drift.runbook_id} on {drift.target}: {linux_result}")
+                    self._track_evidence_result(bid, linux_check_type)
 
                 # If drift detected and L1-eligible, attempt auto-remediation
                 if not drift.compliant and drift.l1_eligible and self.auto_healer:
@@ -2147,7 +2201,7 @@ try {
                 # Submit with deduplication (signing happens in client)
                 network_result = "pass" if result.compliant else "fail"
                 if self._should_submit_evidence("network", network_result):
-                    await self.client.submit_evidence(
+                    bid = await self.client.submit_evidence(
                         bundle_hash=bundle_hash,
                         check_type="network",
                         check_result=network_result,
@@ -2156,6 +2210,7 @@ try {
                         hipaa_control=result.hipaa_controls[0] if result.hipaa_controls else "164.312(e)(1)",
                         signer=self.signer
                     )
+                    self._track_evidence_result(bid, "network")
 
                 status = "compliant" if result.compliant else f"drifted ({len(result.drift_items)} issues)"
                 logger.debug(f"Network posture {result.target}: {status}")
@@ -2344,15 +2399,16 @@ try {
                 check_result = "pass" if compliance_rate >= 80 else "fail"
 
                 if self._should_submit_evidence("workstation", check_result):
-                    await self.client.submit_evidence(
+                    bid = await self.client.submit_evidence(
                         bundle_hash=summary_hash,
                         check_type="workstation",
                         check_result=check_result,
                         evidence_data=summary,
                         host=f"site:{self.config.site_id}",
-                        hipaa_control="164.312(a)(2)(iv)",  # Encryption/decryption
+                        hipaa_control="164.312(a)(2)(iv)",
                         signer=self.signer,
                     )
+                    self._track_evidence_result(bid, "workstation")
 
                 # Log summary
                 compliant = summary.get("compliant_workstations", 0)
@@ -2944,6 +3000,7 @@ try {
             uptime_seconds=get_uptime_seconds(),
             agent_version=VERSION,
             nixos_version=get_nixos_version(),
+            agent_public_key=self._public_key_hex,
         )
         return {"status": "checkin_complete"}
 
@@ -2967,6 +3024,7 @@ try {
             agent_version=VERSION,
             nixos_version=get_nixos_version(),
             has_local_credentials=False,
+            agent_public_key=self._public_key_hex,
         )
         if response:
             await self._update_windows_targets_from_response(response)

@@ -718,50 +718,108 @@ async def submit_evidence(
         logger.warning(f"Evidence submission rejected: no signature provided for site={site_id}")
         raise HTTPException(
             status_code=401,
-            detail="Evidence submission requires agent_signature"
+            detail="Evidence submission requires agent_signature. "
+                   "Ensure the appliance has a signing key at "
+                   "/var/lib/compliance-agent/keys/signing.key"
         )
 
-    if not site_row.agent_public_key:
-        logger.warning(f"Evidence submission rejected: no public key registered for site={site_id}")
-        raise HTTPException(
-            status_code=401,
-            detail="Site has no registered agent public key"
-        )
+    registered_key = site_row.agent_public_key
+    if not registered_key:
+        # Auto-register if the bundle includes the public key
+        if bundle.agent_public_key and len(bundle.agent_public_key) == 64:
+            try:
+                await db.execute(
+                    text("UPDATE sites SET agent_public_key = :key WHERE site_id = :sid"),
+                    {"key": bundle.agent_public_key, "sid": site_id}
+                )
+                await db.commit()
+                registered_key = bundle.agent_public_key
+                logger.info(f"Auto-registered agent public key from evidence for site={site_id}")
+            except Exception as e:
+                logger.error(f"Failed to auto-register key: {e}")
+
+        if not registered_key:
+            logger.warning(f"Evidence submission rejected: no public key registered for site={site_id}")
+            raise HTTPException(
+                status_code=401,
+                detail="Site has no registered agent public key. "
+                       "The appliance must checkin at least once to register its "
+                       "signing key before submitting evidence."
+            )
 
     # Verify the Ed25519 signature
     # Use the signed_data from the bundle if provided (eliminates serialization mismatch)
     # Otherwise, reconstruct from fields (legacy support)
     if bundle.signed_data:
-        # Agent provided the exact string it signed - use that
         signed_data = bundle.signed_data.encode('utf-8')
-        logger.debug(f"Using agent-provided signed_data for verification")
     else:
-        # Legacy: reconstruct signed data from fields (may have serialization differences)
         signed_data = json.dumps({
             "site_id": site_id,
             "checked_at": bundle.checked_at.isoformat(),
             "checks": bundle.checks,
             "summary": bundle.summary
         }, sort_keys=True).encode('utf-8')
-        logger.debug(f"Reconstructing signed_data from bundle fields (legacy)")
 
-    # Verify signature if present
+    # Verify signature
     signature_valid = False
     if bundle.agent_signature:
         is_valid = verify_ed25519_signature(
             data=signed_data,
             signature_hex=bundle.agent_signature,
-            public_key_hex=site_row.agent_public_key
+            public_key_hex=registered_key
         )
         if not is_valid:
-            logger.warning(f"Evidence signature REJECTED for site={site_id}")
-            raise HTTPException(
-                status_code=401,
-                detail="Evidence signature verification failed"
+            # Diagnostic info for troubleshooting
+            submitted_fp = bundle.agent_public_key[:12] if bundle.agent_public_key else "not-provided"
+            registered_fp = registered_key[:12] if registered_key else "none"
+            key_match = bundle.agent_public_key == registered_key if bundle.agent_public_key else None
+
+            logger.warning(
+                f"Evidence signature REJECTED for site={site_id} "
+                f"registered_key={registered_fp}... submitted_key={submitted_fp}... "
+                f"key_match={key_match} signed_data_provided={bundle.signed_data is not None}"
             )
+
+            # Track rejection for partner visibility
+            try:
+                await db.execute(text("""
+                    UPDATE site_appliances SET
+                        evidence_rejection_count = COALESCE(evidence_rejection_count, 0) + 1,
+                        last_evidence_rejection = NOW()
+                    WHERE site_id = :site_id
+                """), {"site_id": site_id})
+                await db.commit()
+            except Exception:
+                pass  # Don't fail the response over tracking
+
+            detail = "Evidence signature verification failed."
+            if key_match is False:
+                detail += (
+                    f" Key mismatch: appliance key ({submitted_fp}...) does not "
+                    f"match registered key ({registered_fp}...). The appliance "
+                    f"may have regenerated its signing key. Re-register via checkin."
+                )
+            elif not bundle.signed_data:
+                detail += (
+                    " No signed_data provided - serialization mismatch likely. "
+                    "Upgrade the appliance agent to include signed_data in evidence."
+                )
+
+            raise HTTPException(status_code=401, detail=detail)
         else:
             signature_valid = True
             logger.info(f"Evidence signature verified for site={site_id}")
+
+            # Track acceptance
+            try:
+                await db.execute(text("""
+                    UPDATE site_appliances SET
+                        evidence_rejection_count = 0,
+                        last_evidence_accepted = NOW()
+                    WHERE site_id = :site_id
+                """), {"site_id": site_id})
+            except Exception:
+                pass
     else:
         logger.warning(f"No agent signature for evidence from site={site_id}")
 
@@ -890,6 +948,53 @@ async def submit_evidence(
         ots_status="pending" if OTS_ENABLED else "none",
         ots_submitted=ots_submitted,
     )
+
+
+@router.get("/sites/{site_id}/signing-status")
+async def get_signing_status(
+    site_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get evidence signing status for a site (partner dashboard).
+
+    Returns key registration status, recent acceptance/rejection counts,
+    and evidence chain health so partners can diagnose issues.
+    """
+    result = await db.execute(
+        text("""
+            SELECT s.agent_public_key,
+                   sa.evidence_rejection_count,
+                   sa.last_evidence_rejection,
+                   sa.last_evidence_accepted,
+                   (SELECT COUNT(*) FROM compliance_bundles cb
+                    WHERE cb.site_id = :site_id AND cb.signature_valid = true) as verified_count,
+                   (SELECT MAX(checked_at) FROM compliance_bundles cb
+                    WHERE cb.site_id = :site_id) as last_evidence
+            FROM sites s
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+            WHERE s.site_id = :site_id
+            LIMIT 1
+        """),
+        {"site_id": site_id}
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Site not found: {site_id}")
+
+    key = row.agent_public_key
+    return {
+        "site_id": site_id,
+        "has_key": bool(key),
+        "key_fingerprint": f"{key[:12]}...{key[-8:]}" if key else None,
+        "evidence_rejection_count": row.evidence_rejection_count or 0,
+        "last_rejection": row.last_evidence_rejection.isoformat() if row.last_evidence_rejection else None,
+        "last_accepted": row.last_evidence_accepted.isoformat() if row.last_evidence_accepted else None,
+        "verified_bundle_count": row.verified_count or 0,
+        "last_evidence": row.last_evidence.isoformat() if row.last_evidence else None,
+        "status": "healthy" if (key and (row.evidence_rejection_count or 0) == 0) else
+                  "broken" if (row.evidence_rejection_count or 0) > 0 else
+                  "no_key"
+    }
 
 
 async def upload_to_worm_background(

@@ -173,7 +173,8 @@ class CentralCommandClient:
         agent_version: str = VERSION,
         nixos_version: str = "unknown",
         compliance_summary: Optional[Dict] = None,
-        has_local_credentials: bool = False
+        has_local_credentials: bool = False,
+        agent_public_key: Optional[str] = None
     ) -> Optional[Dict]:
         """
         Send phone-home checkin to Central Command.
@@ -181,6 +182,8 @@ class CentralCommandClient:
         Args:
             has_local_credentials: If True, tells server appliance has fresh
                 local credentials and doesn't need them in the response.
+            agent_public_key: Hex-encoded Ed25519 public key for evidence
+                signature verification. Server registers on first checkin.
 
         Returns:
             Response dict with orders, windows_targets, etc. if successful.
@@ -197,6 +200,8 @@ class CentralCommandClient:
             "nixos_version": nixos_version,
             "has_local_credentials": has_local_credentials,
         }
+        if agent_public_key:
+            payload["agent_public_key"] = agent_public_key
 
         status, response = await self._request(
             'POST',
@@ -318,28 +323,28 @@ class CentralCommandClient:
             "summary": summary
         }
 
-        # Sign the payload if signer is provided (matches server-side verification)
+        # Scrub PHI BEFORE signing so the signature matches what the server
+        # receives (since _request() also scrubs via _scrub_outbound).
+        payload = self._scrub_outbound(payload)
+
+        # Sign the scrubbed payload (matches server-side verification)
         signed_data_str = None
         if signer and not agent_signature:
             try:
-                # Build the exact structure the server expects for verification
                 signed_data_str = json.dumps({
-                    "site_id": self.config.site_id,
-                    "checked_at": timestamp.isoformat(),
-                    "checks": checks,
-                    "summary": summary
+                    "site_id": payload["site_id"],
+                    "checked_at": payload["checked_at"],
+                    "checks": payload["checks"],
+                    "summary": payload["summary"]
                 }, sort_keys=True)
-                logger.debug(f"SIGNING DATA: {signed_data_str[:200]}...")
                 signature_bytes = signer.sign(signed_data_str)
                 agent_signature = signature_bytes.hex()
-                logger.debug(f"SIGNATURE: {agent_signature[:40]}...")
             except Exception as e:
                 logger.warning(f"Failed to sign evidence bundle: {e}")
 
         # Include agent signature and signed_data if available
         if agent_signature:
             payload["agent_signature"] = agent_signature
-            # Include the exact signed data so server can verify against it
             if signed_data_str:
                 payload["signed_data"] = signed_data_str
 
