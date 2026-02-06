@@ -107,7 +107,7 @@ in
         enable = true;
         device = "nodev";  # EFI mode
         efiSupport = true;
-        efiInstallAsRemovable = true;  # Works without NVRAM access
+        efiInstallAsRemovable = true;  # Installs to EFI/BOOT/BOOTX64.EFI - works without NVRAM
       };
       efi.canTouchEfiVariables = false;
       timeout = 3;

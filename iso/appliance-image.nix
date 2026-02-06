@@ -176,12 +176,6 @@ in
       fi
       log "DEBUG: squashfs check passed"
 
-      # Check if already installed (marker file would exist on installed system)
-      if [ -f "/var/lib/msp/.installed" ]; then
-        log "Already installed, skipping"
-        exit 0
-      fi
-
       log "Running from live ISO - starting auto-install..."
 
       # Find internal drive (skip USB/removable)
@@ -222,6 +216,35 @@ in
         log "Available drives:"
         lsblk -d -o NAME,SIZE,TYPE,MOUNTPOINT | tee -a "$LOG_FILE"
         exit 0  # Don't fail - allow manual intervention
+      fi
+
+      # Check if this drive already has a NixOS install (prevent install loop)
+      NIXOS_PART=$(lsblk -rno NAME,LABEL "$INTERNAL_DEV" | grep nixos | head -1 | awk '{print $1}')
+      if [ -n "$NIXOS_PART" ]; then
+        log "Drive already has partition labeled 'nixos' (/dev/$NIXOS_PART)"
+        TMPDIR=$(mktemp -d)
+        if mount -o ro "/dev/$NIXOS_PART" "$TMPDIR" 2>/dev/null; then
+          if [ -d "$TMPDIR/nix/store" ]; then
+            STORE_COUNT=$(ls "$TMPDIR/nix/store" 2>/dev/null | wc -l)
+            log "Existing NixOS installation found ($STORE_COUNT store paths)"
+            umount "$TMPDIR"
+            rmdir "$TMPDIR"
+            log ""
+            log "============================================"
+            log "  INSTALLATION ALREADY COMPLETE"
+            log "  Remove installer media and reboot to"
+            log "  boot into the installed system."
+            log "============================================"
+            log ""
+            log "To force reinstall: touch /tmp/force-reinstall then rerun"
+            if [ ! -f /tmp/force-reinstall ]; then
+              exit 0
+            fi
+            log "Force reinstall requested, continuing..."
+          fi
+          umount "$TMPDIR" 2>/dev/null
+        fi
+        rmdir "$TMPDIR" 2>/dev/null
       fi
 
       # Confirmation display
