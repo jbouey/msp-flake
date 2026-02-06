@@ -397,7 +397,7 @@ in
       TTYVHangup = "yes";
     };
 
-    path = with pkgs; [ coreutils systemd util-linux iproute2 gnugrep gawk ];
+    path = with pkgs; [ coreutils systemd util-linux iproute2 gnugrep gawk ncurses ];
 
     script = ''
       clear
