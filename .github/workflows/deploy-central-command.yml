@@ -64,6 +64,12 @@ jobs:
             mcp-server/central-command/frontend/dist/ \
             ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/frontend_dist/
 
+      - name: Deploy nginx config
+        run: |
+          rsync -avz \
+            mcp-server/central-command/frontend/nginx.conf \
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/frontend/nginx.conf
+
       - name: Fix permissions and restart services
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
