@@ -2,14 +2,30 @@
  * React hooks for fleet data fetching
  */
 
-import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
 import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi } from '../utils/api';
 import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice } from '../utils/api';
 import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary } from '../types';
+import { useWebSocketStatus } from './useWebSocket';
 
-// Polling interval in milliseconds (60 seconds - reduced from 30s to prevent flickering)
-const POLLING_INTERVAL = 60_000;
-const STALE_TIME = 30_000; // Consider data fresh for 30 seconds
+// Polling intervals
+const POLLING_INTERVAL = 60_000;      // Fallback when WebSocket is disconnected
+const STALE_TIME = 30_000;            // Consider data fresh for 30 seconds
+
+/**
+ * Returns common query options that disable polling when WebSocket is active.
+ * When WS is connected, real-time events push updates via cache invalidation,
+ * so polling is unnecessary and causes race conditions.
+ */
+function useQueryDefaults() {
+  const { connected } = useWebSocketStatus();
+  return {
+    // Disable polling when WebSocket pushes real-time updates
+    refetchInterval: connected ? false as const : POLLING_INTERVAL,
+    staleTime: STALE_TIME,
+    placeholderData: keepPreviousData,
+  };
+}
 
 // NOTE: React Query provides an AbortSignal through queryFn context.
 // To enable request cancellation, update API functions to accept { signal } options
@@ -31,11 +47,11 @@ function logMutationError(context: string, error: unknown): void {
  * Hook for fetching fleet overview data with polling
  */
 export function useFleet() {
+  const defaults = useQueryDefaults();
   return useQuery<ClientOverview[]>({
     queryKey: ['fleet'],
     queryFn: fleetApi.getFleet,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -43,12 +59,12 @@ export function useFleet() {
  * Hook for fetching a single client's details
  */
 export function useClient(siteId: string | null) {
+  const defaults = useQueryDefaults();
   return useQuery<ClientDetail>({
     queryKey: ['client', siteId],
     queryFn: () => fleetApi.getClient(siteId!),
     enabled: !!siteId,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -61,11 +77,11 @@ export function useIncidents(params?: {
   level?: string;
   resolved?: boolean;
 }) {
+  const defaults = useQueryDefaults();
   return useQuery<Incident[]>({
     queryKey: ['incidents', params],
     queryFn: () => incidentApi.getIncidents(params),
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -76,11 +92,11 @@ export function useEvents(params?: {
   site_id?: string;
   limit?: number;
 }) {
+  const defaults = useQueryDefaults();
   return useQuery<ComplianceEvent[]>({
     queryKey: ['events', params],
     queryFn: () => incidentApi.getEvents(params),
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -88,11 +104,11 @@ export function useEvents(params?: {
  * Hook for fetching global stats
  */
 export function useGlobalStats() {
+  const defaults = useQueryDefaults();
   return useQuery<GlobalStats>({
     queryKey: ['stats'],
     queryFn: statsApi.getGlobalStats,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -100,11 +116,11 @@ export function useGlobalStats() {
  * Hook for fetching learning loop status
  */
 export function useLearningStatus() {
+  const defaults = useQueryDefaults();
   return useQuery<LearningStatus>({
     queryKey: ['learning', 'status'],
     queryFn: learningApi.getStatus,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -114,13 +130,13 @@ export function useLearningStatus() {
 export function useRefreshFleet() {
   const queryClient = useQueryClient();
 
-  return () => {
-    queryClient.invalidateQueries({ queryKey: ['fleet'] });
-    queryClient.invalidateQueries({ queryKey: ['incidents'] });
-    queryClient.invalidateQueries({ queryKey: ['stats'] });
-    queryClient.invalidateQueries({ queryKey: ['learning'] });
-    queryClient.invalidateQueries({ queryKey: ['runbooks'] });
-  };
+  return () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['fleet'] }),
+    queryClient.invalidateQueries({ queryKey: ['incidents'] }),
+    queryClient.invalidateQueries({ queryKey: ['stats'] }),
+    queryClient.invalidateQueries({ queryKey: ['learning'] }),
+    queryClient.invalidateQueries({ queryKey: ['runbooks'] }),
+  ]);
 }
 
 /**
@@ -131,6 +147,7 @@ export function useRunbooks() {
     queryKey: ['runbooks'],
     queryFn: runbookApi.getRunbooks,
     staleTime: STALE_TIME,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -143,6 +160,7 @@ export function useRunbook(runbookId: string | null) {
     queryFn: () => runbookApi.getRunbook(runbookId!),
     enabled: !!runbookId,
     staleTime: STALE_TIME,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -155,6 +173,7 @@ export function useRunbookExecutions(runbookId: string | null, limit?: number) {
     queryFn: () => runbookApi.getExecutions(runbookId!, limit),
     enabled: !!runbookId,
     staleTime: STALE_TIME,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -162,11 +181,11 @@ export function useRunbookExecutions(runbookId: string | null, limit?: number) {
  * Hook for fetching promotion candidates
  */
 export function usePromotionCandidates() {
+  const defaults = useQueryDefaults();
   return useQuery<PromotionCandidate[]>({
     queryKey: ['learning', 'candidates'],
     queryFn: learningApi.getCandidates,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -174,11 +193,11 @@ export function usePromotionCandidates() {
  * Hook for fetching promotion history
  */
 export function usePromotionHistory(limit?: number) {
+  const defaults = useQueryDefaults();
   return useQuery<PromotionHistory[]>({
     queryKey: ['learning', 'history', limit],
     queryFn: () => learningApi.getHistory(limit),
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -202,11 +221,11 @@ export function usePromotePattern() {
  * Hook for fetching onboarding pipeline
  */
 export function useOnboardingPipeline() {
+  const defaults = useQueryDefaults();
   return useQuery<OnboardingClient[]>({
     queryKey: ['onboarding', 'pipeline'],
     queryFn: onboardingApi.getPipeline,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -214,11 +233,11 @@ export function useOnboardingPipeline() {
  * Hook for fetching onboarding metrics
  */
 export function useOnboardingMetrics() {
+  const defaults = useQueryDefaults();
   return useQuery<OnboardingMetrics>({
     queryKey: ['onboarding', 'metrics'],
     queryFn: onboardingApi.getMetrics,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -230,11 +249,11 @@ export function useOnboardingMetrics() {
  * Hook for fetching all sites with live status
  */
 export function useSites(status?: string) {
+  const defaults = useQueryDefaults();
   return useQuery<{ sites: Site[]; count: number }>({
     queryKey: ['sites', status],
     queryFn: () => sitesApi.getSites(status),
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -242,12 +261,12 @@ export function useSites(status?: string) {
  * Hook for fetching a single site's details
  */
 export function useSite(siteId: string | null) {
+  const defaults = useQueryDefaults();
   return useQuery<SiteDetail>({
     queryKey: ['site', siteId],
     queryFn: () => sitesApi.getSite(siteId!),
     enabled: !!siteId,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -300,6 +319,38 @@ export function useAddCredential() {
 }
 
 /**
+ * Hook for deleting a site
+ */
+export function useDeleteSite() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (siteId: string) => sitesApi.deleteSite(siteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sites'] });
+      queryClient.invalidateQueries({ queryKey: ['fleet'] });
+    },
+    onError: (error) => logMutationError('deleteSite', error),
+  });
+}
+
+/**
+ * Hook for deleting a credential from a site
+ */
+export function useDeleteCredential() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, credentialId }: { siteId: string; credentialId: string }) =>
+      sitesApi.deleteCredential(siteId, credentialId),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+    },
+    onError: (error) => logMutationError('deleteCredential', error),
+  });
+}
+
+/**
  * Hook for updating healing tier for a site
  */
 export function useUpdateHealingTier() {
@@ -324,12 +375,12 @@ export function useUpdateHealingTier() {
  * Hook for fetching orders for a site
  */
 export function useOrders(siteId: string | null, status?: string) {
+  const defaults = useQueryDefaults();
   return useQuery<OrderResponse[]>({
     queryKey: ['orders', siteId, status],
     queryFn: () => ordersApi.getOrders(siteId!, status as any),
     enabled: !!siteId,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -441,11 +492,11 @@ export function useNotifications(params?: {
   unread_only?: boolean;
   limit?: number;
 }) {
+  const defaults = useQueryDefaults();
   return useQuery<Notification[]>({
     queryKey: ['notifications', params],
     queryFn: () => notificationsApi.getNotifications(params),
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -453,11 +504,11 @@ export function useNotifications(params?: {
  * Hook for fetching notification summary (counts)
  */
 export function useNotificationSummary() {
+  const defaults = useQueryDefaults();
   return useQuery<NotificationSummary>({
     queryKey: ['notifications', 'summary'],
     queryFn: notificationsApi.getSummary,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -541,6 +592,7 @@ export function useRunbookCatalog() {
     queryKey: ['runbookCatalog'],
     queryFn: runbookConfigApi.getRunbooks,
     staleTime: STALE_TIME,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -552,6 +604,7 @@ export function useRunbookCategories() {
     queryKey: ['runbookCategories'],
     queryFn: runbookConfigApi.getCategories,
     staleTime: STALE_TIME,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -564,6 +617,7 @@ export function useSiteRunbookConfig(siteId: string | null) {
     queryFn: () => runbookConfigApi.getSiteRunbooks(siteId!),
     enabled: !!siteId,
     staleTime: STALE_TIME,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -591,12 +645,12 @@ export function useSetSiteRunbook() {
  * Hook for fetching workstations for a site with summary
  */
 export function useSiteWorkstations(siteId: string | null) {
+  const defaults = useQueryDefaults();
   return useQuery<SiteWorkstationsResponse>({
     queryKey: ['workstations', siteId],
     queryFn: () => workstationsApi.getSiteWorkstations(siteId!),
     enabled: !!siteId,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -623,12 +677,12 @@ export function useTriggerWorkstationScan() {
  * Hook for fetching Go agents for a site with summary
  */
 export function useSiteGoAgents(siteId: string | null) {
+  const defaults = useQueryDefaults();
   return useQuery<SiteGoAgentsResponse>({
     queryKey: ['goAgents', siteId],
     queryFn: () => goAgentsApi.getSiteAgents(siteId!),
     enabled: !!siteId,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -700,12 +754,12 @@ export function useSiteDevices(
     offset?: number;
   }
 ) {
+  const defaults = useQueryDefaults();
   return useQuery<SiteDevicesResponse>({
     queryKey: ['devices', siteId, params],
     queryFn: () => devicesApi.getSiteDevices(siteId!, params),
     enabled: !!siteId,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -713,12 +767,12 @@ export function useSiteDevices(
  * Hook for fetching device summary for a site
  */
 export function useSiteDeviceSummary(siteId: string | null) {
+  const defaults = useQueryDefaults();
   return useQuery<SiteDeviceSummary>({
     queryKey: ['devices', siteId, 'summary'],
     queryFn: () => devicesApi.getSiteSummary(siteId!),
     enabled: !!siteId,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }
 
@@ -726,6 +780,7 @@ export function useSiteDeviceSummary(siteId: string | null) {
  * Hook for fetching medical devices for a site
  */
 export function useSiteMedicalDevices(siteId: string | null, limit?: number, offset?: number) {
+  const defaults = useQueryDefaults();
   return useQuery<{
     site_id: string;
     medical_devices: DiscoveredDevice[];
@@ -735,7 +790,6 @@ export function useSiteMedicalDevices(siteId: string | null, limit?: number, off
     queryKey: ['devices', siteId, 'medical', limit, offset],
     queryFn: () => devicesApi.getMedicalDevices(siteId!, limit, offset),
     enabled: !!siteId,
-    refetchInterval: POLLING_INTERVAL,
-    staleTime: STALE_TIME,
+    ...defaults,
   });
 }

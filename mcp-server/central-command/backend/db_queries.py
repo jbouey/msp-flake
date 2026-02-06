@@ -368,20 +368,22 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
 
 
 async def promote_pattern_in_db(db: AsyncSession, pattern_id: str) -> Optional[str]:
-    """Promote a pattern to L1 rule."""
-    # Get pattern
+    """Promote a pattern to L1 rule. Uses SELECT FOR UPDATE to prevent duplicate promotions."""
+    from .websocket_manager import broadcast_event
+
+    # Get pattern with row lock to prevent concurrent promotions
     result = await db.execute(
-        text("SELECT * FROM patterns WHERE pattern_id = :pid AND status = 'pending'"),
+        text("SELECT * FROM patterns WHERE pattern_id = :pid AND status = 'pending' FOR UPDATE"),
         {"pid": pattern_id}
     )
     pattern = result.fetchone()
-    
+
     if not pattern:
         return None
-    
+
     # Create L1 rule
     rule_id = f"RB-AUTO-{pattern.pattern_signature[:8].upper()}"
-    
+
     await db.execute(text("""
         INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, promoted_from_l2, enabled)
         VALUES (:rule_id, :pattern, :runbook_id, 0.9, true, true)
@@ -391,15 +393,28 @@ async def promote_pattern_in_db(db: AsyncSession, pattern_id: str) -> Optional[s
         "pattern": f'{{"incident_type": "{pattern.incident_type}"}}',
         "runbook_id": pattern.runbook_id,
     })
-    
+
     # Update pattern
     await db.execute(text("""
-        UPDATE patterns 
+        UPDATE patterns
         SET status = 'promoted', promoted_at = NOW(), promoted_to_rule_id = :rule_id
         WHERE pattern_id = :pid
     """), {"rule_id": rule_id, "pid": pattern_id})
-    
+
     await db.commit()
+
+    # Broadcast promotion event
+    try:
+        await broadcast_event("pattern_promoted", {
+            "pattern_id": pattern_id,
+            "rule_id": rule_id,
+            "incident_type": pattern.incident_type,
+            "runbook_id": pattern.runbook_id,
+            "pattern_signature": pattern.pattern_signature,
+        })
+    except Exception:
+        pass
+
     return rule_id
 
 
@@ -1263,6 +1278,62 @@ async def get_healing_metrics_for_site(db: AsyncSession, site_id: str) -> Dict[s
         "incidents_24h": inc_row.last_24h if inc_row else 0,
         "last_incident": inc_row.last_incident if inc_row else None,
     }
+
+
+async def get_all_healing_metrics(db: AsyncSession) -> Dict[str, Dict[str, Any]]:
+    """Batch-fetch healing metrics for ALL sites in 2 queries (replaces N+1 per-site calls).
+
+    Returns dict keyed by site_id with same shape as get_healing_metrics_for_site().
+    """
+    # Get incident stats grouped by site
+    incident_result = await db.execute(text("""
+        SELECT
+            a.site_id,
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE i.status = 'resolved') as resolved,
+            COUNT(*) FILTER (WHERE i.reported_at > NOW() - INTERVAL '24 hours') as last_24h,
+            MAX(i.reported_at) as last_incident
+        FROM incidents i
+        JOIN appliances a ON a.id = i.appliance_id
+        GROUP BY a.site_id
+    """))
+    incident_by_site = {row.site_id: row for row in incident_result.fetchall()}
+
+    # Get order stats grouped by site
+    order_result = await db.execute(text("""
+        SELECT
+            site_id,
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE status = 'completed') as completed
+        FROM admin_orders
+        GROUP BY site_id
+    """))
+    order_by_site = {row.site_id: row for row in order_result.fetchall()}
+
+    # Merge into per-site dicts
+    all_site_ids = set(incident_by_site.keys()) | set(order_by_site.keys())
+    results: Dict[str, Dict[str, Any]] = {}
+
+    for site_id in all_site_ids:
+        inc = incident_by_site.get(site_id)
+        ord_ = order_by_site.get(site_id)
+
+        total_incidents = inc.total if inc else 0
+        resolved = inc.resolved if inc else 0
+        healing_rate = (resolved / total_incidents * 100) if total_incidents > 0 else 100.0
+
+        total_orders = ord_.total if ord_ else 0
+        completed = ord_.completed if ord_ else 0
+        order_rate = (completed / total_orders * 100) if total_orders > 0 else 100.0
+
+        results[site_id] = {
+            "healing_success_rate": round(healing_rate, 1),
+            "order_execution_rate": round(order_rate, 1),
+            "incidents_24h": inc.last_24h if inc else 0,
+            "last_incident": inc.last_incident if inc else None,
+        }
+
+    return results
 
 
 async def get_global_healing_metrics(db: AsyncSession) -> Dict[str, Any]:

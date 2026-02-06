@@ -15,6 +15,7 @@ from enum import Enum
 
 from .fleet import get_pool
 from .auth import require_auth, require_operator
+from .websocket_manager import broadcast_event
 
 logger = logging.getLogger(__name__)
 
@@ -1406,7 +1407,9 @@ async def appliance_checkin(checkin: ApplianceCheckin):
     appliance_id = f"{checkin.site_id}-{mac_normalized}"
 
     async with pool.acquire() as conn:
+      async with conn.transaction():
         # === STEP 1: Find existing appliances with same MAC or hostname ===
+        # Use FOR UPDATE to prevent concurrent check-ins from racing
         existing = await conn.fetch("""
             SELECT appliance_id, hostname, mac_address, first_checkin
             FROM site_appliances
@@ -1416,6 +1419,7 @@ async def appliance_checkin(checkin: ApplianceCheckin):
                 OR LOWER(hostname) = $3
             )
             ORDER BY last_checkin DESC NULLS LAST
+            FOR UPDATE
         """, checkin.site_id, mac_clean.upper(), hostname_lower)
 
         merge_from_ids = []
@@ -1630,6 +1634,21 @@ async def appliance_checkin(checkin: ApplianceCheckin):
                     """, canonical_id)
         except Exception:
             pass  # Don't fail checkin if trigger lookup fails
+
+    # Broadcast checkin event to connected dashboard clients
+    try:
+        await broadcast_event("appliance_checkin", {
+            "site_id": checkin.site_id,
+            "appliance_id": canonical_id,
+            "hostname": checkin.hostname,
+            "status": "online",
+            "last_checkin": now.isoformat(),
+            "agent_version": checkin.agent_version,
+            "ip_addresses": checkin.ip_addresses,
+            "uptime_seconds": checkin.uptime_seconds,
+        })
+    except Exception:
+        pass  # Don't fail checkin if broadcast fails
 
     return {
         "status": "ok",

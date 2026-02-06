@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Query, HTTPException, Request, Depends, Response
+from .websocket_manager import broadcast_event
 
 logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,6 +71,7 @@ from .db_queries import (
     get_runbook_detail_from_db,
     get_runbook_executions_from_db,
     get_healing_metrics_for_site,
+    get_all_healing_metrics,
     get_global_healing_metrics,
 )
 from .email_alerts import send_critical_alert
@@ -128,14 +130,11 @@ async def get_fleet_overview(db: AsyncSession = Depends(get_db)):
     # Get compliance scores for all sites
     all_compliance = await get_all_compliance_scores(db)
 
-    # Pre-fetch healing metrics for performance (one query per site)
-    healing_metrics_cache = {}
+    # Batch-fetch healing metrics for all sites in 2 queries (replaces N+1)
+    healing_metrics_cache = await get_all_healing_metrics(db)
 
     clients = []
     for row in rows:
-        # Get healing metrics for this site (cache to avoid repeated queries)
-        if row.site_id not in healing_metrics_cache:
-            healing_metrics_cache[row.site_id] = await get_healing_metrics_for_site(db, row.site_id)
         # Calculate connectivity score based on last checkin
         checkin_freshness = 0
         if row.last_checkin:
@@ -1166,6 +1165,7 @@ async def get_global_stats(db: AsyncSession = Depends(get_db)):
         l1_resolution_rate=stats.get("l1_resolution_rate", 0.0),
         l2_resolution_rate=stats.get("l2_resolution_rate", 0.0),
         l3_escalation_rate=stats.get("l3_escalation_rate", 0.0),
+        computed_at=datetime.now(timezone.utc).isoformat(),
     )
 
 
@@ -1529,7 +1529,7 @@ async def create_notification(
             metadata=notification.metadata
         )
 
-    return Notification(
+    notif = Notification(
         id=str(row.id),
         site_id=row.site_id,
         appliance_id=row.appliance_id,
@@ -1543,6 +1543,26 @@ async def create_notification(
         created_at=row.created_at,
         read_at=row.read_at
     )
+
+    # Broadcast to connected dashboard clients
+    try:
+        await broadcast_event("notification_created", {
+            "id": notif.id,
+            "site_id": notif.site_id,
+            "appliance_id": notif.appliance_id,
+            "severity": notif.severity,
+            "category": notif.category,
+            "title": notif.title,
+            "message": notif.message,
+            "metadata": notif.metadata,
+            "is_read": notif.is_read,
+            "is_dismissed": notif.is_dismissed,
+            "created_at": notif.created_at.isoformat() if notif.created_at else None,
+        })
+    except Exception:
+        pass
+
+    return notif
 
 
 # =============================================================================

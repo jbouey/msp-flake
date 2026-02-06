@@ -20,7 +20,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 import uuid
 
-from fastapi import FastAPI, File, UploadFile, Form, Header
+from fastapi import FastAPI, File, UploadFile, Form, Header, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi import HTTPException, status, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,6 +58,7 @@ from dashboard_api.billing import router as billing_router
 from dashboard_api.exceptions_api import router as exceptions_router
 from dashboard_api.appliance_delegation import router as appliance_delegation_router
 from dashboard_api.learning_api import partner_learning_router
+from central_command.backend.websocket_manager import ws_manager
 
 # ============================================================================
 # Configuration
@@ -443,6 +444,14 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Site-ID", "X-CSRF-Token"],
 )
 
+# ETag middleware for conditional responses (saves bandwidth on polling)
+try:
+    from central_command.backend.etag_middleware import ETagMiddleware
+    app.add_middleware(ETagMiddleware)
+    logger.info("ETag middleware enabled")
+except ImportError:
+    logger.warning("ETag middleware not available")
+
 # Rate limiting middleware - SECURITY: Protect against brute force and DoS
 try:
     from central_command.backend.rate_limiter import RateLimitMiddleware
@@ -495,6 +504,21 @@ app.include_router(billing_router)  # Stripe billing for partners
 app.include_router(exceptions_router)  # Compliance exceptions management
 app.include_router(appliance_delegation_router)  # Appliance delegation (signing keys, audit, escalations)
 app.include_router(partner_learning_router)  # Partner learning management (promotions, rules)
+
+# WebSocket endpoint for real-time event push
+@app.websocket("/ws/events")
+async def websocket_events(websocket: WebSocket):
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive; client can send pings
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text('{"type":"pong"}')
+    except WebSocketDisconnect:
+        await ws_manager.disconnect(websocket)
+    except Exception:
+        await ws_manager.disconnect(websocket)
 
 # Serve agent update packages (only if directory exists)
 _agent_packages_dir = Path("/opt/mcp-server/agent-packages")

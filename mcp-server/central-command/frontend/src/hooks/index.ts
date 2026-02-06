@@ -20,6 +20,8 @@ export {
   useCreateSite,
   useUpdateSite,
   useAddCredential,
+  useDeleteCredential,
+  useDeleteSite,
   useUpdateHealingTier,
   // Order hooks
   useOrders,
@@ -54,6 +56,7 @@ export {
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';
+export { useWebSocket, useWebSocketStatus, WebSocketContext } from './useWebSocket';
 
 // Integrations hooks
 export {

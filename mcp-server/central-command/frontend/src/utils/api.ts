@@ -4,6 +4,11 @@
 
 const API_BASE = '/api/dashboard';
 
+// ETag cache for conditional requests
+const etagCache = new Map<string, string>();
+// Response cache for 304 Not Modified fallback
+const responseCache = new Map<string, unknown>();
+
 class ApiError extends Error {
   constructor(public status: number, message: string, public isAborted: boolean = false) {
     super(message);
@@ -72,6 +77,15 @@ async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise
     }
   }
 
+  // Add ETag for conditional GET requests
+  const method = options?.method?.toUpperCase() || 'GET';
+  if (method === 'GET') {
+    const cachedEtag = etagCache.get(url);
+    if (cachedEtag) {
+      headers['If-None-Match'] = cachedEtag;
+    }
+  }
+
   // Create timeout controller
   const { controller, cleanup } = createTimeoutController(timeout, options?.signal);
 
@@ -87,12 +101,34 @@ async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise
       },
     });
 
+    // 304 Not Modified - return cached response data instead of throwing
+    if (response.status === 304) {
+      const cached = responseCache.get(url);
+      if (cached !== undefined) {
+        return cached as T;
+      }
+      // No cache available, fetch fresh (strip ETag to force full response)
+      etagCache.delete(url);
+      return fetchApi<T>(endpoint, options);
+    }
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
       throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
     }
 
-    return response.json();
+    // Store ETag and response for future conditional requests
+    const etag = response.headers.get('etag');
+    if (etag) {
+      etagCache.set(url, etag);
+    }
+
+    const data: T = await response.json();
+    // Cache response body for 304 fallback
+    if (method === 'GET') {
+      responseCache.set(url, data);
+    }
+    return data;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new ApiError(0, 'Request was cancelled or timed out', true);
@@ -354,6 +390,15 @@ async function fetchSitesApi<T>(endpoint: string, options?: FetchApiOptions): Pr
     }
   }
 
+  // Add ETag for conditional GET requests
+  const method = options?.method?.toUpperCase() || 'GET';
+  if (method === 'GET') {
+    const cachedEtag = etagCache.get(url);
+    if (cachedEtag) {
+      headers['If-None-Match'] = cachedEtag;
+    }
+  }
+
   // Create timeout controller
   const { controller, cleanup } = createTimeoutController(timeout, options?.signal);
 
@@ -369,12 +414,32 @@ async function fetchSitesApi<T>(endpoint: string, options?: FetchApiOptions): Pr
       },
     });
 
+    // 304 Not Modified - return cached response data instead of throwing
+    if (response.status === 304) {
+      const cached = responseCache.get(url);
+      if (cached !== undefined) {
+        return cached as T;
+      }
+      etagCache.delete(url);
+      return fetchSitesApi<T>(endpoint, options);
+    }
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
       throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
     }
 
-    return response.json();
+    // Store ETag and response for future conditional requests
+    const etag = response.headers.get('etag');
+    if (etag) {
+      etagCache.set(url, etag);
+    }
+
+    const data: T = await response.json();
+    if (method === 'GET') {
+      responseCache.set(url, data);
+    }
+    return data;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new ApiError(0, 'Request was cancelled or timed out', true);

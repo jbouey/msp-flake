@@ -6,7 +6,7 @@ import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
 import { ErrorBoundary, Spinner } from './components/shared';
-import { useFleet, useRefreshFleet, useCommandPalette } from './hooks';
+import { useFleet, useRefreshFleet, useCommandPalette, useWebSocket, WebSocketContext } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 // Critical pages - loaded immediately
@@ -107,16 +107,16 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: (failureCount, error) => {
-        // Don't retry on 4xx errors (client errors)
         if (error instanceof Error && 'status' in error) {
           const status = (error as { status: number }).status;
-          if (status >= 400 && status < 500) return false;
+          // Don't retry on 304 (not modified) or 4xx (client errors)
+          if (status === 304 || (status >= 400 && status < 500)) return false;
         }
         // Retry up to 2 times for other errors
         return failureCount < 2;
       },
-      refetchOnWindowFocus: false,
-      // Use error boundary for render errors
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
       throwOnError: false,
     },
     mutations: {
@@ -162,6 +162,9 @@ const AppLayout: React.FC = () => {
   const { data: clients = [], dataUpdatedAt } = useFleet();
   const refreshFleet = useRefreshFleet();
 
+  // Connect WebSocket for real-time event push
+  const wsState = useWebSocket();
+
   // Register Cmd+K shortcut for command bar
   useCommandPalette(() => setCommandBarOpen(true));
 
@@ -179,12 +182,12 @@ const AppLayout: React.FC = () => {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    refreshFleet();
-    // Wait a bit for queries to refetch
-    setTimeout(() => {
+    try {
+      await refreshFleet();
+    } finally {
       setRefreshing(false);
       setLastUpdated(new Date());
-    }, 1000);
+    }
   };
 
   const handleLogout = async () => {
@@ -202,6 +205,7 @@ const AppLayout: React.FC = () => {
   };
 
   return (
+    <WebSocketContext.Provider value={wsState}>
     <div className="min-h-screen bg-background-primary">
       {/* Sidebar */}
       <Sidebar
@@ -261,6 +265,7 @@ const AppLayout: React.FC = () => {
       {/* Command Bar (Cmd+K) */}
       <CommandBar isOpen={commandBarOpen} onClose={() => setCommandBarOpen(false)} />
     </div>
+    </WebSocketContext.Provider>
   );
 };
 
