@@ -11,8 +11,9 @@ Handles 15-20% of incidents that don't match deterministic rules:
 import json
 import logging
 import asyncio
+import os
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
@@ -55,6 +56,12 @@ class LLMConfig:
     temperature: float = 0.1
     require_runbook_selection: bool = True
     allowed_actions: List[str] = field(default_factory=list)
+
+    # Cost controls
+    max_concurrent_api_calls: int = 3
+    max_api_calls_per_hour: int = 60
+    daily_budget_usd: float = float(os.getenv("LLM_DAILY_BUDGET_USD", "10.0"))
+    hybrid_min_confidence_for_api_fallback: float = 0.0  # Below this, escalate to L3 instead of calling API
 
 
 @dataclass
@@ -272,7 +279,21 @@ class APILLMPlanner(BaseLLMPlanner):
                     result = await resp.json()
                     response_text = result["choices"][0]["message"]["content"]
 
-                    return self._parse_response(incident.id, response_text, context)
+                    # Log token usage and estimated cost
+                    usage = result.get("usage", {})
+                    total_tokens = usage.get("total_tokens", 0)
+                    # gpt-4o-mini: ~$0.15/1M input, $0.60/1M output
+                    est_cost = (usage.get("prompt_tokens", 0) * 0.00000015 +
+                                usage.get("completion_tokens", 0) * 0.0000006)
+                    logger.info(
+                        f"OpenAI API usage: {total_tokens} tokens, "
+                        f"est cost ${est_cost:.6f}"
+                    )
+
+                    decision = self._parse_response(incident.id, response_text, context)
+                    decision.context_used["api_tokens"] = total_tokens
+                    decision.context_used["api_cost_usd"] = est_cost
+                    return decision
 
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
@@ -323,7 +344,23 @@ class APILLMPlanner(BaseLLMPlanner):
                     result = await resp.json()
                     response_text = result["content"][0]["text"]
 
-                    return self._parse_response(incident.id, response_text, context)
+                    # Log token usage and estimated cost
+                    usage = result.get("usage", {})
+                    input_tokens = usage.get("input_tokens", 0)
+                    output_tokens = usage.get("output_tokens", 0)
+                    total_tokens = input_tokens + output_tokens
+                    # claude-3-haiku: ~$0.25/1M input, $1.25/1M output
+                    est_cost = (input_tokens * 0.00000025 +
+                                output_tokens * 0.00000125)
+                    logger.info(
+                        f"Anthropic API usage: {total_tokens} tokens, "
+                        f"est cost ${est_cost:.6f}"
+                    )
+
+                    decision = self._parse_response(incident.id, response_text, context)
+                    decision.context_used["api_tokens"] = total_tokens
+                    decision.context_used["api_cost_usd"] = est_cost
+                    return decision
 
         except Exception as e:
             logger.error(f"Anthropic API error: {e}")
@@ -435,19 +472,38 @@ class HybridLLMPlanner(BaseLLMPlanner):
         incident: Incident,
         context: Dict[str, Any]
     ) -> LLMDecision:
-        """Try local first, fall back to API."""
+        """Try local first, fall back to API only when justified."""
+        local_decision = None
+
         # Try local first
         if await self.local_planner.is_available():
             try:
-                decision = await self.local_planner.plan(incident, context)
+                local_decision = await self.local_planner.plan(incident, context)
 
                 # If confident enough, use local decision
-                if decision.confidence >= 0.7 and not decision.escalate_to_l3:
-                    logger.info(f"Using local LLM decision (confidence: {decision.confidence})")
-                    return decision
+                if local_decision.confidence >= 0.7 and not local_decision.escalate_to_l3:
+                    logger.info(f"Using local LLM decision (confidence: {local_decision.confidence})")
+                    return local_decision
 
             except Exception as e:
                 logger.warning(f"Local LLM failed: {e}")
+
+        # Check if local confidence is too low to justify an API fallback
+        min_conf = self.config.hybrid_min_confidence_for_api_fallback
+        if local_decision and local_decision.confidence < min_conf:
+            logger.info(
+                f"Local confidence {local_decision.confidence:.2f} below "
+                f"API fallback threshold {min_conf:.2f}, escalating to L3 "
+                f"instead of calling paid API"
+            )
+            return LLMDecision(
+                incident_id=incident.id,
+                recommended_action="escalate",
+                action_params={"reason": f"Local confidence too low ({local_decision.confidence:.2f}) for API fallback"},
+                confidence=local_decision.confidence,
+                reasoning=f"Local LLM confidence {local_decision.confidence:.2f} below API fallback threshold {min_conf:.2f}",
+                escalate_to_l3=True
+            )
 
         # Fall back to API
         if await self.api_planner.is_available():
@@ -482,6 +538,12 @@ class Level2Planner:
         self.config = config
         self.incident_db = incident_db
         self.action_executor = action_executor
+
+        # Cost control state
+        self._api_semaphore = asyncio.Semaphore(config.max_concurrent_api_calls)
+        self._hourly_calls: List[datetime] = []  # Sliding window of API call timestamps
+        self._daily_cost_usd: float = 0.0
+        self._daily_cost_date: str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         # Initialize planner based on mode
         if config.mode == LLMMode.LOCAL:
@@ -522,15 +584,68 @@ class Level2Planner:
             "promotion_eligible": pattern_context.get("promotion_eligible", False)
         }
 
+    def _check_budget(self) -> Optional[str]:
+        """Check if API budget/rate limits allow a call. Returns rejection reason or None."""
+        now = datetime.now(timezone.utc)
+
+        # Reset daily cost if new day
+        today = now.strftime("%Y-%m-%d")
+        if today != self._daily_cost_date:
+            self._daily_cost_usd = 0.0
+            self._daily_cost_date = today
+
+        # Check daily budget
+        if self._daily_cost_usd >= self.config.daily_budget_usd:
+            return f"Daily API budget exhausted (${self._daily_cost_usd:.4f} / ${self.config.daily_budget_usd:.2f})"
+
+        # Prune hourly window and check rate limit
+        one_hour_ago = now - timedelta(hours=1)
+        self._hourly_calls = [t for t in self._hourly_calls if t > one_hour_ago]
+        if len(self._hourly_calls) >= self.config.max_api_calls_per_hour:
+            return f"Hourly API rate limit reached ({len(self._hourly_calls)}/{self.config.max_api_calls_per_hour})"
+
+        return None
+
+    def record_api_cost(self, cost_usd: float, tokens: int) -> None:
+        """Record cost of an API call for budget tracking."""
+        now = datetime.now(timezone.utc)
+        self._hourly_calls.append(now)
+        self._daily_cost_usd += cost_usd
+        logger.info(
+            f"L2 API cost: ${cost_usd:.6f} ({tokens} tokens) | "
+            f"Daily total: ${self._daily_cost_usd:.4f} / ${self.config.daily_budget_usd:.2f} | "
+            f"Hourly calls: {len(self._hourly_calls)}/{self.config.max_api_calls_per_hour}"
+        )
+
     async def plan(self, incident: Incident) -> LLMDecision:
         """Generate a plan for the incident."""
         start_time = datetime.now(timezone.utc)
 
+        # Check budget/rate limits before making any API calls
+        budget_rejection = self._check_budget()
+        if budget_rejection:
+            logger.warning(f"L2 budget guard: {budget_rejection} - escalating to L3")
+            return LLMDecision(
+                incident_id=incident.id,
+                recommended_action="escalate",
+                action_params={"reason": budget_rejection},
+                confidence=0.0,
+                reasoning=budget_rejection,
+                escalate_to_l3=True
+            )
+
         # Build context
         context = self.build_context(incident)
 
-        # Get LLM decision
-        decision = await self.planner.plan(incident, context)
+        # Acquire concurrency semaphore to limit parallel API calls
+        async with self._api_semaphore:
+            decision = await self.planner.plan(incident, context)
+
+        # Record API cost if an API call was made
+        api_cost = decision.context_used.get("api_cost_usd", 0.0)
+        api_tokens = decision.context_used.get("api_tokens", 0)
+        if api_cost > 0:
+            self.record_api_cost(api_cost, api_tokens)
 
         # Apply guardrails
         decision = self._apply_guardrails(decision)
