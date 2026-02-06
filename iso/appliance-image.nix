@@ -103,8 +103,8 @@ in
 
   # Disable hardware watchdog on live ISO - nixos-install starves CPUs
   # The installed system (appliance-disk-image.nix) has its own watchdog config
-  systemd.watchdog.runtimeTime = lib.mkForce "";
-  systemd.watchdog.device = lib.mkForce "";
+  systemd.watchdog.runtimeTime = lib.mkForce null;
+  systemd.watchdog.device = lib.mkForce null;
 
   # No GUI - headless operation
   services.xserver.enable = false;
