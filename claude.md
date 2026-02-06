@@ -71,7 +71,7 @@ python3 .agent/scripts/context-manager.py compact      # Archive old sessions
 ```
 packages/compliance-agent/   # Python agent (main work area)
   src/compliance_agent/      # Core modules
-  tests/                     # pytest tests (839 passing)
+  tests/                     # pytest tests (885+ passing)
   venv/                      # Python 3.13 virtualenv
 modules/                     # NixOS modules
 mcp-server/                  # Central MCP server
@@ -170,7 +170,7 @@ Quick reference:
 | iMac Host | 192.168.88.50 | jrelly | (SSH key) |
 | Windows DC | 192.168.88.250 | NORTHVALLEY\Administrator | NorthValley2024! |
 | Windows WS | 192.168.88.251 | localadmin | NorthValley2024! |
-| Physical Appliance | 192.168.88.246 | root | (SSH key) |
+| Physical Appliance | 192.168.88.241 | root | (SSH key) |
 | VPS | 178.156.162.116 | root | (SSH key) |
 
 ## Don't Forget
@@ -179,7 +179,7 @@ Quick reference:
 - Run tests before AND after changes
 - Update `.agent/CONTEXT.md` with session changes
 - iMac gateway (NEPA clinic): `192.168.88.50` (jrelly@)
-- Physical appliance: `192.168.88.246` (root@)
+- Physical appliance: `192.168.88.241` (root@)
 - Use `now_utc()` not `datetime.utcnow()` (deprecated)
 
 ## Session Handoff

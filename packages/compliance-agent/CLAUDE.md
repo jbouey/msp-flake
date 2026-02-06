@@ -9,9 +9,8 @@
 
 This is ONE component of the larger MSP_FLAKES platform. Read these files first:
 
-1. **Project context:** `../../.agent/CONTEXT.md`
-2. **Current tasks:** `../../.agent/TODO.md`
-3. **Network/VMs:** `../../.agent/NETWORK.md`
+1. **Project state:** `../../.agent/claude-progress.json` (single source of truth)
+2. **Network/VMs:** `../../.agent/reference/NETWORK.md`
 4. **Architecture decisions:** `../../.agent/DECISIONS.md`
 5. **Master architecture:** `../../CLAUDE.md`
 6. **LAB CREDENTIALS:** `../../.agent/LAB_CREDENTIALS.md` ← **ALWAYS CHECK THIS FOR CREDENTIALS**
@@ -44,7 +43,7 @@ packages/compliance-agent/
 │   ├── phi_scrubber.py       # PHI pattern removal
 │   ├── windows_collector.py  # Windows data collection
 │   └── runbooks/windows/     # 7 HIPAA runbooks
-├── tests/                    # pytest tests (161 passing)
+├── tests/                    # pytest tests (885+ passing)
 ├── docs/                     # Agent-specific documentation
 └── venv/                     # Python 3.13 virtualenv
 ```
@@ -53,20 +52,7 @@ packages/compliance-agent/
 
 ## Current Priorities (from TODO.md)
 
-### 🔴 Critical
-1. **Fix datetime.utcnow() deprecation** - 907 warnings, replace with `datetime.now(timezone.utc)`
-2. **Implement evidence bundle signing** - Ed25519, HIPAA requirement
-3. **Update imports to use _types.py** - New single source of truth
-
-### Files needing datetime fix:
-- `mcp_client.py` (lines 347, 365)
-- `offline_queue.py` (lines 119, 120, 163, 205, 250, 325, 352)
-- `utils.py` (line 309)
-- `incident_db.py` (multiple)
-- `evidence.py` (multiple)
-
-Use `from datetime import datetime, timezone` then `datetime.now(timezone.utc)`
-Or import `now_utc` from `_types.py`
+See `.agent/claude-progress.json` for current priorities.
 
 ---
 
@@ -125,9 +111,9 @@ Incident → L1 Deterministic (70-80%, <100ms, $0)
 
 ## Test Status
 
-- **161 passed, 7 skipped**
-- Skipped: AV/EDR mocking complexity, Windows VM dependency
-- Target: Zero deprecation warnings
+- **885+ passed** (v1.0.55)
+- See `docs/TESTING.md` for full test guide
+- Use `now_utc()` not `datetime.utcnow()`
 
 ---
 
