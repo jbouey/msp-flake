@@ -92,8 +92,8 @@ in
     ./local-status.nix
   ];
 
-  # System identification
-  networking.hostName = lib.mkDefault "osiriscare-appliance";
+  # System identification - mkForce overrides installer module's "nixos" default
+  networking.hostName = lib.mkForce "osiriscare-installer";
   system.stateVersion = "24.05";
 
   # Boot with serial console for debugging
@@ -126,6 +126,28 @@ in
   # Console login requires password for physical security (HIPAA §164.310)
   # Auto-login disabled in production - use SSH for remote access
   services.getty.autologinUser = lib.mkForce null;
+
+  # ============================================================================
+  # Branded Console - replaces generic "Welcome to NixOS" with OsirisCare
+  # ============================================================================
+  services.getty.greetingLine = lib.mkForce ''
+
+    \e[1;36m╔═══════════════════════════════════════════════════════════╗
+    ║                                                           ║
+    ║          OsirisCare MSP Compliance Platform                ║
+    ║            APPLIANCE INSTALLER  v1.0                       ║
+    ║                                                           ║
+    ╠═══════════════════════════════════════════════════════════╣
+    ║  Installation runs automatically on boot.                  ║
+    ║  Live progress:  Alt+F2  or  journalctl -u msp-auto-install -f  ║
+    ║  IP Address:     \4                                        ║
+    ╚═══════════════════════════════════════════════════════════╝\e[0m
+
+  '';
+
+  services.getty.helpLine = lib.mkForce ''
+    Log in as \e[1mroot\e[0m (password: osiris2024) to access the installer console.
+  '';
 
   # ============================================================================
   # ZERO FRICTION AUTO-INSTALL SERVICE
@@ -339,26 +361,62 @@ in
     '';
   };
 
-  # Show IP address on login
+  # Post-login MOTD
   environment.etc."motd".text = ''
 
-    ╔═══════════════════════════════════════════════════════════╗
-    ║        OsirisCare Compliance Appliance INSTALLER          ║
-    ║               ZERO-FRICTION DEPLOYMENT                    ║
-    ╚═══════════════════════════════════════════════════════════╝
+    OsirisCare MSP - Appliance Installer
+    ─────────────────────────────────────
+    The auto-install service partitions, formats, and installs
+    the appliance via nixos-install from the GitHub flake.
 
-    AUTO-INSTALL is running. Network connection required.
-    The installer fetches the appliance configuration from GitHub.
-
-    Check progress: journalctl -u msp-auto-install -f
-
-    The system will automatically:
-      1. Detect internal drive
-      2. Partition and format (ESP + MSP-DATA + root)
-      3. Install appliance via nixos-install (requires internet)
-      4. Reboot
+    Useful commands:
+      journalctl -u msp-auto-install -f    # Watch install progress
+      systemctl status msp-auto-install     # Check install status
+      ip addr                               # Show IP addresses
 
   '';
+
+  # ============================================================================
+  # Live Install Progress on tty2 (Alt+F2)
+  # Shows real-time install output without needing to log in
+  # ============================================================================
+  systemd.services.msp-install-display = {
+    description = "OsirisCare Install Progress Display";
+    after = [ "systemd-vconsole-setup.service" ];
+    wantedBy = [ "multi-user.target" ];
+    conflicts = [ "getty@tty2.service" ];
+
+    serviceConfig = {
+      Type = "simple";
+      Restart = "always";
+      RestartSec = "2s";
+      StandardInput = "tty";
+      StandardOutput = "tty";
+      TTYPath = "/dev/tty2";
+      TTYReset = "yes";
+      TTYVHangup = "yes";
+    };
+
+    path = with pkgs; [ coreutils systemd util-linux iproute2 gnugrep gawk ];
+
+    script = ''
+      clear
+      echo ""
+      echo "  \033[1;36m╔═══════════════════════════════════════════════════════════╗"
+      echo "  ║          OsirisCare MSP Compliance Platform                ║"
+      echo "  ║              INSTALL PROGRESS                              ║"
+      echo "  ╚═══════════════════════════════════════════════════════════╝\033[0m"
+      echo ""
+
+      IP_ADDR=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -1)
+      echo "  IP Address: ''${IP_ADDR:-waiting for network...}"
+      echo "  ─────────────────────────────────────────────────────────"
+      echo ""
+
+      # Follow the auto-install journal in real time
+      exec journalctl -u msp-auto-install -f --no-hostname -o cat
+    '';
+  };
 
   # ============================================================================
   # Health Gate Service (A/B Update Verification)

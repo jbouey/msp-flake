@@ -72,8 +72,8 @@ in
     ./local-status.nix
   ];
 
-  # System identification
-  networking.hostName = lib.mkDefault "osiriscare-appliance";
+  # System identification - mkForce ensures branding even if other modules set defaults
+  networking.hostName = lib.mkForce "osiriscare";
   system.stateVersion = "24.05";
 
   # ============================================================================
@@ -137,20 +137,39 @@ in
   # Auto-login disabled in production - use SSH for remote access
   services.getty.autologinUser = lib.mkForce null;
 
-  # Show IP address on login
+  # ============================================================================
+  # Branded Console - professional appliance look on physical console
+  # ============================================================================
+  services.getty.greetingLine = lib.mkForce ''
+
+    \e[1;36m╔═══════════════════════════════════════════════════════════╗
+    ║                                                           ║
+    ║          OsirisCare MSP Compliance Platform                ║
+    ║                COMPLIANCE APPLIANCE                        ║
+    ║                                                           ║
+    ╠═══════════════════════════════════════════════════════════╣
+    ║  Dashboard:  http://\4                                     ║
+    ║  SSH:        ssh msp@\4                                    ║
+    ║  Portal:     http://\4:8083                                ║
+    ╚═══════════════════════════════════════════════════════════╝\e[0m
+
+  '';
+
+  services.getty.helpLine = lib.mkForce ''
+    Log in as \e[1mmsp\e[0m for appliance management. Root login via console only.
+  '';
+
+  # Post-login MOTD (first-boot service overwrites this with IP-specific info)
   environment.etc."motd".text = ''
 
-    ╔═══════════════════════════════════════════════════════════╗
-    ║           OsirisCare Compliance Appliance                 ║
-    ║                 (Installed System)                        ║
-    ╚═══════════════════════════════════════════════════════════╝
+    OsirisCare MSP - Compliance Appliance
+    ──────────────────────────────────────
+    Dashboard:  http://osiriscare.local
+    SSH:        ssh msp@osiriscare.local
+    Portal:     http://osiriscare.local:8083
 
-    Access via: ssh root@osiriscare-appliance.local
-    Status page: http://osiriscare-appliance.local
-    Local Portal: http://osiriscare-appliance.local:8083
-
-    Run 'ip addr' to see IP addresses
-    Run 'journalctl -u compliance-agent -f' to watch agent
+    Agent:      journalctl -u compliance-agent -f
+    Health:     systemctl status msp-health-check
 
   '';
 
