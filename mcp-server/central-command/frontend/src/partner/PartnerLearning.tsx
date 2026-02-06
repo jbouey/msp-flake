@@ -146,7 +146,7 @@ export const PartnerLearning: React.FC = () => {
   };
 
   const handleReject = async () => {
-    if (!selectedCandidate || !rejectReason) return;
+    if (!selectedCandidate || !rejectReason.trim()) return;
     setApproving(true);
     setError(null);
 

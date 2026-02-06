@@ -23,7 +23,7 @@ from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
-from asyncpg.exceptions import PostgresError
+from asyncpg.exceptions import PostgresError, LockNotAvailableError
 
 from .partners import require_partner
 from .fleet import get_pool
@@ -401,7 +401,7 @@ async def approve_candidate(
         await transaction.start()
 
         try:
-            # Verify ownership and get candidate with FOR UPDATE lock
+            # Step 1: Verify partner owns this candidate (read from view, no lock)
             candidate = await conn.fetchrow("""
                 SELECT
                     id,
@@ -414,12 +414,32 @@ async def approve_candidate(
                     recommended_action
                 FROM v_partner_promotion_candidates
                 WHERE partner_id = $1 AND id::text = $2
-                FOR UPDATE
             """, partner_id, pattern_id)
 
             if not candidate:
                 await transaction.rollback()
                 raise HTTPException(status_code=404, detail="Candidate not found or not owned by partner")
+
+            # Step 2: Lock the base table row to prevent concurrent approvals
+            locked = await conn.fetchrow("""
+                SELECT id FROM aggregated_pattern_stats
+                WHERE site_id = $1 AND pattern_signature = $2
+                FOR UPDATE NOWAIT
+            """, candidate['site_id'], candidate['pattern_signature'])
+
+            if not locked:
+                await transaction.rollback()
+                raise HTTPException(status_code=409, detail="Pattern no longer available")
+
+            # Step 3: Check if already promoted (prevent duplicate)
+            existing = await conn.fetchrow("""
+                SELECT rule_id, status FROM promoted_rules
+                WHERE pattern_signature = $1 AND site_id = $2
+            """, candidate['pattern_signature'], candidate['site_id'])
+
+            if existing and existing['status'] == 'active':
+                await transaction.rollback()
+                raise HTTPException(status_code=409, detail=f"Pattern already promoted as {existing['rule_id']}")
 
             # Validate pattern signature format
             if not validate_pattern_signature(candidate['pattern_signature']):
@@ -470,6 +490,7 @@ async def approve_candidate(
             )
 
             deployed_count = 0
+            failed_appliances = []
 
             # Dispatch to appliances if requested
             if request.deploy_immediately:
@@ -477,20 +498,31 @@ async def approve_candidate(
                     SELECT appliance_id FROM site_appliances WHERE site_id = $1
                 """, candidate['site_id'])
 
+                command_params = json.dumps({
+                    "rule_id": rule['id'],
+                    "rule_yaml": rule_yaml,
+                    "promoted_at": datetime.now(timezone.utc).isoformat()
+                })
+
                 for appliance in appliances:
-                    await conn.execute("""
-                        INSERT INTO appliance_commands (
-                            appliance_id, command_type, params, created_at
-                        ) VALUES ($1, 'sync_promoted_rule', $2, NOW())
-                    """,
-                        appliance['appliance_id'],
-                        json.dumps({
-                            "rule_id": rule['id'],
-                            "rule_yaml": rule_yaml,
-                            "promoted_at": datetime.now(timezone.utc).isoformat()
-                        })
-                    )
-                    deployed_count += 1
+                    try:
+                        # ON CONFLICT prevents duplicate commands on retry
+                        await conn.execute("""
+                            INSERT INTO appliance_commands (
+                                appliance_id, command_type, params, created_at
+                            ) VALUES ($1, 'sync_promoted_rule', $2, NOW())
+                            ON CONFLICT (appliance_id, command_type, params) DO NOTHING
+                        """,
+                            appliance['appliance_id'],
+                            command_params
+                        )
+                        deployed_count += 1
+                    except Exception as e:
+                        failed_appliances.append(appliance['appliance_id'])
+                        logger.warning(f"Failed to queue command for appliance {appliance['appliance_id']}: {e}")
+
+                if failed_appliances:
+                    logger.error(f"Failed to deploy rule {rule['id']} to {len(failed_appliances)} appliances")
 
                 # Update deployment count
                 await conn.execute("""
@@ -507,14 +539,20 @@ async def approve_candidate(
             return {
                 "status": "approved",
                 "rule_id": rule['id'],
+                "pattern_signature": candidate['pattern_signature'],
+                "site_id": candidate['site_id'],
                 "rule_yaml": rule_yaml,
                 "deployed_to": deployed_count,
+                "failed_appliances": len(failed_appliances),
                 "message": f"Rule promoted and deployed to {deployed_count} appliances" if deployed_count else "Rule promoted (pending deployment)"
             }
 
         except HTTPException:
             # Re-raise HTTP exceptions (already rolled back)
             raise
+        except LockNotAvailableError:
+            await transaction.rollback()
+            raise HTTPException(status_code=409, detail="Pattern is being promoted by another request, please retry")
         except PostgresError as e:
             await transaction.rollback()
             logger.error(f"Database error during promotion: {e}")
