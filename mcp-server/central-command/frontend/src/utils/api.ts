@@ -1179,6 +1179,11 @@ export const fleetUpdatesApi = {
     fetchSitesApi<{ status: string }>(`/fleet/rollouts/${rolloutId}/cancel`, {
       method: 'POST',
     }),
+
+  deleteRelease: (version: string) =>
+    fetchSitesApi<{ status: string }>(`/fleet/releases/${version}`, {
+      method: 'DELETE',
+    }),
 };
 
 // =============================================================================

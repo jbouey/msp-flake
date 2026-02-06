@@ -508,7 +508,27 @@ export const Settings: React.FC = () => {
               <span className="text-sm font-medium text-label-primary">Purge Old Telemetry</span>
               <p className="text-xs text-label-tertiary mt-0.5">Delete telemetry older than retention period</p>
             </div>
-            <button className="px-3 py-1.5 text-sm rounded-ios bg-red-500/10 text-red-600 border border-red-500/20 hover:bg-red-500/20 transition-colors">
+            <button
+              onClick={async () => {
+                if (!confirm('Permanently delete old telemetry data? This cannot be undone.')) return;
+                try {
+                  const token = localStorage.getItem('auth_token');
+                  const res = await fetch('/api/dashboard/admin/settings/purge-telemetry', {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${token}` },
+                  });
+                  const data = await res.json();
+                  if (res.ok) {
+                    setSaveMessage({ type: 'success', text: `Purged ${data.deleted} telemetry records (>${data.retention_days} days old)` });
+                  } else {
+                    setSaveMessage({ type: 'error', text: data.detail || 'Purge failed' });
+                  }
+                } catch {
+                  setSaveMessage({ type: 'error', text: 'Failed to purge telemetry' });
+                }
+              }}
+              className="px-3 py-1.5 text-sm rounded-ios bg-red-500/10 text-red-600 border border-red-500/20 hover:bg-red-500/20 transition-colors"
+            >
               Purge Now
             </button>
           </div>
@@ -517,7 +537,27 @@ export const Settings: React.FC = () => {
               <span className="text-sm font-medium text-label-primary">Reset Learning Data</span>
               <p className="text-xs text-label-tertiary mt-0.5">Clear all patterns and L1 rules (keeps runbooks)</p>
             </div>
-            <button className="px-3 py-1.5 text-sm rounded-ios bg-red-500/10 text-red-600 border border-red-500/20 hover:bg-red-500/20 transition-colors">
+            <button
+              onClick={async () => {
+                if (!confirm('Reset ALL learning data? This will delete all patterns and auto-promoted L1 rules. This cannot be undone.')) return;
+                try {
+                  const token = localStorage.getItem('auth_token');
+                  const res = await fetch('/api/dashboard/admin/settings/reset-learning', {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${token}` },
+                  });
+                  const data = await res.json();
+                  if (res.ok) {
+                    setSaveMessage({ type: 'success', text: `Reset complete: ${data.patterns_deleted} patterns and ${data.rules_deleted} rules deleted` });
+                  } else {
+                    setSaveMessage({ type: 'error', text: data.detail || 'Reset failed' });
+                  }
+                } catch {
+                  setSaveMessage({ type: 'error', text: 'Failed to reset learning data' });
+                }
+              }}
+              className="px-3 py-1.5 text-sm rounded-ios bg-red-500/10 text-red-600 border border-red-500/20 hover:bg-red-500/20 transition-colors"
+            >
               Reset
             </button>
           </div>

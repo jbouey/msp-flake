@@ -61,18 +61,24 @@ export const FleetUpdates: React.FC = () => {
   const { data: stats } = useQuery<FleetStats>({
     queryKey: ['fleet-stats'],
     queryFn: () => fleetUpdatesApi.getStats(),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 
   // Fetch releases
   const { data: releases = [], isLoading: releasesLoading } = useQuery<FleetRelease[]>({
     queryKey: ['fleet-releases'],
     queryFn: () => fleetUpdatesApi.getReleases(),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 
-  // Fetch rollouts
+  // Fetch rollouts (poll faster for active rollout progress)
   const { data: rollouts = [], isLoading: rolloutsLoading } = useQuery<FleetRollout[]>({
     queryKey: ['fleet-rollouts'],
     queryFn: () => fleetUpdatesApi.getRollouts(),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 
   // Create release mutation
@@ -119,6 +125,22 @@ export const FleetUpdates: React.FC = () => {
   const advanceRolloutMutation = useMutation({
     mutationFn: (rolloutId: string) => fleetUpdatesApi.advanceRollout(rolloutId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['fleet-rollouts'] }),
+  });
+
+  const cancelRolloutMutation = useMutation({
+    mutationFn: (rolloutId: string) => fleetUpdatesApi.cancelRollout(rolloutId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fleet-rollouts'] });
+      queryClient.invalidateQueries({ queryKey: ['fleet-stats'] });
+    },
+  });
+
+  const deleteReleaseMutation = useMutation({
+    mutationFn: (version: string) => fleetUpdatesApi.deleteRelease(version),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fleet-releases'] });
+      queryClient.invalidateQueries({ queryKey: ['fleet-stats'] });
+    },
   });
 
   const setLatestMutation = useMutation({
@@ -200,15 +222,37 @@ export const FleetUpdates: React.FC = () => {
                     >
                       Advance Stage
                     </button>
+                    <button
+                      onClick={() => {
+                        if (confirm('Cancel this rollout? Pending appliances will not be updated.')) {
+                          cancelRolloutMutation.mutate(rollout.id);
+                        }
+                      }}
+                      className="px-3 py-1 text-sm bg-health-critical text-white rounded-ios-md hover:opacity-90"
+                    >
+                      Cancel
+                    </button>
                   </>
                 )}
                 {rollout.status === 'paused' && (
-                  <button
-                    onClick={() => resumeRolloutMutation.mutate(rollout.id)}
-                    className="px-3 py-1 text-sm bg-health-healthy text-white rounded-ios-md hover:opacity-90"
-                  >
-                    Resume
-                  </button>
+                  <>
+                    <button
+                      onClick={() => resumeRolloutMutation.mutate(rollout.id)}
+                      className="px-3 py-1 text-sm bg-health-healthy text-white rounded-ios-md hover:opacity-90"
+                    >
+                      Resume
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm('Cancel this rollout? Pending appliances will not be updated.')) {
+                          cancelRolloutMutation.mutate(rollout.id);
+                        }
+                      }}
+                      className="px-3 py-1 text-sm bg-health-critical text-white rounded-ios-md hover:opacity-90"
+                    >
+                      Cancel
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -306,6 +350,18 @@ export const FleetUpdates: React.FC = () => {
                         >
                           Deploy
                         </button>
+                        {!release.is_latest && (
+                          <button
+                            onClick={() => {
+                              if (confirm(`Deactivate release ${release.version}? It will no longer be available for rollouts.`)) {
+                                deleteReleaseMutation.mutate(release.version);
+                              }
+                            }}
+                            className="px-2 py-1 text-xs bg-health-critical text-white rounded hover:opacity-90"
+                          >
+                            Remove
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
