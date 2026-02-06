@@ -21,12 +21,13 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, field_validator
 from asyncpg.exceptions import PostgresError, LockNotAvailableError
 
 from .partners import require_partner
 from .fleet import get_pool
+from .partner_activity_logger import log_partner_learning_action, PartnerEventType
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +381,7 @@ async def get_candidate_details(
 async def approve_candidate(
     pattern_id: str,
     request: ApproveRequest,
+    http_request: Request,
     partner=Depends(require_partner)
 ):
     """Approve a pattern for L1 promotion.
@@ -536,6 +538,15 @@ async def approve_candidate(
 
             logger.info(f"Pattern {candidate['pattern_signature'][:8]} promoted to rule {rule['id']} by partner {redact_partner_id(partner_id)}")
 
+            await log_partner_learning_action(
+                partner_id=str(partner['id']),
+                event_type=PartnerEventType.PATTERN_APPROVED,
+                pattern_id=candidate['pattern_signature'],
+                event_data={"rule_id": str(rule['id']), "deploy_immediately": request.deploy_immediately},
+                ip_address=http_request.client.host if http_request.client else None,
+                user_agent=http_request.headers.get("user-agent", "")[:500],
+            )
+
             return {
                 "status": "approved",
                 "rule_id": rule['id'],
@@ -567,6 +578,7 @@ async def approve_candidate(
 async def reject_candidate(
     pattern_id: str,
     request: RejectRequest,
+    http_request: Request,
     partner=Depends(require_partner)
 ):
     """Reject a pattern from L1 promotion."""
@@ -616,6 +628,15 @@ async def reject_candidate(
 
             # Don't log rejection reason (may contain PII)
             logger.info(f"Pattern {candidate['pattern_signature'][:8]} rejected by partner {redact_partner_id(partner_id)}")
+
+            await log_partner_learning_action(
+                partner_id=str(partner['id']),
+                event_type=PartnerEventType.PATTERN_REJECTED,
+                pattern_id=candidate['pattern_signature'],
+                event_data={"reason": request.reason},
+                ip_address=http_request.client.host if http_request.client else None,
+                user_agent=http_request.headers.get("user-agent", "")[:500],
+            )
 
             return {
                 "status": "rejected",
@@ -680,6 +701,7 @@ async def get_promoted_rules(
 @partner_learning_router.patch("/promoted-rules/{rule_id}/status")
 async def update_rule_status(
     rule_id: str,
+    request: Request,
     status: str = Query(..., description="New status: active, disabled, archived"),
     partner=Depends(require_partner)
 ):
@@ -715,6 +737,15 @@ async def update_rule_status(
             await transaction.commit()
 
             logger.info(f"Rule {rule_id} status changed to {status} by partner {redact_partner_id(partner_id)}")
+
+            await log_partner_learning_action(
+                partner_id=str(partner['id']),
+                event_type=PartnerEventType.RULE_STATUS_CHANGED,
+                pattern_id=rule_id,
+                event_data={"new_status": status},
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent", "")[:500],
+            )
 
             return {"status": "updated", "rule_id": rule_id, "new_status": status}
 

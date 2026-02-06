@@ -17,12 +17,21 @@ import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Header, Depends, Response, Cookie
+from fastapi import APIRouter, HTTPException, Header, Depends, Response, Cookie, Request, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .fleet import get_pool
 from .auth import require_admin
+from .partner_activity_logger import (
+    log_partner_activity,
+    log_partner_site_action,
+    log_partner_credential_action,
+    log_partner_provision_action,
+    PartnerEventType,
+    get_partner_activity,
+    get_partner_activity_stats,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +293,7 @@ async def claim_provision_code(claim: ProvisionClaim):
 # =============================================================================
 
 @router.get("/me")
-async def get_my_partner(partner=Depends(require_partner)):
+async def get_my_partner(request: Request, partner=Depends(require_partner)):
     """Get current partner's info (self-service)."""
     pool = await get_pool()
 
@@ -311,6 +320,18 @@ async def get_my_partner(partner=Depends(require_partner)):
             WHERE partner_id = $1
         """, partner['id'])
 
+        await log_partner_activity(
+            partner_id=str(partner['id']),
+            event_type=PartnerEventType.PROFILE_VIEWED,
+            target_type="partner",
+            target_id=str(partner['id']),
+            event_data={"partner_name": partner['name']},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", "")[:500],
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
+
         return {
             'id': str(row['id']),
             'name': row['name'],
@@ -332,7 +353,7 @@ async def get_my_partner(partner=Depends(require_partner)):
 
 
 @router.get("/me/sites")
-async def get_my_sites(partner=Depends(require_partner)):
+async def get_my_sites(request: Request, partner=Depends(require_partner)):
     """Get sites belonging to this partner."""
     pool = await get_pool()
 
@@ -363,11 +384,24 @@ async def get_my_sites(partner=Depends(require_partner)):
                 'created_at': row['created_at'].isoformat() if row['created_at'] else None,
             })
 
+        await log_partner_activity(
+            partner_id=str(partner['id']),
+            event_type=PartnerEventType.SITES_LISTED,
+            target_type="partner",
+            target_id=str(partner['id']),
+            event_data={"site_count": len(sites)},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", "")[:500],
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
+
         return {'sites': sites, 'count': len(sites)}
 
 
 @router.post("/me/provisions")
 async def create_provision_code(
+    request: Request,
     provision: ProvisionCreate,
     partner=Depends(require_partner)
 ):
@@ -391,6 +425,18 @@ async def create_provision_code(
             provision.client_name,
             expires_at
         )
+
+    await log_partner_activity(
+        partner_id=str(partner['id']),
+        event_type=PartnerEventType.PROVISION_CREATED,
+        target_type="provision",
+        target_id=str(row['id']),
+        event_data={"client_name": provision.client_name, "provision_code": row['provision_code']},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
 
     return {
         "id": str(row['id']),
@@ -449,6 +495,7 @@ async def list_provision_codes(
 
 @router.delete("/me/provisions/{provision_id}")
 async def revoke_provision_code(
+    request: Request,
     provision_id: str,
     partner=Depends(require_partner)
 ):
@@ -468,6 +515,18 @@ async def revoke_provision_code(
                 status_code=404,
                 detail="Provision code not found or already claimed/revoked"
             )
+
+    await log_partner_activity(
+        partner_id=str(partner['id']),
+        event_type=PartnerEventType.PROVISION_REVOKED,
+        target_type="provision",
+        target_id=str(provision_id),
+        event_data={"provision_code": result['provision_code']},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
 
     return {
         "status": "revoked",
@@ -621,7 +680,7 @@ async def get_provision_qr_by_code(
 # =============================================================================
 
 @router.post("")
-async def create_partner(partner: PartnerCreate, admin: dict = Depends(require_admin)):
+async def create_partner(request: Request, partner: PartnerCreate, admin: dict = Depends(require_admin)):
     """Create a new partner (admin only)."""
     pool = await get_pool()
 
@@ -657,6 +716,18 @@ async def create_partner(partner: PartnerCreate, admin: dict = Depends(require_a
             partner.revenue_share_percent,
             api_key_hash
         )
+
+    await log_partner_activity(
+        partner_id=str(row['id']),
+        event_type=PartnerEventType.PARTNER_CREATED,
+        target_type="partner",
+        target_id=str(row['id']),
+        event_data={"partner_name": row['name'], "slug": row['slug'], "admin_user": admin.get("sub", "unknown")},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
 
     return {
         "id": str(row['id']),
@@ -715,6 +786,27 @@ async def list_partners(status: Optional[str] = None, admin: dict = Depends(requ
             })
 
         return {'partners': partners, 'count': len(partners)}
+
+
+@router.get("/activity/all")
+async def get_all_partner_activity_log(
+    partner_id: Optional[str] = Query(None),
+    event_category: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    admin: dict = Depends(require_admin),
+):
+    """Get all partner activity logs (admin only)."""
+    logs = await get_partner_activity(
+        partner_id=partner_id,
+        event_type=event_type,
+        event_category=event_category,
+        limit=limit,
+        offset=offset,
+    )
+    stats = await get_partner_activity_stats()
+    return {"logs": logs, "stats": stats}
 
 
 # =============================================================================
@@ -792,7 +884,7 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
 
 
 @router.put("/{partner_id}")
-async def update_partner(partner_id: str, update: PartnerUpdate, admin: dict = Depends(require_admin)):
+async def update_partner(request: Request, partner_id: str, update: PartnerUpdate, admin: dict = Depends(require_admin)):
     """Update partner info (admin only)."""
     pool = await get_pool()
 
@@ -861,6 +953,18 @@ async def update_partner(partner_id: str, update: PartnerUpdate, admin: dict = D
         if not result:
             raise HTTPException(status_code=404, detail="Partner not found")
 
+    await log_partner_activity(
+        partner_id=str(partner_id),
+        event_type=PartnerEventType.PARTNER_UPDATED,
+        target_type="partner",
+        target_id=str(partner_id),
+        event_data={"updated_fields": [u.split(" = ")[0].strip() for u in updates if " = " in u], "admin_user": admin.get("sub", "unknown")},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
     return {
         "status": "updated",
         "id": str(result['id']),
@@ -869,7 +973,7 @@ async def update_partner(partner_id: str, update: PartnerUpdate, admin: dict = D
 
 
 @router.post("/{partner_id}/regenerate-key")
-async def regenerate_api_key(partner_id: str, admin: dict = Depends(require_admin)):
+async def regenerate_api_key(request: Request, partner_id: str, admin: dict = Depends(require_admin)):
     """Regenerate partner API key (admin only)."""
     pool = await get_pool()
 
@@ -887,11 +991,42 @@ async def regenerate_api_key(partner_id: str, admin: dict = Depends(require_admi
         if not result:
             raise HTTPException(status_code=404, detail="Partner not found")
 
+    await log_partner_activity(
+        partner_id=str(partner_id),
+        event_type=PartnerEventType.API_KEY_REGENERATED,
+        target_type="partner",
+        target_id=str(partner_id),
+        event_data={"partner_name": result['name'], "admin_user": admin.get("sub", "unknown")},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
     return {
         "status": "regenerated",
         "api_key": api_key,
         "message": "Save this API key - it cannot be retrieved later"
     }
+
+
+@router.get("/{partner_id}/activity")
+async def get_partner_activity_log(
+    partner_id: str,
+    event_category: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    admin: dict = Depends(require_admin),
+):
+    """Get activity log for a specific partner (admin only)."""
+    logs = await get_partner_activity(
+        partner_id=partner_id,
+        event_category=event_category,
+        limit=limit,
+        offset=offset,
+    )
+    stats = await get_partner_activity_stats(partner_id=partner_id)
+    return {"logs": logs, "stats": stats}
 
 
 @router.post("/{partner_id}/users")
@@ -987,7 +1122,7 @@ class DiscoveredAssetUpdate(BaseModel):
 
 
 @router.get("/me/sites/{site_id}")
-async def get_partner_site_detail(site_id: str, partner=Depends(require_partner)):
+async def get_partner_site_detail(request: Request, site_id: str, partner=Depends(require_partner)):
     """Get detailed site info including assets and credentials."""
     pool = await get_pool()
 
@@ -1039,6 +1174,18 @@ async def get_partner_site_detail(site_id: str, partner=Depends(require_partner)
             ORDER BY started_at DESC
             LIMIT 10
         """, site_id)
+
+        await log_partner_activity(
+            partner_id=str(partner['id']),
+            event_type=PartnerEventType.SITE_VIEWED,
+            target_type="site",
+            target_id=site_id,
+            event_data={"clinic_name": site['clinic_name'], "asset_count": len(assets), "credential_count": len(credentials)},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", "")[:500],
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
 
         return {
             'site': {
@@ -1100,6 +1247,7 @@ async def get_partner_site_detail(site_id: str, partner=Depends(require_partner)
 
 @router.post("/me/sites/{site_id}/credentials")
 async def add_site_credentials(
+    request: Request,
     site_id: str,
     credential: CredentialCreate,
     partner=Depends(require_partner)
@@ -1143,6 +1291,18 @@ async def add_site_credentials(
             is_primary
         )
 
+    await log_partner_activity(
+        partner_id=str(partner['id']),
+        event_type=PartnerEventType.CREDENTIAL_ADDED,
+        target_type="credential",
+        target_id=str(row['id']),
+        event_data={"site_id": site_id, "credential_name": credential.name, "credential_type": credential.credential_type},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
     return {
         'id': str(row['id']),
         'name': row['name'],
@@ -1155,6 +1315,7 @@ async def add_site_credentials(
 
 @router.post("/me/sites/{site_id}/credentials/{credential_id}/validate")
 async def validate_credential(
+    request: Request,
     site_id: str,
     credential_id: str,
     partner=Depends(require_partner)
@@ -1197,6 +1358,18 @@ async def validate_credential(
             WHERE id = $2
         """, json.dumps(validation_result), credential_id)
 
+    await log_partner_activity(
+        partner_id=str(partner['id']),
+        event_type=PartnerEventType.CREDENTIAL_VALIDATED,
+        target_type="credential",
+        target_id=str(credential_id),
+        event_data={"site_id": site_id, "validation_status": "pending"},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
     return {
         'credential_id': credential_id,
         'validation_status': 'pending',
@@ -1207,6 +1380,7 @@ async def validate_credential(
 
 @router.delete("/me/sites/{site_id}/credentials/{credential_id}")
 async def delete_credential(
+    request: Request,
     site_id: str,
     credential_id: str,
     partner=Depends(require_partner)
@@ -1225,6 +1399,18 @@ async def delete_credential(
 
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Credential not found")
+
+    await log_partner_activity(
+        partner_id=str(partner['id']),
+        event_type=PartnerEventType.CREDENTIAL_DELETED,
+        target_type="credential",
+        target_id=str(credential_id),
+        event_data={"site_id": site_id},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
 
     return {'status': 'deleted', 'credential_id': credential_id}
 
@@ -1289,6 +1475,7 @@ async def list_site_assets(
 
 @router.patch("/me/sites/{site_id}/assets/{asset_id}")
 async def update_asset(
+    request: Request,
     site_id: str,
     asset_id: str,
     update: DiscoveredAssetUpdate,
@@ -1342,6 +1529,18 @@ async def update_asset(
 
         result = await conn.fetchrow(query, *values)
 
+    await log_partner_activity(
+        partner_id=str(partner['id']),
+        event_type=PartnerEventType.ASSET_UPDATED,
+        target_type="asset",
+        target_id=str(asset_id),
+        event_data={"site_id": site_id, "monitoring_status": result['monitoring_status'], "asset_type": result['asset_type']},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
     return {
         'id': str(result['id']),
         'monitoring_status': result['monitoring_status'],
@@ -1351,7 +1550,7 @@ async def update_asset(
 
 
 @router.post("/me/sites/{site_id}/discovery/trigger")
-async def trigger_discovery(site_id: str, partner=Depends(require_partner)):
+async def trigger_discovery(request: Request, site_id: str, partner=Depends(require_partner)):
     """Trigger a network discovery scan for a site."""
     pool = await get_pool()
 
@@ -1414,6 +1613,18 @@ async def trigger_discovery(site_id: str, partner=Depends(require_partner)):
                 expires_at
             )
 
+            await log_partner_activity(
+                partner_id=str(partner['id']),
+                event_type=PartnerEventType.DISCOVERY_TRIGGERED,
+                target_type="site",
+                target_id=site_id,
+                event_data={"scan_id": str(scan['id']), "order_id": order_id, "status": "queued"},
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent", "")[:500],
+                request_path=str(request.url.path),
+                request_method=request.method,
+            )
+
             return {
                 'scan_id': str(scan['id']),
                 'order_id': order_id,
@@ -1422,6 +1633,18 @@ async def trigger_discovery(site_id: str, partner=Depends(require_partner)):
                 'message': 'Discovery scan queued. Appliance will execute on next check-in.',
             }
         else:
+            await log_partner_activity(
+                partner_id=str(partner['id']),
+                event_type=PartnerEventType.DISCOVERY_TRIGGERED,
+                target_type="site",
+                target_id=site_id,
+                event_data={"scan_id": str(scan['id']), "status": "pending_no_appliance"},
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent", "")[:500],
+                request_path=str(request.url.path),
+                request_method=request.method,
+            )
+
             return {
                 'scan_id': str(scan['id']),
                 'status': 'pending',

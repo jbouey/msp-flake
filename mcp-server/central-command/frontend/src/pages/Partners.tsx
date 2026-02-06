@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 
 const getToken = (): string | null => localStorage.getItem('auth_token');
@@ -41,6 +41,61 @@ interface PartnerOAuthConfig {
   allow_consumer_gmail: boolean;
   notify_emails: string[];
 }
+
+interface ActivityEvent {
+  id: number;
+  partner_id: string;
+  partner_name: string | null;
+  partner_slug: string | null;
+  event_type: string;
+  event_category: string;
+  event_data: Record<string, unknown>;
+  target_type: string | null;
+  target_id: string | null;
+  actor_ip: string | null;
+  success: boolean;
+  error_message: string | null;
+  created_at: string;
+}
+
+interface ActivityStats {
+  total: number;
+  recent: number;
+  auth_events: number;
+  unique_partners: number;
+}
+
+const EVENT_CATEGORY_COLORS: Record<string, string> = {
+  auth: 'text-health-healthy bg-green-50',
+  admin: 'text-ios-purple bg-purple-50',
+  site: 'text-ios-blue bg-blue-50',
+  provision: 'text-ios-blue bg-blue-50',
+  credential: 'text-ios-orange bg-orange-50',
+  asset: 'text-ios-teal bg-teal-50',
+  discovery: 'text-ios-teal bg-teal-50',
+  learning: 'text-ios-indigo bg-indigo-50',
+};
+
+const getEventColor = (event: ActivityEvent): string => {
+  if (!event.success) return 'text-health-critical bg-red-50';
+  if (event.event_type.includes('failed') || event.event_type.includes('rejected'))
+    return 'text-health-critical bg-red-50';
+  return EVENT_CATEGORY_COLORS[event.event_category] || 'text-label-secondary bg-gray-100';
+};
+
+const formatEventType = (type: string): string => {
+  return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+};
+
+const formatDateTime = (dateStr: string): string => {
+  return new Date(dateStr).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+};
 
 /**
  * Format date for display
@@ -361,9 +416,246 @@ const PartnerDetailModal: React.FC<{
 };
 
 /**
+ * Partner Activity Log tab
+ */
+const PartnerActivityLog: React.FC = () => {
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [stats, setStats] = useState<ActivityStats>({ total: 0, recent: 0, auth_events: 0, unique_partners: 0 });
+  const [isLoading, setIsLoading] = useState(true);
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [filterPartner, setFilterPartner] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const fetchActivity = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    setIsLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: '200' });
+      if (filterCategory !== 'all') params.set('event_category', filterCategory);
+      if (filterPartner !== 'all') params.set('partner_id', filterPartner);
+
+      const res = await fetch(`/api/partners/activity/all?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setEvents(data.logs || []);
+        if (data.stats) setStats(data.stats);
+      }
+    } catch (error) {
+      console.error('Failed to fetch partner activity:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [filterCategory, filterPartner]);
+
+  useEffect(() => {
+    fetchActivity();
+  }, [fetchActivity]);
+
+  // Get unique partners and categories for filters
+  const partners = Array.from(
+    new Map(events.filter(e => e.partner_name).map(e => [e.partner_id, e.partner_name!])).entries()
+  );
+  const categories = Array.from(new Set(events.map(e => e.event_category)));
+
+  // Client-side search filter
+  const filteredEvents = events.filter(e => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      (e.partner_name?.toLowerCase().includes(q)) ||
+      e.event_type.toLowerCase().includes(q) ||
+      (e.target_id?.toLowerCase().includes(q)) ||
+      (e.actor_ip?.toLowerCase().includes(q)) ||
+      JSON.stringify(e.event_data).toLowerCase().includes(q)
+    );
+  });
+
+  const exportCsv = () => {
+    const csv = [
+      ['Timestamp', 'Partner', 'Event', 'Category', 'Target', 'IP', 'Success', 'Details'].join(','),
+      ...filteredEvents.map(e =>
+        [
+          e.created_at,
+          `"${e.partner_name || e.partner_id}"`,
+          e.event_type,
+          e.event_category,
+          `"${e.target_type ? `${e.target_type}:${e.target_id || ''}` : ''}"`,
+          e.actor_ip || '',
+          e.success ? 'yes' : 'no',
+          `"${JSON.stringify(e.event_data).replace(/"/g, '""')}"`,
+        ].join(',')
+      ),
+    ].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `partner-activity-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Stats row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <GlassCard padding="md">
+          <p className="text-xs text-label-tertiary uppercase tracking-wide">Total Events</p>
+          <p className="text-2xl font-semibold mt-1">{stats.total}</p>
+        </GlassCard>
+        <GlassCard padding="md">
+          <p className="text-xs text-label-tertiary uppercase tracking-wide">Last 24h</p>
+          <p className="text-2xl font-semibold mt-1">{stats.recent}</p>
+        </GlassCard>
+        <GlassCard padding="md">
+          <p className="text-xs text-label-tertiary uppercase tracking-wide">Auth Events</p>
+          <p className="text-2xl font-semibold text-health-healthy mt-1">{stats.auth_events}</p>
+        </GlassCard>
+        <GlassCard padding="md">
+          <p className="text-xs text-label-tertiary uppercase tracking-wide">Unique Partners</p>
+          <p className="text-2xl font-semibold mt-1">{stats.unique_partners}</p>
+        </GlassCard>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="relative flex-1 max-w-md">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search activity..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 bg-white/50 border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+          />
+        </div>
+        <select
+          value={filterCategory}
+          onChange={(e) => setFilterCategory(e.target.value)}
+          className="px-4 py-2 bg-white/50 border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary"
+        >
+          <option value="all">All Categories</option>
+          {categories.map(cat => (
+            <option key={cat} value={cat}>{cat.charAt(0).toUpperCase() + cat.slice(1)}</option>
+          ))}
+        </select>
+        <select
+          value={filterPartner}
+          onChange={(e) => setFilterPartner(e.target.value)}
+          className="px-4 py-2 bg-white/50 border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary"
+        >
+          <option value="all">All Partners</option>
+          {partners.map(([id, name]) => (
+            <option key={id} value={id}>{name}</option>
+          ))}
+        </select>
+        <button onClick={exportCsv} className="btn-secondary flex items-center gap-2">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          Export CSV
+        </button>
+      </div>
+
+      {/* Activity table */}
+      <GlassCard padding="none">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Spinner size="lg" />
+          </div>
+        ) : filteredEvents.length === 0 ? (
+          <div className="text-center py-12">
+            <svg className="w-12 h-12 text-label-tertiary mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p className="text-label-secondary">No partner activity found</p>
+            <p className="text-label-tertiary text-sm mt-1">
+              Activity will appear here as partners use the system
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-fill-secondary border-b border-separator-light">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">Time</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">Partner</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">Event</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">Target</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">Details</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">IP</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-separator-light">
+                {filteredEvents.map((event) => (
+                  <tr key={event.id} className="hover:bg-fill-tertiary/50 transition-colors">
+                    <td className="px-4 py-3">
+                      <span className="text-sm text-label-secondary font-mono whitespace-nowrap">
+                        {formatDateTime(event.created_at)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm font-medium text-label-primary">
+                        {event.partner_name || event.partner_slug || event.partner_id.slice(0, 8)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded whitespace-nowrap ${getEventColor(event)}`}>
+                        {formatEventType(event.event_type)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {event.target_type ? (
+                        <span className="text-sm text-label-primary">
+                          {event.target_type}{event.target_id ? `: ${event.target_id.slice(0, 12)}` : ''}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-label-tertiary">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm text-label-tertiary max-w-[200px] truncate block">
+                        {event.error_message
+                          ? event.error_message
+                          : Object.keys(event.event_data).length > 0
+                            ? Object.entries(event.event_data).map(([k, v]) => `${k}: ${v}`).join(', ')
+                            : '-'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs text-label-tertiary font-mono">
+                        {event.actor_ip || '-'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </GlassCard>
+
+      <GlassCard padding="sm">
+        <p className="text-xs text-label-tertiary text-center">
+          Partner activity is logged to an append-only audit table for HIPAA 164.312(b) compliance.
+        </p>
+      </GlassCard>
+    </div>
+  );
+};
+
+/**
  * Partners admin page
  */
 export const Partners: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'partners' | 'activity'>('partners');
   const [partners, setPartners] = useState<Partner[]>([]);
   const [pendingPartners, setPendingPartners] = useState<PendingPartner[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -590,13 +882,44 @@ export const Partners: React.FC = () => {
             Manage MSP partners and resellers
           </p>
         </div>
-        <button
-          onClick={() => setShowNewPartnerModal(true)}
-          className="btn-primary"
-        >
-          + New Partner
-        </button>
+        {activeTab === 'partners' && (
+          <button
+            onClick={() => setShowNewPartnerModal(true)}
+            className="btn-primary"
+          >
+            + New Partner
+          </button>
+        )}
       </div>
+
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-separator-light">
+        {[
+          { key: 'partners' as const, label: 'Partners' },
+          { key: 'activity' as const, label: 'Activity Log' },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-2.5 text-sm font-medium transition-colors relative ${
+              activeTab === tab.key
+                ? 'text-accent-primary'
+                : 'text-label-tertiary hover:text-label-secondary'
+            }`}
+          >
+            {tab.label}
+            {activeTab === tab.key && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent-primary rounded-t" />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Activity Log tab */}
+      {activeTab === 'activity' && <PartnerActivityLog />}
+
+      {/* Partners tab content */}
+      {activeTab === 'partners' && <>
 
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -864,6 +1187,8 @@ export const Partners: React.FC = () => {
           </table>
         )}
       </GlassCard>
+
+      </>}
 
       {/* New Partner Modal */}
       <NewPartnerModal

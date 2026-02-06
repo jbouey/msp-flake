@@ -39,6 +39,7 @@ from typing import Dict
 from .fleet import get_pool
 from .auth import require_admin
 from .oauth_login import encrypt_secret, decrypt_secret
+from .partner_activity_logger import log_partner_activity, log_partner_login, PartnerEventType
 
 logger = logging.getLogger(__name__)
 
@@ -430,6 +431,18 @@ async def microsoft_login(request: Request, redirect_after: str = "/partner/dash
     }
 
     auth_url = f"https://login.microsoftonline.com/{MICROSOFT_TENANT}/oauth2/v2.0/authorize?{urlencode(params)}"
+
+    # Audit: log OAuth flow initiation
+    await log_partner_activity(
+        partner_id="00000000-0000-0000-0000-000000000000",
+        event_type=PartnerEventType.OAUTH_LOGIN_STARTED,
+        event_data={"provider": "microsoft"},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
     return RedirectResponse(url=auth_url, status_code=303)
 
 
@@ -472,6 +485,18 @@ async def google_login(request: Request, redirect_after: str = "/partner/dashboa
     }
 
     auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+
+    # Audit: log OAuth flow initiation
+    await log_partner_activity(
+        partner_id="00000000-0000-0000-0000-000000000000",
+        event_type=PartnerEventType.OAUTH_LOGIN_STARTED,
+        event_data={"provider": "google"},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
     return RedirectResponse(url=auth_url, status_code=303)
 
 
@@ -554,12 +579,33 @@ async def oauth_callback(
         )
 
         logger.info(f"Partner OAuth login successful: {partner['slug']} via {provider}")
+
+        # Audit: log successful OAuth login
+        await log_partner_login(
+            partner_id=str(partner["id"]),
+            provider=provider,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", "")[:500],
+            success=True,
+        )
+
         return response
 
     except HTTPException:
         raise
     except Exception as e:
         logger.exception(f"OAuth callback error: {e}")
+
+        # Audit: log failed OAuth login
+        await log_partner_login(
+            partner_id="00000000-0000-0000-0000-000000000000",
+            provider=provider,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", "")[:500],
+            success=False,
+            error=str(e),
+        )
+
         return RedirectResponse(url=f"/partner/login?error=auth_failed", status_code=303)
 
 
@@ -715,13 +761,29 @@ async def get_current_partner(
 
 @public_router.post("/logout")
 async def logout(
+    request: Request,
     response: Response,
     osiris_partner_session: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME)
 ):
     """Logout and clear session."""
+    partner_id = None
     if osiris_partner_session:
         pool = await get_pool()
+        # Look up partner before deleting the session so we can log it
+        partner = await get_partner_from_session(osiris_partner_session, pool)
+        if partner:
+            partner_id = str(partner["id"])
         await delete_partner_session(osiris_partner_session, pool)
+
+    # Audit: log logout
+    await log_partner_activity(
+        partner_id=partner_id or "00000000-0000-0000-0000-000000000000",
+        event_type=PartnerEventType.LOGOUT,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
 
     response = Response(status_code=204)
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
@@ -813,6 +875,19 @@ async def approve_partner(partner_id: str, request: Request, user: Dict = Depend
 
     logger.info(f"Partner approved: {partner['slug']} by admin {admin_user_id}")
 
+    # Audit: log partner approval
+    await log_partner_activity(
+        partner_id=str(user.get("id", "")),
+        event_type=PartnerEventType.PARTNER_APPROVED,
+        target_type="partner",
+        target_id=partner_id,
+        event_data={"approved_by": str(admin_user_id)},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
     # Send approval notification to partner
     try:
         from .notifications import send_email
@@ -856,6 +931,18 @@ async def reject_partner(partner_id: str, request: Request, user: Dict = Depends
         await conn.execute("DELETE FROM partners WHERE id = $1", partner_id)
 
     logger.info(f"Partner rejected and deleted: {partner['slug']}")
+
+    # Audit: log partner rejection
+    await log_partner_activity(
+        partner_id=str(user.get("id", "")),
+        event_type=PartnerEventType.PARTNER_REJECTED,
+        target_type="partner",
+        target_id=partner_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
 
     return {"status": "rejected", "partner_id": partner_id}
 
