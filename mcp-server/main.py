@@ -58,7 +58,7 @@ from dashboard_api.billing import router as billing_router
 from dashboard_api.exceptions_api import router as exceptions_router
 from dashboard_api.appliance_delegation import router as appliance_delegation_router
 from dashboard_api.learning_api import partner_learning_router
-from central_command.backend.websocket_manager import ws_manager
+from dashboard_api.websocket_manager import ws_manager
 
 # ============================================================================
 # Configuration
@@ -446,7 +446,7 @@ app.add_middleware(
 
 # ETag middleware for conditional responses (saves bandwidth on polling)
 try:
-    from central_command.backend.etag_middleware import ETagMiddleware
+    from dashboard_api.etag_middleware import ETagMiddleware
     app.add_middleware(ETagMiddleware)
     logger.info("ETag middleware enabled")
 except ImportError:
@@ -454,7 +454,7 @@ except ImportError:
 
 # Rate limiting middleware - SECURITY: Protect against brute force and DoS
 try:
-    from central_command.backend.rate_limiter import RateLimitMiddleware
+    from dashboard_api.rate_limiter import RateLimitMiddleware
     app.add_middleware(RateLimitMiddleware)
     logger.info("Rate limiting middleware enabled")
 except ImportError:
@@ -462,7 +462,7 @@ except ImportError:
 
 # Security headers middleware - SECURITY: CSP, X-Frame-Options, HSTS, etc.
 try:
-    from central_command.backend.security_headers import SecurityHeadersMiddleware
+    from dashboard_api.security_headers import SecurityHeadersMiddleware
     app.add_middleware(SecurityHeadersMiddleware)
     logger.info("Security headers middleware enabled")
 except ImportError:
