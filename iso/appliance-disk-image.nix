@@ -103,12 +103,7 @@ in
   # ============================================================================
   boot = {
     loader = {
-      grub = {
-        enable = true;
-        device = "nodev";  # EFI mode
-        efiSupport = true;
-        efiInstallAsRemovable = true;  # Installs to EFI/BOOT/BOOTX64.EFI - works without NVRAM
-      };
+      systemd-boot.enable = true;
       efi.canTouchEfiVariables = false;
       timeout = 3;
     };
