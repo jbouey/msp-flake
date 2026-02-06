@@ -79,6 +79,9 @@ from .sensor_api import (
     SENSOR_TIMEOUT,
 )
 
+# Local encrypted credential storage
+from .credential_store import CredentialStore
+
 # Linux Sensor API for dual-mode architecture
 from .sensor_linux import (
     router as linux_sensor_router,
@@ -370,6 +373,12 @@ class ApplianceAgent:
         self._grpc_port = getattr(config, 'grpc_port', 50051)
         self._grpc_server_task: Optional[asyncio.Task] = None
         self.agent_registry: Optional[AgentRegistry] = None
+
+        # Local credential storage (reduces credential-over-wire exposure)
+        self.credential_store = CredentialStore(
+            state_dir=config.state_dir,
+            api_key=config.api_key
+        )
 
         # Evidence signing
         self.signer: Optional[Ed25519Signer] = None
@@ -665,6 +674,12 @@ class ApplianceAgent:
         if self.drift_checker and self.config.enable_drift_detection:
             compliance_summary = await self._get_compliance_summary()
 
+        # Check if local credential store has fresh credentials
+        has_local_creds = (
+            self.credential_store.has_credentials("windows") and
+            not self.credential_store.needs_refresh("windows")
+        )
+
         checkin_response = await self.client.checkin(
             hostname=get_hostname(),
             mac_address=get_mac_address(),
@@ -672,7 +687,8 @@ class ApplianceAgent:
             uptime_seconds=get_uptime_seconds(),
             agent_version=VERSION,
             nixos_version=get_nixos_version(),
-            compliance_summary=compliance_summary
+            compliance_summary=compliance_summary,
+            has_local_credentials=has_local_creds
         )
 
         if checkin_response is not None:
@@ -1495,14 +1511,23 @@ class ApplianceAgent:
         """
         Update Windows targets from server check-in response.
 
-        This enables credential-pull architecture where credentials are fetched
-        fresh from Central Command on each check-in cycle, rather than stored
-        locally. Benefits:
-        - No cached credentials on disk
-        - Credential rotation picked up automatically
-        - Stolen appliance doesn't expose credentials
+        Uses conditional credential pull: credentials are stored locally
+        in encrypted storage after first retrieval. Server only sends
+        credentials when they've been updated or on first checkin.
         """
         windows_targets = response.get('windows_targets', [])
+
+        if windows_targets:
+            # Server sent fresh credentials - save locally
+            try:
+                self.credential_store.store_credentials("windows", windows_targets)
+            except Exception as e:
+                logger.warning(f"Failed to save Windows credentials locally: {e}")
+        elif not self.windows_targets:
+            # No credentials from server and none in memory - try local store
+            windows_targets = self.credential_store.load_credentials("windows")
+            if windows_targets:
+                logger.info("Loaded Windows credentials from local store")
 
         if not windows_targets:
             return
@@ -1531,16 +1556,28 @@ class ApplianceAgent:
         if new_targets:
             # Replace targets with server-provided ones
             self.windows_targets = new_targets
-            logger.info(f"Updated {len(new_targets)} Windows targets from Central Command")
+            logger.info(f"Updated {len(new_targets)} Windows targets")
 
     async def _update_linux_targets_from_response(self, response: Dict):
         """
         Update Linux targets from server check-in response.
 
-        Uses credential-pull architecture just like Windows targets.
-        Linux credentials can be SSH password or SSH key based.
+        Uses conditional credential pull with local encrypted storage,
+        just like Windows targets.
         """
         linux_targets = response.get('linux_targets', [])
+
+        if linux_targets:
+            # Server sent fresh credentials - save locally
+            try:
+                self.credential_store.store_credentials("linux", linux_targets)
+            except Exception as e:
+                logger.warning(f"Failed to save Linux credentials locally: {e}")
+        elif not self.linux_targets:
+            # No credentials from server and none in memory - try local store
+            linux_targets = self.credential_store.load_credentials("linux")
+            if linux_targets:
+                logger.info("Loaded Linux credentials from local store")
 
         if not linux_targets:
             return
@@ -1851,15 +1888,18 @@ try {
                             else:
                                 status = "fail"
 
-                    # Submit as evidence
+                    # Submit as evidence (PHI-hardened)
                     evidence_data = {
                         "check_name": check_name,
                         "target": target.hostname,
                         "computer_name": computer_name,
                         "status": status,
-                        "output": output[:1000],  # Truncate large outputs
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
+                    # Only include command output for failing checks (defense in depth)
+                    if status != "pass":
+                        evidence_data["output"] = output[:500]
+                    evidence_data["phi_scrubbed"] = True  # Transport layer scrubs in _request()
 
                     evidence_json = json.dumps(evidence_data, sort_keys=True)
                     bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
@@ -1962,9 +2002,16 @@ try {
             # Run drift detection on all targets
             drift_results = await self.linux_drift_detector.detect_all()
 
-            # Submit evidence for each result
+            # Submit evidence for each result (PHI-hardened)
             for drift in drift_results:
                 evidence_data = drift.to_dict()
+                # Strip verbose output from passing checks (defense in depth)
+                if drift.compliant and "output" in evidence_data:
+                    del evidence_data["output"]
+                elif "output" in evidence_data:
+                    evidence_data["output"] = str(evidence_data["output"])[:500]
+                evidence_data["phi_scrubbed"] = True
+
                 evidence_json = json.dumps(evidence_data, sort_keys=True)
                 bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
 
@@ -2093,6 +2140,7 @@ try {
         for result in results:
             try:
                 evidence_data = result.to_dict()
+                evidence_data["phi_scrubbed"] = True  # Transport layer scrubs in _request()
                 evidence_json = json.dumps(evidence_data, sort_keys=True)
                 bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
 
@@ -2285,8 +2333,9 @@ try {
                     online_count=len(online_workstations),
                 )
 
-                # Submit site summary
+                # Submit site summary (PHI-hardened - summaries only, no per-workstation details)
                 summary = evidence.get("site_summary", {})
+                summary["phi_scrubbed"] = True  # Transport layer scrubs in _request()
                 summary_json = json.dumps(summary, sort_keys=True)
                 summary_hash = hashlib.sha256(summary_json.encode()).hexdigest()
 
@@ -2877,6 +2926,7 @@ try {
             'remove_linux_sensor': self._handle_remove_linux_sensor,
             'sensor_status': self._handle_sensor_status,
             'sync_promoted_rule': self._handle_sync_promoted_rule,
+            'update_credentials': self._handle_update_credentials,
         }
 
         handler = handlers.get(order_type)
@@ -2896,6 +2946,33 @@ try {
             nixos_version=get_nixos_version(),
         )
         return {"status": "checkin_complete"}
+
+    async def _handle_update_credentials(self, params: Dict) -> Dict:
+        """Force credential refresh from server.
+
+        Clears local credential store and performs a checkin without
+        the has_local_credentials flag, causing the server to send
+        fresh credentials.
+        """
+        self.credential_store.clear_credentials("windows")
+        self.credential_store.clear_credentials("linux")
+        logger.info("Cleared local credential store, forcing refresh on next checkin")
+
+        # Perform immediate checkin without local credentials flag
+        response = await self.client.checkin(
+            hostname=get_hostname(),
+            mac_address=get_mac_address(),
+            ip_addresses=get_ip_addresses(),
+            uptime_seconds=get_uptime_seconds(),
+            agent_version=VERSION,
+            nixos_version=get_nixos_version(),
+            has_local_credentials=False,
+        )
+        if response:
+            await self._update_windows_targets_from_response(response)
+            await self._update_linux_targets_from_response(response)
+            return {"status": "credentials_refreshed"}
+        return {"status": "checkin_failed"}
 
     async def _handle_run_drift(self, params: Dict) -> Dict:
         """Run drift detection immediately."""

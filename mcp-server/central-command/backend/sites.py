@@ -957,6 +957,7 @@ class ApplianceCheckin(BaseModel):
     uptime_seconds: Optional[int] = None
     agent_version: Optional[str] = None
     nixos_version: Optional[str] = None
+    has_local_credentials: bool = False  # If True, appliance has fresh local creds
 
 
 def normalize_mac(mac: str) -> str:
@@ -1551,42 +1552,44 @@ async def appliance_checkin(checkin: ApplianceCheckin):
             import logging
             logging.warning(f"Failed to fetch healing orders: {e}")
 
-        # === STEP 5: Get windows targets (credential-pull) ===
+        # === STEP 5: Get windows targets (conditional credential delivery) ===
+        # Only send credentials if appliance doesn't have fresh local copies
         windows_targets = []
-        try:
-            creds = await conn.fetch("""
-                SELECT credential_name, encrypted_data
-                FROM site_credentials
-                WHERE site_id = $1
-                AND credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
-                ORDER BY created_at DESC
-            """, checkin.site_id)
+        if not checkin.has_local_credentials:
+            try:
+                creds = await conn.fetch("""
+                    SELECT credential_name, encrypted_data
+                    FROM site_credentials
+                    WHERE site_id = $1
+                    AND credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
+                    ORDER BY created_at DESC
+                """, checkin.site_id)
 
-            for cred in creds:
-                if cred['encrypted_data']:
-                    try:
-                        cred_data = json.loads(cred['encrypted_data'])
-                        # Transform credentials to expected format
-                        hostname = cred_data.get('host') or cred_data.get('target_host')
-                        username = cred_data.get('username', '')
-                        password = cred_data.get('password', '')
-                        domain = cred_data.get('domain', '')
-                        use_ssl = cred_data.get('use_ssl', False)
+                for cred in creds:
+                    if cred['encrypted_data']:
+                        try:
+                            cred_data = json.loads(cred['encrypted_data'])
+                            # Transform credentials to expected format
+                            hostname = cred_data.get('host') or cred_data.get('target_host')
+                            username = cred_data.get('username', '')
+                            password = cred_data.get('password', '')
+                            domain = cred_data.get('domain', '')
+                            use_ssl = cred_data.get('use_ssl', False)
 
-                        # Combine domain\username for NTLM auth
-                        full_username = f"{domain}\\{username}" if domain else username
+                            # Combine domain\username for NTLM auth
+                            full_username = f"{domain}\\{username}" if domain else username
 
-                        if hostname:
-                            windows_targets.append({
-                                "hostname": hostname,
-                                "username": full_username,
-                                "password": password,
-                                "use_ssl": use_ssl,
-                            })
-                    except json.JSONDecodeError:
-                        pass
-        except Exception:
-            pass  # Don't fail checkin if credentials lookup fails
+                            if hostname:
+                                windows_targets.append({
+                                    "hostname": hostname,
+                                    "username": full_username,
+                                    "password": password,
+                                    "use_ssl": use_ssl,
+                                })
+                        except json.JSONDecodeError:
+                            pass
+            except Exception:
+                pass  # Don't fail checkin if credentials lookup fails
 
         # === STEP 6: Get enabled runbooks (runbook config pull) ===
         enabled_runbooks = []

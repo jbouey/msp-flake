@@ -483,6 +483,99 @@ class TestSelectivePatterns:
         assert "555-123-4567" in result
 
 
+class TestExcludeCategories:
+    """Test exclude_categories parameter for outbound scrubbing."""
+
+    def test_exclude_ip_addresses(self):
+        """Test excluding IP address scrubbing (infrastructure data)."""
+        scrubber = PHIScrubber(exclude_categories={'ip_address'})
+        text = "Patient SSN: 123-45-6789 from server 192.168.1.100"
+        result, stats = scrubber.scrub(text)
+
+        # SSN should be scrubbed
+        assert "[SSN-REDACTED]" in result
+        assert "123-45-6789" not in result
+
+        # IP should be PRESERVED (excluded from scrubbing)
+        assert "192.168.1.100" in result
+        assert "[IP-REDACTED]" not in result
+
+    def test_exclude_multiple_categories(self):
+        """Test excluding multiple categories."""
+        scrubber = PHIScrubber(exclude_categories={'ip_address', 'email'})
+        text = "SSN: 123-45-6789, Email: test@example.com, IP: 10.0.0.1"
+        result, stats = scrubber.scrub(text)
+
+        # SSN should be scrubbed
+        assert "[SSN-REDACTED]" in result
+
+        # Email and IP should be preserved
+        assert "test@example.com" in result
+        assert "10.0.0.1" in result
+
+    def test_exclude_none_scrubs_all(self):
+        """Test that no exclusions scrubs everything."""
+        scrubber = PHIScrubber()
+        text = "Server 192.168.1.100 has SSN 123-45-6789"
+        result, stats = scrubber.scrub(text)
+
+        # Both should be scrubbed
+        assert "192.168.1.100" not in result
+        assert "123-45-6789" not in result
+
+    def test_exclude_with_hash_redaction(self):
+        """Test exclude works with hash redaction mode."""
+        scrubber = PHIScrubber(hash_redacted=True, exclude_categories={'ip_address'})
+        text = "SSN: 123-45-6789, server 10.0.1.5"
+        result, stats = scrubber.scrub(text)
+
+        # SSN should be hash-redacted
+        assert "[SSN-REDACTED-" in result
+        # IP should be preserved
+        assert "10.0.1.5" in result
+
+    def test_exclude_with_dict_scrubbing(self):
+        """Test exclude works with dict scrubbing (outbound gateway pattern)."""
+        scrubber = PHIScrubber(hash_redacted=True, exclude_categories={'ip_address'})
+        data = {
+            "hostname": "dc1.northvalley.local",
+            "ip_address": "192.168.88.250",
+            "output": "Patient SSN: 123-45-6789 accessed system",
+            "details": {
+                "server_ip": "10.0.0.1",
+                "error": "MRN: 12345678 not found"
+            }
+        }
+        result, stats = scrubber.scrub_dict(data)
+
+        # Infrastructure data preserved
+        assert result["ip_address"] == "192.168.88.250"
+        assert result["details"]["server_ip"] == "10.0.0.1"
+
+        # PHI scrubbed
+        assert "123-45-6789" not in result["output"]
+        assert "12345678" not in result["details"]["error"]
+        assert stats.phi_scrubbed is True
+
+    def test_exclude_custom_patterns(self):
+        """Test that excluded custom patterns are skipped."""
+        import re
+        custom_patterns = {
+            'custom_id': (re.compile(r'\bCUST-[A-Z]+\b'), '[CUSTOM-REDACTED]')
+        }
+        scrubber = PHIScrubber(
+            custom_patterns=custom_patterns,
+            exclude_categories={'custom_id'}
+        )
+        text = "Customer CUST-ABCDEF SSN 123-45-6789"
+        result, stats = scrubber.scrub(text)
+
+        # Custom pattern excluded
+        assert "CUST-ABCDEF" in result
+        # Built-in SSN still scrubbed
+        assert "[SSN-REDACTED]" in result
+
+
 class TestCustomPatterns:
     """Test custom pattern support."""
 

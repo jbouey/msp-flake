@@ -155,7 +155,8 @@ class PHIScrubber:
         self,
         patterns: Optional[List[str]] = None,
         custom_patterns: Optional[Dict[str, Tuple[re.Pattern, str]]] = None,
-        hash_redacted: bool = False
+        hash_redacted: bool = False,
+        exclude_categories: Optional[set] = None
     ):
         """
         Initialize PHI scrubber.
@@ -164,17 +165,22 @@ class PHIScrubber:
             patterns: List of pattern types to enable (None = all)
             custom_patterns: Additional custom patterns
             hash_redacted: If True, append hash of original for correlation
+            exclude_categories: Set of pattern names to exclude (e.g. {'ip_address'}
+                to keep IPs intact for infrastructure data that isn't PHI)
         """
         self.enabled_patterns = patterns or list(self.PATTERNS.keys())
         self.custom_patterns = custom_patterns or {}
         self.hash_redacted = hash_redacted
+        self.exclude_categories = exclude_categories or set()
 
-        # Build active pattern list
+        # Build active pattern list, excluding specified categories
         self.active_patterns: Dict[str, Tuple[re.Pattern, str]] = {}
         for name in self.enabled_patterns:
-            if name in self.PATTERNS:
+            if name in self.PATTERNS and name not in self.exclude_categories:
                 self.active_patterns[name] = self.PATTERNS[name]
-        self.active_patterns.update(self.custom_patterns)
+        for name, pattern_tuple in self.custom_patterns.items():
+            if name not in self.exclude_categories:
+                self.active_patterns[name] = pattern_tuple
 
     def scrub(self, text: str) -> Tuple[str, ScrubResult]:
         """

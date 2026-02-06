@@ -1,6 +1,6 @@
 {
-  "session": 88,
-  "updated": "2026-02-06T14:34:56.144033Z",
+  "session": 89,
+  "updated": "2026-02-06T17:00:00Z",
   "agent_version": "1.0.55",
   "iso_version": "installer-v1.1",
   "disk_image_version": "v55 (deprecated)",
@@ -10,7 +10,7 @@
     "physical_appliance": "booted_installer_v1.1",
     "vm_appliance": "healthy_v52"
   },
-  "current_blocker": "None - installer boots on hardware, auto-install needs testing after ncurses fix",
+  "current_blocker": "None - PHI boundary enforcement complete, needs commit and deploy",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -23,21 +23,21 @@
   "active_tasks": [
     {
       "id": 1,
-      "task": "Re-test installer ISO with ncurses fix on physical hardware",
+      "task": "Commit and deploy PHI boundary enforcement changes",
       "status": "pending",
-      "note": "New ISO built and downloaded to ~/Downloads/osiriscare-appliance.iso"
+      "note": "All code complete and tested (881 pass), needs git commit and VPS deploy"
     },
     {
       "id": 2,
-      "task": "Verify msp-auto-install completes successfully on physical hardware",
+      "task": "Create migration 036_credential_versioning.sql",
       "status": "pending",
-      "depends_on": 1
+      "note": "Server-side credential version tracking (credentials_provisioned_at, credentials_version on site_appliances)"
     },
     {
       "id": 3,
-      "task": "Verify installed system calls home to Central Command",
+      "task": "Re-test installer ISO with ncurses fix on physical hardware",
       "status": "pending",
-      "depends_on": 2
+      "note": "New ISO built and downloaded to ~/Downloads/osiriscare-appliance.iso"
     },
     {
       "id": 4,
@@ -51,20 +51,17 @@
       "depends_on": 4
     }
   ],
-  "completed_this_session": [],
+  "completed_this_session": [
+    "PHI boundary enforcement - outbound scrub gateway in appliance_client._request()",
+    "PHI scrubber exclude_categories support (preserve IPs as infrastructure data)",
+    "L2 LLM PHI guard - scrub raw_data before cloud API calls",
+    "Credential local storage - Fernet-encrypted CredentialStore",
+    "Conditional credential pull - skip credentials in checkin when local cache fresh",
+    "Evidence hardening - truncate output, strip passing checks, add phi_scrubbed flag",
+    "Partner activity logging - 3 backend files instrumented",
+    "26 new tests added (881 total passing, 7 skipped)"
+  ],
   "recent_commits": [
-    {
-      "hash": "0c6d68f",
-      "message": "fix: Add cancel rollout, remove release buttons, wire Settings danger zone"
-    },
-    {
-      "hash": "34a95b7",
-      "message": "fix: Add ncurses to install-display service path (clear command not found)"
-    },
-    {
-      "hash": "40a60e0",
-      "message": "fix: Add L2 LLM cost controls to prevent runaway API spending"
-    },
     {
       "hash": "a5ae966",
       "message": "fix: Correct import paths for Docker deployment (central_command -> dashboard_api)"
@@ -80,14 +77,18 @@
     {
       "hash": "bcb19e9",
       "message": "fix: Resolve dashboard live data sync issues for production readiness"
+    },
+    {
+      "hash": "ff8b6cc",
+      "message": "feat: Brand console with OsirisCare identity, add install progress display"
     }
   ],
   "key_findings": {
-    "dd_images_broken": "VM-built disk images fail on different hardware due to ESP timeouts, firmware mismatches",
-    "solution": "Use nixos-install from golden flake - hardware-agnostic",
-    "install_display_needs_ncurses": "msp-install-display service needs ncurses in path for clear command",
-    "docker_import_paths": "Docker mounts backend at /app/dashboard_api/ not /app/central_command/backend/",
-    "l2_had_no_cost_controls": "Hybrid mode caused dual API calls with no budget caps, rate limits, or concurrency guards"
+    "phi_audit_9_channels": "9 outbound data channels identified from appliance, only runbook executors had scrubbing",
+    "phi_scrub_gateway": "Single enforcement point in _request() scrubs ALL outbound HTTP payloads",
+    "credential_exposure": "Credentials were sent plaintext in every 60s checkin - now cached locally with Fernet encryption",
+    "infrastructure_vs_phi": "IPs/hostnames are infrastructure (Safe Harbor 45 CFR 164.514(b)(2)), not PHI - excluded from scrubbing",
+    "l2_llm_phi_leak": "Cloud LLM calls received raw incident data with potential PHI - now scrubbed before API calls"
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",

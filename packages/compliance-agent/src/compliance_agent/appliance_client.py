@@ -20,6 +20,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 
 from .appliance_config import ApplianceConfig
+from .phi_scrubber import PHIScrubber
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,12 @@ class CentralCommandClient:
         self.max_retries = max_retries
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self._session: Optional[aiohttp.ClientSession] = None
+        # PHI scrubber for outbound data - excludes IP addresses since those are
+        # infrastructure data intentionally shared with the partner dashboard
+        self._outbound_scrubber = PHIScrubber(
+            hash_redacted=True,
+            exclude_categories={'ip_address'}
+        )
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session with TLS 1.2+ enforcement."""
@@ -93,6 +100,26 @@ class CentralCommandClient:
         if self._session and not self._session.closed:
             await self._session.close()
 
+    def _scrub_outbound(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Scrub PHI from outbound payload before transmission.
+
+        HIPAA §164.312(e)(1) Transmission Security: ensure no PHI
+        leaves the clinic in API payloads. Infrastructure data (IPs,
+        hostnames) is preserved since it's intentionally shared.
+        """
+        try:
+            scrubbed, result = self._outbound_scrubber.scrub_dict(data)
+            if result.phi_scrubbed:
+                logger.warning(
+                    f"PHI scrubbed from outbound data: "
+                    f"{result.patterns_matched} patterns ({result.patterns_by_type})"
+                )
+            return scrubbed
+        except Exception as e:
+            logger.error(f"PHI scrubbing failed (sending unscrubbed): {e}")
+            return data
+
     async def _request(
         self,
         method: str,
@@ -106,6 +133,10 @@ class CentralCommandClient:
         Returns:
             Tuple of (status_code, response_json)
         """
+        # Scrub PHI from outbound payloads at the transport boundary
+        if json_data is not None:
+            json_data = self._scrub_outbound(json_data)
+
         url = f"{self.config.api_endpoint}{endpoint}"
         session = await self._get_session()
         last_error = None
@@ -141,10 +172,15 @@ class CentralCommandClient:
         uptime_seconds: int,
         agent_version: str = VERSION,
         nixos_version: str = "unknown",
-        compliance_summary: Optional[Dict] = None
+        compliance_summary: Optional[Dict] = None,
+        has_local_credentials: bool = False
     ) -> Optional[Dict]:
         """
         Send phone-home checkin to Central Command.
+
+        Args:
+            has_local_credentials: If True, tells server appliance has fresh
+                local credentials and doesn't need them in the response.
 
         Returns:
             Response dict with orders, windows_targets, etc. if successful.
@@ -159,6 +195,7 @@ class CentralCommandClient:
             "uptime_seconds": uptime_seconds,
             "agent_version": agent_version,
             "nixos_version": nixos_version,
+            "has_local_credentials": has_local_credentials,
         }
 
         status, response = await self._request(

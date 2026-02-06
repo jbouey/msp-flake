@@ -22,9 +22,13 @@ from .incident_db import (
     IncidentDatabase, Incident,
     ResolutionLevel, IncidentOutcome
 )
-
+from .phi_scrubber import PHIScrubber
 
 logger = logging.getLogger(__name__)
+
+# PHI scrubber for cloud LLM calls - excludes IP addresses since those are
+# infrastructure data intentionally shared, not PHI
+_phi_scrubber = PHIScrubber(hash_redacted=True, exclude_categories={'ip_address'})
 
 
 class LLMMode(str, Enum):
@@ -218,7 +222,11 @@ class LocalLLMPlanner(BaseLLMPlanner):
 
 
 class APILLMPlanner(BaseLLMPlanner):
-    """Cloud API LLM planner (OpenAI, Anthropic)."""
+    """Cloud API LLM planner (OpenAI, Anthropic).
+
+    PHI scrubbing is applied to all data before it leaves the appliance
+    to cloud APIs (HIPAA §164.312(e)(1) Transmission Security).
+    """
 
     def __init__(self, config: LLMConfig):
         self.config = config
@@ -374,15 +382,45 @@ class APILLMPlanner(BaseLLMPlanner):
             )
 
     def _build_prompt(self, incident: Incident, context: Dict[str, Any]) -> str:
-        """Build prompt for LLM."""
+        """Build prompt for cloud LLM with PHI scrubbing.
+
+        All data is scrubbed before sending to cloud APIs to prevent
+        PHI from leaving the clinic network.
+        """
+        # Scrub incident raw_data for cloud transmission
+        raw_data = incident.raw_data
+        if isinstance(raw_data, dict):
+            raw_data, scrub_result = _phi_scrubber.scrub_dict(raw_data)
+            if scrub_result.phi_scrubbed:
+                logger.info(
+                    f"PHI scrubbed from L2 cloud LLM input: "
+                    f"{scrub_result.patterns_matched} patterns"
+                )
+        elif isinstance(raw_data, str):
+            raw_data, scrub_result = _phi_scrubber.scrub(raw_data)
+            if scrub_result.phi_scrubbed:
+                logger.info(f"PHI scrubbed from L2 cloud LLM input string")
+
+        # Scrub similar incidents context too
+        similar = context.get("similar_incidents", [])
+        if similar:
+            scrubbed_similar = []
+            for inc in similar:
+                if isinstance(inc, dict):
+                    scrubbed_inc, _ = _phi_scrubber.scrub_dict(inc)
+                    scrubbed_similar.append(scrubbed_inc)
+                else:
+                    scrubbed_similar.append(inc)
+            similar = scrubbed_similar
+
         return PLANNER_PROMPT.format(
             incident_type=incident.incident_type,
             severity=incident.severity,
             site_id=incident.site_id,
             host_id=incident.host_id,
-            raw_data=json.dumps(incident.raw_data, indent=2),
+            raw_data=json.dumps(raw_data, indent=2),
             historical_context=json.dumps(context.get("historical", {}), indent=2),
-            similar_incidents=json.dumps(context.get("similar_incidents", []), indent=2),
+            similar_incidents=json.dumps(similar, indent=2),
             successful_actions=json.dumps(context.get("successful_actions", []), indent=2),
             allowed_actions=json.dumps(self.config.allowed_actions or ALLOWED_ACTIONS, indent=2)
         )
@@ -454,7 +492,11 @@ class APILLMPlanner(BaseLLMPlanner):
 
 
 class HybridLLMPlanner(BaseLLMPlanner):
-    """Hybrid planner: local first, API fallback."""
+    """Hybrid planner: local first, API fallback.
+
+    PHI scrubbing is handled by APILLMPlanner._build_prompt() when
+    falling back to cloud API. Local LLM sees full data (stays on appliance).
+    """
 
     def __init__(self, config: LLMConfig):
         self.config = config
