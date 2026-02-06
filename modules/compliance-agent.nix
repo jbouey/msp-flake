@@ -437,7 +437,17 @@ in
         Restart = "always";
         RestartSec = "10s";
 
-        ExecStart = "${cfg.package}/bin/compliance-agent";
+        # Hot-update overlay: if /var/lib/msp/agent-overlay exists,
+        # prepend it to PYTHONPATH so updated code takes priority
+        ExecStart = let
+          wrapper = pkgs.writeShellScript "compliance-agent-start" ''
+            if [ -d /var/lib/msp/agent-overlay ] && [ -f /var/lib/msp/agent-overlay/VERSION ]; then
+              export PYTHONPATH="/var/lib/msp/agent-overlay:''${PYTHONPATH:-}"
+              echo "Agent overlay v$(cat /var/lib/msp/agent-overlay/VERSION) active"
+            fi
+            exec ${cfg.package}/bin/compliance-agent
+          '';
+        in "${wrapper}";
 
         # ====================================================================
         # Systemd Hardening
@@ -447,7 +457,7 @@ in
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
-        ReadWritePaths = [ "/var/lib/compliance-agent" ];
+        ReadWritePaths = [ "/var/lib/compliance-agent" "/var/lib/msp" ];
 
         # Process protections
         NoNewPrivileges = true;

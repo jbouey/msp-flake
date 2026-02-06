@@ -111,7 +111,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.52"
+VERSION = "1.0.55"
 
 
 async def run_command(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
@@ -3102,7 +3102,11 @@ try {
 
         logger.info(f"Agent update extracted to {overlay_dir}")
 
-        # Create/update systemd drop-in to set PYTHONPATH
+        # Write version marker for startup overlay detection
+        version_file = overlay_dir / "VERSION"
+        version_file.write_text(version)
+
+        # Try systemd drop-in first (works on mutable filesystems)
         dropin_dir = Path("/etc/systemd/system/compliance-agent.service.d")
         try:
             dropin_dir.mkdir(parents=True, exist_ok=True)
@@ -3111,25 +3115,37 @@ try {
 Environment="PYTHONPATH={overlay_dir}"
 ''')
             logger.info("Created systemd PYTHONPATH override")
-        except PermissionError:
-            # NixOS read-only filesystem - use alternative approach
-            logger.warning("Cannot write systemd drop-in (read-only fs), update will apply on next ISO deploy")
+            import os
+            os.system("systemctl daemon-reload")
+            asyncio.get_event_loop().call_later(3, self._do_restart)
             return {
-                "status": "update_downloaded",
+                "status": "update_applied",
                 "version": version,
-                "note": "Filesystem read-only, manual restart with PYTHONPATH required"
+                "restart_scheduled": True
+            }
+        except (PermissionError, OSError):
+            # NixOS read-only filesystem - restart with PYTHONPATH via os.execve
+            logger.info("Read-only filesystem detected, restarting with overlay PYTHONPATH")
+            asyncio.get_event_loop().call_later(3, self._do_overlay_restart, str(overlay_dir))
+            return {
+                "status": "update_applied",
+                "version": version,
+                "restart_scheduled": True,
+                "method": "overlay_execve"
             }
 
-        # Reload systemd and schedule restart
+    def _do_overlay_restart(self, overlay_dir: str):
+        """Restart agent process with PYTHONPATH pointing to overlay."""
         import os
-        os.system("systemctl daemon-reload")
-        asyncio.get_event_loop().call_later(3, self._do_restart)
-
-        return {
-            "status": "update_applied",
-            "version": version,
-            "restart_scheduled": True
-        }
+        env = os.environ.copy()
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{overlay_dir}:{existing}" if existing else overlay_dir
+        logger.info(f"Re-executing agent with PYTHONPATH={env['PYTHONPATH']}")
+        try:
+            os.execve(sys.executable, [sys.executable] + sys.argv, env)
+        except Exception as e:
+            logger.error(f"Failed to re-exec with overlay: {e}, falling back to systemctl restart")
+            os.system("systemctl restart compliance-agent")
 
     async def _handle_view_logs(self, params: Dict) -> Dict:
         """Return recent agent logs."""
@@ -3535,8 +3551,27 @@ Environment="PYTHONPATH={overlay_dir}"
         os.system("systemctl reboot")
 
 
+def _apply_overlay():
+    """Check for and apply agent overlay (hot-update support).
+
+    If /var/lib/msp/agent-overlay/ exists with a VERSION file,
+    prepend it to sys.path so updated code takes priority.
+    """
+    overlay_dir = Path("/var/lib/msp/agent-overlay")
+    version_file = overlay_dir / "VERSION"
+    if version_file.exists():
+        overlay_path = str(overlay_dir)
+        if overlay_path not in sys.path:
+            sys.path.insert(0, overlay_path)
+            version = version_file.read_text().strip()
+            print(f"[overlay] Agent overlay v{version} active from {overlay_path}")
+
+
 def main():
     """Main entry point for appliance agent."""
+    # Apply hot-update overlay before any imports
+    _apply_overlay()
+
     import argparse
 
     parser = argparse.ArgumentParser(description="OsirisCare Compliance Agent")
