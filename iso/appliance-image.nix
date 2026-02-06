@@ -97,8 +97,14 @@ in
   system.stateVersion = "24.05";
 
   # Boot with serial console for debugging
-  boot.kernelParams = [ "console=tty1" "console=ttyS0,115200" ];
+  # nosoftlockup: prevent false watchdog alarms during heavy nixos-install I/O
+  boot.kernelParams = [ "console=tty1" "console=ttyS0,115200" "nosoftlockup" ];
   boot.loader.timeout = lib.mkForce 3;
+
+  # Disable hardware watchdog on live ISO - nixos-install starves CPUs
+  # The installed system (appliance-disk-image.nix) has its own watchdog config
+  systemd.watchdog.runtimeTime = lib.mkForce "";
+  systemd.watchdog.device = lib.mkForce "";
 
   # No GUI - headless operation
   services.xserver.enable = false;
