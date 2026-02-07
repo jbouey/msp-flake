@@ -142,7 +142,6 @@ class TestAutoHealerIntegration:
             enable_level1=True,
             enable_level2=True,
             enable_level3=True,
-            dry_run=True  # Don't execute real actions
         )
 
         return AutoHealer(config)
@@ -486,7 +485,6 @@ class TestWindowsVMIntegration:
             enable_level1=True,
             enable_level2=True,
             enable_level3=True,
-            dry_run=False  # Execute real actions on VM
         )
 
         healer = AutoHealer(config)
@@ -579,7 +577,6 @@ class TestMultiVMScenarios:
             enable_level1=True,
             enable_level2=True,
             enable_level3=True,
-            dry_run=True
         )
 
         healer = AutoHealer(config)
@@ -624,7 +621,6 @@ class TestMultiVMScenarios:
             enable_level1=True,
             enable_level2=True,
             enable_level3=True,
-            dry_run=True
         )
 
         healer = AutoHealer(config)
@@ -689,7 +685,6 @@ class TestEvidenceGeneration:
             enable_level1=True,
             enable_level2=True,
             enable_level3=True,
-            dry_run=True
         )
 
         healer = AutoHealer(config)
