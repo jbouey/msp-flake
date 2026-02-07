@@ -663,7 +663,6 @@ in
       if [ -f "$CONFIG_PATH" ]; then
         SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH")
         if [ -n "$SITE_ID" ]; then
-          echo "$SITE_ID" > /etc/hostname
           hostname "$SITE_ID"
           echo "Hostname set to: $SITE_ID"
         fi
@@ -682,7 +681,7 @@ in
 
       # Update MOTD with access info
       IP_ADDR=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -1)
-      cat > /etc/motd << MOTD
+      cat > /run/motd.dynamic << MOTD
 
     ╔═══════════════════════════════════════════════════════════╗
     ║           OsirisCare Compliance Appliance                 ║

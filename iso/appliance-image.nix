@@ -533,8 +533,12 @@ in
       echo -e "\033[2m── OsirisCare Install Log (Alt+F1 for main display) ──\033[0m"
       echo ""
 
-      # Follow the install log file in real time
-      exec tail -f /tmp/msp-install.log 2>/dev/null || exec journalctl -u msp-auto-install -f --no-hostname -o cat
+      # Wait for log file to appear, then follow it
+      while [ ! -f /tmp/msp-install.log ]; do
+        echo -e "\033[2mWaiting for installer to start...\033[0m"
+        sleep 2
+      done
+      exec tail -f /tmp/msp-install.log
     '';
   };
 
