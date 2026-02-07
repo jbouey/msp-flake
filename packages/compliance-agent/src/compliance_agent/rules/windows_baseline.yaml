@@ -175,12 +175,9 @@ rules:
       - field: check_type
         operator: eq
         value: bitlocker_status
-      - field: drift_detected
+      - field: status
         operator: eq
-        value: true
-      - field: details.ProtectionStatus
-        operator: ne
-        value: "On"
+        value: fail
     action: escalate
     action_params:
       reason: "BitLocker encryption not enabled on system drive - manual intervention required"
@@ -190,10 +187,108 @@ rules:
       - "164.312(a)(2)(iv)"
       - "164.312(e)(2)(ii)"
     severity_filter:
+      - high
       - critical
     enabled: true
     priority: 2
     cooldown_seconds: 86400  # Once per day
+
+  # =========================================================================
+  # Windows Service Checks (match appliance_agent check_types)
+  # =========================================================================
+  - id: L1-WIN-SVC-DNS-001
+    name: DNS Server Service Down
+    description: Restart Windows DNS service if stopped
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_dns
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SVC-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+    severity_filter:
+      - medium
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 300
+
+  - id: L1-WIN-SVC-SPOOLER-001
+    name: Print Spooler Service Down
+    description: Restart Windows Print Spooler service if stopped
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_spooler
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SVC-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 10
+    cooldown_seconds: 300
+
+  - id: L1-WIN-SVC-W32TIME-001
+    name: Windows Time Service Down
+    description: Restart W32Time service if stopped
+    conditions:
+      - field: check_type
+        operator: eq
+        value: service_w32time
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SVC-004
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(b)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 5
+    cooldown_seconds: 300
+
+  - id: L1-WIN-BACKUP-STATUS-001
+    name: Windows Backup Failed
+    description: Trigger backup remediation when backup_status check fails
+    conditions:
+      - field: check_type
+        operator: eq
+        value: backup_status
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-BACKUP-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(7)(ii)(A)"
+      - "164.310(d)(2)(iv)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 15
+    cooldown_seconds: 1800
 
   # =========================================================================
   # NixOS Appliance Rules (for the appliance itself)
@@ -268,43 +363,15 @@ rules:
 
   # =========================================================================
   # Windows Service Runbooks (RB-WIN-SVC-*)
+  # These match the actual check_type values from appliance_agent.py
   # =========================================================================
-  - id: L1-WIN-SVC-DNS-001
-    name: DNS Server Service Recovery
-    description: Restart Windows DNS Server service if stopped
-    conditions:
-      - field: check_type
-        operator: eq
-        value: service_health
-      - field: details.service_name
-        operator: eq
-        value: DNS
-      - field: status
-        operator: eq
-        value: fail
-    action: run_windows_runbook
-    action_params:
-      runbook_id: RB-WIN-SVC-001
-      phases: ["remediate", "verify"]
-    hipaa_controls:
-      - "164.312(b)"
-    severity_filter:
-      - high
-      - critical
-    enabled: true
-    priority: 5
-    cooldown_seconds: 300
-
   - id: L1-WIN-SVC-DHCP-001
     name: DHCP Server Service Recovery
     description: Restart Windows DHCP Server service if stopped
     conditions:
       - field: check_type
         operator: eq
-        value: service_health
-      - field: details.service_name
-        operator: eq
-        value: DHCPServer
+        value: service_dhcp
       - field: status
         operator: eq
         value: fail
@@ -320,32 +387,6 @@ rules:
     enabled: true
     priority: 10
     cooldown_seconds: 300
-
-  - id: L1-WIN-SVC-SPOOLER-001
-    name: Print Spooler Security Check
-    description: Manage Print Spooler service for security (disable on DCs)
-    conditions:
-      - field: check_type
-        operator: eq
-        value: service_health
-      - field: details.service_name
-        operator: eq
-        value: Spooler
-      - field: drift_detected
-        operator: eq
-        value: true
-    action: run_windows_runbook
-    action_params:
-      runbook_id: RB-WIN-SVC-003
-      phases: ["detect", "remediate", "verify"]
-    hipaa_controls:
-      - "164.308(a)(5)(ii)(B)"
-    severity_filter:
-      - medium
-      - high
-    enabled: true
-    priority: 25
-    cooldown_seconds: 600
 
   - id: L1-WIN-SVC-TIME-001
     name: Windows Time Service Recovery
