@@ -104,11 +104,9 @@ in
   boot.loader.timeout = lib.mkForce 3;
 
   # Readable console font for the installer TUI
-  console = {
-    earlySetup = true;
-    font = "${pkgs.terminus_font}/share/consolefonts/ter-v22n.psf.gz";
-    packages = [ pkgs.terminus_font ];
-  };
+  console.earlySetup = lib.mkForce true;
+  console.font = lib.mkForce "${pkgs.terminus_font}/share/consolefonts/ter-v22n.psf.gz";
+  console.packages = lib.mkForce [ pkgs.terminus_font ];
 
   # Disable hardware watchdog on live ISO - nixos-install starves CPUs
   # The installed system (appliance-disk-image.nix) has its own watchdog config
