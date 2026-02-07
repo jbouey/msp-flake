@@ -86,6 +86,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/evidence",                 # Evidence bundle submission from appliances
         "/incidents",                # Incident reporting from appliances
         "/checkin",                  # Appliance checkin (if at root)
+        "/agent/patterns",           # Pattern sync from appliances (machine-to-machine)
     }
 
     # Exempt path prefixes (for API-key authenticated, OAuth, agent endpoints)
