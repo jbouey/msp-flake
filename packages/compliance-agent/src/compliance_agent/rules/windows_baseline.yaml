@@ -532,6 +532,31 @@ rules:
     priority: 3
     cooldown_seconds: 300
 
+  - id: L1-WIN-SEC-EXCLUSION-001
+    name: Windows Defender Unauthorized Exclusion
+    description: Remove unauthorized Defender exclusions that could hide malware
+    conditions:
+      - field: check_type
+        operator: eq
+        value: windows_defender
+      - field: details.unauthorized_exclusions
+        operator: exists
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SEC-017
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(5)(ii)(B)"
+      - "164.312(b)"
+    severity_filter:
+      - medium
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 300
+
   # =========================================================================
   # Windows Network Runbooks (RB-WIN-NET-*)
   # =========================================================================

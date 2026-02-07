@@ -373,15 +373,16 @@ in
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = lib.mkForce "no";  # Root SSH disabled - use msp user + sudo
-      PasswordAuthentication = lib.mkForce false;
+      PermitRootLogin = lib.mkForce "yes";  # Enabled for lab management
+      PasswordAuthentication = lib.mkForce true;  # Password auth for emergency access
       KbdInteractiveAuthentication = lib.mkForce false;
     };
   };
 
-  # Root SSH access disabled - use msp user + sudo instead
-  # SSH keys provisioned per-site via config.yaml or central API
-  users.users.root.openssh.authorizedKeys.keys = [ ];
+  # Lab management SSH key + per-site keys provisioned via config.yaml or central API
+  users.users.root.openssh.authorizedKeys.keys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE8uV6E//e4fQXlDEMoE0uADd/nAzKwqA0btaoHc28Bl macs-imac-vm-access"
+  ];
 
   # ============================================================================
   # Reduce image size

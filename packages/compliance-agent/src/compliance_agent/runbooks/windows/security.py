@@ -2164,6 +2164,198 @@ try {
 
 
 # =============================================================================
+# RB-WIN-SEC-017: Windows Defender Exclusion Audit
+# =============================================================================
+
+RUNBOOK_DEFENDER_EXCLUSIONS = WindowsRunbook(
+    id="RB-WIN-SEC-017",
+    name="Windows Defender Exclusion Audit",
+    description="Detect and remove unauthorized Windows Defender exclusions that could hide malware",
+    version="1.0",
+    hipaa_controls=["164.308(a)(5)(ii)(B)", "164.312(b)"],
+    severity="high",
+    constraints=ExecutionConstraints(
+        max_retries=1,
+        retry_delay_seconds=10,
+        requires_maintenance_window=False,
+        allow_concurrent=False
+    ),
+
+    detect_script=r'''
+try {
+    $Prefs = Get-MpPreference
+
+    # Collect all exclusion types
+    $PathExclusions = @($Prefs.ExclusionPath | Where-Object { $_ })
+    $ExtExclusions = @($Prefs.ExclusionExtension | Where-Object { $_ })
+    $ProcessExclusions = @($Prefs.ExclusionProcess | Where-Object { $_ })
+
+    # Known-suspicious patterns
+    $SuspiciousPaths = @(
+        'C:\Windows\Temp',
+        'C:\Temp',
+        'C:\Users\Public',
+        'C:\ProgramData',
+        'C:\'
+    )
+    $SuspiciousExtensions = @('exe', 'dll', 'bat', 'cmd', 'ps1', 'vbs', 'js', 'wsf', 'scr', 'com')
+
+    $Unauthorized = @()
+    $Details = @()
+
+    # Check path exclusions
+    foreach ($Path in $PathExclusions) {
+        $IsSuspicious = $false
+        foreach ($Pattern in $SuspiciousPaths) {
+            if ($Path -like "$Pattern*") {
+                $IsSuspicious = $true
+                break
+            }
+        }
+        if ($IsSuspicious) {
+            $Unauthorized += $Path
+            $Details += "Suspicious path exclusion: $Path"
+        }
+    }
+
+    # Check extension exclusions
+    foreach ($Ext in $ExtExclusions) {
+        $NormExt = $Ext.TrimStart('.')
+        if ($SuspiciousExtensions -contains $NormExt) {
+            $Unauthorized += "ext:$NormExt"
+            $Details += "Dangerous extension exclusion: .$NormExt"
+        }
+    }
+
+    # Check process exclusions for suspicious patterns
+    foreach ($Proc in $ProcessExclusions) {
+        if ($Proc -match '\\Temp\\|\\Downloads\\|\\Public\\|\\AppData\\Local\\Temp') {
+            $Unauthorized += "proc:$Proc"
+            $Details += "Suspicious process exclusion: $Proc"
+        }
+    }
+
+    $Drifted = $Unauthorized.Count -gt 0
+
+    @{
+        Drifted = $Drifted
+        PathExclusions = $PathExclusions
+        ExtensionExclusions = $ExtExclusions
+        ProcessExclusions = $ProcessExclusions
+        UnauthorizedCount = $Unauthorized.Count
+        UnauthorizedExclusions = $Unauthorized
+        Details = $Details
+    } | ConvertTo-Json -Depth 3
+} catch {
+    @{ Drifted = $false; Error = $_.Exception.Message } | ConvertTo-Json
+}
+''',
+
+    remediate_script=r'''
+try {
+    $Prefs = Get-MpPreference
+    $Removed = @()
+
+    # Suspicious paths to remove
+    $SuspiciousPaths = @(
+        'C:\Windows\Temp',
+        'C:\Temp',
+        'C:\Users\Public',
+        'C:\ProgramData',
+        'C:\'
+    )
+    $SuspiciousExtensions = @('exe', 'dll', 'bat', 'cmd', 'ps1', 'vbs', 'js', 'wsf', 'scr', 'com')
+
+    # Remove suspicious path exclusions
+    foreach ($Path in @($Prefs.ExclusionPath | Where-Object { $_ })) {
+        foreach ($Pattern in $SuspiciousPaths) {
+            if ($Path -like "$Pattern*") {
+                Remove-MpPreference -ExclusionPath $Path -ErrorAction Stop
+                $Removed += "path:$Path"
+                break
+            }
+        }
+    }
+
+    # Remove suspicious extension exclusions
+    foreach ($Ext in @($Prefs.ExclusionExtension | Where-Object { $_ })) {
+        $NormExt = $Ext.TrimStart('.')
+        if ($SuspiciousExtensions -contains $NormExt) {
+            Remove-MpPreference -ExclusionExtension $Ext -ErrorAction Stop
+            $Removed += "ext:$Ext"
+        }
+    }
+
+    # Remove suspicious process exclusions
+    foreach ($Proc in @($Prefs.ExclusionProcess | Where-Object { $_ })) {
+        if ($Proc -match '\\Temp\\|\\Downloads\\|\\Public\\|\\AppData\\Local\\Temp') {
+            Remove-MpPreference -ExclusionProcess $Proc -ErrorAction Stop
+            $Removed += "proc:$Proc"
+        }
+    }
+
+    @{
+        Success = $true
+        RemovedCount = $Removed.Count
+        RemovedExclusions = $Removed
+    } | ConvertTo-Json -Depth 3
+} catch {
+    @{ Success = $false; Error = $_.Exception.Message } | ConvertTo-Json
+}
+''',
+
+    verify_script=r'''
+try {
+    $Prefs = Get-MpPreference
+
+    $SuspiciousPaths = @(
+        'C:\Windows\Temp',
+        'C:\Temp',
+        'C:\Users\Public',
+        'C:\ProgramData',
+        'C:\'
+    )
+    $SuspiciousExtensions = @('exe', 'dll', 'bat', 'cmd', 'ps1', 'vbs', 'js', 'wsf', 'scr', 'com')
+
+    $Remaining = @()
+
+    foreach ($Path in @($Prefs.ExclusionPath | Where-Object { $_ })) {
+        foreach ($Pattern in $SuspiciousPaths) {
+            if ($Path -like "$Pattern*") {
+                $Remaining += "path:$Path"
+                break
+            }
+        }
+    }
+
+    foreach ($Ext in @($Prefs.ExclusionExtension | Where-Object { $_ })) {
+        $NormExt = $Ext.TrimStart('.')
+        if ($SuspiciousExtensions -contains $NormExt) {
+            $Remaining += "ext:$Ext"
+        }
+    }
+
+    @{
+        Verified = ($Remaining.Count -eq 0)
+        RemainingCount = $Remaining.Count
+        RemainingExclusions = $Remaining
+        TotalPathExclusions = @($Prefs.ExclusionPath | Where-Object { $_ }).Count
+        TotalExtExclusions = @($Prefs.ExclusionExtension | Where-Object { $_ }).Count
+        TotalProcessExclusions = @($Prefs.ExclusionProcess | Where-Object { $_ }).Count
+    } | ConvertTo-Json -Depth 3
+} catch {
+    @{ Verified = $false; Error = $_.Exception.Message } | ConvertTo-Json
+}
+''',
+
+    timeout_seconds=120,
+    requires_reboot=False,
+    disruptive=False,
+    evidence_fields=["UnauthorizedExclusions", "RemovedExclusions", "RemainingExclusions"]
+)
+
+
+# =============================================================================
 # Security Runbooks Registry
 # =============================================================================
 
@@ -2184,5 +2376,6 @@ SECURITY_RUNBOOKS: Dict[str, WindowsRunbook] = {
     "RB-WIN-SEC-014": RUNBOOK_TLS_CONFIG,
     "RB-WIN-SEC-015": RUNBOOK_USB_CONTROL,
     "RB-WIN-SEC-016": RUNBOOK_SCREEN_LOCK,
+    "RB-WIN-SEC-017": RUNBOOK_DEFENDER_EXCLUSIONS,
     "RB-WIN-ACCESS-001": RUNBOOK_ACCESS_CONTROL,
 }

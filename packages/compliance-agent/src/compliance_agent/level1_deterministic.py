@@ -39,6 +39,7 @@ class MatchOperator(str, Enum):
     LESS_THAN = "lt"
     IN = "in"
     NOT_IN = "not_in"
+    EXISTS = "exists"
 
 
 @dataclass
@@ -52,6 +53,11 @@ class RuleCondition:
         """Check if this condition matches the data."""
         # Navigate nested fields with dot notation
         actual_value = self._get_field_value(data, self.field)
+
+        # EXISTS checks whether the field is present (not None)
+        if self.operator == MatchOperator.EXISTS:
+            field_exists = actual_value is not None
+            return field_exists if self.value else not field_exists
 
         if actual_value is None:
             return False
@@ -246,11 +252,28 @@ class DeterministicEngine:
         self._load_rules()
 
     def _load_rules(self):
-        """Load all rules from built-in defaults and custom directory."""
+        """Load all rules from built-in defaults, bundled rules, and custom directory."""
         self.rules = []
 
         # Load built-in rules
         self._load_builtin_rules()
+
+        # Load bundled rules from package's rules/ directory
+        # These include Windows baseline rules (firewall, defender, etc.)
+        bundled_rules_dir = Path(__file__).parent / "rules"
+        if bundled_rules_dir.exists():
+            for rule_file in sorted(bundled_rules_dir.glob("*.yaml")):
+                try:
+                    self._load_rule_file(rule_file)
+                    logger.info(f"Loaded bundled rules: {rule_file.name}")
+                except Exception as e:
+                    logger.error(f"Failed to load bundled rule file {rule_file}: {e}")
+            for rule_file in sorted(bundled_rules_dir.glob("*.yml")):
+                try:
+                    self._load_rule_file(rule_file)
+                    logger.info(f"Loaded bundled rules: {rule_file.name}")
+                except Exception as e:
+                    logger.error(f"Failed to load bundled rule file {rule_file}: {e}")
 
         # Load custom rules from directory
         # Sort files alphabetically for deterministic load order

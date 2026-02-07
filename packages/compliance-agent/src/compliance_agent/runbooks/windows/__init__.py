@@ -177,7 +177,8 @@ def get_runbooks_by_check_type(check_type: str) -> List[WindowsRunbook]:
                           "RB-WIN-NET-002", "RB-WIN-NET-004", "RB-WIN-SEC-003",
                           "RB-WIN-SEC-004"],
         "ntp_sync": ["RB-WIN-SVC-004"],
-        "windows_defender": ["RB-WIN-AV-001", "RB-WIN-SEC-006"],
+        "windows_defender": ["RB-WIN-AV-001", "RB-WIN-SEC-006", "RB-WIN-SEC-017"],
+        "defender_exclusions": ["RB-WIN-SEC-017"],
         "disk_space": ["RB-WIN-STG-001", "RB-WIN-STG-003"],
 
         # Security policy checks

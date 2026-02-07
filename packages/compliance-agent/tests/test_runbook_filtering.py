@@ -239,7 +239,7 @@ class TestCategoryRunbooks:
         """Test security category has expected runbooks."""
         from compliance_agent.runbooks.windows.security import SECURITY_RUNBOOKS
 
-        assert len(SECURITY_RUNBOOKS) == 17
+        assert len(SECURITY_RUNBOOKS) == 18
         assert "RB-WIN-SEC-001" in SECURITY_RUNBOOKS  # Firewall
         assert "RB-WIN-SEC-002" in SECURITY_RUNBOOKS  # Audit Policy
         assert "RB-WIN-SEC-003" in SECURITY_RUNBOOKS  # Account Lockout
@@ -256,6 +256,7 @@ class TestCategoryRunbooks:
         assert "RB-WIN-SEC-014" in SECURITY_RUNBOOKS  # TLS/SSL Configuration
         assert "RB-WIN-SEC-015" in SECURITY_RUNBOOKS  # USB/Removable Media Control
         assert "RB-WIN-SEC-016" in SECURITY_RUNBOOKS  # Screen Lock / Auto Logoff
+        assert "RB-WIN-SEC-017" in SECURITY_RUNBOOKS  # Defender Exclusion Management
 
     def test_network_category(self):
         """Test network category has expected runbooks."""

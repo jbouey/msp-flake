@@ -308,6 +308,178 @@ rules:
         assert match.action == "test_action"
 
 
+# ==================== Bundled Rules Loading Tests ====================
+
+class TestBundledRulesLoading:
+    """Tests for loading bundled YAML rules from the package's rules/ directory."""
+
+    def test_bundled_rules_loaded(self, temp_db, temp_rules_dir):
+        """Test that bundled rules from rules/ directory are loaded."""
+        engine = DeterministicEngine(
+            rules_dir=temp_rules_dir,
+            incident_db=temp_db,
+            action_executor=None
+        )
+
+        stats = engine.get_rule_stats()
+        # Should have built-in rules + bundled Windows rules (34+)
+        assert stats["total_rules"] > 10, (
+            f"Expected >10 total rules (built-in + bundled), got {stats['total_rules']}"
+        )
+
+    def test_windows_firewall_rule_matches(self, temp_db, temp_rules_dir):
+        """Test that Windows firewall rule matches a firewall_status incident."""
+        engine = DeterministicEngine(
+            rules_dir=temp_rules_dir,
+            incident_db=temp_db,
+            action_executor=None
+        )
+
+        data = {
+            "check_type": "firewall_status",
+            "drift_detected": True,
+            "status": "fail",
+            "details": {
+                "domain_profile": "disabled",
+            }
+        }
+
+        match = engine.match(
+            incident_id="INC-TEST-FW-001",
+            incident_type="firewall_status",
+            severity="high",
+            data=data
+        )
+
+        assert match is not None, "Expected firewall rule to match firewall_status incident"
+        assert match.action == "run_windows_runbook"
+        assert "runbook_id" in match.action_params
+
+    def test_windows_defender_rule_matches(self, temp_db, temp_rules_dir):
+        """Test that Windows defender rule matches a windows_defender incident."""
+        engine = DeterministicEngine(
+            rules_dir=temp_rules_dir,
+            incident_db=temp_db,
+            action_executor=None
+        )
+
+        data = {
+            "check_type": "windows_defender",
+            "drift_detected": True,
+            "status": "fail",
+            "details": {
+                "realtime_protection": False,
+            }
+        }
+
+        match = engine.match(
+            incident_id="INC-TEST-DEF-001",
+            incident_type="windows_defender",
+            severity="high",
+            data=data
+        )
+
+        assert match is not None, "Expected defender rule to match windows_defender incident"
+        assert match.action == "run_windows_runbook"
+
+    def test_windows_defender_exclusion_rule_matches(self, temp_db, temp_rules_dir):
+        """Test that Defender exclusion rule matches when unauthorized_exclusions exist."""
+        engine = DeterministicEngine(
+            rules_dir=temp_rules_dir,
+            incident_db=temp_db,
+            action_executor=None
+        )
+
+        data = {
+            "check_type": "windows_defender",
+            "drift_detected": True,
+            "status": "non_compliant",
+            "details": {
+                "unauthorized_exclusions": ["C:\\Windows\\Temp\\*.exe"],
+            }
+        }
+
+        match = engine.match(
+            incident_id="INC-TEST-EXCL-001",
+            incident_type="windows_defender",
+            severity="medium",
+            data=data
+        )
+
+        assert match is not None, "Expected exclusion rule to match"
+        assert match.action == "run_windows_runbook"
+        assert match.action_params.get("runbook_id") == "RB-WIN-SEC-017"
+
+    def test_bundled_rules_dont_override_custom(self, temp_db, temp_rules_dir):
+        """Test that custom rules with higher priority take precedence over bundled."""
+        # Write a custom rule with priority 1 (higher than bundled priority 5)
+        rule_yaml = """
+rules:
+  - id: L1-CUSTOM-FW-001
+    name: Custom Firewall Rule
+    description: Custom high-priority firewall rule
+    conditions:
+      - field: check_type
+        operator: eq
+        value: firewall_status
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: custom_firewall_action
+    action_params:
+      custom_param: true
+    enabled: true
+    priority: 1
+    cooldown_seconds: 60
+"""
+        rule_file = temp_rules_dir / "custom_firewall.yaml"
+        rule_file.write_text(rule_yaml)
+
+        engine = DeterministicEngine(
+            rules_dir=temp_rules_dir,
+            incident_db=temp_db,
+            action_executor=None
+        )
+
+        data = {
+            "check_type": "firewall_status",
+            "drift_detected": True,
+            "status": "non_compliant",
+            "details": {}
+        }
+
+        match = engine.match(
+            incident_id="INC-TEST-PRIORITY-001",
+            incident_type="firewall_status",
+            severity="high",
+            data=data
+        )
+
+        assert match is not None
+        # Custom rule (priority 1) should match before bundled rules (priority 5)
+        assert match.rule.id == "L1-CUSTOM-FW-001"
+        assert match.action == "custom_firewall_action"
+
+    def test_exists_operator(self, temp_db, temp_rules_dir):
+        """Test the EXISTS operator in rule conditions."""
+        engine = DeterministicEngine(
+            rules_dir=temp_rules_dir,
+            incident_db=temp_db,
+            action_executor=None
+        )
+
+        # Test exists=true with field present
+        cond = RuleCondition("details.some_field", MatchOperator.EXISTS, True)
+        assert cond.matches({"details": {"some_field": "value"}}) is True
+
+        # Test exists=true with field absent
+        assert cond.matches({"details": {}}) is False
+
+        # Test exists=false with field absent
+        cond_not = RuleCondition("details.missing", MatchOperator.EXISTS, False)
+        assert cond_not.matches({"details": {}}) is True
+
+
 # ==================== Level 3 Escalation Tests ====================
 
 class TestLevel3Escalation:
