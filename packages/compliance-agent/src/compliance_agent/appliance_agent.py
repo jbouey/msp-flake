@@ -3007,6 +3007,7 @@ try {
             'run_drift': self._handle_run_drift,
             'sync_rules': self._handle_sync_rules,
             'restart_agent': self._handle_restart_agent,
+            'nixos_rebuild': self._handle_nixos_rebuild,
             'update_agent': self._handle_update_agent,
             'update_iso': self._handle_update_iso,
             'view_logs': self._handle_view_logs,
@@ -3094,6 +3095,32 @@ try {
         """Execute agent restart via systemctl."""
         import os
         os.system("systemctl restart compliance-agent")
+
+    async def _handle_nixos_rebuild(self, params: Dict) -> Dict:
+        """Run nixos-rebuild to pull latest flake from GitHub.
+
+        Parameters:
+            flake_ref: Optional flake reference (default: github:jbouey/msp-flake#osiriscare-appliance-disk)
+            action: 'test' or 'switch' (default: test)
+        """
+        flake_ref = params.get('flake_ref', 'github:jbouey/msp-flake#osiriscare-appliance-disk')
+        action = params.get('action', 'test')
+        if action not in ('test', 'switch'):
+            return {"error": f"Invalid action: {action}, must be 'test' or 'switch'"}
+
+        logger.info(f"nixos-rebuild {action} --flake {flake_ref} --refresh")
+        code, stdout, stderr = await run_command(
+            f"nixos-rebuild {action} --flake {flake_ref} --refresh 2>&1",
+            timeout=600,
+        )
+
+        if code == 0:
+            logger.info(f"nixos-rebuild {action} succeeded, restarting agent in 10s")
+            asyncio.get_event_loop().call_later(10, self._do_restart)
+            return {"status": "success", "action": action, "output": stdout[-500:]}
+        else:
+            logger.error(f"nixos-rebuild failed (exit {code}): {stderr[-500:]}")
+            return {"status": "failed", "exit_code": code, "output": (stdout + stderr)[-500:]}
 
     async def _handle_update_agent(self, params: Dict) -> Dict:
         """
