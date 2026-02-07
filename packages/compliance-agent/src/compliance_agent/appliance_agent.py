@@ -493,6 +493,14 @@ class ApplianceAgent:
         if self._grpc_enabled and GRPC_AVAILABLE:
             await self._start_grpc_server()
 
+        # Initialize offline evidence queue for resilience
+        from .offline_queue import EvidenceQueue
+        self._evidence_queue = EvidenceQueue(
+            db_path=self.config.state_dir / "evidence-queue.db",
+            max_retries=10,
+        )
+        logger.info("Offline evidence queue initialized")
+
         # Initial delay to let network settle
         await asyncio.sleep(5)
 
@@ -756,6 +764,10 @@ class ApplianceAgent:
 
         if checkin_response is not None:
             logger.debug(f"[{timestamp}] Checkin OK")
+            # Verify pending rebuild if one is in progress
+            self._verify_rebuild_if_pending()
+            # Drain offline evidence queue (connectivity confirmed)
+            await self._drain_evidence_queue()
             # Update Windows targets from server response (credential pull)
             await self._update_windows_targets_from_response(checkin_response)
             # Update Linux targets from server response (credential pull)
@@ -915,8 +927,27 @@ class ApplianceAgent:
                     )
                     self._track_evidence_result(bundle_id, check_name)
 
-                    # Store locally as well
-                    await self._store_local_evidence(bundle_id, evidence_data)
+                    # Store locally
+                    local_bundle_id = bundle_id or f"local-{bundle_hash[:12]}"
+                    await self._store_local_evidence(local_bundle_id, evidence_data)
+
+                    # If submission failed, queue for retry when connectivity returns
+                    if bundle_id is None and hasattr(self, '_evidence_queue'):
+                        local_path = (
+                            self.config.evidence_dir /
+                            datetime.now(timezone.utc).strftime("%Y/%m/%d") /
+                            local_bundle_id
+                        )
+                        bundle_path = local_path / "bundle.json"
+                        sig_path = local_path / "bundle.sig"
+                        try:
+                            await self._evidence_queue.enqueue(
+                                bundle_id=local_bundle_id,
+                                bundle_path=bundle_path,
+                                signature_path=sig_path,
+                            )
+                        except Exception:
+                            pass  # Already queued (duplicate)
 
         except Exception as e:
             logger.error(f"Drift detection failed: {e}")
@@ -953,6 +984,55 @@ class ApplianceAgent:
 
         except Exception as e:
             logger.warning(f"Failed to store local evidence: {e}")
+
+    async def _drain_evidence_queue(self):
+        """Retry queued evidence submissions after connectivity is confirmed."""
+        if not hasattr(self, '_evidence_queue'):
+            return
+
+        try:
+            pending = await self._evidence_queue.list_pending(limit=20, ready_only=True)
+            if not pending:
+                return
+
+            logger.info(f"Draining offline evidence queue: {len(pending)} items")
+            for item in pending:
+                try:
+                    # Re-read the stored evidence bundle
+                    bundle_path = Path(item.bundle_path)
+                    if not bundle_path.exists():
+                        await self._evidence_queue.mark_uploaded(item.id)
+                        continue
+
+                    with open(bundle_path) as f:
+                        evidence_data = json.load(f)
+
+                    evidence_json = json.dumps(evidence_data, sort_keys=True)
+                    bundle_hash = hashlib.sha256(evidence_json.encode()).hexdigest()
+                    check_type = evidence_data.get("check_name", evidence_data.get("check_type", "unknown"))
+                    check_result = evidence_data.get("status", "unknown")
+
+                    bundle_id = await self.client.submit_evidence(
+                        bundle_hash=bundle_hash,
+                        check_type=check_type,
+                        check_result=check_result,
+                        evidence_data=evidence_data,
+                        signer=self.signer,
+                    )
+
+                    if bundle_id:
+                        await self._evidence_queue.mark_uploaded(item.id)
+                        logger.info(f"Queued evidence submitted: {item.bundle_id} → {bundle_id}")
+                    else:
+                        await self._evidence_queue.mark_failed(item.id, "submission returned None")
+                except Exception as e:
+                    await self._evidence_queue.mark_failed(item.id, str(e))
+
+            # Prune old uploaded entries
+            await self._evidence_queue.prune_uploaded(older_than_days=7)
+
+        except Exception as e:
+            logger.debug(f"Evidence queue drain skipped: {e}")
 
     # =========================================================================
     # Three-Tier Healing System
@@ -3011,6 +3091,7 @@ try {
             'update_agent': self._handle_update_agent,
             'update_iso': self._handle_update_iso,
             'view_logs': self._handle_view_logs,
+            'diagnostic': self._handle_diagnostic,
             'deploy_sensor': self._handle_deploy_sensor,
             'remove_sensor': self._handle_remove_sensor,
             'deploy_linux_sensor': self._handle_deploy_linux_sensor,
@@ -3091,36 +3172,73 @@ try {
         asyncio.get_event_loop().call_later(5, self._do_restart)
         return {"status": "restart_scheduled"}
 
+    def _verify_rebuild_if_pending(self):
+        """After successful checkin, verify a pending rebuild so the watchdog persists it."""
+        marker = Path("/var/lib/msp/.rebuild-in-progress")
+        verified = Path("/var/lib/msp/.rebuild-verified")
+
+        if marker.exists() and not verified.exists():
+            import time
+            verified.write_text(str(int(time.time())))
+            logger.info("Rebuild verified - watchdog will persist with nixos-rebuild switch")
+
     def _do_restart(self):
         """Execute agent restart via systemctl."""
         import os
         os.system("systemctl restart compliance-agent")
 
     async def _handle_nixos_rebuild(self, params: Dict) -> Dict:
-        """Run nixos-rebuild to pull latest flake from GitHub.
+        """Two-phase nixos-rebuild with automatic rollback safety.
+
+        Phase 1: nixos-rebuild test (activates but doesn't persist across reboot)
+        Phase 2: After agent successfully checks in, watchdog persists with switch
+
+        If the agent fails to check in within 10 minutes, the watchdog
+        automatically rolls back to the previous NixOS generation.
 
         Parameters:
-            flake_ref: Optional flake reference (default: github:jbouey/msp-flake#osiriscare-appliance-disk)
-            action: 'test' or 'switch' (default: test)
+            flake_ref: Flake reference (default: github:jbouey/msp-flake#osiriscare-appliance-disk)
         """
-        flake_ref = params.get('flake_ref', 'github:jbouey/msp-flake#osiriscare-appliance-disk')
-        action = params.get('action', 'test')
-        if action not in ('test', 'switch'):
-            return {"error": f"Invalid action: {action}, must be 'test' or 'switch'"}
+        import time
 
-        logger.info(f"nixos-rebuild {action} --flake {flake_ref} --refresh")
+        flake_ref = params.get('flake_ref', 'github:jbouey/msp-flake#osiriscare-appliance-disk')
+
+        # Save current system path for rollback
+        code, current_system, _ = await run_command("readlink /run/current-system", timeout=5)
+        current_system = current_system.strip() if code == 0 else ""
+
+        if not current_system:
+            return {"error": "Cannot determine current system path for rollback safety"}
+
+        # Write rebuild marker: line 1 = timestamp, line 2 = previous system, line 3 = flake ref
+        marker = Path("/var/lib/msp/.rebuild-in-progress")
+        marker.write_text(f"{int(time.time())}\n{current_system}\n{flake_ref}")
+
+        logger.info(f"Two-phase rebuild: test --flake {flake_ref} --refresh (rollback safety active)")
+
+        # Phase 1: nixos-rebuild test (does NOT persist across reboot)
         code, stdout, stderr = await run_command(
-            f"nixos-rebuild {action} --flake {flake_ref} --refresh 2>&1",
+            f"nixos-rebuild test --flake {flake_ref} --refresh 2>&1",
             timeout=600,
         )
 
-        if code == 0:
-            logger.info(f"nixos-rebuild {action} succeeded, restarting agent in 10s")
-            asyncio.get_event_loop().call_later(10, self._do_restart)
-            return {"status": "success", "action": action, "output": stdout[-500:]}
-        else:
-            logger.error(f"nixos-rebuild failed (exit {code}): {stderr[-500:]}")
+        if code != 0:
+            # Build failed, clean up marker
+            marker.unlink(missing_ok=True)
+            logger.error(f"nixos-rebuild test failed (exit {code})")
             return {"status": "failed", "exit_code": code, "output": (stdout + stderr)[-500:]}
+
+        # Build succeeded - agent will restart with new config.
+        # The watchdog timer checks every 2 min:
+        #   - If agent checks in OK → writes .rebuild-verified → watchdog persists with switch
+        #   - If agent fails to check in within 10 min → watchdog rolls back
+        logger.info("nixos-rebuild test succeeded. Agent restarting. Watchdog will verify or rollback.")
+        asyncio.get_event_loop().call_later(10, self._do_restart)
+        return {
+            "status": "test_activated",
+            "previous_system": current_system,
+            "message": "Rebuild test active. Watchdog will persist after successful checkin or rollback after 10min.",
+        }
 
     async def _handle_update_agent(self, params: Dict) -> Dict:
         """
@@ -3218,6 +3336,55 @@ Environment="PYTHONPATH={overlay_dir}"
         return {
             "logs": stdout if code == 0 else stderr,
             "lines": lines
+        }
+
+    async def _handle_diagnostic(self, params: Dict) -> Dict:
+        """Run a whitelisted diagnostic command and return output.
+
+        This is NOT a remote shell. Only specific, safe diagnostic commands
+        are allowed. The appliance is the customer's device — we only run
+        commands that help the MSP operator diagnose issues.
+
+        Parameters:
+            command: One of the whitelisted diagnostic command names
+            args: Optional arguments (sanitized per command)
+        """
+        DIAGNOSTICS = {
+            'agent_status': 'systemctl status compliance-agent --no-pager',
+            'agent_logs': 'journalctl -u compliance-agent --no-pager -n {lines}',
+            'system_logs': 'journalctl --no-pager -n {lines} --priority=err',
+            'disk_usage': 'df -h',
+            'memory': 'free -h',
+            'uptime': 'uptime',
+            'network': 'ip -4 addr show',
+            'dns': 'cat /etc/resolv.conf',
+            'time_sync': 'chronyc tracking',
+            'nix_generations': 'nix-env -p /nix/var/nix/profiles/system --list-generations',
+            'current_system': 'readlink /run/current-system',
+            'services': 'systemctl list-units --type=service --state=running --no-pager --no-legend | grep msp',
+            'firewall': 'nft list ruleset 2>/dev/null | head -50',
+            'evidence_queue': 'sqlite3 /var/lib/msp/evidence-queue.db "SELECT COUNT(*) as pending FROM queued_evidence WHERE uploaded_at IS NULL" 2>/dev/null || echo "no queue db"',
+            'rebuild_status': 'cat /var/lib/msp/.rebuild-in-progress 2>/dev/null && echo "---" && cat /var/lib/msp/.rebuild-verified 2>/dev/null || echo "no rebuild pending"',
+        }
+
+        command = params.get('command', '')
+        if command not in DIAGNOSTICS:
+            return {
+                "error": f"Unknown diagnostic: {command}",
+                "available": list(DIAGNOSTICS.keys()),
+            }
+
+        # Sanitize args
+        lines = min(int(params.get('lines', 100)), 500)
+        cmd = DIAGNOSTICS[command].format(lines=lines)
+
+        code, stdout, stderr = await run_command(cmd, timeout=30)
+        output = stdout if code == 0 else f"{stdout}\n{stderr}"
+
+        return {
+            "command": command,
+            "exit_code": code,
+            "output": output[-2000:],  # Cap output size
         }
 
     async def _handle_deploy_sensor(self, params: Dict) -> Dict:

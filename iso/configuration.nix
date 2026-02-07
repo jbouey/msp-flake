@@ -175,4 +175,77 @@
       OnUnitActiveSec = "5min";
     };
   };
+
+  # ============================================================================
+  # Rebuild Safety Watchdog
+  # ============================================================================
+  # Separate from compliance-agent so it works even if the agent is broken.
+  # After a nixos-rebuild test, monitors for agent health verification.
+  # If the agent doesn't confirm within timeout, rolls back to previous generation.
+  systemd.services.msp-rebuild-watchdog = {
+    description = "MSP Rebuild Safety Watchdog";
+    after = [ "local-fs.target" ];
+
+    path = with pkgs; [ nix coreutils systemd ];
+
+    serviceConfig = {
+      Type = "oneshot";
+    };
+
+    script = ''
+      MARKER="/var/lib/msp/.rebuild-in-progress"
+      VERIFIED="/var/lib/msp/.rebuild-verified"
+      LOG_TAG="msp-rebuild-watchdog"
+      TIMEOUT=600  # 10 minutes
+
+      # No rebuild in progress, nothing to do
+      if [ ! -f "$MARKER" ]; then
+        exit 0
+      fi
+
+      # Agent verified the rebuild - persist it
+      if [ -f "$VERIFIED" ]; then
+        FLAKE_REF=$(sed -n '3p' "$MARKER")
+        logger -t "$LOG_TAG" "Rebuild verified by agent, persisting with switch"
+
+        if [ -n "$FLAKE_REF" ]; then
+          nixos-rebuild switch --flake "$FLAKE_REF" --refresh 2>&1 | logger -t "$LOG_TAG" || true
+        fi
+
+        rm -f "$MARKER" "$VERIFIED"
+        logger -t "$LOG_TAG" "Rebuild persisted successfully"
+        exit 0
+      fi
+
+      # Check if timeout exceeded
+      REBUILD_TIME=$(head -1 "$MARKER")
+      NOW=$(date +%s)
+      ELAPSED=$((NOW - REBUILD_TIME))
+
+      if [ "$ELAPSED" -gt "$TIMEOUT" ]; then
+        PREV_SYSTEM=$(sed -n '2p' "$MARKER")
+        logger -t "$LOG_TAG" "TIMEOUT: Agent failed to verify rebuild after ''${ELAPSED}s. Rolling back to $PREV_SYSTEM"
+
+        # Roll back by activating the previous system
+        if [ -n "$PREV_SYSTEM" ] && [ -e "$PREV_SYSTEM/bin/switch-to-configuration" ]; then
+          "$PREV_SYSTEM/bin/switch-to-configuration" test 2>&1 | logger -t "$LOG_TAG"
+          logger -t "$LOG_TAG" "Rolled back successfully. Restarting compliance-agent."
+          systemctl restart compliance-agent || true
+        else
+          logger -t "$LOG_TAG" "ERROR: Cannot find previous system at $PREV_SYSTEM, manual intervention needed"
+        fi
+
+        rm -f "$MARKER" "$VERIFIED"
+      fi
+    '';
+  };
+
+  systemd.timers.msp-rebuild-watchdog = {
+    description = "Monitor rebuild safety (every 2 minutes)";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "1min";
+      OnUnitActiveSec = "2min";
+    };
+  };
 }
