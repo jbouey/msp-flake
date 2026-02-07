@@ -15,7 +15,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.55";  # Session 86 - Installer fixes, MSP-DATA partition
+    version = "1.0.56";
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
@@ -100,7 +100,9 @@ in
   # nosoftlockup: prevent false watchdog alarms during heavy nixos-install I/O
   # audit=0: disable kernel audit on live ISO (configuration.nix enables auditd
   # with execve logging which causes kauditd hold queue overflow during boot)
-  boot.kernelParams = [ "quiet" "loglevel=3" "console=tty1" "console=ttyS0,115200" "nosoftlockup" "audit=0" ];
+  boot.kernelParams = [ "quiet" "loglevel=1" "systemd.show_status=false" "console=tty1" "console=ttyS0,115200" "nosoftlockup" "audit=0" ];
+  # Blacklist noisy Logitech HID++ driver — spams battery protocol errors on tty
+  boot.blacklistedKernelModules = [ "hid_logitech_hidpp" ];
   boot.loader.timeout = lib.mkForce 3;
 
   # Readable console font for the installer TUI

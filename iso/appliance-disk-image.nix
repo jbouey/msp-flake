@@ -9,7 +9,7 @@ let
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
-    version = "1.0.55";
+    version = "1.0.56";
     src = ../packages/compliance-agent;
 
     propagatedBuildInputs = with pkgs.python311Packages; [
@@ -108,8 +108,9 @@ in
       timeout = 3;
     };
 
-    # Kernel params
-    kernelParams = [ "console=tty1" "console=ttyS0,115200" ];
+    # Kernel params — quiet boot, suppress noisy drivers
+    kernelParams = [ "quiet" "loglevel=3" "console=tty1" "console=ttyS0,115200" ];
+    blacklistedKernelModules = [ "hid_logitech_hidpp" ];
 
     # Essential kernel modules for HP T640 and common hardware
     initrd.availableKernelModules = [
@@ -140,24 +141,77 @@ in
   # ============================================================================
   # Branded Console - professional appliance look on physical console
   # ============================================================================
-  services.getty.greetingLine = lib.mkForce ''
-
-    \e[1;36m╔═══════════════════════════════════════════════════════════╗
-    ║                                                           ║
-    ║          OsirisCare MSP Compliance Platform                ║
-    ║                COMPLIANCE APPLIANCE                        ║
-    ║                                                           ║
-    ╠═══════════════════════════════════════════════════════════╣
-    ║  Dashboard:  http://\4                                     ║
-    ║  SSH:        ssh msp@\4                                    ║
-    ║  Portal:     http://\4:8083                                ║
-    ╚═══════════════════════════════════════════════════════════╝\e[0m
-
-  '';
+  # NOTE: Do NOT use services.getty.greetingLine with \4 — it re-renders once
+  # per network interface (loopback, link-local, DHCP), causing triple banners.
+  # Instead, msp-console-branding writes /etc/issue once after network settles.
+  services.getty.greetingLine = lib.mkForce "";
 
   services.getty.helpLine = lib.mkForce ''
     Log in as \e[1mmsp\e[0m for appliance management. Root login via console only.
   '';
+
+  # Oneshot service: write branded /etc/issue after real IP is available
+  systemd.services.msp-console-branding = {
+    description = "OsirisCare Console Branding";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "systemd-networkd-wait-online.service" ];
+    wants = [ "network-online.target" ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      StandardOutput = "journal";
+      StandardError = "journal";
+    };
+
+    # Wait briefly for DHCP, get real IP, write /etc/issue, nudge getty
+    script = ''
+      # Give DHCP a moment to settle
+      sleep 3
+
+      # Get the first real (non-loopback, non-link-local) IPv4 address
+      IP=$(${pkgs.iproute2}/bin/ip -4 addr show scope global \
+        | ${pkgs.gnugrep}/bin/grep -oP '(?<=inet\s)\d+(\.\d+){3}' \
+        | head -1)
+
+      # Fallback if no global IP yet
+      if [ -z "$IP" ]; then
+        IP="(no network)"
+      fi
+
+      # Build padded lines — box is 50 chars wide inside the borders
+      W=50
+      dash_url="http://$IP"
+      ssh_cmd="ssh msp@$IP"
+      portal_url="http://$IP:8083"
+
+      pad() {
+        local label="$1" value="$2"
+        local content="  $label$value"
+        local len=''${#content}
+        local spaces=$((W - len))
+        [ $spaces -lt 1 ] && spaces=1
+        printf '%s%*s' "$content" "$spaces" ""
+      }
+
+      cat > /etc/issue <<EOF
+\e[1;36m
+    ┌──────────────────────────────────────────────────┐
+    │       OsirisCare MSP Compliance Platform         │
+    │             COMPLIANCE APPLIANCE                 │
+    ├──────────────────────────────────────────────────┤
+    │$(pad "Dashboard:  " "$dash_url")│
+    │$(pad "SSH:        " "$ssh_cmd")│
+    │$(pad "Portal:     " "$portal_url")│
+    └──────────────────────────────────────────────────┘
+\e[0m
+EOF
+
+      # Clear tty1 and signal getty to re-read /etc/issue
+      printf '\033c' > /dev/tty1 2>/dev/null || true
+      ${pkgs.systemd}/bin/systemctl restart getty@tty1.service 2>/dev/null || true
+    '';
+  };
 
   # Post-login MOTD (first-boot service overwrites this with IP-specific info)
   environment.etc."motd".text = ''
