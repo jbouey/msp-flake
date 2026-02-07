@@ -3217,10 +3217,13 @@ try {
         logger.info(f"Two-phase rebuild: test --flake {flake_ref} --refresh (rollback safety active)")
 
         # Phase 1: nixos-rebuild test (does NOT persist across reboot)
-        # Set full PATH — nixos-rebuild needs nix, git, etc. which may not
-        # be in PATH within the sandboxed systemd service
+        # Use systemd-run to escape ProtectSystem=strict sandbox — nixos-rebuild
+        # needs write access to /nix/store which the sandboxed service can't provide.
+        # --wait blocks until complete, --pipe sends output through, --collect cleans up.
         code, stdout, stderr = await run_command(
-            f"PATH=/run/current-system/sw/bin:$PATH nixos-rebuild test --flake {flake_ref} --refresh 2>&1",
+            "systemd-run --unit=msp-rebuild --wait --pipe --collect "
+            f"/bin/sh -c 'export PATH=/run/current-system/sw/bin:$PATH && "
+            f"nixos-rebuild test --flake {flake_ref} --refresh' 2>&1",
             timeout=600,
         )
 
