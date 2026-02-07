@@ -430,7 +430,7 @@ in
       echo -e "  ║    2. System will reboot in 30 seconds                    ║"
       echo -e "  ║    3. Appliance will auto-provision on first boot         ║"
       echo -e "  ║                                                           ║"
-      echo -e "  ║  ''${C_DIM}$STORE_COUNT packages installed to $INTERNAL_DEV''${C_GREEN}${C_RESET}"
+      echo -e "  ║  ''${C_DIM}$STORE_COUNT packages installed to $INTERNAL_DEV''${C_RESET}"
       echo -e "  ''${C_GREEN}║                                                           ║"
       echo -e "  ╚═══════════════════════════════════════════════════════════╝''${C_RESET}"
       echo ""
