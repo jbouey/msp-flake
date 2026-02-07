@@ -1711,3 +1711,67 @@ async def get_public_key():
         pass
 
     return {"error": "Public key not available", "algorithm": "Ed25519"}
+
+
+@router.get("/sites/{site_id}/compliance-packet")
+async def generate_compliance_packet(
+    site_id: str,
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate a monthly HIPAA compliance packet from real evidence data.
+
+    Queries compliance_bundles for the given site and period, computes
+    compliance score, control posture, and returns the packet as JSON
+    with a markdown rendering.
+
+    Args:
+        site_id: Site identifier
+        month: Month (1-12), defaults to current month
+        year: Year, defaults to current year
+    """
+    now = datetime.now(timezone.utc)
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+
+    # Validate
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="Month must be 1-12")
+    if year < 2020 or year > 2100:
+        raise HTTPException(status_code=400, detail="Invalid year")
+
+    # Check site exists
+    site_result = await db.execute(
+        text("SELECT site_id FROM sites WHERE site_id = :site_id"),
+        {"site_id": site_id}
+    )
+    if not site_result.fetchone():
+        raise HTTPException(status_code=404, detail=f"Site not found: {site_id}")
+
+    try:
+        import sys
+        # Import from same directory (dashboard_api) or parent (mcp-server root)
+        sys.path.insert(0, str(Path(__file__).parent))
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from compliance_packet import CompliancePacket
+
+        packet = CompliancePacket(
+            site_id=site_id,
+            month=month,
+            year=year,
+            db=db,
+        )
+        result = await packet.generate_packet()
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Compliance packet generation failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate compliance packet: {str(e)}"
+        )

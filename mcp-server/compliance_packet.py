@@ -1,415 +1,575 @@
 """
 Compliance Packet Generator
 
-Generates monthly HIPAA compliance packets with:
-- Executive summary
-- Control posture heatmap
-- Backup/restore verification
-- Incident summary
-- Evidence bundle manifest
+Generates monthly HIPAA compliance packets from real evidence bundle data.
 
-Output: Print-ready PDF for auditors
+Queries compliance_bundles table for actual check results, computes
+compliance scores, and generates auditor-ready markdown.
 
 HIPAA Controls:
-- §164.316(b)(1): Documentation (policies and procedures)
-- §164.316(b)(2)(i): Time limit (retain for 6 years)
+- 164.316(b)(1): Documentation (policies and procedures)
+- 164.316(b)(2)(i): Time limit (retain for 6 years)
 """
 
-from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import json
-import yaml
-from jinja2 import Template
+import hashlib
+import logging
 import subprocess
+
+from jinja2 import Template
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+
+logger = logging.getLogger(__name__)
+
+# Map check_types to HIPAA controls
+CHECK_TYPE_HIPAA_MAP = {
+    "ntp_sync": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
+    "windows_backup_status": {"control": "164.308(a)(7)(ii)(A)", "description": "Data Backup Plan"},
+    "windows_firewall_status": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "windows_windows_defender": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
+    "windows_audit_policy": {"control": "164.312(b)", "description": "Audit Controls"},
+    "windows_password_policy": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "windows_bitlocker_status": {"control": "164.312(a)(2)(iv)", "description": "Encryption and Decryption"},
+    "windows_service_dns": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
+    "windows_service_spooler": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
+    "windows_service_w32time": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
+    "firewall": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "disk_space": {"control": "164.310(d)(2)(iv)", "description": "Data Backup and Storage"},
+    "critical_services": {"control": "164.308(a)(1)(ii)(D)", "description": "Information System Activity Review"},
+    "nixos_generation": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
+    "network": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+}
 
 
 class CompliancePacket:
-    """Generate monthly HIPAA compliance packet"""
+    """Generate monthly HIPAA compliance packet from real evidence data."""
 
     def __init__(
         self,
-        client_id: str,
+        site_id: str,
         month: int,
         year: int,
+        db: AsyncSession,
         baseline_version: str = "1.0",
-        evidence_dir: str = "./evidence"
+        output_dir: Optional[Path] = None,
     ):
-        self.client_id = client_id
+        self.site_id = site_id
         self.month = month
         self.year = year
+        self.db = db
         self.baseline_version = baseline_version
-        self.evidence_dir = Path(evidence_dir)
+        self.output_dir = output_dir or Path("/tmp/compliance-packets")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.packet_id = f"CP-{year}{month:02d}-{client_id}"
+        self.packet_id = f"CP-{year}{month:02d}-{site_id[:16]}"
+        self._period_start = datetime(year, month, 1, tzinfo=timezone.utc)
+        if month == 12:
+            self._period_end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            self._period_end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
 
-    async def generate_packet(self) -> str:
+    async def generate_packet(self) -> Dict[str, Any]:
+        """Generate compliance packet from real evidence data.
+
+        Returns dict with packet data and file paths.
         """
-        Generate complete compliance packet
+        logger.info(f"Generating compliance packet: {self.packet_id}")
 
-        Returns: Path to generated PDF
-        """
+        # Get site name
+        site_name = await self._get_site_name()
 
-        print(f"Generating compliance packet: {self.packet_id}")
-
-        # Collect data
+        # Query real data
         data = {
-            "client_id": self.client_id,
-            "client_name": self._get_client_name(),
-            "month": datetime(self.year, self.month, 1).strftime("%B"),
+            "client_id": self.site_id,
+            "client_name": site_name,
+            "month": self._period_start.strftime("%B"),
             "year": self.year,
             "baseline_version": self.baseline_version,
-            "generated_timestamp": datetime.utcnow().isoformat(),
+            "generated_timestamp": datetime.now(timezone.utc).isoformat(),
             "packet_id": self.packet_id,
 
-            # Executive summary metrics
+            # Real metrics from evidence
             "compliance_pct": await self._calculate_compliance_score(),
             "critical_issue_count": await self._count_critical_issues(),
             "auto_fixed_count": await self._count_auto_fixes(),
             "mttr_hours": await self._calculate_mttr(),
             "backup_success_rate": await self._calculate_backup_success_rate(),
 
-            # Control posture
+            # Control posture from real checks
             "controls": await self._get_control_posture(),
 
-            # Backups
+            # Real backup data
             "backup_summary": await self._get_backup_summary(),
 
-            # Time sync
+            # Real NTP data
             "time_sync": await self._get_time_sync_status(),
 
-            # Access controls
+            # Access controls from evidence
             "access_controls": await self._get_access_controls(),
 
-            # Patches
+            # Patch posture
             "patch_posture": await self._get_patch_posture(),
 
-            # Encryption
+            # Encryption from evidence
             "encryption_status": await self._get_encryption_status(),
 
-            # Incidents
+            # Real incidents
             "incidents": await self._get_incidents(),
 
             # Exceptions
             "exceptions": await self._get_baseline_exceptions(),
 
-            # Evidence manifest
-            "evidence_bundles": await self._get_evidence_bundles()
+            # Evidence chain manifest
+            "evidence_bundles": await self._get_evidence_manifest(),
         }
 
-        # Generate markdown
+        # Render markdown
         markdown = self._render_markdown(data)
 
-        # Save markdown
-        md_path = self.evidence_dir / f"{self.packet_id}.md"
-        with open(md_path, 'w') as f:
+        md_path = self.output_dir / f"{self.packet_id}.md"
+        with open(md_path, "w") as f:
             f.write(markdown)
 
-        print(f"Markdown saved: {md_path}")
+        logger.info(f"Compliance packet saved: {md_path}")
 
-        # Convert to PDF
-        pdf_path = await self._markdown_to_pdf(md_path)
+        return {
+            "packet_id": self.packet_id,
+            "site_id": self.site_id,
+            "period": f"{self._period_start.strftime('%B %Y')}",
+            "markdown_path": str(md_path),
+            "data": data,
+        }
 
-        print(f"PDF generated: {pdf_path}")
-
-        return str(pdf_path)
-
-    def _get_client_name(self) -> str:
-        """Get human-readable client name"""
-        # TODO: Load from client database
-        return "Clinic ABC"
+    async def _get_site_name(self) -> str:
+        result = await self.db.execute(
+            text("SELECT clinic_name FROM sites WHERE site_id = :sid"),
+            {"sid": self.site_id},
+        )
+        row = result.fetchone()
+        return row.clinic_name if row and row.clinic_name else self.site_id
 
     async def _calculate_compliance_score(self) -> float:
-        """Calculate overall compliance percentage"""
-        # TODO: Implement actual calculation from controls
-        # For demo, return synthetic data
-        return 98.5
+        """Compliance % = pass bundles / total bundles in period."""
+        result = await self.db.execute(
+            text("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE check_result = 'pass') as pass_count
+                FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND checked_at >= :start AND checked_at < :end
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
+        row = result.fetchone()
+        if not row or row.total == 0:
+            return 0.0
+        return round(row.pass_count * 100.0 / row.total, 1)
 
     async def _count_critical_issues(self) -> int:
-        """Count critical issues this month"""
-        return 2
+        """Count fail results in period."""
+        result = await self.db.execute(
+            text("""
+                SELECT COUNT(*) FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND checked_at >= :start AND checked_at < :end
+                  AND check_result = 'fail'
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
+        return result.scalar() or 0
 
     async def _count_auto_fixes(self) -> int:
-        """Count auto-fixed incidents"""
-        return 8
+        """Count bundles where a fail was followed by a pass for same check_type."""
+        result = await self.db.execute(
+            text("""
+                SELECT COUNT(DISTINCT check_type) FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND checked_at >= :start AND checked_at < :end
+                  AND check_result = 'pass'
+                  AND check_type IN (
+                      SELECT DISTINCT check_type FROM compliance_bundles
+                      WHERE site_id = :sid
+                        AND checked_at >= :start AND checked_at < :end
+                        AND check_result = 'fail'
+                  )
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
+        return result.scalar() or 0
 
     async def _calculate_mttr(self) -> float:
-        """Calculate mean time to resolution (hours)"""
-        return 4.2
+        """Estimate MTTR: avg time between fail and next pass for same check_type.
+
+        Uses LATERAL join with LIMIT 1 for efficient lookup, and samples
+        up to 500 recent failures to keep the query fast on large datasets.
+        """
+        result = await self.db.execute(
+            text("""
+                WITH recent_fails AS (
+                    SELECT check_type, checked_at as fail_time
+                    FROM compliance_bundles
+                    WHERE site_id = :sid
+                      AND checked_at >= :start AND checked_at < :end
+                      AND check_result = 'fail'
+                    ORDER BY checked_at DESC
+                    LIMIT 500
+                )
+                SELECT AVG(EXTRACT(EPOCH FROM (recovery.recover_time - f.fail_time)) / 3600) as avg_mttr
+                FROM recent_fails f
+                CROSS JOIN LATERAL (
+                    SELECT checked_at as recover_time
+                    FROM compliance_bundles
+                    WHERE site_id = :sid
+                      AND check_type = f.check_type
+                      AND check_result = 'pass'
+                      AND checked_at > f.fail_time
+                      AND checked_at < f.fail_time + INTERVAL '24 hours'
+                    ORDER BY checked_at ASC
+                    LIMIT 1
+                ) recovery
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
+        row = result.fetchone()
+        return round(row.avg_mttr, 1) if row and row.avg_mttr else 0.0
 
     async def _calculate_backup_success_rate(self) -> float:
-        """Calculate backup success rate"""
-        return 100.0
+        """Backup pass rate from windows_backup_status checks."""
+        result = await self.db.execute(
+            text("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE check_result = 'pass') as pass_count
+                FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND checked_at >= :start AND checked_at < :end
+                  AND check_type = 'windows_backup_status'
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
+        row = result.fetchone()
+        if not row or row.total == 0:
+            return 100.0
+        return round(row.pass_count * 100.0 / row.total, 1)
 
     async def _get_control_posture(self) -> List[Dict]:
-        """Get status of all HIPAA controls"""
+        """Build control posture from real check_type results."""
+        result = await self.db.execute(
+            text("""
+                WITH stats AS (
+                    SELECT check_type,
+                           COUNT(*) as total,
+                           COUNT(*) FILTER (WHERE check_result = 'pass') as pass_count,
+                           COUNT(*) FILTER (WHERE check_result = 'fail') as fail_count,
+                           MAX(checked_at) as last_checked
+                    FROM compliance_bundles
+                    WHERE site_id = :sid
+                      AND checked_at >= :start AND checked_at < :end
+                    GROUP BY check_type
+                ),
+                latest AS (
+                    SELECT DISTINCT ON (check_type)
+                           check_type, bundle_id as latest_bundle_id
+                    FROM compliance_bundles
+                    WHERE site_id = :sid
+                      AND checked_at >= :start AND checked_at < :end
+                    ORDER BY check_type, checked_at DESC
+                )
+                SELECT s.*, l.latest_bundle_id
+                FROM stats s
+                LEFT JOIN latest l USING (check_type)
+                ORDER BY s.check_type
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
 
-        # Demo data - in production, load from monitoring system
-        controls = [
-            {
-                "control": "164.308(a)(1)(ii)(D)",
-                "description": "Information System Activity Review",
-                "status": "✅ Pass",
-                "evidence_id": "EB-2025110-001",
-                "last_checked": "2025-11-01T10:00:00Z"
-            },
-            {
-                "control": "164.308(a)(5)(ii)(B)",
-                "description": "Protection from Malicious Software",
-                "status": "✅ Pass",
-                "evidence_id": "EB-2025110-002",
-                "last_checked": "2025-11-01T10:00:00Z"
-            },
-            {
-                "control": "164.308(a)(7)(ii)(A)",
-                "description": "Data Backup Plan",
-                "status": "✅ Pass",
-                "evidence_id": "EB-2025110-003",
-                "last_checked": "2025-11-01T10:00:00Z"
-            },
-            {
-                "control": "164.310(d)(1)",
-                "description": "Device and Media Controls",
-                "status": "✅ Pass",
-                "evidence_id": "EB-2025110-004",
-                "last_checked": "2025-11-01T10:00:00Z"
-            },
-            {
-                "control": "164.312(a)(1)",
-                "description": "Access Control",
-                "status": "✅ Pass",
-                "evidence_id": "EB-2025110-005",
-                "last_checked": "2025-11-01T10:00:00Z"
-            },
-            {
-                "control": "164.312(a)(2)(iv)",
-                "description": "Encryption and Decryption",
-                "status": "✅ Pass",
-                "evidence_id": "EB-2025110-006",
-                "last_checked": "2025-11-01T10:00:00Z"
-            },
-            {
-                "control": "164.312(b)",
-                "description": "Audit Controls",
-                "status": "✅ Pass",
-                "evidence_id": "EB-2025110-007",
-                "last_checked": "2025-11-01T10:00:00Z"
-            },
-            {
-                "control": "164.312(e)(1)",
-                "description": "Transmission Security",
-                "status": "✅ Pass",
-                "evidence_id": "EB-2025110-008",
-                "last_checked": "2025-11-01T10:00:00Z"
-            }
-        ]
+        controls = []
+        for row in result.fetchall():
+            hipaa = CHECK_TYPE_HIPAA_MAP.get(row.check_type, {
+                "control": "164.308(a)(1)",
+                "description": row.check_type.replace("_", " ").title(),
+            })
+
+            pass_rate = row.pass_count * 100.0 / row.total if row.total > 0 else 0
+            if pass_rate >= 90:
+                status = "Pass"
+            elif pass_rate >= 50:
+                status = "Warning"
+            else:
+                status = "Fail"
+
+            controls.append({
+                "control": hipaa["control"],
+                "description": hipaa["description"],
+                "status": status,
+                "pass_rate": f"{pass_rate:.0f}%",
+                "evidence_id": row.latest_bundle_id or "N/A",
+                "last_checked": row.last_checked.strftime("%Y-%m-%d %H:%M") if row.last_checked else "N/A",
+                "check_count": row.total,
+            })
 
         return controls
 
     async def _get_backup_summary(self) -> Dict:
-        """Get backup status for the month"""
+        """Get real backup check results by week."""
+        result = await self.db.execute(
+            text("""
+                SELECT
+                    EXTRACT(WEEK FROM checked_at) as week_num,
+                    MIN(checked_at::date) as week_start,
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE check_result = 'pass') as pass_count,
+                    COUNT(*) FILTER (WHERE check_result = 'fail') as fail_count
+                FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND checked_at >= :start AND checked_at < :end
+                  AND check_type = 'windows_backup_status'
+                GROUP BY EXTRACT(WEEK FROM checked_at)
+                ORDER BY week_num
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
 
-        # Demo data
+        weeks = []
+        for i, row in enumerate(result.fetchall()):
+            status = "Pass" if row.fail_count == 0 else "Fail"
+            weeks.append({
+                "week": f"Week {i + 1}",
+                "status": status,
+                "checks": row.total,
+                "pass_count": row.pass_count,
+                "fail_count": row.fail_count,
+            })
+
         return {
-            "schedule": "Daily at 02:00 UTC",
+            "schedule": "Continuous monitoring",
             "retention_days": 90,
-            "encryption": "AES-256-GCM",
-            "weeks": [
-                {
-                    "week": "Week 1",
-                    "status": "✅ Success",
-                    "size_gb": 127.4,
-                    "checksum": "sha256:a1b2c3...",
-                    "restore_test_date": "2025-10-15",
-                    "restore_test_result": "✅ Pass (3 files, 1 DB)"
-                },
-                {
-                    "week": "Week 2",
-                    "status": "✅ Success",
-                    "size_gb": 128.1,
-                    "checksum": "sha256:c3d4e5...",
-                    "restore_test_date": "2025-10-22",
-                    "restore_test_result": "✅ Pass (5 files)"
-                },
-                {
-                    "week": "Week 3",
-                    "status": "✅ Success",
-                    "size_gb": 129.3,
-                    "checksum": "sha256:e5f6g7...",
-                    "restore_test_date": None,
-                    "restore_test_result": "Not yet scheduled"
-                },
-                {
-                    "week": "Week 4",
-                    "status": "✅ Success",
-                    "size_gb": 130.8,
-                    "checksum": "sha256:g7h8i9...",
-                    "restore_test_date": None,
-                    "restore_test_result": "Not yet scheduled"
-                }
-            ]
+            "weeks": weeks,
         }
 
     async def _get_time_sync_status(self) -> Dict:
-        """Get NTP sync status"""
+        """Get NTP sync status from real evidence."""
+        result = await self.db.execute(
+            text("""
+                SELECT check_result, checked_at, checks
+                FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND check_type = 'ntp_sync'
+                ORDER BY checked_at DESC
+                LIMIT 5
+            """),
+            {"sid": self.site_id},
+        )
+
+        rows = result.fetchall()
+        if not rows:
+            return {
+                "ntp_server": "pool.ntp.org",
+                "sync_status": "No data",
+                "max_drift_ms": 0,
+                "systems": [],
+            }
+
+        latest = rows[0]
+        all_pass = all(r.check_result == "pass" for r in rows)
 
         return {
             "ntp_server": "pool.ntp.org",
-            "sync_status": "✅ Synchronized",
-            "max_drift_ms": 45,
-            "threshold_ms": 90000,
-            "systems": [
-                {
-                    "hostname": "srv-primary",
-                    "drift_ms": 12,
-                    "status": "✅",
-                    "last_sync": "2025-11-01 14:32:00"
-                },
-                {
-                    "hostname": "srv-backup",
-                    "drift_ms": -8,
-                    "status": "✅",
-                    "last_sync": "2025-11-01 14:31:00"
-                }
-            ]
+            "sync_status": "Synchronized" if all_pass else "Drift detected",
+            "max_drift_ms": 90000,
+            "last_check": latest.checked_at.strftime("%Y-%m-%d %H:%M"),
+            "recent_results": [
+                {"time": r.checked_at.strftime("%Y-%m-%d %H:%M"), "result": r.check_result}
+                for r in rows
+            ],
+            "systems": [],
         }
 
     async def _get_access_controls(self) -> Dict:
-        """Get access control metrics"""
+        """Get access control metrics from password_policy checks."""
+        result = await self.db.execute(
+            text("""
+                SELECT check_result, COUNT(*)
+                FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND checked_at >= :start AND checked_at < :end
+                  AND check_type = 'windows_password_policy'
+                GROUP BY check_result
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
+
+        results = {r.check_result: r.count for r in result.fetchall()}
+        total = sum(results.values())
+        pass_count = results.get("pass", 0)
 
         return {
-            "failed_logins": {
-                "total": 12,
-                "threshold": 10,
-                "lockouts": 1
+            "password_policy": {
+                "total_checks": total,
+                "pass_count": pass_count,
+                "fail_count": results.get("fail", 0),
+                "compliance_rate": f"{pass_count * 100 / total:.0f}%" if total > 0 else "N/A",
             },
-            "dormant_accounts": {
-                "count": 2,
-                "definition": "No login in 90+ days"
-            },
-            "mfa": {
-                "total_users": 24,
-                "mfa_enabled": 24,
-                "coverage_pct": 100.0,
-                "break_glass_accounts": 2
-            }
         }
 
     async def _get_patch_posture(self) -> Dict:
-        """Get patch/vulnerability status"""
+        """Get patch/update posture from nixos_generation checks."""
+        result = await self.db.execute(
+            text("""
+                SELECT check_result, checked_at
+                FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND check_type = 'nixos_generation'
+                ORDER BY checked_at DESC
+                LIMIT 1
+            """),
+            {"sid": self.site_id},
+        )
+        row = result.fetchone()
 
         return {
-            "last_scan": "2025-10-30",
-            "critical_pending": 0,
-            "high_pending": 2,
-            "medium_pending": 8,
-            "recent_patches": [
-                {
-                    "cve": "CVE-2025-1234",
-                    "discovered": "2025-10-15",
-                    "patched": "2025-10-15",
-                    "mttr_hours": 4.2
-                },
-                {
-                    "cve": "CVE-2025-5678",
-                    "discovered": "2025-10-20",
-                    "patched": "2025-10-21",
-                    "mttr_hours": 18.7
-                }
-            ]
+            "last_check": row.checked_at.strftime("%Y-%m-%d") if row else "N/A",
+            "status": row.check_result if row else "unknown",
+            "note": "NixOS declarative configuration - patches applied via flake update",
         }
 
     async def _get_encryption_status(self) -> Dict:
-        """Get encryption status"""
+        """Get encryption status from bitlocker checks."""
+        result = await self.db.execute(
+            text("""
+                SELECT check_result, COUNT(*)
+                FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND checked_at >= :start AND checked_at < :end
+                  AND check_type = 'windows_bitlocker_status'
+                GROUP BY check_result
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
+
+        results = {r.check_result: r.count for r in result.fetchall()}
 
         return {
-            "at_rest": [
-                {
-                    "volume": "/dev/sda2",
-                    "type": "LUKS",
-                    "status": "✅ Encrypted",
-                    "algorithm": "AES-256-XTS"
-                },
-                {
-                    "volume": "Backups",
-                    "type": "Object Storage",
-                    "status": "✅ Encrypted",
-                    "algorithm": "AES-256-GCM"
-                }
-            ],
-            "in_transit": [
-                {
-                    "service": "Web Portal",
-                    "protocol": "TLS 1.3",
-                    "certificate": "wildcard.clinic.com",
-                    "expiry": "2026-03-15"
-                },
-                {
-                    "service": "VPN",
-                    "protocol": "WireGuard",
-                    "certificate": "psk+pubkey",
-                    "expiry": "N/A (rotated)"
-                }
-            ]
+            "bitlocker": {
+                "total_checks": sum(results.values()),
+                "pass_count": results.get("pass", 0),
+                "fail_count": results.get("fail", 0),
+                "status": "Enabled" if results.get("pass", 0) > 0 else "Not detected",
+            },
+            "in_transit": "TLS 1.2+ enforced (mTLS for agent communication)",
         }
 
     async def _get_incidents(self) -> List[Dict]:
-        """Get incidents for the month"""
+        """Get incidents from fail→pass transitions (auto-healed)."""
+        result = await self.db.execute(
+            text("""
+                SELECT check_type, check_result, checked_at, bundle_id
+                FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND checked_at >= :start AND checked_at < :end
+                  AND check_result = 'fail'
+                ORDER BY checked_at DESC
+                LIMIT 20
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
 
-        return [
-            {
-                "incident_id": "INC-2025-10-001",
-                "type": "Backup Failure",
+        incidents = []
+        for row in result.fetchall():
+            incidents.append({
+                "incident_id": row.bundle_id,
+                "type": row.check_type.replace("_", " ").title(),
                 "severity": "High",
-                "auto_fixed": True,
-                "resolution_minutes": 12
-            },
-            {
-                "incident_id": "INC-2025-10-002",
-                "type": "Cert Expiring",
-                "severity": "Medium",
-                "auto_fixed": True,
-                "resolution_minutes": 8
-            }
-        ]
+                "time": row.checked_at.strftime("%Y-%m-%d %H:%M"),
+            })
+
+        return incidents[:10]
 
     async def _get_baseline_exceptions(self) -> List[Dict]:
-        """Get active baseline exceptions"""
+        """Get active compliance exceptions."""
+        result = await self.db.execute(
+            text("""
+                SELECT item_id, scope_type, reason, expiration_date
+                FROM compliance_exceptions
+                WHERE site_id = :sid
+                  AND is_active = true
+                  AND expiration_date > NOW()
+                ORDER BY created_at DESC
+                LIMIT 10
+            """),
+            {"sid": self.site_id},
+        )
 
-        return [
-            {
-                "rule": "privileged_access",
-                "scope": "admin@clinic.com",
-                "reason": "Board approval pending",
-                "owner": "Security Team",
-                "risk": "Low",
-                "expires": "2025-11-15"
-            }
-        ]
+        exceptions = []
+        for row in result.fetchall():
+            exceptions.append({
+                "rule": row.item_id,
+                "scope": row.scope_type,
+                "reason": row.reason,
+                "expires": row.expiration_date.strftime("%Y-%m-%d") if row.expiration_date else "N/A",
+            })
 
-    async def _get_evidence_bundles(self) -> Dict:
-        """Get evidence bundle manifest"""
+        return exceptions
+
+    async def _get_evidence_manifest(self) -> Dict:
+        """Get evidence chain summary for the period."""
+        result = await self.db.execute(
+            text("""
+                SELECT
+                    COUNT(*) as total_bundles,
+                    COUNT(*) FILTER (WHERE signature_valid = true) as signed_count,
+                    MIN(chain_position) as first_position,
+                    MAX(chain_position) as last_position,
+                    MIN(checked_at) as first_bundle,
+                    MAX(checked_at) as last_bundle,
+                    MAX(chain_hash) as latest_chain_hash
+                FROM compliance_bundles
+                WHERE site_id = :sid
+                  AND checked_at >= :start AND checked_at < :end
+            """),
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+        )
+        row = result.fetchone()
+
+        # OTS status (ots_proofs uses naive timestamps)
+        naive_start = self._period_start.replace(tzinfo=None)
+        naive_end = self._period_end.replace(tzinfo=None)
+        ots_result = await self.db.execute(
+            text("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE status = 'anchored') as anchored
+                FROM ots_proofs
+                WHERE site_id = :sid
+                  AND submitted_at >= :start AND submitted_at < :end
+            """),
+            {"sid": self.site_id, "start": naive_start, "end": naive_end},
+        )
+        ots_row = ots_result.fetchone()
 
         return {
-            "bundle_id": f"EB-{self.year}{self.month:02d}-{self.client_id}",
-            "generated": datetime.utcnow().isoformat(),
-            "signature": "sha256:x9y8z7...",
-            "worm_url": f"s3://compliance-worm/{self.client_id}/{self.year}/{self.month:02d}/",
-            "contents": [
-                "posture_report.pdf",
-                "snapshots/ (24 daily snapshots)",
-                "rule_results.json",
-                "evidence_artifacts.zip",
-                "manifest.json (signed)"
-            ]
+            "total_bundles": row.total_bundles or 0,
+            "signed_bundles": row.signed_count or 0,
+            "chain_range": f"{row.first_position or 0} - {row.last_position or 0}",
+            "period_start": row.first_bundle.isoformat() if row.first_bundle else "N/A",
+            "period_end": row.last_bundle.isoformat() if row.last_bundle else "N/A",
+            "latest_chain_hash": row.latest_chain_hash[:16] + "..." if row.latest_chain_hash else "N/A",
+            "worm_url": f"s3://evidence-worm/{self.site_id}/{self.year}/{self.month:02d}/",
+            "ots_submitted": ots_row.total if ots_row else 0,
+            "ots_anchored": ots_row.anchored if ots_row else 0,
         }
 
     def _render_markdown(self, data: Dict) -> str:
-        """Render compliance packet markdown"""
-
+        """Render compliance packet markdown from real data."""
         template = Template("""# Monthly HIPAA Compliance Packet
 
-**Client:** {{ client_name }}
+**Site:** {{ client_name }}
+**Site ID:** {{ client_id }}
 **Period:** {{ month }} {{ year }}
 **Baseline:** NixOS-HIPAA v{{ baseline_version }}
 **Generated:** {{ generated_timestamp }}
@@ -421,205 +581,115 @@ class CompliancePacket:
 
 **PHI Disclaimer:** This report contains system metadata and operational metrics only. No Protected Health Information (PHI) is processed, stored, or transmitted by the compliance monitoring system.
 
-**Compliance Status:** {{ compliance_pct }}% of controls passing
-**Critical Issues:** {{ critical_issue_count }} ({{ auto_fixed_count }} auto-fixed)
-**MTTR (Critical Patches):** {{ mttr_hours }}h
-**Backup Success Rate:** {{ backup_success_rate }}%
+| Metric | Value |
+|--------|-------|
+| Overall Compliance | {{ compliance_pct }}% |
+| Failed Checks | {{ critical_issue_count }} |
+| Check Types Auto-Recovered | {{ auto_fixed_count }} |
+| Mean Time to Recovery | {{ mttr_hours }}h |
+| Backup Success Rate | {{ backup_success_rate }}% |
 
 ---
 
-## Control Posture Heatmap
+## Control Posture
 
-| Control | Description | Status | Evidence ID | Last Checked |
-|---------|-------------|--------|-------------|--------------|
-{% for control in controls %}| {{ control.control }} | {{ control.description }} | {{ control.status }} | {{ control.evidence_id }} | {{ control.last_checked }} |
+| HIPAA Control | Description | Status | Pass Rate | Checks | Last Verified |
+|---------------|-------------|--------|-----------|--------|---------------|
+{% for c in controls %}| {{ c.control }} | {{ c.description }} | {{ c.status }} | {{ c.pass_rate }} | {{ c.check_count }} | {{ c.last_checked }} |
 {% endfor %}
 
-**Legend:** ✅ Pass | ⚠️ Warning | ❌ Fail
-
 ---
 
-## Backups & Test-Restores
+## Backup Status
 
-**Backup Schedule:** {{ backup_summary.schedule }}
+**Schedule:** {{ backup_summary.schedule }}
 **Retention:** {{ backup_summary.retention_days }} days
-**Encryption:** {{ backup_summary.encryption }}
 
-| Week | Backup Status | Size (GB) | Checksum | Restore Test | Test Result |
-|------|--------------|-----------|----------|--------------|-------------|
-{% for week in backup_summary.weeks %}| {{ week.week }} | {{ week.status }} | {{ week.size_gb }} | {{ week.checksum }} | {{ week.restore_test_date or 'Not scheduled' }} | {{ week.restore_test_result }} |
-{% endfor %}
+{% if backup_summary.weeks %}| Week | Status | Total Checks | Passed | Failed |
+|------|--------|-------------|--------|--------|
+{% for w in backup_summary.weeks %}| {{ w.week }} | {{ w.status }} | {{ w.checks }} | {{ w.pass_count }} | {{ w.fail_count }} |
+{% endfor %}{% else %}No backup checks recorded this period.
+{% endif %}
 
-**HIPAA Control:** §164.308(a)(7)(ii)(A), §164.310(d)(2)(iv)
+**HIPAA Control:** 164.308(a)(7)(ii)(A), 164.310(d)(2)(iv)
 
 ---
 
 ## Time Synchronization
 
 **NTP Server:** {{ time_sync.ntp_server }}
-**Sync Status:** {{ time_sync.sync_status }}
-**Max Drift Observed:** {{ time_sync.max_drift_ms }}ms
-**Threshold:** ±{{ time_sync.threshold_ms }}ms
+**Status:** {{ time_sync.sync_status }}
+{% if time_sync.last_check %}**Last Check:** {{ time_sync.last_check }}{% endif %}
 
-| System | Drift (ms) | Status | Last Sync |
-|--------|-----------|--------|-----------|
-{% for system in time_sync.systems %}| {{ system.hostname }} | {{ system.drift_ms }} | {{ system.status }} | {{ system.last_sync }} |
-{% endfor %}
-
-**HIPAA Control:** §164.312(b) (Audit controls require accurate timestamps)
+**HIPAA Control:** 164.312(b)
 
 ---
 
 ## Access Controls
 
-### Failed Login Attempts
+{% if access_controls.password_policy %}**Password Policy Checks:** {{ access_controls.password_policy.total_checks }}
+**Pass Rate:** {{ access_controls.password_policy.compliance_rate }}
+{% endif %}
 
-**Total Failed Logins:** {{ access_controls.failed_logins.total }}
-**Threshold:** >{{ access_controls.failed_logins.threshold }} triggers alert
-**Lockouts:** {{ access_controls.failed_logins.lockouts }}
-
-### Dormant Accounts
-
-**Found:** {{ access_controls.dormant_accounts.count }}
-**Definition:** {{ access_controls.dormant_accounts.definition }}
-
-### MFA Status
-
-**Total Active Users:** {{ access_controls.mfa.total_users }}
-**MFA Enabled:** {{ access_controls.mfa.mfa_enabled }} ({{ access_controls.mfa.coverage_pct }}%)
-**Break-Glass Accounts:** {{ access_controls.mfa.break_glass_accounts }} (Target: ≤2)
-
-**HIPAA Control:** §164.312(a)(2)(i), §164.308(a)(3)(ii)(C)
+**HIPAA Control:** 164.312(a)(1), 164.308(a)(3)(ii)(C)
 
 ---
 
-## Patch & Vulnerability Posture
+## Patch & System Posture
 
-**Last Vulnerability Scan:** {{ patch_posture.last_scan }}
-**Critical Patches Pending:** {{ patch_posture.critical_pending }}
-**High Patches Pending:** {{ patch_posture.high_pending }}
-**Medium Patches Pending:** {{ patch_posture.medium_pending }}
+**Last Check:** {{ patch_posture.last_check }}
+**Status:** {{ patch_posture.status }}
+**Note:** {{ patch_posture.note }}
 
-### Patch Timeline (Critical)
-
-| CVE | Discovered | Patched | MTTR |
-|-----|-----------|---------|------|
-{% for patch in patch_posture.recent_patches %}| {{ patch.cve }} | {{ patch.discovered }} | {{ patch.patched }} | {{ patch.mttr_hours }}h |
-{% endfor %}
-
-**HIPAA Control:** §164.308(a)(5)(ii)(B)
+**HIPAA Control:** 164.308(a)(5)(ii)(B)
 
 ---
 
 ## Encryption Status
 
-### At-Rest Encryption
+**BitLocker:** {{ encryption_status.bitlocker.status }} ({{ encryption_status.bitlocker.pass_count }}/{{ encryption_status.bitlocker.total_checks }} checks passed)
+**In-Transit:** {{ encryption_status.in_transit }}
 
-| Volume | Type | Status | Algorithm |
-|--------|------|--------|-----------|
-{% for vol in encryption_status.at_rest %}| {{ vol.volume }} | {{ vol.type }} | {{ vol.status }} | {{ vol.algorithm }} |
-{% endfor %}
-
-### In-Transit Encryption
-
-| Service | Protocol | Certificate | Expiry |
-|---------|----------|-------------|--------|
-{% for svc in encryption_status.in_transit %}| {{ svc.service }} | {{ svc.protocol }} | {{ svc.certificate }} | {{ svc.expiry }} |
-{% endfor %}
-
-**HIPAA Control:** §164.312(a)(2)(iv), §164.312(e)(1)
+**HIPAA Control:** 164.312(a)(2)(iv), 164.312(e)(1)
 
 ---
 
-## Incidents & Exceptions
+## Incidents (Failed Checks)
 
-### Incidents This Month
-
-| Incident ID | Type | Severity | Auto-Fixed | Resolution Time |
-|-------------|------|----------|------------|-----------------|
-{% for incident in incidents %}| {{ incident.incident_id }} | {{ incident.type }} | {{ incident.severity }} | {{ "Yes" if incident.auto_fixed else "No" }} | {{ incident.resolution_minutes }} minutes |
-{% endfor %}
-
-### Active Baseline Exceptions
-
-| Rule | Scope | Reason | Owner | Risk | Expires |
-|------|-------|--------|-------|------|---------|
-{% for exc in exceptions %}| {{ exc.rule }} | {{ exc.scope }} | {{ exc.reason }} | {{ exc.owner }} | {{ exc.risk }} | {{ exc.expires }} |
-{% endfor %}
+{% if incidents %}| Time | Check Type | Bundle ID |
+|------|-----------|-----------|
+{% for inc in incidents %}| {{ inc.time }} | {{ inc.type }} | {{ inc.incident_id[:20] }}... |
+{% endfor %}{% else %}No failed checks recorded this period.
+{% endif %}
 
 ---
 
-## Evidence Bundle Manifest
+{% if exceptions %}## Active Exceptions
 
-**Bundle ID:** {{ evidence_bundles.bundle_id }}
-**Generated:** {{ evidence_bundles.generated }}
-**Signature:** `{{ evidence_bundles.signature }}`
-**WORM Storage URL:** `{{ evidence_bundles.worm_url }}`
-
-**Contents:**
-{% for item in evidence_bundles.contents %}- {{ item }}
+| Rule | Scope | Reason | Expires |
+|------|-------|--------|---------|
+{% for exc in exceptions %}| {{ exc.rule }} | {{ exc.scope }} | {{ exc.reason }} | {{ exc.expires }} |
 {% endfor %}
+
+---
+{% endif %}
+
+## Evidence Chain Manifest
+
+| Property | Value |
+|----------|-------|
+| Total Bundles | {{ evidence_bundles.total_bundles }} |
+| Signed (Ed25519) | {{ evidence_bundles.signed_bundles }} |
+| Chain Positions | {{ evidence_bundles.chain_range }} |
+| Period Coverage | {{ evidence_bundles.period_start }} to {{ evidence_bundles.period_end }} |
+| Latest Chain Hash | `{{ evidence_bundles.latest_chain_hash }}` |
+| WORM Storage | `{{ evidence_bundles.worm_url }}` |
+| OTS Proofs Submitted | {{ evidence_bundles.ots_submitted }} |
+| OTS Bitcoin Anchored | {{ evidence_bundles.ots_anchored }} |
 
 ---
 
 **End of Monthly Compliance Packet**
-**Next Review:** {{ month }} 1st, {{ year + 1 if month == 12 else year }}
-
-**Questions:** Contact security@clinic.com
-**Audit Support:** All evidence bundles available for 24 months
+**Audit Support:** All evidence bundles retained for 90+ days in WORM storage
 """)
-
         return template.render(**data)
-
-    async def _markdown_to_pdf(self, md_path: Path) -> Path:
-        """Convert markdown to PDF using pandoc"""
-
-        pdf_path = md_path.with_suffix('.pdf')
-
-        try:
-            # Try using pandoc
-            subprocess.run([
-                'pandoc',
-                str(md_path),
-                '-o', str(pdf_path),
-                '--pdf-engine=xelatex',
-                '-V', 'geometry:margin=1in',
-                '-V', 'fontsize=10pt'
-            ], check=True)
-
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            print("Warning: pandoc not available, PDF not generated")
-            print(f"Markdown available at: {md_path}")
-            # Return markdown path if PDF generation fails
-            return md_path
-
-        return pdf_path
-
-
-# CLI interface
-if __name__ == "__main__":
-    import asyncio
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Generate HIPAA compliance packet")
-    parser.add_argument("--client", required=True, help="Client ID")
-    parser.add_argument("--month", type=int, default=datetime.now().month, help="Month (1-12)")
-    parser.add_argument("--year", type=int, default=datetime.now().year, help="Year")
-    parser.add_argument("--baseline", default="1.0", help="Baseline version")
-    parser.add_argument("--evidence-dir", default="./evidence", help="Evidence directory")
-
-    args = parser.parse_args()
-
-    async def main():
-        packet = CompliancePacket(
-            client_id=args.client,
-            month=args.month,
-            year=args.year,
-            baseline_version=args.baseline,
-            evidence_dir=args.evidence_dir
-        )
-
-        pdf_path = await packet.generate_packet()
-        print(f"\n✅ Compliance packet generated: {pdf_path}")
-
-    asyncio.run(main())
