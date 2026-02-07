@@ -286,10 +286,18 @@ in
             rmdir "$TMPDIR"
             if [ ! -f /tmp/force-reinstall ]; then
               dialog --backtitle "OsirisCare MSP Compliance Platform" \
-                --title " Installation Already Complete " \
-                --msgbox "\nAn OsirisCare appliance is already installed on $INTERNAL_DEV.\n\n  1. Remove the USB installer\n  2. Reboot to start the appliance\n\nTo force reinstall:\n  Alt+F2 → login as root (password: osiris2024)\n  touch /tmp/force-reinstall\n  systemctl restart msp-auto-install" \
-                18 65 2>/dev/null || true
-              exit 0
+                --title " Existing Installation Detected " \
+                --yesno "\nAn OsirisCare appliance is already installed on $INTERNAL_DEV ($DEV_SIZE).\n\n  Choose an action:\n\n    Yes  =  Wipe and reinstall (ALL DATA ERASED)\n    No   =  Cancel (remove USB and reboot)\n\n  Debug console: Alt+F2 (root / osiris2024)" \
+                16 65 2>/dev/null
+              CHOICE=$?
+              if [ "$CHOICE" -ne 0 ]; then
+                dialog --backtitle "OsirisCare MSP Compliance Platform" \
+                  --title " Installation Cancelled " \
+                  --msgbox "\nRemove the USB installer and reboot to start\nthe existing appliance." \
+                  9 55 2>/dev/null || true
+                exit 0
+              fi
+              log "User chose to reinstall over existing installation"
             fi
             log "Force reinstall requested"
           fi
