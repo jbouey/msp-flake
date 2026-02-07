@@ -719,7 +719,7 @@ EOF
       if [ -f "$CONFIG_PATH" ]; then
         SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH")
         if [ -n "$SITE_ID" ]; then
-          hostname "$SITE_ID"
+          ${pkgs.inetutils}/bin/hostname "$SITE_ID"
           echo "Hostname set to: $SITE_ID"
         fi
 
