@@ -109,7 +109,7 @@ in
     };
 
     # Kernel params
-    kernelParams = [ "console=tty1" "quiet" ];
+    kernelParams = [ "console=tty1" "console=ttyS0,115200" ];
 
     # Essential kernel modules for HP T640 and common hardware
     initrd.availableKernelModules = [
