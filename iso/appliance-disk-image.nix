@@ -379,9 +379,13 @@ in
     };
   };
 
+  # Root password for console/SSH access (lab + emergency)
+  users.users.root.initialPassword = "osiris2024";
+
   # Lab management SSH key + per-site keys provisioned via config.yaml or central API
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE8uV6E//e4fQXlDEMoE0uADd/nAzKwqA0btaoHc28Bl macs-imac-vm-access"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
   ];
 
   # ============================================================================

@@ -168,7 +168,7 @@ in
 
     path = with pkgs; [
       util-linux parted dosfstools e2fsprogs nixos-install-tools
-      git curl coreutils gnugrep gawk procps
+      git curl coreutils gnugrep gawk procps ncurses
       nix  # Required - nixos-install calls nix and nix-build internally
     ];
 
@@ -193,7 +193,7 @@ in
       }
 
       banner() {
-        clear
+        printf '\033c'
         echo ""
         echo -e "  ''${C_CYAN}╔═══════════════════════════════════════════════════════════╗"
         echo -e "  ║                                                           ║"
@@ -305,9 +305,9 @@ in
             fi
             log "Force reinstall requested"
           fi
-          umount "$TMPDIR" 2>/dev/null
+          umount "$TMPDIR" 2>/dev/null || true
         fi
-        rmdir "$TMPDIR" 2>/dev/null
+        rmdir "$TMPDIR" 2>/dev/null || true
       fi
 
       # Countdown
