@@ -676,24 +676,31 @@ async def get_promotion_candidates(db: AsyncSession = Depends(get_db)):
 @router.get("/learning/history", response_model=List[PromotionHistory])
 async def get_promotion_history(limit: int = Query(default=20, le=100), db: AsyncSession = Depends(get_db)):
     """Get recently promoted L2->L1 rules."""
+    # Match execution telemetry by incident_type + target (hostname or site_id)
+    # from pattern_signature format "check_type:check_type:target".
+    # Old approach matched on promoted_to_rule_id but agent records executions
+    # with different runbook IDs (e.g. L1-SVC-DNS-001 vs RB-AUTO-SERVICE_).
     result = await db.execute(text("""
         SELECT
             p.pattern_id,
             p.pattern_signature,
             p.promoted_to_rule_id,
             p.promoted_at,
-            COALESCE(
-                (SELECT COUNT(*) FROM execution_telemetry et
-                 WHERE et.runbook_id = p.promoted_to_rule_id
-                 AND et.created_at > p.promoted_at), 0
-            ) as executions_since,
-            COALESCE(
-                (SELECT COUNT(*) FILTER (WHERE success = true) * 100.0 / NULLIF(COUNT(*), 0)
-                 FROM execution_telemetry et
-                 WHERE et.runbook_id = p.promoted_to_rule_id
-                 AND et.created_at > p.promoted_at), 0
-            ) as success_rate
+            COALESCE(exec_stats.total, 0) as executions_since,
+            COALESCE(exec_stats.success_pct, 0) as success_rate
         FROM patterns p
+        LEFT JOIN LATERAL (
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE et.success) * 100.0 / NULLIF(COUNT(*), 0) as success_pct
+            FROM execution_telemetry et
+            WHERE et.incident_type = p.incident_type
+            AND et.created_at > p.promoted_at
+            AND (
+                et.hostname = split_part(p.pattern_signature, ':', 3)
+                OR et.site_id = split_part(p.pattern_signature, ':', 3)
+            )
+        ) exec_stats ON true
         WHERE p.status = 'promoted'
         ORDER BY p.promoted_at DESC
         LIMIT :limit

@@ -22,7 +22,7 @@ export const Learning: React.FC = () => {
   // Fetch data
   const { data: status, isLoading: isLoadingStatus, isError: isStatusError } = useLearningStatus();
   const { data: candidates = [], isLoading: isLoadingCandidates, isError: isCandidatesError } = usePromotionCandidates();
-  const { data: history = [], isLoading: isLoadingHistory } = usePromotionHistory(10);
+  const { data: history = [], isLoading: isLoadingHistory } = usePromotionHistory(50);
 
   // Mutations
   const promoteMutation = usePromotePattern();
