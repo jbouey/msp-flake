@@ -529,7 +529,7 @@ in
     path = with pkgs; [ coreutils systemd util-linux iproute2 gnugrep gawk ];
 
     script = ''
-      clear
+      printf '\033c'
       echo -e "\033[2m── OsirisCare Install Log (Alt+F1 for main display) ──\033[0m"
       echo ""
 
