@@ -3784,13 +3784,29 @@ def _apply_overlay():
 
     If /var/lib/msp/agent-overlay/ exists with a VERSION file,
     prepend it to sys.path so updated code takes priority.
+
+    Since appliance_agent is already loaded by the time main() calls this,
+    a simple sys.path change won't reload it. Instead, if the overlay is new
+    (not yet in sys.path), we set PYTHONPATH and os.execve to restart the
+    process fresh — the overlay modules load first on the new invocation.
+    On the second invocation the overlay path is already in sys.path so we
+    skip the restart and proceed normally.
     """
     overlay_dir = Path("/var/lib/msp/agent-overlay")
     version_file = overlay_dir / "VERSION"
     if version_file.exists():
         overlay_path = str(overlay_dir)
         if overlay_path not in sys.path:
-            sys.path.insert(0, overlay_path)
+            # First time seeing overlay — restart process so overlay loads from scratch
+            version = version_file.read_text().strip()
+            print(f"[overlay] Agent overlay v{version} detected, restarting with overlay on PYTHONPATH")
+            import os
+            env = os.environ.copy()
+            existing = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = overlay_path + (":" + existing if existing else "")
+            os.execve(sys.executable, [sys.executable] + sys.argv, env)
+            # execve replaces the process — code below never runs
+        else:
             version = version_file.read_text().strip()
             print(f"[overlay] Agent overlay v{version} active from {overlay_path}")
 
