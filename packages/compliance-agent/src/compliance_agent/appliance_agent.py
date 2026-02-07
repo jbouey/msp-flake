@@ -3314,17 +3314,16 @@ Environment="PYTHONPATH={overlay_dir}"
             }
 
     def _do_overlay_restart(self, overlay_dir: str):
-        """Restart agent process with PYTHONPATH pointing to overlay."""
+        """Restart agent via systemctl so _apply_overlay() runs on fresh start.
+
+        Note: os.execve doesn't work on NixOS because sys.argv[0] is the nix
+        bash wrapper, not a Python script. systemctl restart uses ExecStart
+        which goes through the wrapper correctly, and _apply_overlay() handles
+        the module reload.
+        """
         import os
-        env = os.environ.copy()
-        existing = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = f"{overlay_dir}:{existing}" if existing else overlay_dir
-        logger.info(f"Re-executing agent with PYTHONPATH={env['PYTHONPATH']}")
-        try:
-            os.execve(sys.executable, [sys.executable] + sys.argv, env)
-        except Exception as e:
-            logger.error(f"Failed to re-exec with overlay: {e}, falling back to systemctl restart")
-            os.system("systemctl restart compliance-agent")
+        logger.info(f"Restarting agent via systemctl (overlay at {overlay_dir})")
+        os.system("systemctl restart compliance-agent")
 
     async def _handle_view_logs(self, params: Dict) -> Dict:
         """Return recent agent logs."""
@@ -3783,32 +3782,59 @@ def _apply_overlay():
     """Check for and apply agent overlay (hot-update support).
 
     If /var/lib/msp/agent-overlay/ exists with a VERSION file,
-    prepend it to sys.path so updated code takes priority.
+    we re-import ALL compliance_agent modules from the overlay and
+    re-invoke main() from the overlay code. This is necessary because
+    by the time this function runs, the nix-installed modules are
+    already loaded — simple sys.path changes don't affect them.
 
-    Since appliance_agent is already loaded by the time main() calls this,
-    a simple sys.path change won't reload it. Instead, if the overlay is new
-    (not yet in sys.path), we set PYTHONPATH and os.execve to restart the
-    process fresh — the overlay modules load first on the new invocation.
-    On the second invocation the overlay path is already in sys.path so we
-    skip the restart and proceed normally.
+    On NixOS, buildPythonApplication wrappers override PYTHONPATH,
+    so os.execve-based approaches don't work either. Instead we:
+    1. Fix sys.path and compliance_agent.__path__
+    2. Purge ALL cached compliance_agent modules
+    3. Re-import and call overlay's main() (which sees the overlay
+       is already at sys.path[0] and proceeds normally)
     """
     overlay_dir = Path("/var/lib/msp/agent-overlay")
     version_file = overlay_dir / "VERSION"
-    if version_file.exists():
-        overlay_path = str(overlay_dir)
-        if overlay_path not in sys.path:
-            # First time seeing overlay — restart process so overlay loads from scratch
-            version = version_file.read_text().strip()
-            print(f"[overlay] Agent overlay v{version} detected, restarting with overlay on PYTHONPATH")
-            import os
-            env = os.environ.copy()
-            existing = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = overlay_path + (":" + existing if existing else "")
-            os.execve(sys.executable, [sys.executable] + sys.argv, env)
-            # execve replaces the process — code below never runs
-        else:
-            version = version_file.read_text().strip()
-            print(f"[overlay] Agent overlay v{version} active from {overlay_path}")
+    if not version_file.exists():
+        return
+
+    overlay_path = str(overlay_dir)
+    overlay_pkg_path = str(overlay_dir / "compliance_agent")
+    version = version_file.read_text().strip()
+
+    # Already applied — overlay is first on sys.path, just proceed
+    if sys.path and sys.path[0] == overlay_path:
+        print(f"[overlay] Agent overlay v{version} active from {overlay_path}")
+        return
+
+    print(f"[overlay] Agent overlay v{version} detected, activating from {overlay_path}")
+
+    # Step 1: Put overlay first on sys.path
+    while overlay_path in sys.path:
+        sys.path.remove(overlay_path)
+    sys.path.insert(0, overlay_path)
+
+    # Step 2: Update compliance_agent.__path__ so submodule imports use overlay
+    import compliance_agent
+    if hasattr(compliance_agent, '__path__'):
+        while overlay_pkg_path in compliance_agent.__path__:
+            compliance_agent.__path__.remove(overlay_pkg_path)
+        compliance_agent.__path__.insert(0, overlay_pkg_path)
+
+    # Step 3: Purge ALL cached compliance_agent modules (including package itself)
+    to_purge = [k for k in sys.modules if k.startswith('compliance_agent')]
+    for mod_name in to_purge:
+        del sys.modules[mod_name]
+
+    print(f"[overlay] Purged {len(to_purge)} modules, re-importing from overlay")
+
+    # Step 4: Re-import main from overlay and run it (never returns)
+    from compliance_agent.appliance_agent import main as overlay_main
+    try:
+        overlay_main()
+    finally:
+        sys.exit(0)
 
 
 def main():
