@@ -1,0 +1,304 @@
+# Clinic Network Compliance L1 Rules
+# Rules for healthcare clinic endpoint device auditing.
+# Maps clinic-specific check types to the new clinic runbooks.
+
+rules:
+  # =========================================================================
+  # Network Security
+  # =========================================================================
+  - id: L1-CLINIC-NET-DHCP-001
+    name: Rogue DHCP Server Detected
+    description: Unauthorized DHCP server found on clinic network
+    conditions:
+      - field: check_type
+        operator: eq
+        value: rogue_dhcp
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-NET-006
+      phases: ["detect", "remediate"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+      - "164.312(e)(1)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 3
+    cooldown_seconds: 1800
+
+  - id: L1-CLINIC-NET-VLAN-001
+    name: Network Segmentation Violation
+    description: ePHI network segmentation not properly enforced
+    conditions:
+      - field: check_type
+        operator: eq
+        value: vlan_segmentation
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-NET-007
+      phases: ["detect", "remediate"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+      - "164.312(e)(1)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 3
+    cooldown_seconds: 3600
+
+  - id: L1-CLINIC-NET-PORTS-001
+    name: Unauthorized Open Ports
+    description: Unapproved services listening on network
+    conditions:
+      - field: check_type
+        operator: eq
+        value: open_ports
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-NET-008
+      phases: ["detect", "remediate", "verify"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+      - "164.312(e)(1)"
+    severity_filter:
+      - medium
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 600
+
+  - id: L1-CLINIC-NET-DNS-001
+    name: DNS Content Filtering Not Active
+    description: DNS filtering not configured for malware/phishing protection
+    conditions:
+      - field: check_type
+        operator: eq
+        value: dns_filtering
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-NET-009
+      phases: ["detect", "remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(5)(ii)(B)"
+      - "164.312(e)(1)"
+    severity_filter:
+      - medium
+      - high
+    enabled: true
+    priority: 10
+    cooldown_seconds: 1800
+
+  # =========================================================================
+  # Device Security
+  # =========================================================================
+  - id: L1-CLINIC-DEV-PRINTER-001
+    name: Non-Compliant Printer/Copier
+    description: Printer using default credentials or lacking encryption
+    conditions:
+      - field: check_type
+        operator: eq
+        value: printer_security
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-DEVICE-001
+      phases: ["detect", "remediate"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+      - "164.312(e)(2)(ii)"
+      - "164.310(d)(1)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 3600
+
+  - id: L1-CLINIC-DEV-IOT-001
+    name: Unmanaged Medical Device Detected
+    description: IoT/medical device found without proper inventory tracking
+    conditions:
+      - field: check_type
+        operator: eq
+        value: iot_medical_device
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-DEVICE-002
+      phases: ["detect", "remediate"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+      - "164.308(a)(1)(ii)(A)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 3600
+
+  - id: L1-CLINIC-DEV-CREDS-001
+    name: Default Credentials in Use
+    description: Network device using manufacturer default credentials
+    conditions:
+      - field: check_type
+        operator: eq
+        value: default_credentials
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-DEVICE-003
+      phases: ["detect", "remediate"]
+    hipaa_controls:
+      - "164.312(d)"
+      - "164.312(a)(1)"
+    severity_filter:
+      - critical
+    enabled: true
+    priority: 1
+    cooldown_seconds: 1800
+
+  - id: L1-CLINIC-DEV-EDR-001
+    name: Endpoint Missing Antimalware
+    description: Workstation without managed AV/EDR agent
+    conditions:
+      - field: check_type
+        operator: eq
+        value: edr_deployment
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-DEVICE-004
+      phases: ["detect", "remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(5)(ii)(B)"
+      - "164.312(b)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 3
+    cooldown_seconds: 1800
+
+  # =========================================================================
+  # Access Control
+  # =========================================================================
+  - id: L1-CLINIC-ACCESS-MFA-001
+    name: MFA Not Enforced
+    description: Multi-factor authentication not enabled for user access
+    conditions:
+      - field: check_type
+        operator: eq
+        value: mfa_enforcement
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-ACCESS-002
+      phases: ["detect", "remediate", "verify"]
+    hipaa_controls:
+      - "164.312(d)"
+      - "164.312(a)(2)(i)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 3
+    cooldown_seconds: 3600
+
+  - id: L1-CLINIC-ACCESS-BRUTE-001
+    name: Brute Force Login Attempt
+    description: Excessive failed login attempts detected
+    conditions:
+      - field: check_type
+        operator: eq
+        value: failed_login_monitor
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-ACCESS-003
+      phases: ["detect", "remediate", "verify"]
+    hipaa_controls:
+      - "164.312(b)"
+      - "164.308(a)(1)(ii)(D)"
+      - "164.312(a)(1)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 1
+    cooldown_seconds: 300
+
+  - id: L1-CLINIC-ACCESS-WIFI-001
+    name: Guest WiFi Isolation Failure
+    description: Guest network can access internal ePHI resources
+    conditions:
+      - field: check_type
+        operator: eq
+        value: guest_wifi_isolation
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-ACCESS-004
+      phases: ["detect", "remediate"]
+    hipaa_controls:
+      - "164.312(a)(1)"
+      - "164.312(e)(1)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 3
+    cooldown_seconds: 3600
+
+  - id: L1-CLINIC-ACCESS-USB-001
+    name: Unauthorized USB Device Activity
+    description: Unapproved removable media connected to clinic workstation
+    conditions:
+      - field: check_type
+        operator: eq
+        value: usb_device_audit
+      - field: drift_detected
+        operator: eq
+        value: true
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-ACCESS-005
+      phases: ["detect", "remediate", "verify"]
+    hipaa_controls:
+      - "164.312(a)(2)(i)"
+      - "164.310(d)(1)"
+    severity_filter:
+      - medium
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 600

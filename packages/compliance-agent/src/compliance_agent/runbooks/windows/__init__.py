@@ -14,8 +14,11 @@ Categories:
 - Active Directory: Computer Account, GPO Compliance, LAPS (3 runbooks)
 - Certificates: Certificate Expiry (1 runbook)
 - RDP: Remote Desktop Hardening (1 runbook)
+- Clinic Network: Rogue DHCP, VLAN Audit, Open Ports, DNS Filtering (4 runbooks)
+- Clinic Devices: Printer Security, IoT Inventory, Default Credentials, EDR Deployment (4 runbooks)
+- Clinic Access: MFA Audit, Failed Login Monitoring, Guest WiFi Isolation, USB Enumeration (4 runbooks)
 
-Total: 35 runbooks
+Total: 47 runbooks
 """
 
 from typing import Dict, List, Optional
@@ -45,6 +48,9 @@ from .updates import UPDATES_RUNBOOKS
 from .active_directory import AD_RUNBOOKS
 from .certificates import CERT_RUNBOOKS
 from .rdp import RDP_RUNBOOKS
+from .clinic_network import CLINIC_NETWORK_RUNBOOKS
+from .clinic_devices import CLINIC_DEVICE_RUNBOOKS
+from .clinic_access import CLINIC_ACCESS_RUNBOOKS
 
 
 # =============================================================================
@@ -70,6 +76,12 @@ ALL_RUNBOOKS: Dict[str, WindowsRunbook] = {
     **CERT_RUNBOOKS,
     # RDP runbooks (1)
     **RDP_RUNBOOKS,
+    # Clinic Network runbooks (4)
+    **CLINIC_NETWORK_RUNBOOKS,
+    # Clinic Device runbooks (4)
+    **CLINIC_DEVICE_RUNBOOKS,
+    # Clinic Access runbooks (4)
+    **CLINIC_ACCESS_RUNBOOKS,
 }
 
 
@@ -141,6 +153,10 @@ def _get_category(runbook_id: str) -> str:
         return "firewall"
     elif runbook_id.startswith("RB-WIN-ENCRYPTION-"):
         return "encryption"
+    elif runbook_id.startswith("RB-WIN-DEVICE-"):
+        return "clinic_devices"
+    elif runbook_id.startswith("RB-WIN-ACCESS-"):
+        return "clinic_access"
     else:
         return "other"
 
@@ -230,6 +246,30 @@ def get_runbooks_by_check_type(check_type: str) -> List[WindowsRunbook]:
         # RDP checks
         "rdp_hardening": ["RB-WIN-RDP-001"],
 
+        # Clinic Network checks
+        "rogue_dhcp": ["RB-WIN-NET-006"],
+        "vlan_segmentation": ["RB-WIN-NET-007"],
+        "open_ports": ["RB-WIN-NET-008"],
+        "dns_filtering": ["RB-WIN-NET-009"],
+
+        # Clinic Device checks
+        "printer_security": ["RB-WIN-DEVICE-001"],
+        "iot_medical_device": ["RB-WIN-DEVICE-002"],
+        "default_credentials": ["RB-WIN-DEVICE-003"],
+        "edr_deployment": ["RB-WIN-DEVICE-004"],
+
+        # Clinic Access checks
+        "mfa_enforcement": ["RB-WIN-ACCESS-002"],
+        "failed_login": ["RB-WIN-ACCESS-003"],
+        "failed_login_monitor": ["RB-WIN-ACCESS-003"],
+        "brute_force": ["RB-WIN-ACCESS-003"],
+        "guest_wifi": ["RB-WIN-ACCESS-004"],
+        "guest_wifi_isolation": ["RB-WIN-ACCESS-004"],
+        "wifi_isolation": ["RB-WIN-ACCESS-004"],
+        "usb_devices": ["RB-WIN-ACCESS-005", "RB-WIN-SEC-015"],
+        "usb_device_audit": ["RB-WIN-ACCESS-005", "RB-WIN-SEC-015"],
+        "removable_media": ["RB-WIN-ACCESS-005", "RB-WIN-SEC-015"],
+
         # Critical services (generic)
         "critical_services": ["RB-WIN-SVC-001", "RB-WIN-SVC-002", "RB-WIN-SVC-004"],
     }
@@ -270,6 +310,9 @@ __all__ = [
     'AD_RUNBOOKS',
     'CERT_RUNBOOKS',
     'RDP_RUNBOOKS',
+    'CLINIC_NETWORK_RUNBOOKS',
+    'CLINIC_DEVICE_RUNBOOKS',
+    'CLINIC_ACCESS_RUNBOOKS',
 
     # Functions
     'get_runbook',
