@@ -350,20 +350,20 @@ async def check_rate_limit(site_id: str, action: str = "default") -> tuple[bool,
 # ============================================================================
 
 async def _ots_upgrade_loop():
-    """Periodically upgrade pending OTS proofs (every 2 hours)."""
-    await asyncio.sleep(60)  # Wait 1 min after startup
+    """Periodically upgrade pending OTS proofs (every 15 minutes)."""
+    await asyncio.sleep(30)  # Wait 30s after startup
     while True:
         try:
             from dashboard_api.evidence_chain import upgrade_pending_proofs
             async with async_session() as db:
-                result = await upgrade_pending_proofs(db, limit=200)
-                if result.get("upgraded", 0) > 0:
+                result = await upgrade_pending_proofs(db, limit=500)
+                if result.get("upgraded", 0) > 0 or result.get("checked", 0) > 0:
                     logger.info("OTS upgrade cycle", **result)
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.warning(f"OTS upgrade cycle failed: {e}")
-        await asyncio.sleep(7200)  # 2 hours
+        await asyncio.sleep(900)  # 15 minutes
 
 
 # ============================================================================
