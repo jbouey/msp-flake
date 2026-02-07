@@ -1,0 +1,152 @@
+# Linux/NixOS Baseline L1 Rules for Auto-Healing
+# These rules handle NixOS-specific check types from the appliance agent.
+
+rules:
+  # =========================================================================
+  # NTP Time Synchronization
+  # =========================================================================
+  - id: L1-LIN-NTP-001
+    name: NTP Time Sync Failure
+    description: Restart chrony/NTP service when time sync drifts
+    conditions:
+      - field: check_type
+        operator: eq
+        value: ntp_sync
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: status
+        operator: eq
+        value: fail
+    action: run_linux_runbook
+    action_params:
+      runbook_id: LIN-NTP-001
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.312(b)"
+      - "164.312(c)(1)"
+    severity_filter:
+      - medium
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 300
+
+  # =========================================================================
+  # NixOS Generation Drift
+  # =========================================================================
+  - id: L1-LIN-GENERATION-001
+    name: NixOS Generation Drift
+    description: NixOS generation behind expected baseline - escalate for review
+    conditions:
+      - field: check_type
+        operator: eq
+        value: nixos_generation
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: status
+        operator: eq
+        value: fail
+    action: escalate
+    action_params:
+      reason: "NixOS generation drift detected - may require nixos-rebuild"
+      urgency: medium
+    hipaa_controls:
+      - "164.308(a)(5)(ii)(B)"
+    severity_filter:
+      - medium
+      - high
+      - critical
+    enabled: true
+    priority: 15
+    cooldown_seconds: 3600
+
+  # =========================================================================
+  # Certificate Expiry
+  # =========================================================================
+  - id: L1-LIN-CERT-001
+    name: Certificate Expiry Warning
+    description: TLS certificate approaching expiration
+    conditions:
+      - field: check_type
+        operator: eq
+        value: certificate_expiry
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: status
+        operator: eq
+        value: fail
+    action: escalate
+    action_params:
+      reason: "Certificate expiring - requires renewal"
+      urgency: high
+    hipaa_controls:
+      - "164.312(e)(1)"
+    severity_filter:
+      - medium
+      - high
+      - critical
+    enabled: true
+    priority: 10
+    cooldown_seconds: 3600
+
+  # =========================================================================
+  # Disk Space
+  # =========================================================================
+  - id: L1-LIN-DISK-001
+    name: Disk Space Critical
+    description: Disk usage critical - clean up old generations and logs
+    conditions:
+      - field: check_type
+        operator: eq
+        value: disk_space
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: status
+        operator: eq
+        value: fail
+    action: run_linux_runbook
+    action_params:
+      runbook_id: LIN-DISK-001
+      phases: ["remediate", "verify"]
+    hipaa_controls: []
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 10
+    cooldown_seconds: 600
+
+  # =========================================================================
+  # Critical Services
+  # =========================================================================
+  - id: L1-LIN-CRITICAL-SVC-001
+    name: Critical Service Down
+    description: A critical NixOS service has stopped
+    conditions:
+      - field: check_type
+        operator: eq
+        value: critical_services
+      - field: drift_detected
+        operator: eq
+        value: true
+      - field: status
+        operator: eq
+        value: fail
+    action: run_linux_runbook
+    action_params:
+      runbook_id: LIN-SVC-004
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(7)(ii)(C)"
+    severity_filter:
+      - medium
+      - high
+      - critical
+    enabled: true
+    priority: 5
+    cooldown_seconds: 300

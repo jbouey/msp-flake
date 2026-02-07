@@ -504,6 +504,31 @@ class CentralCommandClient:
             logger.warning(f"Failed to report incident: {status}")
             return None
 
+    async def resolve_incident(
+        self,
+        incident_id: str,
+        resolution_tier: str = "L1",
+        action_taken: str = "",
+    ) -> bool:
+        """Mark an incident as resolved on Central Command."""
+        payload = {
+            "resolution_tier": resolution_tier,
+            "action_taken": action_taken,
+        }
+
+        status, response = await self._request(
+            'POST',
+            f'/incidents/{incident_id}/resolve',
+            json_data=payload
+        )
+
+        if status == 200:
+            logger.debug(f"Incident {incident_id} resolved on server")
+            return True
+        else:
+            logger.debug(f"Failed to resolve incident {incident_id}: {status}")
+            return False
+
     # =========================================================================
     # Health Check
     # =========================================================================

@@ -100,6 +100,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/fleet/",           # Fleet updates - admin auth protected
         "/api/orders/",          # Order acknowledgement from appliances
         "/api/evidence/",        # Evidence chain - appliance submissions + admin ops
+        "/incidents/",           # Incident resolve from appliances (machine-to-machine)
     )
 
     # Safe methods that don't require CSRF validation

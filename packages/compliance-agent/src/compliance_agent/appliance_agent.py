@@ -1478,8 +1478,9 @@ class ApplianceAgent:
         }
 
         # Report incident to Central Command so it appears in dashboard
+        incident_response = None
         try:
-            await self.client.report_incident(
+            incident_response = await self.client.report_incident(
                 incident_type=check_name,
                 severity=severity,
                 check_type=check_name,
@@ -1508,6 +1509,16 @@ class ApplianceAgent:
                 logger.info(
                     f"Healing {check_name}: {result.resolution_level} → {result.action_taken} (SUCCESS)"
                 )
+                # Mark incident resolved on Central Command
+                if incident_response and incident_response.get("incident_id"):
+                    try:
+                        await self.client.resolve_incident(
+                            incident_id=incident_response["incident_id"],
+                            resolution_tier=result.resolution_level or "L1",
+                            action_taken=result.action_taken or "",
+                        )
+                    except Exception as e:
+                        logger.debug(f"Incident resolve report failed (non-critical): {e}")
                 # Report pattern to learning flywheel for L1/L2 promotions
                 if result.action_taken:
                     try:

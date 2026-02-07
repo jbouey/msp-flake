@@ -86,7 +86,7 @@ RUNBOOK_DIR = Path(os.getenv("RUNBOOK_DIR", "/app/runbooks"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # Rate limiting
-RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "10"))
+RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "60"))
 RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "300"))  # 5 minutes
 
 # Order TTL
@@ -1075,6 +1075,34 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
         "runbook_id": runbook_id,
         "timestamp": now.isoformat()
     }
+
+@app.post("/incidents/{incident_id}/resolve")
+async def resolve_incident(incident_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """Mark an incident as resolved after successful healing."""
+    body = await request.json()
+    resolution_tier = body.get("resolution_tier", "L1")
+    action_taken = body.get("action_taken", "")
+
+    result = await db.execute(
+        text("""
+            UPDATE incidents SET
+                resolved_at = NOW(),
+                status = 'resolved',
+                resolution_tier = COALESCE(:resolution_tier, resolution_tier)
+            WHERE id = :incident_id
+            AND resolved_at IS NULL
+            RETURNING id
+        """),
+        {"incident_id": incident_id, "resolution_tier": resolution_tier}
+    )
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found or already resolved")
+
+    await db.commit()
+    logger.info("Incident resolved", incident_id=incident_id, tier=resolution_tier, action=action_taken)
+    return {"status": "resolved", "incident_id": incident_id}
+
 
 @app.post("/drift")
 async def report_drift(drift: DriftReport, db: AsyncSession = Depends(get_db)):
