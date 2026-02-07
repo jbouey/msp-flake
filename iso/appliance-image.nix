@@ -100,7 +100,7 @@ in
   # nosoftlockup: prevent false watchdog alarms during heavy nixos-install I/O
   # audit=0: disable kernel audit on live ISO (configuration.nix enables auditd
   # with execve logging which causes kauditd hold queue overflow during boot)
-  boot.kernelParams = [ "console=tty1" "console=ttyS0,115200" "nosoftlockup" "audit=0" ];
+  boot.kernelParams = [ "quiet" "loglevel=3" "console=tty1" "console=ttyS0,115200" "nosoftlockup" "audit=0" ];
   boot.loader.timeout = lib.mkForce 3;
 
   # Readable console font for the installer TUI
