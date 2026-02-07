@@ -111,7 +111,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.55"
+VERSION = "1.0.56"
 
 
 async def run_command(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
@@ -361,6 +361,11 @@ class ApplianceAgent:
         self._last_prune_time = datetime.min.replace(tzinfo=timezone.utc)
         self._prune_interval = getattr(config, 'prune_interval', 86400)  # 24 hours default
         self._incident_retention_days = getattr(config, 'incident_retention_days', 30)  # Keep 30 days
+
+        # Drift report cooldown: prevent spamming Central Command with the same check_type
+        # Key: check_name -> last report timestamp
+        self._drift_report_times: Dict[str, datetime] = {}
+        self._drift_report_cooldown = getattr(config, 'drift_report_cooldown', 600)  # 10 min default
 
         # Dual-mode sensor support
         self._sensor_enabled = getattr(config, 'sensor_enabled', True)
@@ -1458,7 +1463,24 @@ class ApplianceAgent:
         # Only heal on failures
         status = check_result.get("status", "pass")
         if status == "pass":
+            # Drift cleared — do NOT clear cooldown here.
+            # If we clear on pass, flapping checks (heal→pass→revert→fail)
+            # bypass cooldown and spam incidents every poll cycle.
+            # Let the 600s cooldown expire naturally instead.
             return None
+
+        # Drift report cooldown: skip if same check reported recently
+        now = datetime.now(timezone.utc)
+        last_reported = self._drift_report_times.get(check_name)
+        if last_reported:
+            elapsed = (now - last_reported).total_seconds()
+            if elapsed < self._drift_report_cooldown:
+                logger.debug(
+                    f"Drift cooldown: {check_name} reported {elapsed:.0f}s ago, "
+                    f"suppressing for {self._drift_report_cooldown - elapsed:.0f}s more"
+                )
+                return None
+        self._drift_report_times[check_name] = now
 
         # Determine severity based on status
         severity_map = {
