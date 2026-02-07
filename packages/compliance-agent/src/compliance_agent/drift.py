@@ -489,8 +489,10 @@ class DriftDetector:
         Check firewall ruleset against baseline.
 
         Detects drift if:
-        - Ruleset hash doesn't match baseline
-        - Firewall service not active
+        - No active firewall backend (nftables or iptables)
+        - Ruleset hash doesn't match baseline (when baseline hash exists)
+
+        Supports both nftables and legacy iptables (NixOS default).
 
         Returns:
             DriftResult with firewall status
@@ -501,40 +503,50 @@ class DriftDetector:
         firewall_config = baseline.get('firewall', {})
 
         expected_hash = firewall_config.get('ruleset_hash')
-        service_name = firewall_config.get('service', 'nftables')
+
+        # Detect which firewall backend is in use
+        backend = None
+        service_active = False
+        ruleset = ""
+
+        # Try nftables first
+        try:
+            result = await run_command('systemctl is-active nftables', timeout=5)
+            if result.stdout.strip() == 'active':
+                backend = "nftables"
+                service_active = True
+                result = await run_command('nft list ruleset', timeout=10)
+                ruleset = result.stdout
+        except Exception:
+            pass
+
+        # Fallback: check iptables (NixOS uses legacy iptables by default)
+        if not service_active:
+            try:
+                result = await run_command(
+                    'iptables -L -n 2>/dev/null | grep -c Chain', timeout=5
+                )
+                chain_count = int(result.stdout.strip()) if result.returncode == 0 else 0
+                if chain_count > 3:
+                    backend = "iptables"
+                    service_active = True
+                    result = await run_command('iptables-save 2>/dev/null', timeout=10)
+                    ruleset = result.stdout
+            except Exception:
+                pass
 
         pre_state = {
-            "service": service_name,
-            "expected_hash": expected_hash
+            "backend": backend or "none",
+            "service_active": service_active,
+            "expected_hash": expected_hash,
         }
 
-        # Check firewall service
-        service_active = False
-        try:
-            result = await run_command(
-                f'systemctl is-active {service_name}',
-                timeout=5
-            )
-            service_active = result.stdout.strip() == 'active'
-            pre_state["service_active"] = service_active
-        except Exception as e:
-            logger.error(f"Failed to check firewall service: {e}")
-            pre_state["service_error"] = str(e)
-
-        # Get current ruleset and hash
+        # Hash the current ruleset
         current_hash = None
-        try:
-            result = await run_command(
-                'nft list ruleset',
-                timeout=10
-            )
-            ruleset = result.stdout
+        if ruleset.strip():
             current_hash = hashlib.sha256(ruleset.encode()).hexdigest()
             pre_state["current_hash"] = current_hash
             pre_state["ruleset_lines"] = len(ruleset.split('\n'))
-        except Exception as e:
-            logger.error(f"Failed to get firewall ruleset: {e}")
-            pre_state["ruleset_error"] = str(e)
 
         # Determine drift
         drifted = False
@@ -545,13 +557,13 @@ class DriftDetector:
             drifted = True
             severity = "critical"
             recommended_action = "start_firewall_service"
-            logger.warning(f"Firewall drift: service {service_name} not active")
+            logger.warning("Firewall drift: no active firewall backend (nftables or iptables)")
 
         if expected_hash and current_hash and current_hash != expected_hash:
             drifted = True
             severity = "high"
             recommended_action = "restore_firewall_baseline"
-            logger.warning(f"Firewall drift: ruleset hash mismatch")
+            logger.warning("Firewall drift: ruleset hash mismatch")
 
         return DriftResult(
             check="firewall_baseline",

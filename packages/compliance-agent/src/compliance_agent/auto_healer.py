@@ -166,12 +166,53 @@ class AutoHealer:
         self._heal_attempts: Dict[tuple, tuple] = {}
         self._cooldowns: Dict[tuple, datetime] = {}
 
+        # Flap detector: track resolve→recur cycles to catch heal loops where
+        # remediation "succeeds" but drift recurs immediately (e.g., GPO override,
+        # false positive detection). Escalates to L3 after max_flap_count cycles.
+        # Key: circuit_key -> (flap_count, first_flap_time)
+        self._flap_tracker: Dict[tuple, tuple] = {}
+        self._max_flap_count = 5  # resolve→recur cycles before escalating
+        self._flap_window_minutes = 30  # time window to count flaps
+
         logger.info(
             f"AutoHealer initialized: L1={config.enable_level1}, "
             f"L2={config.enable_level2}, L3={config.enable_level3}, "
             f"Learning={config.enable_learning}, "
-            f"CircuitBreaker=max {config.max_heal_attempts_per_incident} attempts/{config.cooldown_period_minutes}min cooldown"
+            f"CircuitBreaker=max {config.max_heal_attempts_per_incident} attempts/{config.cooldown_period_minutes}min cooldown, "
+            f"FlapDetector=max {self._max_flap_count} recurrences/{self._flap_window_minutes}min"
         )
+
+    def _is_flapping(self, circuit_key: tuple) -> bool:
+        """Check if an incident type is flapping (resolve→recur loop)."""
+        if circuit_key not in self._flap_tracker:
+            return False
+        count, first_time = self._flap_tracker[circuit_key]
+        age_minutes = (datetime.now(timezone.utc) - first_time).total_seconds() / 60
+        if age_minutes > self._flap_window_minutes:
+            # Window expired, reset
+            del self._flap_tracker[circuit_key]
+            return False
+        return count >= self._max_flap_count
+
+    def _track_flap(self, circuit_key: tuple) -> None:
+        """Track a resolve→recur cycle. Called when an incident recurs after healing."""
+        now = datetime.now(timezone.utc)
+        if circuit_key in self._flap_tracker:
+            count, first_time = self._flap_tracker[circuit_key]
+            age_minutes = (now - first_time).total_seconds() / 60
+            if age_minutes > self._flap_window_minutes:
+                self._flap_tracker[circuit_key] = (1, now)
+            else:
+                new_count = count + 1
+                self._flap_tracker[circuit_key] = (new_count, first_time)
+                if new_count >= self._max_flap_count:
+                    logger.warning(
+                        f"FLAP DETECTED: {circuit_key[2]} on {circuit_key[1]} "
+                        f"resolved then recurred {new_count} times in {age_minutes:.0f} min. "
+                        f"Escalating to L3 - likely false positive or external override."
+                    )
+        else:
+            self._flap_tracker[circuit_key] = (1, now)
 
     def _is_in_cooldown(self, circuit_key: tuple) -> bool:
         """Check if a circuit is in cooldown due to too many failures."""
@@ -246,6 +287,22 @@ class AutoHealer:
                 action_taken="circuit_breaker_cooldown",
                 resolution_time_ms=0,
                 error=f"Circuit breaker active: {remaining:.1f} min cooldown remaining"
+            )
+
+        # Flap detector: check for resolve→recur loops
+        self._track_flap(circuit_key)
+        if self._is_flapping(circuit_key):
+            logger.warning(
+                f"FLAP DETECTOR: {incident_type} on {host_id} keeps recurring after healing. "
+                f"Escalating to L3 - remediation is not durable."
+            )
+            return HealingResult(
+                incident_id=f"FLAP-{uuid.uuid4().hex[:8]}",
+                success=False,
+                resolution_level=ResolutionLevel.LEVEL3_ESCALATION,
+                action_taken="flap_detected_escalation",
+                resolution_time_ms=int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000),
+                error=f"Flap detected: {incident_type} resolved then recurred {self._max_flap_count}+ times"
             )
 
         # Track this heal attempt
