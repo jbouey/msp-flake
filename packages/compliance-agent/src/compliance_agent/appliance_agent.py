@@ -1005,6 +1005,7 @@ class ApplianceAgent:
             incident_db=self.incident_db,
             site_id=self.config.site_id,
             appliance_id=self._get_appliance_id(),
+            queue_path=self.config.state_dir / "learning_sync_queue.db",
             promoted_rules_dir=self.config.rules_dir / "promoted"
         )
         logger.info(

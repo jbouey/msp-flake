@@ -10,6 +10,7 @@ Handles bidirectional synchronization between agent and Central Command:
 
 import asyncio
 import logging
+import os
 import sqlite3
 import json
 from datetime import datetime, timezone, timedelta
@@ -208,7 +209,7 @@ class LearningSyncService:
     """
 
     SYNC_INTERVAL_HOURS = 4
-    DEFAULT_QUEUE_PATH = Path("/var/lib/msp-compliance-agent/learning_sync_queue.db")
+    DEFAULT_QUEUE_PATH = Path(os.environ.get("STATE_DIR", "/var/lib/msp")) / "learning_sync_queue.db"
     DEFAULT_PROMOTED_RULES_DIR = Path("/etc/msp/rules/promoted")
 
     def __init__(
