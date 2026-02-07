@@ -663,7 +663,8 @@ in
       if [ -f "$CONFIG_PATH" ]; then
         SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH")
         if [ -n "$SITE_ID" ]; then
-          hostnamectl set-hostname "$SITE_ID"
+          echo "$SITE_ID" > /etc/hostname
+          hostname "$SITE_ID"
           echo "Hostname set to: $SITE_ID"
         fi
 
