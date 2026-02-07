@@ -123,30 +123,24 @@ in
   hardware.enableAllFirmware = true;  # Includes all firmware blobs
   hardware.enableRedistributableFirmware = true;  # Subset that's redistributable
 
-  # Console login requires password for physical security (HIPAA §164.310)
-  # Auto-login disabled in production - use SSH for remote access
-  services.getty.autologinUser = lib.mkForce null;
+  # Disable getty on tty1 during install — the installer service owns the console
+  # Getty only runs on tty2+ for manual debug access
+  systemd.services."getty@tty1".enable = false;
+  systemd.services."autovt@tty1".enable = false;
 
-  # ============================================================================
-  # Branded Console - replaces generic "Welcome to NixOS" with OsirisCare
-  # ============================================================================
+  # Login prompt on tty2 for manual debug (Alt+F2)
   services.getty.greetingLine = lib.mkForce ''
 
     \e[1;36m╔═══════════════════════════════════════════════════════════╗
-    ║                                                           ║
     ║          OsirisCare MSP Compliance Platform                ║
-    ║            APPLIANCE INSTALLER  v1.0                       ║
-    ║                                                           ║
-    ╠═══════════════════════════════════════════════════════════╣
-    ║  Installation runs automatically on boot.                  ║
-    ║  Live progress:  Alt+F2  or  journalctl -u msp-auto-install -f  ║
-    ║  IP Address:     \4                                        ║
+    ║            INSTALLER DEBUG CONSOLE                         ║
     ╚═══════════════════════════════════════════════════════════╝\e[0m
 
   '';
 
   services.getty.helpLine = lib.mkForce ''
-    Log in as \e[1mroot\e[0m (password: osiris2024) to access the installer console.
+    Log in as \e[1mroot\e[0m (password: osiris2024) for debug access.
+    Install log: cat /tmp/msp-install.log
   '';
 
   # ============================================================================
@@ -156,144 +150,188 @@ in
   systemd.services.msp-auto-install = {
     description = "MSP Appliance Zero-Friction Auto-Install";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
+    after = [ "network-online.target" "systemd-vconsole-setup.service" ];
     wants = [ "network-online.target" ];
+    conflicts = [ "getty@tty1.service" ];
 
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      StandardOutput = "journal+console";
-      StandardError = "journal+console";
+      # Take over tty1 — this IS the user-facing display
+      StandardInput = "tty";
+      StandardOutput = "tty";
+      StandardError = "journal";
+      TTYPath = "/dev/tty1";
+      TTYReset = "yes";
+      TTYVHangup = "yes";
     };
 
     path = with pkgs; [
       util-linux parted dosfstools e2fsprogs nixos-install-tools
-      git curl coreutils gnugrep gawk
+      git curl coreutils gnugrep gawk procps
       nix  # Required - nixos-install calls nix and nix-build internally
     ];
 
     script = ''
       set -e
       LOG_FILE="/tmp/msp-install.log"
+      TOTAL_STEPS=8
+      CURRENT_STEP=0
+
+      # ── Branded output helpers ──────────────────────────────────
+      C_CYAN="\033[1;36m"
+      C_GREEN="\033[1;32m"
+      C_YELLOW="\033[1;33m"
+      C_RED="\033[1;31m"
+      C_WHITE="\033[1;37m"
+      C_DIM="\033[2m"
+      C_RESET="\033[0m"
 
       log() {
-        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
-        echo "$1"  # Also show on console
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" >> "$LOG_FILE"
+        echo -e "$1"
       }
 
-      log "=== OsirisCare Zero-Friction Installer ==="
-      log "DEBUG: Starting installer script"
+      banner() {
+        clear
+        echo ""
+        echo -e "  ''${C_CYAN}╔═══════════════════════════════════════════════════════════╗"
+        echo -e "  ║                                                           ║"
+        echo -e "  ║       ''${C_WHITE}OsirisCare MSP Compliance Platform''${C_CYAN}                ║"
+        echo -e "  ║            ''${C_WHITE}APPLIANCE INSTALLER''${C_CYAN}                           ║"
+        echo -e "  ║                                                           ║"
+        echo -e "  ╚═══════════════════════════════════════════════════════════╝''${C_RESET}"
+        echo ""
+      }
 
-      # Show all block devices
-      log "DEBUG: Available block devices:"
-      lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL | tee -a "$LOG_FILE"
+      progress_bar() {
+        local pct=$1
+        local width=40
+        local filled=$(( pct * width / 100 ))
+        local empty=$(( width - filled ))
+        local bar=""
+        for ((i=0; i<filled; i++)); do bar+="█"; done
+        for ((i=0; i<empty; i++)); do bar+="░"; done
+        echo -e "  ''${C_CYAN}[''${C_GREEN}''${bar}''${C_CYAN}] ''${C_WHITE}''${pct}%''${C_RESET}"
+      }
 
-      # Check if we're running from live ISO (squashfs root)
-      log "DEBUG: Checking /proc/mounts for squashfs..."
-      grep squashfs /proc/mounts | tee -a "$LOG_FILE" || log "DEBUG: No squashfs found"
+      step() {
+        CURRENT_STEP=$((CURRENT_STEP + 1))
+        local pct=$(( CURRENT_STEP * 100 / TOTAL_STEPS ))
+        echo ""
+        echo -e "  ''${C_WHITE}Step ''${CURRENT_STEP}/''${TOTAL_STEPS}: $1''${C_RESET}"
+        progress_bar "$pct"
+        echo ""
+        log "Step $CURRENT_STEP/$TOTAL_STEPS: $1"
+      }
 
+      step_ok() {
+        echo -e "  ''${C_GREEN}✓ $1''${C_RESET}"
+        log "  OK: $1"
+      }
+
+      step_fail() {
+        echo -e "  ''${C_RED}✗ $1''${C_RESET}"
+        log "  FAIL: $1"
+      }
+
+      # ── Start installer ─────────────────────────────────────────
+      banner
+
+      # Log block devices for debugging
+      lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL >> "$LOG_FILE" 2>&1
+
+      # Check if we're running from live ISO
       if ! grep -q "squashfs" /proc/mounts; then
         log "Not running from live ISO, skipping auto-install"
         exit 0
       fi
-      log "DEBUG: squashfs check passed"
 
-      log "Running from live ISO - starting auto-install..."
+      step "Detecting hardware"
 
       # Find internal drive (skip USB/removable)
       BOOT_DEV=$(findmnt -n -o SOURCE / | sed 's/\[.*$//' | head -1)
-      log "DEBUG: Boot device from findmnt: $BOOT_DEV"
 
       INTERNAL_DEV=""
       for dev in /dev/sda /dev/sdb /dev/vda /dev/nvme0n1; do
-        log "DEBUG: Checking $dev..."
-        [ -b "$dev" ] || { log "DEBUG: $dev not a block device"; continue; }
+        [ -b "$dev" ] || continue
         DEV_NAME=$(basename "$dev")
-
-        # Skip if this is our boot device
-        if echo "$BOOT_DEV" | grep -q "$DEV_NAME"; then
-          log "DEBUG: Skipping $dev - matches boot device"
-          continue
-        fi
-
-        # Check if removable
+        echo "$BOOT_DEV" | grep -q "$DEV_NAME" && continue
         REMOVABLE=$(cat /sys/block/$DEV_NAME/removable 2>/dev/null || echo "1")
-        log "DEBUG: $dev removable=$REMOVABLE"
-        [ "$REMOVABLE" = "1" ] && { log "DEBUG: Skipping $dev - removable"; continue; }
-
-        # Check size (must be at least 16GB)
+        [ "$REMOVABLE" = "1" ] && continue
         SIZE=$(blockdev --getsize64 "$dev" 2>/dev/null || echo "0")
-        log "DEBUG: $dev size=$SIZE"
         if [ "$SIZE" -gt 16000000000 ]; then
           INTERNAL_DEV="$dev"
-          log "Found internal drive: $INTERNAL_DEV ($(numfmt --to=iec $SIZE))"
           break
-        else
-          log "DEBUG: $dev too small (need >16GB)"
         fi
       done
 
       if [ -z "$INTERNAL_DEV" ]; then
-        log "ERROR: No suitable internal drive found"
-        log "Available drives:"
-        lsblk -d -o NAME,SIZE,TYPE,MOUNTPOINT | tee -a "$LOG_FILE"
-        exit 0  # Don't fail - allow manual intervention
+        step_fail "No suitable internal drive found (need >16GB)"
+        echo -e "  ''${C_DIM}Available drives:''${C_RESET}"
+        lsblk -d -o NAME,SIZE,TYPE,MODEL
+        echo ""
+        echo -e "  ''${C_YELLOW}Please attach an internal drive and reboot.''${C_RESET}"
+        exit 0
       fi
 
-      # Check if this drive already has a NixOS install (prevent install loop)
+      DEV_SIZE=$(numfmt --to=iec $(blockdev --getsize64 "$INTERNAL_DEV"))
+      step_ok "Found internal drive: $INTERNAL_DEV ($DEV_SIZE)"
+
+      # Check for existing install
       NIXOS_PART=$(lsblk -rno NAME,LABEL "$INTERNAL_DEV" | grep nixos | head -1 | awk '{print $1}')
       if [ -n "$NIXOS_PART" ]; then
-        log "Drive already has partition labeled 'nixos' (/dev/$NIXOS_PART)"
         TMPDIR=$(mktemp -d)
         if mount -o ro "/dev/$NIXOS_PART" "$TMPDIR" 2>/dev/null; then
           if [ -d "$TMPDIR/nix/store" ]; then
-            STORE_COUNT=$(ls "$TMPDIR/nix/store" 2>/dev/null | wc -l)
-            log "Existing NixOS installation found ($STORE_COUNT store paths)"
             umount "$TMPDIR"
             rmdir "$TMPDIR"
-            log ""
-            log "============================================"
-            log "  INSTALLATION ALREADY COMPLETE"
-            log "  Remove installer media and reboot to"
-            log "  boot into the installed system."
-            log "============================================"
-            log ""
-            log "To force reinstall: touch /tmp/force-reinstall then rerun"
             if [ ! -f /tmp/force-reinstall ]; then
+              banner
+              echo -e "  ''${C_GREEN}╔═══════════════════════════════════════════════════════════╗"
+              echo -e "  ║          INSTALLATION ALREADY COMPLETE                      ║"
+              echo -e "  ╠═══════════════════════════════════════════════════════════╣"
+              echo -e "  ║                                                           ║"
+              echo -e "  ║  1. Remove the USB installer                              ║"
+              echo -e "  ║  2. Reboot to start the appliance                         ║"
+              echo -e "  ║                                                           ║"
+              echo -e "  ║  ''${C_WHITE}To force reinstall:''${C_GREEN}                                   ║"
+              echo -e "  ║    touch /tmp/force-reinstall''${C_GREEN}                            ║"
+              echo -e "  ║    systemctl restart msp-auto-install''${C_GREEN}                    ║"
+              echo -e "  ║                                                           ║"
+              echo -e "  ╚═══════════════════════════════════════════════════════════╝''${C_RESET}"
+              echo ""
               exit 0
             fi
-            log "Force reinstall requested, continuing..."
+            log "Force reinstall requested"
           fi
           umount "$TMPDIR" 2>/dev/null
         fi
         rmdir "$TMPDIR" 2>/dev/null
       fi
 
-      # Confirmation display
-      log ""
-      log "============================================"
-      log "  INSTALLING TO: $INTERNAL_DEV"
-      log "  THIS WILL ERASE ALL DATA ON THIS DRIVE"
-      log "============================================"
-      log ""
-      log "Starting in 10 seconds... (Ctrl+C to cancel)"
-      sleep 10
+      # Countdown
+      echo ""
+      echo -e "  ''${C_YELLOW}▸ Installing to $INTERNAL_DEV — ALL DATA WILL BE ERASED''${C_RESET}"
+      echo ""
+      for i in 10 9 8 7 6 5 4 3 2 1; do
+        echo -ne "\r  ''${C_DIM}Starting in ''${C_WHITE}$i''${C_DIM} seconds... (Ctrl+C to cancel)''${C_RESET}  "
+        sleep 1
+      done
+      echo ""
 
-      # Partition the drive: ESP (512MB) + MSP-DATA (2GB) + root (rest)
-      log "Partitioning $INTERNAL_DEV..."
-      wipefs -a "$INTERNAL_DEV"
-      parted -s "$INTERNAL_DEV" -- mklabel gpt
-      parted -s "$INTERNAL_DEV" -- mkpart ESP fat32 1MiB 512MiB
-      parted -s "$INTERNAL_DEV" -- set 1 esp on
-      parted -s "$INTERNAL_DEV" -- mkpart MSP-DATA ext4 512MiB 2560MiB
-      parted -s "$INTERNAL_DEV" -- mkpart primary 2560MiB 100%
-
-      # Wait for partitions to appear
+      # ── Partition ───────────────────────────────────────────────
+      step "Partitioning drive"
+      wipefs -a "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1
+      parted -s "$INTERNAL_DEV" -- mklabel gpt >> "$LOG_FILE" 2>&1
+      parted -s "$INTERNAL_DEV" -- mkpart ESP fat32 1MiB 512MiB >> "$LOG_FILE" 2>&1
+      parted -s "$INTERNAL_DEV" -- set 1 esp on >> "$LOG_FILE" 2>&1
+      parted -s "$INTERNAL_DEV" -- mkpart MSP-DATA ext4 512MiB 2560MiB >> "$LOG_FILE" 2>&1
+      parted -s "$INTERNAL_DEV" -- mkpart primary 2560MiB 100% >> "$LOG_FILE" 2>&1
       sleep 2
-      partprobe "$INTERNAL_DEV"
+      partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1
       sleep 2
 
-      # Determine partition names (nvme vs sda style)
       if [[ "$INTERNAL_DEV" == *"nvme"* ]]; then
         ESP_PART="''${INTERNAL_DEV}p1"
         DATA_PART="''${INTERNAL_DEV}p2"
@@ -303,60 +341,106 @@ in
         DATA_PART="''${INTERNAL_DEV}2"
         ROOT_PART="''${INTERNAL_DEV}3"
       fi
+      step_ok "ESP: $ESP_PART | Data: $DATA_PART | Root: $ROOT_PART"
 
-      log "ESP partition: $ESP_PART"
-      log "MSP-DATA partition: $DATA_PART"
-      log "Root partition: $ROOT_PART"
+      # ── Format ──────────────────────────────────────────────────
+      step "Formatting partitions"
+      mkfs.fat -F32 -n ESP "$ESP_PART" >> "$LOG_FILE" 2>&1
+      step_ok "ESP (FAT32)"
+      mkfs.ext4 -L MSP-DATA -F "$DATA_PART" >> "$LOG_FILE" 2>&1
+      step_ok "MSP-DATA (ext4)"
+      mkfs.ext4 -L nixos -F "$ROOT_PART" >> "$LOG_FILE" 2>&1
+      step_ok "Root (ext4)"
 
-      # Format partitions
-      log "Formatting partitions..."
-      mkfs.fat -F32 -n ESP "$ESP_PART"
-      mkfs.ext4 -L MSP-DATA -F "$DATA_PART"
-      mkfs.ext4 -L nixos -F "$ROOT_PART"
-
-      # Mount for installation
-      log "Mounting partitions..."
+      # ── Mount ───────────────────────────────────────────────────
+      step "Mounting filesystems"
       mount "$ROOT_PART" /mnt
       mkdir -p /mnt/boot
       mount "$ESP_PART" /mnt/boot
       mkdir -p /mnt/var/lib/msp
       mount "$DATA_PART" /mnt/var/lib/msp
+      step_ok "Mounted root, boot, and data partitions"
 
-      # Generate hardware config for this specific machine
-      log "Generating hardware configuration..."
-      nixos-generate-config --root /mnt
+      # ── Hardware config ─────────────────────────────────────────
+      step "Detecting hardware configuration"
+      nixos-generate-config --root /mnt >> "$LOG_FILE" 2>&1
+      step_ok "Hardware configuration generated"
 
-      # Install from the GitHub flake - fetches the full appliance with compliance-agent
+      # ── Install (the big step) ──────────────────────────────────
+      step "Installing OsirisCare appliance"
       FLAKE_URL="github:jbouey/msp-flake#osiriscare-appliance-disk"
 
-      log "Installing from flake: $FLAKE_URL"
-      log "Fetching appliance configuration from GitHub (requires network)..."
+      echo -e "  ''${C_DIM}Fetching from: $FLAKE_URL''${C_RESET}"
+      echo -e "  ''${C_DIM}This may take 5-15 minutes depending on network speed...''${C_RESET}"
+      echo ""
 
-      if nixos-install --flake "$FLAKE_URL" --no-root-passwd 2>&1 | tee -a "$LOG_FILE"; then
-        log "SUCCESS: Full OsirisCare appliance installed"
-      else
-        EXIT_CODE=$?
-        log "ERROR: nixos-install failed with exit code $EXIT_CODE"
-        log "Check network connectivity and try again"
-        log "Manual install: nixos-install --flake $FLAKE_URL --no-root-passwd"
+      # Show a spinner while nixos-install runs
+      nixos-install --flake "$FLAKE_URL" --no-root-passwd >> "$LOG_FILE" 2>&1 &
+      INSTALL_PID=$!
+
+      SPINNER="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+      ELAPSED=0
+      while kill -0 $INSTALL_PID 2>/dev/null; do
+        for ((i=0; i<''${#SPINNER}; i++)); do
+          kill -0 $INSTALL_PID 2>/dev/null || break
+          MINS=$((ELAPSED / 60))
+          SECS=$((ELAPSED % 60))
+          LAST_LINE=$(tail -1 "$LOG_FILE" 2>/dev/null | cut -c1-60)
+          echo -ne "\r  ''${C_CYAN}''${SPINNER:$i:1}''${C_RESET} Installing... ''${C_DIM}(''${MINS}m ''${SECS}s)''${C_RESET}  ''${C_DIM}''${LAST_LINE}''${C_RESET}          "
+          sleep 1
+          ELAPSED=$((ELAPSED + 1))
+        done
+      done
+      echo ""
+
+      wait $INSTALL_PID
+      INSTALL_EXIT=$?
+
+      if [ $INSTALL_EXIT -ne 0 ]; then
+        step_fail "Installation failed (exit code $INSTALL_EXIT)"
+        echo ""
+        echo -e "  ''${C_RED}Check the log: cat /tmp/msp-install.log''${C_RESET}"
+        echo -e "  ''${C_YELLOW}Manual install: nixos-install --flake $FLAKE_URL --no-root-passwd''${C_RESET}"
         exit 1
       fi
+      step_ok "OsirisCare appliance installed successfully"
 
-      # Verify installation
-      log "Verifying installation..."
-      ls -la /mnt/boot/ 2>/dev/null | tee -a "$LOG_FILE"
-      log "Nix store entries: $(ls /mnt/nix/store 2>/dev/null | wc -l)"
+      # ── Verify ──────────────────────────────────────────────────
+      step "Verifying installation"
+      STORE_COUNT=$(ls /mnt/nix/store 2>/dev/null | wc -l)
+      BOOT_OK="no"
+      [ -d /mnt/boot/EFI ] && BOOT_OK="yes"
+      step_ok "Nix store: $STORE_COUNT packages | Boot: $BOOT_OK"
+      ls -la /mnt/boot/ >> "$LOG_FILE" 2>/dev/null
 
-      log ""
-      log "============================================"
-      log "  INSTALLATION COMPLETE!"
-      log "  Remove USB/ISO and reboot"
-      log "============================================"
-      log ""
-      log "Rebooting in 15 seconds..."
-      sleep 15
-
+      # ── Done ────────────────────────────────────────────────────
       umount -R /mnt
+
+      banner
+      progress_bar 100
+      echo ""
+      echo -e "  ''${C_GREEN}╔═══════════════════════════════════════════════════════════╗"
+      echo -e "  ║                                                           ║"
+      echo -e "  ║        ''${C_WHITE}INSTALLATION COMPLETE!''${C_GREEN}                            ║"
+      echo -e "  ║                                                           ║"
+      echo -e "  ╠═══════════════════════════════════════════════════════════╣"
+      echo -e "  ║                                                           ║"
+      echo -e "  ║  ''${C_WHITE}Next steps:''${C_GREEN}                                            ║"
+      echo -e "  ║    1. Remove the USB drive                                ║"
+      echo -e "  ║    2. System will reboot in 30 seconds                    ║"
+      echo -e "  ║    3. Appliance will auto-provision on first boot         ║"
+      echo -e "  ║                                                           ║"
+      echo -e "  ║  ''${C_DIM}$STORE_COUNT packages installed to $INTERNAL_DEV''${C_GREEN}${C_RESET}"
+      echo -e "  ''${C_GREEN}║                                                           ║"
+      echo -e "  ╚═══════════════════════════════════════════════════════════╝''${C_RESET}"
+      echo ""
+
+      for i in 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1; do
+        echo -ne "\r  ''${C_DIM}Rebooting in ''${C_WHITE}$i''${C_DIM} seconds... (remove USB now)''${C_RESET}   "
+        sleep 1
+      done
+      echo ""
+
       systemctl reboot
     '';
   };
@@ -381,7 +465,7 @@ in
   # Shows real-time install output without needing to log in
   # ============================================================================
   systemd.services.msp-install-display = {
-    description = "OsirisCare Install Progress Display";
+    description = "OsirisCare Install Debug Log (tty2)";
     after = [ "systemd-vconsole-setup.service" ];
     wantedBy = [ "multi-user.target" ];
     conflicts = [ "getty@tty2.service" ];
@@ -397,24 +481,15 @@ in
       TTYVHangup = "yes";
     };
 
-    path = with pkgs; [ coreutils systemd util-linux iproute2 gnugrep gawk ncurses ];
+    path = with pkgs; [ coreutils systemd util-linux iproute2 gnugrep gawk ];
 
     script = ''
       clear
-      echo ""
-      echo "  \033[1;36m╔═══════════════════════════════════════════════════════════╗"
-      echo "  ║          OsirisCare MSP Compliance Platform                ║"
-      echo "  ║              INSTALL PROGRESS                              ║"
-      echo "  ╚═══════════════════════════════════════════════════════════╝\033[0m"
+      echo -e "\033[2m── OsirisCare Install Log (Alt+F1 for main display) ──\033[0m"
       echo ""
 
-      IP_ADDR=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -1)
-      echo "  IP Address: ''${IP_ADDR:-waiting for network...}"
-      echo "  ─────────────────────────────────────────────────────────"
-      echo ""
-
-      # Follow the auto-install journal in real time
-      exec journalctl -u msp-auto-install -f --no-hostname -o cat
+      # Follow the install log file in real time
+      exec tail -f /tmp/msp-install.log 2>/dev/null || exec journalctl -u msp-auto-install -f --no-hostname -o cat
     '';
   };
 
