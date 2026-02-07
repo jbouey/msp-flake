@@ -128,6 +128,8 @@
     description = "MSP Appliance Health Check";
     after = [ "network-online.target" ];
 
+    path = with pkgs; [ gawk coreutils procps chrony systemd gnugrep ];
+
     serviceConfig = {
       Type = "oneshot";
     };

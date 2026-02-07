@@ -1062,6 +1062,8 @@ ISSUE
     after = [ "network-online.target" "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
 
+    path = with pkgs; [ systemd iproute2 gnugrep coreutils ];
+
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;

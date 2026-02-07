@@ -672,6 +672,8 @@ EOF
     after = [ "network-online.target" "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
 
+    path = with pkgs; [ inetutils iproute2 gnugrep coreutils ];
+
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
