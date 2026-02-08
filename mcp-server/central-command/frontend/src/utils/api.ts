@@ -57,8 +57,12 @@ function createTimeoutController(timeoutMs: number, existingSignal?: AbortSignal
   return { controller, cleanup };
 }
 
-async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
-  const url = `${API_BASE}${endpoint}`;
+async function _fetchWithBase<T>(
+  baseUrl: string,
+  endpoint: string,
+  options?: FetchApiOptions,
+): Promise<T> {
+  const url = `${baseUrl}${endpoint}`;
   const timeout = options?.timeout ?? REQUEST_TIMEOUT;
 
   const headers: Record<string, string> = {
@@ -89,7 +93,6 @@ async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
-      // Include credentials to send HTTP-only cookies
       credentials: 'same-origin',
       headers: {
         ...headers,
@@ -97,19 +100,17 @@ async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise
       },
     });
 
-    // 304 Not Modified - return cached response data instead of throwing
+    // 304 Not Modified - return cached response data
     if (response.status === 304) {
       const cached = responseCache.get(url);
       if (cached !== undefined) {
         return cached as T;
       }
-      // No cache available, fetch fresh (strip ETag to force full response)
       etagCache.delete(url);
-      return fetchApi<T>(endpoint, options);
+      return _fetchWithBase<T>(baseUrl, endpoint, options);
     }
 
     if (!response.ok) {
-      // Redirect to login on auth failure (expired session)
       if (response.status === 401 && !endpoint.includes('/auth/')) {
         window.location.href = '/login';
         throw new ApiError(401, 'Session expired');
@@ -118,14 +119,12 @@ async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise
       throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
     }
 
-    // Store ETag and response for future conditional requests
     const etag = response.headers.get('etag');
     if (etag) {
       etagCache.set(url, etag);
     }
 
     const data: T = await response.json();
-    // Cache response body for 304 fallback
     if (method === 'GET') {
       responseCache.set(url, data);
     }
@@ -138,6 +137,10 @@ async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise
   } finally {
     cleanup();
   }
+}
+
+async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
+  return _fetchWithBase<T>(API_BASE, endpoint, options);
 }
 
 // =============================================================================
@@ -382,83 +385,7 @@ export interface SiteCredential {
 }
 
 async function fetchSitesApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
-  const url = `/api${endpoint}`;
-  const timeout = options?.timeout ?? REQUEST_TIMEOUT;
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  // Add CSRF token for state-changing requests
-  const method = options?.method?.toUpperCase() || 'GET';
-  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
-    const csrfToken = getCsrfToken();
-    if (csrfToken) {
-      headers['X-CSRF-Token'] = csrfToken;
-    }
-  }
-
-  // Add ETag for conditional GET requests
-  if (method === 'GET') {
-    const cachedEtag = etagCache.get(url);
-    if (cachedEtag) {
-      headers['If-None-Match'] = cachedEtag;
-    }
-  }
-
-  // Create timeout controller
-  const { controller, cleanup } = createTimeoutController(timeout, options?.signal);
-
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-      // Include credentials to send HTTP-only cookies
-      credentials: 'same-origin',
-      headers: {
-        ...headers,
-        ...(options?.headers as Record<string, string>),
-      },
-    });
-
-    // 304 Not Modified - return cached response data instead of throwing
-    if (response.status === 304) {
-      const cached = responseCache.get(url);
-      if (cached !== undefined) {
-        return cached as T;
-      }
-      etagCache.delete(url);
-      return fetchSitesApi<T>(endpoint, options);
-    }
-
-    if (!response.ok) {
-      if (response.status === 401 && !endpoint.includes('/auth/')) {
-        window.location.href = '/login';
-        throw new ApiError(401, 'Session expired');
-      }
-      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
-    }
-
-    // Store ETag and response for future conditional requests
-    const etag = response.headers.get('etag');
-    if (etag) {
-      etagCache.set(url, etag);
-    }
-
-    const data: T = await response.json();
-    if (method === 'GET') {
-      responseCache.set(url, data);
-    }
-    return data;
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new ApiError(0, 'Request was cancelled or timed out', true);
-    }
-    throw error;
-  } finally {
-    cleanup();
-  }
+  return _fetchWithBase<T>('/api', endpoint, options);
 }
 
 export const sitesApi = {

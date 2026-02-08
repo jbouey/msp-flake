@@ -1451,7 +1451,7 @@ async def get_notifications(
             read_at=row.read_at,
         ) for row in rows]
     except Exception as e:
-        # Return empty list if table doesn't exist
+        logger.warning(f"Failed to fetch notifications: {e}")
         return []
 
 
@@ -1479,7 +1479,8 @@ async def get_notification_summary(db: AsyncSession = Depends(get_db)):
             info=row.info or 0,
             success=row.success or 0,
         )
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to fetch notification summary: {e}")
         return NotificationSummary(total=0, unread=0, critical=0, warning=0, info=0, success=0)
 
 
@@ -1585,8 +1586,8 @@ async def create_notification(
             "is_dismissed": notif.is_dismissed,
             "created_at": notif.created_at.isoformat() if notif.created_at else None,
         })
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to broadcast notification event: {e}")
 
     return notif
 
