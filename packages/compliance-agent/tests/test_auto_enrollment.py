@@ -326,14 +326,16 @@ class TestADEnumerationWorkstations:
             mock_enum = MockEnum.return_value
             mock_enum.enumerate_all = AsyncMock(return_value=([mock_srv], [mock_ws]))
             mock_enum.test_connectivity = AsyncMock(return_value=True)
+            mock_enum.resolve_missing_ips = AsyncMock()
 
             await agent._enumerate_ad_targets()
 
         # Both server and workstation should be in windows_targets
+        # Hostnames should be IPs (preferred over FQDNs for appliance DNS compatibility)
         assert len(agent.windows_targets) == 2
         hostnames = {t.hostname for t in agent.windows_targets}
-        assert "NVSRV01.northvalley.local" in hostnames
-        assert "NVWS01.northvalley.local" in hostnames
+        assert "192.168.88.244" in hostnames
+        assert "192.168.88.251" in hostnames
 
     @pytest.mark.asyncio
     async def test_enumerate_skips_unreachable_workstations(self):
@@ -387,6 +389,7 @@ class TestADEnumerationWorkstations:
             mock_enum = MockEnum.return_value
             mock_enum.enumerate_all = AsyncMock(return_value=([], [mock_ws]))
             mock_enum.test_connectivity = AsyncMock(return_value=False)
+            mock_enum.resolve_missing_ips = AsyncMock()
 
             await agent._enumerate_ad_targets()
 
@@ -454,11 +457,248 @@ class TestADEnumerationWorkstations:
             mock_enum = MockEnum.return_value
             mock_enum.enumerate_all = AsyncMock(return_value=([], [mock_ws]))
             mock_enum.test_connectivity = AsyncMock(return_value=True)
+            mock_enum.resolve_missing_ips = AsyncMock()
 
             await agent._enumerate_ad_targets()
 
         # Should still be just 1 (not duplicated)
         assert len(agent.windows_targets) == 1
+
+
+class TestFQDNToIPResolution:
+    """Tests for resolve_missing_ips() — FQDN→IP resolution via DC."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_fills_missing_ips(self):
+        """Computers without ip_address should get IPs resolved via DC."""
+        from compliance_agent.ad_enumeration import ADEnumerator, ADComputer
+        from compliance_agent._types import now_utc
+
+        executor = MagicMock()
+        result_mock = MagicMock()
+        result_mock.success = True
+        result_mock.output = {"stdout": '{"WS01.northvalley.local": "192.168.88.251"}'}
+        executor.run_script = AsyncMock(return_value=result_mock)
+
+        enumerator = ADEnumerator(
+            domain_controller="192.168.88.250",
+            username="Administrator",
+            password="TestPass123!",
+            domain="northvalley.local",
+            executor=executor,
+        )
+
+        computer = ADComputer(
+            hostname="WS01",
+            fqdn="WS01.northvalley.local",
+            ip_address=None,  # Missing
+            os_name="Windows 10",
+            os_version="10.0",
+            is_server=False,
+            is_workstation=True,
+            is_domain_controller=False,
+            ou_path="",
+            last_logon=now_utc(),
+            enabled=True,
+        )
+
+        await enumerator.resolve_missing_ips([computer])
+
+        assert computer.ip_address == "192.168.88.251"
+
+    @pytest.mark.asyncio
+    async def test_resolve_skips_computers_with_ips(self):
+        """Computers that already have ip_address should not be re-resolved."""
+        from compliance_agent.ad_enumeration import ADEnumerator, ADComputer
+        from compliance_agent._types import now_utc
+
+        executor = MagicMock()
+        executor.run_script = AsyncMock()
+
+        enumerator = ADEnumerator(
+            domain_controller="192.168.88.250",
+            username="Administrator",
+            password="TestPass123!",
+            domain="northvalley.local",
+            executor=executor,
+        )
+
+        computer = ADComputer(
+            hostname="WS01",
+            fqdn="WS01.northvalley.local",
+            ip_address="192.168.88.251",  # Already set
+            os_name="Windows 10",
+            os_version="10.0",
+            is_server=False,
+            is_workstation=True,
+            is_domain_controller=False,
+            ou_path="",
+            last_logon=now_utc(),
+            enabled=True,
+        )
+
+        await enumerator.resolve_missing_ips([computer])
+
+        # Should NOT have called executor — nothing to resolve
+        executor.run_script.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_resolve_handles_failure_gracefully(self):
+        """DNS resolution failure should not crash — computers just keep no IP."""
+        from compliance_agent.ad_enumeration import ADEnumerator, ADComputer
+        from compliance_agent._types import now_utc
+
+        executor = MagicMock()
+        executor.run_script = AsyncMock(side_effect=Exception("WinRM timeout"))
+
+        enumerator = ADEnumerator(
+            domain_controller="192.168.88.250",
+            username="Administrator",
+            password="TestPass123!",
+            domain="northvalley.local",
+            executor=executor,
+        )
+
+        computer = ADComputer(
+            hostname="WS01",
+            fqdn="WS01.northvalley.local",
+            ip_address=None,
+            os_name="Windows 10",
+            os_version="10.0",
+            is_server=False,
+            is_workstation=True,
+            is_domain_controller=False,
+            ou_path="",
+            last_logon=now_utc(),
+            enabled=True,
+        )
+
+        # Should not raise
+        await enumerator.resolve_missing_ips([computer])
+        assert computer.ip_address is None
+
+    @pytest.mark.asyncio
+    async def test_ip_preferred_over_fqdn_in_windows_targets(self):
+        """WindowsTarget hostname should use IP when available, not FQDN."""
+        from compliance_agent.appliance_agent import ApplianceAgent
+        from compliance_agent.ad_enumeration import ADComputer
+        from compliance_agent.domain_discovery import DiscoveredDomain
+        from compliance_agent._types import now_utc
+
+        agent = ApplianceAgent.__new__(ApplianceAgent)
+        agent.windows_targets = []
+        agent.workstation_targets = []
+        agent.config = MagicMock()
+        agent.config.site_id = "test-site"
+        agent.windows_executor = MagicMock()
+        agent._last_enumeration = datetime.min.replace(tzinfo=timezone.utc)
+        agent._enumeration_interval = 3600
+        agent.logger = MagicMock()
+        agent.client = MagicMock()
+
+        agent.discovered_domain = DiscoveredDomain(
+            domain_name="northvalley.local",
+            netbios_name="NORTHVALLEY",
+            domain_controllers=["192.168.88.250"],
+            dns_servers=["192.168.88.250"],
+            discovered_at=now_utc(),
+            discovery_method="dns_srv",
+        )
+
+        agent._get_domain_credentials = AsyncMock(return_value={
+            "username": "NORTHVALLEY\\Administrator",
+            "password": "TestPass123!",
+        })
+        agent._report_enumeration_results = AsyncMock()
+
+        # Computer with both IP and FQDN
+        mock_ws = ADComputer(
+            hostname="WS01",
+            fqdn="WS01.northvalley.local",
+            ip_address="192.168.88.251",
+            os_name="Windows 10",
+            os_version="10.0",
+            is_server=False,
+            is_workstation=True,
+            is_domain_controller=False,
+            ou_path="",
+            last_logon=now_utc(),
+            enabled=True,
+        )
+
+        with patch('compliance_agent.appliance_agent.ADEnumerator') as MockEnum:
+            mock_enum = MockEnum.return_value
+            mock_enum.enumerate_all = AsyncMock(return_value=([], [mock_ws]))
+            mock_enum.test_connectivity = AsyncMock(return_value=True)
+            mock_enum.resolve_missing_ips = AsyncMock()
+
+            await agent._enumerate_ad_targets()
+
+        assert len(agent.windows_targets) == 1
+        # Must use IP, not FQDN
+        assert agent.windows_targets[0].hostname == "192.168.88.251"
+        assert agent.windows_targets[0].ip_address == "192.168.88.251"
+
+    @pytest.mark.asyncio
+    async def test_fqdn_fallback_when_no_ip(self):
+        """When no IP is available, FQDN should be used as hostname fallback."""
+        from compliance_agent.appliance_agent import ApplianceAgent
+        from compliance_agent.ad_enumeration import ADComputer
+        from compliance_agent.domain_discovery import DiscoveredDomain
+        from compliance_agent._types import now_utc
+
+        agent = ApplianceAgent.__new__(ApplianceAgent)
+        agent.windows_targets = []
+        agent.workstation_targets = []
+        agent.config = MagicMock()
+        agent.config.site_id = "test-site"
+        agent.windows_executor = MagicMock()
+        agent._last_enumeration = datetime.min.replace(tzinfo=timezone.utc)
+        agent._enumeration_interval = 3600
+        agent.logger = MagicMock()
+        agent.client = MagicMock()
+
+        agent.discovered_domain = DiscoveredDomain(
+            domain_name="northvalley.local",
+            netbios_name="NORTHVALLEY",
+            domain_controllers=["192.168.88.250"],
+            dns_servers=["192.168.88.250"],
+            discovered_at=now_utc(),
+            discovery_method="dns_srv",
+        )
+
+        agent._get_domain_credentials = AsyncMock(return_value={
+            "username": "NORTHVALLEY\\Administrator",
+            "password": "TestPass123!",
+        })
+        agent._report_enumeration_results = AsyncMock()
+
+        # Computer with FQDN but no IP (resolution failed)
+        mock_ws = ADComputer(
+            hostname="WS02",
+            fqdn="WS02.northvalley.local",
+            ip_address=None,
+            os_name="Windows 10",
+            os_version="10.0",
+            is_server=False,
+            is_workstation=True,
+            is_domain_controller=False,
+            ou_path="",
+            last_logon=now_utc(),
+            enabled=True,
+        )
+
+        with patch('compliance_agent.appliance_agent.ADEnumerator') as MockEnum:
+            mock_enum = MockEnum.return_value
+            mock_enum.enumerate_all = AsyncMock(return_value=([], [mock_ws]))
+            mock_enum.test_connectivity = AsyncMock(return_value=True)
+            mock_enum.resolve_missing_ips = AsyncMock()
+
+            await agent._enumerate_ad_targets()
+
+        assert len(agent.windows_targets) == 1
+        # Falls back to FQDN when no IP
+        assert agent.windows_targets[0].hostname == "WS02.northvalley.local"
 
 
 class TestPeriodicReEnumeration:

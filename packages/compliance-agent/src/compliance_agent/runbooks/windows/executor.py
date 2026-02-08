@@ -293,7 +293,7 @@ class WindowsExecutor:
             retry_count=retry_count
         )
 
-    def _execute_sync(self, target: WindowsTarget, script: str) -> Dict:
+    def _execute_sync(self, target: WindowsTarget, script: str, skip_phi_scrub: bool = False) -> Dict:
         """Synchronous script execution (runs in thread pool)."""
         import json
 
@@ -306,8 +306,10 @@ class WindowsExecutor:
         std_err = result.std_err.decode('utf-8', errors='replace') if result.std_err else ""
 
         # PHI scrubbing for HIPAA compliance
+        # skip_phi_scrub=True for infrastructure queries (AD enumeration, DNS)
+        # where IP addresses are network data, not patient data
         phi_scrubbed = False
-        if _phi_scrubber:
+        if _phi_scrubber and not skip_phi_scrub:
             std_out_scrubbed, out_result = _phi_scrubber.scrub(std_out)
             std_err_scrubbed, err_result = _phi_scrubber.scrub(std_err)
             std_out = std_out_scrubbed
@@ -327,7 +329,7 @@ class WindowsExecutor:
             try:
                 parsed = json.loads(output["std_out"])
                 # Scrub parsed JSON dict as well
-                if _phi_scrubber and isinstance(parsed, dict):
+                if _phi_scrubber and not skip_phi_scrub and isinstance(parsed, dict):
                     parsed, _ = _phi_scrubber.scrub_dict(parsed)
                 output["parsed"] = parsed
             except json.JSONDecodeError:
@@ -342,6 +344,7 @@ class WindowsExecutor:
         credentials: Optional[Dict[str, str]] = None,
         script_params: Optional[Dict[str, str]] = None,
         timeout_seconds: int = 30,
+        skip_phi_scrub: bool = False,
     ) -> ExecutionResult:
         """
         Execute arbitrary PowerShell script on target.
@@ -354,6 +357,8 @@ class WindowsExecutor:
             credentials: Dict with username/password (optional if target registered)
             script_params: Parameters to pass to script (as PowerShell $params)
             timeout_seconds: Execution timeout
+            skip_phi_scrub: Skip PHI scrubbing (for infrastructure queries
+                where IPs are network data, not patient data)
 
         Returns:
             ExecutionResult with output and status
@@ -398,7 +403,7 @@ class WindowsExecutor:
             output = await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
-                    partial(self._execute_sync, ws_target, script)
+                    partial(self._execute_sync, ws_target, script, skip_phi_scrub)
                 ),
                 timeout=timeout_seconds
             )

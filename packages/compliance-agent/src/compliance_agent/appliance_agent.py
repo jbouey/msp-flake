@@ -2544,6 +2544,12 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                 if not self._domain_controller and self.discovered_domain.domain_controllers:
                     self._domain_controller = self.discovered_domain.domain_controllers[0]
                     logger.info(f"Auto-set domain controller: {self._domain_controller}")
+
+                # Trigger immediate AD enumeration to discover all domain machines
+                try:
+                    await self._enumerate_ad_targets()
+                except Exception as e:
+                    logger.warning(f"Initial AD enumeration failed: {e}")
             else:
                 logger.warning("No AD domain discovered - manual configuration required")
                 self._domain_discovery_complete = True  # Mark complete even if failed
@@ -2894,13 +2900,18 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
         result.workstations = workstations
         result.enumeration_time = datetime.now(timezone.utc)
         
+        # Resolve FQDNs to IPs for computers missing IPv4Address
+        # (appliance DNS may not resolve .local domains)
+        all_computers = servers + [w for w in workstations if w.enabled]
+        await enumerator.resolve_missing_ips(all_computers)
+
         # Test server connectivity (limit 5 concurrent)
         semaphore = asyncio.Semaphore(5)
-        
+
         async def test_with_limit(computer):
             async with semaphore:
                 return computer, await enumerator.test_connectivity(computer)
-        
+
         # Test servers
         if servers:
             logger.info(f"Testing connectivity to {len(servers)} servers...")
@@ -2933,10 +2944,11 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
         
         # Update local target lists
         # Servers AND workstations become Windows targets for full compliance scanning
+        # Prefer IP address over FQDN — appliance DNS may not resolve .local domains
         new_windows_targets = []
         for computer in result.reachable_servers + result.reachable_workstations:
             new_windows_targets.append({
-                "hostname": computer.fqdn or computer.ip_address or computer.hostname,
+                "hostname": computer.ip_address or computer.fqdn or computer.hostname,
                 "ip_address": computer.ip_address or "",
                 "username": creds['username'],
                 "password": creds['password'],
@@ -2975,7 +2987,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
         # Also store workstation list for Go agent deployment tracking
         self.workstation_targets = [
             {
-                "hostname": w.fqdn or w.ip_address or w.hostname,
+                "hostname": w.ip_address or w.fqdn or w.hostname,
                 "os": w.os_name,
             }
             for w in result.reachable_workstations

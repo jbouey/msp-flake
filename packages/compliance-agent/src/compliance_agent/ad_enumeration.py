@@ -115,11 +115,14 @@ class ADEnumerator:
             }
             
             # Run PowerShell script on domain controller
+            # skip_phi_scrub: AD computer data contains IPs that are
+            # network infrastructure, not patient data
             result = await self.executor.run_script(
                 target=self.dc,
                 script=ps_script,
                 credentials=credentials,
                 timeout_seconds=120,
+                skip_phi_scrub=True,
             )
             
             if not result.success:
@@ -203,36 +206,79 @@ class ADEnumerator:
             logger.warning(f"Failed to parse computer: {e}")
             return None
     
-    async def test_connectivity(self, target: ADComputer) -> bool:
-        """Test if we can reach a computer via WinRM."""
+    async def resolve_missing_ips(self, computers: List[ADComputer]) -> None:
+        """
+        Resolve FQDNs to IP addresses for computers missing IPv4Address.
+
+        Runs a single bulk DNS lookup on the DC via PowerShell so the
+        appliance (which may not resolve .local domains) can connect by IP.
+        """
+        need_resolution = [c for c in computers if not c.ip_address and c.fqdn]
+        if not need_resolution:
+            return
+
+        # Build PowerShell to resolve all FQDNs in one call
+        fqdns = [c.fqdn for c in need_resolution]
+        # Escape for PowerShell array
+        fqdn_list = ",".join(f"'{f}'" for f in fqdns)
+        ps_script = f'''
+        $results = @{{}}
+        foreach ($name in @({fqdn_list})) {{
+            try {{
+                $ip = [System.Net.Dns]::GetHostAddresses($name) | Where-Object {{ $_.AddressFamily -eq 'InterNetwork' }} | Select-Object -First 1
+                if ($ip) {{ $results[$name] = $ip.IPAddressToString }}
+            }} catch {{}}
+        }}
+        $results | ConvertTo-Json
+        '''
+
+        credentials = {
+            "username": f"{self.domain}\\{self.username}" if '\\' not in self.username and '@' not in self.username else self.username,
+            "password": self.password,
+        }
+
         try:
-            # Use the executor to test WinRM connectivity
-            test_script = '''
-            $test = Test-NetConnection -ComputerName $params_Hostname -Port 5985 -WarningAction SilentlyContinue
-            @{ online = $test.TcpTestSucceeded } | ConvertTo-Json
-            '''
-            
-            hostname = target.ip_address or target.fqdn or target.hostname
-            credentials = {
-                "username": f"{self.domain}\\{self.username}" if '\\' not in self.username and '@' not in self.username else self.username,
-                "password": self.password,
-            }
-            
             result = await self.executor.run_script(
-                target=self.dc,  # Run from DC
-                script=test_script,
-                script_params={"Hostname": hostname},
+                target=self.dc,
+                script=ps_script,
                 credentials=credentials,
-                timeout_seconds=10,
+                timeout_seconds=30,
+                skip_phi_scrub=True,
             )
-            
+
             if result.success:
-                status = json.loads(result.output.get("stdout", "{}"))
-                return status.get("online", False)
-            
-            return False
+                output = result.output.get("stdout", "").strip()
+                if output:
+                    resolved = json.loads(output)
+                    if isinstance(resolved, dict):
+                        for computer in need_resolution:
+                            ip = resolved.get(computer.fqdn)
+                            if ip:
+                                computer.ip_address = ip
+                                logger.debug(f"Resolved {computer.fqdn} → {ip}")
+                        logger.info(f"Resolved {len(resolved)}/{len(need_resolution)} FQDNs to IPs")
         except Exception as e:
-            logger.debug(f"Connectivity test failed for {target.hostname}: {e}")
+            logger.warning(f"Bulk DNS resolution failed: {e}")
+
+    async def test_connectivity(self, target: ADComputer, port: int = 5985) -> bool:
+        """
+        Test if a computer is reachable via WinRM from the appliance.
+
+        Uses a direct TCP connection test (faster and more reliable than
+        running PowerShell Test-NetConnection on the DC).
+        """
+        hostname = target.ip_address or target.fqdn or target.hostname
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(hostname, port),
+                timeout=5.0,
+            )
+            writer.close()
+            await writer.wait_closed()
+            logger.debug(f"Connectivity OK: {hostname}:{port}")
+            return True
+        except Exception as e:
+            logger.debug(f"Connectivity failed for {hostname}:{port}: {e}")
             return False
 
 
