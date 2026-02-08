@@ -52,6 +52,44 @@ OTS_CALENDARS = [
 OTS_ENABLED = os.getenv("OTS_ENABLED", "true").lower() == "true"
 OTS_TIMEOUT = int(os.getenv("OTS_TIMEOUT", "30"))
 
+# Bitcoin attestation tag in OTS proofs
+BTC_ATTESTATION_TAG = b'\x05\x88\x96\x0d\x73\xd7\x19\x01'
+
+
+def read_bitcoin_varint(data: bytes, pos: int) -> tuple:
+    """Parse a Bitcoin varint from bytes at position.
+
+    Bitcoin varints encode integers with variable-length format:
+    - 0x00-0xFC: 1 byte (value is the byte itself)
+    - 0xFD: 3 bytes (0xFD + 2-byte little-endian)
+    - 0xFE: 5 bytes (0xFE + 4-byte little-endian)
+    - 0xFF: 9 bytes (0xFF + 8-byte little-endian)
+
+    Returns:
+        (value, bytes_consumed) tuple.
+
+    Raises:
+        IndexError: Not enough data at position.
+    """
+    if pos >= len(data):
+        raise IndexError("Not enough data for varint")
+
+    first = data[pos]
+    if first < 0xFD:
+        return first, 1
+    elif first == 0xFD:
+        if pos + 3 > len(data):
+            raise IndexError("Not enough data for 2-byte varint")
+        return int.from_bytes(data[pos + 1:pos + 3], 'little'), 3
+    elif first == 0xFE:
+        if pos + 5 > len(data):
+            raise IndexError("Not enough data for 4-byte varint")
+        return int.from_bytes(data[pos + 1:pos + 5], 'little'), 5
+    else:  # 0xFF
+        if pos + 9 > len(data):
+            raise IndexError("Not enough data for 8-byte varint")
+        return int.from_bytes(data[pos + 1:pos + 9], 'little'), 9
+
 
 # =============================================================================
 # Ed25519 Signature Verification
@@ -440,7 +478,7 @@ def parse_ots_file(ots_bytes: bytes) -> Optional[Dict[str, Any]]:
     calendar_url = extract_calendar_url_from_proof(timestamp_data)
 
     # Check for Bitcoin attestation marker
-    has_bitcoin = b'\x05\x88\x96\x0d\x73\xd7\x19\x01' in timestamp_data
+    has_bitcoin = BTC_ATTESTATION_TAG in timestamp_data
 
     return {
         "hash_bytes": hash_bytes,
@@ -463,7 +501,6 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
     from opentimestamps.core.notary import PendingAttestation, BitcoinBlockHeaderAttestation
 
     OTS_MAGIC = b'\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94'
-    BTC_ATTESTATION_TAG = b'\x05\x88\x96\x0d\x73\xd7\x19\x01'
 
     # Expire proofs older than 7 days (calendars prune after ~7 days)
     await db.execute(text("""
@@ -550,12 +587,14 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
                                     upgrade_data = await resp.read()
 
                                     if BTC_ATTESTATION_TAG in upgrade_data:
-                                        # Extract block height
+                                        # Extract block height (varint after 8-byte tag)
                                         pos = upgrade_data.find(BTC_ATTESTATION_TAG)
                                         block_height = None
-                                        if pos >= 0 and pos + 12 <= len(upgrade_data):
-                                            block_bytes = upgrade_data[pos + 8:pos + 12]
-                                            block_height = int.from_bytes(block_bytes, 'little')
+                                        if pos >= 0:
+                                            try:
+                                                block_height, _ = read_bitcoin_varint(upgrade_data, pos + 8)
+                                            except (IndexError, ValueError):
+                                                block_height = None
 
                                         # Store upgraded proof (proper v1 format)
                                         upgraded_ots = (OTS_MAGIC + b'\x01\x08' +
@@ -1430,6 +1469,130 @@ async def trigger_ots_upgrade(
     """
     result = await upgrade_pending_proofs(db, limit=limit)
     return result
+
+
+@router.post("/ots/resubmit-expired")
+async def resubmit_expired_proofs(
+    site_id: Optional[str] = None,
+    limit: int = 500,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Resubmit expired OTS proofs to calendar servers.
+
+    Expired proofs (older than 7 days) can no longer be upgraded because
+    calendars prune old pending commitments. This endpoint resubmits the
+    original bundle hashes to get fresh calendar commitments.
+
+    Args:
+        site_id: Optional site filter
+        limit: Max proofs to resubmit per call (default 500)
+    """
+    # Query expired proofs
+    if site_id:
+        result = await db.execute(text("""
+            SELECT bundle_id, bundle_hash, site_id
+            FROM ots_proofs
+            WHERE status = 'expired'
+            AND site_id = :site_id
+            ORDER BY submitted_at ASC
+            LIMIT :limit
+        """), {"site_id": site_id, "limit": limit})
+    else:
+        result = await db.execute(text("""
+            SELECT bundle_id, bundle_hash, site_id
+            FROM ots_proofs
+            WHERE status = 'expired'
+            ORDER BY submitted_at ASC
+            LIMIT :limit
+        """), {"limit": limit})
+
+    expired_proofs = result.fetchall()
+
+    if not expired_proofs:
+        return {"resubmitted": 0, "failed": 0, "message": "No expired proofs found"}
+
+    resubmitted = 0
+    failed = 0
+
+    for proof in expired_proofs:
+        try:
+            ots_result = await submit_hash_to_ots(proof.bundle_hash, proof.bundle_id)
+
+            if ots_result:
+                submitted_at = ots_result["submitted_at"]
+                if submitted_at.tzinfo is not None:
+                    submitted_at = submitted_at.replace(tzinfo=None)
+
+                await db.execute(text("""
+                    UPDATE ots_proofs
+                    SET status = 'pending',
+                        proof_data = :proof_data,
+                        calendar_url = :calendar_url,
+                        submitted_at = :submitted_at,
+                        error = NULL,
+                        upgrade_attempts = 0,
+                        last_upgrade_attempt = NULL
+                    WHERE bundle_id = :bundle_id
+                """), {
+                    "proof_data": ots_result["proof_data"],
+                    "calendar_url": ots_result["calendar_url"],
+                    "submitted_at": submitted_at,
+                    "bundle_id": proof.bundle_id,
+                })
+
+                # Sync to compliance_bundles
+                await db.execute(text("""
+                    UPDATE compliance_bundles
+                    SET ots_status = 'pending',
+                        ots_proof = :proof_data,
+                        ots_calendar_url = :calendar_url,
+                        ots_submitted_at = :submitted_at,
+                        ots_error = NULL
+                    WHERE bundle_id = :bundle_id
+                """), {
+                    "proof_data": ots_result["proof_data"],
+                    "calendar_url": ots_result["calendar_url"],
+                    "submitted_at": submitted_at,
+                    "bundle_id": proof.bundle_id,
+                })
+
+                resubmitted += 1
+            else:
+                failed += 1
+                await db.execute(text("""
+                    UPDATE ots_proofs
+                    SET error = 'Resubmission failed - all calendars returned errors'
+                    WHERE bundle_id = :bundle_id
+                """), {"bundle_id": proof.bundle_id})
+
+        except Exception as e:
+            failed += 1
+            logger.warning(f"Failed to resubmit {proof.bundle_id[:8]}: {e}")
+
+        # Commit every 50 to avoid long transactions
+        if (resubmitted + failed) % 50 == 0:
+            await db.commit()
+
+    await db.commit()
+
+    # Get remaining expired count
+    remaining = await db.execute(text(
+        "SELECT COUNT(*) FROM ots_proofs WHERE status = 'expired'"
+    ))
+    remaining_count = remaining.scalar() or 0
+
+    logger.info(
+        f"OTS resubmission: {resubmitted} resubmitted, {failed} failed, "
+        f"{remaining_count} still expired"
+    )
+
+    return {
+        "resubmitted": resubmitted,
+        "failed": failed,
+        "remaining_expired": remaining_count,
+        "message": f"Resubmitted {resubmitted} proofs ({failed} failed, {remaining_count} remaining)",
+    }
 
 
 @router.post("/migrate-chain-positions")

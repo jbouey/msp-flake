@@ -21,11 +21,25 @@ import hashlib
 import os
 import sys
 import re
+import types
 
-# Add backend directory to path for csrf module (which has no external deps)
+# Add backend directory to path for csrf module
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
+
+# Stub out starlette and fastapi so csrf.py can import without full install
+for _mod in (
+    "fastapi", "starlette", "starlette.middleware",
+    "starlette.middleware.base", "starlette.responses",
+):
+    if _mod not in sys.modules:
+        sys.modules[_mod] = types.ModuleType(_mod)
+
+sys.modules["fastapi"].Request = type("Request", (), {})
+sys.modules["fastapi"].HTTPException = type("HTTPException", (Exception,), {})
+sys.modules["starlette.middleware.base"].BaseHTTPMiddleware = type("BaseHTTPMiddleware", (), {})
+sys.modules["starlette.responses"].Response = type("Response", (), {})
 
 
 # ============================================================================

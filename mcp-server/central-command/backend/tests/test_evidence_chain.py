@@ -46,6 +46,8 @@ from evidence_chain import (
     parse_ots_file,
     extract_calendar_url_from_proof,
     replay_timestamp_operations,
+    read_bitcoin_varint,
+    BTC_ATTESTATION_TAG,
 )
 
 # Import Ed25519 for generating test keys/signatures
@@ -321,3 +323,85 @@ class TestTimestampReplay:
         ops = bytes([0xf1, 40]) + big_append
         result = replay_timestamp_operations(initial, ops)
         assert result is None
+
+
+# =============================================================================
+# Bitcoin Varint Parsing
+# =============================================================================
+
+class TestBitcoinVarint:
+    """Test read_bitcoin_varint()."""
+
+    def test_single_byte_zero(self):
+        assert read_bitcoin_varint(b"\x00", 0) == (0, 1)
+
+    def test_single_byte_max(self):
+        """Values 0-252 are encoded as a single byte."""
+        assert read_bitcoin_varint(b"\xfc", 0) == (252, 1)
+
+    def test_two_byte_encoding(self):
+        """0xFD prefix = 2-byte little-endian value."""
+        # 0xFD 0x00 0x01 = 256
+        data = bytes([0xFD, 0x00, 0x01])
+        assert read_bitcoin_varint(data, 0) == (256, 3)
+
+    def test_two_byte_block_height(self):
+        """Typical Bitcoin block height ~880,000 needs 4-byte encoding."""
+        # 880,000 = 0x0D6F80 → 0xFE prefix + 4-byte LE
+        height = 880000
+        data = bytes([0xFE]) + height.to_bytes(4, 'little')
+        value, consumed = read_bitcoin_varint(data, 0)
+        assert value == 880000
+        assert consumed == 5
+
+    def test_four_byte_encoding(self):
+        """0xFE prefix = 4-byte little-endian value."""
+        # 0xFE + 4 bytes LE for 70000
+        height = 70000
+        data = bytes([0xFE]) + height.to_bytes(4, 'little')
+        assert read_bitcoin_varint(data, 0) == (70000, 5)
+
+    def test_eight_byte_encoding(self):
+        """0xFF prefix = 8-byte little-endian value."""
+        big_val = 2**40
+        data = bytes([0xFF]) + big_val.to_bytes(8, 'little')
+        assert read_bitcoin_varint(data, 0) == (big_val, 9)
+
+    def test_offset_position(self):
+        """Read varint at non-zero offset."""
+        # Prefix garbage + varint at pos 5
+        data = b"\x00\x00\x00\x00\x00\x42"
+        assert read_bitcoin_varint(data, 5) == (0x42, 1)
+
+    def test_after_btc_attestation_tag(self):
+        """Parse block height after BTC attestation tag (real-world layout)."""
+        height = 880123
+        tag = BTC_ATTESTATION_TAG
+        varint_data = bytes([0xFE]) + height.to_bytes(4, 'little')
+        proof_data = b"\xf1\x04test" + tag + varint_data
+        pos = proof_data.find(tag) + len(tag)
+        value, consumed = read_bitcoin_varint(proof_data, pos)
+        assert value == 880123
+        assert consumed == 5
+
+    def test_empty_data_raises(self):
+        with pytest.raises(IndexError):
+            read_bitcoin_varint(b"", 0)
+
+    def test_truncated_two_byte_raises(self):
+        with pytest.raises(IndexError):
+            read_bitcoin_varint(bytes([0xFD, 0x01]), 0)  # needs 3 bytes
+
+    def test_truncated_four_byte_raises(self):
+        with pytest.raises(IndexError):
+            read_bitcoin_varint(bytes([0xFE, 0x01, 0x02]), 0)  # needs 5 bytes
+
+    def test_out_of_bounds_raises(self):
+        with pytest.raises(IndexError):
+            read_bitcoin_varint(b"\x00", 5)
+
+    def test_current_block_height_range(self):
+        """Current Bitcoin block heights (~880K) parse correctly."""
+        for height in [879000, 880000, 881000, 900000]:
+            data = bytes([0xFE]) + height.to_bytes(4, 'little')
+            assert read_bitcoin_varint(data, 0)[0] == height
