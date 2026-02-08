@@ -1,6 +1,6 @@
 {
   "session": 100,
-  "updated": "2026-02-08T04:15:00.000000Z",
+  "updated": "2026-02-08T20:23:41.020417Z",
   "agent_version": "1.0.57",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -105,7 +105,7 @@
   ],
   "completed_this_session": [
     "Fixed Dashboard all-zeros + Learning Loop 500 errors: root cause was asyncio.gather() on same AsyncSession (InvalidStateError). Fixed 3 files (routes.py 2x, portal.py 1x). db_queries.py was already fixed locally. Deployed all to VPS",
-    "Fixed CI: Build VirtualBox VM workflow failing on assertion — test-client-wired.nix had http:// placeholder for mcpUrl (module requires HTTPS for non-localhost). Changed to https://. Commit 881bd8a",
+    "Fixed CI: Build VirtualBox VM workflow failing on assertion \u2014 test-client-wired.nix had http:// placeholder for mcpUrl (module requires HTTPS for non-localhost). Changed to https://. Commit 881bd8a",
     "Enriched L3 escalation emails: email_alerts.py send_critical_alert() now accepts and renders host_id, severity, check_type, drift details (expected vs actual table), HIPAA controls with descriptions, attempted remediation actions, recommended action. main.py passes all incident data to email. escalation_engine.py added ntp_sync/time to HIPAA control map and suggestions. Deployed to VPS"
   ],
   "recent_commits": [
@@ -115,11 +115,11 @@
     },
     {
       "hash": "2f5bba5",
-      "message": "quality: Phase 6 — stale doc versions + gRPC TLS support"
+      "message": "quality: Phase 6 \u2014 stale doc versions + gRPC TLS support"
     },
     {
       "hash": "f8427ba",
-      "message": "docs: Language audit — replace enforcement/autonomous with attestation/evidence substrate"
+      "message": "docs: Language audit \u2014 replace enforcement/autonomous with attestation/evidence substrate"
     },
     {
       "hash": "9281add",
@@ -140,7 +140,7 @@
     "deployment_lesson": "ALWAYS push to main instead of manual scp. CI/CD workflow (.github/workflows/deploy-central-command.yml) auto-deploys backend + frontend to VPS on push to main when mcp-server/central-command/** changes. Manual scp causes stale versions. Pipeline: checkout -> npm ci -> npm run build -> rsync backend to /opt/mcp-server/dashboard_api_mount/ -> rsync frontend to /opt/mcp-server/frontend_dist/ -> docker compose restart.",
     "learning_loop_stats_lesson": "Promotion history must match execution_telemetry by incident_type + hostname/site_id (from pattern_signature), NOT by runbook_id. Agent records executions with internal IDs (L1-SVC-DNS-001) that differ from promoted_to_rule_id (RB-AUTO-SERVICE_). The pattern_signature format is check_type:check_type:target where target is hostname or site_id.",
     "dashboard_asyncio_lesson": "SQLAlchemy AsyncSession cannot run concurrent queries via asyncio.gather(). Causes InvalidStateError. Must run queries sequentially on the same session. Fixed in db_queries.py, routes.py (2x), portal.py (1x). All deployed to VPS.",
-    "l3_email_lesson": "L3 escalation emails are generated in email_alerts.py send_critical_alert(), called from main.py POST /incidents handler. The escalation_engine.py path (via notifications.py /api/escalations) is separate — used when agent posts to Central Command directly. Both paths now have rich context."
+    "l3_email_lesson": "L3 escalation emails are generated in email_alerts.py send_critical_alert(), called from main.py POST /incidents handler. The escalation_engine.py path (via notifications.py /api/escalations) is separate \u2014 used when agent posts to Central Command directly. Both paths now have rich context."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",

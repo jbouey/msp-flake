@@ -42,8 +42,10 @@ packages/compliance-agent/
 │   ├── web_ui.py             # FastAPI dashboard
 │   ├── phi_scrubber.py       # PHI pattern removal
 │   ├── windows_collector.py  # Windows data collection
-│   └── runbooks/windows/     # 7 HIPAA runbooks
-├── tests/                    # pytest tests (925+ passing)
+│   ├── domain_discovery.py   # Zero-friction AD domain discovery (LDAP rootDSE)
+│   ├── ad_enumeration.py     # AD computer enumeration (servers + workstations)
+│   └── runbooks/windows/     # 50 HIPAA runbooks
+├── tests/                    # pytest tests (935+ passing)
 ├── docs/                     # Agent-specific documentation
 └── venv/                     # Python 3.13 virtualenv
 ```
@@ -111,7 +113,7 @@ Incident → L1 Deterministic (70-80%, <100ms, $0)
 
 ## Test Status
 
-- **891+ passed** (v1.0.55)
+- **935+ passed** (v1.0.56)
 - See `docs/TESTING.md` for full test guide
 - Use `now_utc()` not `datetime.utcnow()`
 

@@ -793,6 +793,57 @@ rules:
   # =========================================================================
   # Windows Active Directory Runbooks (RB-WIN-AD-*)
   # =========================================================================
+  # =========================================================================
+  # Persistence Detection (Security)
+  # =========================================================================
+  - id: L1-PERSIST-TASK-001
+    name: Suspicious Scheduled Task Removal
+    description: Remove suspicious scheduled tasks (persistence mechanism)
+    conditions:
+      - field: check_type
+        operator: eq
+        value: scheduled_task_persistence
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SEC-018
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(1)(ii)(D)"
+      - "164.312(b)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 3
+    cooldown_seconds: 300
+
+  - id: L1-PERSIST-REG-001
+    name: Suspicious Registry Run Key Removal
+    description: Remove suspicious Run/RunOnce registry entries (persistence mechanism)
+    conditions:
+      - field: check_type
+        operator: eq
+        value: registry_run_persistence
+      - field: status
+        operator: eq
+        value: fail
+    action: run_windows_runbook
+    action_params:
+      runbook_id: RB-WIN-SEC-019
+      phases: ["remediate", "verify"]
+    hipaa_controls:
+      - "164.308(a)(1)(ii)(D)"
+      - "164.312(b)"
+    severity_filter:
+      - high
+      - critical
+    enabled: true
+    priority: 3
+    cooldown_seconds: 300
+
   - id: L1-WIN-AD-TRUST-001
     name: Computer Account Password Reset
     description: Reset machine account password when domain trust broken

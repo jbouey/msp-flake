@@ -295,6 +295,7 @@ DEFAULT_WINDOWS_SCAN_INTERVAL = 300      # Windows drift check (5 min)
 DEFAULT_WORKSTATION_SCAN_INTERVAL = 600  # Workstation compliance (10 min)
 DEFAULT_WORKSTATION_DISCOVERY_INTERVAL = 3600  # AD workstation discovery (1 hour)
 DEFAULT_ENUMERATION_INTERVAL = 3600      # AD enumeration refresh (1 hour)
+DEFAULT_DEVICE_DB_SYNC_INTERVAL = 600    # Sync targets from network-scanner device DB (10 min)
 DEFAULT_EVIDENCE_HEARTBEAT_INTERVAL = 3600  # Evidence heartbeat even if no change (1 hour)
 DEFAULT_CYCLE_TIMEOUT = 300              # Main loop cycle timeout (5 min)
 
@@ -351,6 +352,11 @@ class ApplianceAgent:
         self.workstation_targets: List[Dict] = []  # Workstations for Go agent deployment
         self._last_enumeration = datetime.min.replace(tzinfo=timezone.utc)
         self._enumeration_interval = DEFAULT_ENUMERATION_INTERVAL
+
+        # Device DB sync (network-scanner → compliance-agent bridge)
+        self._last_device_db_sync = datetime.min.replace(tzinfo=timezone.utc)
+        self._device_db_sync_interval = DEFAULT_DEVICE_DB_SYNC_INTERVAL
+        self._device_db_path = Path(getattr(config, 'state_dir', '/var/lib/msp')).parent / "msp" / "devices.db"
 
         # Three-tier healing components
         self.auto_healer: Optional[AutoHealer] = None
@@ -515,6 +521,31 @@ class ApplianceAgent:
 
         # Initial delay to let network settle
         await asyncio.sleep(5)
+
+        # Pre-load Windows targets from local credential store for domain discovery
+        try:
+            stored_creds = self.credential_store.load_credentials("windows")
+            if stored_creds and not self.windows_targets:
+                for tc in stored_creds:
+                    hostname = tc.get('hostname')
+                    if not hostname:
+                        continue
+                    try:
+                        self.windows_targets.append(WindowsTarget(
+                            hostname=hostname,
+                            username=tc.get('username', ''),
+                            password=tc.get('password', ''),
+                            use_ssl=tc.get('use_ssl', False),
+                            port=5986 if tc.get('use_ssl') else 5985,
+                            transport='ntlm',
+                            ip_address=tc.get('ip_address', tc.get('ip', '')),
+                        ))
+                    except Exception:
+                        pass
+                if self.windows_targets:
+                    logger.info(f"Pre-loaded {len(self.windows_targets)} Windows targets for domain discovery")
+        except Exception as e:
+            logger.debug(f"Could not pre-load credentials: {e}")
 
         # First-boot domain discovery (zero-friction deployment)
         if not self._domain_discovery_complete:
@@ -813,37 +844,43 @@ class ApplianceAgent:
         if self.config.enable_l1_sync:
             await self._maybe_sync_rules()
 
-        # 4. Run Windows device scans (periodically)
+        # 4. Sync targets from network-scanner device DB (periodically)
+        await self._maybe_sync_device_db()
+
+        # 5. Periodic AD re-enumeration (hourly, catches new domain devices)
+        await self._maybe_reenumerate_ad()
+
+        # 6. Run Windows device scans (periodically)
         if self.windows_targets:
             await self._maybe_scan_windows()
 
-        # 5. Run Linux device scans (periodically)
+        # 7. Run Linux device scans (periodically)
         if self.linux_targets:
             await self._maybe_scan_linux()
 
-        # 6. Run network posture scan (periodically)
+        # 8. Run network posture scan (periodically)
         await self._maybe_scan_network_posture()
 
-        # 7. Run workstation compliance scan (periodically)
+        # 9. Run workstation compliance scan (periodically)
         if self._workstation_enabled and self._domain_controller:
             await self._maybe_scan_workstations()
 
-        # 8. Deploy Go agents to workstations (if enumeration completed)
+        # 10. Deploy Go agents to workstations (if enumeration completed)
         if self.workstation_targets and self.discovered_domain:
             await self._maybe_deploy_go_agents()
 
-        # 9. Check for L2->L1 promotion candidates (periodically)
+        # 11. Check for L2->L1 promotion candidates (periodically)
         if self.learning_system:
             await self._maybe_check_promotions()
 
-        # 10. Learning system sync (pattern stats + promoted rules)
+        # 12. Learning system sync (pattern stats + promoted rules)
         if self.learning_sync:
             await self._maybe_sync_learning()
 
-        # 11. Database maintenance (pruning old incidents)
+        # 13. Database maintenance (pruning old incidents)
         await self._maybe_prune_database()
 
-        # 12. Process pending orders (remote commands/updates)
+        # 14. Process pending orders (remote commands/updates)
         await self._process_pending_orders()
 
     async def _get_compliance_summary(self) -> dict:
@@ -2486,6 +2523,15 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
         
         logger.info("Running first-boot domain discovery...")
         try:
+            # Pass known Windows target IPs as fallback DNS candidates
+            # Include both ip_address field and hostnames that look like IPs
+            dns_candidates = set()
+            for t in self.windows_targets:
+                if t.ip_address:
+                    dns_candidates.add(t.ip_address)
+                if t.hostname and t.hostname[0].isdigit():
+                    dns_candidates.add(t.hostname)
+            self.domain_discovery._known_dns_candidates = list(dns_candidates)
             self.discovered_domain = await self.domain_discovery.discover()
             
             if self.discovered_domain:
@@ -2493,6 +2539,11 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                 await self._report_discovered_domain(self.discovered_domain)
                 self._domain_discovery_complete = True
                 logger.info(f"Domain discovery complete: {self.discovered_domain.domain_name}")
+
+                # Auto-set domain controller for workstation scanning
+                if not self._domain_controller and self.discovered_domain.domain_controllers:
+                    self._domain_controller = self.discovered_domain.domain_controllers[0]
+                    logger.info(f"Auto-set domain controller: {self._domain_controller}")
             else:
                 logger.warning("No AD domain discovered - manual configuration required")
                 self._domain_discovery_complete = True  # Mark complete even if failed
@@ -2703,6 +2754,102 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
         # Same as DC creds for now (domain admin can access workstations)
         return self._get_dc_credentials()
     
+    async def _maybe_sync_device_db(self):
+        """
+        Sync Windows targets from network-scanner's device database.
+
+        Reads /var/lib/msp/devices.db (populated by network-scanner service)
+        and adds monitored workstations/servers as WinRM targets for full
+        compliance scanning. This bridges network discovery → compliance.
+        """
+        now = datetime.now(timezone.utc)
+        elapsed = (now - self._last_device_db_sync).total_seconds()
+        if elapsed < self._device_db_sync_interval:
+            return
+
+        self._last_device_db_sync = now
+
+        if not self._device_db_path.exists():
+            return  # Network scanner not running or no DB yet
+
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(self._device_db_path), timeout=5)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT hostname, ip_address, device_type, os_name, medical_device
+                FROM devices
+                WHERE scan_policy != 'excluded'
+                  AND status = 'monitored'
+                  AND (medical_device = 0 OR manually_opted_in = 1)
+                  AND device_type IN ('workstation', 'server', 'domain_controller')
+                  AND ip_address IS NOT NULL
+                  AND ip_address != ''
+            """).fetchall()
+            conn.close()
+
+            if not rows:
+                return
+
+            # Get credentials for WinRM access
+            creds = self._get_dc_credentials()
+            if not creds:
+                return
+
+            # Build set of existing target IPs for dedup
+            existing_ips = {t.ip_address for t in self.windows_targets if t.ip_address}
+            existing_hosts = {t.hostname.lower() for t in self.windows_targets}
+
+            added = 0
+            for row in rows:
+                ip = row['ip_address']
+                hostname = row['hostname'] or ip
+                if ip in existing_ips or hostname.lower() in existing_hosts:
+                    continue
+
+                try:
+                    target = WindowsTarget(
+                        hostname=hostname,
+                        ip_address=ip,
+                        username=creds['username'],
+                        password=creds['password'],
+                        use_ssl=False,
+                        port=5985,
+                        transport='ntlm',
+                    )
+                    self.windows_targets.append(target)
+                    existing_ips.add(ip)
+                    existing_hosts.add(hostname.lower())
+                    added += 1
+                except Exception as e:
+                    logger.warning(f"Failed to add device DB target {hostname}: {e}")
+
+            if added:
+                logger.info(f"Auto-enrolled {added} devices from network scanner DB")
+
+        except Exception as e:
+            logger.debug(f"Device DB sync skipped: {e}")
+
+    async def _maybe_reenumerate_ad(self):
+        """
+        Periodically re-enumerate AD to discover new domain devices.
+
+        Runs hourly to catch new servers/workstations joining the domain.
+        """
+        if not self.discovered_domain:
+            return
+
+        now = datetime.now(timezone.utc)
+        elapsed = (now - self._last_enumeration).total_seconds()
+        if elapsed < self._enumeration_interval:
+            return
+
+        logger.info("Periodic AD re-enumeration triggered")
+        try:
+            await self._enumerate_ad_targets()
+        except Exception as e:
+            logger.warning(f"Periodic AD enumeration failed: {e}")
+
     async def _enumerate_ad_targets(self):
         """
         Enumerate servers and workstations from AD.
@@ -2715,8 +2862,10 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
             logger.warning("Cannot enumerate AD: no domain discovered")
             return
         
-        # Get domain credentials from Central Command
+        # Get domain credentials (try Central Command first, then local store)
         creds = await self._get_domain_credentials()
+        if not creds:
+            creds = self._get_dc_credentials()
         if not creds:
             logger.warning("No domain credentials available for enumeration")
             return
@@ -2765,43 +2914,65 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                 else:
                     result.unreachable.append(computer)
         
-        # Test workstations (only if Go agent deployment planned)
-        # For now, just mark enabled ones as discovered
-        result.reachable_workstations = [w for w in workstations if w.enabled]
+        # Test workstation connectivity for full compliance scanning
+        if workstations:
+            enabled_ws = [w for w in workstations if w.enabled]
+            logger.info(f"Testing connectivity to {len(enabled_ws)} workstations...")
+            ws_tests = await asyncio.gather(*[test_with_limit(w) for w in enabled_ws], return_exceptions=True)
+            for test_result in ws_tests:
+                if isinstance(test_result, Exception):
+                    continue
+                computer, reachable = test_result
+                if reachable:
+                    result.reachable_workstations.append(computer)
+                else:
+                    result.unreachable.append(computer)
         
         # Report results to Central Command
         await self._report_enumeration_results(result)
         
         # Update local target lists
-        # Servers become Windows targets for compliance scanning
+        # Servers AND workstations become Windows targets for full compliance scanning
         new_windows_targets = []
-        for s in result.reachable_servers:
+        for computer in result.reachable_servers + result.reachable_workstations:
             new_windows_targets.append({
-                "hostname": s.fqdn or s.ip_address or s.hostname,
-                "ip_address": s.ip_address or "",  # Store IP for target matching
+                "hostname": computer.fqdn or computer.ip_address or computer.hostname,
+                "ip_address": computer.ip_address or "",
                 "username": creds['username'],
                 "password": creds['password'],
             })
-        
+
         # Merge with existing targets (don't overwrite manually configured ones)
         existing_hostnames = {t.hostname for t in self.windows_targets}
+        existing_ips = {t.ip_address for t in self.windows_targets if t.ip_address}
+        added_count = 0
         for target_dict in new_windows_targets:
-            if target_dict['hostname'] not in existing_hostnames:
-                try:
-                    target = WindowsTarget(
-                        hostname=target_dict['hostname'],
-                        username=target_dict['username'],
-                        password=target_dict['password'],
-                        use_ssl=False,
-                        port=5985,
-                        transport='ntlm',
-                        ip_address=target_dict.get('ip_address', ''),
-                    )
-                    self.windows_targets.append(target)
-                except Exception as e:
-                    logger.warning(f"Failed to add enumerated target: {e}")
-        
-        # Store workstation targets for Go agent deployment
+            hostname = target_dict['hostname']
+            ip = target_dict.get('ip_address', '')
+            if hostname in existing_hostnames or (ip and ip in existing_ips):
+                continue
+            try:
+                target = WindowsTarget(
+                    hostname=hostname,
+                    username=target_dict['username'],
+                    password=target_dict['password'],
+                    use_ssl=False,
+                    port=5985,
+                    transport='ntlm',
+                    ip_address=ip,
+                )
+                self.windows_targets.append(target)
+                existing_hostnames.add(hostname)
+                if ip:
+                    existing_ips.add(ip)
+                added_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to add enumerated target: {e}")
+
+        if added_count:
+            logger.info(f"Added {added_count} new targets from AD enumeration")
+
+        # Also store workstation list for Go agent deployment tracking
         self.workstation_targets = [
             {
                 "hostname": w.fqdn or w.ip_address or w.hostname,
