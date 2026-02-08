@@ -20,7 +20,7 @@
     deploymentMode = "direct";
 
     # MCP server connection
-    mcpUrl = "http://MCP_SERVER_IP:8000";  # REPLACE WITH ACTUAL IP
+    mcpUrl = "https://MCP_SERVER_IP:8000";  # REPLACE WITH ACTUAL IP
 
     # Network egress allowlist (hostnames only, no ports)
     allowedHosts = [
