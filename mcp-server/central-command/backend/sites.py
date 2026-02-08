@@ -1007,58 +1007,49 @@ async def report_discovered_domain(report: DiscoveredDomainReport):
             report.site_id,
         )
 
-        # Get partner for this site
-        partner = await conn.fetchrow("""
-            SELECT p.partner_id, p.name, p.notification_email
-            FROM partners p
-            JOIN sites s ON s.partner_id = p.partner_id
-            WHERE s.site_id = $1
-        """, report.site_id)
-        
-        if partner:
-            # Create notification for partner
-            domain_name = report.discovered_domain.get('domain_name', 'Unknown')
-            domain_controllers = report.discovered_domain.get('domain_controllers', [])
-            
-            await conn.execute("""
-                INSERT INTO notifications (
-                    site_id, appliance_id, severity, category, title, message, metadata, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-            """,
-                report.site_id,
-                report.appliance_id,
-                'info',
-                'deployment',
-                f'Domain Discovered: {domain_name}',
-                f'Appliance discovered Active Directory domain "{domain_name}". '
-                f'Please enter domain administrator credentials to begin automatic enumeration.',
-                json.dumps({
-                    "domain_name": domain_name,
-                    "domain_controllers": domain_controllers,
-                    "action_required": "Enter domain administrator credentials",
-                    "dashboard_link": f"/sites/{report.site_id}/credentials",
-                }),
-                now,
-            )
-            
-            # Try to send email notification if configured
-            try:
-                from .email_alerts import send_critical_alert, is_email_configured
-                if is_email_configured() and partner.get('notification_email'):
-                    send_critical_alert(
-                        recipient=partner['notification_email'],
-                        subject=f"Domain Discovered: {domain_name}",
-                        body=f"""
-                        <p>Your OsirisCare appliance has automatically discovered the Active Directory domain:</p>
-                        <p><strong>{domain_name}</strong></p>
-                        <p>Domain Controllers: {', '.join(domain_controllers) if domain_controllers else 'None found'}</p>
-                        <p><strong>Action Required:</strong> Please enter domain administrator credentials in the dashboard to begin automatic enumeration of servers and workstations.</p>
-                        <p><a href="https://dashboard.osiriscare.net/sites/{report.site_id}/credentials">Enter Credentials</a></p>
-                        """,
-                        severity="info",
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to send email notification: {e}")
+        # Create notification for dashboard
+        domain_name = report.discovered_domain.get('domain_name', 'Unknown')
+        domain_controllers = report.discovered_domain.get('domain_controllers', [])
+
+        await conn.execute("""
+            INSERT INTO notifications (
+                site_id, appliance_id, severity, category, title, message, metadata, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+        """,
+            report.site_id,
+            report.appliance_id,
+            'info',
+            'deployment',
+            f'Domain Discovered: {domain_name}',
+            f'Appliance discovered Active Directory domain "{domain_name}". '
+            f'Please enter domain administrator credentials to begin automatic enumeration.',
+            json.dumps({
+                "domain_name": domain_name,
+                "domain_controllers": domain_controllers,
+                "action_required": "Enter domain administrator credentials",
+                "dashboard_link": f"/sites/{report.site_id}/credentials",
+            }),
+            now,
+        )
+
+        # Try to send email notification if configured
+        try:
+            from .email_alerts import send_critical_alert, is_email_configured
+            if is_email_configured():
+                dc_list = ', '.join(domain_controllers) if domain_controllers else 'None found'
+                send_critical_alert(
+                    title=f"Domain Discovered: {domain_name}",
+                    message=(
+                        f'Appliance discovered AD domain "{domain_name}". '
+                        f'Domain Controllers: {dc_list}. '
+                        f'Action required: enter domain admin credentials in dashboard.'
+                    ),
+                    site_id=report.site_id,
+                    category="deployment",
+                    severity="info",
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send email notification: {e}")
     
     return {"status": "ok", "message": "Domain discovery recorded"}
 
