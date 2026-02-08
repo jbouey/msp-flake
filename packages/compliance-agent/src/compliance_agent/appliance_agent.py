@@ -766,6 +766,8 @@ class ApplianceAgent:
             logger.debug(f"[{timestamp}] Checkin OK")
             # Verify pending rebuild if one is in progress
             self._verify_rebuild_if_pending()
+            # Complete rebuild order that was interrupted by agent restart
+            await self._complete_pending_rebuild_order()
             # Drain offline evidence queue (connectivity confirmed)
             await self._drain_evidence_queue()
             # Update Windows targets from server response (credential pull)
@@ -3099,13 +3101,47 @@ try {
             'sensor_status': self._handle_sensor_status,
             'sync_promoted_rule': self._handle_sync_promoted_rule,
             'update_credentials': self._handle_update_credentials,
+            'healing': self._handle_healing,
         }
+
+        # Pass order_id into parameters so handlers that restart the agent
+        # (nixos_rebuild, restart_agent) can persist it for post-restart completion
+        parameters['_order_id'] = order.get('order_id')
 
         handler = handlers.get(order_type)
         if handler:
             return await handler(parameters)
         else:
             raise ValueError(f"Unknown order type: {order_type}")
+
+    async def _handle_healing(self, params: Dict) -> Dict:
+        """Execute a healing order from Central Command.
+
+        Healing orders contain a runbook_id and optional incident_id.
+        Routes to the existing _execute_healing_action() which handles
+        Windows/Linux runbook execution, legacy action mapping, etc.
+        """
+        runbook_id = params.get('runbook_id')
+        if not runbook_id:
+            return {"error": "runbook_id required for healing order"}
+
+        incident_id = params.get('incident_id')
+        target_host = params.get('target_host') or params.get('hostname')
+
+        # Route through _execute_healing_action using run_runbook:<ID> format
+        # which handles Windows/Linux detection and AUTO-* mapping
+        action = f"run_runbook:{runbook_id}"
+        result = await self._execute_healing_action(
+            action=action,
+            params=params,
+            site_id=self.config.site_id,
+            host_id=target_host,
+        )
+
+        if incident_id:
+            result['incident_id'] = incident_id
+
+        return result
 
     async def _handle_force_checkin(self, params: Dict) -> Dict:
         """Force an immediate checkin."""
@@ -3182,6 +3218,33 @@ try {
             verified.write_text(str(int(time.time())))
             logger.info("Rebuild verified - watchdog will persist with nixos-rebuild switch")
 
+    async def _complete_pending_rebuild_order(self):
+        """Complete a rebuild order that was interrupted by agent restart.
+
+        During nixos-rebuild test, the agent restarts before complete_order()
+        is called. The order_id is persisted to a file so we can complete it
+        after the restart once checkin succeeds.
+        """
+        pending_order_file = Path("/var/lib/msp/.pending-rebuild-order")
+        if not pending_order_file.exists():
+            return
+
+        order_id = pending_order_file.read_text().strip()
+        if not order_id:
+            pending_order_file.unlink(missing_ok=True)
+            return
+
+        try:
+            await self.client.complete_order(
+                order_id=order_id,
+                success=True,
+                result={"status": "rebuild_completed", "completed_after_restart": True}
+            )
+            logger.info(f"Completed pending rebuild order {order_id} after restart")
+            pending_order_file.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to complete pending rebuild order {order_id}: {e}")
+
     def _do_restart(self):
         """Execute agent restart via systemctl."""
         import os
@@ -3213,6 +3276,11 @@ try {
         # Write rebuild marker: line 1 = timestamp, line 2 = previous system, line 3 = flake ref
         marker = Path("/var/lib/msp/.rebuild-in-progress")
         marker.write_text(f"{int(time.time())}\n{current_system}\n{flake_ref}")
+
+        # Persist order_id so we can complete it after agent restart
+        order_id = params.get('_order_id')
+        if order_id:
+            Path("/var/lib/msp/.pending-rebuild-order").write_text(order_id)
 
         logger.info(f"Two-phase rebuild: test --flake {flake_ref} --refresh (rollback safety active)")
 
