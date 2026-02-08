@@ -2359,6 +2359,184 @@ try {
 # Security Runbooks Registry
 # =============================================================================
 
+# =============================================================================
+# RB-WIN-SEC-018: Suspicious Scheduled Task Removal
+# =============================================================================
+
+RUNBOOK_SCHED_TASK_PERSIST = WindowsRunbook(
+    id="RB-WIN-SEC-018",
+    name="Suspicious Scheduled Task Removal",
+    description="Detect and remove suspicious scheduled tasks used for persistence",
+    version="1.0",
+    hipaa_controls=["164.308(a)(1)(ii)(D)", "164.312(b)"],
+    severity="critical",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=10,
+        requires_maintenance_window=False,
+        allow_concurrent=False
+    ),
+
+    detect_script=r'''
+$suspicious = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
+    $_.TaskName -notmatch '^(Microsoft|Google|Adobe|Mozilla|OneDrive|MicrosoftEdge|Optimize|Scheduled|User_Feed|CreateExplorerShellUnelevatedTask)' -and
+    $_.TaskPath -eq '\' -and
+    $_.State -ne 'Disabled'
+} | ForEach-Object {
+    $action = ($_.Actions | Select-Object -First 1).Execute
+    if ($action -and $action -notmatch '(svchost|taskhost|consent|SystemSettings|WindowsUpdate|defrag|SilentCleanup)') {
+        @{TaskName=$_.TaskName; Execute=$action; State=$_.State.ToString()}
+    }
+}
+if ($suspicious) {
+    @{Status='FAIL'; Details="Suspicious scheduled tasks found"; Tasks=$suspicious} | ConvertTo-Json -Compress
+} else {
+    @{Status='PASS'; Details="No suspicious scheduled tasks"} | ConvertTo-Json -Compress
+}
+''',
+
+    remediate_script=r'''
+$removed = @()
+$failed = @()
+Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
+    $_.TaskName -notmatch '^(Microsoft|Google|Adobe|Mozilla|OneDrive|MicrosoftEdge|Optimize|Scheduled|User_Feed|CreateExplorerShellUnelevatedTask)' -and
+    $_.TaskPath -eq '\' -and
+    $_.State -ne 'Disabled'
+} | ForEach-Object {
+    $action = ($_.Actions | Select-Object -First 1).Execute
+    if ($action -and $action -notmatch '(svchost|taskhost|consent|SystemSettings|WindowsUpdate|defrag|SilentCleanup)') {
+        try {
+            Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false -ErrorAction Stop
+            $removed += $_.TaskName
+        } catch {
+            $failed += @{TaskName=$_.TaskName; Error=$_.Exception.Message}
+        }
+    }
+}
+@{Removed=$removed; Failed=$failed} | ConvertTo-Json -Compress
+''',
+
+    verify_script=r'''
+$remaining = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
+    $_.TaskName -notmatch '^(Microsoft|Google|Adobe|Mozilla|OneDrive|MicrosoftEdge|Optimize|Scheduled|User_Feed|CreateExplorerShellUnelevatedTask)' -and
+    $_.TaskPath -eq '\' -and
+    $_.State -ne 'Disabled'
+} | ForEach-Object {
+    $action = ($_.Actions | Select-Object -First 1).Execute
+    if ($action -and $action -notmatch '(svchost|taskhost|consent|SystemSettings|WindowsUpdate|defrag|SilentCleanup)') {
+        @{TaskName=$_.TaskName; Execute=$action}
+    }
+}
+if ($remaining) {
+    @{Status='FAIL'; Details="Suspicious tasks still present"; Tasks=$remaining} | ConvertTo-Json -Compress
+} else {
+    @{Status='PASS'; Details="All suspicious scheduled tasks removed"} | ConvertTo-Json -Compress
+}
+'''
+)
+
+
+# =============================================================================
+# RB-WIN-SEC-019: Suspicious Registry Run Key Removal
+# =============================================================================
+
+RUNBOOK_REGISTRY_PERSIST = WindowsRunbook(
+    id="RB-WIN-SEC-019",
+    name="Suspicious Registry Run Key Removal",
+    description="Detect and remove suspicious Run/RunOnce registry entries used for persistence",
+    version="1.0",
+    hipaa_controls=["164.308(a)(1)(ii)(D)", "164.312(b)"],
+    severity="critical",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=10,
+        requires_maintenance_window=False,
+        allow_concurrent=False
+    ),
+
+    detect_script=r'''
+$found = @()
+$paths = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
+)
+foreach ($p in $paths) {
+    $props = Get-ItemProperty -Path $p -ErrorAction SilentlyContinue
+    if ($props) {
+        $props.PSObject.Properties | Where-Object {
+            $_.Name -notmatch '^(PS|VMware|SecurityHealth|RealTimeProtection|Windows)' -and
+            $_.Value -match '\.(exe|bat|cmd|ps1|vbs|js)' -and
+            $_.Value -notmatch '(Program Files|Windows|Microsoft|VMware)'
+        } | ForEach-Object {
+            $found += @{Name=$_.Name; Value=$_.Value; Path=$p}
+        }
+    }
+}
+if ($found.Count -gt 0) {
+    @{Status='FAIL'; Details="Suspicious Run entries found"; Entries=$found} | ConvertTo-Json -Compress
+} else {
+    @{Status='PASS'; Details="No suspicious Run entries"} | ConvertTo-Json -Compress
+}
+''',
+
+    remediate_script=r'''
+$removed = @()
+$failed = @()
+$paths = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
+)
+foreach ($p in $paths) {
+    $props = Get-ItemProperty -Path $p -ErrorAction SilentlyContinue
+    if ($props) {
+        $props.PSObject.Properties | Where-Object {
+            $_.Name -notmatch '^(PS|VMware|SecurityHealth|RealTimeProtection|Windows)' -and
+            $_.Value -match '\.(exe|bat|cmd|ps1|vbs|js)' -and
+            $_.Value -notmatch '(Program Files|Windows|Microsoft|VMware)'
+        } | ForEach-Object {
+            try {
+                Remove-ItemProperty -Path $p -Name $_.Name -Force -ErrorAction Stop
+                $removed += @{Name=$_.Name; Path=$p}
+            } catch {
+                $failed += @{Name=$_.Name; Path=$p; Error=$_.Exception.Message}
+            }
+        }
+    }
+}
+@{Removed=$removed; Failed=$failed} | ConvertTo-Json -Compress
+''',
+
+    verify_script=r'''
+$remaining = @()
+$paths = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
+)
+foreach ($p in $paths) {
+    $props = Get-ItemProperty -Path $p -ErrorAction SilentlyContinue
+    if ($props) {
+        $props.PSObject.Properties | Where-Object {
+            $_.Name -notmatch '^(PS|VMware|SecurityHealth|RealTimeProtection|Windows)' -and
+            $_.Value -match '\.(exe|bat|cmd|ps1|vbs|js)' -and
+            $_.Value -notmatch '(Program Files|Windows|Microsoft|VMware)'
+        } | ForEach-Object {
+            $remaining += @{Name=$_.Name; Value=$_.Value; Path=$p}
+        }
+    }
+}
+if ($remaining.Count -gt 0) {
+    @{Status='FAIL'; Details="Suspicious entries still present"; Entries=$remaining} | ConvertTo-Json -Compress
+} else {
+    @{Status='PASS'; Details="All suspicious Run entries removed"} | ConvertTo-Json -Compress
+}
+'''
+)
+
+
+# =============================================================================
+# Combined Security Runbook Registry
+# =============================================================================
+
 SECURITY_RUNBOOKS: Dict[str, WindowsRunbook] = {
     "RB-WIN-SEC-001": RUNBOOK_FIREWALL_ENABLE,
     "RB-WIN-SEC-002": RUNBOOK_AUDIT_POLICY,
@@ -2377,5 +2555,7 @@ SECURITY_RUNBOOKS: Dict[str, WindowsRunbook] = {
     "RB-WIN-SEC-015": RUNBOOK_USB_CONTROL,
     "RB-WIN-SEC-016": RUNBOOK_SCREEN_LOCK,
     "RB-WIN-SEC-017": RUNBOOK_DEFENDER_EXCLUSIONS,
+    "RB-WIN-SEC-018": RUNBOOK_SCHED_TASK_PERSIST,
+    "RB-WIN-SEC-019": RUNBOOK_REGISTRY_PERSIST,
     "RB-WIN-ACCESS-001": RUNBOOK_ACCESS_CONTROL,
 }

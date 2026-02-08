@@ -1166,6 +1166,20 @@ class ApplianceAgent:
             "restore_audit_policy": "RB-WIN-SEC-002",       # Audit Policy
             "restore_defender": "RB-WIN-SEC-006",           # Defender Real-time
             "enable_bitlocker": "RB-WIN-SEC-005",           # BitLocker Status
+            # Legacy actions from old l1_rules.json on appliances
+            "set_audit_policy": "RB-WIN-SEC-002",
+            "set_password_policy": "RB-WIN-SEC-004",
+            "set_lockout_policy": "RB-WIN-SEC-003",
+            "set_screensaver_policy": "RB-WIN-SEC-016",
+            "set_screen_lock_policy": "RB-WIN-SEC-016",
+            "disable_smb1": "RB-WIN-SEC-007",
+            "disable_autoplay": "RB-WIN-SEC-015",
+            "configure_rdp_security": "RB-WIN-SEC-010",
+            "enable_uac": "RB-WIN-SEC-011",
+            "set_event_log_size": "RB-WIN-SEC-012",
+            "update_defender_definitions": "RB-WIN-AV-001",
+            "disable_guest_account": "RB-WIN-SEC-009",
+            "trigger_windows_update": "RB-WIN-PATCH-001",
             # Alert-style actions from L1 rules - FULL COVERAGE mapping
             # Core security
             "alert:firewall_disabled": "RB-WIN-FIREWALL-001",
@@ -1963,6 +1977,41 @@ try {
     @{BackupType = 'NotInstalled'; Error = $_.Exception.Message} | ConvertTo-Json
 }
 """),
+                # Persistence detection: suspicious scheduled tasks
+                ("scheduled_task_persistence", """
+$suspicious = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
+    $_.TaskName -notmatch '^(Microsoft|Google|Adobe|Mozilla|OneDrive|MicrosoftEdge|Optimize|Scheduled|User_Feed|CreateExplorerShellUnelevatedTask)' -and
+    $_.TaskPath -eq '\\' -and
+    $_.State -ne 'Disabled'
+} | ForEach-Object {
+    $action = ($_.Actions | Select-Object -First 1).Execute
+    if ($action -and $action -notmatch '(svchost|taskhost|consent|SystemSettings|WindowsUpdate|defrag|SilentCleanup)') {
+        @{TaskName=$_.TaskName; Execute=$action; State=$_.State.ToString()}
+    }
+}
+if ($suspicious) { $suspicious | ConvertTo-Json -Compress } else { '[]' }
+"""),
+                # Persistence detection: suspicious Run registry keys
+                ("registry_run_persistence", """
+$found = @()
+$paths = @(
+    'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run',
+    'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce'
+)
+foreach ($p in $paths) {
+    $props = Get-ItemProperty -Path $p -ErrorAction SilentlyContinue
+    if ($props) {
+        $props.PSObject.Properties | Where-Object {
+            $_.Name -notmatch '^(PS|VMware|SecurityHealth|RealTimeProtection|Windows)' -and
+            $_.Value -match '\\.(exe|bat|cmd|ps1|vbs|js)' -and
+            $_.Value -notmatch '(Program Files|Windows|Microsoft|VMware)'
+        } | ForEach-Object {
+            $found += @{Name=$_.Name; Value=$_.Value; Path=$p}
+        }
+    }
+}
+if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
+"""),
             ]
 
             for check_name, ps_cmd in checks:
@@ -2061,6 +2110,26 @@ try {
                                 status = "fail"
                         except Exception:
                             status = "fail" if check_result.status_code != 0 else status
+
+                    elif check_name == "scheduled_task_persistence" and check_result.status_code == 0:
+                        try:
+                            import json as json_module
+                            tasks = json_module.loads(output) if output.strip() else []
+                            if isinstance(tasks, dict):
+                                tasks = [tasks]  # Single result
+                            status = "fail" if tasks else "pass"
+                        except Exception:
+                            status = "pass" if output.strip() == "[]" else "fail"
+
+                    elif check_name == "registry_run_persistence" and check_result.status_code == 0:
+                        try:
+                            import json as json_module
+                            entries = json_module.loads(output) if output.strip() else []
+                            if isinstance(entries, dict):
+                                entries = [entries]
+                            status = "fail" if entries else "pass"
+                        except Exception:
+                            status = "pass" if output.strip() == "[]" else "fail"
 
                     elif check_name.startswith("service_") and check_result.status_code == 0:
                         # Check if critical Windows service is running
