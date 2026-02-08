@@ -134,6 +134,7 @@ engine = create_async_engine(
     max_overflow=30,        # Allow burst capacity
     pool_recycle=3600,      # Recycle stale connections after 1 hour
     pool_pre_ping=True,     # Verify connections before use
+    connect_args={"server_settings": {"statement_timeout": "30000"}},  # 30s query timeout
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -362,7 +363,7 @@ async def _ots_upgrade_loop():
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.warning(f"OTS upgrade cycle failed: {e}")
+            logger.exception(f"OTS upgrade cycle failed: {e}")
         await asyncio.sleep(900)  # 15 minutes
 
 
@@ -377,10 +378,23 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting MCP Server...")
     
-    # Connect to Redis
-    redis_client = await redis.from_url(REDIS_URL, decode_responses=True)
-    await redis_client.ping()
-    logger.info("Connected to Redis", url=REDIS_URL.split("@")[-1])
+    # Connect to Redis with timeout and retry
+    for attempt in range(3):
+        try:
+            redis_client = await redis.from_url(
+                REDIS_URL, decode_responses=True,
+                socket_connect_timeout=5, socket_timeout=5
+            )
+            await redis_client.ping()
+            logger.info("Connected to Redis", url=REDIS_URL.split("@")[-1])
+            break
+        except Exception as e:
+            if attempt < 2:
+                logger.warning(f"Redis connection attempt {attempt + 1} failed: {e}, retrying in 3s...")
+                await asyncio.sleep(3)
+            else:
+                logger.error(f"Redis connection failed after 3 attempts: {e}")
+                redis_client = None
     
     # Load signing key
     load_or_create_signing_key()
@@ -440,6 +454,10 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down MCP Server...")
     ots_upgrade_task.cancel()
+    try:
+        await asyncio.wait_for(asyncio.shield(ots_upgrade_task), timeout=10)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
     if redis_client:
         await redis_client.close()
     await engine.dispose()
@@ -572,12 +590,18 @@ async def health():
     
     # Check Redis
     try:
-        await redis_client.ping()
-        checks["redis"] = "connected"
+        if redis_client:
+            await redis_client.ping()
+            checks["redis"] = "connected"
+        else:
+            checks["redis"] = "not_configured"
+            checks["status"] = "degraded"
+            logger.warning("Health check: Redis not connected")
     except Exception as e:
         checks["redis"] = f"error: {str(e)}"
         checks["status"] = "degraded"
-    
+        logger.warning("Health check: Redis degraded", error=str(e))
+
     # Check database
     try:
         async with async_session() as session:
@@ -586,7 +610,8 @@ async def health():
     except Exception as e:
         checks["database"] = f"error: {str(e)}"
         checks["status"] = "degraded"
-    
+        logger.warning("Health check: Database degraded", error=str(e))
+
     # Check MinIO
     try:
         minio_client.bucket_exists(MINIO_BUCKET)
@@ -594,6 +619,7 @@ async def health():
     except Exception as e:
         checks["minio"] = f"error: {str(e)}"
         checks["status"] = "degraded"
+        logger.warning("Health check: MinIO degraded", error=str(e))
     
     checks["timestamp"] = datetime.now(timezone.utc).isoformat()
     checks["runbooks_loaded"] = len(RUNBOOKS)

@@ -89,7 +89,7 @@ class IncidentDatabase:
 
     def _init_db(self):
         """Initialize database schema."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=FULL")
 
@@ -234,7 +234,7 @@ class IncidentDatabase:
             created_at=datetime.now(timezone.utc).isoformat()
         )
 
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.execute("""
             INSERT INTO incidents (
                 id, site_id, host_id, incident_type, severity,
@@ -272,7 +272,7 @@ class IncidentDatabase:
         """Mark an incident as resolved and update stats."""
         resolved_at = datetime.now(timezone.utc).isoformat()
 
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         # Get pattern signature
         cursor = conn.execute(
@@ -371,7 +371,7 @@ class IncidentDatabase:
         Get historical context for a pattern.
         Used by Level 2 LLM for informed decisions.
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
 
         # Get pattern stats
@@ -418,7 +418,7 @@ class IncidentDatabase:
         limit: int = 5
     ) -> List[Dict[str, Any]]:
         """Get similar incidents for context building."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
 
         query = """
@@ -443,7 +443,7 @@ class IncidentDatabase:
 
     def get_promotion_candidates(self) -> List[PatternStats]:
         """Get patterns eligible for L1 promotion."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
 
         cursor = conn.execute("""
@@ -476,7 +476,7 @@ class IncidentDatabase:
 
     def mark_promoted(self, pattern_signature: str, rule_yaml: str, incident_ids: List[str]):
         """Mark a pattern as promoted to L1."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         # Get current stats for record
         cursor = conn.execute("""
@@ -527,7 +527,7 @@ class IncidentDatabase:
         feedback_data: Dict[str, Any]
     ):
         """Record human feedback for learning."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         conn.execute("""
             INSERT INTO learning_feedback (
@@ -550,7 +550,7 @@ class IncidentDatabase:
 
     def get_incident(self, incident_id: str) -> Optional[Incident]:
         """Get a single incident by ID."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
 
         cursor = conn.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,))
@@ -579,7 +579,7 @@ class IncidentDatabase:
 
     def get_stats_summary(self, days: int = 30) -> Dict[str, Any]:
         """Get summary statistics for dashboard."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
@@ -612,7 +612,7 @@ class IncidentDatabase:
 
     def get_recent_incidents(self, limit: int = 10, site_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get most recent incidents for audit/evidence."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
 
         query = "SELECT * FROM incidents"
@@ -651,7 +651,7 @@ class IncidentDatabase:
 
         cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
 
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         # Get counts before deletion for reporting
         cursor = conn.execute("SELECT COUNT(*) FROM incidents")
@@ -729,7 +729,7 @@ class IncidentDatabase:
         """Get database size and record counts for monitoring."""
         import os
 
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         stats = {}
 

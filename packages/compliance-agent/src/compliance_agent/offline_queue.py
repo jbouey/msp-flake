@@ -48,7 +48,7 @@ class EvidenceQueue:
         # Create parent directory if needed
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         # Enable WAL mode for better concurrency and crash safety
         conn.execute('PRAGMA journal_mode=WAL')
@@ -105,7 +105,7 @@ class EvidenceQueue:
         Raises:
             sqlite3.IntegrityError: If bundle_id already queued
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         try:
             cursor = conn.execute('''
@@ -145,7 +145,7 @@ class EvidenceQueue:
         Returns:
             List of queued evidence bundles
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
 
         try:
@@ -195,7 +195,7 @@ class EvidenceQueue:
         Args:
             queue_id: Queue entry ID
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         try:
             conn.execute('''
@@ -225,7 +225,7 @@ class EvidenceQueue:
             error: Error message
             retry_after_sec: Seconds until next retry (None = exponential backoff)
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         try:
             # Get current retry count
@@ -282,7 +282,7 @@ class EvidenceQueue:
         Returns:
             Dictionary with queue stats
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         try:
             # Total pending
@@ -346,7 +346,7 @@ class EvidenceQueue:
         Returns:
             Number of entries deleted
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=older_than_days)
@@ -369,6 +369,41 @@ class EvidenceQueue:
         finally:
             conn.close()
 
+    async def prune_failed(self, older_than_days: int = 30) -> int:
+        """
+        Delete entries that exceeded max retries and are older than cutoff.
+
+        Args:
+            older_than_days: Only delete failed entries older than this many days
+
+        Returns:
+            Number of entries deleted
+        """
+        conn = sqlite3.connect(self.db_path, timeout=30)
+
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+
+            cursor = conn.execute('''
+                DELETE FROM queued_evidence
+                WHERE uploaded_at IS NULL
+                AND retry_count >= ?
+                AND created_at < ?
+            ''', (self.max_retries, cutoff_date.isoformat()))
+
+            deleted_count = cursor.rowcount
+            conn.commit()
+
+            if deleted_count > 0:
+                logger.info(
+                    f"Pruned {deleted_count} permanently failed entries older than {older_than_days} days"
+                )
+
+            return deleted_count
+
+        finally:
+            conn.close()
+
     async def get_by_bundle_id(self, bundle_id: str) -> Optional[QueuedEvidence]:
         """
         Get queue entry by bundle ID.
@@ -379,7 +414,7 @@ class EvidenceQueue:
         Returns:
             QueuedEvidence if found, None otherwise
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
 
         try:
@@ -414,7 +449,7 @@ class EvidenceQueue:
 
         WARNING: This is destructive and should only be used in tests.
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
 
         try:
             conn.execute('DELETE FROM queued_evidence')

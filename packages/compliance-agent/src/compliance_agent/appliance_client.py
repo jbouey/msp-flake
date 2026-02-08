@@ -79,9 +79,15 @@ class CentralCommandClient:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session with TLS 1.2+ enforcement."""
         if self._session is None or self._session.closed:
+            # Close stale session if it exists but is closed
+            if self._session is not None and self._session.closed:
+                try:
+                    await self._session.close()
+                except Exception:
+                    pass
             # Create hardened SSL connector
             ssl_context = create_secure_ssl_context()
-            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            connector = aiohttp.TCPConnector(ssl=ssl_context, limit=100, limit_per_host=10)
 
             self._session = aiohttp.ClientSession(
                 connector=connector,

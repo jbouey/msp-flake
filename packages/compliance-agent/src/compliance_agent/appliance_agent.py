@@ -511,7 +511,9 @@ class ApplianceAgent:
         # Main loop
         while self.running:
             try:
-                await self._run_cycle()
+                await asyncio.wait_for(self._run_cycle(), timeout=300)
+            except asyncio.TimeoutError:
+                logger.error("Main loop cycle timed out after 300s — possible deadlock or network hang")
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1030,8 +1032,9 @@ class ApplianceAgent:
                 except Exception as e:
                     await self._evidence_queue.mark_failed(item.id, str(e))
 
-            # Prune old uploaded entries
+            # Prune old uploaded entries and permanently failed entries
             await self._evidence_queue.prune_uploaded(older_than_days=7)
+            await self._evidence_queue.prune_failed(older_than_days=30)
 
         except Exception as e:
             logger.debug(f"Evidence queue drain skipped: {e}")
