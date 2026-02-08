@@ -457,14 +457,15 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None,
 )
 
 # CORS middleware - SECURITY: Specific origins only
+_cors_origins = [
+    "https://dashboard.osiriscare.net",
+    "https://portal.osiriscare.net",
+]
+if os.getenv("ENVIRONMENT", "production") == "development":
+    _cors_origins.extend(["http://localhost:3000", "http://localhost:5173"])
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://dashboard.osiriscare.net",
-        "https://portal.osiriscare.net",
-        "http://localhost:3000",  # Development
-        "http://localhost:5173",  # Vite dev
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Site-ID", "X-CSRF-Token"],

@@ -16,18 +16,14 @@ class ApiError extends Error {
   }
 }
 
-// Get auth token from localStorage (for backwards compatibility during migration)
-// HTTP-only cookies are now the preferred method
-function getAuthToken(): string | null {
-  return localStorage.getItem('auth_token');
-}
-
-// Check if we should use cookie-based auth (preferred) or header-based auth
-// Cookie auth is more secure as tokens can't be accessed by JS
-const USE_COOKIE_AUTH = true;
-
 // Request timeout in milliseconds (30 seconds)
 const REQUEST_TIMEOUT = 30000;
+
+// Read CSRF token from cookie for state-changing requests
+function getCsrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 /**
  * Extended fetch options with AbortSignal support
@@ -69,16 +65,16 @@ async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise
     'Content-Type': 'application/json',
   };
 
-  // Add auth token if not using cookie auth (backwards compatibility)
-  if (!USE_COOKIE_AUTH) {
-    const token = getAuthToken();
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+  // Add CSRF token for state-changing requests
+  const method = options?.method?.toUpperCase() || 'GET';
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
     }
   }
 
   // Add ETag for conditional GET requests
-  const method = options?.method?.toUpperCase() || 'GET';
   if (method === 'GET') {
     const cachedEtag = etagCache.get(url);
     if (cachedEtag) {
@@ -113,6 +109,11 @@ async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise
     }
 
     if (!response.ok) {
+      // Redirect to login on auth failure (expired session)
+      if (response.status === 401 && !endpoint.includes('/auth/')) {
+        window.location.href = '/login';
+        throw new ApiError(401, 'Session expired');
+      }
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
       throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
     }
@@ -388,16 +389,16 @@ async function fetchSitesApi<T>(endpoint: string, options?: FetchApiOptions): Pr
     'Content-Type': 'application/json',
   };
 
-  // Add auth token if not using cookie auth (backwards compatibility)
-  if (!USE_COOKIE_AUTH) {
-    const token = getAuthToken();
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+  // Add CSRF token for state-changing requests
+  const method = options?.method?.toUpperCase() || 'GET';
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
     }
   }
 
   // Add ETag for conditional GET requests
-  const method = options?.method?.toUpperCase() || 'GET';
   if (method === 'GET') {
     const cachedEtag = etagCache.get(url);
     if (cachedEtag) {
@@ -431,6 +432,10 @@ async function fetchSitesApi<T>(endpoint: string, options?: FetchApiOptions): Pr
     }
 
     if (!response.ok) {
+      if (response.status === 401 && !endpoint.includes('/auth/')) {
+        window.location.href = '/login';
+        throw new ApiError(401, 'Session expired');
+      }
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
       throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
     }
