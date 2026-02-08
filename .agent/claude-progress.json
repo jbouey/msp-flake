@@ -1,6 +1,6 @@
 {
-  "session": 99,
-  "updated": "2026-02-08T02:00:48.900543Z",
+  "session": 100,
+  "updated": "2026-02-08T04:15:00.000000Z",
   "agent_version": "1.0.57",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -104,32 +104,30 @@
     }
   ],
   "completed_this_session": [
-    "Phase 1 security hardening: CORS env-aware, sourcemap off, HSTS, Docker ports localhost-only, Redis auth, dead localStorage code removed",
-    "Phase 2 reliability: main loop 5min timeout, SQLite busy_timeout=30s, aiohttp limits, queue prune_failed, DB statement timeout, Redis retry, graceful OTS shutdown, health check logging",
-    "Phase 3 code quality: deduplicated fetchApi (80 lines removed), deleted old mcp_client.py (276 lines), logged bare excepts, 55 new backend tests (test_auth.py + test_evidence_chain.py)",
-    "Phase 4 operational debt: fixed OTS varint parsing (block heights), added POST /ots/resubmit-expired for 78K expired proofs, fixed 26 CSRF test failures (starlette stubs), 13 new varint tests. 114 backend tests all passing",
-    "Phase 5 code quality: extracted 9 magic numbers to named constants (appliance_agent.py), fixed hardcoded platform detection in auto_healer.py telemetry (now detects windows vs linux from incident type), standardized 2 HTTP error responses (routes.py logout + evidence_chain.py public-key), 8 new platform detection tests. 914 agent + 114 backend = 1028 total tests passing"
+    "Fixed Dashboard all-zeros + Learning Loop 500 errors: root cause was asyncio.gather() on same AsyncSession (InvalidStateError). Fixed 3 files (routes.py 2x, portal.py 1x). db_queries.py was already fixed locally. Deployed all to VPS",
+    "Fixed CI: Build VirtualBox VM workflow failing on assertion — test-client-wired.nix had http:// placeholder for mcpUrl (module requires HTTPS for non-localhost). Changed to https://. Commit 881bd8a",
+    "Enriched L3 escalation emails: email_alerts.py send_critical_alert() now accepts and renders host_id, severity, check_type, drift details (expected vs actual table), HIPAA controls with descriptions, attempted remediation actions, recommended action. main.py passes all incident data to email. escalation_engine.py added ntp_sync/time to HIPAA control map and suggestions. Deployed to VPS"
   ],
   "recent_commits": [
     {
+      "hash": "881bd8a",
+      "message": "fix: Use HTTPS in test-client-wired mcpUrl placeholder to pass module assertion"
+    },
+    {
+      "hash": "2f5bba5",
+      "message": "quality: Phase 6 — stale doc versions + gRPC TLS support"
+    },
+    {
+      "hash": "f8427ba",
+      "message": "docs: Language audit — replace enforcement/autonomous with attestation/evidence substrate"
+    },
+    {
+      "hash": "9281add",
+      "message": "quality: Phase 5 code quality - constants, platform detection, error standardization"
+    },
+    {
       "hash": "e60bdfa",
       "message": "fix: OTS varint parsing, batch resubmission endpoint, all backend tests passing"
-    },
-    {
-      "hash": "f23f36c",
-      "message": "quality: Phase 3 code cleanup + 55 new backend tests"
-    },
-    {
-      "hash": "f9ffe30",
-      "message": "reliability: Phase 2 production hardening"
-    },
-    {
-      "hash": "d9cad37",
-      "message": "security: Phase 1 production hardening"
-    },
-    {
-      "hash": "9e3d408",
-      "message": "feat: Fix rebuild order completion + add healing order handler (#15, #16)"
     }
   ],
   "key_findings": {
@@ -141,7 +139,8 @@
     "systemd_sandbox_lesson": "ProtectSystem=strict makes filesystem read-only. nixos-rebuild needs /nix/store write access. Use systemd-run --wait --pipe to escape the sandbox into an unsandboxed transient unit.",
     "deployment_lesson": "ALWAYS push to main instead of manual scp. CI/CD workflow (.github/workflows/deploy-central-command.yml) auto-deploys backend + frontend to VPS on push to main when mcp-server/central-command/** changes. Manual scp causes stale versions. Pipeline: checkout -> npm ci -> npm run build -> rsync backend to /opt/mcp-server/dashboard_api_mount/ -> rsync frontend to /opt/mcp-server/frontend_dist/ -> docker compose restart.",
     "learning_loop_stats_lesson": "Promotion history must match execution_telemetry by incident_type + hostname/site_id (from pattern_signature), NOT by runbook_id. Agent records executions with internal IDs (L1-SVC-DNS-001) that differ from promoted_to_rule_id (RB-AUTO-SERVICE_). The pattern_signature format is check_type:check_type:target where target is hostname or site_id.",
-    "dashboard_asyncio_lesson": "SQLAlchemy AsyncSession cannot run concurrent queries via asyncio.gather(). Causes InvalidStateError. Must run queries sequentially on the same session. Fixed in db_queries.py (3 locations)."
+    "dashboard_asyncio_lesson": "SQLAlchemy AsyncSession cannot run concurrent queries via asyncio.gather(). Causes InvalidStateError. Must run queries sequentially on the same session. Fixed in db_queries.py, routes.py (2x), portal.py (1x). All deployed to VPS.",
+    "l3_email_lesson": "L3 escalation emails are generated in email_alerts.py send_critical_alert(), called from main.py POST /incidents handler. The escalation_engine.py path (via notifications.py /api/escalations) is separate — used when agent posts to Central Command directly. Both paths now have rich context."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",

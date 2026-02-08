@@ -99,19 +99,27 @@ services.msp-secrets = {
 
 ## Security Headers
 
-### Production Headers
-```python
-headers = {
-    "X-Frame-Options": "DENY",
-    "X-Content-Type-Options": "nosniff",
-    "Strict-Transport-Security": "max-age=31536000",
-    "Content-Security-Policy": "default-src 'self'",
-    "Referrer-Policy": "strict-origin-when-cross-origin",
-}
+### Production Headers (nginx.conf + backend)
+```
+X-Frame-Options: DENY
+X-Content-Type-Options: nosniff
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+Content-Security-Policy: default-src 'self'
+Referrer-Policy: strict-origin-when-cross-origin
 ```
 
+## Production Hardening (Session 99)
+- **CORS:** Environment-aware — only `dashboard.osiriscare.net` + `portal.osiriscare.net` in production; localhost origins added only when `ENVIRONMENT=development`
+- **Docker ports:** All 5 services bound to `127.0.0.1` (postgres, redis, minio, grafana, prometheus)
+- **Redis:** `requirepass` enabled via `REDIS_PASSWORD` env var
+- **Source maps:** Disabled in production (`sourcemap: false` in vite.config.ts)
+- **Auth tokens:** HTTP-only cookies only (dead localStorage code removed)
+- **CSRF:** Double-submit cookie pattern via `csrf.py` middleware
+
 ## Key Files
-- `backend/auth.py` - Authentication logic
+- `backend/auth.py` - Authentication logic (bcrypt, session tokens, lockout)
+- `backend/csrf.py` - CSRF double-submit pattern middleware
 - `backend/security_headers.py` - CSP and headers
 - `mcp-server/guardrails.py` - Input validation
 - `flake/Modules/secrets.nix` - SOPS configuration
+- `docker-compose.yml` - Port binding, Redis auth, Grafana password

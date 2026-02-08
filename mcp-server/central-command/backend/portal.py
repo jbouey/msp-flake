@@ -833,20 +833,12 @@ async def get_portal_data(
     """
     await validate_session(site_id, portal_session, token)
 
-    # Run all independent database queries in parallel to avoid N+1 pattern
-    (
-        site_info,
-        kpis_data,
-        control_results,
-        resolved_incidents,
-        evidence_bundles_data,
-    ) = await asyncio.gather(
-        get_site_info(db, site_id),
-        get_portal_kpis(db, site_id),
-        get_control_results_for_site(db, site_id, days=30),
-        get_resolved_incidents_for_site(db, site_id, days=30),
-        get_evidence_bundles_for_site(db, site_id),
-    )
+    # Run queries sequentially - AsyncSession doesn't support concurrent ops
+    site_info = await get_site_info(db, site_id)
+    kpis_data = await get_portal_kpis(db, site_id)
+    control_results = await get_control_results_for_site(db, site_id, days=30)
+    resolved_incidents = await get_resolved_incidents_for_site(db, site_id, days=30)
+    evidence_bundles_data = await get_evidence_bundles_for_site(db, site_id)
 
     # Build site from database info
     if site_info:

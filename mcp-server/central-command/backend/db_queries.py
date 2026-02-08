@@ -4,7 +4,6 @@ Provides functions to query real data from PostgreSQL.
 Falls back to mock data when database is empty.
 """
 
-import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy import text
@@ -189,57 +188,51 @@ async def get_events_from_db(
 
 
 async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
-    """Get learning loop statistics using parallel queries."""
+    """Get learning loop statistics.
 
-    async def get_l1_count():
-        result = await db.execute(text("SELECT COUNT(*) FROM l1_rules WHERE enabled = true"))
-        return result.scalar() or 0
+    NOTE: Queries run sequentially because SQLAlchemy AsyncSession does not
+    support concurrent operations on the same session (causes InvalidStateError).
+    """
+    # L1 rules count
+    result = await db.execute(text("SELECT COUNT(*) FROM l1_rules WHERE enabled = true"))
+    l1_count = result.scalar() or 0
 
-    async def get_pending_patterns():
-        result = await db.execute(text("SELECT COUNT(*) FROM patterns WHERE status = 'pending'"))
-        return result.scalar() or 0
+    # Pending patterns
+    result = await db.execute(text("SELECT COUNT(*) FROM patterns WHERE status = 'pending'"))
+    pending_patterns = result.scalar() or 0
 
-    async def get_recently_promoted():
-        result = await db.execute(text(
-            "SELECT COUNT(*) FROM patterns WHERE status = 'promoted' AND promoted_at > NOW() - INTERVAL '30 days'"
-        ))
-        return result.scalar() or 0
+    # Recently promoted
+    result = await db.execute(text(
+        "SELECT COUNT(*) FROM patterns WHERE status = 'promoted' AND promoted_at > NOW() - INTERVAL '30 days'"
+    ))
+    recently_promoted = result.scalar() or 0
 
-    async def get_tier_counts():
-        result = await db.execute(text("""
-            WITH combined_tiers AS (
-                SELECT resolution_tier as tier FROM incidents
-                WHERE reported_at > NOW() - INTERVAL '30 days'
-                AND resolution_tier IS NOT NULL
-                UNION ALL
-                SELECT resolution_level as tier FROM execution_telemetry
-                WHERE created_at > NOW() - INTERVAL '30 days'
-                AND resolution_level IS NOT NULL
-            )
-            SELECT tier, COUNT(*) as count
-            FROM combined_tiers
-            GROUP BY tier
-        """))
-        return {row.tier: row.count for row in result.fetchall()}
-
-    async def get_success_stats():
-        result = await db.execute(text("""
-            SELECT
-                COUNT(*) as total,
-                COUNT(*) FILTER (WHERE success = true) as successful
-            FROM execution_telemetry
+    # Tier counts
+    result = await db.execute(text("""
+        WITH combined_tiers AS (
+            SELECT resolution_tier as tier FROM incidents
+            WHERE reported_at > NOW() - INTERVAL '30 days'
+            AND resolution_tier IS NOT NULL
+            UNION ALL
+            SELECT resolution_level as tier FROM execution_telemetry
             WHERE created_at > NOW() - INTERVAL '30 days'
-        """))
-        return result.fetchone()
+            AND resolution_level IS NOT NULL
+        )
+        SELECT tier, COUNT(*) as count
+        FROM combined_tiers
+        GROUP BY tier
+    """))
+    tier_counts = {row.tier: row.count for row in result.fetchall()}
 
-    # Run all queries in parallel
-    l1_count, pending_patterns, recently_promoted, tier_counts, success_row = await asyncio.gather(
-        get_l1_count(),
-        get_pending_patterns(),
-        get_recently_promoted(),
-        get_tier_counts(),
-        get_success_stats(),
-    )
+    # Success stats
+    result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE success = true) as successful
+        FROM execution_telemetry
+        WHERE created_at > NOW() - INTERVAL '30 days'
+    """))
+    success_row = result.fetchone()
 
     total_resolved = sum(tier_counts.values()) or 1
     l1_rate = (tier_counts.get("L1", 0) / total_resolved) * 100
@@ -297,51 +290,41 @@ async def get_promotion_candidates_from_db(db: AsyncSession) -> List[Dict[str, A
 async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
     """Get global statistics using parallel queries."""
 
-    async def get_site_count():
-        result = await db.execute(text("SELECT COUNT(*) as total FROM sites"))
-        return result.fetchone()
+    # NOTE: Queries run sequentially - SQLAlchemy AsyncSession does not
+    # support concurrent operations on the same session.
+    site_row = await db.execute(text("SELECT COUNT(*) as total FROM sites"))
+    site_row = site_row.fetchone()
 
-    async def get_appliance_stats():
-        result = await db.execute(text("""
-            SELECT
-                COUNT(*) as total,
-                COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online
-            FROM site_appliances
-        """))
-        return result.fetchone()
+    appliance_row = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online
+        FROM site_appliances
+    """))
+    appliance_row = appliance_row.fetchone()
 
-    async def get_incident_stats():
-        result = await db.execute(text("""
-            SELECT
-                COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '24 hours') as day,
-                COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '7 days') as week,
-                COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '30 days') as month,
-                COUNT(*) FILTER (WHERE resolution_tier = 'L1' AND status = 'resolved') as l1,
-                COUNT(*) FILTER (WHERE resolution_tier = 'L2' AND status = 'resolved') as l2,
-                COUNT(*) FILTER (WHERE resolution_tier = 'L3' AND status = 'resolved') as l3,
-                COUNT(*) FILTER (WHERE status = 'resolved') as total_resolved
-            FROM incidents
-            WHERE reported_at > NOW() - INTERVAL '30 days'
-        """))
-        return result.fetchone()
+    inc_row = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '24 hours') as day,
+            COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '7 days') as week,
+            COUNT(*) FILTER (WHERE reported_at > NOW() - INTERVAL '30 days') as month,
+            COUNT(*) FILTER (WHERE resolution_tier = 'L1' AND status = 'resolved') as l1,
+            COUNT(*) FILTER (WHERE resolution_tier = 'L2' AND status = 'resolved') as l2,
+            COUNT(*) FILTER (WHERE resolution_tier = 'L3' AND status = 'resolved') as l3,
+            COUNT(*) FILTER (WHERE status = 'resolved') as total_resolved
+        FROM incidents
+        WHERE reported_at > NOW() - INTERVAL '30 days'
+    """))
+    inc_row = inc_row.fetchone()
 
-    async def get_compliance_stats():
-        result = await db.execute(text("""
-            SELECT
-                COUNT(*) FILTER (WHERE check_result = 'pass') as passed,
-                COUNT(*) as total
-            FROM compliance_bundles
-            WHERE created_at > NOW() - INTERVAL '24 hours'
-        """))
-        return result.fetchone()
-
-    # Run all queries in parallel
-    site_row, appliance_row, inc_row, comp_row = await asyncio.gather(
-        get_site_count(),
-        get_appliance_stats(),
-        get_incident_stats(),
-        get_compliance_stats(),
-    )
+    comp_row = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE check_result = 'pass') as passed,
+            COUNT(*) as total
+        FROM compliance_bundles
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+    """))
+    comp_row = comp_row.fetchone()
 
     compliance_score = round((comp_row.passed or 0) / max(comp_row.total or 1, 1) * 100, 1)
 
@@ -521,12 +504,7 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
 
 
 async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any]]:
-    """Get compliance scores for all sites that have compliance data.
-
-    Uses asyncio.gather to parallelize queries instead of sequential N+1 pattern.
-    """
-    import asyncio
-
+    """Get compliance scores for all sites that have compliance data."""
     # Get all sites with compliance data
     result = await db.execute(text("""
         SELECT DISTINCT site_id FROM compliance_bundles
@@ -536,13 +514,12 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
     if not site_ids:
         return {}
 
-    # Parallel fetch: get all scores concurrently instead of sequential loop
-    async def get_score(site_id: str) -> tuple:
-        return site_id, await get_compliance_scores_for_site(db, site_id)
+    # Sequential fetch - SQLAlchemy AsyncSession doesn't support concurrent ops
+    scores = {}
+    for site_id in site_ids:
+        scores[site_id] = await get_compliance_scores_for_site(db, site_id)
 
-    results = await asyncio.gather(*[get_score(sid) for sid in site_ids])
-
-    return {site_id: scores for site_id, scores in results}
+    return scores
 
 
 # =============================================================================

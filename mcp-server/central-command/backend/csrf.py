@@ -132,7 +132,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         header_token = request.headers.get(self.HEADER_NAME)
 
         if not validate_csrf_token(cookie_token, header_token):
-            logger.warning(f"CSRF validation failed for {method} {path}")
+            has_cookie = cookie_token is not None
+            has_header = header_token is not None
+            logger.warning(
+                f"CSRF validation failed for {method} {path} "
+                f"(cookie={'present' if has_cookie else 'MISSING'}, "
+                f"header={'present' if has_header else 'MISSING'}"
+                f"{', mismatch' if has_cookie and has_header else ''})"
+            )
             raise HTTPException(
                 status_code=403,
                 detail="CSRF validation failed. Refresh the page and try again."

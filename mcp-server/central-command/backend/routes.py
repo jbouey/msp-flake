@@ -7,7 +7,6 @@ This module uses the central database when available, falling back
 to mock data for demo/development purposes.
 """
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone, timedelta
@@ -227,11 +226,9 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
     if not site:
         raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
 
-    # Get real compliance scores and healing metrics for this site (parallel)
-    site_compliance, site_healing = await asyncio.gather(
-        get_compliance_scores_for_site(db, site_id),
-        get_healing_metrics_for_site(db, site_id)
-    )
+    # Sequential - AsyncSession doesn't support concurrent ops on same session
+    site_compliance = await get_compliance_scores_for_site(db, site_id)
+    site_healing = await get_healing_metrics_for_site(db, site_id)
 
     if site_compliance.get("has_data"):
         patching = site_compliance.get("patching") or 0
@@ -357,11 +354,9 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
 @router.get("/fleet/{site_id}/appliances", response_model=List[Appliance])
 async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)):
     """Get all appliances for a client."""
-    # Get real compliance scores and healing metrics for this site (parallel)
-    site_compliance, site_healing = await asyncio.gather(
-        get_compliance_scores_for_site(db, site_id),
-        get_healing_metrics_for_site(db, site_id)
-    )
+    # Sequential - AsyncSession doesn't support concurrent ops on same session
+    site_compliance = await get_compliance_scores_for_site(db, site_id)
+    site_healing = await get_healing_metrics_for_site(db, site_id)
 
     if site_compliance.get("has_data"):
         patching = site_compliance.get("patching") or 0

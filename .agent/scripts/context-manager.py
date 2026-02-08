@@ -58,6 +58,9 @@ def save_progress(data: dict):
 
 def status():
     """Show current state."""
+    # Auto-compact stale sessions on every status check
+    compact_sessions(days_to_keep=14, quiet=True)
+
     progress = load_progress()
 
     print("=" * 60)
@@ -97,6 +100,9 @@ def status():
 
 def new_session(session_num: int, description: str):
     """Start a new session."""
+    # Auto-compact old sessions before starting fresh
+    compact_sessions(days_to_keep=14, quiet=True)
+
     progress = load_progress()
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -210,10 +216,11 @@ def add_completed(item: str):
     print(f"Added: {item}")
 
 
-def compact_sessions(days_to_keep: int = 14):
+def compact_sessions(days_to_keep: int = 14, quiet: bool = False):
     """Archive old sessions."""
     if not SESSIONS_DIR.exists():
-        print("No sessions directory")
+        if not quiet:
+            print("No sessions directory")
         return
 
     cutoff = datetime.now() - timedelta(days=days_to_keep)
@@ -230,7 +237,8 @@ def compact_sessions(days_to_keep: int = 14):
                 to_archive.append(session)
 
     if not to_archive:
-        print(f"No sessions older than {days_to_keep} days")
+        if not quiet:
+            print(f"No sessions older than {days_to_keep} days")
         return
 
     # Create archive
@@ -264,7 +272,8 @@ def compact_sessions(days_to_keep: int = 14):
                 out.write("\n---\n")
 
                 session_file.unlink()
-                print(f"Archived: {session_file.name}")
+                if not quiet:
+                    print(f"Archived: {session_file.name}")
 
     print(f"Archived {len(to_archive)} sessions to {len(monthly)} monthly files")
 

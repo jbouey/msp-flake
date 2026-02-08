@@ -1,9 +1,16 @@
 # Testing Patterns
 
 ## Overview
-- **839 tests** across 35 files
+- **961+ tests**: 906 agent tests (35 files) + 55 backend tests (3 files)
 - **595+ fixtures** for isolation
 - **pytest-asyncio** for async testing
+
+### Backend Tests (mcp-server/central-command/backend/tests/)
+- `test_auth.py` — 25 tests: password complexity, bcrypt/SHA-256 hashing, session tokens
+- `test_evidence_chain.py` — 30 tests: Ed25519 signatures, OTS file construction/parsing, timestamp replay
+- `test_production_security.py` — 46 tests: CSRF tokens (requires starlette installed)
+- **Note:** Backend tests stub FastAPI/SQLAlchemy at module level to test pure functions without full server deps
+- Run: `python3.13 -m pytest tests/ -v --tb=short` (from backend dir)
 
 ## Async Test Pattern
 

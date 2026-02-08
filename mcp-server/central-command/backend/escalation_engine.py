@@ -772,7 +772,9 @@ class EscalationEngine:
             "firewall": ["164.312(e)(1)", "164.312(a)(1)"],
             "encryption": ["164.312(a)(2)(iv)", "164.312(e)(2)(ii)"],
             "access_control": ["164.312(d)", "164.312(a)(1)"],
-            "audit": ["164.312(b)", "164.308(a)(1)(ii)(D)"]
+            "audit": ["164.312(b)", "164.308(a)(1)(ii)(D)"],
+            "ntp": ["164.312(b)", "164.308(a)(1)(ii)(D)"],
+            "time": ["164.312(b)", "164.308(a)(1)(ii)(D)"],
         }
 
         incident_type = incident.get('type', incident.get('incident_type', '')).lower()
@@ -792,7 +794,9 @@ class EscalationEngine:
             "logging": "Check log service status and disk space",
             "firewall": "Review firewall rules and network segmentation",
             "encryption": "Verify encryption at rest and in transit",
-            "service_down": "Restart service and check for resource constraints"
+            "service_down": "Restart service and check for resource constraints",
+            "ntp": "Verify NTP service is running and reachable. Check chrony/systemd-timesyncd status and network connectivity to NTP servers",
+            "time": "Check system clock synchronization. Evidence timestamps require accurate clocks for HIPAA audit trails",
         }
 
         incident_type = incident.get('type', incident.get('incident_type', '')).lower()

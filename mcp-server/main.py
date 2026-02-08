@@ -1076,12 +1076,26 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                 if resolution_tier == "L3":
                     notification_severity = "critical"
 
+                # Build rich title/message for L3 escalations
+                if resolution_tier == "L3":
+                    l3_title = f"[L3] {incident.incident_type}"
+                    if incident.host_id:
+                        l3_title += f" - {incident.host_id}"
+
+                    l3_message = (
+                        f"{incident.incident_type} on {incident.site_id} "
+                        f"could not be auto-remediated and requires human review."
+                    )
+                else:
+                    l3_title = f"{incident.severity.upper()}: {incident.incident_type}"
+                    l3_message = f"Incident {incident.incident_type} on {incident.site_id}. Resolution: {resolution_tier}"
+
                 await create_notification_with_email(
                     db=db,
                     severity=notification_severity,
                     category=notification_category,
-                    title=f"[L3] {incident.incident_type}" if resolution_tier == "L3" else f"{incident.severity.upper()}: {incident.incident_type}",
-                    message=f"L3 Escalation: {incident.incident_type} on {incident.site_id} requires human review." if resolution_tier == "L3" else f"Incident {incident.incident_type} on {incident.site_id}. Resolution: {resolution_tier}",
+                    title=l3_title,
+                    message=l3_message,
                     site_id=incident.site_id,
                     appliance_id=appliance_id,
                     metadata={
@@ -1089,7 +1103,12 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                         "check_type": incident.check_type,
                         "resolution_tier": resolution_tier,
                         "order_id": order_id
-                    }
+                    },
+                    host_id=incident.host_id if resolution_tier == "L3" else None,
+                    incident_severity=incident.severity if resolution_tier == "L3" else None,
+                    check_type=incident.check_type if resolution_tier == "L3" else None,
+                    details=incident.details if resolution_tier == "L3" else None,
+                    hipaa_controls=incident.hipaa_controls if resolution_tier == "L3" else None,
                 )
         except Exception as e:
             logger.error(f"Failed to create notification: {e}")
