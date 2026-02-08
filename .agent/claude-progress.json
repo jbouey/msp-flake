@@ -1,108 +1,172 @@
 {
-  "session": 89,
-  "updated": "2026-02-06T17:00:00Z",
-  "agent_version": "1.0.55",
-  "iso_version": "installer-v1.1",
-  "disk_image_version": "v55 (deprecated)",
+  "session": 98,
+  "updated": "2026-02-08T00:01:00Z",
+  "agent_version": "1.0.56",
+  "iso_version": "installer-v8-dialog-tui",
+  "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "booted_installer_v1.1",
-    "vm_appliance": "healthy_v52"
+    "physical_appliance": "v1.0.56_rebuilt_via_fleet_at_192.168.88.241",
+    "vm_appliance": "v1.0.56_rebuilt_via_fleet_at_192.168.88.254",
+    "redis_minio": "localhost_only",
+    "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
+    "learning_flywheel": "active_22_promoted_stats_fixed_cicd_deploying",
+    "incident_resolution": "pipeline_active",
+    "evidence_pipeline": "end_to_end_live_182k_bundles_all_signed_worm_active",
+    "compliance_packets": "live_endpoint_real_data_deployed_to_vps",
+    "ots_proofs": "2705_anchored_251_pending_78699_expired",
+    "fleet_updates": "proven_end_to_end_overlay_plus_nixos_rebuild"
   },
-  "current_blocker": "None - PHI boundary enforcement complete, needs commit and deploy",
+  "current_blocker": "None - evidence pipeline end-to-end operational",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
     "key_files": [
-      "iso/appliance-image.nix (installer ISO with msp-auto-install)",
+      "iso/appliance-image.nix (installer ISO with dialog TUI + msp-auto-install)",
+      "iso/appliance-disk-image.nix (installed system config)",
       "iso/configuration.nix (base appliance config)",
       "flake.nix (nixosConfigurations.appliance)"
     ]
   },
+  "fleet_update_mechanism": {
+    "overlay_flow": [
+      "1. Insert update_agent order with tarball URL",
+      "2. Agent downloads tarball, extracts to /var/lib/msp/agent-overlay/",
+      "3. Agent restarts via systemctl restart",
+      "4. _apply_overlay() detects overlay, purges modules, re-imports from overlay",
+      "5. Agent runs with overlay code (new handlers, fixes, etc.)",
+      "NOTE: Pre-fix appliances use argparse.py bootstrap shim to activate overlay"
+    ],
+    "rebuild_flow": [
+      "1. Insert nixos_rebuild order with flake_ref",
+      "2. Agent runs nixos-rebuild test via systemd-run (escapes ProtectSystem sandbox)",
+      "3. New system activates, agent restarts with new nix code",
+      "4. _verify_rebuild_if_pending() writes .rebuild-verified",
+      "5. Watchdog timer persists rebuild with nixos-rebuild switch",
+      "6. If agent fails to check in within 10 min, watchdog rolls back"
+    ],
+    "key_insight": "NixOS buildPythonApplication wrappers override PYTHONPATH, making os.execve useless for overlay activation. Fix: purge sys.modules + update __path__ within same process. Pre-fix bootstrap: fake argparse.py intercepts first import in main()."
+  },
   "active_tasks": [
     {
-      "id": 1,
-      "task": "Commit and deploy PHI boundary enforcement changes",
+      "id": 2,
+      "task": "Rotate leaked credentials from old settings.local.json",
       "status": "pending",
-      "note": "All code complete and tested (881 pass), needs git commit and VPS deploy"
+      "priority": "high",
+      "note": "Anthropic API key, AWS access keys, bearer tokens were in permission strings. Still in shell history"
     },
     {
-      "id": 2,
+      "id": 6,
       "task": "Create migration 036_credential_versioning.sql",
       "status": "pending",
-      "note": "Server-side credential version tracking (credentials_provisioned_at, credentials_version on site_appliances)"
+      "note": "Server-side credential version tracking"
     },
     {
-      "id": 3,
-      "task": "Re-test installer ISO with ncurses fix on physical hardware",
+      "id": 9,
+      "task": "Old evidence-worm bucket cleanup",
+      "status": "in_progress",
+      "note": "rm -rf running on VPS (PID 3841089) against /mnt/storagebox. Slow due to network-mounted CIFS. Will finish on its own"
+    },
+    {
+      "id": 10,
+      "task": "Re-submit expired OTS proofs",
       "status": "pending",
-      "note": "New ISO built and downloaded to ~/Downloads/osiriscare-appliance.iso"
+      "note": "78,699 expired proofs can't be upgraded (calendar pruned). Need batch job to re-submit hashes for fresh calendar commitments"
     },
     {
-      "id": 4,
-      "task": "Evidence bundles to MinIO",
-      "status": "pending"
-    },
-    {
-      "id": 5,
-      "task": "First compliance packet",
+      "id": 11,
+      "task": "Fix Bitcoin block height extraction in OTS",
       "status": "pending",
-      "depends_on": 4
+      "priority": "low",
+      "note": "Reads ~965M instead of ~880K. Varint parsing needed instead of fixed 4-byte int. Cosmetic only"
+    },
+    {
+      "id": 15,
+      "task": "Fix rebuild order completion on agent restart",
+      "status": "pending",
+      "priority": "medium",
+      "note": "nixos-rebuild test restarts the agent during activation, so the order stays 'acknowledged' forever. Need to persist order_id and complete it on next startup."
+    },
+    {
+      "id": 16,
+      "task": "Add healing order handler",
+      "status": "pending",
+      "priority": "medium",
+      "note": "Backend generates healing orders but agent has no handler. Keeps failing with 'Unknown order type: healing' every cycle."
+    },
+    {
+      "id": 17,
+      "task": "Remove argparse bootstrap shim after nix rebuild",
+      "status": "pending",
+      "priority": "low",
+      "note": "After both appliances have the fixed _apply_overlay() from nix rebuild, the argparse.py bootstrap in the overlay tarball is no longer needed. Can be removed from future tarballs."
     }
   ],
   "completed_this_session": [
-    "PHI boundary enforcement - outbound scrub gateway in appliance_client._request()",
-    "PHI scrubber exclude_categories support (preserve IPs as infrastructure data)",
-    "L2 LLM PHI guard - scrub raw_data before cloud API calls",
-    "Credential local storage - Fernet-encrypted CredentialStore",
-    "Conditional credential pull - skip credentials in checkin when local cache fresh",
-    "Evidence hardening - truncate output, strip passing checks, add phi_scrubbed flag",
-    "Partner activity logging - 3 backend files instrumented",
-    "26 new tests added (881 total passing, 7 skipped)"
+    "Fixed learning loop promotion history: query matched on runbook_id but agent uses different IDs (L1-SVC-DNS-001 vs RB-AUTO-SERVICE_). Rewrote to match on incident_type + hostname/site_id",
+    "Bumped promotion history limit from 10 to 50 so all 22 promoted patterns show",
+    "Pushed to main - CI/CD (deploy-central-command.yml) handles deployment automatically"
   ],
   "recent_commits": [
     {
-      "hash": "a5ae966",
-      "message": "fix: Correct import paths for Docker deployment (central_command -> dashboard_api)"
+      "hash": "bda5982",
+      "message": "fix: Learning loop promotion history shows correct execution stats"
     },
     {
-      "hash": "e6049ba",
-      "message": "fix: Partner learning API - race conditions, idempotency, locking"
+      "hash": "b6b81f2",
+      "message": "fix: Use full nix path for hostname in first-boot service"
     },
     {
-      "hash": "c328001",
-      "message": "fix: Learning loop audit - reject endpoint, error feedback, JSON safety"
+      "hash": "313a7b8",
+      "message": "fix: Suppress kernel boot noise on installer (quiet loglevel=3)"
     },
     {
-      "hash": "bcb19e9",
-      "message": "fix: Resolve dashboard live data sync issues for production readiness"
+      "hash": "174a3ad",
+      "message": "feat: Add reinstall option when existing installation detected"
     },
     {
-      "hash": "ff8b6cc",
-      "message": "feat: Brand console with OsirisCare identity, add install progress display"
+      "hash": "69ade5f",
+      "message": "fix: Use systemd-run to escape sandbox for nixos-rebuild"
     }
   ],
   "key_findings": {
-    "phi_audit_9_channels": "9 outbound data channels identified from appliance, only runbook executors had scrubbing",
-    "phi_scrub_gateway": "Single enforcement point in _request() scrubs ALL outbound HTTP payloads",
-    "credential_exposure": "Credentials were sent plaintext in every 60s checkin - now cached locally with Fernet encryption",
-    "infrastructure_vs_phi": "IPs/hostnames are infrastructure (Safe Harbor 45 CFR 164.514(b)(2)), not PHI - excluded from scrubbing",
-    "l2_llm_phi_leak": "Cloud LLM calls received raw incident data with potential PHI - now scrubbed before API calls"
+    "evidence_pipeline_status": "182,685 bundles in DB (111K physical, 71K test). Feb bundles all Ed25519 signed (2,408 signed). Hash chain 111K+ positions deep. Agent submits JSON to /api/evidence/sites/{site_id}/submit with Ed25519 signature + signed_data",
+    "minio_worm_status": "evidence-worm-v2 bucket with COMPLIANCE 90d Object Lock. WORM uploads active (verified latest bundle in MinIO). Transient Docker DNS issue resolved after container restart",
+    "compliance_packet_data": "Real HIPAA compliance packets LIVE at /api/evidence/sites/{site_id}/compliance-packet. Jan: 28.3% (109K bundles, early setup). Feb: 52.1% (2.4K bundles, all signed, 2.2K BTC-anchored). 15 check types mapped to HIPAA controls. MTTR 0.3-0.5h",
+    "ots_status": "2,705 anchored to Bitcoin, 251 pending, 78,699 expired. Fixed construct_ots_file (missing version byte). Uses opentimestamps-client reference library. Upgrade loop: 15min/500 batch",
+    "nix_overlay_lesson": "NixOS buildPythonApplication creates bash wrappers that override PYTHONPATH. os.execve re-runs the wrapper, losing the overlay. Fix: manipulate __path__ and sys.modules within the same process. For pre-fix appliances, hijack an import (argparse.py shim) to bootstrap the overlay.",
+    "systemd_sandbox_lesson": "ProtectSystem=strict makes filesystem read-only. nixos-rebuild needs /nix/store write access. Use systemd-run --wait --pipe to escape the sandbox into an unsandboxed transient unit.",
+    "deployment_lesson": "ALWAYS push to main instead of manual scp. CI/CD workflow (.github/workflows/deploy-central-command.yml) auto-deploys backend + frontend to VPS on push to main when mcp-server/central-command/** changes. Manual scp causes stale versions. Pipeline: checkout -> npm ci -> npm run build -> rsync backend to /opt/mcp-server/dashboard_api_mount/ -> rsync frontend to /opt/mcp-server/frontend_dist/ -> docker compose restart.",
+    "learning_loop_stats_lesson": "Promotion history must match execution_telemetry by incident_type + hostname/site_id (from pattern_signature), NOT by runbook_id. Agent records executions with internal IDs (L1-SVC-DNS-001) that differ from promoted_to_rule_id (RB-AUTO-SERVICE_). The pattern_signature format is check_type:check_type:target where target is hostname or site_id.",
+    "dashboard_asyncio_lesson": "SQLAlchemy AsyncSession cannot run concurrent queries via asyncio.gather(). Causes InvalidStateError. Must run queries sequentially on the same session. Fixed in db_queries.py (3 locations)."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",
     "2. Write to USB: dd if=result/iso/*.iso of=/dev/diskN bs=4m",
     "3. Boot target hardware from USB",
-    "4. msp-auto-install runs: detects drive, partitions, formats, nixos-install",
+    "4. msp-auto-install runs: dialog TUI with 8-step progress",
     "5. System reboots, compliance-agent calls home",
     "6. Central Command provisions via MAC address"
   ],
+  "fleet_update_commands": {
+    "deploy_overlay": "INSERT INTO admin_orders (order_id, appliance_id, site_id, order_type, parameters, status, expires_at) VALUES ('overlay-ID', 'APPLIANCE_ID', 'SITE_ID', 'update_agent', '{\"package_url\": \"https://api.osiriscare.net/agent-packages/compliance-agent-1.0.56.tar.gz\", \"version\": \"1.0.56-desc\"}', 'pending', now() + interval '2 hours')",
+    "trigger_rebuild": "INSERT INTO admin_orders (order_id, appliance_id, site_id, order_type, parameters, status, expires_at) VALUES ('rebuild-ID', 'APPLIANCE_ID', 'SITE_ID', 'nixos_rebuild', '{\"flake_ref\": \"github:jbouey/msp-flake#osiriscare-appliance-disk\"}', 'pending', now() + interval '4 hours')",
+    "run_diagnostic": "INSERT INTO admin_orders (order_id, appliance_id, site_id, order_type, parameters, status, expires_at) VALUES ('diag-ID', 'APPLIANCE_ID', 'SITE_ID', 'diagnostic', '{\"command\": \"agent_status\"}', 'pending', now() + interval '1 hour')",
+    "appliance_ids": {
+      "physical": "physical-appliance-pilot-1aea78-84:3A:5B:91:B6:61 (site: physical-appliance-pilot-1aea78)",
+      "vm": "test-appliance-lab-b3c40c-08-00-27-98-FD-84 (site: test-appliance-lab-b3c40c)"
+    }
+  },
   "quick_commands": {
     "build_iso": "ssh root@178.156.162.116 'cd /opt/msp-flakes && nix build .#appliance-iso'",
     "vps_ssh": "ssh root@178.156.162.116",
     "imac_ssh": "ssh jrelly@192.168.88.50",
-    "appliance_status": "ssh root@178.156.162.116 \"docker exec mcp-postgres psql -U mcp -d mcp -c 'SELECT site_id, agent_version, last_checkin FROM appliances ORDER BY last_checkin DESC'\""
+    "physical_ssh": "ssh jrelly@192.168.88.50 'ssh root@192.168.88.241'",
+    "vm_rebuild": "ssh jrelly@192.168.88.50 \"ssh root@192.168.88.254 'nixos-rebuild test --flake github:jbouey/msp-flake#osiriscare-appliance-disk --refresh'\"",
+    "physical_rebuild": "ssh jrelly@192.168.88.50 \"ssh root@192.168.88.241 'nixos-rebuild test --flake github:jbouey/msp-flake#osiriscare-appliance-disk --refresh'\"",
+    "appliance_status": "ssh root@178.156.162.116 \"docker exec mcp-postgres psql -U mcp -d mcp -c 'SELECT site_id, agent_version, last_checkin FROM appliances ORDER BY last_checkin DESC'\"",
+    "compliance_packet": "ssh root@178.156.162.116 \"curl -s 'http://localhost:8000/api/evidence/sites/physical-appliance-pilot-1aea78/compliance-packet?month=2&year=2026'\""
   },
   "context_files": {
     "credentials": ".agent/LAB_CREDENTIALS.md",
