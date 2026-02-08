@@ -1709,6 +1709,8 @@ class ApplianceAgent:
                         logger.debug(f"Reported pattern for {check_name} to learning loop")
                     except Exception as e:
                         logger.debug(f"Pattern report failed (non-critical): {e}")
+            elif getattr(result, 'escalated', False):
+                logger.info(f"Healing {check_name}: escalated to L3 for human review")
             else:
                 logger.warning(
                     f"Healing {check_name}: {result.resolution_level} → {result.action_taken} (FAILED: {result.error})"
@@ -2255,8 +2257,10 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                                         logger.debug(f"Reported pattern for {check_name} to learning loop")
                                     except Exception as e:
                                         logger.debug(f"Pattern report failed (non-critical): {e}")
+                            elif getattr(heal_result, 'escalated', False):
+                                logger.info(f"Healing {check_name}: escalated to L3 for human review")
                             else:
-                                logger.warning(f"Healing failed: {heal_result.error}")
+                                logger.warning(f"Healing failed for {check_name}: {heal_result.error}")
                         except Exception as heal_err:
                             logger.warning(f"Healing attempt failed for {check_name}: {heal_err}")
 
