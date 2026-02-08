@@ -784,5 +784,55 @@ class TestRuleConditions:
         assert condition.matches(data) is True
 
 
+# ==================== Platform Detection Tests ====================
+
+class TestPlatformDetection:
+    """Tests for _detect_platform() in AutoHealer."""
+
+    def _make_incident(self, incident_type: str) -> Incident:
+        return Incident(
+            id=f"test-{incident_type}",
+            site_id="test-site",
+            host_id="test-host",
+            incident_type=incident_type,
+            severity="medium",
+            raw_data={},
+            pattern_signature=f"{incident_type}:{incident_type}:test-host",
+            created_at="2026-02-07T12:00:00+00:00",
+        )
+
+    def test_windows_defender_is_windows(self, auto_healer_config):
+        healer = AutoHealer(config=auto_healer_config)
+        assert healer._detect_platform(self._make_incident("windows_defender")) == "windows"
+
+    def test_bitlocker_is_windows(self, auto_healer_config):
+        healer = AutoHealer(config=auto_healer_config)
+        assert healer._detect_platform(self._make_incident("bitlocker")) == "windows"
+
+    def test_workstation_is_windows(self, auto_healer_config):
+        healer = AutoHealer(config=auto_healer_config)
+        assert healer._detect_platform(self._make_incident("workstation")) == "windows"
+
+    def test_screen_lock_is_windows(self, auto_healer_config):
+        healer = AutoHealer(config=auto_healer_config)
+        assert healer._detect_platform(self._make_incident("screen_lock")) == "windows"
+
+    def test_patching_is_linux(self, auto_healer_config):
+        healer = AutoHealer(config=auto_healer_config)
+        assert healer._detect_platform(self._make_incident("patching")) == "linux"
+
+    def test_firewall_is_linux(self, auto_healer_config):
+        healer = AutoHealer(config=auto_healer_config)
+        assert healer._detect_platform(self._make_incident("firewall")) == "linux"
+
+    def test_backup_is_linux(self, auto_healer_config):
+        healer = AutoHealer(config=auto_healer_config)
+        assert healer._detect_platform(self._make_incident("backup")) == "linux"
+
+    def test_ntp_sync_is_linux(self, auto_healer_config):
+        healer = AutoHealer(config=auto_healer_config)
+        assert healer._detect_platform(self._make_incident("ntp_sync")) == "linux"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

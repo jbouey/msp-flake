@@ -1,7 +1,7 @@
 {
-  "session": 98,
-  "updated": "2026-02-08T00:01:00Z",
-  "agent_version": "1.0.56",
+  "session": 99,
+  "updated": "2026-02-08T02:00:48.900543Z",
+  "agent_version": "1.0.57",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
@@ -77,23 +77,23 @@
     {
       "id": 11,
       "task": "Fix Bitcoin block height extraction in OTS",
-      "status": "pending",
+      "status": "completed",
       "priority": "low",
-      "note": "Reads ~965M instead of ~880K. Varint parsing needed instead of fixed 4-byte int. Cosmetic only"
+      "note": "Fixed: replaced fixed 4-byte int with read_bitcoin_varint(). Commit e60bdfa"
     },
     {
       "id": 15,
       "task": "Fix rebuild order completion on agent restart",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium",
-      "note": "nixos-rebuild test restarts the agent during activation, so the order stays 'acknowledged' forever. Need to persist order_id and complete it on next startup."
+      "note": "Persists order_id to /var/lib/msp/.pending-rebuild-order before rebuild. Completes on first successful checkin after restart. Commit 9e3d408."
     },
     {
       "id": 16,
       "task": "Add healing order handler",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium",
-      "note": "Backend generates healing orders but agent has no handler. Keeps failing with 'Unknown order type: healing' every cycle."
+      "note": "Added 'healing' to dispatch dict + _handle_healing() routes through _execute_healing_action() with run_runbook:<ID> format. Commit 9e3d408."
     },
     {
       "id": 17,
@@ -104,30 +104,32 @@
     }
   ],
   "completed_this_session": [
-    "Fixed learning loop promotion history: query matched on runbook_id but agent uses different IDs (L1-SVC-DNS-001 vs RB-AUTO-SERVICE_). Rewrote to match on incident_type + hostname/site_id",
-    "Bumped promotion history limit from 10 to 50 so all 22 promoted patterns show",
-    "Pushed to main - CI/CD (deploy-central-command.yml) handles deployment automatically"
+    "Phase 1 security hardening: CORS env-aware, sourcemap off, HSTS, Docker ports localhost-only, Redis auth, dead localStorage code removed",
+    "Phase 2 reliability: main loop 5min timeout, SQLite busy_timeout=30s, aiohttp limits, queue prune_failed, DB statement timeout, Redis retry, graceful OTS shutdown, health check logging",
+    "Phase 3 code quality: deduplicated fetchApi (80 lines removed), deleted old mcp_client.py (276 lines), logged bare excepts, 55 new backend tests (test_auth.py + test_evidence_chain.py)",
+    "Phase 4 operational debt: fixed OTS varint parsing (block heights), added POST /ots/resubmit-expired for 78K expired proofs, fixed 26 CSRF test failures (starlette stubs), 13 new varint tests. 114 backend tests all passing",
+    "Phase 5 code quality: extracted 9 magic numbers to named constants (appliance_agent.py), fixed hardcoded platform detection in auto_healer.py telemetry (now detects windows vs linux from incident type), standardized 2 HTTP error responses (routes.py logout + evidence_chain.py public-key), 8 new platform detection tests. 914 agent + 114 backend = 1028 total tests passing"
   ],
   "recent_commits": [
     {
-      "hash": "bda5982",
-      "message": "fix: Learning loop promotion history shows correct execution stats"
+      "hash": "e60bdfa",
+      "message": "fix: OTS varint parsing, batch resubmission endpoint, all backend tests passing"
     },
     {
-      "hash": "b6b81f2",
-      "message": "fix: Use full nix path for hostname in first-boot service"
+      "hash": "f23f36c",
+      "message": "quality: Phase 3 code cleanup + 55 new backend tests"
     },
     {
-      "hash": "313a7b8",
-      "message": "fix: Suppress kernel boot noise on installer (quiet loglevel=3)"
+      "hash": "f9ffe30",
+      "message": "reliability: Phase 2 production hardening"
     },
     {
-      "hash": "174a3ad",
-      "message": "feat: Add reinstall option when existing installation detected"
+      "hash": "d9cad37",
+      "message": "security: Phase 1 production hardening"
     },
     {
-      "hash": "69ade5f",
-      "message": "fix: Use systemd-run to escape sandbox for nixos-rebuild"
+      "hash": "9e3d408",
+      "message": "feat: Fix rebuild order completion + add healing order handler (#15, #16)"
     }
   ],
   "key_findings": {

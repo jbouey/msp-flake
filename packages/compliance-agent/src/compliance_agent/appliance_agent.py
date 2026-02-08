@@ -287,6 +287,18 @@ class SimpleDriftChecker:
         }
 
 
+# Default intervals (seconds) — overridable via ApplianceConfig attributes
+DEFAULT_RULES_SYNC_INTERVAL = 3600       # Sync L1 rules from server (1 hour)
+DEFAULT_LINUX_SCAN_INTERVAL = 300        # Linux drift check (5 min)
+DEFAULT_NETWORK_POSTURE_INTERVAL = 600   # Network posture scan (10 min)
+DEFAULT_WINDOWS_SCAN_INTERVAL = 300      # Windows drift check (5 min)
+DEFAULT_WORKSTATION_SCAN_INTERVAL = 600  # Workstation compliance (10 min)
+DEFAULT_WORKSTATION_DISCOVERY_INTERVAL = 3600  # AD workstation discovery (1 hour)
+DEFAULT_ENUMERATION_INTERVAL = 3600      # AD enumeration refresh (1 hour)
+DEFAULT_EVIDENCE_HEARTBEAT_INTERVAL = 3600  # Evidence heartbeat even if no change (1 hour)
+DEFAULT_CYCLE_TIMEOUT = 300              # Main loop cycle timeout (5 min)
+
+
 class ApplianceAgent:
     """
     Appliance-mode compliance agent.
@@ -314,10 +326,10 @@ class ApplianceAgent:
         self._last_windows_scan = datetime.min.replace(tzinfo=timezone.utc)
         self._last_linux_scan = datetime.min.replace(tzinfo=timezone.utc)
         self._last_network_posture_scan = datetime.min.replace(tzinfo=timezone.utc)
-        self._rules_sync_interval = 3600  # Sync rules every hour
-        self._linux_scan_interval = 300  # Scan Linux targets every 5 minutes
-        self._network_posture_interval = 600  # Network posture scan every 10 minutes
-        self._windows_scan_interval = 300  # Scan Windows every 5 minutes
+        self._rules_sync_interval = DEFAULT_RULES_SYNC_INTERVAL
+        self._linux_scan_interval = DEFAULT_LINUX_SCAN_INTERVAL
+        self._network_posture_interval = DEFAULT_NETWORK_POSTURE_INTERVAL
+        self._windows_scan_interval = DEFAULT_WINDOWS_SCAN_INTERVAL
 
         # Workstation discovery and compliance
         self.workstation_discovery: Optional[WorkstationDiscovery] = None
@@ -325,8 +337,8 @@ class ApplianceAgent:
         self.workstations: List[Workstation] = []
         self._last_workstation_scan = datetime.min.replace(tzinfo=timezone.utc)
         self._last_workstation_discovery = datetime.min.replace(tzinfo=timezone.utc)
-        self._workstation_scan_interval = 600  # Scan workstations every 10 minutes
-        self._workstation_discovery_interval = 3600  # Discover from AD every hour
+        self._workstation_scan_interval = DEFAULT_WORKSTATION_SCAN_INTERVAL
+        self._workstation_discovery_interval = DEFAULT_WORKSTATION_DISCOVERY_INTERVAL
         self._workstation_enabled = getattr(config, 'workstation_enabled', True)
         self._domain_controller: Optional[str] = getattr(config, 'domain_controller', None)
 
@@ -338,7 +350,7 @@ class ApplianceAgent:
         # AD enumeration for zero-friction deployment
         self.workstation_targets: List[Dict] = []  # Workstations for Go agent deployment
         self._last_enumeration = datetime.min.replace(tzinfo=timezone.utc)
-        self._enumeration_interval = 3600  # Re-enumerate every hour
+        self._enumeration_interval = DEFAULT_ENUMERATION_INTERVAL
 
         # Three-tier healing components
         self.auto_healer: Optional[AutoHealer] = None
@@ -393,7 +405,7 @@ class ApplianceAgent:
         # Stores {check_type: (last_result, last_submit_time)}
         # Only submits on state change or hourly heartbeat to reduce storage by ~99%
         self._evidence_state_cache: Dict[str, tuple] = {}
-        self._evidence_heartbeat_interval = 3600  # Hourly heartbeat even if no change
+        self._evidence_heartbeat_interval = DEFAULT_EVIDENCE_HEARTBEAT_INTERVAL
         self._evidence_failure_count = 0  # Consecutive evidence submission failures
         self._evidence_failure_reported = False  # Whether we've already raised an incident
 
@@ -511,9 +523,9 @@ class ApplianceAgent:
         # Main loop
         while self.running:
             try:
-                await asyncio.wait_for(self._run_cycle(), timeout=300)
+                await asyncio.wait_for(self._run_cycle(), timeout=DEFAULT_CYCLE_TIMEOUT)
             except asyncio.TimeoutError:
-                logger.error("Main loop cycle timed out after 300s — possible deadlock or network hang")
+                logger.error(f"Main loop cycle timed out after {DEFAULT_CYCLE_TIMEOUT}s — possible deadlock or network hang")
             except asyncio.CancelledError:
                 break
             except Exception as e:

@@ -1680,7 +1680,7 @@ async def logout(
         response.delete_cookie(key="session_token", path="/")
         return {"success": success}
 
-    return {"success": False, "error": "No token provided"}
+    raise HTTPException(status_code=401, detail="No token provided")
 
 
 @auth_router.get("/me", response_model=Optional[UserResponse])

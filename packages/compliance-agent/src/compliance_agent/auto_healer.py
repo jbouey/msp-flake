@@ -739,6 +739,18 @@ class AutoHealer:
         """Check if audit logging is configured."""
         return True
 
+    # Check types that indicate Windows targets
+    _WINDOWS_CHECK_TYPES = frozenset({
+        "windows_defender", "workstation", "bitlocker",
+        "defender", "patches", "screen_lock",
+    })
+
+    def _detect_platform(self, incident: Incident) -> str:
+        """Detect platform from incident type (check_type)."""
+        if incident.incident_type in self._WINDOWS_CHECK_TYPES:
+            return "windows"
+        return "linux"
+
     def _compute_state_diff(
         self,
         before: Dict[str, Any],
@@ -800,7 +812,7 @@ class AutoHealer:
                 "incident_id": incident.id,
                 "runbook_id": runbook_id or action,
                 "hostname": incident.host_id,
-                "platform": "windows",  # TODO: detect platform
+                "platform": self._detect_platform(incident),
                 "incident_type": incident.incident_type,
                 "started_at": state_before.get("captured_at"),
                 "completed_at": state_after.get("captured_at"),

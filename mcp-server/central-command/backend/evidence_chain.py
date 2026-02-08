@@ -1820,7 +1820,7 @@ async def get_public_key():
     except Exception:
         pass
 
-    return {"error": "Public key not available", "algorithm": "Ed25519"}
+    raise HTTPException(status_code=500, detail="Public key not available")
 
 
 @router.get("/sites/{site_id}/compliance-packet")
