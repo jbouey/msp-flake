@@ -320,7 +320,7 @@ agent/proto/compliance.proto  # Go agent (125 lines) - OUT OF SYNC
 # mcp-server/main.py line 410
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None,
     title="MCP Server",
-    description="MSP Compliance Platform - Central Control Plane",
+    description="MSP Compliance Platform - Central Orchestration Server",
     version="1.0.0",
     lifespan=lifespan
 )

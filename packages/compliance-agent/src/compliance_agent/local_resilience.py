@@ -1,16 +1,16 @@
-"""Local Resilience Module - Offline-first compliance and healing.
+"""Local Resilience Module - Offline-first compliance and evidence capture.
 
-This module enables the appliance to operate fully autonomously when
-Central Command is unreachable. It manages:
+This module enables the appliance to operate with local execution capability when
+Central Command is unreachable. It manages pre-synced controls only:
 
-1. Local Runbook Cache - Synced from cloud, executed locally
+1. Local Runbook Cache - Synced from Central Command, executed locally
 2. Local Compliance Frameworks - Multi-standard support (HIPAA, SOC2, PCI-DSS, etc.)
 3. Evidence Queue - Store-and-forward when offline
 4. Offline Alerting - Local SMTP relay capability
 
 Architecture:
-- Central Command = Control Plane (administers what's deployed)
-- Appliance = Data Plane (executes locally, syncs when online)
+- Central Command = Orchestration Server (administers policy and configuration)
+- Appliance = Execution Agent (runs pre-approved controls, syncs when online)
 """
 
 import json

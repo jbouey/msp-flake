@@ -1,5 +1,5 @@
 {
-  description = "MSP Compliance Appliance - Self-Healing NixOS Agent";
+  description = "MSP Compliance Appliance - Evidence & Remediation Agent";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";

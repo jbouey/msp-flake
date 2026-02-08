@@ -28,7 +28,7 @@ packages/compliance-agent/
 │   ├── agent.py              # Main orchestration loop
 │   ├── config.py             # Configuration (27 options)
 │   ├── drift.py              # 6 compliance checks
-│   ├── healing.py            # Self-healing engine
+│   ├── healing.py            # Remediation engine
 │   ├── auto_healer.py        # Three-tier L1/L2/L3 orchestrator
 │   ├── level1_deterministic.py  # L1 YAML rules
 │   ├── level2_llm.py         # L2 LLM planner

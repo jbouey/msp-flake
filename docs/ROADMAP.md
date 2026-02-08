@@ -75,7 +75,7 @@ mcp-server/
 - ✅ 10 Guardrails Locked - All safety controls implemented
 - ✅ VM Integration Tests - 7 test cases
 - ✅ Agent Core - Full implementation with three-tier healing
-- ✅ Self-Healing Logic - L1/L2/L3 healing operational
+- ✅ Tiered Remediation - L1/L2/L3 remediation operational
 - ✅ A/B Partition Updates - Health gate, GRUB config, auto-rollback
 - ✅ Fleet Updates UI - Release management, staged rollouts
 - ✅ Go Agent - Deployed to all 3 Windows VMs (DC, WS, SRV)

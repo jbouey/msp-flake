@@ -40,7 +40,7 @@ class ComplianceAgent:
     
     Runs the main event loop that:
     - Detects drift from baseline
-    - Remediates drift automatically
+    - Executes remediation via L1/L2/L3 tiered system
     - Generates evidence bundles
     - Submits evidence to MCP server
     - Handles offline mode with retry queue

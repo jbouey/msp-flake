@@ -1,7 +1,8 @@
-# Baseline Enforcement Module
+# Baseline Attestation Module
 #
-# Implements continuous baseline drift detection and enforcement
-# Ensures system always matches approved HIPAA baseline configuration
+# Implements continuous baseline drift detection and attestation.
+# Detects and reports deviation from approved HIPAA baseline configuration.
+# Operator-authorized remediation is applied when configured.
 #
 # HIPAA Controls:
 # - §164.308(a)(1)(ii)(D) - Information System Activity Review
@@ -10,7 +11,7 @@
 #
 # Features:
 # - Hourly baseline verification
-# - Automatic drift remediation
+# - Operator-authorized drift remediation (configurable)
 # - Drift alerting
 # - Complete audit trail
 # - Integration with evidence pipeline

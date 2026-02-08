@@ -134,10 +134,11 @@ class PromotionConfig:
 
 class SelfLearningSystem:
     """
-    Self-Learning System for automatic rule promotion.
+    Pattern Learning System for rule promotion.
 
     Analyzes L2 LLM decisions to find patterns that can be
     promoted to L1 deterministic rules, reducing latency and cost.
+    Promotion is configurable and can require operator approval.
     """
 
     def __init__(

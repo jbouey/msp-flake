@@ -9,7 +9,7 @@
 
 **Stack:** NixOS + MCP + LLM
 **Target:** Small to mid-sized clinics (NEPA region)
-**Service Model:** Auto-heal infrastructure + HIPAA compliance monitoring
+**Service Model:** HIPAA compliance monitoring + evidence capture + operator-authorized remediation
 
 ## Production Infrastructure
 
@@ -317,7 +317,7 @@ Central Command uses a three-tier permission system:
 | Reverse Proxy | Caddy | Auto TLS, HTTPS termination |
 | Hosting | Hetzner VPS | Production infrastructure |
 
-## Three-Tier Auto-Healing
+## Three-Tier Remediation
 
 ```
 Incident Flow:
@@ -548,6 +548,6 @@ async def process_incident(incident: IncidentRequest):
 3. LLM-driven synthetic testing
 4. Metadata-only monitoring (no PHI processing)
 5. Auditor-ready evidence packets
-6. Enforcement-first dashboards
+6. Evidence-first dashboards
 7. Signed evidence bundles
 8. Auto-generated executive reporting

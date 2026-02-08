@@ -425,7 +425,7 @@ in
 
     # Main agent service
     systemd.services.compliance-agent = {
-      description = "MSP Compliance Agent - Self-Healing & Evidence Generation";
+      description = "MSP Compliance Agent - Drift Detection & Evidence Generation";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" "systemd-timesyncd.service" ];
       wants = [ "network-online.target" ];
@@ -551,7 +551,7 @@ in
     # ========================================================================
 
     systemd.services.mcp-server = mkIf cfg.mcpServer.enable {
-      description = "MCP Server - Local Control Plane for Compliance Agent";
+      description = "MCP Server - Local Orchestration for Compliance Agent";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" "redis-mcp.service" ];
       wants = [ "network-online.target" ];

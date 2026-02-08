@@ -1373,7 +1373,7 @@ Msp_Flakes/
 │   ├── RB-RESTORE-001-test.yaml
 │   └── RB-SERVICE-001-crash.yaml
 │
-├── mcp-server/                       # Central control plane
+├── mcp-server/                       # Central orchestration server
 │   ├── planner.py                    # LLM runbook selection
 │   ├── executor.py                   # Runbook execution
 │   ├── evidence/                     # Evidence generation

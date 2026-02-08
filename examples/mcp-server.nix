@@ -1,7 +1,7 @@
 { config, pkgs, modulesPath, ... }:
 
 # MCP Server configuration for VirtualBox deployment
-# Central control plane that receives incidents from compliance agents
+# Central orchestration server that receives incidents from compliance agents
 
 {
   imports = [
@@ -117,7 +117,7 @@
   # ============================================================================
 
   systemd.services.mcp-server = {
-    description = "MSP MCP Server - Central Control Plane";
+    description = "MSP MCP Server - Central Orchestration Server";
     wantedBy = [ "multi-user.target" ];
     after = [ "network.target" "redis-mcp.service" ];
     requires = [ "redis-mcp.service" ];
@@ -231,7 +231,7 @@
 
   users.motd = ''
     ╔════════════════════════════════════════════════════════════╗
-    ║            MSP MCP Server - Central Control Plane          ║
+    ║            MSP MCP Server - Central Orchestration Server          ║
     ╚════════════════════════════════════════════════════════════╝
 
     Services:

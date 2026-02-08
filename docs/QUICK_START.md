@@ -44,7 +44,7 @@
 **What it covers:**
 - ✅ LUKS full disk encryption (network-bound + TPM)
 - ✅ SSH certificate authentication (8h lifetime, auto-expire)
-- ✅ Baseline enforcement (drift detection + auto-remediation)
+- ✅ Baseline attestation (drift detection + operator-authorized remediation)
 - ✅ Audit logging (auditd + journald + forwarding)
 - ✅ Health monitoring (continuous verification)
 

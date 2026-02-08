@@ -1,23 +1,33 @@
 # MSP Compliance Agent
 
-**Pull-Only Autonomous Compliance Agent for Healthcare SMBs**
+**Pull-Only Compliance Attestation Agent for Healthcare SMBs**
 
 [![Tests](https://img.shields.io/badge/tests-453%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.13-blue)]()
-[![HIPAA](https://img.shields.io/badge/HIPAA-compliant-green)]()
+[![HIPAA](https://img.shields.io/badge/HIPAA-monitoring-green)]()
 [![ISO](https://img.shields.io/badge/ISO-v18-blue)]()
 
 **Last Updated:** 2026-01-05 (Session 11)
 **Agent Version:** 1.0.9
 **Production Status:** HP T640 appliance deployed, 17,000+ evidence bundles
 
+## Positioning & Safety
+
+This product is an **evidence-grade compliance attestation substrate**. It provides:
+
+- **Observability:** Continuous drift detection and posture measurement across HIPAA controls
+- **Evidence capture:** Cryptographically signed, append-only evidence bundles with Bitcoin-anchored timestamps
+- **Human-authorized remediation:** Tiered remediation workflows (L1 deterministic, L2 LLM-assisted, L3 human escalation) where L1/L2 rules are operator-configured and L3 requires explicit human decision
+
+This is **not** a coercive enforcement or autonomous control platform. Remediation occurs via explicit operator-configured rules, externally executed runbooks, or human-escalated decisions. The system measures and attests compliance posture; it does not unilaterally impose infrastructure changes. Any L1/L2 remediation behavior is configurable, bounded by maintenance windows, and subject to health-check rollback.
+
 ## Overview
 
-The MSP Compliance Agent is an autonomous HIPAA compliance monitoring and self-healing system for healthcare SMBs. It runs at each client site and:
+The MSP Compliance Agent is a pull-only HIPAA compliance monitoring and evidence-capture agent for healthcare SMBs. It runs at each client site and:
 
 1. **Polls MCP server** for orders (pull-only, no listening sockets)
 2. **Detects drift** from baseline configuration (6 compliance checks)
-3. **Heals drift automatically** with rollback capability
+3. **Executes operator-authorized remediation** with rollback capability (L1/L2/L3 tiered)
 4. **Generates evidence** bundles for all actions (Ed25519 signed)
 5. **Operates offline** with durable queue when MCP unavailable
 6. **Manages Windows servers** via WinRM runbooks
@@ -73,9 +83,9 @@ python -m compliance_agent.agent --config /path/to/config.yaml
       └──────────┘  └──────────┘  └──────────┘
 ```
 
-## Three-Tier Auto-Healing Architecture
+## Three-Tier Remediation Architecture
 
-The agent implements an intelligent three-tier incident resolution system:
+The agent implements a tiered incident resolution system with human escalation:
 
 ```
         Incident
@@ -124,10 +134,10 @@ The agent implements an intelligent three-tier incident resolution system:
 | `level1_deterministic.py` | YAML-based deterministic rules engine |
 | `level2_llm.py` | LLM context-aware planner (local/API/hybrid) |
 | `level3_escalation.py` | Human escalation with rich tickets |
-| `learning_loop.py` | Self-learning for L2→L1 promotion |
+| `learning_loop.py` | Pattern learning for L2→L1 promotion |
 | `incident_db.py` | SQLite incident history for context |
 | `drift.py` | 6 compliance drift detection checks |
-| `healing.py` | Self-healing engine with rollback |
+| `healing.py` | Remediation engine with rollback |
 | `evidence.py` | Evidence bundle generation & signing |
 | `mcp_client.py` | MCP server communication (mTLS) |
 | `offline_queue.py` | SQLite WAL queue for offline operation |
@@ -191,8 +201,8 @@ allow_disruptive_outside_window: false
 |---|-----------|--------|
 | 1 | Order authentication (Ed25519) | ✅ |
 | 2 | Order TTL (15 min default) | ✅ |
-| 3 | Maintenance window enforcement | ✅ |
-| 4 | Health check + rollback | ✅ |
+| 3 | Maintenance window gating | ✅ |
+| 4 | Health check + rollback on failure | ✅ |
 | 5 | Evidence generation | ✅ |
 | 6 | Rate limiting | ✅ |
 | 7 | Runbook whitelisting | ✅ |

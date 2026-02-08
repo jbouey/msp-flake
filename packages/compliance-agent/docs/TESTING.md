@@ -2,7 +2,7 @@
 
 ## Overview
 
-The compliance agent test suite validates the core functionality for HIPAA compliance monitoring and self-healing across NixOS and Windows Server targets.
+The compliance agent test suite validates the core functionality for HIPAA compliance monitoring and remediation across NixOS and Windows Server targets.
 
 ## Test Structure
 

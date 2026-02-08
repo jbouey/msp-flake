@@ -41,7 +41,7 @@ Week 6: ░░░░░░░░░░░░   0% - Testing & Demo
 **Metrics:**
 - 1,479 lines of code
 - 11 HIPAA controls mapped
-- 6 auto-remediation runbooks
+- 6 remediation runbooks
 
 ---
 
@@ -51,7 +51,7 @@ Week 6: ░░░░░░░░░░░░   0% - Testing & Demo
 - ✅ LUKS full-disk encryption module
 - ✅ SSH hardening (cert-based auth)
 - ✅ SOPS secrets management
-- ✅ Time sync enforcement (chronyd)
+- ✅ Time sync verification (chronyd)
 - ✅ CI/CD with cosign + SBOM
 - ✅ Audit logging (auditd + journald)
 

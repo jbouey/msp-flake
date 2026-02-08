@@ -1,8 +1,8 @@
-"""MSP Compliance Agent - Self-Healing NixOS Agent"""
+"""MSP Compliance Agent - Evidence Capture & Remediation for NixOS"""
 
 __version__ = "1.0.56"
 
-# Three-Tier Auto-Healing Architecture
+# Three-Tier Remediation Architecture
 from .incident_db import IncidentDatabase, Incident, ResolutionLevel, IncidentOutcome
 from .level1_deterministic import DeterministicEngine, Rule, RuleMatch
 from .level2_llm import Level2Planner, LLMConfig, LLMMode, LLMDecision

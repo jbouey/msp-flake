@@ -1,6 +1,6 @@
 #\!/usr/bin/env python3
 """
-MCP Server - Central Control Plane for MSP Compliance Platform
+MCP Server - Central Orchestration Server for MSP Compliance Platform
 
 Production-ready FastAPI server that:
 - Receives check-ins from compliance appliances
@@ -469,7 +469,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, 
     title="MCP Server",
-    description="MSP Compliance Platform - Central Control Plane",
+    description="MSP Compliance Platform - Central Orchestration Server",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -580,7 +580,7 @@ async def root():
     return {
         "service": "MCP Server",
         "version": "1.0.0",
-        "description": "MSP Compliance Platform - Central Control Plane"
+        "description": "MSP Compliance Platform - Central Orchestration Server"
     }
 
 @app.api_route("/health", methods=["GET", "HEAD"])

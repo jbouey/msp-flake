@@ -74,7 +74,7 @@ APPLIANCE_TIERS = {
         "features": [
             "HIPAA compliance monitoring",
             "Automated evidence generation",
-            "Self-healing infrastructure",
+            "Guided remediation workflows",
             "Network discovery",
             "Medical device protection",
             "24/7 drift detection",

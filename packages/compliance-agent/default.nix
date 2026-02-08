@@ -39,7 +39,7 @@ python311Packages.buildPythonApplication rec {
   doCheck = false;
 
   meta = with lib; {
-    description = "MSP Compliance Agent - Self-Healing NixOS Agent";
+    description = "MSP Compliance Agent - Evidence & Remediation for NixOS";
     homepage = "https://github.com/yourorg/msp-platform";
     license = licenses.mit;
     platforms = platforms.linux;

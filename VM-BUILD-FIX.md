@@ -5,7 +5,7 @@
 ```
 error: The option `description' does not exist. Definition values:
 - In `/Users/jrelly/Documents/msp-flake/flake-compliance.nix':
-  "MSP Compliance Appliance - Self-Healing NixOS Agent"
+  "MSP Compliance Appliance - Evidence & Remediation Agent"
 ```
 
 ## Root Cause

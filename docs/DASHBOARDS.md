@@ -1,8 +1,8 @@
 # Executive Dashboards & Audit-Ready Outputs
 
-## Philosophy: Enforcement-First, Visuals Second
+## Philosophy: Evidence-First, Visuals Second
 
-**Core Principle:** Dashboards expose automation, they don't replace it. Every red tile flows into real action via MCP remediation pipeline.
+**Core Principle:** Dashboards expose compliance posture and evidence, not just visuals. Every drift finding flows into the remediation pipeline for operator review or L1/L2 resolution.
 
 **What This Adds:**
 - Thin collector + rules-as-code
@@ -14,7 +14,7 @@
 - Heavy SaaS sprawl
 - Big data lakes
 - Expensive BI tools
-- Dashboards without enforcement
+- Dashboards without evidence backing
 
 ## Minimal Architecture
 

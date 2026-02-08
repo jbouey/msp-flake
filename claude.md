@@ -1,9 +1,11 @@
 # MSP Compliance Platform
 
-HIPAA compliance automation for healthcare SMBs. NixOS + MCP + LLM.
-Auto-heal infrastructure, generate audit evidence, replace traditional MSPs at 75% lower cost.
+HIPAA compliance attestation substrate for healthcare SMBs. NixOS + MCP + LLM.
+Drift detection, evidence-grade observability, operator-authorized remediation. 75% lower cost than traditional MSPs.
 
 **Target:** 1-50 provider practices in NEPA region | **Pricing:** $200-3000/mo
+
+> **Positioning:** This is an evidence-grade compliance attestation substrate. It provides observability, drift detection, evidence capture, and human-authorized remediation workflows. It is not a coercive enforcement platform. Remediation occurs only via operator-configured rules or human-escalated decisions.
 
 ## Appliance Deployment
 
@@ -107,3 +109,6 @@ Primary state: `.agent/claude-progress.json`
 - Use `now_utc()` not `datetime.utcnow()`
 - Run tests before AND after changes
 - Log session work to `.agent/sessions/YYYY-MM-DD-description.md`
+- **DEPLOY VIA GIT PUSH, NOT SCP.** CI/CD (`.github/workflows/deploy-central-command.yml`) auto-deploys backend + frontend to VPS on push to main. Manual scp causes stale versions.
+- **SQLAlchemy AsyncSession:** Never use `asyncio.gather()` on the same session - causes `InvalidStateError`. Run queries sequentially.
+- **execution_telemetry.runbook_id:** Agent uses internal IDs (L1-SVC-DNS-001) that differ from backend IDs (RB-AUTO-SERVICE_). Match by `incident_type` + `hostname/site_id`, not `runbook_id`.

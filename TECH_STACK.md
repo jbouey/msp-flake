@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-HIPAA compliance automation platform for small healthcare practices (1-50 providers). Autonomous infrastructure healing + compliance documentation replaces traditional MSPs at 75% lower cost.
+HIPAA compliance attestation platform for small healthcare practices (1-50 providers). Drift detection, evidence capture, and operator-authorized remediation replaces traditional MSPs at 75% lower cost.
 
 | Metric | Value |
 |--------|-------|
@@ -140,7 +140,7 @@ curl https://api.osiriscare.net/health
 |--------|-------|---------|
 | `agent.py` | 450 | Main orchestration loop |
 | `drift.py` | 630 | 6 compliance checks |
-| `healing.py` | 890 | Self-healing engine |
+| `healing.py` | 890 | Remediation engine |
 | `auto_healer.py` | 520 | Three-tier orchestrator |
 | `level1_deterministic.py` | 380 | YAML rules engine |
 | `level2_llm.py` | 410 | LLM context planner |

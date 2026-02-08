@@ -53,7 +53,7 @@ This SOP defines the complete process for onboarding new clients to the MSP HIPA
 ### Success Criteria
 
 - [ ] All infrastructure discovered and classified
-- [ ] Baseline configuration enforced
+- [ ] Baseline configuration applied and attested
 - [ ] Evidence bundles generating nightly
 - [ ] First monthly compliance packet delivered
 - [ ] Client staff trained on dashboard
@@ -154,7 +154,7 @@ Shipped → Received → Connectivity → Scanning → Baseline → Active
 | Lead | n8n webhook or manual | Sites list |
 | Connectivity | First appliance checkin | Auto-updated |
 | Scanning | Discovery scan complete | Auto-updated |
-| Baseline | Baseline enforced | Auto-updated |
+| Baseline | Baseline applied | Auto-updated |
 | Active | Validation complete | Manual promotion |
 
 ### API Quick Reference
@@ -263,7 +263,7 @@ Gather requirements, assess infrastructure, and prepare for deployment.
 3. **Service Scope Alignment (15 min)**
    - What we monitor (servers, network devices)
    - What we don't monitor (workstations, SaaS, printers)
-   - Auto-remediation examples
+   - Guided remediation examples (L1/L2/L3 tiers)
    - Evidence generation process
    - HIPAA compliance coverage
 
@@ -364,7 +364,7 @@ Client must provide:
    - Data retention (7 years)
 
 3. **Service Level Agreement (SLA)**
-   - Uptime guarantee: 99.9%
+   - Uptime target: 99.9%
    - Critical incident MTTR: <4 hours
    - Evidence bundle delivery: daily
    - Compliance packet delivery: monthly
@@ -447,7 +447,7 @@ Review checklist with client technical lead:
 
 ### Objective
 
-Deploy monitoring infrastructure, enforce baseline, and validate functionality.
+Deploy monitoring infrastructure, apply baseline configuration, and validate functionality.
 
 ### Timeline
 
@@ -895,7 +895,7 @@ cat /var/lib/msp/evidence/clinic-001/bundles/latest/restore-test-results.json
 **Final Checklist:**
 
 - [ ] All infrastructure discovered and monitored
-- [ ] Baseline configuration enforced
+- [ ] Baseline configuration applied and attested
 - [ ] Synthetic incident tests passed
 - [ ] Backup monitoring active
 - [ ] Evidence pipeline functional
@@ -1022,7 +1022,7 @@ Monitor system for 6 weeks to ensure stability and tune configurations.
 ### Week 3-4: Incident Response Validation
 
 **Goals:**
-- Validate auto-remediation effectiveness
+- Validate remediation effectiveness (L1/L2 success rates, L3 escalation process)
 - Test escalation procedures
 - Measure MTTR
 
@@ -1109,7 +1109,7 @@ Monitor system for 6 weeks to ensure stability and tune configurations.
    - Verify 100% evidence coverage
    - Check compliance packet quality
    - Validate backup/restore testing
-   - Confirm baseline enforcement
+   - Confirm baseline configuration is applied and attested
 
 2. **Client Final Review**
    - Present 6-week summary
@@ -1168,11 +1168,11 @@ Ensure client understands system and can operate independently for routine tasks
 │         INCIDENT RESPONSE QUICK REFERENCE               │
 └─────────────────────────────────────────────────────────┘
 
-AUTOMATED (No Action Needed):
-• Backup failures → Auto-remediated
-• Service crashes → Auto-restarted
-• Disk full → Auto-cleaned
-• Certificate expiry → Auto-renewed
+L1/L2 REMEDIATION (Operator-Authorized, Reviewed Daily):
+• Backup failures → Remediation attempted, verified
+• Service crashes → Restart attempted, verified
+• Disk full → Cleanup attempted, verified
+• Certificate expiry → Renewal attempted, verified
 
 ESCALATED (Your Action Needed):
 • Email: incident-{id}@alerts.msp.com
@@ -1246,7 +1246,7 @@ HELPFUL LINKS:
 
 **Daily:**
 - [ ] Monitor incident queue
-- [ ] Review auto-remediation success rate
+- [ ] Review L1/L2 remediation success rate
 - [ ] Check evidence bundle generation
 - [ ] Verify backup completions
 

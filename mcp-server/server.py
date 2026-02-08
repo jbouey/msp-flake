@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MCP Server - Central Control Plane for MSP Compliance Platform
+MCP Server - Central Orchestration Server for MSP Compliance Platform
 
 Receives incidents, uses LLM to select runbooks, manages evidence,
 and powers the learning loop (L2 -> L1 promotion).
@@ -129,7 +129,7 @@ class EvidenceBundle(BaseModel):
 
 app = FastAPI(
     title="MCP Server",
-    description="MSP Compliance Platform - Central Control Plane",
+    description="MSP Compliance Platform - Central Orchestration Server",
     version="1.0.0"
 )
 

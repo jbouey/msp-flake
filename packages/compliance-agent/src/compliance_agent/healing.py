@@ -1,7 +1,7 @@
 """
-Self-healing remediation engine for compliance drift.
+Remediation engine for compliance drift.
 
-This module implements automated remediation actions for the 6 drift types
+This module implements tiered remediation actions for the 6 drift types
 detected by the DriftDetector. Each remediation follows a pattern:
 1. Check if approval is required (for disruptive actions)
 2. Check maintenance window (if disruptive)

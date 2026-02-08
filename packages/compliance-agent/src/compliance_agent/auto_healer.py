@@ -1,12 +1,12 @@
 """
-Auto-Healer: Three-Tier Incident Resolution Orchestrator.
+Three-Tier Incident Resolution Orchestrator.
 
-Implements the LLM-Era Auto-Healing architecture:
-- Level 1: Deterministic Rules Engine (70-80% of incidents)
-- Level 2: LLM Context-Aware Planner (15-20%)
-- Level 3: Human Escalation (5-10%)
+Implements tiered remediation with human escalation:
+- Level 1: Deterministic Rules Engine (70-80% of incidents, operator-configured)
+- Level 2: LLM Context-Aware Planner (15-20%, generates remediation plans)
+- Level 3: Human Escalation (5-10%, requires operator decision)
 
-With self-learning loop for continuous improvement.
+With pattern learning loop for L2-to-L1 rule promotion.
 """
 
 import asyncio

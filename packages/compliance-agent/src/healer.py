@@ -1,7 +1,7 @@
 """
-Self-Healing - Automated Remediation Engine
+Remediation Engine
 
-This module executes remediation runbooks to heal detected drift.
+This module executes remediation runbooks to address detected drift.
 
 Features:
 - Runbook execution with step-by-step tracking

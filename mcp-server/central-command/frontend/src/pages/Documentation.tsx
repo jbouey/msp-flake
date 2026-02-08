@@ -22,15 +22,15 @@ const sections: Record<DocSection, { title: string; icon: string; items: DocItem
             <p>
               OsirisCare is a HIPAA compliance automation platform designed for healthcare SMBs.
               It combines NixOS-based infrastructure, Model Context Protocol (MCP) orchestration,
-              and LLM-powered remediation to deliver automated compliance monitoring and self-healing.
+              and LLM-assisted remediation to deliver compliance monitoring, drift detection, and evidence-grade observability.
             </p>
             <h4 className="font-semibold mt-4">Key Features</h4>
             <ul className="list-disc list-inside space-y-2 text-label-secondary">
               <li>Automated HIPAA compliance monitoring (8 core controls)</li>
-              <li>Three-tier auto-healing (L1 deterministic, L2 LLM, L3 human)</li>
+              <li>Three-tier remediation (L1 deterministic, L2 LLM-assisted, L3 human escalation)</li>
               <li>Immutable audit trail with cryptographic evidence</li>
               <li>Client portal with magic-link access</li>
-              <li>Real-time drift detection and remediation</li>
+              <li>Real-time drift detection and guided remediation</li>
             </ul>
             <h4 className="font-semibold mt-4">Architecture</h4>
             <ul className="list-disc list-inside space-y-2 text-label-secondary">
@@ -107,7 +107,7 @@ const sections: Record<DocSection, { title: string; icon: string; items: DocItem
                   'Review Central Command dashboard for offline appliances',
                   'Check for any L3 escalations requiring human intervention',
                   'Verify overnight backup jobs completed successfully',
-                  'Review any new incidents from overnight auto-healing',
+                  'Review any new incidents from overnight remediation cycles',
                   'Check email for client-reported issues',
                 ].map((item, i) => (
                   <li key={i} className="flex items-start gap-2">

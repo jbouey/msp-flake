@@ -73,8 +73,8 @@ const EvidenceChainDiagram: React.FC = () => (
     </div>
 
     <p className="text-sm text-gray-600 text-center mt-4">
-      Each evidence bundle references the previous one, creating an unbreakable chain.
-      Any tampering would break the chain and be immediately detectable.
+      Each evidence bundle references the previous one, creating a tamper-evident chain.
+      Any modification would invalidate the chain and be detectable during verification.
     </p>
   </div>
 );

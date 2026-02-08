@@ -1,4 +1,4 @@
-# MSP Compliance Agent - NixOS Self-Healing Appliance
+# MSP Compliance Agent - NixOS Compliance Attestation Appliance
 
 **Status:** Phase 1 Complete (Scaffold) - Phase 2 In Progress (Implementation)
 
@@ -6,7 +6,7 @@
 
 Production-ready NixOS compliance agent implementing:
 - Pull-only control (no inbound connections)
-- Self-healing via declarative baseline reconciliation
+- Operator-authorized remediation via declarative baseline reconciliation
 - Evidence generation with Ed25519 signatures
 - Dual deployment modes (reseller/direct)
 - Full systemd hardening and egress allowlist
@@ -189,7 +189,7 @@ nix develop
    - LUKS encryption status
    - NTP offset monitoring
 
-3. **Self-Healing** (`healer.py`)
+3. **Remediation** (`healer.py`)
    - `nixos-rebuild switch` in maintenance window
    - Automatic rollback on health check failure
    - Service restart with backoff

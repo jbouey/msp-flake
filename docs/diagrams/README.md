@@ -38,7 +38,7 @@ This directory contains Mermaid diagrams documenting the MSP HIPAA Compliance Pl
 Systemd Timer (60s +-jitter) → Agent Loop → Drift Detector → 6 Checks
 ```
 
-#### Flow 2: Self-Healing Trigger Propagation
+#### Flow 2: Remediation Trigger Propagation
 ```
 Drift Detected → L1 Deterministic (70-80%)
              → L2 LLM Planner (15-20%)

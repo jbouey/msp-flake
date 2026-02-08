@@ -16,7 +16,7 @@ flowchart TB
         Modules --> AuditD
     end
 
-    subgraph MCPServer["MCP Server (Central Control Plane)"]
+    subgraph MCPServer["MCP Server (Central Orchestration)"]
         direction TB
         FastAPI["FastAPI Server<br/>:8000"]
         Redis["Redis Cache<br/>:6379"]
@@ -37,7 +37,7 @@ flowchart TB
         AgentCore["Agent Core<br/>(Main Loop)"]
         DriftDetector["Drift Detector<br/>(6 Checks)"]
 
-        subgraph ThreeTier["Three-Tier Auto-Healing"]
+        subgraph ThreeTier["Three-Tier Remediation"]
             L1["L1: Deterministic<br/>(70-80%, <100ms)"]
             L2["L2: LLM Planner<br/>(15-20%, 2-5s)"]
             L3["L3: Human Escalation<br/>(5-10%)"]

@@ -40,7 +40,7 @@ const INDUSTRIES = [
 
 const COVERAGE_TIERS = [
   { id: 'basic', name: 'Basic', description: 'Essential compliance monitoring' },
-  { id: 'standard', name: 'Standard', description: 'Full compliance + self-healing' },
+  { id: 'standard', name: 'Standard', description: 'Compliance monitoring + guided remediation' },
   { id: 'full', name: 'Full Coverage', description: 'Complete automation + priority support' },
 ];
 
