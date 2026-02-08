@@ -2,14 +2,13 @@
 
 **Pull-Only Compliance Attestation Agent for Healthcare SMBs**
 
-[![Tests](https://img.shields.io/badge/tests-453%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-925%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.13-blue)]()
 [![HIPAA](https://img.shields.io/badge/HIPAA-monitoring-green)]()
-[![ISO](https://img.shields.io/badge/ISO-v18-blue)]()
 
-**Last Updated:** 2026-01-05 (Session 11)
-**Agent Version:** 1.0.9
-**Production Status:** HP T640 appliance deployed, 17,000+ evidence bundles
+**Last Updated:** 2026-02-07 (Session 99)
+**Agent Version:** 1.0.57
+**Production Status:** Physical + VM appliances deployed, 182K+ evidence bundles
 
 ## Positioning & Safety
 
@@ -213,26 +212,17 @@ allow_disruptive_outside_window: false
 ## Testing
 
 ```bash
-# Full test suite (161 tests)
+# Full test suite (925 tests across 39 files)
 python -m pytest tests/ -v --tb=short
 
 # Core tests only
 python -m pytest tests/test_agent.py tests/test_healing.py tests/test_drift.py -v
 
-# Auto-healer tests (24 tests)
+# Three-tier remediation tests (38 tests)
 python -m pytest tests/test_auto_healer.py -v
 
-# Integration tests (simulated VMs, 12 tests)
+# Integration tests
 python -m pytest tests/test_auto_healer_integration.py -v
-
-# Windows integration (requires VM)
-export WIN_TEST_HOST="192.168.56.10"
-export WIN_TEST_USER="vagrant"
-export WIN_TEST_PASS="vagrant"
-python tests/test_windows_integration.py
-
-# Integration tests with real VMs
-python tests/test_auto_healer_integration.py --real-vms
 ```
 
 ## Documentation
@@ -261,36 +251,12 @@ Proprietary - MSP Compliance Platform
 
 ## Status
 
-**Phase 12 - Launch Readiness** - Production pilot deployed, 453 tests passing
+**Production** - Agent v1.0.57, 925 tests passing, 2 appliances deployed
 
-### Current (2026-01-05)
-- **ISO v18** deployed to HP T640 physical appliance
-- **Agent v1.0.9** with all healing fixes integrated
-- **17,000+ evidence bundles** collected with Ed25519 signatures
-- **Credential-pull architecture** - no credentials stored on appliance
-- **Three-tier healing verified** - Windows firewall chaos test passed
-- **North Valley Lab** - Windows DC + Workstation for compliance testing
-
-### Session 11 (2026-01-05)
-- Built ISO v18 with healing integration fixes
-- VPS garbage collection freed 109GB
-- Transferred ISO to iMac for deployment
-- Physical appliance checking in every 60s
-
-### Session 10 (2026-01-05)
-- Fixed L1 `execute()` to properly check action success
-- Fixed `_handle_drift_healing()` to use `auto_healer.heal()` correctly
-- Fixed `_heal_run_windows_runbook()` to use `WindowsExecutor.run_runbook()`
-- Verified Windows firewall auto-healing on physical appliance
-
-### Session 9 (2026-01-04)
-- Implemented credential-pull architecture (RMM pattern)
-- Credentials fetched from Central Command each check-in cycle
-- No credentials stored on disk - stolen device safety
-
-### Earlier Milestones
-- Partner/reseller infrastructure (Phase 11)
-- QR code provisioning for appliances
-- Ed25519 evidence signing (agent + server)
-- MinIO WORM storage with 7-year retention
-- Client portal with magic-link auth
+### Current (2026-02-07)
+- **Physical appliance** (HP T640) at 192.168.88.241 running v1.0.56
+- **VM appliance** at 192.168.88.254 running v1.0.56
+- **182,000+ evidence bundles** with Ed25519 signatures and Bitcoin-anchored OTS proofs
+- **Fleet update mechanism** - overlay + nixos-rebuild with watchdog rollback
+- **Evidence pipeline** - end-to-end: agent → backend → MinIO WORM → OTS → compliance packets
+- **925 agent tests + 114 backend tests** = 1,039 total passing

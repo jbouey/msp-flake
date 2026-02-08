@@ -65,8 +65,8 @@ mcp-server/
 ## Current Implementation Status
 
 **Phase:** Phase 13 - Zero-Touch Update System
-**Agent Version:** v1.0.45
-**ISO Version:** v44 (deployed to physical appliance)
+**Agent Version:** v1.0.57
+**ISO Version:** installer-v8-dialog-tui (deployed to physical appliance)
 
 **Deliverables:**
 - ✅ NixOS Compliance Agent - Production flake with 27 options

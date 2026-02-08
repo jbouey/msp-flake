@@ -2,13 +2,14 @@
 
 import pytest
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from compliance_agent.grpc_server import (
     AgentRegistry,
     AgentState,
     get_grpc_stats,
     GRPC_AVAILABLE,
+    _load_tls_credentials,
 )
 
 
@@ -243,3 +244,63 @@ class TestDriftRouting:
         # The sync method schedules async healing via event loop
         # Just verify it doesn't raise
         servicer._route_drift_to_healing_sync(event)
+
+
+class TestTLSCredentials:
+    """Test TLS credential loading for gRPC server."""
+
+    def test_no_tls_when_no_files(self):
+        """Returns None when no cert/key provided."""
+        assert _load_tls_credentials(None, None) is None
+        assert _load_tls_credentials("", "") is None
+
+    def test_no_tls_when_files_missing(self, tmp_path):
+        """Returns None when cert/key files don't exist."""
+        result = _load_tls_credentials(
+            str(tmp_path / "nonexistent.crt"),
+            str(tmp_path / "nonexistent.key"),
+        )
+        assert result is None
+
+    @pytest.mark.skipif(not GRPC_AVAILABLE, reason="grpcio not installed")
+    def test_tls_loads_with_valid_files(self, tmp_path):
+        """Loads credentials when cert/key files exist."""
+        cert_file = tmp_path / "server.crt"
+        key_file = tmp_path / "server.key"
+
+        # Write minimal PEM-like content (grpc validates format later)
+        cert_file.write_bytes(b"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n")
+        key_file.write_bytes(b"-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----\n")
+
+        result = _load_tls_credentials(str(cert_file), str(key_file))
+        # grpc.ssl_server_credentials returns a ServerCredentials object
+        assert result is not None
+
+    @pytest.mark.skipif(not GRPC_AVAILABLE, reason="grpcio not installed")
+    def test_mtls_loads_with_ca_cert(self, tmp_path):
+        """Loads mTLS credentials when CA cert also provided."""
+        cert_file = tmp_path / "server.crt"
+        key_file = tmp_path / "server.key"
+        ca_file = tmp_path / "ca.crt"
+
+        cert_file.write_bytes(b"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n")
+        key_file.write_bytes(b"-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----\n")
+        ca_file.write_bytes(b"-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n")
+
+        result = _load_tls_credentials(str(cert_file), str(key_file), str(ca_file))
+        assert result is not None
+
+    def test_tls_ignores_missing_ca_cert(self, tmp_path):
+        """Falls back gracefully when CA cert doesn't exist."""
+        cert_file = tmp_path / "server.crt"
+        key_file = tmp_path / "server.key"
+
+        cert_file.write_bytes(b"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n")
+        key_file.write_bytes(b"-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----\n")
+
+        # CA file doesn't exist — should still work (server TLS without mTLS)
+        if GRPC_AVAILABLE:
+            result = _load_tls_credentials(
+                str(cert_file), str(key_file), str(tmp_path / "nonexistent_ca.crt")
+            )
+            assert result is not None

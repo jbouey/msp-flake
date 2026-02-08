@@ -1,8 +1,8 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-01-23 (Session 65)
-**Agent Version:** v1.0.45
-**ISO Version:** v44 (deployed to physical appliance)
+**Last Updated:** 2026-02-07 (Session 99)
+**Agent Version:** v1.0.57
+**ISO Version:** installer-v8-dialog-tui (deployed to physical appliance)
 **Go Agent:** Deployed to all 3 VMs (DC, WS, SRV), gRPC verified working, 24 tests
 
 ## Overview

@@ -43,7 +43,7 @@ packages/compliance-agent/
 │   ├── phi_scrubber.py       # PHI pattern removal
 │   ├── windows_collector.py  # Windows data collection
 │   └── runbooks/windows/     # 7 HIPAA runbooks
-├── tests/                    # pytest tests (885+ passing)
+├── tests/                    # pytest tests (925+ passing)
 ├── docs/                     # Agent-specific documentation
 └── venv/                     # Python 3.13 virtualenv
 ```

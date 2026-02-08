@@ -21,7 +21,7 @@ Key files: `iso/appliance-image.nix`, `iso/configuration.nix`, `flake.nix`
 ```
 packages/compliance-agent/   # Python agent (main work area)
   src/compliance_agent/      # Core modules
-  tests/                     # pytest tests (885+ passing)
+  tests/                     # pytest tests (925+ passing)
   venv/                      # Python 3.13 virtualenv
 modules/                     # NixOS modules
 mcp-server/central-command/  # Dashboard backend + frontend

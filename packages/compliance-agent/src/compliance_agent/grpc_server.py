@@ -390,12 +390,53 @@ else:
             pass
 
 
+def _load_tls_credentials(
+    tls_cert_file: Optional[str] = None,
+    tls_key_file: Optional[str] = None,
+    ca_cert_file: Optional[str] = None,
+) -> Optional["grpc.ServerCredentials"]:
+    """Load TLS credentials from files. Returns None if TLS not configured."""
+    if not tls_cert_file or not tls_key_file:
+        return None
+
+    from pathlib import Path
+    cert_path = Path(tls_cert_file)
+    key_path = Path(tls_key_file)
+
+    if not cert_path.exists() or not key_path.exists():
+        logger.warning(
+            f"gRPC TLS cert/key not found ({cert_path}, {key_path}), "
+            "falling back to insecure"
+        )
+        return None
+
+    cert_data = cert_path.read_bytes()
+    key_data = key_path.read_bytes()
+
+    ca_data = None
+    require_client_auth = False
+    if ca_cert_file:
+        ca_path = Path(ca_cert_file)
+        if ca_path.exists():
+            ca_data = ca_path.read_bytes()
+            require_client_auth = True
+
+    return grpc.ssl_server_credentials(
+        [(key_data, cert_data)],
+        root_certificates=ca_data,
+        require_client_auth=require_client_auth,
+    )
+
+
 def serve_sync(
     port: int,
     agent_registry: AgentRegistry,
     mcp_client=None,
     healing_engine=None,
     config=None,
+    tls_cert_file: Optional[str] = None,
+    tls_key_file: Optional[str] = None,
+    ca_cert_file: Optional[str] = None,
 ) -> None:
     """Start the gRPC server (synchronous version for threading)."""
     if not GRPC_AVAILABLE:
@@ -416,9 +457,14 @@ def serve_sync(
 
     # Listen on all interfaces
     listen_addr = f"[::]:{port}"
-    server.add_insecure_port(listen_addr)  # TODO: Add TLS
+    credentials = _load_tls_credentials(tls_cert_file, tls_key_file, ca_cert_file)
+    if credentials:
+        server.add_secure_port(listen_addr, credentials)
+        logger.info(f"Starting gRPC server on {listen_addr} (TLS enabled)")
+    else:
+        server.add_insecure_port(listen_addr)
+        logger.warning(f"Starting gRPC server on {listen_addr} (insecure - no TLS configured)")
 
-    logger.info(f"Starting gRPC server on {listen_addr}")
     server.start()
     server.wait_for_termination()
 
@@ -429,6 +475,9 @@ async def serve(
     mcp_client=None,
     healing_engine=None,
     config=None,
+    tls_cert_file: Optional[str] = None,
+    tls_key_file: Optional[str] = None,
+    ca_cert_file: Optional[str] = None,
 ) -> None:
     """Start the gRPC server (async version)."""
     if not GRPC_AVAILABLE:
@@ -449,9 +498,14 @@ async def serve(
 
     # Listen on all interfaces
     listen_addr = f"[::]:{port}"
-    server.add_insecure_port(listen_addr)  # TODO: Add TLS
+    credentials = _load_tls_credentials(tls_cert_file, tls_key_file, ca_cert_file)
+    if credentials:
+        server.add_secure_port(listen_addr, credentials)
+        logger.info(f"Starting gRPC server on {listen_addr} (TLS enabled)")
+    else:
+        server.add_insecure_port(listen_addr)
+        logger.warning(f"Starting gRPC server on {listen_addr} (insecure - no TLS configured)")
 
-    logger.info(f"Starting gRPC server on {listen_addr}")
     await server.start()
     await server.wait_for_termination()
 

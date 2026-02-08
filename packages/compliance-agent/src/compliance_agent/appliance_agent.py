@@ -733,11 +733,18 @@ class ApplianceAgent:
             # Start gRPC server in background task
             async def serve():
                 try:
+                    # Pass TLS config if available
+                    tls_cert = str(self.config.grpc_tls_cert_file) if getattr(self.config, 'grpc_tls_cert_file', None) else None
+                    tls_key = str(self.config.grpc_tls_key_file) if getattr(self.config, 'grpc_tls_key_file', None) else None
+                    ca_cert = str(self.config.grpc_ca_cert_file) if getattr(self.config, 'grpc_ca_cert_file', None) else None
                     await grpc_serve(
                         port=self._grpc_port,
                         agent_registry=self.agent_registry,
                         healing_engine=self.auto_healer,
                         config=self.config,
+                        tls_cert_file=tls_cert,
+                        tls_key_file=tls_key,
+                        ca_cert_file=ca_cert,
                     )
                 except asyncio.CancelledError:
                     pass

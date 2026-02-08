@@ -306,6 +306,25 @@ class AgentConfig(BaseModel):
     )
 
     # ========================================================================
+    # gRPC Server TLS
+    # ========================================================================
+
+    grpc_tls_cert_file: Optional[Path] = Field(
+        default=None,
+        description="Path to gRPC server TLS certificate (enables TLS when set)"
+    )
+
+    grpc_tls_key_file: Optional[Path] = Field(
+        default=None,
+        description="Path to gRPC server TLS private key"
+    )
+
+    grpc_ca_cert_file: Optional[Path] = Field(
+        default=None,
+        description="Path to CA certificate for mutual TLS (optional)"
+    )
+
+    # ========================================================================
     # Validators
     # ========================================================================
 
@@ -497,6 +516,11 @@ def load_config() -> AgentConfig:
         'l3_escalation_webhook': os.environ.get('L3_ESCALATION_WEBHOOK') or None,
         'learning_loop_enabled': os.environ.get('LEARNING_LOOP_ENABLED', 'true').lower() == 'true',
         'learning_auto_promote': os.environ.get('LEARNING_AUTO_PROMOTE', 'false').lower() == 'true',
+
+        # gRPC TLS
+        'grpc_tls_cert_file': Path(os.environ['GRPC_TLS_CERT_FILE']) if os.environ.get('GRPC_TLS_CERT_FILE') else None,
+        'grpc_tls_key_file': Path(os.environ['GRPC_TLS_KEY_FILE']) if os.environ.get('GRPC_TLS_KEY_FILE') else None,
+        'grpc_ca_cert_file': Path(os.environ['GRPC_CA_CERT_FILE']) if os.environ.get('GRPC_CA_CERT_FILE') else None,
     }
 
     return AgentConfig(**config_dict)  # type: ignore[arg-type]
