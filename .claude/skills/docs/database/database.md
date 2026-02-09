@@ -113,6 +113,21 @@ CREATE TABLE pattern_stats (
     success_count INTEGER DEFAULT 0,
     promotion_eligible BOOLEAN DEFAULT FALSE
 );
+
+-- Persistent flap suppression: once a check flaps 3x and escalates to L3,
+-- healing is disabled until an operator clears it. Survives agent restarts.
+-- Prevents infinite L3 escalation loops (e.g., Windows GPO overriding firewall).
+CREATE TABLE flap_suppressions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    site_id TEXT NOT NULL,
+    host_id TEXT NOT NULL,
+    incident_type TEXT NOT NULL,
+    suppressed_at TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    cleared_at TEXT,       -- NULL = active suppression
+    cleared_by TEXT,       -- operator who cleared it
+    UNIQUE(site_id, host_id, incident_type)
+);
 ```
 
 ### Offline Queue

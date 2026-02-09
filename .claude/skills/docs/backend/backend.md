@@ -223,4 +223,5 @@ class Settings(BaseModel):
 - `backend/l2_planner.py` - LLM integration (507 lines)
 - `compliance_agent/grpc_server.py` - gRPC servicer
 - `compliance_agent/level1_deterministic.py` - Rule engine
-- `compliance_agent/auto_healer.py` - Healing orchestrator
+- `compliance_agent/auto_healer.py` - Healing orchestrator (circuit breaker + persistent flap suppression)
+- `compliance_agent/incident_db.py` - SQLite incident DB + flap_suppressions table

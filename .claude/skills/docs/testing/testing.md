@@ -1,7 +1,7 @@
 # Testing Patterns
 
 ## Overview
-- **961+ tests**: 906 agent tests (35 files) + 55 backend tests (3 files)
+- **970+ tests**: 957 agent tests (35 files) + 55 backend tests (3 files)
 - **595+ fixtures** for isolation
 - **pytest-asyncio** for async testing
 
