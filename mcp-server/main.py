@@ -2288,7 +2288,8 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "description": "Re-enable Windows Firewall when disabled",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "firewall"},
-                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]},
+                {"field": "platform", "operator": "ne", "value": "nixos"}
             ],
             "actions": ["restore_firewall_baseline"],
             "severity": "critical",
@@ -2302,7 +2303,8 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "description": "Re-enable Windows Firewall when status check fails",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "firewall_status"},
-                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]},
+                {"field": "platform", "operator": "ne", "value": "nixos"}
             ],
             "actions": ["restore_firewall_baseline"],
             "severity": "critical",
