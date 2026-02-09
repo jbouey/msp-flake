@@ -171,8 +171,8 @@ class AutoHealer:
         # false positive detection). Escalates to L3 after max_flap_count cycles.
         # Key: circuit_key -> (flap_count, first_flap_time)
         self._flap_tracker: Dict[tuple, tuple] = {}
-        self._max_flap_count = 5  # resolve→recur cycles before escalating
-        self._flap_window_minutes = 30  # time window to count flaps
+        self._max_flap_count = 3  # resolve→recur cycles before escalating
+        self._flap_window_minutes = 120  # time window to count flaps (must exceed drift_report_cooldown * max_flap_count)
 
         logger.info(
             f"AutoHealer initialized: L1={config.enable_level1}, "
@@ -283,7 +283,7 @@ class AutoHealer:
             return HealingResult(
                 incident_id=f"SKIPPED-{uuid.uuid4().hex[:8]}",
                 success=False,
-                resolution_level=ResolutionLevel.LEVEL3_ESCALATION,
+                resolution_level=ResolutionLevel.LEVEL3_HUMAN,
                 action_taken="circuit_breaker_cooldown",
                 resolution_time_ms=0,
                 error=f"Circuit breaker active: {remaining:.1f} min cooldown remaining"
@@ -299,7 +299,8 @@ class AutoHealer:
             return HealingResult(
                 incident_id=f"FLAP-{uuid.uuid4().hex[:8]}",
                 success=False,
-                resolution_level=ResolutionLevel.LEVEL3_ESCALATION,
+                escalated=True,
+                resolution_level=ResolutionLevel.LEVEL3_HUMAN,
                 action_taken="flap_detected_escalation",
                 resolution_time_ms=int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000),
                 error=f"Flap detected: {incident_type} resolved then recurred {self._max_flap_count}+ times"

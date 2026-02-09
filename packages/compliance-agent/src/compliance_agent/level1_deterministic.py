@@ -455,7 +455,8 @@ class DeterministicEngine:
                 source="builtin"
             ),
 
-            # Firewall rules changed
+            # Firewall rules changed (non-NixOS only — NixOS firewalls are
+            # declaratively managed and must be fixed via nix config, not runbooks)
             Rule(
                 id="L1-FW-001",
                 name="Firewall Configuration Drift",
@@ -463,6 +464,7 @@ class DeterministicEngine:
                 conditions=[
                     RuleCondition("check_type", MatchOperator.EQUALS, "firewall"),
                     RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                    RuleCondition("platform", MatchOperator.NOT_EQUALS, "nixos"),
                 ],
                 action="restore_firewall_baseline",
                 action_params={},

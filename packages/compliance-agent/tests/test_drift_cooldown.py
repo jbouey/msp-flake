@@ -18,6 +18,7 @@ def agent_with_healer():
     agent = ApplianceAgent.__new__(ApplianceAgent)
     agent._drift_report_times = {}
     agent._drift_report_cooldown = 600  # 10 min
+    agent._drift_report_cooldown_overrides = {}  # Per-check overrides (flap detection)
 
     # Mock auto_healer
     agent.auto_healer = AsyncMock()
@@ -170,3 +171,106 @@ class TestDriftCooldown:
             {"status": "fail", "details": {}}
         )
         assert result is None
+
+
+class TestFlapDetection:
+    """Test that flap detection triggers and extends cooldown to break loops."""
+
+    @pytest.mark.asyncio
+    async def test_cooldown_extended_on_flap_detection(self, agent_with_healer):
+        """When heal() returns flap_detected_escalation, cooldown extends to 1 hour."""
+        # Configure heal to return flap detection result
+        agent_with_healer.auto_healer.heal = AsyncMock(return_value=MagicMock(
+            success=False,
+            escalated=True,
+            resolution_level="L3",
+            action_taken="flap_detected_escalation",
+            incident_id="FLAP-abc123",
+            resolution_time_ms=5,
+            error="Flap detected: firewall resolved then recurred 3+ times",
+        ))
+
+        result = await agent_with_healer._handle_drift_healing(
+            "firewall",
+            {"status": "fail", "details": {}}
+        )
+
+        assert result is not None
+        # Cooldown should be extended to 3600s (1 hour)
+        assert agent_with_healer._drift_report_cooldown_overrides.get("firewall") == 3600
+
+    @pytest.mark.asyncio
+    async def test_extended_cooldown_suppresses_subsequent_reports(self, agent_with_healer):
+        """After flap extends cooldown to 1 hour, incidents within that window are suppressed."""
+        # Simulate flap already detected — cooldown override set
+        agent_with_healer._drift_report_cooldown_overrides["firewall"] = 3600
+        # Last report 15 minutes ago (within 1 hour override, but past default 600s)
+        agent_with_healer._drift_report_times["firewall"] = (
+            datetime.now(timezone.utc) - timedelta(minutes=15)
+        )
+
+        result = await agent_with_healer._handle_drift_healing(
+            "firewall",
+            {"status": "fail", "details": {}}
+        )
+
+        assert result is None
+        agent_with_healer.auto_healer.heal.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_extended_cooldown_does_not_affect_other_checks(self, agent_with_healer):
+        """Flap cooldown for one check doesn't affect other checks."""
+        # Flap detected for firewall — 1 hour cooldown
+        agent_with_healer._drift_report_cooldown_overrides["firewall"] = 3600
+        agent_with_healer._drift_report_times["firewall"] = datetime.now(timezone.utc)
+
+        # backup should still work normally (no override)
+        result = await agent_with_healer._handle_drift_healing(
+            "backup",
+            {"status": "fail", "details": {}}
+        )
+
+        assert result is not None
+        agent_with_healer.auto_healer.heal.assert_called_once()
+
+
+class TestNixosPlatformSkip:
+    """Test that L1-FW-001 skips NixOS platforms."""
+
+    def test_l1_fw_001_does_not_match_nixos(self):
+        """L1-FW-001 should not match when platform is 'nixos'."""
+        from compliance_agent.level1_deterministic import DeterministicEngine
+
+        engine = DeterministicEngine(rules_dir=None, incident_db=None)
+
+        # NixOS platform — should NOT match
+        match = engine.match(
+            incident_id="test-001",
+            incident_type="firewall",
+            severity="high",
+            data={
+                "check_type": "firewall",
+                "drift_detected": True,
+                "platform": "nixos",
+            }
+        )
+        assert match is None or match.rule.id != "L1-FW-001"
+
+    def test_l1_fw_001_matches_non_nixos(self):
+        """L1-FW-001 should match when platform is not 'nixos' (e.g., Windows)."""
+        from compliance_agent.level1_deterministic import DeterministicEngine
+
+        engine = DeterministicEngine(rules_dir=None, incident_db=None)
+
+        match = engine.match(
+            incident_id="test-002",
+            incident_type="firewall",
+            severity="high",
+            data={
+                "check_type": "firewall",
+                "drift_detected": True,
+                "platform": "windows",
+            }
+        )
+        assert match is not None
+        assert match.rule.id == "L1-FW-001"

@@ -834,5 +834,85 @@ class TestPlatformDetection:
         assert healer._detect_platform(self._make_incident("ntp_sync")) == "linux"
 
 
+class TestFlapDetector:
+    """Test the flap detector catches resolve→recur loops."""
+
+    @pytest.fixture
+    def auto_healer_config(self, tmp_path):
+        return AutoHealerConfig(
+            db_path=str(tmp_path / "test_flap.db"),
+            rules_dir=tmp_path / "rules",
+            enable_level1=True,
+            enable_level2=False,
+            enable_level3=False,
+            enable_learning=False,
+        )
+
+    def test_flap_thresholds(self, auto_healer_config):
+        """Verify flap detector uses correct thresholds."""
+        healer = AutoHealer(config=auto_healer_config)
+        assert healer._max_flap_count == 3
+        assert healer._flap_window_minutes == 120
+
+    def test_flap_not_triggered_below_threshold(self, auto_healer_config):
+        """Two recurrences should not trigger flap detection."""
+        healer = AutoHealer(config=auto_healer_config)
+        key = ("site-1", "host-1", "firewall")
+
+        healer._track_flap(key)
+        assert not healer._is_flapping(key)
+
+        healer._track_flap(key)
+        assert not healer._is_flapping(key)
+
+    def test_flap_triggered_at_threshold(self, auto_healer_config):
+        """Three recurrences should trigger flap detection."""
+        healer = AutoHealer(config=auto_healer_config)
+        key = ("site-1", "host-1", "firewall")
+
+        for _ in range(3):
+            healer._track_flap(key)
+
+        assert healer._is_flapping(key)
+
+    @pytest.mark.asyncio
+    async def test_flap_escalation_result_has_escalated_true(self, auto_healer_config):
+        """Flap detection should return HealingResult with escalated=True."""
+        healer = AutoHealer(config=auto_healer_config)
+        key = ("site-1", "host-1", "firewall")
+
+        # Pre-load flap tracker to threshold
+        for _ in range(3):
+            healer._track_flap(key)
+
+        result = await healer.heal(
+            site_id="site-1",
+            host_id="host-1",
+            incident_type="firewall",
+            severity="high",
+            raw_data={"check_type": "firewall", "drift_detected": True}
+        )
+
+        assert result.escalated is True
+        assert result.action_taken == "flap_detected_escalation"
+        assert result.resolution_level == ResolutionLevel.LEVEL3_HUMAN
+        assert result.success is False
+
+    def test_flap_window_reset(self, auto_healer_config):
+        """Flap counter should reset after window expires."""
+        from datetime import timedelta
+        healer = AutoHealer(config=auto_healer_config)
+        key = ("site-1", "host-1", "firewall")
+
+        # Simulate 2 flaps from 3 hours ago (outside 120-min window)
+        old_time = datetime.now(timezone.utc) - timedelta(hours=3)
+        healer._flap_tracker[key] = (2, old_time)
+
+        # Next track should reset the counter
+        healer._track_flap(key)
+        count, _ = healer._flap_tracker[key]
+        assert count == 1  # Reset, not incremented to 3
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

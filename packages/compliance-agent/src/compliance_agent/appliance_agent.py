@@ -384,6 +384,8 @@ class ApplianceAgent:
         # Key: check_name -> last report timestamp
         self._drift_report_times: Dict[str, datetime] = {}
         self._drift_report_cooldown = getattr(config, 'drift_report_cooldown', 600)  # 10 min default
+        # Per-check cooldown overrides (set when flap detected to extend cooldown)
+        self._drift_report_cooldown_overrides: Dict[str, int] = {}
 
         # Dual-mode sensor support
         self._sensor_enabled = getattr(config, 'sensor_enabled', True)
@@ -1625,14 +1627,18 @@ class ApplianceAgent:
             return None
 
         # Drift report cooldown: skip if same check reported recently
+        # Use per-check override if flap detection extended the cooldown
         now = datetime.now(timezone.utc)
+        cooldown = self._drift_report_cooldown_overrides.get(
+            check_name, self._drift_report_cooldown
+        )
         last_reported = self._drift_report_times.get(check_name)
         if last_reported:
             elapsed = (now - last_reported).total_seconds()
-            if elapsed < self._drift_report_cooldown:
+            if elapsed < cooldown:
                 logger.debug(
                     f"Drift cooldown: {check_name} reported {elapsed:.0f}s ago, "
-                    f"suppressing for {self._drift_report_cooldown - elapsed:.0f}s more"
+                    f"suppressing for {cooldown - elapsed:.0f}s more"
                 )
                 return None
         self._drift_report_times[check_name] = now
@@ -1711,6 +1717,13 @@ class ApplianceAgent:
                         logger.debug(f"Pattern report failed (non-critical): {e}")
             elif getattr(result, 'escalated', False):
                 logger.info(f"Healing {check_name}: escalated to L3 for human review")
+                # Flap detection: extend cooldown to stop the loop
+                if result.action_taken == "flap_detected_escalation":
+                    self._drift_report_cooldown_overrides[check_name] = 3600  # 1 hour
+                    logger.warning(
+                        f"Flap loop detected for {check_name}: "
+                        f"extending cooldown to 1 hour to stop incident spam"
+                    )
             else:
                 logger.warning(
                     f"Healing {check_name}: {result.resolution_level} → {result.action_taken} (FAILED: {result.error})"
