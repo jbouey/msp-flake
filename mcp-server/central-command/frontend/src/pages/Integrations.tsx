@@ -203,7 +203,7 @@ function IntegrationCard({
             <button
               onClick={() => setShowDeleteConfirm(false)}
               disabled={deleting}
-              className="px-2 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-500 disabled:opacity-50"
+              className="px-2 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50"
             >
               No
             </button>

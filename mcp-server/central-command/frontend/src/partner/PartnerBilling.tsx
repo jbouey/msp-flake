@@ -435,7 +435,7 @@ export const PartnerBilling: React.FC = () => {
                           className={`w-full py-2 px-4 font-medium rounded-lg transition disabled:opacity-50 ${
                             key === 'practice'
                               ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                              : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                              : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
                           }`}
                         >
                           {actionLoading ? 'Loading...' : 'Get Started'}

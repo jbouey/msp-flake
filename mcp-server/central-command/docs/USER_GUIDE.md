@@ -1,6 +1,6 @@
 # Central Command User Guide
 
-## Malachor MSP Compliance Platform
+## OsirisCare MSP Compliance Platform
 
 **Version:** 1.2.0
 **Last Updated:** January 16, 2026
@@ -430,5 +430,5 @@ For technical support, contact your system administrator or refer to the interna
 
 ---
 
-*Document generated for Malachor MSP Compliance Platform*
+*Document generated for OsirisCare MSP Compliance Platform*
 *Central Command Dashboard v1.0.0*

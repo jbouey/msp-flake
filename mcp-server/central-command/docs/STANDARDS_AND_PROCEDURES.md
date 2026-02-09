@@ -1,4 +1,4 @@
-# Malachor MSP Standards and Procedures
+# OsirisCare MSP Standards and Procedures
 
 ## Compliance Operations Manual
 
@@ -26,12 +26,12 @@
 
 ## Purpose and Scope
 
-This document establishes standard operating procedures for the Malachor MSP Compliance Platform. These procedures apply to all managed client sites and govern the handling of compliance incidents, infrastructure maintenance, and HIPAA-related security controls.
+This document establishes standard operating procedures for the OsirisCare MSP Compliance Platform. These procedures apply to all managed client sites and govern the handling of compliance incidents, infrastructure maintenance, and HIPAA-related security controls.
 
 ### Applicability
 
 - All managed healthcare client sites
-- All Malachor MSP technicians and administrators
+- All OsirisCare MSP technicians and administrators
 - Automated compliance agent operations
 - Third-party contractors with system access
 
@@ -380,9 +380,9 @@ All logs are protected by:
 | Review Type | Frequency | Reviewer |
 |-------------|-----------|----------|
 | User Access | Quarterly | Client IT contact |
-| Privileged Access | Monthly | Malachor security |
-| Service Accounts | Quarterly | Malachor operations |
-| API Keys | Monthly | Malachor security |
+| Privileged Access | Monthly | OsirisCare security |
+| Service Accounts | Quarterly | OsirisCare operations |
+| API Keys | Monthly | OsirisCare security |
 
 ### Account Deprovisioning
 
@@ -503,13 +503,13 @@ Each compliance incident generates an evidence bundle containing:
 | L2 AI Assistant | Automatic | 2-5 seconds |
 | L3 On-Call Technician | Page/SMS | 15 minutes |
 | Account Manager | Email/Phone | 4 hours |
-| Security Incident | security@malachor.io | 1 hour |
+| Security Incident | security@osiriscare.net | 1 hour |
 
 ### Client Portal
 
 - **Dashboard:** http://[server]:3000
 - **Documentation:** http://[server]:3000/USER_GUIDE.pdf
-- **Support:** support@malachor.io
+- **Support:** support@osiriscare.net
 
 ---
 
@@ -549,10 +549,10 @@ Each compliance incident generates an evidence bundle containing:
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
-| 1.0.0 | 2025-12-30 | Malachor Operations | Initial release |
-| 1.1.0 | 2025-12-30 | Malachor Operations | Added Learning Loop System section |
+| 1.0.0 | 2025-12-30 | OsirisCare Operations | Initial release |
+| 1.1.0 | 2025-12-30 | OsirisCare Operations | Added Learning Loop System section |
 
 ---
 
 *This document is confidential and intended for authorized personnel only.*
-*For questions, contact compliance@malachor.io*
+*For questions, contact compliance@osiriscare.net*

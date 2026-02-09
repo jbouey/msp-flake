@@ -264,7 +264,7 @@ export const PartnerComplianceSettings: React.FC = () => {
                   className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
                     selectedIndustry === ind.id
                       ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
                   }`}
                 >
                   <span className="mr-1">{ind.icon}</span> {ind.name}
@@ -442,7 +442,7 @@ export const PartnerComplianceSettings: React.FC = () => {
                   <button
                     key={ind.id}
                     onClick={() => handleApplyPreset(editingSite, ind.id)}
-                    className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition"
+                    className="px-3 py-1.5 text-sm bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg transition"
                   >
                     {ind.icon} {ind.name}
                   </button>

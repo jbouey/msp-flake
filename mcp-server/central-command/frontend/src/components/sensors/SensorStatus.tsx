@@ -106,7 +106,7 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
         </div>
         <button
           onClick={() => queryClient.invalidateQueries({ queryKey: ['sensors', siteId] })}
-          className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded"
+          className="px-3 py-1 text-sm bg-blue-50 text-blue-600 hover:bg-blue-100 rounded"
         >
           Refresh
         </button>
@@ -142,7 +142,7 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {sensors.map((sensor) => (
-              <tr key={sensor.hostname} className="hover:bg-gray-50">
+              <tr key={sensor.hostname} className="hover:bg-blue-50/50">
                 {/* Hostname */}
                 <td className="px-4 py-2 whitespace-nowrap">
                   <div className="flex items-center">
