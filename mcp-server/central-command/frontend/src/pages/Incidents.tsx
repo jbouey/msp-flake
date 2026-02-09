@@ -18,22 +18,22 @@ export const Incidents: React.FC = () => {
   const resolvedCount = incidents.filter((i: Incident) => i.resolved).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 page-enter">
       <GlassCard>
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-xl font-semibold text-label-primary">All Incidents</h1>
+            <h1 className="text-xl font-semibold text-label-primary tracking-tight">All Incidents</h1>
             <p className="text-sm text-label-tertiary mt-1">
               {incidents.length} total incidents
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => setFilter('all')}
-              className={`px-3 py-1.5 text-sm rounded-ios-md transition-colors ${
+              className={`px-3 py-1.5 text-sm font-medium rounded-ios-sm transition-colors ${
                 filter === 'all'
-                  ? 'bg-accent-primary text-white'
+                  ? 'bg-accent-primary text-white shadow-glow-blue'
                   : 'bg-fill-tertiary text-label-secondary hover:bg-fill-secondary'
               }`}
             >
@@ -41,9 +41,9 @@ export const Incidents: React.FC = () => {
             </button>
             <button
               onClick={() => setFilter('active')}
-              className={`px-3 py-1.5 text-sm rounded-ios-md transition-colors ${
+              className={`px-3 py-1.5 text-sm font-medium rounded-ios-sm transition-colors ${
                 filter === 'active'
-                  ? 'bg-health-warning text-white'
+                  ? 'bg-health-warning text-white shadow-glow-orange'
                   : 'bg-fill-tertiary text-label-secondary hover:bg-fill-secondary'
               }`}
             >
@@ -51,9 +51,9 @@ export const Incidents: React.FC = () => {
             </button>
             <button
               onClick={() => setFilter('resolved')}
-              className={`px-3 py-1.5 text-sm rounded-ios-md transition-colors ${
+              className={`px-3 py-1.5 text-sm font-medium rounded-ios-sm transition-colors ${
                 filter === 'resolved'
-                  ? 'bg-health-healthy text-white'
+                  ? 'bg-health-healthy text-white shadow-glow-green'
                   : 'bg-fill-tertiary text-label-secondary hover:bg-fill-secondary'
               }`}
             >

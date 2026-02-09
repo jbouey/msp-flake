@@ -112,28 +112,65 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
   const hasOAuthProviders = providers.google || providers.microsoft;
 
   return (
-    <div className="min-h-screen bg-background-primary flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Gradient background */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: 'linear-gradient(135deg, #F2F2F7 0%, #E8E0F0 30%, #D6E8F7 60%, #F2F2F7 100%)',
+        }}
+      />
+      {/* Subtle radial accent */}
+      <div
+        className="absolute top-[-20%] right-[-10%] w-[600px] h-[600px] rounded-full opacity-30"
+        style={{
+          background: 'radial-gradient(circle, rgba(0, 122, 255, 0.12) 0%, transparent 70%)',
+        }}
+      />
+      <div
+        className="absolute bottom-[-15%] left-[-5%] w-[500px] h-[500px] rounded-full opacity-25"
+        style={{
+          background: 'radial-gradient(circle, rgba(88, 86, 214, 0.1) 0%, transparent 70%)',
+        }}
+      />
+
+      <div className="w-full max-w-[380px] relative z-10 animate-fade-in">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-accent-primary rounded-ios-lg mx-auto flex items-center justify-center mb-4">
-            <span className="text-white font-bold text-2xl">M</span>
+          <div
+            className="w-16 h-16 rounded-ios-xl mx-auto flex items-center justify-center mb-4 shadow-glow-blue"
+            style={{
+              background: 'linear-gradient(135deg, #007AFF 0%, #5856D6 100%)',
+            }}
+          >
+            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
           </div>
-          <h1 className="text-2xl font-semibold text-label-primary">Central Command</h1>
-          <p className="text-label-tertiary mt-1">Sign in to continue</p>
+          <h1 className="text-2xl font-bold text-label-primary tracking-tight">Central Command</h1>
+          <p className="text-label-tertiary text-sm mt-1">Sign in to continue</p>
         </div>
 
         {/* Login Card */}
-        <div className="bg-white/80 backdrop-blur-xl rounded-ios-lg shadow-lg border border-white/50 p-8">
-          <form onSubmit={handleSubmit} className="space-y-6">
+        <div
+          className="rounded-ios-xl p-7"
+          style={{
+            background: 'rgba(255, 255, 255, 0.82)',
+            backdropFilter: 'blur(40px) saturate(200%)',
+            WebkitBackdropFilter: 'blur(40px) saturate(200%)',
+            border: '1px solid rgba(255, 255, 255, 0.5)',
+            boxShadow: '0 2px 32px rgba(0, 0, 0, 0.06), 0 0.5px 0 rgba(255, 255, 255, 0.4) inset',
+          }}
+        >
+          <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-ios-md">
+              <div className="p-3 bg-ios-red/8 border border-ios-red/15 rounded-ios-md animate-fade-in">
                 <p className="text-sm text-health-critical">{error}</p>
               </div>
             )}
 
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-label-primary mb-2">
+              <label htmlFor="username" className="block text-sm font-medium text-label-primary mb-1.5">
                 Username
               </label>
               <input
@@ -143,13 +180,13 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
                 onChange={(e) => setUsername(e.target.value)}
                 required
                 autoComplete="username"
-                className="w-full px-4 py-3 bg-separator-light rounded-ios-md border-none outline-none focus:ring-2 focus:ring-accent-primary text-label-primary placeholder-label-tertiary"
+                className="w-full px-3.5 py-2.5 bg-fill-quaternary rounded-ios-md border border-separator-light text-label-primary placeholder-label-tertiary outline-none transition-all focus:border-accent-primary focus:ring-2 focus:ring-accent-primary/20 text-[15px]"
                 placeholder="Enter username"
               />
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-label-primary mb-2">
+              <label htmlFor="password" className="block text-sm font-medium text-label-primary mb-1.5">
                 Password
               </label>
               <input
@@ -159,7 +196,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full px-4 py-3 bg-separator-light rounded-ios-md border-none outline-none focus:ring-2 focus:ring-accent-primary text-label-primary placeholder-label-tertiary"
+                className="w-full px-3.5 py-2.5 bg-fill-quaternary rounded-ios-md border border-separator-light text-label-primary placeholder-label-tertiary outline-none transition-all focus:border-accent-primary focus:ring-2 focus:ring-accent-primary/20 text-[15px]"
                 placeholder="Enter password"
               />
             </div>
@@ -167,31 +204,43 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full py-3 bg-accent-primary text-white font-medium rounded-ios-md hover:bg-accent-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-2.5 text-white font-semibold rounded-ios-md transition-all disabled:opacity-50 disabled:cursor-not-allowed text-[15px]"
+              style={{
+                background: 'linear-gradient(135deg, #007AFF 0%, #5856D6 100%)',
+                boxShadow: isLoading ? 'none' : '0 2px 12px rgba(0, 122, 255, 0.3)',
+              }}
             >
-              {isLoading ? 'Signing in...' : 'Sign In'}
+              {isLoading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Signing in...
+                </span>
+              ) : 'Sign In'}
             </button>
           </form>
 
           {/* OAuth Buttons */}
           {!providersLoading && hasOAuthProviders && (
             <>
-              <div className="relative my-6">
+              <div className="relative my-5">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-separator-light"></div>
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white/80 text-label-tertiary">or continue with</span>
+                  <span className="px-3 text-label-tertiary text-xs" style={{ background: 'rgba(255, 255, 255, 0.82)' }}>or continue with</span>
                 </div>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 {providers.google && (
                   <button
                     type="button"
                     onClick={() => handleOAuthLogin('google')}
                     disabled={oauthLoading !== null}
-                    className="w-full py-3 px-4 bg-white border border-gray-300 rounded-ios-md hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                    className="w-full py-2.5 px-4 bg-white border border-separator-medium rounded-ios-md hover:bg-fill-quaternary transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
                   >
                     <svg className="w-5 h-5" viewBox="0 0 24 24">
                       <path
@@ -211,7 +260,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
                         d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
                       />
                     </svg>
-                    <span className="text-label-primary font-medium">
+                    <span className="text-label-primary font-medium text-sm">
                       {oauthLoading === 'google' ? 'Redirecting...' : 'Sign in with Google'}
                     </span>
                   </button>
@@ -222,7 +271,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
                     type="button"
                     onClick={() => handleOAuthLogin('microsoft')}
                     disabled={oauthLoading !== null}
-                    className="w-full py-3 px-4 bg-white border border-gray-300 rounded-ios-md hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                    className="w-full py-2.5 px-4 bg-white border border-separator-medium rounded-ios-md hover:bg-fill-quaternary transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
                   >
                     <svg className="w-5 h-5" viewBox="0 0 23 23">
                       <rect fill="#f35325" x="1" y="1" width="10" height="10"/>
@@ -230,7 +279,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
                       <rect fill="#05a6f0" x="1" y="12" width="10" height="10"/>
                       <rect fill="#ffba08" x="12" y="12" width="10" height="10"/>
                     </svg>
-                    <span className="text-label-primary font-medium">
+                    <span className="text-label-primary font-medium text-sm">
                       {oauthLoading === 'microsoft' ? 'Redirecting...' : 'Sign in with Microsoft'}
                     </span>
                   </button>
@@ -242,7 +291,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
         </div>
 
         {/* Footer */}
-        <p className="text-xs text-label-tertiary text-center mt-8">
+        <p className="text-[11px] text-label-tertiary text-center mt-8 tracking-wide">
           Malachor MSP Compliance Platform
         </p>
       </div>

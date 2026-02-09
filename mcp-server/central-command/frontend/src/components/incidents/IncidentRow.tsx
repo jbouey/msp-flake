@@ -93,9 +93,9 @@ export const IncidentRow: React.FC<IncidentRowProps> = memo(({
       className="w-full flex items-center gap-4 p-4 bg-white/50 hover:bg-white/80 rounded-ios-md transition-colors text-left border border-separator-light"
     >
       {/* Status indicator */}
-      <div
-        className={`w-2 h-2 rounded-full flex-shrink-0 ${
-          incident.resolved ? 'bg-health-healthy' : 'bg-health-warning animate-pulse'
+      <span
+        className={`status-dot ${
+          incident.resolved ? 'status-dot-healthy' : 'status-dot-warning animate-pulse-soft'
         }`}
       />
 

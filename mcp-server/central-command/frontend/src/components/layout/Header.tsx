@@ -25,7 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
   refreshing = false,
   lastUpdated,
   actions,
-  user,
+  user: _user,
 }) => {
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -38,26 +38,18 @@ export const Header: React.FC<HeaderProps> = ({
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const userInitials = user?.displayName
-    ? user.displayName
-        .split(' ')
-        .map((n) => n[0])
-        .join('')
-        .toUpperCase()
-    : 'U';
-
   return (
-    <header className="glass-header h-16 flex items-center justify-between px-6 sticky top-0 z-10">
+    <header className="glass-header h-14 flex items-center justify-between px-6 sticky top-0 z-10">
       {/* Left: Title */}
-      <div>
-        <h1 className="text-xl font-semibold text-label-primary">{title}</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-lg font-semibold text-label-primary tracking-tight">{title}</h1>
         {subtitle && (
-          <p className="text-sm text-label-tertiary">{subtitle}</p>
+          <span className="text-sm text-label-tertiary">{subtitle}</span>
         )}
       </div>
 
       {/* Right: Actions */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2">
         {/* Search */}
         <div className="relative">
           {searchOpen ? (
@@ -67,44 +59,51 @@ export const Header: React.FC<HeaderProps> = ({
               autoFocus
               onBlur={() => setSearchOpen(false)}
               className="
-                w-64 px-4 py-2 text-sm
-                bg-separator-light rounded-ios-md
+                w-56 px-3 py-1.5 text-sm
+                bg-fill-tertiary rounded-ios-sm
                 border-none outline-none
-                focus:ring-2 focus:ring-accent-primary
+                focus:ring-2 focus:ring-accent-primary/40
                 placeholder-label-tertiary
+                transition-all
               "
             />
           ) : (
             <button
               onClick={() => setSearchOpen(true)}
-              className="p-2 rounded-ios-sm hover:bg-separator-light transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-ios-sm bg-fill-quaternary hover:bg-fill-tertiary transition-colors"
               aria-label="Search"
             >
-              <svg className="w-5 h-5 text-label-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4 h-4 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
+              <span className="text-xs text-label-tertiary hidden sm:inline">Search</span>
+              <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium text-label-tertiary bg-white/60 rounded border border-separator-light">
+                <span className="text-[11px]">&#8984;</span>K
+              </kbd>
             </button>
           )}
         </div>
 
         {/* Refresh indicator */}
         {showRefresh && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {lastUpdated && (
-              <span className="text-xs text-label-tertiary">
+              <span className="text-[11px] text-label-tertiary tabular-nums">
                 {formatLastUpdated(lastUpdated)}
               </span>
             )}
             <button
               onClick={onRefresh}
               disabled={refreshing}
-              className={`
-                p-2 rounded-ios-sm hover:bg-separator-light transition-colors
-                ${refreshing ? 'animate-spin' : ''}
-              `}
+              className="p-1.5 rounded-ios-sm hover:bg-fill-tertiary transition-colors disabled:opacity-50"
               aria-label="Refresh"
             >
-              <svg className="w-5 h-5 text-label-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg
+                className={`w-4 h-4 text-label-tertiary transition-transform ${refreshing ? 'animate-spin' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             </button>
@@ -113,17 +112,6 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Custom actions */}
         {actions}
-
-        {/* User info */}
-        <div className="flex items-center gap-2 pl-4 border-l border-separator-light">
-          <div className="w-8 h-8 bg-accent-primary rounded-full flex items-center justify-center">
-            <span className="text-white text-sm font-medium">{userInitials}</span>
-          </div>
-          <div className="text-sm">
-            <span className="text-label-primary font-medium">{user?.displayName || 'User'}</span>
-            <span className="text-label-tertiary ml-1 text-xs capitalize">({user?.role || 'guest'})</span>
-          </div>
-        </div>
       </div>
     </header>
   );

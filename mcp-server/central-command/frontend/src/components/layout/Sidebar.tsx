@@ -1,7 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import type { ClientOverview, HealthStatus } from '../../types';
-import { getHealthColor } from '../../tokens/style-tokens';
 import { useNotificationSummary } from '../../hooks';
 
 interface User {
@@ -50,6 +49,15 @@ const navItems: NavItem[] = [
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+      </svg>
+    ),
+  },
+  {
+    path: '/incidents',
+    label: 'Incidents',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
     ),
   },
@@ -162,14 +170,14 @@ const navItems: NavItem[] = [
   },
 ];
 
+const statusDotClass: Record<HealthStatus, string> = {
+  critical: 'status-dot status-dot-critical',
+  warning: 'status-dot status-dot-warning',
+  healthy: 'status-dot status-dot-healthy',
+};
+
 const HealthDot: React.FC<{ status: HealthStatus }> = ({ status }) => {
-  const color = getHealthColor(status);
-  return (
-    <span
-      className="w-2 h-2 rounded-full flex-shrink-0"
-      style={{ backgroundColor: color }}
-    />
-  );
+  return <span className={statusDotClass[status] || 'status-dot status-dot-neutral'} />;
 };
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -197,34 +205,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside className="glass-sidebar w-64 h-screen flex flex-col fixed left-0 top-0">
       {/* Logo */}
-      <div className="p-6 border-b border-separator-light">
+      <div className="px-5 py-5 border-b border-separator-light">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-accent-primary rounded-ios-md flex items-center justify-center">
-            <span className="text-white font-bold text-lg">M</span>
+          <div
+            className="w-10 h-10 rounded-ios-md flex items-center justify-center shadow-glow-blue"
+            style={{
+              background: 'linear-gradient(135deg, #007AFF 0%, #5856D6 100%)',
+            }}
+          >
+            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
           </div>
           <div>
-            <h1 className="font-semibold text-label-primary">Malachor</h1>
+            <h1 className="font-semibold text-label-primary tracking-tight">Malachor</h1>
             <p className="text-xs text-label-tertiary">Central Command</p>
           </div>
         </div>
       </div>
 
       {/* Clients Section */}
-      <div className="p-4 border-b border-separator-light">
-        <h2 className="text-xs font-semibold text-label-tertiary uppercase tracking-wide mb-3">
+      <div className="px-4 pt-4 pb-3 border-b border-separator-light">
+        <h2 className="text-[10px] font-semibold text-label-tertiary uppercase tracking-wider mb-2 px-1">
           Clients
         </h2>
-        <div className="space-y-1 max-h-48 overflow-y-auto">
+        <div className="space-y-0.5 max-h-48 overflow-y-auto">
           {clients.map((client) => (
             <button
               key={client.site_id}
               onClick={() => onClientSelect?.(client.site_id)}
               className={`
-                w-full flex items-center gap-2 px-3 py-2 rounded-ios-sm text-left
+                w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-ios-sm text-left
                 transition-colors duration-150
                 ${selectedClient === client.site_id
                   ? 'bg-accent-tint text-accent-primary'
-                  : 'text-label-primary hover:bg-separator-light'
+                  : 'text-label-primary hover:bg-fill-quaternary'
                 }
               `}
             >
@@ -233,7 +248,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
           ))}
           {clients.length === 0 && (
-            <p className="text-sm text-label-tertiary px-3 py-2">
+            <p className="text-sm text-label-tertiary px-2.5 py-1.5">
               No clients yet
             </p>
           )}
@@ -241,28 +256,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-4 overflow-y-auto">
-        <h2 className="text-xs font-semibold text-label-tertiary uppercase tracking-wide mb-3">
-          Pages
+      <nav className="flex-1 px-3 pt-4 pb-2 overflow-y-auto">
+        <h2 className="text-[10px] font-semibold text-label-tertiary uppercase tracking-wider mb-2 px-2">
+          Navigation
         </h2>
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           {filteredNavItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
-              className={({ isActive }) => `
-                flex items-center gap-3 px-3 py-2 rounded-ios-sm
-                transition-colors duration-150
-                ${isActive
-                  ? 'bg-accent-tint text-accent-primary'
-                  : 'text-label-primary hover:bg-separator-light'
-                }
-              `}
+              end={item.path === '/'}
+              className={({ isActive }) =>
+                `nav-item ${isActive ? 'nav-item-active' : 'text-label-secondary'}`
+              }
             >
               {item.icon}
               <span className="text-sm font-medium flex-1">{item.label}</span>
               {item.path === '/notifications' && unreadCount > 0 && (
-                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-500 text-white">
+                <span className="min-w-[18px] h-[18px] flex items-center justify-center text-[10px] font-semibold rounded-full bg-ios-red text-white px-1">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
@@ -272,21 +283,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </nav>
 
       {/* Bottom section - User info */}
-      <div className="p-4 border-t border-separator-light">
+      <div className="px-4 py-3 border-t border-separator-light">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-accent-primary rounded-full flex items-center justify-center">
-            <span className="text-white text-sm font-medium">{userInitials}</span>
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{
+              background: 'linear-gradient(135deg, #007AFF 0%, #5856D6 100%)',
+            }}
+          >
+            <span className="text-white text-xs font-semibold">{userInitials}</span>
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-label-primary truncate">
               {user?.displayName || 'User'}
             </p>
-            <p className="text-xs text-label-tertiary capitalize">{user?.role || 'Guest'}</p>
+            <p className="text-[11px] text-label-tertiary capitalize">{user?.role || 'Guest'}</p>
           </div>
           {onLogout && (
             <button
               onClick={onLogout}
-              className="p-1.5 hover:bg-separator-light rounded-ios-sm transition-colors"
+              className="p-1.5 hover:bg-fill-tertiary rounded-ios-sm transition-colors"
               title="Sign out"
             >
               <svg className="w-4 h-4 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">

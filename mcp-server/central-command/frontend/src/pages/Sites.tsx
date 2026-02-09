@@ -8,25 +8,32 @@ import type { Site } from '../utils/api';
  * Status indicator component
  */
 const StatusBadge: React.FC<{ status: Site['live_status'] }> = ({ status }) => {
-  const variants: Record<Site['live_status'], { color: string; icon: string; label: string }> = {
-    online: { color: 'bg-health-healthy', icon: '🟢', label: 'Online' },
-    stale: { color: 'bg-health-warning', icon: '🟡', label: 'Stale' },
-    offline: { color: 'bg-health-critical', icon: '🔴', label: 'Offline' },
-    pending: { color: 'bg-gray-400', icon: '⚪', label: 'Pending' },
+  const dotClass: Record<Site['live_status'], string> = {
+    online: 'status-dot status-dot-healthy',
+    stale: 'status-dot status-dot-warning',
+    offline: 'status-dot status-dot-critical',
+    pending: 'status-dot status-dot-neutral',
   };
 
-  const variant = variants[status] || variants.pending;
+  const textClass: Record<Site['live_status'], string> = {
+    online: 'text-health-healthy',
+    stale: 'text-health-warning',
+    offline: 'text-health-critical',
+    pending: 'text-label-tertiary',
+  };
+
+  const labels: Record<Site['live_status'], string> = {
+    online: 'Online',
+    stale: 'Stale',
+    offline: 'Offline',
+    pending: 'Pending',
+  };
 
   return (
-    <span className="inline-flex items-center gap-1.5 text-sm">
-      <span>{variant.icon}</span>
-      <span className={`font-medium ${
-        status === 'online' ? 'text-health-healthy' :
-        status === 'stale' ? 'text-health-warning' :
-        status === 'offline' ? 'text-health-critical' :
-        'text-label-tertiary'
-      }`}>
-        {variant.label}
+    <span className="inline-flex items-center gap-2 text-sm">
+      <span className={dotClass[status] || dotClass.pending} />
+      <span className={`font-medium ${textClass[status] || textClass.pending}`}>
+        {labels[status] || 'Pending'}
       </span>
     </span>
   );
@@ -60,7 +67,7 @@ const SiteRow: React.FC<{ site: Site; onClick: () => void }> = ({ site, onClick 
   return (
     <tr
       onClick={onClick}
-      className="hover:bg-fill-tertiary/50 cursor-pointer transition-colors"
+      className="hover:bg-fill-quaternary cursor-pointer transition-colors"
     >
       <td className="px-4 py-3">
         <div>
@@ -126,7 +133,7 @@ const NewSiteModal: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 modal-backdrop flex items-center justify-center z-50">
       <GlassCard className="w-full max-w-md">
         <h2 className="text-xl font-semibold mb-4">New Site</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -138,7 +145,7 @@ const NewSiteModal: React.FC<{
               type="text"
               value={clinicName}
               onChange={(e) => setClinicName(e.target.value)}
-              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
+              className="w-full px-3 py-2 rounded-ios bg-fill-quaternary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
               required
             />
           </div>
@@ -150,7 +157,7 @@ const NewSiteModal: React.FC<{
               type="text"
               value={contactName}
               onChange={(e) => setContactName(e.target.value)}
-              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
+              className="w-full px-3 py-2 rounded-ios bg-fill-quaternary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
             />
           </div>
           <div>
@@ -161,7 +168,7 @@ const NewSiteModal: React.FC<{
               type="email"
               value={contactEmail}
               onChange={(e) => setContactEmail(e.target.value)}
-              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
+              className="w-full px-3 py-2 rounded-ios bg-fill-quaternary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
             />
           </div>
           <div>
@@ -171,7 +178,7 @@ const NewSiteModal: React.FC<{
             <select
               value={tier}
               onChange={(e) => setTier(e.target.value)}
-              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
+              className="w-full px-3 py-2 rounded-ios bg-fill-quaternary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
             >
               <option value="small">Small (1-5 providers)</option>
               <option value="mid">Mid (6-15 providers)</option>
@@ -182,7 +189,7 @@ const NewSiteModal: React.FC<{
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary transition-colors"
+              className="flex-1 px-4 py-2 rounded-ios bg-fill-quaternary text-label-primary hover:bg-fill-secondary transition-colors"
             >
               Cancel
             </button>
@@ -232,11 +239,11 @@ export const Sites: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 page-enter">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-label-primary">Sites</h1>
+          <h1 className="text-2xl font-semibold text-label-primary tracking-tight">Sites</h1>
           <p className="text-label-tertiary text-sm mt-1">
             {sites.length} client site{sites.length !== 1 ? 's' : ''}
           </p>
@@ -324,7 +331,7 @@ export const Sites: React.FC = () => {
           </div>
         ) : (
           <table className="w-full">
-            <thead className="bg-fill-secondary border-b border-separator-light">
+            <thead className="bg-fill-quaternary border-b border-separator-light">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
                   Site

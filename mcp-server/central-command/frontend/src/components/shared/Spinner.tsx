@@ -70,15 +70,15 @@ export const LoadingInline: React.FC<{ message?: string }> = ({
   );
 };
 
-// Skeleton loader for cards
+// Skeleton loader for cards - glassmorphic shimmer
 export const SkeletonCard: React.FC<{ lines?: number }> = ({ lines = 3 }) => {
   return (
-    <div className="glass-card p-6 animate-pulse">
-      <div className="h-4 bg-gray-200 rounded w-3/4 mb-4" />
+    <div className="glass-card p-6">
+      <div className="skeleton h-4 w-3/4 mb-4" />
       {Array.from({ length: lines }).map((_, i) => (
         <div
           key={i}
-          className="h-3 bg-gray-200 rounded mb-2"
+          className="skeleton h-3 mb-2"
           style={{ width: `${Math.random() * 40 + 50}%` }}
         />
       ))}
@@ -86,14 +86,14 @@ export const SkeletonCard: React.FC<{ lines?: number }> = ({ lines = 3 }) => {
   );
 };
 
-// Skeleton loader for text
+// Skeleton loader for text - glassmorphic shimmer
 export const SkeletonText: React.FC<{ width?: string; height?: string }> = ({
   width = '100%',
   height = '1rem',
 }) => {
   return (
     <div
-      className="bg-gray-200 rounded animate-pulse"
+      className="skeleton"
       style={{ width, height }}
     />
   );
