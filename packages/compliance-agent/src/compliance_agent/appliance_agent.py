@@ -2242,6 +2242,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                                 "check_type": check_name,  # L1 rules check this
                                 "drift_detected": True,
                                 "status": status,
+                                "platform": "windows",
                                 "details": evidence_data,  # Nested evidence data
                                 "host": target.hostname,
                                 "output": output[:500],  # Include some output for context

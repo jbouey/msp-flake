@@ -158,6 +158,24 @@ class IncidentDatabase:
             )
         """)
 
+        # Persistent flap suppressions: once a check flaps and escalates to L3,
+        # healing is suppressed until a human explicitly clears it.
+        # Survives agent restarts, prevents infinite L3 escalation loops
+        # (e.g., Windows firewall drift where GPO constantly reverts changes).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS flap_suppressions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                site_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                incident_type TEXT NOT NULL,
+                suppressed_at TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                cleared_at TEXT,
+                cleared_by TEXT,
+                UNIQUE(site_id, host_id, incident_type)
+            )
+        """)
+
         # Create indexes
         conn.execute("CREATE INDEX IF NOT EXISTS idx_incidents_pattern ON incidents(pattern_signature)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_incidents_type ON incidents(incident_type)")
@@ -762,3 +780,68 @@ class IncidentDatabase:
         conn.close()
 
         return stats
+
+    # --- Persistent Flap Suppression ---
+
+    def record_flap_suppression(
+        self,
+        site_id: str,
+        host_id: str,
+        incident_type: str,
+        reason: str
+    ) -> None:
+        """Record a flap suppression. Healing stays suppressed until cleared by a human."""
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn.execute("""
+            INSERT INTO flap_suppressions (site_id, host_id, incident_type, suppressed_at, reason)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(site_id, host_id, incident_type) DO UPDATE SET
+                suppressed_at = excluded.suppressed_at,
+                reason = excluded.reason,
+                cleared_at = NULL,
+                cleared_by = NULL
+        """, (site_id, host_id, incident_type, datetime.now(timezone.utc).isoformat(), reason))
+        conn.commit()
+        conn.close()
+
+    def is_flap_suppressed(self, site_id: str, host_id: str, incident_type: str) -> bool:
+        """Check if healing is suppressed for this circuit key."""
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        cursor = conn.execute("""
+            SELECT 1 FROM flap_suppressions
+            WHERE site_id = ? AND host_id = ? AND incident_type = ?
+            AND cleared_at IS NULL
+        """, (site_id, host_id, incident_type))
+        result = cursor.fetchone() is not None
+        conn.close()
+        return result
+
+    def clear_flap_suppression(
+        self, site_id: str, host_id: str, incident_type: str, cleared_by: str = "operator"
+    ) -> bool:
+        """Clear a flap suppression so healing can resume. Returns True if a suppression was cleared."""
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        cursor = conn.execute("""
+            UPDATE flap_suppressions
+            SET cleared_at = ?, cleared_by = ?
+            WHERE site_id = ? AND host_id = ? AND incident_type = ?
+            AND cleared_at IS NULL
+        """, (datetime.now(timezone.utc).isoformat(), cleared_by, site_id, host_id, incident_type))
+        changed = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return changed
+
+    def get_active_suppressions(self) -> List[Dict[str, Any]]:
+        """Get all active flap suppressions (for dashboard display)."""
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute("""
+            SELECT site_id, host_id, incident_type, suppressed_at, reason
+            FROM flap_suppressions
+            WHERE cleared_at IS NULL
+            ORDER BY suppressed_at DESC
+        """)
+        results = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return results

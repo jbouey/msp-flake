@@ -914,5 +914,141 @@ class TestFlapDetector:
         assert count == 1  # Reset, not incremented to 3
 
 
+class TestPersistentFlapSuppression:
+    """Test persistent flap suppression survives window expiry and agent restarts."""
+
+    @pytest.fixture
+    def auto_healer_config(self, tmp_path):
+        return AutoHealerConfig(
+            db_path=str(tmp_path / "test_suppression.db"),
+            rules_dir=tmp_path / "rules",
+            enable_level1=True,
+            enable_level2=False,
+            enable_level3=False,
+            enable_learning=False,
+        )
+
+    def test_flap_records_persistent_suppression(self, auto_healer_config):
+        """When flap is detected, a persistent suppression record is created in SQLite."""
+        healer = AutoHealer(config=auto_healer_config)
+        key = ("site-1", "host-1", "firewall")
+
+        # Trigger flap detection
+        for _ in range(3):
+            healer._track_flap(key)
+
+        assert healer._is_flapping(key)
+
+        # Simulate what heal() does when flap detected
+        healer.incident_db.record_flap_suppression(
+            site_id="site-1", host_id="host-1",
+            incident_type="firewall", reason="test flap"
+        )
+
+        assert healer.incident_db.is_flap_suppressed("site-1", "host-1", "firewall")
+
+    @pytest.mark.asyncio
+    async def test_heal_returns_suppressed_when_persisted(self, auto_healer_config):
+        """heal() should return suppressed result when persistent suppression exists."""
+        healer = AutoHealer(config=auto_healer_config)
+
+        # Pre-record a suppression (simulates previous agent run)
+        healer.incident_db.record_flap_suppression(
+            site_id="site-1", host_id="host-1",
+            incident_type="firewall", reason="GPO override loop"
+        )
+
+        result = await healer.heal(
+            site_id="site-1", host_id="host-1",
+            incident_type="firewall", severity="high",
+            raw_data={"check_type": "firewall", "drift_detected": True}
+        )
+
+        assert result.success is False
+        assert result.action_taken == "flap_suppressed_awaiting_human"
+        assert result.escalated is True
+        assert result.resolution_level == ResolutionLevel.LEVEL3_HUMAN
+
+    @pytest.mark.asyncio
+    async def test_heal_resumes_after_suppression_cleared(self, auto_healer_config):
+        """After operator clears suppression, healing should resume."""
+        healer = AutoHealer(config=auto_healer_config)
+
+        # Record and then clear suppression
+        healer.incident_db.record_flap_suppression(
+            site_id="site-1", host_id="host-1",
+            incident_type="firewall", reason="GPO override loop"
+        )
+        cleared = healer.incident_db.clear_flap_suppression(
+            "site-1", "host-1", "firewall", cleared_by="admin"
+        )
+        assert cleared is True
+        assert not healer.incident_db.is_flap_suppressed("site-1", "host-1", "firewall")
+
+    def test_suppression_survives_new_db_connection(self, auto_healer_config):
+        """Suppression persists across new IncidentDatabase instances (simulates restart)."""
+        from compliance_agent.incident_db import IncidentDatabase
+
+        db_path = auto_healer_config.db_path
+
+        # First "agent run" records suppression
+        db1 = IncidentDatabase(db_path=db_path)
+        db1.record_flap_suppression("site-1", "host-1", "firewall", "GPO loop")
+        assert db1.is_flap_suppressed("site-1", "host-1", "firewall")
+
+        # Second "agent run" — new instance, same DB file
+        db2 = IncidentDatabase(db_path=db_path)
+        assert db2.is_flap_suppressed("site-1", "host-1", "firewall")
+
+    def test_get_active_suppressions(self, auto_healer_config):
+        """get_active_suppressions returns only uncleared suppressions."""
+        healer = AutoHealer(config=auto_healer_config)
+        db = healer.incident_db
+
+        db.record_flap_suppression("site-1", "host-1", "firewall", "GPO loop")
+        db.record_flap_suppression("site-1", "host-2", "defender", "service conflict")
+        db.record_flap_suppression("site-1", "host-3", "patches", "WSUS override")
+
+        # Clear one
+        db.clear_flap_suppression("site-1", "host-2", "defender")
+
+        active = db.get_active_suppressions()
+        assert len(active) == 2
+        types = {s["incident_type"] for s in active}
+        assert types == {"firewall", "patches"}
+
+    def test_clear_nonexistent_suppression_returns_false(self, auto_healer_config):
+        """Clearing a non-existent suppression returns False."""
+        healer = AutoHealer(config=auto_healer_config)
+        result = healer.incident_db.clear_flap_suppression("site-1", "host-1", "firewall")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_flap_detection_persists_suppression_via_heal(self, auto_healer_config):
+        """Full integration: 3 flaps via heal() → persistent suppression → 4th call suppressed."""
+        healer = AutoHealer(config=auto_healer_config)
+
+        # First 3 calls trigger flap detection on the 3rd
+        for i in range(3):
+            result = await healer.heal(
+                site_id="site-1", host_id="host-1",
+                incident_type="firewall", severity="high",
+                raw_data={"check_type": "firewall", "drift_detected": True, "platform": "windows"}
+            )
+
+        # 3rd call should have detected flap and recorded suppression
+        assert result.action_taken == "flap_detected_escalation"
+        assert healer.incident_db.is_flap_suppressed("site-1", "host-1", "firewall")
+
+        # 4th call: even after clearing in-memory tracker, persistent suppression blocks
+        healer._flap_tracker.clear()
+        result = await healer.heal(
+            site_id="site-1", host_id="host-1",
+            incident_type="firewall", severity="high",
+            raw_data={"check_type": "firewall", "drift_detected": True, "platform": "windows"}
+        )
+        assert result.action_taken == "flap_suppressed_awaiting_human"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

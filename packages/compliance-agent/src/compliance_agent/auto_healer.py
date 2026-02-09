@@ -270,8 +270,26 @@ class AutoHealer:
         """
         start_time = datetime.now(timezone.utc)
 
-        # Circuit breaker: check for runaway healing loops
+        # Persistent flap suppression: check SQLite before anything else.
+        # Once a check flaps and gets escalated to L3, healing stays off
+        # until a human explicitly clears it (survives agent restarts).
         circuit_key = (site_id, host_id, incident_type)
+        if self.incident_db.is_flap_suppressed(site_id, host_id, incident_type):
+            logger.info(
+                f"FLAP SUPPRESSED: {incident_type} on {host_id} — "
+                f"healing disabled until operator clears suppression"
+            )
+            return HealingResult(
+                incident_id=f"SUPPRESSED-{uuid.uuid4().hex[:8]}",
+                success=False,
+                escalated=True,
+                resolution_level=ResolutionLevel.LEVEL3_HUMAN,
+                action_taken="flap_suppressed_awaiting_human",
+                resolution_time_ms=0,
+                error=f"Persistent flap suppression active for {incident_type} — awaiting operator clearance"
+            )
+
+        # Circuit breaker: check for runaway healing loops
         if self._is_in_cooldown(circuit_key):
             cooldown_until = self._cooldowns[circuit_key]
             remaining = (cooldown_until - start_time).total_seconds() / 60
@@ -292,9 +310,20 @@ class AutoHealer:
         # Flap detector: check for resolve→recur loops
         self._track_flap(circuit_key)
         if self._is_flapping(circuit_key):
+            reason = (
+                f"{incident_type} resolved then recurred {self._max_flap_count}+ times "
+                f"within {self._flap_window_minutes} min — likely external override (e.g., GPO)"
+            )
             logger.warning(
                 f"FLAP DETECTOR: {incident_type} on {host_id} keeps recurring after healing. "
-                f"Escalating to L3 - remediation is not durable."
+                f"Escalating to L3 and recording persistent suppression."
+            )
+            # Persist suppression so it survives agent restarts and window expiry
+            self.incident_db.record_flap_suppression(
+                site_id=site_id,
+                host_id=host_id,
+                incident_type=incident_type,
+                reason=reason,
             )
             return HealingResult(
                 incident_id=f"FLAP-{uuid.uuid4().hex[:8]}",
@@ -303,7 +332,7 @@ class AutoHealer:
                 resolution_level=ResolutionLevel.LEVEL3_HUMAN,
                 action_taken="flap_detected_escalation",
                 resolution_time_ms=int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000),
-                error=f"Flap detected: {incident_type} resolved then recurred {self._max_flap_count}+ times"
+                error=f"Flap detected: {incident_type} resolved then recurred {self._max_flap_count}+ times. Healing suppressed until operator clears."
             )
 
         # Track this heal attempt
