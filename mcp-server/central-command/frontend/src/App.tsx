@@ -201,7 +201,7 @@ const AppLayout: React.FC = () => {
       const siteId = location.pathname.replace('/client/', '');
       return siteId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }
-    return pageTitles[location.pathname] || 'Central Command';
+    return pageTitles[location.pathname] || 'Dashboard';
   };
 
   return (

@@ -141,7 +141,7 @@ export default function SetPassword() {
           </div>
           <h1 className="text-2xl font-bold text-label-primary">Set Your Password</h1>
           <p className="text-label-tertiary mt-2">
-            Welcome to Central Command! Set your password to activate your account.
+            Welcome to OsirisCare! Set your password to activate your account.
           </p>
         </div>
 

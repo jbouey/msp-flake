@@ -219,7 +219,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
           <div>
             <h1 className="font-semibold text-label-primary tracking-tight">OsirisCare</h1>
-            <p className="text-xs text-label-tertiary">Central Command</p>
+            <p className="text-xs text-label-tertiary">Compliance Dashboard</p>
           </div>
         </div>
       </div>
