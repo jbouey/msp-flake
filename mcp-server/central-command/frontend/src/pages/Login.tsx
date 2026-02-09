@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSearchParams } from 'react-router-dom';
+import { OsirisCareLeaf } from '../components/shared';
 
 interface LoginProps {
   onSuccess: () => void;
@@ -138,14 +139,13 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
         {/* Logo */}
         <div className="text-center mb-8">
           <div
-            className="w-16 h-16 rounded-ios-xl mx-auto flex items-center justify-center mb-4 shadow-glow-blue"
+            className="w-16 h-16 rounded-ios-xl mx-auto flex items-center justify-center mb-4"
             style={{
-              background: 'linear-gradient(135deg, #007AFF 0%, #5856D6 100%)',
+              background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)',
+              boxShadow: '0 2px 16px rgba(60, 188, 180, 0.4)',
             }}
           >
-            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-            </svg>
+            <OsirisCareLeaf className="w-8 h-8" color="white" />
           </div>
           <h1 className="text-2xl font-bold text-label-primary tracking-tight">OsirisCare</h1>
           <p className="text-label-tertiary text-sm mt-1">MSP compliance dashboard</p>
@@ -206,8 +206,8 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
               disabled={isLoading}
               className="w-full py-2.5 text-white font-semibold rounded-ios-md transition-all disabled:opacity-50 disabled:cursor-not-allowed text-[15px]"
               style={{
-                background: 'linear-gradient(135deg, #007AFF 0%, #5856D6 100%)',
-                boxShadow: isLoading ? 'none' : '0 2px 12px rgba(0, 122, 255, 0.3)',
+                background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)',
+                boxShadow: isLoading ? 'none' : '0 2px 12px rgba(60, 188, 180, 0.35)',
               }}
             >
               {isLoading ? (

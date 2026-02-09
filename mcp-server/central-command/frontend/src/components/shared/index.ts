@@ -6,3 +6,4 @@ export { Spinner, LoadingScreen, LoadingInline, SkeletonCard, SkeletonText } fro
 export { ActionDropdown } from './ActionDropdown';
 export type { ActionItem } from './ActionDropdown';
 export { ErrorBoundary, PageErrorBoundary } from './ErrorBoundary';
+export { OsirisCareLeaf } from './OsirisCareLeaf';

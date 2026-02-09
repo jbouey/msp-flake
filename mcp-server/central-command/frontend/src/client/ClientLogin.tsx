@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from './ClientContext';
+import { OsirisCareLeaf } from '../components/shared';
 
 export const ClientLogin: React.FC = () => {
   const navigate = useNavigate();
@@ -49,10 +50,8 @@ export const ClientLogin: React.FC = () => {
         <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-cyan-600/20 rounded-full blur-3xl" />
         <div className="max-w-md w-full relative" style={{ background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.5)' }}>
           <div className="p-8 text-center">
-            <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}>
-              <svg className="w-7 h-7 text-white animate-pulse-soft" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-              </svg>
+            <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center animate-pulse-soft" style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}>
+              <OsirisCareLeaf className="w-7 h-7" color="white" />
             </div>
             <p className="text-gray-500">Loading...</p>
           </div>
@@ -115,9 +114,7 @@ export const ClientLogin: React.FC = () => {
             className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg"
             style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 20px rgba(60, 188, 180, 0.4)' }}
           >
-            <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-            </svg>
+            <OsirisCareLeaf className="w-9 h-9" color="white" />
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight">Client Portal</h1>
           <p className="text-teal-200/80 mt-2">Access your HIPAA compliance dashboard</p>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { GlassCard, Spinner } from '../components/shared';
+import { GlassCard, Spinner, OsirisCareLeaf } from '../components/shared';
 import { usersApi, InviteValidation } from '../utils/api';
 
 /**
@@ -134,10 +134,11 @@ export default function SetPassword() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
       <GlassCard className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-accent-primary/20 flex items-center justify-center">
-            <svg className="w-8 h-8 text-accent-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-            </svg>
+          <div
+            className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center"
+            style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 2px 16px rgba(60, 188, 180, 0.4)' }}
+          >
+            <OsirisCareLeaf className="w-8 h-8" color="white" />
           </div>
           <h1 className="text-2xl font-bold text-label-primary">Set Your Password</h1>
           <p className="text-label-tertiary mt-2">
