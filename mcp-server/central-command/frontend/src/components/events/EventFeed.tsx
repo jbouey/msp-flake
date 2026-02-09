@@ -16,7 +16,7 @@ const outcomeColors: Record<string, string> = {
   fail: 'bg-red-100 text-red-800',
   warning: 'bg-yellow-100 text-yellow-800',
   error: 'bg-red-200 text-red-900',
-  unknown: 'bg-gray-100 text-gray-600',
+  unknown: 'bg-blue-50 text-blue-600',
 };
 
 const formatTimeAgo = (dateStr: string): string => {
@@ -102,7 +102,7 @@ export const EventFeed: React.FC<EventFeedProps> = ({
           {displayEvents.map((event) => (
             <div
               key={event.id}
-              className="flex items-center justify-between p-3 rounded-lg bg-fill-tertiary/50 hover:bg-fill-tertiary transition-colors"
+              className="flex items-center justify-between p-3 rounded-lg bg-blue-50/40 hover:bg-blue-50 transition-colors"
             >
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <span className={`px-2 py-0.5 text-xs rounded-full ${outcomeColors[event.outcome] || outcomeColors.unknown}`}>

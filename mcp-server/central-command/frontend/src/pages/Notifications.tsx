@@ -74,8 +74,8 @@ const NotificationCard: React.FC<{
     <div
       className={`p-4 rounded-ios border transition-all ${
         notification.is_read
-          ? 'bg-fill-secondary/50 border-separator-light'
-          : 'bg-fill-primary border-accent-primary/30 shadow-sm'
+          ? 'bg-blue-50/30 border-blue-100/50'
+          : 'bg-blue-50/60 border-accent-primary/30 shadow-sm'
       }`}
     >
       <div className="flex items-start gap-4">
@@ -200,7 +200,7 @@ export const Notifications: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowTestModal(true)}
-            className="px-4 py-2 text-sm rounded-ios bg-fill-secondary text-label-primary border border-separator-light hover:bg-fill-tertiary transition-colors"
+            className="px-4 py-2 text-sm rounded-ios bg-blue-50 text-label-primary border border-blue-100 hover:bg-blue-100 transition-colors"
           >
             Test Alert
           </button>
@@ -246,7 +246,7 @@ export const Notifications: React.FC = () => {
               </button>
               <button
                 onClick={() => setShowTestModal(false)}
-                className="w-full px-4 py-2 text-sm rounded-ios bg-fill-secondary text-label-primary border border-separator-light hover:bg-fill-tertiary transition-colors"
+                className="w-full px-4 py-2 text-sm rounded-ios bg-blue-50 text-label-primary border border-blue-100 hover:bg-blue-100 transition-colors"
               >
                 Cancel
               </button>

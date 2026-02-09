@@ -34,12 +34,12 @@ export default {
           secondary: '#FFFFFF',
           tertiary: 'rgba(255, 255, 255, 0.72)',
         },
-        // Fill colors (iOS grouped content backgrounds)
+        // Fill colors (blue-tinted grouped content backgrounds)
         fill: {
-          primary: 'rgba(120, 120, 128, 0.2)',
-          secondary: 'rgba(120, 120, 128, 0.16)',
-          tertiary: 'rgba(120, 120, 128, 0.12)',
-          quaternary: 'rgba(120, 120, 128, 0.08)',
+          primary: 'rgba(0, 100, 220, 0.12)',
+          secondary: 'rgba(0, 100, 220, 0.08)',
+          tertiary: 'rgba(0, 100, 220, 0.06)',
+          quaternary: 'rgba(0, 100, 220, 0.04)',
         },
         // Text colors
         label: {

@@ -28,7 +28,7 @@ const severityClasses: Record<Severity, string> = {
   critical: 'bg-red-100 text-health-critical',
   high: 'bg-orange-100 text-health-warning',
   medium: 'bg-yellow-100 text-yellow-700',
-  low: 'bg-gray-100 text-label-tertiary',
+  low: 'bg-blue-50 text-label-tertiary',
 };
 
 export const Badge: React.FC<BadgeProps> = ({
@@ -39,7 +39,7 @@ export const Badge: React.FC<BadgeProps> = ({
   severity,
   className = '',
 }) => {
-  let variantClasses = 'bg-gray-100 text-label-secondary';
+  let variantClasses = 'bg-blue-50 text-label-secondary';
 
   if (variant === 'health' && status) {
     variantClasses = healthClasses[status];
