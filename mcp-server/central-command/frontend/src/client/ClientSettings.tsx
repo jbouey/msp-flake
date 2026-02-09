@@ -396,7 +396,7 @@ export const ClientSettings: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-4">
-              <Link to="/client/dashboard" className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100">
+              <Link to="/client/dashboard" className="p-2 text-gray-500 hover:text-teal-600 rounded-lg hover:bg-teal-50">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
@@ -428,7 +428,7 @@ export const ClientSettings: React.FC = () => {
             className={`pb-2 px-1 font-medium ${
               activeTab === 'users'
                 ? 'text-teal-600 border-b-2 border-teal-600'
-                : 'text-gray-500 hover:text-gray-700'
+                : 'text-gray-500 hover:text-teal-600'
             }`}
           >
             Users
@@ -438,7 +438,7 @@ export const ClientSettings: React.FC = () => {
             className={`pb-2 px-1 font-medium ${
               activeTab === 'password'
                 ? 'text-teal-600 border-b-2 border-teal-600'
-                : 'text-gray-500 hover:text-gray-700'
+                : 'text-gray-500 hover:text-teal-600'
             }`}
           >
             Password
@@ -449,7 +449,7 @@ export const ClientSettings: React.FC = () => {
               className={`pb-2 px-1 font-medium ${
                 activeTab === 'transfer'
                   ? 'text-teal-600 border-b-2 border-teal-600'
-                  : 'text-gray-500 hover:text-gray-700'
+                  : 'text-gray-500 hover:text-teal-600'
               }`}
             >
               Transfer Provider
@@ -461,7 +461,7 @@ export const ClientSettings: React.FC = () => {
               className={`pb-2 px-1 font-medium ${
                 activeTab === 'billing'
                   ? 'text-teal-600 border-b-2 border-teal-600'
-                  : 'text-gray-500 hover:text-gray-700'
+                  : 'text-gray-500 hover:text-teal-600'
               }`}
             >
               Billing
@@ -496,7 +496,7 @@ export const ClientSettings: React.FC = () => {
                     type="submit"
                     disabled={inviting}
                     className="px-6 py-2 text-white rounded-xl hover:brightness-110 transition-all disabled:opacity-50"
-                    style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)' }}
+                    style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}
                   >
                     {inviting ? 'Sending...' : 'Send Invite'}
                   </button>
@@ -589,7 +589,7 @@ export const ClientSettings: React.FC = () => {
                 type="submit"
                 disabled={savingPassword}
                 className="w-full px-6 py-2 text-white rounded-xl hover:brightness-110 transition-all disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)' }}
+                style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}
               >
                 {savingPassword ? 'Saving...' : 'Update Password'}
               </button>
@@ -615,7 +615,7 @@ export const ClientSettings: React.FC = () => {
                 {transferStatus.status === 'pending' && (
                   <button
                     onClick={handleCancelTransfer}
-                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-teal-50/50"
                   >
                     Cancel Request
                   </button>
@@ -706,7 +706,7 @@ export const ClientSettings: React.FC = () => {
 
                   <button
                     onClick={handleManageBilling}
-                    className="mt-4 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                    className="mt-4 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-teal-50/50"
                   >
                     Manage Subscription
                   </button>
@@ -798,7 +798,7 @@ export const ClientSettings: React.FC = () => {
                 <button
                   onClick={handleStartSubscription}
                   className="w-full px-6 py-3 text-white rounded-xl hover:brightness-110 transition-all font-medium"
-                  style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)', boxShadow: '0 4px 14px rgba(13, 148, 136, 0.35)' }}
+                  style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
                 >
                   Start Subscription
                 </button>

@@ -86,7 +86,7 @@ export const EvidenceDownloads: React.FC<EvidenceDownloadsProps> = ({ bundles, s
               {typeBundles.slice(0, 5).map((bundle) => (
                 <div
                   key={bundle.bundle_id}
-                  className="px-4 py-3 flex items-center justify-between hover:bg-gray-50"
+                  className="px-4 py-3 flex items-center justify-between hover:bg-blue-50/50"
                 >
                   <div>
                     <p className="text-sm font-medium text-gray-900">{bundle.bundle_id}</p>

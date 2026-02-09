@@ -230,7 +230,7 @@ export const PartnerDashboard: React.FC = () => {
               logout();
               navigate('/partner/login');
             }}
-            className="px-4 py-2 text-sm text-gray-500 hover:text-gray-900 rounded-lg hover:bg-gray-100 transition"
+            className="px-4 py-2 text-sm text-gray-500 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition"
           >
             Sign Out
           </button>
@@ -289,7 +289,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'sites'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                : 'border-transparent text-gray-500 hover:text-indigo-600'
             }`}
           >
             Sites ({sites.length})
@@ -299,7 +299,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'provisions'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                : 'border-transparent text-gray-500 hover:text-indigo-600'
             }`}
           >
             Provision Codes ({provisions.length})
@@ -309,7 +309,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'billing'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                : 'border-transparent text-gray-500 hover:text-indigo-600'
             }`}
           >
             Billing
@@ -319,7 +319,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'compliance'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                : 'border-transparent text-gray-500 hover:text-indigo-600'
             }`}
           >
             Compliance
@@ -329,7 +329,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'exceptions'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                : 'border-transparent text-gray-500 hover:text-indigo-600'
             }`}
           >
             Exceptions
@@ -339,7 +339,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'learning'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                : 'border-transparent text-gray-500 hover:text-indigo-600'
             }`}
           >
             Learning
@@ -385,7 +385,7 @@ export const PartnerDashboard: React.FC = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {sites.map((site) => (
-                    <tr key={site.site_id} className="hover:bg-gray-50">
+                    <tr key={site.site_id} className="hover:bg-indigo-50/50">
                       <td className="px-6 py-4">
                         <div>
                           <p className="font-medium text-gray-900">{site.clinic_name}</p>
@@ -557,7 +557,7 @@ export const PartnerDashboard: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {provisions.map((provision) => (
-                      <tr key={provision.id} className="hover:bg-gray-50">
+                      <tr key={provision.id} className="hover:bg-indigo-50/50">
                         <td className="px-6 py-4">
                           <code className="px-2 py-1 bg-gray-100 rounded text-sm font-mono">
                             {provision.provision_code}

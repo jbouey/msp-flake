@@ -147,7 +147,7 @@ export const ClientNotifications: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-4">
-              <Link to="/client/dashboard" className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100">
+              <Link to="/client/dashboard" className="p-2 text-gray-500 hover:text-teal-600 rounded-lg hover:bg-teal-50">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
@@ -190,7 +190,7 @@ export const ClientNotifications: React.FC = () => {
               {notifications.map((notification) => (
                 <div
                   key={notification.id}
-                  className={`p-4 hover:bg-gray-50 ${!notification.is_read ? 'bg-teal-50' : ''}`}
+                  className={`p-4 hover:bg-teal-50/50 ${!notification.is_read ? 'bg-teal-50' : ''}`}
                   onClick={() => !notification.is_read && markAsRead(notification.id)}
                 >
                   <div className="flex items-start gap-4">

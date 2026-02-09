@@ -373,7 +373,7 @@ export const PartnerComplianceSettings: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-gray-200">
               {sites.map((site) => (
-                <tr key={site.site_id} className="hover:bg-gray-50">
+                <tr key={site.site_id} className="hover:bg-indigo-50/50">
                   <td className="px-6 py-4">
                     <p className="font-medium text-gray-900">{site.site_name}</p>
                     <p className="text-sm text-gray-500">{site.site_id}</p>

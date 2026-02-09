@@ -48,7 +48,7 @@ export const IncidentList: React.FC<IncidentListProps> = ({ incidents }) => {
   return (
     <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
       {incidents.map((incident) => (
-        <div key={incident.incident_id} className="p-4 hover:bg-gray-50">
+        <div key={incident.incident_id} className="p-4 hover:bg-blue-50/50">
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">

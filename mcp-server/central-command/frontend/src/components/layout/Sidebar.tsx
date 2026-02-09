@@ -218,7 +218,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </svg>
           </div>
           <div>
-            <h1 className="font-semibold text-label-primary tracking-tight">Malachor</h1>
+            <h1 className="font-semibold text-label-primary tracking-tight">OsirisCare</h1>
             <p className="text-xs text-label-tertiary">Central Command</p>
           </div>
         </div>

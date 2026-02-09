@@ -97,7 +97,7 @@ export const ClientEvidence: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-4">
-              <Link to="/client/dashboard" className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100">
+              <Link to="/client/dashboard" className="p-2 text-gray-500 hover:text-teal-600 rounded-lg hover:bg-teal-50">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
@@ -150,7 +150,7 @@ export const ClientEvidence: React.FC = () => {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {evidence.map((bundle) => (
-                  <tr key={bundle.id} className="hover:bg-gray-50">
+                  <tr key={bundle.id} className="hover:bg-teal-50/50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <p className="text-sm font-medium text-gray-900">{bundle.clinic_name}</p>
                       <p className="text-xs text-gray-500">{bundle.site_id}</p>
@@ -165,7 +165,7 @@ export const ClientEvidence: React.FC = () => {
                       <div className="flex items-center justify-end gap-2">
                         <Link
                           to={`/client/evidence/${bundle.id}`}
-                          className="p-2 text-gray-500 hover:text-teal-600 rounded hover:bg-gray-100"
+                          className="p-2 text-gray-500 hover:text-teal-600 rounded hover:bg-teal-50"
                           title="View Details"
                         >
                           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -175,7 +175,7 @@ export const ClientEvidence: React.FC = () => {
                         </Link>
                         <button
                           onClick={() => handleDownload(bundle.id)}
-                          className="p-2 text-gray-500 hover:text-teal-600 rounded hover:bg-gray-100"
+                          className="p-2 text-gray-500 hover:text-teal-600 rounded hover:bg-teal-50"
                           title="Download"
                         >
                           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -196,7 +196,7 @@ export const ClientEvidence: React.FC = () => {
               <button
                 onClick={() => setOffset(Math.max(0, offset - limit))}
                 disabled={offset === 0}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-teal-50/50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Previous
               </button>
@@ -206,7 +206,7 @@ export const ClientEvidence: React.FC = () => {
               <button
                 onClick={() => setOffset(offset + limit)}
                 disabled={offset + limit >= total}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-teal-50/50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Next
               </button>

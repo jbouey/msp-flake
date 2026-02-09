@@ -292,7 +292,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
 
         {/* Footer */}
         <p className="text-[11px] text-label-tertiary text-center mt-8 tracking-wide">
-          Malachor MSP Compliance Platform
+          OsirisCare MSP Compliance Platform
         </p>
       </div>
     </div>

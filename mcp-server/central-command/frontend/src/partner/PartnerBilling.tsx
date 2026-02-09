@@ -514,7 +514,7 @@ export const PartnerBilling: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {invoices.map((invoice) => (
-                  <tr key={invoice.id} className="hover:bg-gray-50">
+                  <tr key={invoice.id} className="hover:bg-indigo-50/50">
                     <td className="px-4 py-3">
                       <span className="font-mono text-sm">{invoice.number}</span>
                     </td>

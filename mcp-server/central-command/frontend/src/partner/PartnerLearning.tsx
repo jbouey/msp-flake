@@ -303,7 +303,7 @@ export const PartnerLearning: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-gray-200">
               {candidates.map((candidate) => (
-                <tr key={candidate.id} className="hover:bg-gray-50">
+                <tr key={candidate.id} className="hover:bg-indigo-50/50">
                   <td className="px-6 py-4">
                     <div>
                       <p className="text-sm font-medium text-gray-900">
@@ -407,7 +407,7 @@ export const PartnerLearning: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {promotedRules.map((rule) => (
-                  <tr key={rule.id} className="hover:bg-gray-50">
+                  <tr key={rule.id} className="hover:bg-indigo-50/50">
                     <td className="px-6 py-4">
                       <p className="text-sm font-medium text-gray-900 font-mono">{rule.rule_id}</p>
                     </td>
@@ -500,7 +500,7 @@ export const PartnerLearning: React.FC = () => {
                   setCustomName('');
                   setApprovalNotes('');
                 }}
-                className="px-4 py-2 text-gray-700 font-medium rounded-lg hover:bg-gray-100 transition"
+                className="px-4 py-2 text-indigo-700 font-medium rounded-lg hover:bg-indigo-50 transition"
               >
                 Cancel
               </button>
@@ -540,7 +540,7 @@ export const PartnerLearning: React.FC = () => {
                   setSelectedCandidate(null);
                   setRejectReason('');
                 }}
-                className="px-4 py-2 text-gray-700 font-medium rounded-lg hover:bg-gray-100 transition"
+                className="px-4 py-2 text-indigo-700 font-medium rounded-lg hover:bg-indigo-50 transition"
               >
                 Cancel
               </button>

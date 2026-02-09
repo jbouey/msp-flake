@@ -100,7 +100,7 @@ export const ClientVerify: React.FC = () => {
         <button
           onClick={() => navigate('/client/login')}
           className="px-6 py-3 text-white font-semibold rounded-xl hover:brightness-110 transition-all"
-          style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)', boxShadow: '0 4px 14px rgba(13, 148, 136, 0.35)' }}
+          style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
         >
           Request New Login Link
         </button>

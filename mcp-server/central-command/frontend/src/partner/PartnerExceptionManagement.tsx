@@ -264,7 +264,7 @@ export function PartnerExceptionManagement({ sites }: { sites: Site[] }) {
               </tr>
             ) : (
               exceptions.map((exc) => (
-                <tr key={exc.id} className="hover:bg-gray-50">
+                <tr key={exc.id} className="hover:bg-indigo-50/50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
                     <button onClick={() => setShowDetailsModal(exc)}>{exc.id}</button>
                   </td>
@@ -566,7 +566,7 @@ function CreateExceptionModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
+                className="px-4 py-2 text-gray-700 hover:bg-indigo-50 rounded-md"
               >
                 Cancel
               </button>
@@ -603,7 +603,7 @@ function ExceptionDetailsModal({
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-xl font-bold">Exception Details</h3>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+            <button onClick={onClose} className="text-gray-500 hover:text-indigo-600">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -688,7 +688,7 @@ function ExceptionDetailsModal({
           <div className="flex justify-end pt-4 mt-4 border-t">
             <button
               onClick={onClose}
-              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+              className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100"
             >
               Close
             </button>

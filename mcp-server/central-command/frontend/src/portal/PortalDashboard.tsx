@@ -195,7 +195,7 @@ export const PortalDashboard: React.FC = () => {
             </span>
             <button
               onClick={handleLogout}
-              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+              className="px-3 py-1.5 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
             >
               Log out
             </button>

@@ -7,6 +7,12 @@ export default {
   theme: {
     extend: {
       colors: {
+        // OsirisCare Brand
+        brand: {
+          teal: '#3CBCB4',      // Logo leaf color — primary accent
+          'teal-dark': '#14A89E', // Gradient start / darker shade
+          'teal-glow': 'rgba(60, 188, 180, 0.35)',
+        },
         // iOS System Colors
         ios: {
           red: '#FF3B30',
@@ -96,6 +102,7 @@ export default {
         'glow-green': '0 0 20px rgba(52, 199, 89, 0.15)',
         'glow-red': '0 0 20px rgba(255, 59, 48, 0.15)',
         'glow-orange': '0 0 20px rgba(255, 149, 0, 0.15)',
+        'glow-teal': '0 4px 20px rgba(60, 188, 180, 0.4)',
       },
       backdropBlur: {
         'glass': '20px',
