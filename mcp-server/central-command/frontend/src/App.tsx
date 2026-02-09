@@ -157,6 +157,7 @@ const AppLayout: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const [commandBarOpen, setCommandBarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Fetch fleet data for sidebar
   const { data: clients = [], dataUpdatedAt } = useFleet();
@@ -167,6 +168,11 @@ const AppLayout: React.FC = () => {
 
   // Register Cmd+K shortcut for command bar
   useCommandPalette(() => setCommandBarOpen(true));
+
+  // Close sidebar on route change (mobile)
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
 
   // Update lastUpdated when data changes
   useEffect(() => {
@@ -214,16 +220,19 @@ const AppLayout: React.FC = () => {
         selectedClient={selectedClient}
         user={user}
         onLogout={handleLogout}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
       />
 
       {/* Main content */}
-      <div className="ml-64">
+      <div className="lg:ml-64">
         <Header
           title={getTitle()}
           onRefresh={handleRefresh}
           refreshing={refreshing}
           lastUpdated={lastUpdated}
           user={user}
+          onMenuToggle={() => setSidebarOpen(true)}
         />
 
         <main className="p-6">

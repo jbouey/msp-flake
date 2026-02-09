@@ -15,6 +15,7 @@ interface HeaderProps {
   lastUpdated?: Date;
   actions?: React.ReactNode;
   user?: User | null;
+  onMenuToggle?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -26,6 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
   lastUpdated,
   actions,
   user: _user,
+  onMenuToggle,
 }) => {
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -40,8 +42,19 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="glass-header h-14 flex items-center justify-between px-6 sticky top-0 z-10">
-      {/* Left: Title */}
+      {/* Left: Menu + Title */}
       <div className="flex items-center gap-2">
+        {onMenuToggle && (
+          <button
+            onClick={onMenuToggle}
+            className="p-1.5 -ml-1.5 rounded-ios-sm hover:bg-fill-tertiary transition-colors lg:hidden"
+            aria-label="Toggle menu"
+          >
+            <svg className="w-5 h-5 text-label-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        )}
         <h1 className="text-lg font-semibold text-label-primary tracking-tight">{title}</h1>
         {subtitle && (
           <span className="text-sm text-label-tertiary">{subtitle}</span>

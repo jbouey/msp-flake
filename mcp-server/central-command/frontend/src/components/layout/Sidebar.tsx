@@ -16,6 +16,8 @@ interface SidebarProps {
   selectedClient?: string | null;
   user?: User | null;
   onLogout?: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
 interface NavItem {
@@ -187,6 +189,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   selectedClient,
   user,
   onLogout,
+  isOpen = false,
+  onClose,
 }) => {
   const { data: notificationSummary } = useNotificationSummary();
   const unreadCount = notificationSummary?.unread || 0;
@@ -204,7 +208,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     : 'U';
 
   return (
-    <aside className="glass-sidebar w-64 h-screen flex flex-col fixed left-0 top-0">
+    <>
+      {/* Mobile overlay */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40 lg:hidden"
+          onClick={onClose}
+        />
+      )}
+      <aside className={`glass-sidebar w-64 h-screen flex flex-col fixed left-0 top-0 z-50 transition-transform duration-300 ease-in-out lg:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
       {/* Logo */}
       <div className="px-5 py-5 border-b border-separator-light">
         <div className="flex items-center gap-3">
@@ -266,6 +278,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               key={item.path}
               to={item.path}
               end={item.path === '/'}
+              onClick={onClose}
               className={({ isActive }) =>
                 `nav-item ${isActive ? 'nav-item-active' : 'text-label-secondary'}`
               }
@@ -313,6 +326,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
     </aside>
+    </>
   );
 };
 
