@@ -16,3 +16,8 @@ venv/
 dist/
 gallery-dl/
 *.exe
+
+# Credentials — purged from history via git-filter-repo
+.agent/reference/LAB_CREDENTIALS.md
+iso/appliance-config/physical-appliance-pilot-1aea78/config.yaml
+iso/appliance-config/physical-appliance-pilot-1aea78/registration.yaml
