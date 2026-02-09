@@ -156,29 +156,39 @@ export const Button: React.FC<ButtonProps> = ({
 );
 ```
 
-## Design Tokens
+## Design System — iOS Glassmorphism + OsirisCare Brand
 
-### Colors (style-tokens.ts)
-```typescript
-export const tokens = {
-  'background-primary': '#0a0a0a',
-  'background-secondary': '#141414',
-  'label-primary': '#ffffff',
-  'label-secondary': '#a1a1a1',
-  'accent-primary': '#3b82f6',
-  'health-critical': '#ef4444',
-  'health-warning': '#f59e0b',
-  'health-healthy': '#22c55e',
-};
+### Brand Colors (tailwind.config.js)
+```javascript
+brand: {
+  teal: '#3CBCB4',        // Logo leaf color — primary accent
+  'teal-dark': '#14A89E', // Gradient start / darker shade
+  'teal-glow': 'rgba(60, 188, 180, 0.35)',
+}
 ```
 
-### Glass Morphism
-```typescript
-// GlassCard component
-<div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl">
-  {children}
-</div>
+### Portal Theming
+- **Admin**: Blue accent (`#007AFF`), blue-tinted fills
+- **Partner**: Indigo accent (`#5856D6`), indigo-tinted hovers
+- **Client**: Teal brand (`#3CBCB4 → #14A89E`), teal-tinted hovers
+- **Public Portal**: Blue accent, blue-tinted hovers
+
+### Fill Tokens (blue-tinted, not grey)
+```javascript
+fill: {
+  primary:    'rgba(0, 100, 220, 0.12)',
+  secondary:  'rgba(0, 100, 220, 0.08)',
+  tertiary:   'rgba(0, 100, 220, 0.06)',
+  quaternary: 'rgba(0, 100, 220, 0.04)',
+}
 ```
+
+### Key Design Rules
+- **No grey hovers** — use brand-tinted alternatives (blue-50, indigo-50, teal-50)
+- **No grey fills** — fill tokens are blue-tinted, not `rgba(120,120,128,...)`
+- **Glassmorphic cards**: `backdrop-blur-glass backdrop-saturate-glass bg-background-tertiary`
+- **GlassCard**: `bg-white/82 backdrop-blur-[20px] border border-separator-light rounded-ios-lg shadow-card`
+- **Brand name**: "OsirisCare" (not "Malachor", not "Central Command")
 
 ## Auth Context
 

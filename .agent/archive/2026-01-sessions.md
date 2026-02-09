@@ -1026,3 +1026,174 @@ src/local_portal/
 [truncated...]
 
 ---
+
+## 2026-01-26-session-72-phase3-resilience-delegation-api.md
+
+# Session 72: Phase 3 Local Resilience + Delegation API
+
+**Date:** 2026-01-26
+**Focus:** Phase 3 Operational Intelligence + Central Command Delegation API + ISO v48
+
+## Completed
+
+### 1. Phase 3 Local Resilience - Operational Intelligence
+Added 4 new components to `packages/compliance-agent/src/compliance_agent/local_resilience.py`:
+
+- **SmartSyncScheduler** - Bandwidth pattern learning and optimal sync timing
+  - Learns network usage patterns per hour
+  - Schedules syncs during low-bandwidth periods
+  - Tracks sync history and success rates
+
+- **PredictiveRunbookCache** - Incident pattern analysis for runbook pre-caching
+  - Analyzes recent incident patterns
+  - Pre-caches likely-needed runbooks before incidents occur
+  - Reduces L2 response latency
+
+- **LocalMetricsAggregator** - Metric collection and reporting
+  - Tracks healing rates, latencies, cache hits
+  - Aggregates metrics for dashboard reporting
+  - Provides performance insights
+
+- **CoverageTierOptimizer** - Tier recommendations based on L1/L2/L3 rates
+  - Analyzes healing tier effectiveness
+  - Recommends tier adjustments based on patterns
+  - Optimizes cost vs. coverage tradeoffs
+
+All Phase 3 components tested and working.
+
+### 2. Central Command Delegation API
+Created new file `mcp-server/central-command/backend/appliance_delegation.py` with:
+
+**Endpoints:**
+- `POST /api/appliances/{id}/delegate-key` - Issue Ed25519 signing key for offline evidence signing
+- `POST /api/appliances/{id}/audit-trail` - Sync offline audit entries with hash verification
+- `POST /api/appliances/{id}/urgent-escalations` - Process urgent escalations, route to L2/L3
+
+**Bug Fixes:**
+- Fixed asyncpg INSERT statements - parameters must be separate arguments, not tuples
+- Fixed `verify_appliance_ownership()` - appliances table uses `id` not `appliance_id`
+- Fixed `routes/__init__.py` - proper package context for relative imports
+
+**Tested on VPS:**
+```bash
+# Delegate key - SUCCESS
+curl -X POST http://localhost:8000/api/appliances/{id}/delegate-key
+# Returns: key_id, public_key, private_key, signature
+
+[truncated...]
+
+---
+
+## 2026-01-26-session70-partner-compliance-local-resilience.md
+
+# Session 70: Partner Compliance Framework Management + Phase 2 Local Resilience
+
+**Date:** 2026-01-26
+**Duration:** ~3 hours
+**Agent Version:** 1.0.48
+
+---
+
+## Summary
+
+This session completed two major features:
+1. **Partner Compliance Framework Management** - Multi-framework compliance configuration for partners
+2. **Phase 2 Local Resilience** - Delegated authority for offline operations
+
+---
+
+## Accomplishments
+
+### 1. Partner Compliance Framework Management - COMPLETE
+
+#### Backend
+- **Fixed Bug:** `partner_row` query was outside `async with` block in `compliance_frameworks.py`
+- **VPS Deployment:** Updated `main.py` on VPS with compliance_frameworks_router and partner_compliance_router
+- **Database Migration:** Created compliance_controls and control_runbook_mapping tables
+
+#### Frontend
+- **PartnerComplianceSettings.tsx (NEW):** Complete partner compliance configuration UI
+  - Framework usage dashboard showing which frameworks each site uses
+  - Default compliance settings form (industry, tier, frameworks)
+  - Industry preset quick-apply buttons (Healthcare, Finance, Technology, Defense, etc.)
+  - Per-site compliance configuration modal
+- **PartnerDashboard.tsx:** Added "Compliance" tab
+
+#### Frameworks Supported (10 total)
+| Framework | Description |
+|-----------|-------------|
+| HIPAA | Healthcare privacy/security |
+| SOC2 | Service organization controls |
+| PCI-DSS | Payment card industry |
+| NIST CSF | Cybersecurity framework |
+| NIST 800-171 | CUI protection |
+| SOX | Financial reporting controls |
+| GDPR | EU data protection |
+| CMMC | Defense contractor security |
+| ISO 27001 | Information security management |
+| CIS Controls | Critical security controls |
+
+### 2. Phase 2 Local Resilience (Delegated Authority) - COMPLETE
+
+All classes added to `packages/compliance-agent/src/compliance_agent/local_resilience.py`
+
+[truncated...]
+
+---
+
+## 2026-01-26-session71-exception-management-idor-fix.md
+
+# Session 71 - Exception Management & IDOR Security Fixes
+
+**Date:** 2026-01-26
+**Status:** COMPLETE
+**Agent Version:** 1.0.48
+**ISO Version:** v47
+**Phase:** 13 (Zero-Touch Update System)
+
+---
+
+## Objectives
+1. Complete Exception Management implementation
+2. Deploy to production (frontend + backend)
+3. Black/white box test partner and client portals
+4. Fix IDOR security vulnerabilities
+
+---
+
+## Accomplishments
+
+### 1. Exception Management System - COMPLETE
+- **Router Registration:** Added `exceptions_router` to `mcp-server/main.py`
+- **Import Fixes:** Fixed exceptions_api.py imports (`.fleet` for get_pool, `.partners` for require_partner)
+- **Database Migration:** `create_exceptions_tables()` called in lifespan startup
+- **Frontend:** PartnerExceptionManagement.tsx component fully functional
+- **Features:**
+  - Create/view/update compliance exceptions
+  - Request new exceptions from partner dashboard
+  - Approve/deny exception requests
+  - Exception status tracking (pending, approved, denied, expired)
+  - Control-level exception granularity
+
+### 2. TypeScript Build Error Fixed
+- **Issue:** `useEffect` declared but never used in PartnerExceptionManagement.tsx
+- **Fix:** Removed unused import
+- **Commit:** `746c19d`
+
+### 3. Production Deployment - COMPLETE
+- **Frontend:** Built and deployed to `/opt/mcp-server/frontend_dist/`
+- **Backend:** Deployed main.py to `/opt/mcp-server/app/main.py`
+- **Database:** Exception tables created via migration
+- **Docker:** Container restarted to pick up changes
+
+### 4. Portal Testing (Black Box & White Box) - COMPLETE
+- **Partner Portal Testing:**
+  - All 5 tabs working: Sites, Provisions, Billing, Compliance, Exceptions
+  - Exceptions tab loads with table and "New Exception" button
+  - Compliance tab shows industry selector and coverage tiers
+- **Client Portal Testing:**
+  - Passwordless login page renders correctly
+
+[truncated...]
+
+---
