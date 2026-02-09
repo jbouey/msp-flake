@@ -21,7 +21,7 @@ Key files: `iso/appliance-image.nix`, `iso/configuration.nix`, `flake.nix`
 ```
 packages/compliance-agent/   # Python agent (main work area)
   src/compliance_agent/      # Core modules
-  tests/                     # pytest tests (925+ passing)
+  tests/                     # pytest tests (950+ passing)
   venv/                      # Python 3.13 virtualenv
 modules/                     # NixOS modules
 mcp-server/central-command/  # Dashboard backend + frontend
@@ -112,3 +112,4 @@ Primary state: `.agent/claude-progress.json`
 - **DEPLOY VIA GIT PUSH, NOT SCP.** CI/CD (`.github/workflows/deploy-central-command.yml`) auto-deploys backend + frontend to VPS on push to main. Manual scp causes stale versions.
 - **SQLAlchemy AsyncSession:** Never use `asyncio.gather()` on the same session - causes `InvalidStateError`. Run queries sequentially.
 - **execution_telemetry.runbook_id:** Agent uses internal IDs (L1-SVC-DNS-001) that differ from backend IDs (RB-AUTO-SERVICE_). Match by `incident_type` + `hostname/site_id`, not `runbook_id`.
+- **Synced L1 rules override built-in rules.** Rules at `/var/lib/msp/rules/l1_rules.json` (synced hourly from Central Command) take precedence over built-in rules in `level1_deterministic.py`. Changes to built-in rules must also be applied to server-side rules in `mcp-server/main.py` and the `l1_rules` DB table.

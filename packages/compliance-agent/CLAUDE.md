@@ -45,7 +45,7 @@ packages/compliance-agent/
 │   ├── domain_discovery.py   # Zero-friction AD domain discovery (LDAP rootDSE)
 │   ├── ad_enumeration.py     # AD computer enumeration (servers + workstations)
 │   └── runbooks/windows/     # 50 HIPAA runbooks
-├── tests/                    # pytest tests (935+ passing)
+├── tests/                    # pytest tests (950+ passing)
 ├── docs/                     # Agent-specific documentation
 └── venv/                     # Python 3.13 virtualenv
 ```
@@ -113,7 +113,7 @@ Incident → L1 Deterministic (70-80%, <100ms, $0)
 
 ## Test Status
 
-- **935+ passed** (v1.0.56)
+- **950+ passed** (v1.0.57)
 - See `docs/TESTING.md` for full test guide
 - Use `now_utc()` not `datetime.utcnow()`
 

@@ -1,14 +1,14 @@
 {
-  "session": 100,
-  "updated": "2026-02-08T20:23:41.020417Z",
+  "session": 102,
+  "updated": "2026-02-09T02:33:47.474159Z",
   "agent_version": "1.0.57",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "v1.0.56_rebuilt_via_fleet_at_192.168.88.241",
-    "vm_appliance": "v1.0.56_rebuilt_via_fleet_at_192.168.88.254",
+    "physical_appliance": "v1.0.56_rebuilt_2026-02-08_ad_enrollment_fixes",
+    "vm_appliance": "v1.0.57_rebuilt_flap_fix_domain_dedup",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_22_promoted_stats_fixed_cicd_deploying",
@@ -104,30 +104,32 @@
     }
   ],
   "completed_this_session": [
-    "Fixed Dashboard all-zeros + Learning Loop 500 errors: root cause was asyncio.gather() on same AsyncSession (InvalidStateError). Fixed 3 files (routes.py 2x, portal.py 1x). db_queries.py was already fixed locally. Deployed all to VPS",
-    "Fixed CI: Build VirtualBox VM workflow failing on assertion \u2014 test-client-wired.nix had http:// placeholder for mcpUrl (module requires HTTPS for non-localhost). Changed to https://. Commit 881bd8a",
-    "Enriched L3 escalation emails: email_alerts.py send_critical_alert() now accepts and renders host_id, severity, check_type, drift details (expected vs actual table), HIPAA controls with descriptions, attempted remediation actions, recommended action. main.py passes all incident data to email. escalation_engine.py added ntp_sync/time to HIPAA control map and suggestions. Deployed to VPS"
+    "Firewall drift circular loop fix: flap detector thresholds 5/30m\u21923/120m (was mathematically unreachable), L1-FW-001 platform!=nixos guard (stops Windows runbook on NixOS), per-check cooldown override extends to 1hr on flap. Confirmed working: flap triggered after 3 recurrences in 23 min. Commits 99c31b9, ac60603",
+    "Domain discovery notification dedup: backend 24h dedup check before INSERT, appliance persistent flag file at /var/lib/msp/.domain-discovery-reported. Commit 4a89ca9",
+    "Fixed latent ResolutionLevel.LEVEL3_ESCALATION\u2192LEVEL3_HUMAN enum bug in auto_healer.py (circuit breaker + flap detector)",
+    "Server-side L1 rules (mcp-server/main.py + DB) updated with platform!=nixos for L1-FIREWALL-001, L1-FIREWALL-002, RB-AUTO-FIREWALL",
+    "10 new tests added: 5 in test_auto_healer.py (flap detector), 5 in test_drift_cooldown.py (cooldown extension, NixOS platform skip). 950 total tests passing"
   ],
   "recent_commits": [
     {
-      "hash": "881bd8a",
-      "message": "fix: Use HTTPS in test-client-wired mcpUrl placeholder to pass module assertion"
+      "hash": "4a89ca9",
+      "message": "fix: Deduplicate domain discovery notifications"
     },
     {
-      "hash": "2f5bba5",
-      "message": "quality: Phase 6 \u2014 stale doc versions + gRPC TLS support"
+      "hash": "ac60603",
+      "message": "fix: Break firewall drift circular loop \u2014 flap detector + NixOS platform guard (server-side)"
     },
     {
-      "hash": "f8427ba",
-      "message": "docs: Language audit \u2014 replace enforcement/autonomous with attestation/evidence substrate"
+      "hash": "99c31b9",
+      "message": "fix: Break firewall drift circular loop \u2014 flap detector + NixOS platform guard (agent-side)"
     },
     {
-      "hash": "9281add",
-      "message": "quality: Phase 5 code quality - constants, platform detection, error standardization"
+      "hash": "940b035",
+      "message": "fix: Domain discovery 500 + distinguish L3 escalation from healing failure"
     },
     {
-      "hash": "e60bdfa",
-      "message": "fix: OTS varint parsing, batch resubmission endpoint, all backend tests passing"
+      "hash": "ff71bd8",
+      "message": "fix: Domain discovery 500 \u2014 remove nonexistent partners table JOIN, fix send_critical_alert params"
     }
   ],
   "key_findings": {
@@ -140,7 +142,10 @@
     "deployment_lesson": "ALWAYS push to main instead of manual scp. CI/CD workflow (.github/workflows/deploy-central-command.yml) auto-deploys backend + frontend to VPS on push to main when mcp-server/central-command/** changes. Manual scp causes stale versions. Pipeline: checkout -> npm ci -> npm run build -> rsync backend to /opt/mcp-server/dashboard_api_mount/ -> rsync frontend to /opt/mcp-server/frontend_dist/ -> docker compose restart.",
     "learning_loop_stats_lesson": "Promotion history must match execution_telemetry by incident_type + hostname/site_id (from pattern_signature), NOT by runbook_id. Agent records executions with internal IDs (L1-SVC-DNS-001) that differ from promoted_to_rule_id (RB-AUTO-SERVICE_). The pattern_signature format is check_type:check_type:target where target is hostname or site_id.",
     "dashboard_asyncio_lesson": "SQLAlchemy AsyncSession cannot run concurrent queries via asyncio.gather(). Causes InvalidStateError. Must run queries sequentially on the same session. Fixed in db_queries.py, routes.py (2x), portal.py (1x). All deployed to VPS.",
-    "l3_email_lesson": "L3 escalation emails are generated in email_alerts.py send_critical_alert(), called from main.py POST /incidents handler. The escalation_engine.py path (via notifications.py /api/escalations) is separate \u2014 used when agent posts to Central Command directly. Both paths now have rich context."
+    "l3_email_lesson": "L3 escalation emails are generated in email_alerts.py send_critical_alert(), called from main.py POST /incidents handler. The escalation_engine.py path (via notifications.py /api/escalations) is separate \u2014 used when agent posts to Central Command directly. Both paths now have rich context.",
+    "phi_scrubber_lesson": "PHI scrubber in WindowsExecutor._execute_sync() replaces ALL IPs in WinRM output with [IP-REDACTED-xxx]. This breaks AD enumeration because IPv4Address values become unreachable hostnames. Fix: skip_phi_scrub=True parameter for infrastructure queries (AD enumeration, DNS resolution). PHI scrubber still active for all other WinRM queries (compliance checks, healing actions).",
+    "flap_detector_lesson": "Flap detector thresholds must account for drift cooldown math. With 600s cooldown, max incidents in 30min = 3 (not 5). Three-layer fix needed: (1) agent-side flap thresholds 3/120min, (2) synced rules platform guard (rules from Central Command override built-in), (3) per-check cooldown extension to 1hr on flap. Synced rules at /var/lib/msp/rules/l1_rules.json override built-in rules in level1_deterministic.py \u2014 must update both.",
+    "ad_enrollment_lesson": "AD enumeration returns FQDNs (e.g., nvdc01.northvalley.local) that the appliance can't resolve because its DNS points to the router. Fix: resolve_missing_ips() runs bulk DNS lookup on the DC via PowerShell, then connectivity tests use IP-first (ip_address or fqdn or hostname). Direct TCP asyncio.open_connection() from appliance is faster and more accurate than PowerShell Test-NetConnection from DC."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",
