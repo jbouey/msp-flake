@@ -230,7 +230,7 @@ export const PartnerComplianceSettings: React.FC = () => {
       )}
 
       {/* Framework Distribution */}
-      <div className="bg-white rounded-xl shadow-sm p-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Framework Usage</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           {Object.entries(frameworkDistribution).map(([fw, count]) => (
@@ -246,7 +246,7 @@ export const PartnerComplianceSettings: React.FC = () => {
       </div>
 
       {/* Default Settings */}
-      <div className="bg-white rounded-xl shadow-sm p-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-2">Default Compliance Settings</h3>
         <p className="text-sm text-gray-500 mb-6">
           These settings apply to new sites by default. Individual sites can override these settings.
@@ -349,7 +349,7 @@ export const PartnerComplianceSettings: React.FC = () => {
       </div>
 
       {/* Sites Compliance */}
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="p-6 border-b">
           <h3 className="text-lg font-semibold text-gray-900">Site Compliance Configuration</h3>
           <p className="text-sm text-gray-500">Configure compliance frameworks for each site</p>
@@ -428,7 +428,7 @@ export const PartnerComplianceSettings: React.FC = () => {
 
       {/* Edit Site Modal */}
       {editingSite && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
           <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               Configure Compliance - {sites.find(s => s.site_id === editingSite)?.site_name}

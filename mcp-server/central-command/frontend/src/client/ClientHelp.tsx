@@ -571,7 +571,7 @@ export const ClientHelp: React.FC = () => {
       {/* Content */}
       <main className="max-w-4xl mx-auto px-6 py-8">
         {/* Intro */}
-        <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
           <div className="flex items-center gap-4 mb-4">
             <div className="w-12 h-12 rounded-full bg-teal-100 flex items-center justify-center">
               <svg className="w-6 h-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -588,7 +588,7 @@ export const ClientHelp: React.FC = () => {
         {/* FAQ Sections */}
         <div className="space-y-3">
           {sections.map((section) => (
-            <div key={section.id} className="bg-white rounded-xl shadow-lg overflow-hidden">
+            <div key={section.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               <button
                 onClick={() => toggleSection(section.id)}
                 className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"

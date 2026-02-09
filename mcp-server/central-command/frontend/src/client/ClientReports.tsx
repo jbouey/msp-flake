@@ -88,11 +88,11 @@ export const ClientReports: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50/80 page-enter">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200">
+      <header className="sticky top-0 z-30 border-b border-gray-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+          <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-4">
               <Link to="/client/dashboard" className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -107,7 +107,7 @@ export const ClientReports: React.FC = () => {
 
       {/* Main */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           {loading ? (
             <div className="p-8 text-center">
               <div className="w-8 h-8 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto" />
@@ -144,7 +144,7 @@ export const ClientReports: React.FC = () => {
                   <div className="flex items-center gap-8">
                     <div className="text-right">
                       <p className={`text-2xl font-bold ${getScoreColor(report.compliance_score)}`}>
-                        {report.compliance_score.toFixed(1)}%
+                        <span className="tabular-nums">{report.compliance_score.toFixed(1)}%</span>
                       </p>
                       <p className="text-xs text-gray-500">Compliance Score</p>
                     </div>
@@ -156,7 +156,8 @@ export const ClientReports: React.FC = () => {
                     </div>
                     <button
                       onClick={() => handleDownload(report.month)}
-                      className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 flex items-center gap-2"
+                      className="px-4 py-2 text-white rounded-xl hover:brightness-110 transition-all flex items-center gap-2"
+                      style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)' }}
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

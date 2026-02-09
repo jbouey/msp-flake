@@ -187,12 +187,12 @@ export function PartnerExceptionManagement({ sites }: { sites: Site[] }) {
   });
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Exception Management</h2>
-          <p className="text-gray-600">Manage compliance exceptions and risk acceptances</p>
+          <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Exception Management</h2>
+          <p className="text-gray-500 text-sm">Manage compliance exceptions and risk acceptances</p>
         </div>
         <div className="flex items-center gap-4">
           <select
@@ -238,7 +238,7 @@ export function PartnerExceptionManagement({ sites }: { sites: Site[] }) {
       </div>
 
       {/* Exceptions Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
@@ -368,8 +368,8 @@ function SummaryCard({ title, value, color }: { title: string; value: number; co
   };
 
   return (
-    <div className={`p-4 rounded-lg border ${colors[color]}`}>
-      <div className="text-2xl font-bold">{value}</div>
+    <div className={`p-4 rounded-2xl border ${colors[color]}`}>
+      <div className="text-2xl font-bold tabular-nums">{value}</div>
       <div className="text-sm">{title}</div>
     </div>
   );
@@ -437,8 +437,8 @@ function CreateExceptionModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50 modal-backdrop">
+      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-xl">
         <div className="p-6">
           <h3 className="text-xl font-bold mb-4">Create Compliance Exception</h3>
 
@@ -598,8 +598,8 @@ function ExceptionDetailsModal({
   });
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50 modal-backdrop">
+      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-xl">
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-xl font-bold">Exception Details</h3>

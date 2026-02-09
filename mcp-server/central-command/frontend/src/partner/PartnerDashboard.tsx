@@ -185,8 +185,15 @@ export const PartnerDashboard: React.FC = () => {
 
   if (isLoading || loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-500 border-t-transparent" />
+      <div className="min-h-screen bg-gray-50/80 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 rounded-2xl mx-auto mb-4 flex items-center justify-center animate-pulse-soft" style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)' }}>
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+            </svg>
+          </div>
+          <p className="text-gray-500 text-sm">Loading dashboard...</p>
+        </div>
       </div>
     );
   }
@@ -198,24 +205,24 @@ export const PartnerDashboard: React.FC = () => {
   const primaryColor = partner.primary_color || '#4F46E5';
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50/80 page-enter">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <header className="sticky top-0 z-30 border-b border-gray-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
             {partner.logo_url ? (
               <img src={partner.logo_url} alt={partner.brand_name} className="h-10" />
             ) : (
               <div
-                className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold"
-                style={{ backgroundColor: primaryColor }}
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-lg"
+                style={{ background: `linear-gradient(135deg, ${primaryColor} 0%, #7C3AED 100%)`, boxShadow: `0 2px 10px ${primaryColor}40` }}
               >
                 {partner.brand_name.charAt(0)}
               </div>
             )}
             <div>
-              <h1 className="text-xl font-semibold text-gray-900">{partner.brand_name}</h1>
-              <p className="text-sm text-gray-500">Partner Dashboard</p>
+              <h1 className="text-lg font-semibold text-gray-900 tracking-tight">{partner.brand_name}</h1>
+              <p className="text-xs text-gray-500">Partner Dashboard</p>
             </div>
           </div>
           <button
@@ -223,7 +230,7 @@ export const PartnerDashboard: React.FC = () => {
               logout();
               navigate('/partner/login');
             }}
-            className="px-4 py-2 text-gray-600 hover:text-gray-900 transition"
+            className="px-4 py-2 text-sm text-gray-500 hover:text-gray-900 rounded-lg hover:bg-gray-100 transition"
           >
             Sign Out
           </button>
@@ -233,21 +240,41 @@ export const PartnerDashboard: React.FC = () => {
       {/* Stats */}
       <div className="max-w-7xl mx-auto px-6 py-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <p className="text-sm text-gray-500 mb-1">Total Sites</p>
-            <p className="text-3xl font-bold text-gray-900">{partner.site_count}</p>
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(79,70,229,0.12) 0%, rgba(124,58,237,0.08) 100%)' }}>
+                <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5" /></svg>
+              </div>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Sites</p>
+            </div>
+            <p className="text-3xl font-bold text-gray-900 tabular-nums">{partner.site_count}</p>
           </div>
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <p className="text-sm text-gray-500 mb-1">Pending Provisions</p>
-            <p className="text-3xl font-bold text-yellow-600">{partner.provisions.pending}</p>
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(234,179,8,0.12) 0%, rgba(245,158,11,0.08) 100%)' }}>
+                <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Pending</p>
+            </div>
+            <p className="text-3xl font-bold text-yellow-600 tabular-nums">{partner.provisions.pending}</p>
           </div>
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <p className="text-sm text-gray-500 mb-1">Claimed Provisions</p>
-            <p className="text-3xl font-bold text-green-600">{partner.provisions.claimed}</p>
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.12) 0%, rgba(22,163,74,0.08) 100%)' }}>
+                <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Claimed</p>
+            </div>
+            <p className="text-3xl font-bold text-green-600 tabular-nums">{partner.provisions.claimed}</p>
           </div>
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <p className="text-sm text-gray-500 mb-1">Revenue Share</p>
-            <p className="text-3xl font-bold" style={{ color: primaryColor }}>
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${primaryColor}1F 0%, ${primaryColor}14 100%)` }}>
+                <svg className="w-5 h-5" style={{ color: primaryColor }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Revenue Share</p>
+            </div>
+            <p className="text-3xl font-bold tabular-nums" style={{ color: primaryColor }}>
               {partner.revenue_share_percent}%
             </p>
           </div>
@@ -323,7 +350,7 @@ export const PartnerDashboard: React.FC = () => {
       {/* Content */}
       <div className="max-w-7xl mx-auto px-6 py-6">
         {activeTab === 'sites' && (
-          <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             {sites.length === 0 ? (
               <div className="p-12 text-center">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -398,7 +425,7 @@ export const PartnerDashboard: React.FC = () => {
 
             {/* New Provision Modal */}
             {showNewProvision && (
-              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
                 <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">Create Provision Code</h3>
                   <div className="mb-4">
@@ -438,7 +465,7 @@ export const PartnerDashboard: React.FC = () => {
 
             {/* QR Code Modal */}
             {qrProvision && (
-              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
                 <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-xl">
                   <div className="text-center">
                     <h3 className="text-lg font-semibold text-gray-900 mb-2">Provision QR Code</h3>
@@ -505,7 +532,7 @@ export const PartnerDashboard: React.FC = () => {
             )}
 
             {/* Provisions Table */}
-            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               {provisions.length === 0 ? (
                 <div className="p-12 text-center">
                   <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">

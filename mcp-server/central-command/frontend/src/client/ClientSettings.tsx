@@ -390,11 +390,11 @@ export const ClientSettings: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50/80 page-enter">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200">
+      <header className="sticky top-0 z-30 border-b border-gray-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+          <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-4">
               <Link to="/client/dashboard" className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -473,7 +473,7 @@ export const ClientSettings: React.FC = () => {
         {activeTab === 'users' && (
           <div className="space-y-6">
             {canManageUsers && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
                 <h2 className="text-lg font-medium mb-4">Invite User</h2>
                 <form onSubmit={handleInvite} className="flex gap-4">
                   <input
@@ -481,13 +481,13 @@ export const ClientSettings: React.FC = () => {
                     value={inviteEmail}
                     onChange={(e) => setInviteEmail(e.target.value)}
                     placeholder="Email address"
-                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                    className="flex-1 px-4 py-2 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                     required
                   />
                   <select
                     value={inviteRole}
                     onChange={(e) => setInviteRole(e.target.value as 'admin' | 'viewer')}
-                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                    className="px-4 py-2 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                   >
                     <option value="viewer">Viewer</option>
                     <option value="admin">Admin</option>
@@ -495,7 +495,8 @@ export const ClientSettings: React.FC = () => {
                   <button
                     type="submit"
                     disabled={inviting}
-                    className="px-6 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50"
+                    className="px-6 py-2 text-white rounded-xl hover:brightness-110 transition-all disabled:opacity-50"
+                    style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)' }}
                   >
                     {inviting ? 'Sending...' : 'Send Invite'}
                   </button>
@@ -503,7 +504,7 @@ export const ClientSettings: React.FC = () => {
               </div>
             )}
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-200">
                 <h2 className="text-lg font-medium">Team Members</h2>
               </div>
@@ -556,7 +557,7 @@ export const ClientSettings: React.FC = () => {
 
         {/* Password Tab */}
         {activeTab === 'password' && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 max-w-md">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 max-w-md">
             <h2 className="text-lg font-medium mb-4">Set Password</h2>
             <p className="text-sm text-gray-500 mb-4">
               Set an optional password for convenient login. You can still use magic links.
@@ -568,7 +569,7 @@ export const ClientSettings: React.FC = () => {
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                  className="w-full px-4 py-2 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                   required
                   minLength={8}
                 />
@@ -579,7 +580,7 @@ export const ClientSettings: React.FC = () => {
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                  className="w-full px-4 py-2 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                   required
                   minLength={8}
                 />
@@ -587,7 +588,8 @@ export const ClientSettings: React.FC = () => {
               <button
                 type="submit"
                 disabled={savingPassword}
-                className="w-full px-6 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50"
+                className="w-full px-6 py-2 text-white rounded-xl hover:brightness-110 transition-all disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)' }}
               >
                 {savingPassword ? 'Saving...' : 'Update Password'}
               </button>
@@ -597,7 +599,7 @@ export const ClientSettings: React.FC = () => {
 
         {/* Transfer Tab */}
         {activeTab === 'transfer' && user?.role === 'owner' && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 max-w-lg">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 max-w-lg">
             <h2 className="text-lg font-medium mb-4">Request Provider Transfer</h2>
             {transferStatus ? (
               <div className="space-y-4">
@@ -631,7 +633,7 @@ export const ClientSettings: React.FC = () => {
                       value={transferReason}
                       onChange={(e) => setTransferReason(e.target.value)}
                       rows={3}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                      className="w-full px-4 py-2 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                       placeholder="Please explain why you want to transfer..."
                       required
                     />
@@ -639,7 +641,8 @@ export const ClientSettings: React.FC = () => {
                   <button
                     type="submit"
                     disabled={requesting}
-                    className="w-full px-6 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50"
+                    className="w-full px-6 py-2 text-white rounded-xl hover:brightness-110 transition-all disabled:opacity-50"
+                    style={{ background: 'linear-gradient(135deg, #EA580C 0%, #F97316 100%)' }}
                   >
                     {requesting ? 'Submitting...' : 'Submit Transfer Request'}
                   </button>
@@ -653,13 +656,13 @@ export const ClientSettings: React.FC = () => {
         {activeTab === 'billing' && user?.role === 'owner' && billingAvailable && (
           <div className="space-y-6">
             {billingLoading ? (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center">
                 <div className="w-8 h-8 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto" />
               </div>
             ) : billingInfo?.has_subscription ? (
               <>
                 {/* Current Plan */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
                   <h2 className="text-lg font-medium mb-4">Current Plan</h2>
                   <div className="flex items-center justify-between">
                     <div>
@@ -711,7 +714,7 @@ export const ClientSettings: React.FC = () => {
 
                 {/* Invoices */}
                 {invoices.length > 0 && (
-                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div className="px-6 py-4 border-b border-gray-200">
                       <h2 className="text-lg font-medium">Recent Invoices</h2>
                     </div>
@@ -754,7 +757,7 @@ export const ClientSettings: React.FC = () => {
               </>
             ) : (
               /* No subscription - show signup */
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 max-w-lg">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 max-w-lg">
                 <h2 className="text-lg font-medium mb-4">Subscribe to OsirisCare</h2>
                 <p className="text-gray-500 mb-6">
                   Get full access to compliance monitoring, evidence management, and audit-ready reports.
@@ -794,7 +797,8 @@ export const ClientSettings: React.FC = () => {
 
                 <button
                   onClick={handleStartSubscription}
-                  className="w-full px-6 py-3 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium"
+                  className="w-full px-6 py-3 text-white rounded-xl hover:brightness-110 transition-all font-medium"
+                  style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)', boxShadow: '0 4px 14px rgba(13, 148, 136, 0.35)' }}
                 >
                   Start Subscription
                 </button>

@@ -118,10 +118,14 @@ export const ClientDashboard: React.FC = () => {
 
   if (isLoading || loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50/80 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Loading your dashboard...</p>
+          <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center animate-pulse-soft" style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)' }}>
+            <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+          </div>
+          <p className="text-gray-500">Loading your dashboard...</p>
         </div>
       </div>
     );
@@ -154,14 +158,14 @@ export const ClientDashboard: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50/80 page-enter">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+      <header className="sticky top-0 z-50 border-b border-gray-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
+          <div className="flex justify-between items-center h-14">
             <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-teal-100 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)', boxShadow: '0 2px 10px rgba(13,148,136,0.3)' }}>
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
               </div>
@@ -191,7 +195,7 @@ export const ClientDashboard: React.FC = () => {
                 </button>
 
                 {showNotifications && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-lg border border-gray-100 z-50">
                     <div className="p-4 border-b border-gray-200">
                       <h3 className="font-semibold text-gray-900">Notifications</h3>
                     </div>
@@ -240,50 +244,76 @@ export const ClientDashboard: React.FC = () => {
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           {/* Compliance Score */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <p className="text-sm font-medium text-gray-500 mb-2">Compliance Score</p>
-            <div className="flex items-end gap-2">
-              <span className={`text-4xl font-bold ${getScoreColor(dashboard?.kpis.compliance_score || 0)}`}>
-                {dashboard?.kpis.compliance_score.toFixed(1)}%
-              </span>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0D9488 0%, #06B6D4 100%)' }}>
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-gray-500">Compliance Score</p>
             </div>
+            <span className={`text-4xl font-bold tabular-nums ${getScoreColor(dashboard?.kpis.compliance_score || 0)}`}>
+              {dashboard?.kpis.compliance_score.toFixed(1)}%
+            </span>
             <div className={`mt-4 h-2 rounded-full ${getScoreBg(dashboard?.kpis.compliance_score || 0)}`}>
               <div
-                className={`h-full rounded-full ${dashboard?.kpis.compliance_score && dashboard.kpis.compliance_score >= 95 ? 'bg-green-500' : dashboard?.kpis.compliance_score && dashboard.kpis.compliance_score >= 80 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                className={`h-full rounded-full transition-all ${dashboard?.kpis.compliance_score && dashboard.kpis.compliance_score >= 95 ? 'bg-green-500' : dashboard?.kpis.compliance_score && dashboard.kpis.compliance_score >= 80 ? 'bg-yellow-500' : 'bg-red-500'}`}
                 style={{ width: `${dashboard?.kpis.compliance_score || 0}%` }}
               />
             </div>
           </div>
 
           {/* Checks Passed */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <p className="text-sm font-medium text-gray-500 mb-2">Controls Passed</p>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-gray-500">Controls Passed</p>
+            </div>
             <div className="flex items-end gap-2">
-              <span className="text-4xl font-bold text-green-600">{dashboard?.kpis.passed}</span>
-              <span className="text-gray-500 mb-1">/ {dashboard?.kpis.total_checks}</span>
+              <span className="text-4xl font-bold text-green-600 tabular-nums">{dashboard?.kpis.passed}</span>
+              <span className="text-gray-500 mb-1 tabular-nums">/ {dashboard?.kpis.total_checks}</span>
             </div>
             <p className="mt-2 text-sm text-gray-500">Last 24 hours</p>
           </div>
 
           {/* Issues */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <p className="text-sm font-medium text-gray-500 mb-2">Issues Detected</p>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-gray-500">Issues Detected</p>
+            </div>
             <div className="flex items-end gap-4">
               <div>
-                <span className="text-4xl font-bold text-red-600">{dashboard?.kpis.failed}</span>
+                <span className="text-4xl font-bold text-red-600 tabular-nums">{dashboard?.kpis.failed}</span>
                 <p className="text-xs text-gray-500">Failed</p>
               </div>
               <div>
-                <span className="text-2xl font-bold text-yellow-600">{dashboard?.kpis.warnings}</span>
+                <span className="text-2xl font-bold text-yellow-600 tabular-nums">{dashboard?.kpis.warnings}</span>
                 <p className="text-xs text-gray-500">Warnings</p>
               </div>
             </div>
           </div>
 
           {/* Sites */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <p className="text-sm font-medium text-gray-500 mb-2">Sites Monitored</p>
-            <span className="text-4xl font-bold text-gray-900">{dashboard?.sites.length || 0}</span>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-cyan-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-gray-500">Sites Monitored</p>
+            </div>
+            <span className="text-4xl font-bold text-gray-900 tabular-nums">{dashboard?.sites.length || 0}</span>
             <p className="mt-2 text-sm text-gray-500">
               {dashboard?.org.provider_count} provider{dashboard?.org.provider_count !== 1 ? 's' : ''}
             </p>
@@ -291,7 +321,7 @@ export const ClientDashboard: React.FC = () => {
         </div>
 
         {/* Sites List */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
           <div className="p-6 border-b border-gray-200">
             <h2 className="text-lg font-semibold text-gray-900">Your Sites</h2>
             <p className="text-sm text-gray-500 mt-1">Click a site to view detailed compliance status</p>
@@ -346,7 +376,7 @@ export const ClientDashboard: React.FC = () => {
         <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-6">
           <Link
             to="/client/evidence"
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:border-teal-300 transition"
+            className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
           >
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-teal-100 rounded-lg flex items-center justify-center">
@@ -363,7 +393,7 @@ export const ClientDashboard: React.FC = () => {
 
           <Link
             to="/client/reports"
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:border-teal-300 transition"
+            className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
           >
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
@@ -380,7 +410,7 @@ export const ClientDashboard: React.FC = () => {
 
           <Link
             to="/client/settings"
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:border-teal-300 transition"
+            className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
           >
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center">
@@ -398,7 +428,7 @@ export const ClientDashboard: React.FC = () => {
 
           <Link
             to="/client/help"
-            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:border-teal-300 transition"
+            className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
           >
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -416,9 +446,9 @@ export const ClientDashboard: React.FC = () => {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-gray-200 mt-12 py-6">
+      <footer className="border-t border-gray-200/60 mt-12 py-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <p className="text-center text-sm text-gray-500">
+          <p className="text-center text-sm text-gray-400">
             Powered by OsirisCare HIPAA Compliance Platform
           </p>
         </div>

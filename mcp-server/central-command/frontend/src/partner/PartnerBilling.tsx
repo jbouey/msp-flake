@@ -250,7 +250,7 @@ export const PartnerBilling: React.FC = () => {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-4 border-indigo-500 border-t-transparent" />
+        <div className="w-8 h-8 rounded-xl flex items-center justify-center animate-pulse-soft" style={{ background: 'linear-gradient(135deg, #4F46E5, #7C3AED)' }} />
       </div>
     );
   }
@@ -274,7 +274,7 @@ export const PartnerBilling: React.FC = () => {
 
       {/* Current Subscription Status */}
       {billingStatus && (
-        <div className="bg-white rounded-xl shadow-sm p-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-gray-900">Subscription Status</h3>
             <span className={`px-3 py-1 text-sm font-medium rounded-full ${getStatusColor(billingStatus.subscription_status)}`}>
@@ -459,7 +459,7 @@ export const PartnerBilling: React.FC = () => {
 
       {/* Payment Methods */}
       {billingStatus?.payment_methods && billingStatus.payment_methods.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm p-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900">Payment Methods</h3>
             <button
@@ -499,7 +499,7 @@ export const PartnerBilling: React.FC = () => {
 
       {/* Invoices */}
       {invoices.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm p-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Invoice History</h3>
           <div className="overflow-x-auto">
             <table className="w-full">

@@ -253,27 +253,27 @@ export const PartnerLearning: React.FC = () => {
       {/* Stats Cards */}
       {stats && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl shadow-sm p-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
             <p className="text-sm text-gray-500">Pending Candidates</p>
-            <p className="text-2xl font-bold text-yellow-600">{stats.pending_candidates}</p>
+            <p className="text-2xl font-bold text-yellow-600 tabular-nums">{stats.pending_candidates}</p>
           </div>
-          <div className="bg-white rounded-xl shadow-sm p-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
             <p className="text-sm text-gray-500">Active L1 Rules</p>
-            <p className="text-2xl font-bold text-green-600">{stats.active_promoted_rules}</p>
+            <p className="text-2xl font-bold text-green-600 tabular-nums">{stats.active_promoted_rules}</p>
           </div>
-          <div className="bg-white rounded-xl shadow-sm p-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
             <p className="text-sm text-gray-500">L1 Resolution Rate</p>
-            <p className="text-2xl font-bold text-indigo-600">{formatPercentage(stats.l1_resolution_rate)}</p>
+            <p className="text-2xl font-bold text-indigo-600 tabular-nums">{formatPercentage(stats.l1_resolution_rate)}</p>
           </div>
-          <div className="bg-white rounded-xl shadow-sm p-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
             <p className="text-sm text-gray-500">Avg Success Rate</p>
-            <p className="text-2xl font-bold text-blue-600">{formatPercentage(stats.avg_success_rate)}</p>
+            <p className="text-2xl font-bold text-blue-600 tabular-nums">{formatPercentage(stats.avg_success_rate)}</p>
           </div>
         </div>
       )}
 
       {/* Promotion Candidates */}
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900">Promotion Candidates</h3>
           <p className="text-sm text-gray-500">Patterns eligible for L1 promotion (5+ occurrences, 90%+ success rate)</p>
@@ -369,7 +369,7 @@ export const PartnerLearning: React.FC = () => {
       </div>
 
       {/* Promoted Rules */}
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div
           className="px-6 py-4 border-b border-gray-200 flex items-center justify-between cursor-pointer"
           onClick={() => setShowPromotedRules(!showPromotedRules)}
@@ -447,7 +447,7 @@ export const PartnerLearning: React.FC = () => {
 
       {/* Approve Modal */}
       {showApproveModal && selectedCandidate && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Approve Pattern for L1 Promotion</h3>
 
@@ -518,7 +518,7 @@ export const PartnerLearning: React.FC = () => {
 
       {/* Reject Modal */}
       {showRejectModal && selectedCandidate && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Reject Pattern</h3>
 
