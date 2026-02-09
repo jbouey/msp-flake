@@ -32,9 +32,9 @@ const deviceTypeConfig: Record<string, { icon: string; label: string; color: str
   workstation: { icon: '💻', label: 'Workstation', color: 'text-blue-400' },
   server: { icon: '🖥️', label: 'Server', color: 'text-purple-400' },
   network: { icon: '🔌', label: 'Network', color: 'text-orange-400' },
-  printer: { icon: '🖨️', label: 'Printer', color: 'text-gray-400' },
+  printer: { icon: '🖨️', label: 'Printer', color: 'text-slate-400' },
   medical: { icon: '🏥', label: 'Medical', color: 'text-red-400' },
-  unknown: { icon: '❓', label: 'Unknown', color: 'text-gray-500' },
+  unknown: { icon: '❓', label: 'Unknown', color: 'text-slate-500' },
 };
 
 /**
@@ -43,8 +43,8 @@ const deviceTypeConfig: Record<string, { icon: string; label: string; color: str
 const complianceColors: Record<string, string> = {
   compliant: 'bg-health-healthy text-white',
   drifted: 'bg-health-critical text-white',
-  unknown: 'bg-gray-500 text-white',
-  excluded: 'bg-gray-600 text-white',
+  unknown: 'bg-slate-500 text-white',
+  excluded: 'bg-slate-600 text-white',
 };
 
 /**
@@ -93,7 +93,7 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
 
         {/* Unknown */}
         <div className="text-center">
-          <div className="text-3xl font-bold text-gray-400">
+          <div className="text-3xl font-bold text-slate-400">
             {summary.by_compliance.unknown}
           </div>
           <div className="text-sm text-label-secondary">Unknown</div>
@@ -124,8 +124,8 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
             <div className="text-sm font-medium text-orange-400">Network</div>
             <div className="text-2xl font-bold text-label-primary">{summary.by_type.network}</div>
           </div>
-          <div className="rounded-lg p-3 bg-gray-500/10 border border-gray-500/30 text-center">
-            <div className="text-sm font-medium text-gray-400">Printers</div>
+          <div className="rounded-lg p-3 bg-slate-500/10 border border-slate-500/30 text-center">
+            <div className="text-sm font-medium text-slate-400">Printers</div>
             <div className="text-2xl font-bold text-label-primary">{summary.by_type.printers}</div>
           </div>
         </div>

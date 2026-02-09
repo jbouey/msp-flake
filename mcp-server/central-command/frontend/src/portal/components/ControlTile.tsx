@@ -63,11 +63,11 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
       {/* Header */}
       <div className="flex justify-between items-start mb-2">
         <div className="flex-1 pr-2">
-          <h3 className="font-semibold text-gray-900 text-sm leading-tight">
+          <h3 className="font-semibold text-slate-900 text-sm leading-tight">
             {displayName}
           </h3>
           {control.plain_english && (
-            <p className="text-xs text-gray-500 mt-0.5">{control.name}</p>
+            <p className="text-xs text-slate-500 mt-0.5">{control.name}</p>
           )}
         </div>
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${config.labelBg}`}>
@@ -78,7 +78,7 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
       {/* Why it matters - always visible for non-passing */}
       {control.status !== 'pass' && control.consequence && (
         <div className="mt-2 p-2 bg-white/60 rounded-lg">
-          <p className="text-xs text-gray-700">
+          <p className="text-xs text-slate-700">
             <span className="font-medium text-red-700">Risk: </span>
             {control.consequence}
           </p>
@@ -87,18 +87,18 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
 
       {/* Expanded content */}
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-gray-200/50 space-y-2">
+        <div className="mt-3 pt-3 border-t border-slate-200/50 space-y-2">
           {control.why_it_matters && (
             <div className="text-xs">
-              <span className="font-medium text-gray-700">Why it matters: </span>
-              <span className="text-gray-600">{control.why_it_matters}</span>
+              <span className="font-medium text-slate-700">Why it matters: </span>
+              <span className="text-slate-600">{control.why_it_matters}</span>
             </div>
           )}
 
           {control.what_we_check && (
             <div className="text-xs">
-              <span className="font-medium text-gray-700">What we check: </span>
-              <span className="text-gray-600">{control.what_we_check}</span>
+              <span className="font-medium text-slate-700">What we check: </span>
+              <span className="text-slate-600">{control.what_we_check}</span>
             </div>
           )}
 
@@ -110,14 +110,14 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
               control.severity === 'critical' ? 'bg-red-50 text-red-700 border border-red-200' :
               control.severity === 'high' ? 'bg-orange-50 text-orange-700 border border-orange-200' :
               control.severity === 'medium' ? 'bg-yellow-50 text-yellow-700 border border-yellow-200' :
-              'bg-gray-50 text-gray-700 border border-gray-200'
+              'bg-slate-50 text-slate-700 border border-slate-200'
             }`}>
               {control.severity.toUpperCase()} priority
             </span>
           </div>
 
           {/* HIPAA citation - shown on expand */}
-          <div className="text-xs text-gray-400 mt-2">
+          <div className="text-xs text-slate-400 mt-2">
             HIPAA: {control.hipaa_controls.join(', ')}
           </div>
         </div>
@@ -140,13 +140,13 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
       )}
 
       {/* Last checked + expand hint */}
-      <div className="mt-3 flex justify-between items-center text-xs text-gray-400">
+      <div className="mt-3 flex justify-between items-center text-xs text-slate-400">
         <span>
           {control.checked_at
             ? `Checked ${new Date(control.checked_at).toLocaleString()}`
             : 'Pending check'}
         </span>
-        <span className="text-gray-300">
+        <span className="text-slate-300">
           {expanded ? '▲ less' : '▼ more'}
         </span>
       </div>

@@ -337,7 +337,7 @@ const sections: Record<DocSection, { title: string; icon: string; items: DocItem
             </ul>
 
             <h4 className="font-semibold mt-6">Step 1: Generate Site Configuration</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`cd /path/to/Msp_Flakes
 
 # Generate config for the site
@@ -357,7 +357,7 @@ python iso/provisioning/generate-config.py \\
             </div>
 
             <h4 className="font-semibold mt-6">Step 2: Register Site in Central Command</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Copy the API key from registration.yaml
 cat appliance-config/clinic-smith-abc123/registration.yaml
 
@@ -373,7 +373,7 @@ curl -X POST https://api.osiriscare.net/api/sites \\
             </div>
 
             <h4 className="font-semibold mt-6">Step 3: Build the ISO</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Build the appliance ISO (requires Linux or remote builder)
 nix build -f flake-compliance.nix appliance-iso -o result-iso
 
@@ -383,7 +383,7 @@ ls -lh result-iso/iso/osiriscare-appliance.iso
             </div>
 
             <h4 className="font-semibold mt-6">Step 4: Flash to USB</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Find USB device (CAREFUL - this erases the drive!)
 lsblk
 # Example: /dev/sdc
@@ -400,7 +400,7 @@ sync`}</pre>
             </div>
 
             <h4 className="font-semibold mt-6">Step 5: Copy Configuration to USB</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Mount the USB config partition
 sudo mkdir -p /mnt/usb
 sudo mount /dev/sdX2 /mnt/usb
@@ -468,7 +468,7 @@ sudo umount /mnt/usb`}</pre>
             </div>
 
             <h4 className="font-semibold mt-6">Via Command Line</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Run the provisioning script
 python iso/provisioning/generate-config.py \\
   --site-id "clinic-smith-abc123" \\
@@ -494,7 +494,7 @@ cat registration.yaml
             </div>
 
             <h4 className="font-semibold mt-6">Register in Central Command</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Add site via API
 curl -X POST https://api.osiriscare.net/api/sites \\
   -H "Authorization: Bearer $ADMIN_TOKEN" \\
@@ -656,7 +656,7 @@ curl -X POST https://api.osiriscare.net/api/sites \\
             </ul>
 
             <h4 className="font-semibold mt-6">Archive Commands</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Export site data before archiving
 curl https://api.osiriscare.net/api/sites/{site_id}/export \\
   -H "Authorization: Bearer $ADMIN_TOKEN" \\
@@ -705,7 +705,7 @@ curl -X PATCH https://api.osiriscare.net/api/sites/{site_id} \\
             </div>
 
             <h4 className="font-semibold mt-6">Method 1: USB Configuration</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# 1. Generate config for the site
 python iso/provisioning/generate-config.py \\
   --site-id "clinic-smith-abc123" \\
@@ -733,7 +733,7 @@ cp appliance-config/clinic-smith-abc123/config.yaml /Volumes/USB/config.yaml
             </div>
 
             <h5 className="font-semibold">Step 1: Get MAC Address</h5>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# From appliance boot screen or label on hardware
 # Example: 84:3A:5B:91:B6:61
 
@@ -742,7 +742,7 @@ ip link show | grep -A1 "state UP" | grep ether`}</pre>
             </div>
 
             <h5 className="font-semibold mt-4">Step 2: Register MAC in Central Command</h5>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Register MAC → Site mapping via API
 curl -X POST https://api.osiriscare.net/api/provision \\
   -H "Content-Type: application/json" \\
@@ -763,7 +763,7 @@ curl -X POST https://api.osiriscare.net/api/provision \\
             </div>
 
             <h5 className="font-semibold mt-4">Step 3: Verify Registration</h5>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Test that MAC returns config (URL-encode the colons)
 curl https://api.osiriscare.net/api/provision/84%3A3A%3A5B%3A91%3AB6%3A61
 
@@ -856,7 +856,7 @@ curl https://api.osiriscare.net/api/provision/84%3A3A%3A5B%3A91%3AB6%3A61
             </div>
 
             <h4 className="font-semibold mt-6">For Partners: Creating Provision Codes</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# 1. Log into Partner Dashboard
 https://dashboard.osiriscare.net/partner/login
 
@@ -874,7 +874,7 @@ https://dashboard.osiriscare.net/partner/login
             </div>
 
             <h4 className="font-semibold mt-6">For Partners: Via API</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Create provision code via API
 curl -X POST https://api.osiriscare.net/api/partners/me/provisions \\
   -H "X-API-Key: YOUR_PARTNER_API_KEY" \\
@@ -912,7 +912,7 @@ curl -X POST https://api.osiriscare.net/api/partners/me/provisions \\
             </div>
 
             <h4 className="font-semibold mt-6">Appliance CLI Provisioning</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# If appliance boots without config.yaml, it enters provisioning mode:
 
 ============================================================
@@ -1102,7 +1102,7 @@ The agent will now restart in normal operation mode.`}</pre>
             </div>
 
             <h4 className="font-semibold mt-6">Promote to L1 Rule</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# After successful manual remediation, create L1 rule
 # in mcp-server/runbooks/
 
@@ -1158,7 +1158,7 @@ evidence:
             </div>
 
             <h4 className="font-semibold mt-6">Check Backup Status</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# API endpoint for dashboard
 curl https://api.osiriscare.net/api/backup/status
 
@@ -1173,7 +1173,7 @@ ssh root@178.156.162.116 "systemctl list-timers | grep osiris"`}</pre>
             </div>
 
             <h4 className="font-semibold mt-6">Manual Backup</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Run backup manually (e.g., before major changes)
 ssh root@178.156.162.116 "/opt/backups/scripts/backup.sh"
 
@@ -1264,7 +1264,7 @@ ssh root@178.156.162.116 "RESTIC_REPOSITORY='sftp:storagebox:/backups' \\
               </div>
             </div>
 
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Check snapshot status
 curl https://api.osiriscare.net/api/snapshot/status
 
@@ -1303,7 +1303,7 @@ ssh root@178.156.162.116 "export HCLOUD_TOKEN=\\$(cat /root/.hcloud-token) && hc
               <ul className="space-y-2 text-sm text-label-secondary">
                 <li className="flex items-start gap-2">
                   <span className="text-accent-primary">1.</span>
-                  <span>Check if VPS is responding: <code className="bg-gray-900 px-1 rounded">ssh root@178.156.162.116</code></span>
+                  <span>Check if VPS is responding: <code className="bg-slate-900 px-1 rounded">ssh root@178.156.162.116</code></span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-accent-primary">2.</span>
@@ -1331,7 +1331,7 @@ ssh root@178.156.162.116 "export HCLOUD_TOKEN=\\$(cat /root/.hcloud-token) && hc
             </div>
 
             <h4 className="font-semibold mt-6">Option A: Restic Restore (Server Alive)</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# SSH to the server
 ssh root@178.156.162.116
 
@@ -1350,7 +1350,7 @@ curl http://localhost:8000/health`}</pre>
             </div>
 
             <h4 className="font-semibold mt-6">Option B: Hetzner Snapshot Rebuild (Server Dead)</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Step 1: Create new server from snapshot
 # Hetzner Console → Servers → Create Server
 # - Location: ash-dc1 (or any available)
@@ -1374,7 +1374,7 @@ curl http://localhost:8000/health`}</pre>
             </div>
 
             <h4 className="font-semibold mt-6">Phase 3: Update DNS (if IP changed)</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Cloudflare Dashboard (recommended)
 # 1. Login to Cloudflare
 # 2. Select osiriscare.net
@@ -1393,15 +1393,15 @@ dig api.osiriscare.net +short`}</pre>
               <ul className="space-y-2 text-sm text-label-secondary">
                 <li className="flex items-center gap-2">
                   <input type="checkbox" className="rounded" />
-                  <span>API responding: <code className="bg-gray-900 px-1 rounded">curl https://api.osiriscare.net/health</code></span>
+                  <span>API responding: <code className="bg-slate-900 px-1 rounded">curl https://api.osiriscare.net/health</code></span>
                 </li>
                 <li className="flex items-center gap-2">
                   <input type="checkbox" className="rounded" />
-                  <span>Dashboard accessible: <code className="bg-gray-900 px-1 rounded">https://dashboard.osiriscare.net</code></span>
+                  <span>Dashboard accessible: <code className="bg-slate-900 px-1 rounded">https://dashboard.osiriscare.net</code></span>
                 </li>
                 <li className="flex items-center gap-2">
                   <input type="checkbox" className="rounded" />
-                  <span>Appliances checking in: <code className="bg-gray-900 px-1 rounded">docker compose logs -f mcp-server | grep checkin</code></span>
+                  <span>Appliances checking in: <code className="bg-slate-900 px-1 rounded">docker compose logs -f mcp-server | grep checkin</code></span>
                 </li>
                 <li className="flex items-center gap-2">
                   <input type="checkbox" className="rounded" />
@@ -1409,7 +1409,7 @@ dig api.osiriscare.net +short`}</pre>
                 </li>
                 <li className="flex items-center gap-2">
                   <input type="checkbox" className="rounded" />
-                  <span>Backup timers running: <code className="bg-gray-900 px-1 rounded">systemctl list-timers | grep osiris</code></span>
+                  <span>Backup timers running: <code className="bg-slate-900 px-1 rounded">systemctl list-timers | grep osiris</code></span>
                 </li>
               </ul>
             </div>
@@ -1696,7 +1696,7 @@ dig api.osiriscare.net +short`}</pre>
         content: (
           <div className="space-y-4">
             <h4 className="font-semibold">Step 1: Generate Configuration</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm">
               <pre>{`# In Central Command, create the site first
 # Then generate the appliance config:
 
@@ -1707,7 +1707,7 @@ nix build .#appliance-image \\
             </div>
 
             <h4 className="font-semibold mt-6">Step 2: Write to USB</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm">
               <pre>{`# Find USB device
 lsblk
 
@@ -1750,7 +1750,7 @@ sudo dd if=result/nixos.img of=/dev/sdX \\
             </ul>
 
             <h4 className="font-semibold mt-6">Remote Access (Emergency)</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm">
               <pre>{`# SSH is enabled for admin user
 ssh admin@<appliance-ip>
 
@@ -1789,13 +1789,13 @@ journalctl -u compliance-agent -f
                 </div>
                 <div className="col-span-2">
                   <span className="text-label-tertiary">SHA256:</span>
-                  <code className="ml-2 text-xs bg-gray-800 px-2 py-1 rounded">1daf70e124c71c8c0c4826fb283e9e5ba2c6a9c4bff230d74d27f8a7fbf5a7ce</code>
+                  <code className="ml-2 text-xs bg-slate-800 px-2 py-1 rounded">1daf70e124c71c8c0c4826fb283e9e5ba2c6a9c4bff230d74d27f8a7fbf5a7ce</code>
                 </div>
               </div>
             </div>
 
             <h4 className="font-semibold mt-6">Download ISO</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
               <pre>{`# Download from VPS (if you have SSH access)
 scp root@178.156.162.116:/opt/mcp-server/static/releases/v44/nixos-appliance-v44.iso ~/Downloads/
 
@@ -1812,7 +1812,7 @@ shasum -a 256 nixos-appliance-v44.iso
               <p className="text-sm text-label-secondary">
                 Use Balena Etcher (recommended) or dd to write the ISO to a USB drive.
               </p>
-              <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm">
+              <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm">
                 <pre>{`# Option 1: Balena Etcher (GUI)
 # Download from https://etcher.balena.io
 # Select ISO, select USB drive, click Flash
@@ -2121,7 +2121,7 @@ sudo dd if=nixos-appliance-v44.iso of=/dev/rdiskN bs=4m
             </ol>
 
             <h4 className="font-semibold mt-4">Via API</h4>
-            <div className="p-4 bg-gray-900 rounded-ios text-green-400 font-mono text-sm">
+            <div className="p-4 bg-slate-900 rounded-ios text-green-400 font-mono text-sm">
               <pre>{`curl -X POST https://api.osiriscare.net/api/portal/sites/{site_id}/generate-token
 
 # Response:
@@ -2175,7 +2175,7 @@ sudo dd if=nixos-appliance-v44.iso of=/dev/rdiskN bs=4m
               <p className="text-sm text-label-secondary mb-3">
                 Use the email template below. Copy and customize with client details:
               </p>
-              <div className="p-4 bg-gray-900 rounded-ios text-gray-300 text-sm font-mono whitespace-pre-wrap">
+              <div className="p-4 bg-slate-900 rounded-ios text-slate-300 text-sm font-mono whitespace-pre-wrap">
 {`Subject: Your HIPAA Compliance Portal Access - [Practice Name]
 
 Hi [Contact Name],

@@ -51,8 +51,8 @@ function FrameworkCard({
 
   return (
     <div
-      className={`bg-gray-800 rounded-lg p-4 border-2 transition-all ${
-        enabled ? `border-${colorClass}-500` : 'border-gray-700'
+      className={`bg-slate-800 rounded-lg p-4 border-2 transition-all ${
+        enabled ? `border-${colorClass}-500` : 'border-slate-700'
       } ${isPrimary ? 'ring-2 ring-yellow-500' : ''}`}
     >
       <div className="flex items-start justify-between mb-3">
@@ -66,7 +66,7 @@ function FrameworkCard({
             )}
           </h3>
           {metadata && (
-            <p className="text-sm text-gray-400">{metadata.version}</p>
+            <p className="text-sm text-slate-400">{metadata.version}</p>
           )}
         </div>
         <label className="relative inline-flex items-center cursor-pointer">
@@ -76,18 +76,18 @@ function FrameworkCard({
             checked={enabled}
             onChange={onToggle}
           />
-          <div className="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+          <div className="w-11 h-6 bg-slate-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
         </label>
       </div>
 
       {metadata && (
-        <p className="text-sm text-gray-400 mb-3">{metadata.description}</p>
+        <p className="text-sm text-slate-400 mb-3">{metadata.description}</p>
       )}
 
       {score && enabled && (
         <div className="mb-3">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-sm text-gray-400">Compliance Score</span>
+            <span className="text-sm text-slate-400">Compliance Score</span>
             <span
               className={`text-lg font-bold ${
                 score.is_compliant
@@ -100,7 +100,7 @@ function FrameworkCard({
               {score.score_percentage.toFixed(1)}%
             </span>
           </div>
-          <div className="w-full bg-gray-700 rounded-full h-2">
+          <div className="w-full bg-slate-700 rounded-full h-2">
             <div
               className={`h-2 rounded-full ${
                 score.is_compliant
@@ -112,7 +112,7 @@ function FrameworkCard({
               style={{ width: `${score.score_percentage}%` }}
             ></div>
           </div>
-          <div className="flex justify-between text-xs text-gray-500 mt-1">
+          <div className="flex justify-between text-xs text-slate-500 mt-1">
             <span>{score.passing_controls} passing</span>
             <span>{score.failing_controls} failing</span>
             <span>{score.unknown_controls} unknown</span>
@@ -284,14 +284,14 @@ export default function FrameworkConfig() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-900 p-6 flex items-center justify-center">
-        <div className="text-gray-400">Loading...</div>
+      <div className="min-h-screen bg-slate-900 p-6 flex items-center justify-center">
+        <div className="text-slate-400">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6">
+    <div className="min-h-screen bg-slate-900 p-6">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="mb-6">
@@ -304,7 +304,7 @@ export default function FrameworkConfig() {
           <h1 className="text-2xl font-bold text-white">
             Multi-Framework Compliance Configuration
           </h1>
-          <p className="text-gray-400 mt-1">
+          <p className="text-slate-400 mt-1">
             Configure which compliance frameworks this appliance reports against.
             One check can satisfy controls across multiple frameworks.
           </p>
@@ -325,13 +325,13 @@ export default function FrameworkConfig() {
         {/* Appliance Selector */}
         {appliances.length > 1 && (
           <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-400 mb-2">
+            <label className="block text-sm font-medium text-slate-400 mb-2">
               Select Appliance
             </label>
             <select
               value={selectedAppliance || ''}
               onChange={(e) => setSelectedAppliance(e.target.value)}
-              className="bg-gray-800 border border-gray-600 text-white rounded-lg px-4 py-2 w-full max-w-md"
+              className="bg-slate-800 border border-slate-600 text-white rounded-lg px-4 py-2 w-full max-w-md"
             >
               {appliances.map((a) => (
                 <option key={a.appliance_id} value={a.appliance_id}>
@@ -345,17 +345,17 @@ export default function FrameworkConfig() {
         {config && (
           <>
             {/* Industry Selector */}
-            <div className="bg-gray-800 rounded-lg p-4 mb-6">
-              <label className="block text-sm font-medium text-gray-400 mb-2">
+            <div className="bg-slate-800 rounded-lg p-4 mb-6">
+              <label className="block text-sm font-medium text-slate-400 mb-2">
                 Industry
               </label>
-              <p className="text-sm text-gray-500 mb-3">
+              <p className="text-sm text-slate-500 mb-3">
                 Select your industry to get recommended frameworks and set the primary framework.
               </p>
               <select
                 value={config.industry}
                 onChange={(e) => handleIndustryChange(e.target.value)}
-                className="bg-gray-700 border border-gray-600 text-white rounded-lg px-4 py-2 w-full max-w-md"
+                className="bg-slate-700 border border-slate-600 text-white rounded-lg px-4 py-2 w-full max-w-md"
               >
                 {INDUSTRIES.map((ind) => (
                   <option key={ind.value} value={ind.value}>
@@ -395,7 +395,7 @@ export default function FrameworkConfig() {
         )}
 
         {appliances.length === 0 && (
-          <div className="text-center text-gray-400 py-12">
+          <div className="text-center text-slate-400 py-12">
             No appliances found for this site. Deploy an appliance first to configure frameworks.
           </div>
         )}

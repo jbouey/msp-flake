@@ -230,32 +230,32 @@ export const PartnerComplianceSettings: React.FC = () => {
       )}
 
       {/* Framework Distribution */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Framework Usage</h3>
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+        <h3 className="text-lg font-semibold text-slate-900 mb-4">Framework Usage</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           {Object.entries(frameworkDistribution).map(([fw, count]) => (
-            <div key={fw} className="bg-gray-50 rounded-lg p-4 text-center">
+            <div key={fw} className="bg-slate-50 rounded-lg p-4 text-center">
               <p className="text-2xl font-bold text-indigo-600">{count}</p>
-              <p className="text-sm text-gray-600">{getFrameworkName(fw)}</p>
+              <p className="text-sm text-slate-600">{getFrameworkName(fw)}</p>
             </div>
           ))}
           {Object.keys(frameworkDistribution).length === 0 && (
-            <p className="text-gray-500 col-span-full">No frameworks configured yet</p>
+            <p className="text-slate-500 col-span-full">No frameworks configured yet</p>
           )}
         </div>
       </div>
 
       {/* Default Settings */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">Default Compliance Settings</h3>
-        <p className="text-sm text-gray-500 mb-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+        <h3 className="text-lg font-semibold text-slate-900 mb-2">Default Compliance Settings</h3>
+        <p className="text-sm text-slate-500 mb-6">
           These settings apply to new sites by default. Individual sites can override these settings.
         </p>
 
         <div className="space-y-6">
           {/* Default Industry */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Default Industry</label>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Default Industry</label>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
               {INDUSTRIES.map((ind) => (
                 <button
@@ -275,7 +275,7 @@ export const PartnerComplianceSettings: React.FC = () => {
 
           {/* Default Coverage Tier */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Default Coverage Tier</label>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Default Coverage Tier</label>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {COVERAGE_TIERS.map((tier) => (
                 <button
@@ -284,11 +284,11 @@ export const PartnerComplianceSettings: React.FC = () => {
                   className={`p-4 rounded-lg border-2 text-left transition ${
                     selectedTier === tier.id
                       ? 'border-indigo-600 bg-indigo-50'
-                      : 'border-gray-200 hover:border-gray-300'
+                      : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  <p className="font-medium text-gray-900">{tier.name}</p>
-                  <p className="text-sm text-gray-500">{tier.description}</p>
+                  <p className="font-medium text-slate-900">{tier.name}</p>
+                  <p className="text-sm text-slate-500">{tier.description}</p>
                 </button>
               ))}
             </div>
@@ -296,7 +296,7 @@ export const PartnerComplianceSettings: React.FC = () => {
 
           {/* Default Frameworks */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Default Frameworks</label>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Default Frameworks</label>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {availableFrameworks.map((fw) => (
                 <label
@@ -304,7 +304,7 @@ export const PartnerComplianceSettings: React.FC = () => {
                   className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${
                     selectedFrameworks.includes(fw.id)
                       ? 'border-indigo-600 bg-indigo-50'
-                      : 'border-gray-200 hover:border-gray-300'
+                      : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
                   <input
@@ -314,8 +314,8 @@ export const PartnerComplianceSettings: React.FC = () => {
                     className="mt-1 h-4 w-4 text-indigo-600 rounded"
                   />
                   <div>
-                    <p className="font-medium text-gray-900 text-sm">{fw.name}</p>
-                    <p className="text-xs text-gray-500 line-clamp-2">{fw.description}</p>
+                    <p className="font-medium text-slate-900 text-sm">{fw.name}</p>
+                    <p className="text-xs text-slate-500 line-clamp-2">{fw.description}</p>
                   </div>
                 </label>
               ))}
@@ -324,13 +324,13 @@ export const PartnerComplianceSettings: React.FC = () => {
 
           {/* Industry Preset Preview */}
           {industryPresets[selectedIndustry] && (
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-sm font-medium text-gray-700 mb-2">
+            <div className="bg-slate-50 rounded-lg p-4">
+              <p className="text-sm font-medium text-slate-700 mb-2">
                 Industry Preset for {INDUSTRIES.find(i => i.id === selectedIndustry)?.name}:
               </p>
               <div className="flex flex-wrap gap-2">
                 {industryPresets[selectedIndustry].map((fw) => (
-                  <span key={fw} className="px-2 py-1 bg-white rounded text-sm text-gray-600 border">
+                  <span key={fw} className="px-2 py-1 bg-white rounded text-sm text-slate-600 border">
                     {getFrameworkName(fw)}
                   </span>
                 ))}
@@ -349,39 +349,39 @@ export const PartnerComplianceSettings: React.FC = () => {
       </div>
 
       {/* Sites Compliance */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="p-6 border-b">
-          <h3 className="text-lg font-semibold text-gray-900">Site Compliance Configuration</h3>
-          <p className="text-sm text-gray-500">Configure compliance frameworks for each site</p>
+          <h3 className="text-lg font-semibold text-slate-900">Site Compliance Configuration</h3>
+          <p className="text-sm text-slate-500">Configure compliance frameworks for each site</p>
         </div>
 
         {sites.length === 0 ? (
           <div className="p-12 text-center">
-            <p className="text-gray-500">No sites configured yet</p>
+            <p className="text-slate-500">No sites configured yet</p>
           </div>
         ) : (
           <table className="w-full">
-            <thead className="bg-gray-50 border-b">
+            <thead className="bg-slate-50 border-b">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Site</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Industry</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tier</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Frameworks</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Site</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Industry</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Tier</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Frameworks</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
+            <tbody className="divide-y divide-slate-200">
               {sites.map((site) => (
                 <tr key={site.site_id} className="hover:bg-indigo-50/50">
                   <td className="px-6 py-4">
-                    <p className="font-medium text-gray-900">{site.site_name}</p>
-                    <p className="text-sm text-gray-500">{site.site_id}</p>
+                    <p className="font-medium text-slate-900">{site.site_name}</p>
+                    <p className="text-sm text-slate-500">{site.site_id}</p>
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-600 capitalize">
+                  <td className="px-6 py-4 text-sm text-slate-600 capitalize">
                     {site.industry || 'Not set'}
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-600 capitalize">
+                  <td className="px-6 py-4 text-sm text-slate-600 capitalize">
                     {site.tier}
                   </td>
                   <td className="px-6 py-4">
@@ -402,7 +402,7 @@ export const PartnerComplianceSettings: React.FC = () => {
                         ? 'bg-green-100 text-green-800'
                         : site.status === 'pending'
                         ? 'bg-yellow-100 text-yellow-800'
-                        : 'bg-gray-100 text-gray-800'
+                        : 'bg-slate-100 text-slate-800'
                     }`}>
                       {site.status}
                     </span>
@@ -430,13 +430,13 @@ export const PartnerComplianceSettings: React.FC = () => {
       {editingSite && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
           <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            <h3 className="text-lg font-semibold text-slate-900 mb-4">
               Configure Compliance - {sites.find(s => s.site_id === editingSite)?.site_name}
             </h3>
 
             {/* Quick Presets */}
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Apply Industry Preset</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Apply Industry Preset</label>
               <div className="flex flex-wrap gap-2">
                 {INDUSTRIES.map((ind) => (
                   <button
@@ -451,16 +451,16 @@ export const PartnerComplianceSettings: React.FC = () => {
             </div>
 
             <div className="border-t pt-4 mb-4">
-              <p className="text-sm text-gray-500 mb-4">Or customize frameworks manually:</p>
+              <p className="text-sm text-slate-500 mb-4">Or customize frameworks manually:</p>
             </div>
 
             {/* Site Industry */}
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Industry</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Industry</label>
               <select
                 value={siteIndustry}
                 onChange={(e) => setSiteIndustry(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="">Use default</option>
                 {INDUSTRIES.map((ind) => (
@@ -471,7 +471,7 @@ export const PartnerComplianceSettings: React.FC = () => {
 
             {/* Site Frameworks */}
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Enabled Frameworks</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Enabled Frameworks</label>
               <div className="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto">
                 {availableFrameworks.map((fw) => (
                   <label
@@ -479,7 +479,7 @@ export const PartnerComplianceSettings: React.FC = () => {
                     className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${
                       siteFrameworks.includes(fw.id)
                         ? 'border-indigo-600 bg-indigo-50'
-                        : 'border-gray-200 hover:border-gray-300'
+                        : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
                     <input
@@ -489,8 +489,8 @@ export const PartnerComplianceSettings: React.FC = () => {
                       className="mt-1 h-4 w-4 text-indigo-600 rounded"
                     />
                     <div>
-                      <p className="font-medium text-gray-900 text-sm">{fw.name}</p>
-                      <p className="text-xs text-gray-500">{fw.description}</p>
+                      <p className="font-medium text-slate-900 text-sm">{fw.name}</p>
+                      <p className="text-xs text-slate-500">{fw.description}</p>
                     </div>
                   </label>
                 ))}
@@ -500,7 +500,7 @@ export const PartnerComplianceSettings: React.FC = () => {
             <div className="flex gap-3 justify-end">
               <button
                 onClick={() => setEditingSite(null)}
-                className="px-4 py-2 text-gray-600 hover:text-gray-900 transition"
+                className="px-4 py-2 text-slate-600 hover:text-slate-900 transition"
               >
                 Cancel
               </button>

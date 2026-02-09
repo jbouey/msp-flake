@@ -41,7 +41,7 @@ const StatusBadge: React.FC<{ status: VerificationResult['status'] }> = ({ statu
     invalid: 'bg-red-100 text-red-800 border-red-200',
     broken: 'bg-red-100 text-red-800 border-red-200',
     signature_invalid: 'bg-orange-100 text-orange-800 border-orange-200',
-    empty: 'bg-gray-100 text-gray-800 border-gray-200',
+    empty: 'bg-slate-100 text-slate-800 border-slate-200',
     error: 'bg-red-100 text-red-800 border-red-200',
   };
   const labels: Record<string, string> = {
@@ -72,9 +72,9 @@ const StatusBadge: React.FC<{ status: VerificationResult['status'] }> = ({ statu
 };
 
 const HashDisplay: React.FC<{ label: string; hash: string; isGenesis?: boolean }> = ({ label, hash, isGenesis }) => (
-  <div className="bg-gray-50 rounded-lg p-3">
-    <span className="text-xs text-gray-500 block mb-1">{label}</span>
-    <code className={`text-xs font-mono break-all ${isGenesis ? 'text-gray-400' : 'text-gray-700'}`}>
+  <div className="bg-slate-50 rounded-lg p-3">
+    <span className="text-xs text-slate-500 block mb-1">{label}</span>
+    <code className={`text-xs font-mono break-all ${isGenesis ? 'text-slate-400' : 'text-slate-700'}`}>
       {isGenesis ? '(genesis - all zeros)' : hash}
     </code>
   </div>
@@ -91,7 +91,7 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
           <div key={bundle.bundle_id} className="relative pl-8">
             {/* Timeline connector */}
             {index < bundles.length - 1 && (
-              <div className="absolute left-3 top-8 bottom-0 w-0.5 bg-gray-200" />
+              <div className="absolute left-3 top-8 bottom-0 w-0.5 bg-slate-200" />
             )}
             {/* Timeline dot */}
             <div className={`absolute left-0 top-2 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold
@@ -99,11 +99,11 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
               {isGenesis ? 'G' : bundles.length - index}
             </div>
 
-            <div className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-sm transition">
+            <div className="bg-white border border-slate-200 rounded-xl p-4 hover:shadow-sm transition">
               <div className="flex items-start justify-between mb-3">
                 <div>
-                  <h4 className="font-semibold text-gray-900">{bundle.bundle_id}</h4>
-                  <p className="text-sm text-gray-500">
+                  <h4 className="font-semibold text-slate-900">{bundle.bundle_id}</h4>
+                  <p className="text-sm text-slate-500">
                     {new Date(bundle.created_at).toLocaleString()}
                   </p>
                 </div>
@@ -116,7 +116,7 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
                       Signed
                     </span>
                   )}
-                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
+                  <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded">
                     {bundle.checks_count} checks
                   </span>
                 </div>
@@ -136,7 +136,7 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
 
               {/* Chain link visualization */}
               {!isGenesis && (
-                <div className="mt-3 flex items-center gap-2 text-xs text-gray-400">
+                <div className="mt-3 flex items-center gap-2 text-xs text-slate-400">
                   <span className="font-mono">{bundle.prev_hash.substring(0, 8)}...</span>
                   <span>links to previous bundle</span>
                 </div>
@@ -202,10 +202,10 @@ export const PortalVerify: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Verifying evidence chain...</p>
+          <p className="text-slate-600">Verifying evidence chain...</p>
         </div>
       </div>
     );
@@ -213,13 +213,13 @@ export const PortalVerify: React.FC = () => {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8 text-center">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <span className="text-3xl">!</span>
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Verification Error</h1>
-          <p className="text-gray-600 mb-6">{error}</p>
+          <h1 className="text-xl font-semibold text-slate-900 mb-2">Verification Error</h1>
+          <p className="text-slate-600 mb-6">{error}</p>
           <button
             onClick={handleBackToDashboard}
             className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
@@ -232,19 +232,19 @@ export const PortalVerify: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50">
       {/* Header */}
       <header className="bg-white border-b shadow-sm">
         <div className="max-w-5xl mx-auto px-6 py-4 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Evidence Chain Verification</h1>
-            <p className="text-sm text-gray-500">
+            <h1 className="text-2xl font-bold text-slate-900">Evidence Chain Verification</h1>
+            <p className="text-sm text-slate-500">
               Cryptographic proof of compliance evidence integrity
             </p>
           </div>
           <button
             onClick={handleBackToDashboard}
-            className="px-4 py-2 text-sm text-gray-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition"
+            className="px-4 py-2 text-sm text-slate-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition"
           >
             Back to Dashboard
           </button>
@@ -253,9 +253,9 @@ export const PortalVerify: React.FC = () => {
 
       <main className="max-w-5xl mx-auto px-6 py-8">
         {/* Verification Status Card */}
-        <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 mb-8">
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 mb-8">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-gray-900">Chain Integrity Status</h2>
+            <h2 className="text-xl font-semibold text-slate-900">Chain Integrity Status</h2>
             {verification && <StatusBadge status={verification.status} />}
           </div>
 
@@ -298,8 +298,8 @@ export const PortalVerify: React.FC = () => {
           )}
 
           {verification?.status === 'empty' && (
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6">
-              <p className="text-gray-600">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-6">
+              <p className="text-slate-600">
                 No compliance evidence bundles have been recorded yet for this site.
                 Evidence will appear here after the first compliance scan.
               </p>
@@ -309,33 +309,33 @@ export const PortalVerify: React.FC = () => {
           {/* Chain Statistics */}
           {verification && verification.status !== 'empty' && (
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="bg-gray-50 rounded-lg p-4 text-center">
-                <span className="text-3xl font-bold text-gray-900">{verification.chain_length}</span>
-                <p className="text-sm text-gray-500 mt-1">Total Bundles</p>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <span className="text-3xl font-bold text-slate-900">{verification.chain_length}</span>
+                <p className="text-sm text-slate-500 mt-1">Total Bundles</p>
               </div>
-              <div className="bg-gray-50 rounded-lg p-4 text-center">
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
                 <span className="text-3xl font-bold text-green-600">
                   {verification.signatures_valid ?? 0}
                 </span>
-                <p className="text-sm text-gray-500 mt-1">Signed Bundles</p>
+                <p className="text-sm text-slate-500 mt-1">Signed Bundles</p>
               </div>
-              <div className="bg-gray-50 rounded-lg p-4 text-center">
-                <span className="text-sm font-mono text-gray-700">
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <span className="text-sm font-mono text-slate-700">
                   {verification.first_bundle?.substring(0, 12)}...
                 </span>
-                <p className="text-sm text-gray-500 mt-1">Genesis Bundle</p>
+                <p className="text-sm text-slate-500 mt-1">Genesis Bundle</p>
               </div>
-              <div className="bg-gray-50 rounded-lg p-4 text-center">
-                <span className="text-sm text-gray-700">
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <span className="text-sm text-slate-700">
                   {verification.first_timestamp && new Date(verification.first_timestamp).toLocaleDateString()}
                 </span>
-                <p className="text-sm text-gray-500 mt-1">First Evidence</p>
+                <p className="text-sm text-slate-500 mt-1">First Evidence</p>
               </div>
-              <div className="bg-gray-50 rounded-lg p-4 text-center">
-                <span className="text-sm text-gray-700">
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <span className="text-sm text-slate-700">
                   {verification.last_timestamp && new Date(verification.last_timestamp).toLocaleDateString()}
                 </span>
-                <p className="text-sm text-gray-500 mt-1">Latest Evidence</p>
+                <p className="text-sm text-slate-500 mt-1">Latest Evidence</p>
               </div>
             </div>
           )}
@@ -343,9 +343,9 @@ export const PortalVerify: React.FC = () => {
 
         {/* Bundle Timeline */}
         {bundles.length > 0 && (
-          <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
-            <h2 className="text-xl font-semibold text-gray-900 mb-6">Evidence Bundle Timeline</h2>
-            <p className="text-sm text-gray-500 mb-6">
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8">
+            <h2 className="text-xl font-semibold text-slate-900 mb-6">Evidence Bundle Timeline</h2>
+            <p className="text-sm text-slate-500 mb-6">
               Each bundle contains a cryptographic hash linking it to the previous bundle,
               forming an immutable chain. The genesis bundle (G) starts the chain with an all-zeros previous hash.
             </p>
@@ -389,13 +389,13 @@ export const PortalVerify: React.FC = () => {
         </section>
 
         {/* Footer */}
-        <footer className="mt-12 pt-8 border-t border-gray-200 text-center">
-          <p className="text-sm text-gray-500">
+        <footer className="mt-12 pt-8 border-t border-slate-200 text-center">
+          <p className="text-sm text-slate-500">
             This verification page provides cryptographic proof of evidence integrity for HIPAA auditors.
           </p>
           <div className="mt-4 flex items-center justify-center gap-2">
-            <span className="text-xs text-gray-300">Powered by</span>
-            <span className="text-sm font-semibold text-gray-500">OsirisCare</span>
+            <span className="text-xs text-slate-300">Powered by</span>
+            <span className="text-sm font-semibold text-slate-500">OsirisCare</span>
           </div>
         </footer>
       </main>

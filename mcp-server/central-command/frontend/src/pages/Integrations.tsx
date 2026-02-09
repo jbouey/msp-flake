@@ -131,13 +131,13 @@ function IntegrationCard({
   };
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 transition-colors">
+    <div className="bg-slate-800 rounded-lg p-4 border border-slate-700 hover:border-slate-600 transition-colors">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
           <ProviderIcon provider={integration.provider} />
           <div>
             <h3 className="text-lg font-semibold text-white">{integration.name}</h3>
-            <p className="text-sm text-gray-400">{info.name}</p>
+            <p className="text-sm text-slate-400">{info.name}</p>
           </div>
         </div>
         <StatusBadge status={integration.status} />
@@ -145,20 +145,20 @@ function IntegrationCard({
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div>
-          <p className="text-xs text-gray-500 uppercase">Resources</p>
+          <p className="text-xs text-slate-500 uppercase">Resources</p>
           <p className="text-lg font-semibold text-white">{integration.resource_count}</p>
         </div>
         <div>
-          <p className="text-xs text-gray-500 uppercase">Health</p>
+          <p className="text-xs text-slate-500 uppercase">Health</p>
           <HealthBadge health={integration.health} />
         </div>
         <div>
-          <p className="text-xs text-gray-500 uppercase">Last Sync</p>
-          <p className="text-sm text-gray-300">{formatDate(integration.last_sync)}</p>
+          <p className="text-xs text-slate-500 uppercase">Last Sync</p>
+          <p className="text-sm text-slate-300">{formatDate(integration.last_sync)}</p>
         </div>
         <div>
-          <p className="text-xs text-gray-500 uppercase">Next Sync</p>
-          <p className="text-sm text-gray-300">{formatDate(integration.next_sync)}</p>
+          <p className="text-xs text-slate-500 uppercase">Next Sync</p>
+          <p className="text-sm text-slate-300">{formatDate(integration.next_sync)}</p>
         </div>
       </div>
 
@@ -168,7 +168,7 @@ function IntegrationCard({
         </div>
       )}
 
-      <div className="flex items-center gap-2 pt-4 border-t border-gray-700">
+      <div className="flex items-center gap-2 pt-4 border-t border-slate-700">
         <Link
           to={`/sites/${siteId}/integrations/${integration.id}`}
           className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
@@ -178,7 +178,7 @@ function IntegrationCard({
         <button
           onClick={onSync}
           disabled={syncing || !['active', 'connected', 'error'].includes(integration.status)}
-          className="px-3 py-1.5 text-sm bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-3 py-1.5 text-sm bg-slate-700 text-white rounded hover:bg-slate-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {syncing ? 'Syncing...' : 'Sync Now'}
         </button>
@@ -192,7 +192,7 @@ function IntegrationCard({
           </button>
         ) : (
           <div className="flex items-center gap-2 ml-auto">
-            <span className="text-sm text-gray-400">Delete?</span>
+            <span className="text-sm text-slate-400">Delete?</span>
             <button
               onClick={handleDeleteClick}
               disabled={deleting}
@@ -227,18 +227,18 @@ function HealthOverview({ siteId }: { siteId: string }) {
   };
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-6">
+    <div className="bg-slate-800 rounded-lg p-4 border border-slate-700 mb-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div>
-            <p className="text-sm text-gray-400">Overall Status</p>
-            <p className={`text-xl font-bold ${statusColors[health.overall_status] || 'text-gray-400'}`}>
+            <p className="text-sm text-slate-400">Overall Status</p>
+            <p className={`text-xl font-bold ${statusColors[health.overall_status] || 'text-slate-400'}`}>
               {health.overall_status.charAt(0).toUpperCase() + health.overall_status.slice(1)}
             </p>
           </div>
-          <div className="h-10 w-px bg-gray-700" />
+          <div className="h-10 w-px bg-slate-700" />
           <div>
-            <p className="text-sm text-gray-400">Integrations</p>
+            <p className="text-sm text-slate-400">Integrations</p>
             <p className="text-xl font-bold text-white">{health.total_integrations}</p>
           </div>
         </div>
@@ -246,13 +246,13 @@ function HealthOverview({ siteId }: { siteId: string }) {
           {health.total_critical > 0 && (
             <div className="text-center">
               <p className="text-2xl font-bold text-red-400">{health.total_critical}</p>
-              <p className="text-xs text-gray-400">Critical</p>
+              <p className="text-xs text-slate-400">Critical</p>
             </div>
           )}
           {health.total_high > 0 && (
             <div className="text-center">
               <p className="text-2xl font-bold text-orange-400">{health.total_high}</p>
-              <p className="text-xs text-gray-400">High</p>
+              <p className="text-xs text-slate-400">High</p>
             </div>
           )}
         </div>
@@ -264,9 +264,9 @@ function HealthOverview({ siteId }: { siteId: string }) {
 // Empty state component
 function EmptyState({ siteId }: { siteId: string }) {
   return (
-    <div className="bg-gray-800 rounded-lg p-8 border border-gray-700 text-center">
+    <div className="bg-slate-800 rounded-lg p-8 border border-slate-700 text-center">
       <svg
-        className="mx-auto h-12 w-12 text-gray-500"
+        className="mx-auto h-12 w-12 text-slate-500"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -279,7 +279,7 @@ function EmptyState({ siteId }: { siteId: string }) {
         />
       </svg>
       <h3 className="mt-4 text-lg font-medium text-white">No cloud integrations</h3>
-      <p className="mt-2 text-gray-400">
+      <p className="mt-2 text-slate-400">
         Connect your cloud accounts to collect compliance evidence automatically.
       </p>
       <Link
@@ -307,7 +307,7 @@ export default function Integrations() {
 
   if (!siteId) {
     return (
-      <div className="p-6 text-center text-gray-400">
+      <div className="p-6 text-center text-slate-400">
         Please select a site to view integrations.
       </div>
     );
@@ -337,11 +337,11 @@ export default function Integrations() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6">
+    <div className="min-h-screen bg-slate-900 p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <div className="flex items-center gap-2 text-sm text-gray-400 mb-1">
+          <div className="flex items-center gap-2 text-sm text-slate-400 mb-1">
             <Link to="/sites" className="hover:text-white">Sites</Link>
             <span>/</span>
             <Link to={`/sites/${siteId}`} className="hover:text-white">{siteId}</Link>
@@ -349,7 +349,7 @@ export default function Integrations() {
             <span className="text-white">Integrations</span>
           </div>
           <h1 className="text-2xl font-bold text-white">Cloud Integrations</h1>
-          <p className="text-gray-400 mt-1">
+          <p className="text-slate-400 mt-1">
             Connect cloud accounts to collect compliance evidence
           </p>
         </div>
@@ -402,16 +402,16 @@ export default function Integrations() {
       )}
 
       {/* Provider info */}
-      <div className="mt-8 pt-8 border-t border-gray-800">
+      <div className="mt-8 pt-8 border-t border-slate-800">
         <h2 className="text-lg font-semibold text-white mb-4">Supported Providers</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {Object.entries(PROVIDER_INFO).map(([provider, info]) => (
-            <div key={provider} className="bg-gray-800/50 rounded-lg p-4">
+            <div key={provider} className="bg-slate-800/50 rounded-lg p-4">
               <div className="flex items-center gap-2 mb-2">
                 <ProviderIcon provider={provider as IntegrationProvider} size={20} />
                 <span className="font-medium text-white">{info.name}</span>
               </div>
-              <p className="text-xs text-gray-400">{info.description}</p>
+              <p className="text-xs text-slate-400">{info.description}</p>
             </div>
           ))}
         </div>

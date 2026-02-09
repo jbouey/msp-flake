@@ -41,9 +41,9 @@ export const KPICard: React.FC<KPICardProps> = ({ label, value, unit, status, de
           {statusLabels[status]}
         </span>
       </div>
-      <div className="text-gray-800 font-medium mt-2">{label}</div>
+      <div className="text-slate-800 font-medium mt-2">{label}</div>
       {description && (
-        <div className="text-gray-500 text-xs mt-1">{description}</div>
+        <div className="text-slate-500 text-xs mt-1">{description}</div>
       )}
     </div>
   );

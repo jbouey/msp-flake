@@ -63,19 +63,19 @@ function ResourceCard({ resource }: { resource: IntegrationResource }) {
   const warningChecks = checks.filter((c) => c.status === 'warning');
 
   return (
-    <div className="bg-gray-800 rounded-lg border border-gray-700">
+    <div className="bg-slate-800 rounded-lg border border-slate-700">
       <div
-        className="p-4 cursor-pointer hover:bg-gray-750 transition-colors"
+        className="p-4 cursor-pointer hover:bg-slate-750 transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-xs text-gray-500 uppercase">{typeLabel}</span>
+              <span className="text-xs text-slate-500 uppercase">{typeLabel}</span>
               <RiskBadge level={resource.risk_level} />
             </div>
             <h3 className="font-medium text-white">{resource.name}</h3>
-            <p className="text-xs text-gray-500 font-mono mt-1">{resource.resource_id}</p>
+            <p className="text-xs text-slate-500 font-mono mt-1">{resource.resource_id}</p>
           </div>
           <div className="flex items-center gap-4 text-sm">
             {failingChecks.length > 0 && (
@@ -85,7 +85,7 @@ function ResourceCard({ resource }: { resource: IntegrationResource }) {
               <span className="text-yellow-400">{warningChecks.length} warnings</span>
             )}
             <svg
-              className={`w-5 h-5 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
+              className={`w-5 h-5 text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -97,8 +97,8 @@ function ResourceCard({ resource }: { resource: IntegrationResource }) {
       </div>
 
       {expanded && (
-        <div className="px-4 pb-4 border-t border-gray-700 pt-4">
-          <h4 className="text-sm font-medium text-gray-300 mb-3">Compliance Checks</h4>
+        <div className="px-4 pb-4 border-t border-slate-700 pt-4">
+          <h4 className="text-sm font-medium text-slate-300 mb-3">Compliance Checks</h4>
           <div className="space-y-2">
             {Object.entries(resource.compliance_checks).map(([key, check]) => (
               <div
@@ -108,7 +108,7 @@ function ResourceCard({ resource }: { resource: IntegrationResource }) {
                     ? 'bg-red-900/20 border border-red-800'
                     : check.status === 'warning'
                     ? 'bg-yellow-900/20 border border-yellow-800'
-                    : 'bg-gray-900/50 border border-gray-700'
+                    : 'bg-slate-900/50 border border-slate-700'
                 }`}
               >
                 <div className="flex items-start gap-2">
@@ -116,11 +116,11 @@ function ResourceCard({ resource }: { resource: IntegrationResource }) {
                   <div className="flex-1">
                     <div className="flex items-center justify-between">
                       <span className="font-medium text-white">{check.check}</span>
-                      <span className="text-xs text-gray-500">{check.control}</span>
+                      <span className="text-xs text-slate-500">{check.control}</span>
                     </div>
-                    <p className="text-sm text-gray-400 mt-1">{check.description}</p>
+                    <p className="text-sm text-slate-400 mt-1">{check.description}</p>
                     {check.details && (
-                      <p className="text-xs text-gray-500 mt-1">{check.details}</p>
+                      <p className="text-xs text-slate-500 mt-1">{check.details}</p>
                     )}
                   </div>
                 </div>
@@ -149,9 +149,9 @@ function SyncBanner({
   };
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 flex items-center justify-between">
+    <div className="bg-slate-800 rounded-lg p-4 border border-slate-700 flex items-center justify-between">
       <div>
-        <p className="text-sm text-gray-400">Last synchronized</p>
+        <p className="text-sm text-slate-400">Last synchronized</p>
         <p className="text-white font-medium">{formatDate(lastSync)}</p>
       </div>
       <button
@@ -214,11 +214,11 @@ function FilterControls({
   return (
     <div className="flex flex-wrap gap-4 mb-4">
       <div>
-        <label className="block text-xs text-gray-400 mb-1">Resource Type</label>
+        <label className="block text-xs text-slate-400 mb-1">Resource Type</label>
         <select
           value={selectedType || ''}
           onChange={(e) => onTypeChange(e.target.value || null)}
-          className="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+          className="px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
         >
           <option value="">All Types</option>
           {resourceTypes.map((type) => (
@@ -230,11 +230,11 @@ function FilterControls({
       </div>
 
       <div>
-        <label className="block text-xs text-gray-400 mb-1">Risk Level</label>
+        <label className="block text-xs text-slate-400 mb-1">Risk Level</label>
         <select
           value={selectedRisk || ''}
           onChange={(e) => onRiskChange((e.target.value as RiskLevel) || null)}
-          className="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+          className="px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
         >
           <option value="">All Levels</option>
           {(Object.keys(RISK_LEVEL_CONFIG) as RiskLevel[]).map((level) => (
@@ -258,20 +258,20 @@ function StatsSummary({
 }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-      <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+      <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
         <p className="text-2xl font-bold text-white">{total}</p>
-        <p className="text-sm text-gray-400">Total Resources</p>
+        <p className="text-sm text-slate-400">Total Resources</p>
       </div>
       {(['critical', 'high', 'medium', 'low'] as RiskLevel[]).map((level) => (
         <div
           key={level}
-          className="bg-gray-800 rounded-lg p-4 border border-gray-700"
+          className="bg-slate-800 rounded-lg p-4 border border-slate-700"
           style={{ borderLeftColor: RISK_LEVEL_CONFIG[level].color, borderLeftWidth: 3 }}
         >
           <p className="text-2xl font-bold" style={{ color: RISK_LEVEL_CONFIG[level].color }}>
             {byRisk[level] || 0}
           </p>
-          <p className="text-sm text-gray-400">{RISK_LEVEL_CONFIG[level].label}</p>
+          <p className="text-sm text-slate-400">{RISK_LEVEL_CONFIG[level].label}</p>
         </div>
       ))}
     </div>
@@ -324,7 +324,7 @@ export default function IntegrationResources() {
   }, [syncJob?.status]);
 
   if (!siteId || !integrationId) {
-    return <div className="p-6 text-gray-400">Missing site or integration ID</div>;
+    return <div className="p-6 text-slate-400">Missing site or integration ID</div>;
   }
 
   const handleSync = async () => {
@@ -361,10 +361,10 @@ export default function IntegrationResources() {
   const syncing = syncJobId !== null && syncJob?.status === 'running';
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6">
+    <div className="min-h-screen bg-slate-900 p-6">
       {/* Header */}
       <div className="mb-6">
-        <div className="flex items-center gap-2 text-sm text-gray-400 mb-1">
+        <div className="flex items-center gap-2 text-sm text-slate-400 mb-1">
           <Link to="/sites" className="hover:text-white">Sites</Link>
           <span>/</span>
           <Link to={`/sites/${siteId}`} className="hover:text-white">{siteId}</Link>
@@ -386,13 +386,13 @@ export default function IntegrationResources() {
                 </span>
               )}
             </h1>
-            <p className="text-gray-400 mt-1">
+            <p className="text-slate-400 mt-1">
               {total} resources collected
             </p>
           </div>
           <Link
             to={`/sites/${siteId}/integrations`}
-            className="text-gray-400 hover:text-white flex items-center gap-1"
+            className="text-slate-400 hover:text-white flex items-center gap-1"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -449,8 +449,8 @@ export default function IntegrationResources() {
 
       {/* Empty state */}
       {!loadingResources && resources.length === 0 && (
-        <div className="bg-gray-800 rounded-lg p-8 border border-gray-700 text-center">
-          <p className="text-gray-400">
+        <div className="bg-slate-800 rounded-lg p-8 border border-slate-700 text-center">
+          <p className="text-slate-400">
             {selectedType || selectedRisk
               ? 'No resources match the current filters'
               : 'No resources have been collected yet'}
@@ -470,21 +470,21 @@ export default function IntegrationResources() {
       {/* Pagination */}
       {total > pageSize && (
         <div className="mt-6 flex items-center justify-between">
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-slate-400">
             Showing {page * pageSize + 1} - {Math.min((page + 1) * pageSize, total)} of {total}
           </p>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setPage((p) => Math.max(0, p - 1))}
               disabled={page === 0}
-              className="px-3 py-1 bg-gray-700 text-white rounded hover:bg-gray-600 disabled:opacity-50"
+              className="px-3 py-1 bg-slate-700 text-white rounded hover:bg-slate-600 disabled:opacity-50"
             >
               Previous
             </button>
             <button
               onClick={() => setPage((p) => p + 1)}
               disabled={(page + 1) * pageSize >= total}
-              className="px-3 py-1 bg-gray-700 text-white rounded hover:bg-gray-600 disabled:opacity-50"
+              className="px-3 py-1 bg-slate-700 text-white rounded hover:bg-slate-600 disabled:opacity-50"
             >
               Next
             </button>

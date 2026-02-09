@@ -157,7 +157,7 @@ export const PartnerDashboard: React.FC = () => {
       case 'revoked':
         return 'bg-red-100 text-red-800';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-slate-100 text-slate-800';
     }
   };
 
@@ -185,14 +185,14 @@ export const PartnerDashboard: React.FC = () => {
 
   if (isLoading || loading) {
     return (
-      <div className="min-h-screen bg-gray-50/80 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50/80 flex items-center justify-center">
         <div className="text-center">
           <div className="w-12 h-12 rounded-2xl mx-auto mb-4 flex items-center justify-center animate-pulse-soft" style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)' }}>
             <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
             </svg>
           </div>
-          <p className="text-gray-500 text-sm">Loading dashboard...</p>
+          <p className="text-slate-500 text-sm">Loading dashboard...</p>
         </div>
       </div>
     );
@@ -205,9 +205,9 @@ export const PartnerDashboard: React.FC = () => {
   const primaryColor = partner.primary_color || '#4F46E5';
 
   return (
-    <div className="min-h-screen bg-gray-50/80 page-enter">
+    <div className="min-h-screen bg-slate-50/80 page-enter">
       {/* Header */}
-      <header className="sticky top-0 z-30 border-b border-gray-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
+      <header className="sticky top-0 z-30 border-b border-slate-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
             {partner.logo_url ? (
@@ -221,8 +221,8 @@ export const PartnerDashboard: React.FC = () => {
               </div>
             )}
             <div>
-              <h1 className="text-lg font-semibold text-gray-900 tracking-tight">{partner.brand_name}</h1>
-              <p className="text-xs text-gray-500">Partner Dashboard</p>
+              <h1 className="text-lg font-semibold text-slate-900 tracking-tight">{partner.brand_name}</h1>
+              <p className="text-xs text-slate-500">Partner Dashboard</p>
             </div>
           </div>
           <button
@@ -230,7 +230,7 @@ export const PartnerDashboard: React.FC = () => {
               logout();
               navigate('/partner/login');
             }}
-            className="px-4 py-2 text-sm text-gray-500 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition"
+            className="px-4 py-2 text-sm text-slate-500 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition"
           >
             Sign Out
           </button>
@@ -240,39 +240,39 @@ export const PartnerDashboard: React.FC = () => {
       {/* Stats */}
       <div className="max-w-7xl mx-auto px-6 py-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(79,70,229,0.12) 0%, rgba(124,58,237,0.08) 100%)' }}>
                 <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5" /></svg>
               </div>
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Sites</p>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Total Sites</p>
             </div>
-            <p className="text-3xl font-bold text-gray-900 tabular-nums">{partner.site_count}</p>
+            <p className="text-3xl font-bold text-slate-900 tabular-nums">{partner.site_count}</p>
           </div>
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(234,179,8,0.12) 0%, rgba(245,158,11,0.08) 100%)' }}>
                 <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
               </div>
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Pending</p>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Pending</p>
             </div>
             <p className="text-3xl font-bold text-yellow-600 tabular-nums">{partner.provisions.pending}</p>
           </div>
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.12) 0%, rgba(22,163,74,0.08) 100%)' }}>
                 <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
               </div>
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Claimed</p>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Claimed</p>
             </div>
             <p className="text-3xl font-bold text-green-600 tabular-nums">{partner.provisions.claimed}</p>
           </div>
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${primaryColor}1F 0%, ${primaryColor}14 100%)` }}>
                 <svg className="w-5 h-5" style={{ color: primaryColor }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
               </div>
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Revenue Share</p>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Revenue Share</p>
             </div>
             <p className="text-3xl font-bold tabular-nums" style={{ color: primaryColor }}>
               {partner.revenue_share_percent}%
@@ -289,7 +289,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'sites'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
             }`}
           >
             Sites ({sites.length})
@@ -299,7 +299,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'provisions'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
             }`}
           >
             Provision Codes ({provisions.length})
@@ -309,7 +309,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'billing'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
             }`}
           >
             Billing
@@ -319,7 +319,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'compliance'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
             }`}
           >
             Compliance
@@ -329,7 +329,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'exceptions'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
             }`}
           >
             Exceptions
@@ -339,7 +339,7 @@ export const PartnerDashboard: React.FC = () => {
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'learning'
                 ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
             }`}
           >
             Learning
@@ -350,16 +350,16 @@ export const PartnerDashboard: React.FC = () => {
       {/* Content */}
       <div className="max-w-7xl mx-auto px-6 py-6">
         {activeTab === 'sites' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             {sites.length === 0 ? (
               <div className="p-12 text-center">
-                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                   </svg>
                 </div>
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No Sites Yet</h3>
-                <p className="text-gray-500 mb-4">
+                <h3 className="text-lg font-medium text-slate-900 mb-2">No Sites Yet</h3>
+                <p className="text-slate-500 mb-4">
                   Create a provision code and use it to onboard your first client.
                 </p>
                 <button
@@ -374,22 +374,22 @@ export const PartnerDashboard: React.FC = () => {
               </div>
             ) : (
               <table className="w-full">
-                <thead className="bg-gray-50 border-b">
+                <thead className="bg-slate-50 border-b">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Site</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tier</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Appliances</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Check-in</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Site</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Tier</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Appliances</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Last Check-in</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
+                <tbody className="divide-y divide-slate-200">
                   {sites.map((site) => (
                     <tr key={site.site_id} className="hover:bg-indigo-50/50">
                       <td className="px-6 py-4">
                         <div>
-                          <p className="font-medium text-gray-900">{site.clinic_name}</p>
-                          <p className="text-sm text-gray-500">{site.site_id}</p>
+                          <p className="font-medium text-slate-900">{site.clinic_name}</p>
+                          <p className="text-sm text-slate-500">{site.site_id}</p>
                         </div>
                       </td>
                       <td className="px-6 py-4">
@@ -397,9 +397,9 @@ export const PartnerDashboard: React.FC = () => {
                           {site.status}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-600 capitalize">{site.tier}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{site.appliance_count}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{formatTime(site.last_checkin)}</td>
+                      <td className="px-6 py-4 text-sm text-slate-600 capitalize">{site.tier}</td>
+                      <td className="px-6 py-4 text-sm text-slate-600">{site.appliance_count}</td>
+                      <td className="px-6 py-4 text-sm text-slate-600">{formatTime(site.last_checkin)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -427,17 +427,17 @@ export const PartnerDashboard: React.FC = () => {
             {showNewProvision && (
               <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
                 <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Create Provision Code</h3>
+                  <h3 className="text-lg font-semibold text-slate-900 mb-4">Create Provision Code</h3>
                   <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Client Name</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Client Name</label>
                     <input
                       type="text"
                       value={newClientName}
                       onChange={(e) => setNewClientName(e.target.value)}
                       placeholder="e.g., Scranton Family Practice"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                     />
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-slate-500 mt-1">
                       This will be the default name when the appliance claims this code.
                     </p>
                   </div>
@@ -447,7 +447,7 @@ export const PartnerDashboard: React.FC = () => {
                         setShowNewProvision(false);
                         setNewClientName('');
                       }}
-                      className="px-4 py-2 text-gray-600 hover:text-gray-900 transition"
+                      className="px-4 py-2 text-slate-600 hover:text-slate-900 transition"
                     >
                       Cancel
                     </button>
@@ -468,13 +468,13 @@ export const PartnerDashboard: React.FC = () => {
               <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
                 <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-xl">
                   <div className="text-center">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">Provision QR Code</h3>
-                    <p className="text-sm text-gray-500 mb-6">
+                    <h3 className="text-lg font-semibold text-slate-900 mb-2">Provision QR Code</h3>
+                    <p className="text-sm text-slate-500 mb-6">
                       {qrProvision.target_client_name || 'New Appliance'}
                     </p>
 
                     {/* QR Code */}
-                    <div className="bg-white p-4 rounded-xl border-2 border-gray-200 inline-block mb-6">
+                    <div className="bg-white p-4 rounded-xl border-2 border-slate-200 inline-block mb-6">
                       <QRCodeSVG
                         value={qrProvision.qr_content}
                         size={200}
@@ -485,16 +485,16 @@ export const PartnerDashboard: React.FC = () => {
 
                     {/* Manual Code */}
                     <div className="mb-6">
-                      <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Manual Entry Code</p>
-                      <code className="px-4 py-2 bg-gray-100 rounded-lg text-lg font-mono font-bold tracking-wider">
+                      <p className="text-xs text-slate-500 uppercase tracking-wide mb-2">Manual Entry Code</p>
+                      <code className="px-4 py-2 bg-slate-100 rounded-lg text-lg font-mono font-bold tracking-wider">
                         {qrProvision.provision_code}
                       </code>
                     </div>
 
                     {/* Instructions */}
-                    <div className="text-left bg-gray-50 rounded-lg p-4 mb-6">
-                      <p className="text-sm font-medium text-gray-700 mb-2">To provision an appliance:</p>
-                      <ol className="text-sm text-gray-600 space-y-1 list-decimal list-inside">
+                    <div className="text-left bg-slate-50 rounded-lg p-4 mb-6">
+                      <p className="text-sm font-medium text-slate-700 mb-2">To provision an appliance:</p>
+                      <ol className="text-sm text-slate-600 space-y-1 list-decimal list-inside">
                         <li>Boot the OsirisCare appliance</li>
                         <li>Scan this QR code or enter the code manually</li>
                         <li>The appliance will register automatically</li>
@@ -502,7 +502,7 @@ export const PartnerDashboard: React.FC = () => {
                     </div>
 
                     {/* Expiration */}
-                    <p className="text-xs text-gray-400 mb-4">
+                    <p className="text-xs text-slate-400 mb-4">
                       Expires: {formatDate(qrProvision.expires_at)}
                     </p>
 
@@ -521,7 +521,7 @@ export const PartnerDashboard: React.FC = () => {
                       </button>
                       <button
                         onClick={() => setQrProvision(null)}
-                        className="px-4 py-2 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition"
+                        className="px-4 py-2 bg-slate-900 text-white font-medium rounded-lg hover:bg-slate-800 transition"
                       >
                         Done
                       </button>
@@ -532,38 +532,38 @@ export const PartnerDashboard: React.FC = () => {
             )}
 
             {/* Provisions Table */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
               {provisions.length === 0 ? (
                 <div className="p-12 text-center">
-                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
                     </svg>
                   </div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No Provision Codes</h3>
-                  <p className="text-gray-500">Create a provision code to onboard new appliances.</p>
+                  <h3 className="text-lg font-medium text-slate-900 mb-2">No Provision Codes</h3>
+                  <p className="text-slate-500">Create a provision code to onboard new appliances.</p>
                 </div>
               ) : (
                 <table className="w-full">
-                  <thead className="bg-gray-50 border-b">
+                  <thead className="bg-slate-50 border-b">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expires</th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Code</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Client</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Created</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Expires</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200">
+                  <tbody className="divide-y divide-slate-200">
                     {provisions.map((provision) => (
                       <tr key={provision.id} className="hover:bg-indigo-50/50">
                         <td className="px-6 py-4">
-                          <code className="px-2 py-1 bg-gray-100 rounded text-sm font-mono">
+                          <code className="px-2 py-1 bg-slate-100 rounded text-sm font-mono">
                             {provision.provision_code}
                           </code>
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                        <td className="px-6 py-4 text-sm text-slate-600">
                           {provision.target_client_name || '-'}
                         </td>
                         <td className="px-6 py-4">
@@ -571,8 +571,8 @@ export const PartnerDashboard: React.FC = () => {
                             {provision.status}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{formatDate(provision.created_at)}</td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{formatDate(provision.expires_at)}</td>
+                        <td className="px-6 py-4 text-sm text-slate-600">{formatDate(provision.created_at)}</td>
+                        <td className="px-6 py-4 text-sm text-slate-600">{formatDate(provision.expires_at)}</td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
                             {provision.status === 'pending' && (
@@ -595,7 +595,7 @@ export const PartnerDashboard: React.FC = () => {
                               </>
                             )}
                             {provision.status === 'claimed' && (
-                              <span className="text-sm text-gray-500">
+                              <span className="text-sm text-slate-500">
                                 {provision.claimed_by_mac}
                               </span>
                             )}

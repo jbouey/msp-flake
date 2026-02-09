@@ -55,10 +55,10 @@ export const EvidenceDownloads: React.FC<EvidenceDownloadsProps> = ({ bundles, s
 
   if (bundles.length === 0) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+      <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
         <div className="text-4xl mb-3">📁</div>
-        <p className="text-gray-600">No evidence bundles yet</p>
-        <p className="text-sm text-gray-400 mt-1">Bundles will appear after first compliance check</p>
+        <p className="text-slate-600">No evidence bundles yet</p>
+        <p className="text-sm text-slate-400 mt-1">Bundles will appear after first compliance check</p>
       </div>
     );
   }
@@ -76,21 +76,21 @@ export const EvidenceDownloads: React.FC<EvidenceDownloadsProps> = ({ bundles, s
       {Object.entries(grouped).map(([type, typeBundles]) => {
         const { icon, label } = formatType(type);
         return (
-          <div key={type} className="bg-white rounded-xl border border-gray-200">
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+          <div key={type} className="bg-white rounded-xl border border-slate-200">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
               <span>{icon}</span>
-              <span className="font-medium text-gray-900">{label} Reports</span>
-              <span className="text-xs text-gray-400">({typeBundles.length})</span>
+              <span className="font-medium text-slate-900">{label} Reports</span>
+              <span className="text-xs text-slate-400">({typeBundles.length})</span>
             </div>
-            <div className="divide-y divide-gray-100">
+            <div className="divide-y divide-slate-100">
               {typeBundles.slice(0, 5).map((bundle) => (
                 <div
                   key={bundle.bundle_id}
                   className="px-4 py-3 flex items-center justify-between hover:bg-blue-50/50"
                 >
                   <div>
-                    <p className="text-sm font-medium text-gray-900">{bundle.bundle_id}</p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-sm font-medium text-slate-900">{bundle.bundle_id}</p>
+                    <p className="text-xs text-slate-500">
                       {new Date(bundle.generated_at).toLocaleDateString()} • {formatSize(bundle.size_bytes)}
                     </p>
                   </div>
@@ -112,8 +112,8 @@ export const EvidenceDownloads: React.FC<EvidenceDownloadsProps> = ({ bundles, s
       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="font-semibold text-gray-900">Monthly Compliance Packet</h3>
-            <p className="text-sm text-gray-600 mt-1">
+            <h3 className="font-semibold text-slate-900">Monthly Compliance Packet</h3>
+            <p className="text-sm text-slate-600 mt-1">
               PDF report with full compliance summary, incident log, and evidence index
             </p>
           </div>

@@ -212,7 +212,7 @@ export const PartnerLearning: React.FC = () => {
       case 'disabled':
         return 'bg-red-100 text-red-800';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-slate-100 text-slate-800';
     }
   };
 
@@ -229,7 +229,7 @@ export const PartnerLearning: React.FC = () => {
     return (
       <div className="flex items-center justify-center p-12">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-        <span className="ml-3 text-gray-500">Loading learning data...</span>
+        <span className="ml-3 text-slate-500">Loading learning data...</span>
       </div>
     );
   }
@@ -253,73 +253,73 @@ export const PartnerLearning: React.FC = () => {
       {/* Stats Cards */}
       {stats && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-            <p className="text-sm text-gray-500">Pending Candidates</p>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <p className="text-sm text-slate-500">Pending Candidates</p>
             <p className="text-2xl font-bold text-yellow-600 tabular-nums">{stats.pending_candidates}</p>
           </div>
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-            <p className="text-sm text-gray-500">Active L1 Rules</p>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <p className="text-sm text-slate-500">Active L1 Rules</p>
             <p className="text-2xl font-bold text-green-600 tabular-nums">{stats.active_promoted_rules}</p>
           </div>
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-            <p className="text-sm text-gray-500">L1 Resolution Rate</p>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <p className="text-sm text-slate-500">L1 Resolution Rate</p>
             <p className="text-2xl font-bold text-indigo-600 tabular-nums">{formatPercentage(stats.l1_resolution_rate)}</p>
           </div>
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-            <p className="text-sm text-gray-500">Avg Success Rate</p>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <p className="text-sm text-slate-500">Avg Success Rate</p>
             <p className="text-2xl font-bold text-blue-600 tabular-nums">{formatPercentage(stats.avg_success_rate)}</p>
           </div>
         </div>
       )}
 
       {/* Promotion Candidates */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">Promotion Candidates</h3>
-          <p className="text-sm text-gray-500">Patterns eligible for L1 promotion (5+ occurrences, 90%+ success rate)</p>
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200">
+          <h3 className="text-lg font-semibold text-slate-900">Promotion Candidates</h3>
+          <p className="text-sm text-slate-500">Patterns eligible for L1 promotion (5+ occurrences, 90%+ success rate)</p>
         </div>
 
         {candidates.length === 0 ? (
           <div className="p-12 text-center">
-            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Promotion Candidates</h3>
-            <p className="text-gray-500">Patterns will appear here once they meet the promotion criteria.</p>
+            <h3 className="text-lg font-medium text-slate-900 mb-2">No Promotion Candidates</h3>
+            <p className="text-slate-500">Patterns will appear here once they meet the promotion criteria.</p>
           </div>
         ) : (
           <table className="w-full">
-            <thead className="bg-gray-50 border-b">
+            <thead className="bg-slate-50 border-b">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pattern</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Site</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Occurrences</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Success Rate</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Pattern</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Site</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Occurrences</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Success Rate</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
+            <tbody className="divide-y divide-slate-200">
               {candidates.map((candidate) => (
                 <tr key={candidate.id} className="hover:bg-indigo-50/50">
                   <td className="px-6 py-4">
                     <div>
-                      <p className="text-sm font-medium text-gray-900">
+                      <p className="text-sm font-medium text-slate-900">
                         {candidate.recommended_action || 'Unknown Pattern'}
                       </p>
-                      <p className="text-xs text-gray-500 font-mono">
+                      <p className="text-xs text-slate-500 font-mono">
                         {candidate.pattern_signature.substring(0, 12)}...
                       </p>
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <p className="text-sm text-gray-900">{candidate.site_name}</p>
+                    <p className="text-sm text-slate-900">{candidate.site_name}</p>
                   </td>
                   <td className="px-6 py-4">
-                    <p className="text-sm text-gray-900">{candidate.total_occurrences}</p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-sm text-slate-900">{candidate.total_occurrences}</p>
+                    <p className="text-xs text-slate-500">
                       L2: {candidate.l2_resolutions}
                     </p>
                   </td>
@@ -369,17 +369,17 @@ export const PartnerLearning: React.FC = () => {
       </div>
 
       {/* Promoted Rules */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         <div
-          className="px-6 py-4 border-b border-gray-200 flex items-center justify-between cursor-pointer"
+          className="px-6 py-4 border-b border-slate-200 flex items-center justify-between cursor-pointer"
           onClick={() => setShowPromotedRules(!showPromotedRules)}
         >
           <div>
-            <h3 className="text-lg font-semibold text-gray-900">Promoted Rules ({promotedRules.length})</h3>
-            <p className="text-sm text-gray-500">Active L1 rules deployed from pattern promotions</p>
+            <h3 className="text-lg font-semibold text-slate-900">Promoted Rules ({promotedRules.length})</h3>
+            <p className="text-sm text-slate-500">Active L1 rules deployed from pattern promotions</p>
           </div>
           <svg
-            className={`w-5 h-5 text-gray-500 transform transition ${showPromotedRules ? 'rotate-180' : ''}`}
+            className={`w-5 h-5 text-slate-500 transform transition ${showPromotedRules ? 'rotate-180' : ''}`}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -390,35 +390,35 @@ export const PartnerLearning: React.FC = () => {
 
         {showPromotedRules && (
           promotedRules.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">
+            <div className="p-8 text-center text-slate-500">
               No promoted rules yet. Approve promotion candidates to create L1 rules.
             </div>
           ) : (
             <table className="w-full">
-              <thead className="bg-gray-50 border-b">
+              <thead className="bg-slate-50 border-b">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rule ID</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Site</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Deployments</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Promoted</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Rule ID</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Site</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Deployments</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Promoted</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-slate-200">
                 {promotedRules.map((rule) => (
                   <tr key={rule.id} className="hover:bg-indigo-50/50">
                     <td className="px-6 py-4">
-                      <p className="text-sm font-medium text-gray-900 font-mono">{rule.rule_id}</p>
+                      <p className="text-sm font-medium text-slate-900 font-mono">{rule.rule_id}</p>
                     </td>
                     <td className="px-6 py-4">
-                      <p className="text-sm text-gray-900">{rule.site_name || rule.site_id}</p>
+                      <p className="text-sm text-slate-900">{rule.site_name || rule.site_id}</p>
                     </td>
                     <td className="px-6 py-4">
-                      <p className="text-sm text-gray-900">{rule.deployment_count}</p>
+                      <p className="text-sm text-slate-900">{rule.deployment_count}</p>
                     </td>
                     <td className="px-6 py-4">
-                      <p className="text-sm text-gray-900">{formatDate(rule.promoted_at)}</p>
+                      <p className="text-sm text-slate-900">{formatDate(rule.promoted_at)}</p>
                     </td>
                     <td className="px-6 py-4">
                       <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(rule.status)}`}>
@@ -449,45 +449,45 @@ export const PartnerLearning: React.FC = () => {
       {showApproveModal && selectedCandidate && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Approve Pattern for L1 Promotion</h3>
+            <h3 className="text-lg font-semibold text-slate-900 mb-4">Approve Pattern for L1 Promotion</h3>
 
             <div className="space-y-4 mb-6">
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-500">Pattern</p>
-                <p className="text-sm font-medium text-gray-900">{selectedCandidate.recommended_action}</p>
-                <p className="text-xs text-gray-500 font-mono mt-1">{selectedCandidate.pattern_signature}</p>
+              <div className="bg-slate-50 rounded-lg p-4">
+                <p className="text-sm text-slate-500">Pattern</p>
+                <p className="text-sm font-medium text-slate-900">{selectedCandidate.recommended_action}</p>
+                <p className="text-xs text-slate-500 font-mono mt-1">{selectedCandidate.pattern_signature}</p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-500">Occurrences</p>
-                  <p className="text-lg font-semibold text-gray-900">{selectedCandidate.total_occurrences}</p>
+                <div className="bg-slate-50 rounded-lg p-4">
+                  <p className="text-sm text-slate-500">Occurrences</p>
+                  <p className="text-lg font-semibold text-slate-900">{selectedCandidate.total_occurrences}</p>
                 </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-500">Success Rate</p>
+                <div className="bg-slate-50 rounded-lg p-4">
+                  <p className="text-sm text-slate-500">Success Rate</p>
                   <p className="text-lg font-semibold text-green-600">{formatPercentage(selectedCandidate.success_rate)}</p>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Custom Rule Name (optional)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Custom Rule Name (optional)</label>
                 <input
                   type="text"
                   value={customName}
                   onChange={(e) => setCustomName(e.target.value)}
                   placeholder="e.g., Firewall Auto-Heal"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
                 <textarea
                   value={approvalNotes}
                   onChange={(e) => setApprovalNotes(e.target.value)}
                   placeholder="Approval notes..."
                   rows={2}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 />
               </div>
             </div>
@@ -520,16 +520,16 @@ export const PartnerLearning: React.FC = () => {
       {showRejectModal && selectedCandidate && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Reject Pattern</h3>
+            <h3 className="text-lg font-semibold text-slate-900 mb-4">Reject Pattern</h3>
 
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Rejection Reason</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Rejection Reason</label>
               <textarea
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
                 placeholder="Why is this pattern not suitable for L1 promotion?"
                 rows={3}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               />
             </div>
 

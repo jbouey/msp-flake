@@ -80,7 +80,7 @@ const getEventColor = (event: ActivityEvent): string => {
   if (!event.success) return 'text-health-critical bg-red-50';
   if (event.event_type.includes('failed') || event.event_type.includes('rejected'))
     return 'text-health-critical bg-red-50';
-  return EVENT_CATEGORY_COLORS[event.event_category] || 'text-label-secondary bg-gray-100';
+  return EVENT_CATEGORY_COLORS[event.event_category] || 'text-label-secondary bg-slate-100';
 };
 
 const formatEventType = (type: string): string => {

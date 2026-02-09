@@ -208,7 +208,7 @@ export const AdminOAuthSettings: React.FC = () => {
     return (
       <div className="p-8">
         <h1 className="text-2xl font-bold text-red-600">Access Denied</h1>
-        <p className="text-gray-600 mt-2">You need admin privileges to access OAuth settings.</p>
+        <p className="text-slate-600 mt-2">You need admin privileges to access OAuth settings.</p>
       </div>
     );
   }
@@ -247,7 +247,7 @@ export const AdminOAuthSettings: React.FC = () => {
       {/* Provider Cards */}
       <div className="space-y-6">
         {/* Google */}
-        <div className="bg-white rounded-ios-lg shadow border border-gray-200 p-6">
+        <div className="bg-white rounded-ios-lg shadow border border-slate-200 p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <svg className="w-8 h-8" viewBox="0 0 24 24">
@@ -262,7 +262,7 @@ export const AdminOAuthSettings: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <span className={`px-3 py-1 rounded-full text-sm font-medium ${config?.providers.google?.enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${config?.providers.google?.enabled ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'}`}>
                 {config?.providers.google?.enabled ? 'Enabled' : 'Disabled'}
               </span>
               <button
@@ -279,7 +279,7 @@ export const AdminOAuthSettings: React.FC = () => {
         </div>
 
         {/* Microsoft */}
-        <div className="bg-white rounded-ios-lg shadow border border-gray-200 p-6">
+        <div className="bg-white rounded-ios-lg shadow border border-slate-200 p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <svg className="w-8 h-8" viewBox="0 0 23 23">
@@ -294,7 +294,7 @@ export const AdminOAuthSettings: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <span className={`px-3 py-1 rounded-full text-sm font-medium ${config?.providers.microsoft?.enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${config?.providers.microsoft?.enabled ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'}`}>
                 {config?.providers.microsoft?.enabled ? 'Enabled' : 'Disabled'}
               </span>
               <button
@@ -315,9 +315,9 @@ export const AdminOAuthSettings: React.FC = () => {
       {pendingUsers.length > 0 && (
         <div className="mt-8">
           <h2 className="text-xl font-semibold text-label-primary mb-4">Pending Approvals</h2>
-          <div className="bg-white rounded-ios-lg shadow border border-gray-200 overflow-hidden">
+          <div className="bg-white rounded-ios-lg shadow border border-slate-200 overflow-hidden">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="bg-slate-50">
                 <tr>
                   <th className="px-4 py-3 text-left text-sm font-medium text-label-secondary">User</th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-label-secondary">Provider</th>
@@ -325,7 +325,7 @@ export const AdminOAuthSettings: React.FC = () => {
                   <th className="px-4 py-3 text-right text-sm font-medium text-label-secondary">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-slate-200">
                 {pendingUsers.map((pendingUser) => (
                   <tr key={pendingUser.id}>
                     <td className="px-4 py-3">
@@ -377,7 +377,7 @@ export const AdminOAuthSettings: React.FC = () => {
                   type="text"
                   value={formData.client_id}
                   onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-ios-md focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-ios-md focus:ring-2 focus:ring-accent-primary focus:border-transparent"
                   placeholder="Enter OAuth Client ID"
                 />
               </div>
@@ -388,7 +388,7 @@ export const AdminOAuthSettings: React.FC = () => {
                   type="password"
                   value={formData.client_secret}
                   onChange={(e) => setFormData({ ...formData, client_secret: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-ios-md focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-ios-md focus:ring-2 focus:ring-accent-primary focus:border-transparent"
                   placeholder="Enter new secret (leave blank to keep existing)"
                 />
               </div>
@@ -400,7 +400,7 @@ export const AdminOAuthSettings: React.FC = () => {
                     type="text"
                     value={formData.tenant_id}
                     onChange={(e) => setFormData({ ...formData, tenant_id: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-ios-md focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-ios-md focus:ring-2 focus:ring-accent-primary focus:border-transparent"
                     placeholder="common (or specific tenant ID)"
                   />
                   <p className="text-xs text-label-tertiary mt-1">Use "common" for any Microsoft account, or your Azure AD tenant ID</p>
@@ -413,7 +413,7 @@ export const AdminOAuthSettings: React.FC = () => {
                   type="text"
                   value={formData.allowed_domains}
                   onChange={(e) => setFormData({ ...formData, allowed_domains: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-ios-md focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-ios-md focus:ring-2 focus:ring-accent-primary focus:border-transparent"
                   placeholder="company.com, contractor.company.com"
                 />
                 <p className="text-xs text-label-tertiary mt-1">Comma-separated list. Leave empty to allow all domains.</p>
@@ -424,7 +424,7 @@ export const AdminOAuthSettings: React.FC = () => {
                 <select
                   value={formData.default_role}
                   onChange={(e) => setFormData({ ...formData, default_role: e.target.value as 'admin' | 'operator' | 'readonly' })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-ios-md focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-ios-md focus:ring-2 focus:ring-accent-primary focus:border-transparent"
                 >
                   <option value="readonly">Read-only</option>
                   <option value="operator">Operator</option>

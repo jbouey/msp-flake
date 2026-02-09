@@ -383,25 +383,25 @@ export const ClientSettings: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50/80 page-enter">
+    <div className="min-h-screen bg-slate-50/80 page-enter">
       {/* Header */}
-      <header className="sticky top-0 z-30 border-b border-gray-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
+      <header className="sticky top-0 z-30 border-b border-slate-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-4">
-              <Link to="/client/dashboard" className="p-2 text-gray-500 hover:text-teal-600 rounded-lg hover:bg-teal-50">
+              <Link to="/client/dashboard" className="p-2 text-slate-500 hover:text-teal-600 rounded-lg hover:bg-teal-50">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </Link>
-              <h1 className="text-lg font-semibold text-gray-900">Account Settings</h1>
+              <h1 className="text-lg font-semibold text-slate-900">Account Settings</h1>
             </div>
           </div>
         </div>
@@ -422,13 +422,13 @@ export const ClientSettings: React.FC = () => {
         )}
 
         {/* Tabs */}
-        <div className="flex gap-4 mb-6 border-b border-gray-200">
+        <div className="flex gap-4 mb-6 border-b border-slate-200">
           <button
             onClick={() => setActiveTab('users')}
             className={`pb-2 px-1 font-medium ${
               activeTab === 'users'
                 ? 'text-teal-600 border-b-2 border-teal-600'
-                : 'text-gray-500 hover:text-teal-600'
+                : 'text-slate-500 hover:text-teal-600'
             }`}
           >
             Users
@@ -438,7 +438,7 @@ export const ClientSettings: React.FC = () => {
             className={`pb-2 px-1 font-medium ${
               activeTab === 'password'
                 ? 'text-teal-600 border-b-2 border-teal-600'
-                : 'text-gray-500 hover:text-teal-600'
+                : 'text-slate-500 hover:text-teal-600'
             }`}
           >
             Password
@@ -449,7 +449,7 @@ export const ClientSettings: React.FC = () => {
               className={`pb-2 px-1 font-medium ${
                 activeTab === 'transfer'
                   ? 'text-teal-600 border-b-2 border-teal-600'
-                  : 'text-gray-500 hover:text-teal-600'
+                  : 'text-slate-500 hover:text-teal-600'
               }`}
             >
               Transfer Provider
@@ -461,7 +461,7 @@ export const ClientSettings: React.FC = () => {
               className={`pb-2 px-1 font-medium ${
                 activeTab === 'billing'
                   ? 'text-teal-600 border-b-2 border-teal-600'
-                  : 'text-gray-500 hover:text-teal-600'
+                  : 'text-slate-500 hover:text-teal-600'
               }`}
             >
               Billing
@@ -473,7 +473,7 @@ export const ClientSettings: React.FC = () => {
         {activeTab === 'users' && (
           <div className="space-y-6">
             {canManageUsers && (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
                 <h2 className="text-lg font-medium mb-4">Invite User</h2>
                 <form onSubmit={handleInvite} className="flex gap-4">
                   <input
@@ -481,13 +481,13 @@ export const ClientSettings: React.FC = () => {
                     value={inviteEmail}
                     onChange={(e) => setInviteEmail(e.target.value)}
                     placeholder="Email address"
-                    className="flex-1 px-4 py-2 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                    className="flex-1 px-4 py-2 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                     required
                   />
                   <select
                     value={inviteRole}
                     onChange={(e) => setInviteRole(e.target.value as 'admin' | 'viewer')}
-                    className="px-4 py-2 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                    className="px-4 py-2 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                   >
                     <option value="viewer">Viewer</option>
                     <option value="admin">Admin</option>
@@ -504,8 +504,8 @@ export const ClientSettings: React.FC = () => {
               </div>
             )}
 
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200">
                 <h2 className="text-lg font-medium">Team Members</h2>
               </div>
               {loading ? (
@@ -513,25 +513,25 @@ export const ClientSettings: React.FC = () => {
                   <div className="w-8 h-8 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto" />
                 </div>
               ) : (
-                <div className="divide-y divide-gray-200">
+                <div className="divide-y divide-slate-200">
                   {users.map((u) => (
                     <div key={u.id} className="p-4 flex items-center justify-between">
                       <div>
-                        <p className="font-medium text-gray-900">{u.name || u.email}</p>
-                        <p className="text-sm text-gray-500">{u.email}</p>
+                        <p className="font-medium text-slate-900">{u.name || u.email}</p>
+                        <p className="text-sm text-slate-500">{u.email}</p>
                       </div>
                       <div className="flex items-center gap-4">
                         {canManageUsers && u.id !== user?.id && u.role !== 'owner' ? (
                           <select
                             value={u.role}
                             onChange={(e) => handleChangeRole(u.id, e.target.value)}
-                            className="px-3 py-1 border border-gray-300 rounded text-sm"
+                            className="px-3 py-1 border border-slate-300 rounded text-sm"
                           >
                             <option value="viewer">Viewer</option>
                             <option value="admin">Admin</option>
                           </select>
                         ) : (
-                          <span className="px-3 py-1 text-sm font-medium bg-gray-100 text-gray-700 rounded capitalize">
+                          <span className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-700 rounded capitalize">
                             {u.role}
                           </span>
                         )}
@@ -557,30 +557,30 @@ export const ClientSettings: React.FC = () => {
 
         {/* Password Tab */}
         {activeTab === 'password' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 max-w-md">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 max-w-md">
             <h2 className="text-lg font-medium mb-4">Set Password</h2>
-            <p className="text-sm text-gray-500 mb-4">
+            <p className="text-sm text-slate-500 mb-4">
               Set an optional password for convenient login. You can still use magic links.
             </p>
             <form onSubmit={handleSetPassword} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">New Password</label>
                 <input
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-4 py-2 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                  className="w-full px-4 py-2 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                   required
                   minLength={8}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Confirm Password</label>
                 <input
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full px-4 py-2 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                  className="w-full px-4 py-2 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                   required
                   minLength={8}
                 />
@@ -599,7 +599,7 @@ export const ClientSettings: React.FC = () => {
 
         {/* Transfer Tab */}
         {activeTab === 'transfer' && user?.role === 'owner' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 max-w-lg">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 max-w-lg">
             <h2 className="text-lg font-medium mb-4">Request Provider Transfer</h2>
             {transferStatus ? (
               <div className="space-y-4">
@@ -615,7 +615,7 @@ export const ClientSettings: React.FC = () => {
                 {transferStatus.status === 'pending' && (
                   <button
                     onClick={handleCancelTransfer}
-                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-teal-50/50"
+                    className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-teal-50/50"
                   >
                     Cancel Request
                   </button>
@@ -623,17 +623,17 @@ export const ClientSettings: React.FC = () => {
               </div>
             ) : (
               <>
-                <p className="text-sm text-gray-500 mb-4">
+                <p className="text-sm text-slate-500 mb-4">
                   Request to transfer your practice to a different MSP provider. Your compliance data will be preserved.
                 </p>
                 <form onSubmit={handleRequestTransfer} className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Reason for Transfer</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Reason for Transfer</label>
                     <textarea
                       value={transferReason}
                       onChange={(e) => setTransferReason(e.target.value)}
                       rows={3}
-                      className="w-full px-4 py-2 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                      className="w-full px-4 py-2 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                       placeholder="Please explain why you want to transfer..."
                       required
                     />
@@ -656,24 +656,24 @@ export const ClientSettings: React.FC = () => {
         {activeTab === 'billing' && user?.role === 'owner' && billingAvailable && (
           <div className="space-y-6">
             {billingLoading ? (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center">
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 text-center">
                 <div className="w-8 h-8 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto" />
               </div>
             ) : billingInfo?.has_subscription ? (
               <>
                 {/* Current Plan */}
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
                   <h2 className="text-lg font-medium mb-4">Current Plan</h2>
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-2xl font-bold text-gray-900">
+                      <p className="text-2xl font-bold text-slate-900">
                         {billingInfo.plan?.name || 'OsirisCare Compliance'}
                       </p>
-                      <p className="text-gray-500">
+                      <p className="text-slate-500">
                         ${billingInfo.plan?.amount}/{billingInfo.plan?.interval}
                       </p>
                       {billingInfo.current_period_end && (
-                        <p className="text-sm text-gray-500 mt-2">
+                        <p className="text-sm text-slate-500 mt-2">
                           {billingInfo.cancel_at_period_end ? 'Cancels' : 'Renews'} on{' '}
                           {new Date(billingInfo.current_period_end).toLocaleDateString()}
                         </p>
@@ -693,11 +693,11 @@ export const ClientSettings: React.FC = () => {
                   </div>
 
                   {billingInfo.payment_method && (
-                    <div className="mt-4 pt-4 border-t border-gray-200">
-                      <p className="text-sm text-gray-500">Payment Method</p>
+                    <div className="mt-4 pt-4 border-t border-slate-200">
+                      <p className="text-sm text-slate-500">Payment Method</p>
                       <p className="font-medium">
                         {billingInfo.payment_method.brand.toUpperCase()} •••• {billingInfo.payment_method.last4}
-                        <span className="text-gray-500 ml-2">
+                        <span className="text-slate-500 ml-2">
                           Expires {billingInfo.payment_method.exp_month}/{billingInfo.payment_method.exp_year}
                         </span>
                       </p>
@@ -706,7 +706,7 @@ export const ClientSettings: React.FC = () => {
 
                   <button
                     onClick={handleManageBilling}
-                    className="mt-4 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-teal-50/50"
+                    className="mt-4 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-teal-50/50"
                   >
                     Manage Subscription
                   </button>
@@ -714,16 +714,16 @@ export const ClientSettings: React.FC = () => {
 
                 {/* Invoices */}
                 {invoices.length > 0 && (
-                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                    <div className="px-6 py-4 border-b border-gray-200">
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-slate-200">
                       <h2 className="text-lg font-medium">Recent Invoices</h2>
                     </div>
-                    <div className="divide-y divide-gray-200">
+                    <div className="divide-y divide-slate-200">
                       {invoices.map((invoice) => (
                         <div key={invoice.id} className="p-4 flex items-center justify-between">
                           <div>
-                            <p className="font-medium text-gray-900">{invoice.number}</p>
-                            <p className="text-sm text-gray-500">
+                            <p className="font-medium text-slate-900">{invoice.number}</p>
+                            <p className="text-sm text-slate-500">
                               {new Date(invoice.created).toLocaleDateString()}
                             </p>
                           </div>
@@ -757,17 +757,17 @@ export const ClientSettings: React.FC = () => {
               </>
             ) : (
               /* No subscription - show signup */
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 max-w-lg">
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 max-w-lg">
                 <h2 className="text-lg font-medium mb-4">Subscribe to OsirisCare</h2>
-                <p className="text-gray-500 mb-6">
+                <p className="text-slate-500 mb-6">
                   Get full access to compliance monitoring, evidence management, and audit-ready reports.
                 </p>
 
-                <div className="bg-gray-50 rounded-lg p-4 mb-6">
-                  <p className="text-2xl font-bold text-gray-900">
-                    Starting at $200<span className="text-base font-normal text-gray-500">/month</span>
+                <div className="bg-slate-50 rounded-lg p-4 mb-6">
+                  <p className="text-2xl font-bold text-slate-900">
+                    Starting at $200<span className="text-base font-normal text-slate-500">/month</span>
                   </p>
-                  <ul className="mt-4 space-y-2 text-sm text-gray-600">
+                  <ul className="mt-4 space-y-2 text-sm text-slate-600">
                     <li className="flex items-center gap-2">
                       <svg className="w-4 h-4 text-teal-500" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />

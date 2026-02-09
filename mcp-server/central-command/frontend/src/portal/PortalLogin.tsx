@@ -147,13 +147,13 @@ export const PortalLogin: React.FC = () => {
   // Validating magic link
   if (state.status === 'validating') {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8 text-center">
           <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center">
             <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent" />
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Validating Access</h1>
-          <p className="text-gray-600">{state.message}</p>
+          <h1 className="text-xl font-semibold text-slate-900 mb-2">Validating Access</h1>
+          <p className="text-slate-600">{state.message}</p>
         </div>
       </div>
     );
@@ -162,16 +162,16 @@ export const PortalLogin: React.FC = () => {
   // Email sent confirmation
   if (state.status === 'sent') {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8 text-center">
           <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
             </svg>
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Check Your Email</h1>
-          <p className="text-gray-600 mb-6">{state.message}</p>
-          <p className="text-sm text-gray-400">
+          <h1 className="text-xl font-semibold text-slate-900 mb-2">Check Your Email</h1>
+          <p className="text-slate-600 mb-6">{state.message}</p>
+          <p className="text-sm text-slate-400">
             Didn't receive it? Check your spam folder or{' '}
             <button
               onClick={() => setState({ status: 'idle' })}
@@ -188,15 +188,15 @@ export const PortalLogin: React.FC = () => {
   // Error state
   if (state.status === 'error') {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8 text-center">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Access Error</h1>
-          <p className="text-gray-600 mb-6">{state.message}</p>
+          <h1 className="text-xl font-semibold text-slate-900 mb-2">Access Error</h1>
+          <p className="text-slate-600 mb-6">{state.message}</p>
           <button
             onClick={() => setState({ status: 'idle' })}
             className="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
@@ -210,26 +210,26 @@ export const PortalLogin: React.FC = () => {
 
   // Login form
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
       <div className="max-w-md w-full">
         {/* Logo */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">OsirisCare</h1>
-          <p className="text-gray-600 mt-2">HIPAA Monitoring Portal</p>
+          <h1 className="text-3xl font-bold text-slate-900">OsirisCare</h1>
+          <p className="text-slate-600 mt-2">HIPAA Monitoring Portal</p>
         </div>
 
         {/* Login Card */}
         <div className="bg-white rounded-2xl shadow-lg p-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2 text-center">
+          <h2 className="text-xl font-semibold text-slate-900 mb-2 text-center">
             Access Your Dashboard
           </h2>
-          <p className="text-gray-600 text-center mb-6">
+          <p className="text-slate-600 text-center mb-6">
             Enter your email to receive a secure login link.
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
                 Email Address
               </label>
               <input
@@ -239,7 +239,7 @@ export const PortalLogin: React.FC = () => {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@company.com"
                 required
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
               />
             </div>
 
@@ -259,19 +259,19 @@ export const PortalLogin: React.FC = () => {
             </button>
           </form>
 
-          <p className="mt-6 text-center text-sm text-gray-400">
+          <p className="mt-6 text-center text-sm text-slate-400">
             No password required. We'll send you a secure link.
           </p>
         </div>
 
         {/* Footer */}
-        <p className="mt-8 text-center text-sm text-gray-400">
+        <p className="mt-8 text-center text-sm text-slate-400">
           Questions?{' '}
           <a href="mailto:support@osiriscare.net" className="text-blue-600 hover:underline">
             Contact Support
           </a>
         </p>
-        <p className="mt-4 text-center text-xs text-gray-300 max-w-sm mx-auto">
+        <p className="mt-4 text-center text-xs text-slate-300 max-w-sm mx-auto">
           This portal provides monitoring data only. OsirisCare does not certify compliance.
         </p>
       </div>

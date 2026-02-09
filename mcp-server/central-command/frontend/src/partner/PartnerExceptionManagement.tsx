@@ -191,14 +191,14 @@ export function PartnerExceptionManagement({ sites }: { sites: Site[] }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Exception Management</h2>
-          <p className="text-gray-500 text-sm">Manage compliance exceptions and risk acceptances</p>
+          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Exception Management</h2>
+          <p className="text-slate-500 text-sm">Manage compliance exceptions and risk acceptances</p>
         </div>
         <div className="flex items-center gap-4">
           <select
             value={selectedSite}
             onChange={(e) => setSelectedSite(e.target.value)}
-            className="rounded-md border-gray-300 shadow-sm"
+            className="rounded-md border-slate-300 shadow-sm"
           >
             {sites.map((site) => (
               <option key={site.id} value={site.id}>{site.name}</option>
@@ -233,32 +233,32 @@ export function PartnerExceptionManagement({ sites }: { sites: Site[] }) {
             onChange={(e) => setShowAllExceptions(!e.target.checked)}
             className="rounded"
           />
-          <span className="text-sm text-gray-600">Active only</span>
+          <span className="text-sm text-slate-600">Active only</span>
         </label>
       </div>
 
       {/* Exceptions Table */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Scope</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expires</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Approved By</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">ID</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Scope</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Item</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Expires</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Approved By</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Actions</th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="bg-white divide-y divide-slate-200">
             {isLoading ? (
               <tr>
-                <td colSpan={7} className="px-6 py-4 text-center text-gray-500">Loading...</td>
+                <td colSpan={7} className="px-6 py-4 text-center text-slate-500">Loading...</td>
               </tr>
             ) : exceptions.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
+                <td colSpan={7} className="px-6 py-4 text-center text-slate-500">
                   No exceptions found
                 </td>
               </tr>
@@ -277,30 +277,30 @@ export function PartnerExceptionManagement({ sites }: { sites: Site[] }) {
                       {exc.scope_type}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">
                     {exc.item_id}
                     {exc.device_filter && (
-                      <span className="ml-2 text-gray-400 text-xs">({exc.device_filter})</span>
+                      <span className="ml-2 text-slate-400 text-xs">({exc.device_filter})</span>
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <StatusBadge exception={exc} />
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
                     {exc.is_valid && (
                       <>
                         {exc.days_until_expiration} days
                         <br />
-                        <span className="text-xs text-gray-400">
+                        <span className="text-xs text-slate-400">
                           {new Date(exc.expiration_date).toLocaleDateString()}
                         </span>
                       </>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
                     {exc.approved_by}
                     <br />
-                    <span className="text-xs text-gray-400">{exc.approval_tier}</span>
+                    <span className="text-xs text-slate-400">{exc.approval_tier}</span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     {exc.is_active && exc.is_valid && (
@@ -363,7 +363,7 @@ function SummaryCard({ title, value, color }: { title: string; value: number; co
     green: 'bg-green-100 text-green-800 border-green-200',
     yellow: 'bg-yellow-100 text-yellow-800 border-yellow-200',
     red: 'bg-red-100 text-red-800 border-red-200',
-    gray: 'bg-gray-100 text-gray-800 border-gray-200',
+    gray: 'bg-slate-100 text-slate-800 border-slate-200',
     blue: 'bg-blue-100 text-blue-800 border-blue-200',
   };
 
@@ -377,7 +377,7 @@ function SummaryCard({ title, value, color }: { title: string; value: number; co
 
 function StatusBadge({ exception }: { exception: ComplianceException }) {
   if (!exception.is_active) {
-    return <span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-600">Revoked</span>;
+    return <span className="px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-600">Revoked</span>;
   }
   if (!exception.is_valid) {
     return <span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-600">Expired</span>;
@@ -449,11 +449,11 @@ function CreateExceptionModal({
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Scope Type</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Scope Type</label>
                 <select
                   value={formData.scope_type}
                   onChange={(e) => setFormData({ ...formData, scope_type: e.target.value as 'runbook' | 'check' | 'control' })}
-                  className="w-full rounded-md border-gray-300 shadow-sm"
+                  className="w-full rounded-md border-slate-300 shadow-sm"
                   required
                 >
                   <option value="runbook">Runbook</option>
@@ -463,20 +463,20 @@ function CreateExceptionModal({
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Item ID</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Item ID</label>
                 <input
                   type="text"
                   value={formData.item_id}
                   onChange={(e) => setFormData({ ...formData, item_id: e.target.value })}
                   placeholder="e.g., RB-WIN-PATCH-001"
-                  className="w-full rounded-md border-gray-300 shadow-sm"
+                  className="w-full rounded-md border-slate-300 shadow-sm"
                   required
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
                 Device Filter (optional)
               </label>
               <input
@@ -484,18 +484,18 @@ function CreateExceptionModal({
                 value={formData.device_filter}
                 onChange={(e) => setFormData({ ...formData, device_filter: e.target.value })}
                 placeholder="e.g., hostname:LEGACY-* or leave empty for all devices"
-                className="w-full rounded-md border-gray-300 shadow-sm"
+                className="w-full rounded-md border-slate-300 shadow-sm"
               />
-              <p className="text-xs text-gray-500 mt-1">Leave empty to apply to all devices at this site</p>
+              <p className="text-xs text-slate-500 mt-1">Leave empty to apply to all devices at this site</p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Reason *</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Reason *</label>
               <textarea
                 value={formData.reason}
                 onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
                 placeholder="Explain why this exception is needed..."
-                className="w-full rounded-md border-gray-300 shadow-sm"
+                className="w-full rounded-md border-slate-300 shadow-sm"
                 rows={3}
                 required
                 minLength={10}
@@ -503,21 +503,21 @@ function CreateExceptionModal({
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
                 Compensating Control (recommended)
               </label>
               <textarea
                 value={formData.compensating_control}
                 onChange={(e) => setFormData({ ...formData, compensating_control: e.target.value })}
                 placeholder="What alternative protection is in place? (e.g., Network segmentation isolates the system)"
-                className="w-full rounded-md border-gray-300 shadow-sm"
+                className="w-full rounded-md border-slate-300 shadow-sm"
                 rows={2}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Risk Accepted By *
                 </label>
                 <input
@@ -525,17 +525,17 @@ function CreateExceptionModal({
                   value={formData.risk_accepted_by}
                   onChange={(e) => setFormData({ ...formData, risk_accepted_by: e.target.value })}
                   placeholder="Name and role (e.g., Dr. Smith, Practice Owner)"
-                  className="w-full rounded-md border-gray-300 shadow-sm"
+                  className="w-full rounded-md border-slate-300 shadow-sm"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Duration</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Duration</label>
                 <select
                   value={formData.duration_days}
                   onChange={(e) => setFormData({ ...formData, duration_days: parseInt(e.target.value) })}
-                  className="w-full rounded-md border-gray-300 shadow-sm"
+                  className="w-full rounded-md border-slate-300 shadow-sm"
                 >
                   <option value={7}>7 days</option>
                   <option value={14}>14 days</option>
@@ -547,17 +547,17 @@ function CreateExceptionModal({
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Action</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Action</label>
               <select
                 value={formData.action}
                 onChange={(e) => setFormData({ ...formData, action: e.target.value as 'suppress_alert' | 'skip_remediation' | 'both' })}
-                className="w-full rounded-md border-gray-300 shadow-sm"
+                className="w-full rounded-md border-slate-300 shadow-sm"
               >
                 <option value="both">Suppress Alert + Skip Remediation</option>
                 <option value="suppress_alert">Suppress Alert Only</option>
                 <option value="skip_remediation">Skip Remediation Only</option>
               </select>
-              <p className="text-xs text-gray-500 mt-1">
+              <p className="text-xs text-slate-500 mt-1">
                 Choose what happens when this check fails
               </p>
             </div>
@@ -566,7 +566,7 @@ function CreateExceptionModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-gray-700 hover:bg-indigo-50 rounded-md"
+                className="px-4 py-2 text-slate-700 hover:bg-indigo-50 rounded-md"
               >
                 Cancel
               </button>
@@ -603,7 +603,7 @@ function ExceptionDetailsModal({
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-xl font-bold">Exception Details</h3>
-            <button onClick={onClose} className="text-gray-500 hover:text-indigo-600">
+            <button onClick={onClose} className="text-slate-500 hover:text-indigo-600">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -613,58 +613,58 @@ function ExceptionDetailsModal({
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm text-gray-500">Exception ID</label>
+                <label className="text-sm text-slate-500">Exception ID</label>
                 <p className="font-medium">{exception.id}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">Status</label>
+                <label className="text-sm text-slate-500">Status</label>
                 <p><StatusBadge exception={exception} /></p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">Scope</label>
+                <label className="text-sm text-slate-500">Scope</label>
                 <p className="font-medium">{exception.scope_type}: {exception.item_id}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">Device Filter</label>
+                <label className="text-sm text-slate-500">Device Filter</label>
                 <p className="font-medium">{exception.device_filter || 'All devices'}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">Action</label>
+                <label className="text-sm text-slate-500">Action</label>
                 <p className="font-medium">{exception.action.replace('_', ' ')}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">Approval Tier</label>
+                <label className="text-sm text-slate-500">Approval Tier</label>
                 <p className="font-medium">{exception.approval_tier}</p>
               </div>
             </div>
 
             <div className="border-t pt-4">
-              <label className="text-sm text-gray-500">Reason</label>
+              <label className="text-sm text-slate-500">Reason</label>
               <p className="mt-1">{exception.reason}</p>
             </div>
 
             {exception.compensating_control && (
               <div>
-                <label className="text-sm text-gray-500">Compensating Control</label>
+                <label className="text-sm text-slate-500">Compensating Control</label>
                 <p className="mt-1">{exception.compensating_control}</p>
               </div>
             )}
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm text-gray-500">Risk Accepted By</label>
+                <label className="text-sm text-slate-500">Risk Accepted By</label>
                 <p className="font-medium">{exception.risk_accepted_by}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">Approved By</label>
+                <label className="text-sm text-slate-500">Approved By</label>
                 <p className="font-medium">{exception.approved_by}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">Start Date</label>
+                <label className="text-sm text-slate-500">Start Date</label>
                 <p className="font-medium">{new Date(exception.start_date).toLocaleDateString()}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">Expiration Date</label>
+                <label className="text-sm text-slate-500">Expiration Date</label>
                 <p className="font-medium">{new Date(exception.expiration_date).toLocaleDateString()}</p>
               </div>
             </div>
@@ -673,12 +673,12 @@ function ExceptionDetailsModal({
               <h4 className="font-medium mb-2">Audit Log</h4>
               <div className="space-y-2">
                 {auditLog.map((entry, i) => (
-                  <div key={i} className="text-sm bg-gray-50 p-2 rounded">
+                  <div key={i} className="text-sm bg-slate-50 p-2 rounded">
                     <span className="font-medium">{entry.action}</span> by {entry.performed_by}
-                    <span className="text-gray-400 ml-2">
+                    <span className="text-slate-400 ml-2">
                       {new Date(entry.performed_at).toLocaleString()}
                     </span>
-                    {entry.notes && <p className="text-gray-600 mt-1">{entry.notes}</p>}
+                    {entry.notes && <p className="text-slate-600 mt-1">{entry.notes}</p>}
                   </div>
                 ))}
               </div>

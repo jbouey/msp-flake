@@ -140,10 +140,10 @@ export const PartnerLogin: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
               </svg>
             </div>
-            <h1 className="text-xl font-semibold text-gray-900 mb-2">
+            <h1 className="text-xl font-semibold text-slate-900 mb-2">
               {magicToken ? 'Validating Access' : 'Loading'}
             </h1>
-            <p className="text-gray-500">Please wait...</p>
+            <p className="text-slate-500">Please wait...</p>
           </div>
         </div>
       </div>
@@ -171,10 +171,10 @@ export const PartnerLogin: React.FC = () => {
 
         {/* Login Card */}
         <div className="p-8" style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.5)' }}>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2 text-center">
+          <h2 className="text-xl font-semibold text-slate-900 mb-2 text-center">
             Partner Login
           </h2>
-          <p className="text-gray-600 text-center mb-6">
+          <p className="text-slate-600 text-center mb-6">
             Sign in with your business identity to access your dashboard.
           </p>
 
@@ -211,7 +211,7 @@ export const PartnerLogin: React.FC = () => {
                   type="button"
                   onClick={() => handleOAuthLogin('microsoft')}
                   disabled={oauthLoading !== null}
-                  className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-gray-50/80 border border-gray-200 rounded-xl hover:bg-indigo-50/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl hover:bg-indigo-50/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 21 21">
                     <rect fill="#f25022" x="1" y="1" width="9" height="9"/>
@@ -219,7 +219,7 @@ export const PartnerLogin: React.FC = () => {
                     <rect fill="#05a6f0" x="1" y="11" width="9" height="9"/>
                     <rect fill="#ffba08" x="11" y="11" width="9" height="9"/>
                   </svg>
-                  <span className="font-medium text-gray-900">
+                  <span className="font-medium text-slate-900">
                     {oauthLoading === 'microsoft' ? 'Redirecting...' : 'Sign in with Microsoft'}
                   </span>
                 </button>
@@ -230,7 +230,7 @@ export const PartnerLogin: React.FC = () => {
                   type="button"
                   onClick={() => handleOAuthLogin('google')}
                   disabled={oauthLoading !== null}
-                  className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-gray-50/80 border border-gray-200 rounded-xl hover:bg-indigo-50/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl hover:bg-indigo-50/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -238,7 +238,7 @@ export const PartnerLogin: React.FC = () => {
                     <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
                     <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
                   </svg>
-                  <span className="font-medium text-gray-900">
+                  <span className="font-medium text-slate-900">
                     {oauthLoading === 'google' ? 'Redirecting...' : 'Sign in with Google'}
                   </span>
                 </button>
@@ -246,10 +246,10 @@ export const PartnerLogin: React.FC = () => {
 
               <div className="relative my-4">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-200" />
+                  <div className="w-full border-t border-slate-200" />
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-gray-500">Or use API key</span>
+                  <span className="px-2 bg-white text-slate-500">Or use API key</span>
                 </div>
               </div>
             </div>
@@ -257,7 +257,7 @@ export const PartnerLogin: React.FC = () => {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="apiKey" className="block text-sm font-medium text-slate-700 mb-1">
                 API Key
               </label>
               <input
@@ -267,7 +267,7 @@ export const PartnerLogin: React.FC = () => {
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder="Enter your partner API key"
                 required
-                className="w-full px-4 py-3 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition font-mono text-sm"
+                className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition font-mono text-sm"
               />
             </div>
 
@@ -281,8 +281,8 @@ export const PartnerLogin: React.FC = () => {
             </button>
           </form>
 
-          <div className="mt-6 pt-6 border-t border-gray-200">
-            <p className="text-center text-sm text-gray-500">
+          <div className="mt-6 pt-6 border-t border-slate-200">
+            <p className="text-center text-sm text-slate-500">
               Don't have an API key?{' '}
               <a href="mailto:partners@osiriscare.net" className="text-indigo-600 hover:underline">
                 Contact us

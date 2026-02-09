@@ -79,7 +79,7 @@ export default function SetPassword() {
   // Loading state
   if (validating) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-teal-900 to-slate-900 flex items-center justify-center">
         <GlassCard className="w-full max-w-md text-center py-12">
           <Spinner />
           <p className="mt-4 text-label-secondary">Validating invite...</p>
@@ -91,7 +91,7 @@ export default function SetPassword() {
   // Invalid invite
   if (!validation?.valid) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-teal-900 to-slate-900 flex items-center justify-center p-4">
         <GlassCard className="w-full max-w-md text-center py-12">
           <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-red-500/20 flex items-center justify-center">
             <svg className="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -114,7 +114,7 @@ export default function SetPassword() {
   // Success state
   if (success) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-teal-900 to-slate-900 flex items-center justify-center p-4">
         <GlassCard className="w-full max-w-md text-center py-12">
           <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-green-500/20 flex items-center justify-center">
             <svg className="w-8 h-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -131,7 +131,7 @@ export default function SetPassword() {
 
   // Set password form
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-teal-900 to-slate-900 flex items-center justify-center p-4">
       <GlassCard className="w-full max-w-md">
         <div className="text-center mb-8">
           <div

@@ -37,16 +37,16 @@ export const IncidentList: React.FC<IncidentListProps> = ({ incidents }) => {
 
   if (incidents.length === 0) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+      <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
         <div className="text-4xl mb-3">✓</div>
-        <p className="text-gray-600">No recent incidents</p>
-        <p className="text-sm text-gray-400 mt-1">Your systems are running smoothly</p>
+        <p className="text-slate-600">No recent incidents</p>
+        <p className="text-sm text-slate-400 mt-1">Your systems are running smoothly</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
+    <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
       {incidents.map((incident) => (
         <div key={incident.incident_id} className="p-4 hover:bg-blue-50/50">
           <div className="flex items-start justify-between gap-4">
@@ -57,11 +57,11 @@ export const IncidentList: React.FC<IncidentListProps> = ({ incidents }) => {
                 }`}>
                   {incident.severity.toUpperCase()}
                 </span>
-                <span className="text-sm font-medium text-gray-900 truncate">
+                <span className="text-sm font-medium text-slate-900 truncate">
                   {formatType(incident.incident_type)}
                 </span>
               </div>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-slate-500">
                 {new Date(incident.created_at).toLocaleString()}
               </p>
             </div>
@@ -84,7 +84,7 @@ export const IncidentList: React.FC<IncidentListProps> = ({ incidents }) => {
                 </span>
               )}
               {incident.resolution_time_sec && (
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-slate-400">
                   {formatDuration(incident.resolution_time_sec)}
                 </span>
               )}

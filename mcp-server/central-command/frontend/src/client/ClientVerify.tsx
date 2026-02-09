@@ -58,10 +58,10 @@ export const ClientVerify: React.FC = () => {
           <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center">
             <div className="animate-spin rounded-full h-12 w-12 border-4 border-teal-500 border-t-transparent" />
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">
+          <h1 className="text-xl font-semibold text-slate-900 mb-2">
             Verifying Your Login
           </h1>
-          <p className="text-gray-600">Please wait...</p>
+          <p className="text-slate-600">Please wait...</p>
         </div>
       </div>
     );
@@ -76,10 +76,10 @@ export const ClientVerify: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">
+          <h1 className="text-xl font-semibold text-slate-900 mb-2">
             Welcome Back!
           </h1>
-          <p className="text-gray-600">Redirecting to your dashboard...</p>
+          <p className="text-slate-600">Redirecting to your dashboard...</p>
         </div>
       </div>
     );
@@ -93,10 +93,10 @@ export const ClientVerify: React.FC = () => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         </div>
-        <h1 className="text-xl font-semibold text-gray-900 mb-2">
+        <h1 className="text-xl font-semibold text-slate-900 mb-2">
           Link Invalid or Expired
         </h1>
-        <p className="text-gray-600 mb-6">{error}</p>
+        <p className="text-slate-600 mb-6">{error}</p>
         <button
           onClick={() => navigate('/client/login')}
           className="px-6 py-3 text-white font-semibold rounded-xl hover:brightness-110 transition-all"

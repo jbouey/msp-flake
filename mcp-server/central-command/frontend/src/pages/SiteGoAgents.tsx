@@ -41,7 +41,7 @@ function formatRelativeTime(dateString: string | null | undefined): string {
  */
 const statusColors: Record<GoAgentStatus, string> = {
   active: 'bg-health-healthy text-white',
-  offline: 'bg-gray-500 text-white',
+  offline: 'bg-slate-500 text-white',
   error: 'bg-health-critical text-white',
   pending: 'bg-yellow-500 text-white',
 };
@@ -91,7 +91,7 @@ const SummaryCard: React.FC<{ summary: SiteGoAgentSummary }> = ({ summary }) => 
 
         {/* Offline */}
         <div className="text-center">
-          <div className="text-3xl font-bold text-gray-400">
+          <div className="text-3xl font-bold text-slate-400">
             {summary.offline_agents}
           </div>
           <div className="text-sm text-label-secondary">Offline</div>
@@ -191,7 +191,7 @@ const GoAgentRow: React.FC<{
       >
         <td className="px-4 py-3">
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${agent.status === 'active' ? 'bg-health-healthy' : 'bg-gray-500'}`} />
+            <div className={`w-2 h-2 rounded-full ${agent.status === 'active' ? 'bg-health-healthy' : 'bg-slate-500'}`} />
             <span className="font-medium text-label-primary">{agent.hostname}</span>
           </div>
         </td>
@@ -296,7 +296,7 @@ const GoAgentRow: React.FC<{
                           : isError
                           ? 'border-health-critical/30 bg-health-critical/10'
                           : isSkipped
-                          ? 'border-gray-500/30 bg-gray-500/10'
+                          ? 'border-slate-500/30 bg-slate-500/10'
                           : 'border-health-warning/30 bg-health-warning/10'
                       }`}
                     >
@@ -309,7 +309,7 @@ const GoAgentRow: React.FC<{
                             <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                           </svg>
                         ) : isSkipped ? (
-                          <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
+                          <svg className="w-4 h-4 text-slate-400" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clipRule="evenodd" />
                           </svg>
                         ) : (

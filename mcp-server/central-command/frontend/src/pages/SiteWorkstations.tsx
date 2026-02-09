@@ -40,8 +40,8 @@ const statusColors: Record<WorkstationComplianceStatus, string> = {
   compliant: 'bg-health-healthy text-white',
   drifted: 'bg-health-warning text-white',
   error: 'bg-health-critical text-white',
-  unknown: 'bg-gray-400 text-white',
-  offline: 'bg-gray-500 text-white',
+  unknown: 'bg-slate-400 text-white',
+  offline: 'bg-slate-500 text-white',
 };
 
 const statusLabels: Record<WorkstationComplianceStatus, string> = {
@@ -115,7 +115,7 @@ const SummaryCard: React.FC<{ summary: SiteWorkstationSummary }> = ({ summary })
 
         {/* Unknown/Offline */}
         <div className="text-center">
-          <div className="text-3xl font-bold text-gray-400">
+          <div className="text-3xl font-bold text-slate-400">
             {summary.unknown_workstations}
           </div>
           <div className="text-sm text-label-secondary">Unknown</div>
@@ -169,7 +169,7 @@ const WorkstationRow: React.FC<{
       >
         <td className="px-4 py-3">
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${workstation.online ? 'bg-health-healthy' : 'bg-gray-500'}`} />
+            <div className={`w-2 h-2 rounded-full ${workstation.online ? 'bg-health-healthy' : 'bg-slate-500'}`} />
             <span className="font-medium text-label-primary">{workstation.hostname}</span>
           </div>
         </td>
@@ -219,7 +219,7 @@ const WorkstationRow: React.FC<{
                         ? 'border-health-critical/30 bg-health-critical/10'
                         : status === 'drifted'
                         ? 'border-health-warning/30 bg-health-warning/10'
-                        : 'border-gray-500/30 bg-gray-500/10'
+                        : 'border-slate-500/30 bg-slate-500/10'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">

@@ -80,7 +80,7 @@ function ProviderCard({
       className={`text-left p-4 rounded-lg border-2 transition-all ${
         selected
           ? 'border-blue-500 bg-blue-500/10'
-          : 'border-gray-700 bg-gray-800 hover:border-gray-600'
+          : 'border-slate-700 bg-slate-800 hover:border-slate-600'
       }`}
     >
       <div className="flex items-center gap-3 mb-2">
@@ -92,12 +92,12 @@ function ProviderCard({
         </div>
         <div>
           <h3 className="font-semibold text-white">{info.name}</h3>
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-slate-400">
             {info.setupType === 'oauth' ? 'OAuth 2.0' : 'IAM Role'}
           </span>
         </div>
       </div>
-      <p className="text-sm text-gray-400">{info.description}</p>
+      <p className="text-sm text-slate-400">{info.description}</p>
     </button>
   );
 }
@@ -120,7 +120,7 @@ function AWSCredentialsForm({
   return (
     <div className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">
+        <label className="block text-sm font-medium text-slate-300 mb-1">
           Integration Name *
         </label>
         <input
@@ -128,12 +128,12 @@ function AWSCredentialsForm({
           value={values.name || ''}
           onChange={(e) => onChange('name', e.target.value)}
           placeholder="e.g., Production AWS Account"
-          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">
+        <label className="block text-sm font-medium text-slate-300 mb-1">
           IAM Role ARN *
         </label>
         <input
@@ -141,15 +141,15 @@ function AWSCredentialsForm({
           value={values.aws_role_arn || ''}
           onChange={(e) => onChange('aws_role_arn', e.target.value)}
           placeholder="arn:aws:iam::123456789012:role/OsirisCareAuditRole"
-          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
         />
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-xs text-slate-500 mt-1">
           The ARN of the IAM role we will assume to access your AWS account
         </p>
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">
+        <label className="block text-sm font-medium text-slate-300 mb-1">
           External ID *
         </label>
         <div className="flex gap-2">
@@ -158,7 +158,7 @@ function AWSCredentialsForm({
             value={values.aws_external_id || ''}
             onChange={(e) => onChange('aws_external_id', e.target.value)}
             placeholder="Click 'Generate' to create a secure ID"
-            className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+            className="flex-1 px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
           />
           <button
             type="button"
@@ -169,13 +169,13 @@ function AWSCredentialsForm({
             {generatingId ? 'Generating...' : 'Generate'}
           </button>
         </div>
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-xs text-slate-500 mt-1">
           A unique ID to prevent confused deputy attacks. Include this in your role's trust policy.
         </p>
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">
+        <label className="block text-sm font-medium text-slate-300 mb-1">
           Regions (comma-separated)
         </label>
         <input
@@ -188,12 +188,12 @@ function AWSCredentialsForm({
             )
           }
           placeholder="us-east-1, us-west-2"
-          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
       </div>
 
       {/* Setup instructions toggle */}
-      <div className="pt-4 border-t border-gray-700">
+      <div className="pt-4 border-t border-slate-700">
         <button
           type="button"
           onClick={() => setShowInstructions(!showInstructions)}
@@ -212,14 +212,14 @@ function AWSCredentialsForm({
 
         {showInstructions && instructions && (
           <div className="mt-4 space-y-4">
-            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
               <h4 className="font-medium text-white mb-2">Setup Instructions</h4>
-              <pre className="text-xs text-gray-300 whitespace-pre-wrap overflow-x-auto">
+              <pre className="text-xs text-slate-300 whitespace-pre-wrap overflow-x-auto">
                 {instructions.instructions}
               </pre>
             </div>
 
-            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="font-medium text-white">CloudFormation Template</h4>
                 <button
@@ -237,7 +237,7 @@ function AWSCredentialsForm({
                   Copy
                 </button>
               </div>
-              <pre className="text-xs text-gray-300 overflow-x-auto max-h-48 overflow-y-auto bg-gray-900 p-2 rounded">
+              <pre className="text-xs text-slate-300 overflow-x-auto max-h-48 overflow-y-auto bg-slate-900 p-2 rounded">
                 {instructions.cloudformation_template.replace(
                   'YOUR_EXTERNAL_ID_HERE',
                   values.aws_external_id || 'YOUR_EXTERNAL_ID_HERE'
@@ -266,7 +266,7 @@ function OAuthCredentialsForm({
   return (
     <div className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">
+        <label className="block text-sm font-medium text-slate-300 mb-1">
           Integration Name *
         </label>
         <input
@@ -274,12 +274,12 @@ function OAuthCredentialsForm({
           value={values.name || ''}
           onChange={(e) => onChange('name', e.target.value)}
           placeholder={`e.g., ${info.name} Production`}
-          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">
+        <label className="block text-sm font-medium text-slate-300 mb-1">
           OAuth Client ID *
         </label>
         <input
@@ -287,12 +287,12 @@ function OAuthCredentialsForm({
           value={values.oauth_client_id || ''}
           onChange={(e) => onChange('oauth_client_id', e.target.value)}
           placeholder="Client ID from your OAuth app"
-          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
         />
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">
+        <label className="block text-sm font-medium text-slate-300 mb-1">
           OAuth Client Secret *
         </label>
         <input
@@ -300,13 +300,13 @@ function OAuthCredentialsForm({
           value={values.oauth_client_secret || ''}
           onChange={(e) => onChange('oauth_client_secret', e.target.value)}
           placeholder="Client secret from your OAuth app"
-          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
       </div>
 
       {(provider === 'azure_ad' || provider === 'microsoft_security') && (
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1">
+          <label className="block text-sm font-medium text-slate-300 mb-1">
             Tenant ID *
           </label>
           <input
@@ -314,14 +314,14 @@ function OAuthCredentialsForm({
             value={values.oauth_tenant_id || ''}
             onChange={(e) => onChange('oauth_tenant_id', e.target.value)}
             placeholder="Azure AD tenant ID (GUID)"
-            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+            className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
           />
         </div>
       )}
 
       {provider === 'okta' && (
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1">
+          <label className="block text-sm font-medium text-slate-300 mb-1">
             Okta Domain *
           </label>
           <input
@@ -329,14 +329,14 @@ function OAuthCredentialsForm({
             value={values.okta_domain || ''}
             onChange={(e) => onChange('okta_domain', e.target.value)}
             placeholder="yourcompany.okta.com"
-            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
       )}
 
       {provider === 'google_workspace' && (
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1">
+          <label className="block text-sm font-medium text-slate-300 mb-1">
             Customer ID (optional)
           </label>
           <input
@@ -344,9 +344,9 @@ function OAuthCredentialsForm({
             value={values.google_customer_id || ''}
             onChange={(e) => onChange('google_customer_id', e.target.value)}
             placeholder="my_customer (default)"
-            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-slate-500 mt-1">
             Leave blank to use "my_customer" which refers to your own domain
           </p>
         </div>
@@ -354,35 +354,35 @@ function OAuthCredentialsForm({
 
       <div className="p-4 bg-blue-900/20 border border-blue-800 rounded-lg">
         <h4 className="font-medium text-blue-400 mb-2">OAuth App Setup</h4>
-        <p className="text-sm text-gray-300">
+        <p className="text-sm text-slate-300">
           {provider === 'google_workspace' && (
             <>
               Create an OAuth app in the Google Cloud Console with the Admin SDK API enabled.
-              Required scopes: <code className="text-xs bg-gray-800 px-1 rounded">admin.directory.user.readonly</code>,{' '}
-              <code className="text-xs bg-gray-800 px-1 rounded">admin.directory.group.readonly</code>
+              Required scopes: <code className="text-xs bg-slate-800 px-1 rounded">admin.directory.user.readonly</code>,{' '}
+              <code className="text-xs bg-slate-800 px-1 rounded">admin.directory.group.readonly</code>
             </>
           )}
           {provider === 'azure_ad' && (
             <>
               Register an application in Azure AD with the Microsoft Graph API permissions.
-              Required permissions: <code className="text-xs bg-gray-800 px-1 rounded">User.Read.All</code>,{' '}
-              <code className="text-xs bg-gray-800 px-1 rounded">Group.Read.All</code>,{' '}
-              <code className="text-xs bg-gray-800 px-1 rounded">Policy.Read.All</code>
+              Required permissions: <code className="text-xs bg-slate-800 px-1 rounded">User.Read.All</code>,{' '}
+              <code className="text-xs bg-slate-800 px-1 rounded">Group.Read.All</code>,{' '}
+              <code className="text-xs bg-slate-800 px-1 rounded">Policy.Read.All</code>
             </>
           )}
           {provider === 'microsoft_security' && (
             <>
               Register an application in Azure AD with Microsoft Graph security permissions.
-              Required: <code className="text-xs bg-gray-800 px-1 rounded">SecurityEvents.Read.All</code>,{' '}
-              <code className="text-xs bg-gray-800 px-1 rounded">DeviceManagementManagedDevices.Read.All</code>,{' '}
-              <code className="text-xs bg-gray-800 px-1 rounded">Device.Read.All</code>
+              Required: <code className="text-xs bg-slate-800 px-1 rounded">SecurityEvents.Read.All</code>,{' '}
+              <code className="text-xs bg-slate-800 px-1 rounded">DeviceManagementManagedDevices.Read.All</code>,{' '}
+              <code className="text-xs bg-slate-800 px-1 rounded">Device.Read.All</code>
             </>
           )}
           {provider === 'okta' && (
             <>
               Create an OAuth app in your Okta Admin Console with the Okta API scopes.
-              Required scopes: <code className="text-xs bg-gray-800 px-1 rounded">okta.users.read</code>,{' '}
-              <code className="text-xs bg-gray-800 px-1 rounded">okta.groups.read</code>
+              Required scopes: <code className="text-xs bg-slate-800 px-1 rounded">okta.users.read</code>,{' '}
+              <code className="text-xs bg-slate-800 px-1 rounded">okta.groups.read</code>
             </>
           )}
         </p>
@@ -405,7 +405,7 @@ export default function IntegrationSetup() {
   const generateExternalId = useGenerateAWSExternalId();
 
   if (!siteId) {
-    return <div className="p-6 text-gray-400">Site ID required</div>;
+    return <div className="p-6 text-slate-400">Site ID required</div>;
   }
 
   const handleProviderSelect = (provider: IntegrationProvider) => {
@@ -482,10 +482,10 @@ export default function IntegrationSetup() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6">
+    <div className="min-h-screen bg-slate-900 p-6">
       {/* Header */}
       <div className="mb-8">
-        <div className="flex items-center gap-2 text-sm text-gray-400 mb-1">
+        <div className="flex items-center gap-2 text-sm text-slate-400 mb-1">
           <Link to="/sites" className="hover:text-white">Sites</Link>
           <span>/</span>
           <Link to={`/sites/${siteId}`} className="hover:text-white">{siteId}</Link>
@@ -507,13 +507,13 @@ export default function IntegrationSetup() {
                   ? 'bg-blue-600 text-white'
                   : i < ['provider', 'credentials', 'complete'].indexOf(step)
                   ? 'bg-green-600 text-white'
-                  : 'bg-gray-700 text-gray-400'
+                  : 'bg-slate-700 text-slate-400'
               }`}
             >
               {i + 1}
             </div>
-            <span className="ml-2 text-sm text-gray-400 capitalize">{s}</span>
-            {i < 2 && <div className="w-8 h-px bg-gray-700 mx-4" />}
+            <span className="ml-2 text-sm text-slate-400 capitalize">{s}</span>
+            {i < 2 && <div className="w-8 h-px bg-slate-700 mx-4" />}
           </div>
         ))}
       </div>
@@ -555,7 +555,7 @@ export default function IntegrationSetup() {
             <div className="flex items-center gap-2 mb-4">
               <button
                 onClick={() => setStep('provider')}
-                className="text-gray-400 hover:text-white"
+                className="text-slate-400 hover:text-white"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -595,7 +595,7 @@ export default function IntegrationSetup() {
               </button>
               <button
                 onClick={() => navigate(`/sites/${siteId}/integrations`)}
-                className="px-4 py-2 text-gray-400 hover:text-white"
+                className="px-4 py-2 text-slate-400 hover:text-white"
               >
                 Cancel
               </button>
@@ -611,7 +611,7 @@ export default function IntegrationSetup() {
               </svg>
             </div>
             <h2 className="text-xl font-semibold text-white mb-2">Integration Created!</h2>
-            <p className="text-gray-400 mb-6">
+            <p className="text-slate-400 mb-6">
               Your {selectedProvider && PROVIDER_INFO[selectedProvider].name} integration has been configured.
               The initial sync will begin shortly.
             </p>

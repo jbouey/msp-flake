@@ -66,7 +66,7 @@ const ApplianceCard: React.FC<{
     online: 'bg-health-healthy',
     stale: 'bg-health-warning',
     offline: 'bg-health-critical',
-    pending: 'bg-gray-400',
+    pending: 'bg-slate-400',
   };
 
   const moreActions: ActionItem[] = [

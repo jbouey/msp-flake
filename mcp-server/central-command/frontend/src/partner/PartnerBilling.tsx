@@ -241,9 +241,9 @@ export const PartnerBilling: React.FC = () => {
         return 'bg-yellow-100 text-yellow-800';
       case 'canceled':
       case 'none':
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-slate-100 text-slate-800';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-slate-100 text-slate-800';
     }
   };
 
@@ -274,9 +274,9 @@ export const PartnerBilling: React.FC = () => {
 
       {/* Current Subscription Status */}
       {billingStatus && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-semibold text-gray-900">Subscription Status</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Subscription Status</h3>
             <span className={`px-3 py-1 text-sm font-medium rounded-full ${getStatusColor(billingStatus.subscription_status)}`}>
               {billingStatus.subscription_status === 'none' ? 'No Subscription' : billingStatus.subscription_status}
             </span>
@@ -286,33 +286,33 @@ export const PartnerBilling: React.FC = () => {
             <div className="space-y-4">
               {/* Active Subscription Details */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-500 mb-1">Current Plan</p>
-                  <p className="text-xl font-semibold text-gray-900">
+                <div className="bg-slate-50 rounded-lg p-4">
+                  <p className="text-sm text-slate-500 mb-1">Current Plan</p>
+                  <p className="text-xl font-semibold text-slate-900">
                     {billingStatus.subscription.plan?.amount
                       ? formatCurrency(billingStatus.subscription.plan.amount)
                       : '$--'}
-                    <span className="text-sm font-normal text-gray-500">
+                    <span className="text-sm font-normal text-slate-500">
                       /{billingStatus.subscription.plan?.interval || 'month'}
                     </span>
                   </p>
                 </div>
 
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-500 mb-1">Current Period Ends</p>
-                  <p className="text-xl font-semibold text-gray-900">
+                <div className="bg-slate-50 rounded-lg p-4">
+                  <p className="text-sm text-slate-500 mb-1">Current Period Ends</p>
+                  <p className="text-xl font-semibold text-slate-900">
                     {formatDate(billingStatus.subscription.current_period_end)}
                   </p>
                 </div>
 
                 {billingStatus.upcoming_invoice && (
-                  <div className="bg-gray-50 rounded-lg p-4">
-                    <p className="text-sm text-gray-500 mb-1">Next Payment</p>
-                    <p className="text-xl font-semibold text-gray-900">
+                  <div className="bg-slate-50 rounded-lg p-4">
+                    <p className="text-sm text-slate-500 mb-1">Next Payment</p>
+                    <p className="text-xl font-semibold text-slate-900">
                       {formatCurrency(billingStatus.upcoming_invoice.amount_due, billingStatus.upcoming_invoice.currency)}
                     </p>
                     {billingStatus.upcoming_invoice.next_payment_date && (
-                      <p className="text-xs text-gray-500 mt-1">
+                      <p className="text-xs text-slate-500 mt-1">
                         on {formatDate(billingStatus.upcoming_invoice.next_payment_date)}
                       </p>
                     )}
@@ -367,10 +367,10 @@ export const PartnerBilling: React.FC = () => {
           ) : (
             /* No Subscription - Show Appliance Tiers */
             <div>
-              <p className="text-gray-600 mb-2">
+              <p className="text-slate-600 mb-2">
                 Deploy OsirisCare appliances for HIPAA compliance monitoring, operator-authorized remediation, and audit-ready evidence.
               </p>
-              <p className="text-sm text-gray-500 mb-6">
+              <p className="text-sm text-slate-500 mb-6">
                 Per-appliance pricing • Each site/domain requires one appliance
               </p>
 
@@ -397,7 +397,7 @@ export const PartnerBilling: React.FC = () => {
                       <div
                         key={key}
                         className={`border-2 rounded-xl p-6 ${
-                          key === 'practice' ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-200'
+                          key === 'practice' ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-slate-200'
                         }`}
                       >
                         {key === 'practice' && (
@@ -405,18 +405,18 @@ export const PartnerBilling: React.FC = () => {
                             Most Popular
                           </span>
                         )}
-                        <h4 className="text-xl font-bold text-gray-900">{tier.name}</h4>
-                        <p className="text-sm text-gray-500 mb-2">{tier.description}</p>
+                        <h4 className="text-xl font-bold text-slate-900">{tier.name}</h4>
+                        <p className="text-sm text-slate-500 mb-2">{tier.description}</p>
                         <div className="mt-2 mb-4">
-                          <span className="text-3xl font-bold text-gray-900">${tier.price_monthly}</span>
-                          <span className="text-gray-500">/mo per appliance</span>
+                          <span className="text-3xl font-bold text-slate-900">${tier.price_monthly}</span>
+                          <span className="text-slate-500">/mo per appliance</span>
                         </div>
-                        <p className="text-sm text-gray-600 mb-4 font-medium">
+                        <p className="text-sm text-slate-600 mb-4 font-medium">
                           {tier.max_endpoints ? `Up to ${tier.max_endpoints} endpoints` : 'Unlimited endpoints'}
                         </p>
                         <ul className="space-y-2 mb-6">
                           {tier.features.slice(0, 5).map((feature, i) => (
-                            <li key={i} className="flex items-center gap-2 text-sm text-gray-600">
+                            <li key={i} className="flex items-center gap-2 text-sm text-slate-600">
                               <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                               </svg>
@@ -445,8 +445,8 @@ export const PartnerBilling: React.FC = () => {
                   </div>
 
                   {/* Per-Endpoint Alternative */}
-                  <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-gray-600">
+                  <div className="mt-6 p-4 bg-slate-50 rounded-lg">
+                    <p className="text-sm text-slate-600">
                       <span className="font-medium">Alternative:</span> Pay ${billingConfig.endpoint_price_monthly}/endpoint/month for usage-based pricing that scales automatically.
                     </p>
                   </div>
@@ -459,9 +459,9 @@ export const PartnerBilling: React.FC = () => {
 
       {/* Payment Methods */}
       {billingStatus?.payment_methods && billingStatus.payment_methods.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">Payment Methods</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Payment Methods</h3>
             <button
               onClick={handleManageBilling}
               className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
@@ -473,16 +473,16 @@ export const PartnerBilling: React.FC = () => {
             {billingStatus.payment_methods.map((method) => (
               <div
                 key={method.id}
-                className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg"
+                className="flex items-center gap-4 p-4 border border-slate-200 rounded-lg"
               >
-                <div className="w-12 h-8 bg-gray-100 rounded flex items-center justify-center">
-                  <span className="text-xs font-bold text-gray-600 uppercase">{method.brand}</span>
+                <div className="w-12 h-8 bg-slate-100 rounded flex items-center justify-center">
+                  <span className="text-xs font-bold text-slate-600 uppercase">{method.brand}</span>
                 </div>
                 <div className="flex-1">
-                  <p className="font-medium text-gray-900">
+                  <p className="font-medium text-slate-900">
                     •••• •••• •••• {method.last4}
                   </p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-slate-500">
                     Expires {method.exp_month}/{method.exp_year}
                   </p>
                 </div>
@@ -499,29 +499,29 @@ export const PartnerBilling: React.FC = () => {
 
       {/* Invoices */}
       {invoices.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Invoice History</h3>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+          <h3 className="text-lg font-semibold text-slate-900 mb-4">Invoice History</h3>
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Invoice</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Amount</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-slate-200">
                 {invoices.map((invoice) => (
                   <tr key={invoice.id} className="hover:bg-indigo-50/50">
                     <td className="px-4 py-3">
                       <span className="font-mono text-sm">{invoice.number}</span>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
+                    <td className="px-4 py-3 text-sm text-slate-600">
                       {formatDate(invoice.created)}
                     </td>
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                    <td className="px-4 py-3 text-sm font-medium text-slate-900">
                       {formatCurrency(invoice.amount_paid || invoice.amount_due, invoice.currency)}
                     </td>
                     <td className="px-4 py-3">
@@ -530,7 +530,7 @@ export const PartnerBilling: React.FC = () => {
                           ? 'bg-green-100 text-green-800'
                           : invoice.status === 'open'
                           ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-gray-100 text-gray-800'
+                          : 'bg-slate-100 text-slate-800'
                       }`}>
                         {invoice.status}
                       </span>
@@ -552,7 +552,7 @@ export const PartnerBilling: React.FC = () => {
                             href={invoice.invoice_pdf}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-sm text-gray-600 hover:text-gray-800"
+                            className="text-sm text-slate-600 hover:text-slate-800"
                           >
                             PDF
                           </a>

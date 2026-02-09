@@ -53,7 +53,7 @@ export const ClientLogin: React.FC = () => {
             <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center animate-pulse-soft" style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}>
               <OsirisCareLeaf className="w-7 h-7" color="white" />
             </div>
-            <p className="text-gray-500">Loading...</p>
+            <p className="text-slate-500">Loading...</p>
           </div>
         </div>
       </div>
@@ -79,13 +79,13 @@ export const ClientLogin: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h2 className="text-xl font-semibold text-gray-900 mb-2">
+            <h2 className="text-xl font-semibold text-slate-900 mb-2">
               Login Link Sent
             </h2>
-            <p className="text-gray-600 mb-6">
+            <p className="text-slate-600 mb-6">
               If <strong>{email}</strong> is registered, you'll receive a login link shortly.
             </p>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-slate-500">
               The link expires in 60 minutes. Check your spam folder if you don't see it.
             </p>
             <button
@@ -122,10 +122,10 @@ export const ClientLogin: React.FC = () => {
 
         {/* Login Card */}
         <div className="p-8" style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.5)' }}>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2 text-center">
+          <h2 className="text-xl font-semibold text-slate-900 mb-2 text-center">
             Sign In
           </h2>
-          <p className="text-gray-600 text-center mb-6">
+          <p className="text-slate-600 text-center mb-6">
             Enter your email to receive a secure login link.
           </p>
 
@@ -137,7 +137,7 @@ export const ClientLogin: React.FC = () => {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
                 Email Address
               </label>
               <input
@@ -147,7 +147,7 @@ export const ClientLogin: React.FC = () => {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@yourpractice.com"
                 required
-                className="w-full px-4 py-3 bg-gray-50/80 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
               />
             </div>
 
@@ -168,8 +168,8 @@ export const ClientLogin: React.FC = () => {
             </button>
           </form>
 
-          <div className="mt-6 pt-6 border-t border-gray-200">
-            <p className="text-center text-sm text-gray-500">
+          <div className="mt-6 pt-6 border-t border-slate-200">
+            <p className="text-center text-sm text-slate-500">
               No password required. We'll send you a secure link.
             </p>
           </div>

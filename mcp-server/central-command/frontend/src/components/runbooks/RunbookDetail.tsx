@@ -94,30 +94,30 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
         {/* Content */}
         <div className="overflow-y-auto max-h-[calc(90vh-200px)]">
           {/* Stats Row */}
-          <div className="grid grid-cols-3 gap-4 p-6 bg-gray-50">
+          <div className="grid grid-cols-3 gap-4 p-6 bg-slate-50">
             <div className="text-center">
-              <p className="text-xs text-gray-600 uppercase tracking-wide">Executions</p>
-              <p className="text-2xl font-semibold text-gray-900 mt-1">
+              <p className="text-xs text-slate-600 uppercase tracking-wide">Executions</p>
+              <p className="text-2xl font-semibold text-slate-900 mt-1">
                 {runbook.execution_count.toLocaleString()}
               </p>
             </div>
             <div className="text-center">
-              <p className="text-xs text-gray-600 uppercase tracking-wide">Success Rate</p>
+              <p className="text-xs text-slate-600 uppercase tracking-wide">Success Rate</p>
               <p className={`text-2xl font-semibold mt-1 ${successColor}`}>
                 {runbook.success_rate.toFixed(1)}%
               </p>
             </div>
             <div className="text-center">
-              <p className="text-xs text-gray-600 uppercase tracking-wide">Avg Time</p>
-              <p className="text-2xl font-semibold text-gray-900 mt-1">
+              <p className="text-xs text-slate-600 uppercase tracking-wide">Avg Time</p>
+              <p className="text-2xl font-semibold text-slate-900 mt-1">
                 {formatTime(runbook.avg_execution_time_ms)}
               </p>
             </div>
           </div>
 
           {/* Steps */}
-          <div className="p-6 border-b border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+          <div className="p-6 border-b border-slate-200">
+            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">
               Execution Steps
             </h3>
             <div className="space-y-2">
@@ -126,17 +126,17 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
                 return (
                   <div
                     key={index}
-                    className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-ios-sm"
+                    className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-ios-sm"
                   >
                     <span className="w-6 h-6 flex items-center justify-center bg-accent-primary text-white text-xs font-medium rounded-full">
                       {index + 1}
                     </span>
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900">
+                      <p className="text-sm font-medium text-slate-900">
                         {s.action || s.name || `Step ${index + 1}`}
                       </p>
                       {s.timeout_seconds && (
-                        <p className="text-xs text-gray-500">
+                        <p className="text-xs text-slate-500">
                           Timeout: {s.timeout_seconds}s
                         </p>
                       )}
@@ -149,15 +149,15 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
 
           {/* Parameters */}
           {Object.keys(runbook.parameters).length > 0 && (
-            <div className="p-6 border-b border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            <div className="p-6 border-b border-slate-200">
+              <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">
                 Parameters
               </h3>
               <div className="grid grid-cols-2 gap-2">
                 {Object.entries(runbook.parameters).map(([key, value]) => (
-                  <div key={key} className="p-2 bg-gray-50 rounded-ios-sm">
-                    <p className="text-xs text-gray-600">{key}</p>
-                    <p className="text-sm font-medium text-gray-900">
+                  <div key={key} className="p-2 bg-slate-50 rounded-ios-sm">
+                    <p className="text-xs text-slate-600">{key}</p>
+                    <p className="text-sm font-medium text-slate-900">
                       {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
                     </p>
                   </div>
@@ -168,23 +168,23 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
 
           {/* Recent Executions */}
           <div className="p-6">
-            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">
               Recent Executions
             </h3>
             {isLoadingExecutions ? (
               <div className="space-y-2">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-16 bg-gray-100 rounded-ios-sm animate-pulse" />
+                  <div key={i} className="h-16 bg-slate-100 rounded-ios-sm animate-pulse" />
                 ))}
               </div>
             ) : executions.length === 0 ? (
-              <p className="text-gray-500 text-sm">No recent executions</p>
+              <p className="text-slate-500 text-sm">No recent executions</p>
             ) : (
               <div className="space-y-2">
                 {executions.map((exec) => (
                   <div
                     key={exec.id}
-                    className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-ios-sm"
+                    className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-ios-sm"
                   >
                     {/* Status */}
                     <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
@@ -194,15 +194,15 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
                     {/* Info */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium text-gray-900 truncate">
+                        <p className="text-sm font-medium text-slate-900 truncate">
                           {exec.hostname}
                         </p>
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-slate-500">
                           {exec.site_id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                         </span>
                       </div>
                       {exec.output && (
-                        <p className="text-xs text-gray-600 truncate">{exec.output}</p>
+                        <p className="text-xs text-slate-600 truncate">{exec.output}</p>
                       )}
                       {exec.error && (
                         <p className="text-xs text-health-critical truncate">{exec.error}</p>
@@ -211,10 +211,10 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
 
                     {/* Time */}
                     <div className="text-right flex-shrink-0">
-                      <p className="text-xs text-gray-500">
+                      <p className="text-xs text-slate-500">
                         {formatDateTime(exec.executed_at)}
                       </p>
-                      <p className="text-xs text-gray-600">
+                      <p className="text-xs text-slate-600">
                         {formatTime(exec.execution_time_ms)}
                       </p>
                     </div>
@@ -225,8 +225,8 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
           </div>
 
           {/* Footer */}
-          <div className="p-6 bg-gray-50 border-t border-gray-200">
-            <div className="flex items-center justify-between text-xs text-gray-500">
+          <div className="p-6 bg-slate-50 border-t border-slate-200">
+            <div className="flex items-center justify-between text-xs text-slate-500">
               <span>Created: {formatDate(runbook.created_at)}</span>
               <span>Last updated: {formatDate(runbook.updated_at)}</span>
             </div>

@@ -119,12 +119,12 @@ export const ClientDashboard: React.FC = () => {
 
   if (isLoading || loading) {
     return (
-      <div className="min-h-screen bg-gray-50/80 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50/80 flex items-center justify-center">
         <div className="text-center">
           <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center animate-pulse-soft" style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}>
             <OsirisCareLeaf className="w-7 h-7" color="white" />
           </div>
-          <p className="text-gray-500">Loading your dashboard...</p>
+          <p className="text-slate-500">Loading your dashboard...</p>
         </div>
       </div>
     );
@@ -132,15 +132,15 @@ export const ClientDashboard: React.FC = () => {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 bg-red-100 rounded-full mx-auto mb-4 flex items-center justify-center">
             <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Error Loading Dashboard</h2>
-          <p className="text-gray-600 mb-4">{error}</p>
+          <h2 className="text-xl font-semibold text-slate-900 mb-2">Error Loading Dashboard</h2>
+          <p className="text-slate-600 mb-4">{error}</p>
           <button
             onClick={() => {
               setError(null);
@@ -157,9 +157,9 @@ export const ClientDashboard: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50/80 page-enter">
+    <div className="min-h-screen bg-slate-50/80 page-enter">
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-gray-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
+      <header className="sticky top-0 z-50 border-b border-slate-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-14">
             <div className="flex items-center gap-4">
@@ -167,8 +167,8 @@ export const ClientDashboard: React.FC = () => {
                 <OsirisCareLeaf className="w-5 h-5" color="white" />
               </div>
               <div>
-                <h1 className="text-lg font-semibold text-gray-900">{dashboard?.org.name}</h1>
-                <p className="text-sm text-gray-500">
+                <h1 className="text-lg font-semibold text-slate-900">{dashboard?.org.name}</h1>
+                <p className="text-sm text-slate-500">
                   {dashboard?.org.partner_brand || 'OsirisCare'} Compliance Portal
                 </p>
               </div>
@@ -179,7 +179,7 @@ export const ClientDashboard: React.FC = () => {
               <div className="relative">
                 <button
                   onClick={() => setShowNotifications(!showNotifications)}
-                  className="relative p-2 text-gray-500 hover:text-teal-600 rounded-lg hover:bg-teal-50"
+                  className="relative p-2 text-slate-500 hover:text-teal-600 rounded-lg hover:bg-teal-50"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
@@ -192,21 +192,21 @@ export const ClientDashboard: React.FC = () => {
                 </button>
 
                 {showNotifications && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-lg border border-gray-100 z-50">
-                    <div className="p-4 border-b border-gray-200">
-                      <h3 className="font-semibold text-gray-900">Notifications</h3>
+                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-lg border border-slate-100 z-50">
+                    <div className="p-4 border-b border-slate-200">
+                      <h3 className="font-semibold text-slate-900">Notifications</h3>
                     </div>
                     <div className="max-h-96 overflow-y-auto">
                       {notifications.length === 0 ? (
-                        <p className="p-4 text-gray-500 text-sm text-center">No notifications</p>
+                        <p className="p-4 text-slate-500 text-sm text-center">No notifications</p>
                       ) : (
                         notifications.map((n) => (
                           <div
                             key={n.id}
-                            className={`p-4 border-b border-gray-100 ${!n.is_read ? 'bg-teal-50' : ''}`}
+                            className={`p-4 border-b border-slate-100 ${!n.is_read ? 'bg-teal-50' : ''}`}
                           >
-                            <p className="font-medium text-gray-900 text-sm">{n.title}</p>
-                            <p className="text-gray-600 text-sm mt-1">{n.message}</p>
+                            <p className="font-medium text-slate-900 text-sm">{n.title}</p>
+                            <p className="text-slate-600 text-sm mt-1">{n.message}</p>
                           </div>
                         ))
                       )}
@@ -218,12 +218,12 @@ export const ClientDashboard: React.FC = () => {
               {/* User Menu */}
               <div className="flex items-center gap-3">
                 <div className="text-right">
-                  <p className="text-sm font-medium text-gray-900">{user?.name || user?.email}</p>
-                  <p className="text-xs text-gray-500 capitalize">{user?.role}</p>
+                  <p className="text-sm font-medium text-slate-900">{user?.name || user?.email}</p>
+                  <p className="text-xs text-slate-500 capitalize">{user?.role}</p>
                 </div>
                 <button
                   onClick={handleLogout}
-                  className="p-2 text-gray-500 hover:text-teal-600 rounded-lg hover:bg-teal-50"
+                  className="p-2 text-slate-500 hover:text-teal-600 rounded-lg hover:bg-teal-50"
                   title="Sign out"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -241,12 +241,12 @@ export const ClientDashboard: React.FC = () => {
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           {/* Compliance Score */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}>
                 <OsirisCareLeaf className="w-5 h-5" color="white" />
               </div>
-              <p className="text-sm font-medium text-gray-500">Compliance Score</p>
+              <p className="text-sm font-medium text-slate-500">Compliance Score</p>
             </div>
             <span className={`text-4xl font-bold tabular-nums ${getScoreColor(dashboard?.kpis.compliance_score || 0)}`}>
               {dashboard?.kpis.compliance_score.toFixed(1)}%
@@ -260,77 +260,77 @@ export const ClientDashboard: React.FC = () => {
           </div>
 
           {/* Checks Passed */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center">
                 <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className="text-sm font-medium text-gray-500">Controls Passed</p>
+              <p className="text-sm font-medium text-slate-500">Controls Passed</p>
             </div>
             <div className="flex items-end gap-2">
               <span className="text-4xl font-bold text-green-600 tabular-nums">{dashboard?.kpis.passed}</span>
-              <span className="text-gray-500 mb-1 tabular-nums">/ {dashboard?.kpis.total_checks}</span>
+              <span className="text-slate-500 mb-1 tabular-nums">/ {dashboard?.kpis.total_checks}</span>
             </div>
-            <p className="mt-2 text-sm text-gray-500">Last 24 hours</p>
+            <p className="mt-2 text-sm text-slate-500">Last 24 hours</p>
           </div>
 
           {/* Issues */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center">
                 <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
               </div>
-              <p className="text-sm font-medium text-gray-500">Issues Detected</p>
+              <p className="text-sm font-medium text-slate-500">Issues Detected</p>
             </div>
             <div className="flex items-end gap-4">
               <div>
                 <span className="text-4xl font-bold text-red-600 tabular-nums">{dashboard?.kpis.failed}</span>
-                <p className="text-xs text-gray-500">Failed</p>
+                <p className="text-xs text-slate-500">Failed</p>
               </div>
               <div>
                 <span className="text-2xl font-bold text-yellow-600 tabular-nums">{dashboard?.kpis.warnings}</span>
-                <p className="text-xs text-gray-500">Warnings</p>
+                <p className="text-xs text-slate-500">Warnings</p>
               </div>
             </div>
           </div>
 
           {/* Sites */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl bg-cyan-100 flex items-center justify-center">
                 <svg className="w-5 h-5 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                 </svg>
               </div>
-              <p className="text-sm font-medium text-gray-500">Sites Monitored</p>
+              <p className="text-sm font-medium text-slate-500">Sites Monitored</p>
             </div>
-            <span className="text-4xl font-bold text-gray-900 tabular-nums">{dashboard?.sites.length || 0}</span>
-            <p className="mt-2 text-sm text-gray-500">
+            <span className="text-4xl font-bold text-slate-900 tabular-nums">{dashboard?.sites.length || 0}</span>
+            <p className="mt-2 text-sm text-slate-500">
               {dashboard?.org.provider_count} provider{dashboard?.org.provider_count !== 1 ? 's' : ''}
             </p>
           </div>
         </div>
 
         {/* Sites List */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-          <div className="p-6 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">Your Sites</h2>
-            <p className="text-sm text-gray-500 mt-1">Click a site to view detailed compliance status</p>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100">
+          <div className="p-6 border-b border-slate-200">
+            <h2 className="text-lg font-semibold text-slate-900">Your Sites</h2>
+            <p className="text-sm text-slate-500 mt-1">Click a site to view detailed compliance status</p>
           </div>
 
           {dashboard?.sites.length === 0 ? (
             <div className="p-8 text-center">
-              <svg className="w-12 h-12 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-12 h-12 text-slate-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
               </svg>
-              <p className="text-gray-600">No sites configured yet</p>
+              <p className="text-slate-600">No sites configured yet</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-200">
+            <div className="divide-y divide-slate-200">
               {dashboard?.sites.map((site) => (
                 <Link
                   key={site.site_id}
@@ -338,26 +338,26 @@ export const ClientDashboard: React.FC = () => {
                   className="flex items-center justify-between p-6 hover:bg-teal-50/50 transition"
                 >
                   <div className="flex items-center gap-4">
-                    <div className={`w-3 h-3 rounded-full ${site.status === 'active' ? 'bg-green-500' : 'bg-gray-400'}`} />
+                    <div className={`w-3 h-3 rounded-full ${site.status === 'active' ? 'bg-green-500' : 'bg-slate-400'}`} />
                     <div>
-                      <h3 className="font-medium text-gray-900">{site.clinic_name}</h3>
-                      <p className="text-sm text-gray-500">{site.site_id}</p>
+                      <h3 className="font-medium text-slate-900">{site.clinic_name}</h3>
+                      <p className="text-sm text-slate-500">{site.site_id}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-8">
                     <div className="text-right">
-                      <p className="text-sm font-medium text-gray-900">{site.evidence_count} checks</p>
-                      <p className="text-xs text-gray-500">
+                      <p className="text-sm font-medium text-slate-900">{site.evidence_count} checks</p>
+                      <p className="text-xs text-slate-500">
                         {site.last_evidence
                           ? `Last: ${new Date(site.last_evidence).toLocaleDateString()}`
                           : 'No data yet'
                         }
                       </p>
                     </div>
-                    <span className={`px-3 py-1 text-xs font-medium rounded-full ${site.tier === 'essential' ? 'bg-blue-100 text-blue-700' : site.tier === 'professional' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'}`}>
+                    <span className={`px-3 py-1 text-xs font-medium rounded-full ${site.tier === 'essential' ? 'bg-blue-100 text-blue-700' : site.tier === 'professional' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700'}`}>
                       {site.tier || 'Standard'}
                     </span>
-                    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </div>
@@ -371,7 +371,7 @@ export const ClientDashboard: React.FC = () => {
         <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-6">
           <Link
             to="/client/evidence"
-            className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
+            className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
           >
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-teal-100 rounded-lg flex items-center justify-center">
@@ -380,15 +380,15 @@ export const ClientDashboard: React.FC = () => {
                 </svg>
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900">Evidence Archive</h3>
-                <p className="text-sm text-gray-500">View and download compliance evidence</p>
+                <h3 className="font-semibold text-slate-900">Evidence Archive</h3>
+                <p className="text-sm text-slate-500">View and download compliance evidence</p>
               </div>
             </div>
           </Link>
 
           <Link
             to="/client/reports"
-            className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
+            className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
           >
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
@@ -397,33 +397,33 @@ export const ClientDashboard: React.FC = () => {
                 </svg>
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900">Monthly Reports</h3>
-                <p className="text-sm text-gray-500">Download compliance report PDFs</p>
+                <h3 className="font-semibold text-slate-900">Monthly Reports</h3>
+                <p className="text-sm text-slate-500">Download compliance report PDFs</p>
               </div>
             </div>
           </Link>
 
           <Link
             to="/client/settings"
-            className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
+            className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
           >
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="w-12 h-12 bg-slate-100 rounded-lg flex items-center justify-center">
+                <svg className="w-6 h-6 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900">Account Settings</h3>
-                <p className="text-sm text-gray-500">Manage users and preferences</p>
+                <h3 className="font-semibold text-slate-900">Account Settings</h3>
+                <p className="text-sm text-slate-500">Manage users and preferences</p>
               </div>
             </div>
           </Link>
 
           <Link
             to="/client/help"
-            className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
+            className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
           >
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -432,8 +432,8 @@ export const ClientDashboard: React.FC = () => {
                 </svg>
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900">Help & Docs</h3>
-                <p className="text-sm text-gray-500">How-to guides and FAQs</p>
+                <h3 className="font-semibold text-slate-900">Help & Docs</h3>
+                <p className="text-sm text-slate-500">How-to guides and FAQs</p>
               </div>
             </div>
           </Link>
@@ -441,9 +441,9 @@ export const ClientDashboard: React.FC = () => {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-gray-200/60 mt-12 py-6">
+      <footer className="border-t border-slate-200/60 mt-12 py-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <p className="text-center text-sm text-gray-400">
+          <p className="text-center text-sm text-slate-400">
             Powered by OsirisCare HIPAA Compliance Platform
           </p>
         </div>

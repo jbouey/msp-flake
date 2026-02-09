@@ -28,7 +28,7 @@ const confidenceColors: Record<string, string> = {
   high: 'bg-blue-500 text-white',
   medium: 'bg-health-warning text-white',
   low: 'bg-orange-500 text-white',
-  no_match: 'bg-gray-500 text-white',
+  no_match: 'bg-slate-500 text-white',
 };
 
 const confidenceLabels: Record<string, string> = {
@@ -45,8 +45,8 @@ const confidenceLabels: Record<string, string> = {
 const gapColors: Record<string, string> = {
   missing_from_rmm: 'bg-health-warning',
   missing_from_ad: 'bg-blue-500',
-  stale_rmm: 'bg-gray-500',
-  stale_ad: 'bg-gray-500',
+  stale_rmm: 'bg-slate-500',
+  stale_ad: 'bg-slate-500',
 };
 
 const gapLabels: Record<string, string> = {

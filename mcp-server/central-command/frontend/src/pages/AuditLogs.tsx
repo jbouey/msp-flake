@@ -20,7 +20,7 @@ const getActionColor = (action: string): string => {
     case 'LOGIN_SUCCESS':
       return 'text-health-healthy bg-green-50';
     case 'LOGOUT':
-      return 'text-label-secondary bg-gray-100';
+      return 'text-label-secondary bg-slate-100';
     case 'CREATE':
     case 'UPDATE':
       return 'text-ios-blue bg-blue-50';
@@ -31,9 +31,9 @@ const getActionColor = (action: string): string => {
     case 'EXECUTE':
       return 'text-ios-purple bg-purple-50';
     case 'VIEW':
-      return 'text-label-tertiary bg-gray-50';
+      return 'text-label-tertiary bg-slate-50';
     default:
-      return 'text-label-secondary bg-gray-100';
+      return 'text-label-secondary bg-slate-100';
   }
 };
 
