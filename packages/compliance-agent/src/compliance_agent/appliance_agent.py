@@ -2537,6 +2537,13 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
         """
         if self._domain_discovery_complete:
             return  # Already discovered
+
+        # Check persistent flag — survives agent restarts
+        discovery_flag = self.config.state_dir / ".domain-discovery-reported"
+        if discovery_flag.exists():
+            self._domain_discovery_complete = True
+            logger.debug("Domain discovery already reported (persistent flag)")
+            return
         
         logger.info("Running first-boot domain discovery...")
         try:
@@ -2585,6 +2592,12 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
             )
             if result:
                 logger.info(f"Reported discovered domain: {domain.domain_name}")
+                # Persist flag so we don't re-report on agent restart
+                try:
+                    flag_path = self.config.state_dir / ".domain-discovery-reported"
+                    flag_path.write_text(domain.domain_name)
+                except Exception:
+                    pass  # Non-critical — backend dedup is the safety net
             else:
                 logger.warning(f"Failed to report domain discovery")
         except Exception as e:

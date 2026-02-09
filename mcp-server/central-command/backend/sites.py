@@ -1007,49 +1007,59 @@ async def report_discovered_domain(report: DiscoveredDomainReport):
             report.site_id,
         )
 
-        # Create notification for dashboard
+        # Create notification for dashboard (deduplicated — skip if recent notification exists)
         domain_name = report.discovered_domain.get('domain_name', 'Unknown')
         domain_controllers = report.discovered_domain.get('domain_controllers', [])
 
-        await conn.execute("""
-            INSERT INTO notifications (
-                site_id, appliance_id, severity, category, title, message, metadata, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-        """,
-            report.site_id,
-            report.appliance_id,
-            'info',
-            'deployment',
-            f'Domain Discovered: {domain_name}',
-            f'Appliance discovered Active Directory domain "{domain_name}". '
-            f'Please enter domain administrator credentials to begin automatic enumeration.',
-            json.dumps({
-                "domain_name": domain_name,
-                "domain_controllers": domain_controllers,
-                "action_required": "Enter domain administrator credentials",
-                "dashboard_link": f"/sites/{report.site_id}/credentials",
-            }),
-            now,
-        )
+        existing = await conn.fetchval("""
+            SELECT COUNT(*) FROM notifications
+            WHERE site_id = $1 AND category = 'deployment'
+              AND title = $2
+              AND created_at > NOW() - INTERVAL '24 hours'
+        """, report.site_id, f'Domain Discovered: {domain_name}')
 
-        # Try to send email notification if configured
-        try:
-            from .email_alerts import send_critical_alert, is_email_configured
-            if is_email_configured():
-                dc_list = ', '.join(domain_controllers) if domain_controllers else 'None found'
-                send_critical_alert(
-                    title=f"Domain Discovered: {domain_name}",
-                    message=(
-                        f'Appliance discovered AD domain "{domain_name}". '
-                        f'Domain Controllers: {dc_list}. '
-                        f'Action required: enter domain admin credentials in dashboard.'
-                    ),
-                    site_id=report.site_id,
-                    category="deployment",
-                    severity="info",
-                )
-        except Exception as e:
-            logger.warning(f"Failed to send email notification: {e}")
+        if existing == 0:
+            await conn.execute("""
+                INSERT INTO notifications (
+                    site_id, appliance_id, severity, category, title, message, metadata, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+            """,
+                report.site_id,
+                report.appliance_id,
+                'info',
+                'deployment',
+                f'Domain Discovered: {domain_name}',
+                f'Appliance discovered Active Directory domain "{domain_name}". '
+                f'Please enter domain administrator credentials to begin automatic enumeration.',
+                json.dumps({
+                    "domain_name": domain_name,
+                    "domain_controllers": domain_controllers,
+                    "action_required": "Enter domain administrator credentials",
+                    "dashboard_link": f"/sites/{report.site_id}/credentials",
+                }),
+                now,
+            )
+
+            # Only send email on first notification (not repeats)
+            try:
+                from .email_alerts import send_critical_alert, is_email_configured
+                if is_email_configured():
+                    dc_list = ', '.join(domain_controllers) if domain_controllers else 'None found'
+                    send_critical_alert(
+                        title=f"Domain Discovered: {domain_name}",
+                        message=(
+                            f'Appliance discovered AD domain "{domain_name}". '
+                            f'Domain Controllers: {dc_list}. '
+                            f'Action required: enter domain admin credentials in dashboard.'
+                        ),
+                        site_id=report.site_id,
+                        category="deployment",
+                        severity="info",
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to send email notification: {e}")
+        else:
+            logger.debug(f"Skipping duplicate domain discovery notification for {domain_name} on {report.site_id}")
     
     return {"status": "ok", "message": "Domain discovery recorded"}
 
