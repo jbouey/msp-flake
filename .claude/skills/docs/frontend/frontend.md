@@ -12,7 +12,7 @@
 src/
 ├── pages/          # 31 page components
 ├── components/     # Domain-organized components
-│   ├── shared/     # Button, Badge, Spinner, GlassCard
+│   ├── shared/     # Button, Badge, Spinner, GlassCard, OsirisCareLeaf
 │   ├── fleet/      # FleetOverview, ClientCard
 │   ├── incidents/  # IncidentFeed, IncidentRow
 │   └── learning/   # PatternCard, PromotionTimeline
@@ -184,10 +184,12 @@ fill: {
 ```
 
 ### Key Design Rules
+- **No `gray-*` classes** — use `slate-*` everywhere (blue-tinted grey). All 1,030 `gray-*` references replaced with `slate-*`.
 - **No grey hovers** — use brand-tinted alternatives (blue-50, indigo-50, teal-50)
 - **No grey fills** — fill tokens are blue-tinted, not `rgba(120,120,128,...)`
 - **Glassmorphic cards**: `backdrop-blur-glass backdrop-saturate-glass bg-background-tertiary`
 - **GlassCard**: `bg-white/82 backdrop-blur-[20px] border border-separator-light rounded-ios-lg shadow-card`
+- **Brand logo**: `<OsirisCareLeaf />` component (two overlapping teal leaves) — use instead of shield icons
 - **Brand name**: "OsirisCare" (not "Malachor", not "Central Command")
 
 ## Auth Context
