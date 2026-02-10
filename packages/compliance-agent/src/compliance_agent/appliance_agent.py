@@ -854,13 +854,13 @@ class ApplianceAgent:
         # 5. Periodic AD re-enumeration (hourly, catches new domain devices)
         await self._maybe_reenumerate_ad()
 
-        # 6. Run Windows device scans (periodically)
-        if self.windows_targets:
-            await self._maybe_scan_windows()
-
-        # 7. Run Linux device scans (periodically)
+        # 6. Run Linux device scans first (fast, ~1min via SSH)
         if self.linux_targets:
             await self._maybe_scan_linux()
+
+        # 7. Run Windows device scans (slower, ~6min via WinRM)
+        if self.windows_targets:
+            await self._maybe_scan_windows()
 
         # 8. Run network posture scan (periodically)
         await self._maybe_scan_network_posture()
