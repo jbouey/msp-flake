@@ -258,7 +258,8 @@ async def get_client_detail(site_id: str) -> Optional[ClientDetail]:
     async with pool.acquire() as conn:
         # Get all appliances for this site
         appliance_rows = await conn.fetch("""
-            SELECT *
+            SELECT id, site_id, hostname, ip_address, agent_version,
+                   tier, is_online, last_checkin, created_at
             FROM appliances
             WHERE site_id = $1
             ORDER BY hostname
@@ -329,7 +330,8 @@ async def get_client_appliances(site_id: str) -> List[Appliance]:
 
     async with pool.acquire() as conn:
         appliance_rows = await conn.fetch("""
-            SELECT *
+            SELECT id, site_id, hostname, ip_address, agent_version,
+                   tier, is_online, last_checkin, created_at
             FROM appliances
             WHERE site_id = $1
             ORDER BY hostname

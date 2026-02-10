@@ -106,7 +106,11 @@ async def get_db():
 # =============================================================================
 
 @router.get("/fleet")
-async def get_fleet_overview(db: AsyncSession = Depends(get_db)):
+async def get_fleet_overview(
+    limit: int = Query(default=100, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
     """Get all clients with aggregated health scores."""
     # Get site data
     query = text("""
@@ -121,9 +125,10 @@ async def get_fleet_overview(db: AsyncSession = Depends(get_db)):
         LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
         GROUP BY s.site_id, s.clinic_name, s.status
         ORDER BY MAX(sa.last_checkin) DESC NULLS LAST
+        LIMIT :limit OFFSET :offset
     """)
 
-    result = await db.execute(query)
+    result = await db.execute(query, {"limit": limit, "offset": offset})
     rows = result.fetchall()
 
     # Get compliance scores for all sites

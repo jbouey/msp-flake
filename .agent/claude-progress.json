@@ -1,6 +1,6 @@
 {
-  "session": 103,
-  "updated": "2026-02-09T21:45:21.793887Z",
+  "session": 104,
+  "updated": "2026-02-10T16:55:00Z",
   "agent_version": "1.0.57",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -96,6 +96,34 @@
       "note": "Added 'healing' to dispatch dict + _handle_healing() routes through _execute_healing_action() with run_runbook:<ID> format. Commit 9e3d408."
     },
     {
+      "id": 18,
+      "task": "Finish Linux VM SSH + chaos integration",
+      "status": "completed",
+      "priority": "high",
+      "note": "DONE: Root cause was empty /root/.ssh/authorized_keys + MaxAuthTries=3. Fixed by copying iMac key to root, bumping MaxAuthTries=6. Updated ssh_attack.py with key-based SSH fallback (no sshpass needed). Both FULL_SPECTRUM + FULL_COVERAGE_5X launched on iMac."
+    },
+    {
+      "id": 19,
+      "task": "Apply VirtualBox VM performance tweaks to all 5 VMs",
+      "status": "completed",
+      "priority": "medium",
+      "note": "Applied by user. All 5 VMs running with tweaks."
+    },
+    {
+      "id": 20,
+      "task": "Fix sed quoting in FULL_SPECTRUM_CHAOS.sh Linux attacks",
+      "status": "pending",
+      "priority": "medium",
+      "note": "LIN-SSH-RootLogin and LIN-SSH-PasswordAuth sed commands fail with 'unterminated s command' — single quotes in sed pattern get mangled by ssh_attack.py key-auth sudo wrapper. Need to escape or use different quoting."
+    },
+    {
+      "id": 21,
+      "task": "Set static IP or DHCP reservation for appliance VM",
+      "status": "pending",
+      "priority": "medium",
+      "note": "Appliance VM got DHCP .254 instead of expected .247 after reboot. Should set static IP in NixOS config or add DHCP reservation on router."
+    },
+    {
       "id": 17,
       "task": "Remove argparse bootstrap shim after nix rebuild",
       "status": "pending",
@@ -103,27 +131,36 @@
       "note": "After both appliances have the fixed _apply_overlay() from nix rebuild, the argparse.py bootstrap in the overlay tarball is no longer needed. Can be removed from future tarballs."
     }
   ],
-  "completed_this_session": [],
+  "completed_this_session": [
+    "Fixed Linux VM SSH: root cause was empty authorized_keys + MaxAuthTries=3. Copied iMac key to root, bumped MaxAuthTries=6",
+    "Updated ssh_attack.py with key-based SSH fallback (no sshpass dependency)",
+    "Rebooted appliance VM — got new DHCP IP .254 (was .247), serial console confirmed full boot",
+    "Launched FULL_SPECTRUM_CHAOS.sh + FULL_COVERAGE_5X.sh on iMac (PID 38145, running in background)",
+    "All 5 VMs confirmed up: DC(.250), WS(.251), SRV(.244), Linux(.242), Appliance(.254)",
+    "Windows attacks: 14/15 succeeded (Defender exclusion expected fail on WS)",
+    "Linux attacks: 6/8 succeeded (2 sed commands have quoting issue in sudo wrapper)",
+    "VBox VM performance tweaks applied by user to all 5 VMs"
+  ],
   "recent_commits": [
     {
-      "hash": "4a89ca9",
-      "message": "fix: Deduplicate domain discovery notifications"
+      "hash": "ebb84fb",
+      "message": "docs: Update skill docs \u2014 flap suppression table, test count, key files"
     },
     {
-      "hash": "ac60603",
-      "message": "fix: Break firewall drift circular loop \u2014 flap detector + NixOS platform guard (server-side)"
+      "hash": "1cde342",
+      "message": "chore: Add purged credential files to .gitignore"
     },
     {
-      "hash": "99c31b9",
-      "message": "fix: Break firewall drift circular loop \u2014 flap detector + NixOS platform guard (agent-side)"
+      "hash": "b7c5683",
+      "message": "feat: Persistent flap suppression \u2014 break infinite L3 escalation loops"
     },
     {
-      "hash": "940b035",
-      "message": "fix: Domain discovery 500 + distinguish L3 escalation from healing failure"
+      "hash": "3e63a38",
+      "message": "feat: Add mobile responsive sidebar with hamburger menu"
     },
     {
-      "hash": "ff71bd8",
-      "message": "fix: Domain discovery 500 \u2014 remove nonexistent partners table JOIN, fix send_critical_alert params"
+      "hash": "65eef3a",
+      "message": "docs: Update frontend skill doc \u2014 slate rule, OsirisCareLeaf component"
     }
   ],
   "key_findings": {
@@ -139,6 +176,11 @@
     "l3_email_lesson": "L3 escalation emails are generated in email_alerts.py send_critical_alert(), called from main.py POST /incidents handler. The escalation_engine.py path (via notifications.py /api/escalations) is separate \u2014 used when agent posts to Central Command directly. Both paths now have rich context.",
     "phi_scrubber_lesson": "PHI scrubber in WindowsExecutor._execute_sync() replaces ALL IPs in WinRM output with [IP-REDACTED-xxx]. This breaks AD enumeration because IPv4Address values become unreachable hostnames. Fix: skip_phi_scrub=True parameter for infrastructure queries (AD enumeration, DNS resolution). PHI scrubber still active for all other WinRM queries (compliance checks, healing actions).",
     "flap_detector_lesson": "Flap detector thresholds must account for drift cooldown math. With 600s cooldown, max incidents in 30min = 3 (not 5). Three-layer fix needed: (1) agent-side flap thresholds 3/120min, (2) synced rules platform guard (rules from Central Command override built-in), (3) per-check cooldown extension to 1hr on flap. Synced rules at /var/lib/msp/rules/l1_rules.json override built-in rules in level1_deterministic.py \u2014 must update both.",
+    "vbox_black_screen_lesson": "VirtualBox Ubuntu Server VMs show black screen on screenshotpng due to console blanking (screen saver). Fix: add consoleblank=0 to GRUB_CMDLINE_LINUX_DEFAULT. For best screenshot compatibility on server VMs, use vboxvga graphics controller. Also: use serial console (uart1 file mode) for headless debugging.",
+    "linux_vm_ssh_lesson": "Ubuntu 24.04 server cloud-init can override sshd_config on boot. Fix: add /etc/cloud/cloud.cfg.d/99-disable-ssh-pwauth.cfg with ssh_pwauth:true. Also disable cloud-init networking via 99-disable-network-config.cfg to prevent netplan overrides. Password reset via NixOS live ISO: mount disk, chroot with explicit PATH=/usr/bin:/usr/sbin:/bin:/sbin, use chpasswd.",
+    "vbox_scancode_lesson": "VBoxManage keyboardputscancode requires PS/2 keyboard mode (--keyboard ps2). USB keyboard mode breaks scancodes. Best approach for complex commands: boot NixOS live ISO, set nixos password + start sshd, SSH in for a real terminal. Helper script type_vm.sh converts ASCII to scancodes.",
+    "ssh_auth_lesson": "When SSH agent has many keys, MaxAuthTries=3 causes 'Too many authentication failures' before the right key is tried. Fix: bump MaxAuthTries=6 AND ensure authorized_keys is populated for all users (root had empty file). ssh_attack.py now falls back to native SSH key auth when sshpass unavailable — uses BatchMode=yes with agent keys. Sudo commands wrap via echo password | sudo -S.",
+    "appliance_dhcp_lesson": "Appliance VM DHCP lease can change after reboot (.247 -> .254). Serial console (uart1 file mode) is essential for diagnosing boot issues when network is unreachable. The appliance banner shows current IP on login prompt.",
     "ad_enrollment_lesson": "AD enumeration returns FQDNs (e.g., nvdc01.northvalley.local) that the appliance can't resolve because its DNS points to the router. Fix: resolve_missing_ips() runs bulk DNS lookup on the DC via PowerShell, then connectivity tests use IP-first (ip_address or fqdn or hostname). Direct TCP asyncio.open_connection() from appliance is faster and more accurate than PowerShell Test-NetConnection from DC."
   },
   "deployment_flow": [
@@ -163,7 +205,7 @@
     "vps_ssh": "ssh root@178.156.162.116",
     "imac_ssh": "ssh jrelly@192.168.88.50",
     "physical_ssh": "ssh jrelly@192.168.88.50 'ssh root@192.168.88.241'",
-    "vm_rebuild": "ssh jrelly@192.168.88.50 \"ssh root@192.168.88.254 'nixos-rebuild test --flake github:jbouey/msp-flake#osiriscare-appliance-disk --refresh'\"",
+    "vm_rebuild": "ssh jrelly@192.168.88.50 \"ssh root@192.168.88.254 'nixos-rebuild test --flake github:jbouey/msp-flake#osiriscare-appliance-disk --refresh'\"  # NOTE: appliance VM currently at .254 (DHCP), may change",
     "physical_rebuild": "ssh jrelly@192.168.88.50 \"ssh root@192.168.88.241 'nixos-rebuild test --flake github:jbouey/msp-flake#osiriscare-appliance-disk --refresh'\"",
     "appliance_status": "ssh root@178.156.162.116 \"docker exec mcp-postgres psql -U mcp -d mcp -c 'SELECT site_id, agent_version, last_checkin FROM appliances ORDER BY last_checkin DESC'\"",
     "compliance_packet": "ssh root@178.156.162.116 \"curl -s 'http://localhost:8000/api/evidence/sites/physical-appliance-pilot-1aea78/compliance-packet?month=2&year=2026'\""

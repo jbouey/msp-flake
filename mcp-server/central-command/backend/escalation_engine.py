@@ -15,6 +15,7 @@ Usage:
     )
 """
 
+import asyncio
 import json
 import hmac
 import hashlib
@@ -24,6 +25,7 @@ import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
+from functools import partial
 from typing import Optional, Dict, Any, List
 from uuid import uuid4
 
@@ -287,11 +289,14 @@ This is an automated notification from OsirisCare Compliance Platform.
             logger.warning("SMTP password not configured, email skipped")
             return {"status": "skipped", "reason": "SMTP not configured"}
 
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls(context=context)
-            server.login(SMTP_USER, SMTP_PASS)
-            server.send_message(msg)
+        def _send_smtp(message):
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                server.starttls(context=ctx)
+                server.login(SMTP_USER, SMTP_PASS)
+                server.send_message(message)
+
+        await asyncio.get_event_loop().run_in_executor(None, partial(_send_smtp, msg))
 
         return {"status": "sent", "channel": "email", "recipients": len(recipients)}
     except Exception as e:
@@ -483,7 +488,8 @@ class EscalationEngine:
         async with pool.acquire() as conn:
             # Get site and partner info
             site = await conn.fetchrow("""
-                SELECT s.*, p.company_name as partner_name
+                SELECT s.id, s.site_id, s.clinic_name, s.partner_id, s.status,
+                       p.company_name as partner_name
                 FROM sites s
                 LEFT JOIN partners p ON s.partner_id = p.id
                 WHERE s.id = $1
@@ -499,13 +505,22 @@ class EscalationEngine:
 
             # Get partner notification settings
             settings = await conn.fetchrow("""
-                SELECT * FROM partner_notification_settings
+                SELECT id, partner_id, email_enabled, email_recipients,
+                       slack_enabled, slack_webhook_url, slack_channel,
+                       pagerduty_enabled, pagerduty_routing_key,
+                       teams_enabled, teams_webhook_url,
+                       webhook_enabled, webhook_url, webhook_secret,
+                       min_severity, escalation_timeout_minutes
+                FROM partner_notification_settings
                 WHERE partner_id = $1
             """, partner_id)
 
             # Get site-level overrides
             overrides = await conn.fetchrow("""
-                SELECT * FROM site_notification_overrides
+                SELECT site_id, email_recipients, slack_channel,
+                       pagerduty_routing_key, escalation_timeout_minutes,
+                       priority_override
+                FROM site_notification_overrides
                 WHERE site_id = $1
             """, site_id)
 

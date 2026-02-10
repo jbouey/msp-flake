@@ -585,45 +585,49 @@ async def root():
 
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
-    """Health check endpoint."""
+    """Health check endpoint — runs all checks in parallel."""
     checks = {"status": "ok"}
-    
-    # Check Redis
-    try:
-        if redis_client:
-            await redis_client.ping()
-            checks["redis"] = "connected"
-        else:
-            checks["redis"] = "not_configured"
-            checks["status"] = "degraded"
-            logger.warning("Health check: Redis not connected")
-    except Exception as e:
-        checks["redis"] = f"error: {str(e)}"
-        checks["status"] = "degraded"
-        logger.warning("Health check: Redis degraded", error=str(e))
 
-    # Check database
-    try:
-        async with async_session() as session:
-            await session.execute(text("SELECT 1"))
-        checks["database"] = "connected"
-    except Exception as e:
-        checks["database"] = f"error: {str(e)}"
-        checks["status"] = "degraded"
-        logger.warning("Health check: Database degraded", error=str(e))
+    async def check_redis():
+        try:
+            if redis_client:
+                await redis_client.ping()
+                return "connected", True
+            return "not_configured", False
+        except Exception as e:
+            return f"error: {str(e)}", False
 
-    # Check MinIO
-    try:
-        minio_client.bucket_exists(MINIO_BUCKET)
-        checks["minio"] = "connected"
-    except Exception as e:
-        checks["minio"] = f"error: {str(e)}"
+    async def check_database():
+        try:
+            async with async_session() as session:
+                await session.execute(text("SELECT 1"))
+            return "connected", True
+        except Exception as e:
+            return f"error: {str(e)}", False
+
+    async def check_minio():
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None, minio_client.bucket_exists, MINIO_BUCKET
+            )
+            return "connected", True
+        except Exception as e:
+            return f"error: {str(e)}", False
+
+    redis_result, db_result, minio_result = await asyncio.gather(
+        check_redis(), check_database(), check_minio()
+    )
+
+    checks["redis"] = redis_result[0]
+    checks["database"] = db_result[0]
+    checks["minio"] = minio_result[0]
+
+    if not all([redis_result[1], db_result[1], minio_result[1]]):
         checks["status"] = "degraded"
-        logger.warning("Health check: MinIO degraded", error=str(e))
-    
+
     checks["timestamp"] = datetime.now(timezone.utc).isoformat()
     checks["runbooks_loaded"] = len(RUNBOOKS)
-    
+
     status_code = 200 if checks["status"] == "ok" else 503
     return JSONResponse(content=checks, status_code=status_code)
 

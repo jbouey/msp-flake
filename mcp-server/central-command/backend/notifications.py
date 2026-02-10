@@ -195,7 +195,14 @@ async def test_notification_channel(
 
     async with pool.acquire() as conn:
         settings = await conn.fetchrow("""
-            SELECT * FROM partner_notification_settings
+            SELECT id, partner_id, email_enabled, email_recipients,
+                   slack_enabled, slack_webhook_url, slack_channel,
+                   pagerduty_enabled, pagerduty_routing_key,
+                   teams_enabled, teams_webhook_url,
+                   webhook_enabled, webhook_url, webhook_secret,
+                   min_severity, escalation_timeout_minutes,
+                   created_at, updated_at
+            FROM partner_notification_settings
             WHERE partner_id = $1
         """, partner['id'])
 

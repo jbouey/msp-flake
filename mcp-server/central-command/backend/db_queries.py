@@ -4,10 +4,48 @@ Provides functions to query real data from PostgreSQL.
 Falls back to mock data when database is empty.
 """
 
+import json
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+
+async def _get_redis():
+    """Get Redis client if available."""
+    try:
+        from main import redis_client
+        return redis_client
+    except (ImportError, AttributeError):
+        return None
+
+
+async def _cache_get(key: str):
+    """Get value from Redis cache. Returns None on miss or error."""
+    r = await _get_redis()
+    if not r:
+        return None
+    try:
+        data = await r.get(key)
+        if data:
+            return json.loads(data)
+    except Exception:
+        pass
+    return None
+
+
+async def _cache_set(key: str, value, ttl_seconds: int = 60):
+    """Set value in Redis cache with TTL."""
+    r = await _get_redis()
+    if not r:
+        return
+    try:
+        await r.setex(key, ttl_seconds, json.dumps(value, default=str))
+    except Exception:
+        pass
 
 
 async def get_fleet_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
@@ -443,25 +481,15 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
             "has_data": False,
         }
     
-    # Category mappings
-    category_checks = {
-        "patching": ["nixos_generation"],
-        "antivirus": ["windows_defender", "windows_windows_defender"],
-        "backup": ["backup_status"],
-        "logging": ["audit_logging", "windows_audit_policy"],
-        "firewall": ["firewall", "windows_firewall_status"],
-        "encryption": ["bitlocker", "windows_bitlocker_status"],
-    }
-    
-    # Collect scores by category
-    category_scores = {cat: [] for cat in category_checks}
-    
+    # Collect scores by category using pre-computed lookup
+    category_scores = {cat: [] for cat in CATEGORY_CHECKS}
+
     for bundle in bundles:
         checks = bundle.checks or []
         for check in checks:
             check_type = check.get("check", "")
             status = check.get("status", "").lower()
-            
+
             # Map status to score
             if status in ("compliant", "pass"):
                 score = 100
@@ -471,12 +499,11 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
                 score = 0
             else:
                 continue  # Skip unknown statuses
-            
-            # Find which category this check belongs to
-            for category, check_types in category_checks.items():
-                if check_type in check_types:
-                    category_scores[category].append(score)
-                    break
+
+            # O(1) category lookup instead of nested loop
+            category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
+            if category:
+                category_scores[category].append(score)
     
     # Calculate average for each category
     result_scores = {}
@@ -504,21 +531,80 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
 
 
 async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any]]:
-    """Get compliance scores for all sites that have compliance data."""
-    # Get all sites with compliance data
-    result = await db.execute(text("""
-        SELECT DISTINCT site_id FROM compliance_bundles
-    """))
-    site_ids = [row.site_id for row in result.fetchall()]
+    """Get compliance scores for all sites in a single query (replaces N+1 loop).
 
-    if not site_ids:
+    Uses a window function to fetch the latest 50 bundles per site, then
+    aggregates scores in Python using the pre-computed category lookup.
+    """
+    cached = await _cache_get("compliance:all_scores")
+    if cached is not None:
+        return cached
+
+    result = await db.execute(text("""
+        SELECT site_id, checks FROM (
+            SELECT site_id, checks,
+                   ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY checked_at DESC) as rn
+            FROM compliance_bundles
+        ) ranked
+        WHERE rn <= 50
+    """))
+    rows = result.fetchall()
+
+    if not rows:
         return {}
 
-    # Sequential fetch - SQLAlchemy AsyncSession doesn't support concurrent ops
-    scores = {}
-    for site_id in site_ids:
-        scores[site_id] = await get_compliance_scores_for_site(db, site_id)
+    # Group by site_id
+    site_bundles: Dict[str, list] = {}
+    for row in rows:
+        site_bundles.setdefault(row.site_id, []).append(row.checks)
 
+    # Score each site
+    scores = {}
+    for site_id, bundles_checks in site_bundles.items():
+        category_scores = {cat: [] for cat in CATEGORY_CHECKS}
+
+        for checks in bundles_checks:
+            if not checks:
+                continue
+            for check in checks:
+                check_type = check.get("check", "")
+                status = check.get("status", "").lower()
+
+                if status in ("compliant", "pass"):
+                    score = 100
+                elif status == "warning":
+                    score = 50
+                elif status in ("non_compliant", "fail"):
+                    score = 0
+                else:
+                    continue
+
+                category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
+                if category:
+                    category_scores[category].append(score)
+
+        result_scores = {}
+        total_score = 0
+        categories_with_data = 0
+
+        for category, cat_scores in category_scores.items():
+            if cat_scores:
+                avg = sum(cat_scores) / len(cat_scores)
+                result_scores[category] = round(avg)
+                total_score += avg
+                categories_with_data += 1
+            else:
+                result_scores[category] = None
+
+        if categories_with_data > 0:
+            result_scores["score"] = round(total_score / categories_with_data, 1)
+        else:
+            result_scores["score"] = None
+
+        result_scores["has_data"] = categories_with_data > 0
+        scores[site_id] = result_scores
+
+    await _cache_set("compliance:all_scores", scores, ttl_seconds=120)
     return scores
 
 
@@ -535,6 +621,12 @@ CATEGORY_CHECKS = {
     "firewall": ["firewall", "windows_firewall_status"],
     "encryption": ["bitlocker", "windows_bitlocker_status"],
 }
+
+# Pre-computed reverse lookup: check_type -> category (O(1) instead of O(categories))
+_CHECK_TYPE_TO_CATEGORY = {}
+for _cat, _types in CATEGORY_CHECKS.items():
+    for _ct in _types:
+        _CHECK_TYPE_TO_CATEGORY[_ct] = _cat
 
 
 async def get_site_info(db: AsyncSession, site_id: str) -> Optional[Dict[str, Any]]:
@@ -1267,6 +1359,10 @@ async def get_all_healing_metrics(db: AsyncSession) -> Dict[str, Dict[str, Any]]
 
     Returns dict keyed by site_id with same shape as get_healing_metrics_for_site().
     """
+    cached = await _cache_get("healing:all_metrics")
+    if cached is not None:
+        return cached
+
     # Get incident stats grouped by site
     incident_result = await db.execute(text("""
         SELECT
@@ -1315,6 +1411,7 @@ async def get_all_healing_metrics(db: AsyncSession) -> Dict[str, Dict[str, Any]]
             "last_incident": inc.last_incident if inc else None,
         }
 
+    await _cache_set("healing:all_metrics", results, ttl_seconds=120)
     return results
 
 
