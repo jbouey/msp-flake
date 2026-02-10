@@ -542,6 +542,90 @@ class DeterministicEngine:
                 priority=10,
                 source="builtin"
             ),
+
+            # --- Linux L1 Rules ---
+
+            # SSH PermitRootLogin drift
+            Rule(
+                id="L1-SSH-001",
+                name="SSH Root Login Drift",
+                description="PermitRootLogin not set to 'no' — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "ssh_config"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-SSH-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(d)", "164.312(a)(1)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # SSH PasswordAuthentication drift
+            Rule(
+                id="L1-SSH-002",
+                name="SSH Password Auth Drift",
+                description="PasswordAuthentication not set to 'no' — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "ssh_config"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                    RuleCondition("details.drift_field", MatchOperator.EQUALS, "PasswordAuthentication"),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-SSH-002", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(d)", "164.312(a)(1)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # Kernel parameter drift (ip_forward, ASLR, etc.)
+            Rule(
+                id="L1-KERN-001",
+                name="Kernel Parameter Drift",
+                description="Unsafe kernel parameters detected — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "kernel"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-KERN-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(e)(1)"],
+                priority=8,
+                source="builtin"
+            ),
+
+            # Cron file permission drift
+            Rule(
+                id="L1-CRON-001",
+                name="Cron Permission Drift",
+                description="Cron files have insecure permissions — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "cron"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-CRON-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(a)(1)"],
+                priority=8,
+                source="builtin"
+            ),
+
+            # SUID binary in temp directories
+            Rule(
+                id="L1-SUID-001",
+                name="Unauthorized SUID Binary",
+                description="SUID binaries found in /tmp — remove immediately",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "permissions"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                    RuleCondition("details.suid_found", MatchOperator.EQUALS, True),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-SUID-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(a)(1)", "164.308(a)(5)(ii)(C)"],
+                priority=3,  # High priority — active persistence indicator
+                source="builtin"
+            ),
         ]
 
         self.rules.extend(builtin_rules)

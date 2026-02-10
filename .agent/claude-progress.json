@@ -1,6 +1,6 @@
 {
   "session": 104,
-  "updated": "2026-02-10T16:55:00Z",
+  "updated": "2026-02-10T18:23:34.325149Z",
   "agent_version": "1.0.57",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -114,7 +114,7 @@
       "task": "Fix sed quoting in FULL_SPECTRUM_CHAOS.sh Linux attacks",
       "status": "pending",
       "priority": "medium",
-      "note": "LIN-SSH-RootLogin and LIN-SSH-PasswordAuth sed commands fail with 'unterminated s command' — single quotes in sed pattern get mangled by ssh_attack.py key-auth sudo wrapper. Need to escape or use different quoting."
+      "note": "LIN-SSH-RootLogin and LIN-SSH-PasswordAuth sed commands fail with 'unterminated s command' \u2014 single quotes in sed pattern get mangled by ssh_attack.py key-auth sudo wrapper. Need to escape or use different quoting."
     },
     {
       "id": 21,
@@ -139,12 +139,30 @@
     "All 5 VMs confirmed up: DC(.250), WS(.251), SRV(.244), Linux(.242), Appliance(.254)",
     "Windows attacks: 14/15 succeeded (Defender exclusion expected fail on WS)",
     "Linux attacks: 6/8 succeeded (2 sed commands have quoting issue in sudo wrapper)",
-    "VBox VM performance tweaks applied by user to all 5 VMs"
+    "VBox VM performance tweaks applied by user to all 5 VMs",
+    "Full backend performance audit: identified 7 bottlenecks across health endpoint, SMTP, N+1 queries, category scoring, caching, SELECT *, and unused indexes",
+    "Fix 1: Health endpoint parallelized with asyncio.gather() — 2.18s → 6ms (350x faster)",
+    "Fix 2: Blocking SMTP wrapped in run_in_executor()",
+    "Fix 3: Pre-computed _CHECK_TYPE_TO_CATEGORY dict for O(1) category lookups",
+    "Fix 4: N+1 compliance query eliminated with ROW_NUMBER() window function",
+    "Fix 5: Redis caching added for compliance scores and healing metrics (120s TTL)",
+    "Fix 6: SELECT * replaced with explicit columns in fleet.py, notifications.py, escalation_engine.py; pagination added to /fleet",
+    "Fix 7: Migration 039 — dropped 11 unused indexes (2.6MB freed), added 3 high-value indexes",
+    "Commit 7844a51 pushed to main, CI/CD deployed, migration 039 executed on VPS",
+    "Verified: 98% healing success rate (196/200 executions), all L1 deterministic"
   ],
   "recent_commits": [
     {
+      "hash": "7844a51",
+      "message": "perf: Backend performance audit fixes — parallel health, async SMTP, N+1 elimination, Redis caching"
+    },
+    {
+      "hash": "cdc7d7b",
+      "message": "feat: Bridge workstation checks into L1/L2/L3 auto-healer pipeline"
+    },
+    {
       "hash": "ebb84fb",
-      "message": "docs: Update skill docs \u2014 flap suppression table, test count, key files"
+      "message": "docs: Update skill docs — flap suppression table, test count, key files"
     },
     {
       "hash": "1cde342",
@@ -152,15 +170,7 @@
     },
     {
       "hash": "b7c5683",
-      "message": "feat: Persistent flap suppression \u2014 break infinite L3 escalation loops"
-    },
-    {
-      "hash": "3e63a38",
-      "message": "feat: Add mobile responsive sidebar with hamburger menu"
-    },
-    {
-      "hash": "65eef3a",
-      "message": "docs: Update frontend skill doc \u2014 slate rule, OsirisCareLeaf component"
+      "message": "feat: Persistent flap suppression — break infinite L3 escalation loops"
     }
   ],
   "key_findings": {
@@ -179,9 +189,10 @@
     "vbox_black_screen_lesson": "VirtualBox Ubuntu Server VMs show black screen on screenshotpng due to console blanking (screen saver). Fix: add consoleblank=0 to GRUB_CMDLINE_LINUX_DEFAULT. For best screenshot compatibility on server VMs, use vboxvga graphics controller. Also: use serial console (uart1 file mode) for headless debugging.",
     "linux_vm_ssh_lesson": "Ubuntu 24.04 server cloud-init can override sshd_config on boot. Fix: add /etc/cloud/cloud.cfg.d/99-disable-ssh-pwauth.cfg with ssh_pwauth:true. Also disable cloud-init networking via 99-disable-network-config.cfg to prevent netplan overrides. Password reset via NixOS live ISO: mount disk, chroot with explicit PATH=/usr/bin:/usr/sbin:/bin:/sbin, use chpasswd.",
     "vbox_scancode_lesson": "VBoxManage keyboardputscancode requires PS/2 keyboard mode (--keyboard ps2). USB keyboard mode breaks scancodes. Best approach for complex commands: boot NixOS live ISO, set nixos password + start sshd, SSH in for a real terminal. Helper script type_vm.sh converts ASCII to scancodes.",
-    "ssh_auth_lesson": "When SSH agent has many keys, MaxAuthTries=3 causes 'Too many authentication failures' before the right key is tried. Fix: bump MaxAuthTries=6 AND ensure authorized_keys is populated for all users (root had empty file). ssh_attack.py now falls back to native SSH key auth when sshpass unavailable — uses BatchMode=yes with agent keys. Sudo commands wrap via echo password | sudo -S.",
+    "ssh_auth_lesson": "When SSH agent has many keys, MaxAuthTries=3 causes 'Too many authentication failures' before the right key is tried. Fix: bump MaxAuthTries=6 AND ensure authorized_keys is populated for all users (root had empty file). ssh_attack.py now falls back to native SSH key auth when sshpass unavailable \u2014 uses BatchMode=yes with agent keys. Sudo commands wrap via echo password | sudo -S.",
     "appliance_dhcp_lesson": "Appliance VM DHCP lease can change after reboot (.247 -> .254). Serial console (uart1 file mode) is essential for diagnosing boot issues when network is unreachable. The appliance banner shows current IP on login prompt.",
-    "ad_enrollment_lesson": "AD enumeration returns FQDNs (e.g., nvdc01.northvalley.local) that the appliance can't resolve because its DNS points to the router. Fix: resolve_missing_ips() runs bulk DNS lookup on the DC via PowerShell, then connectivity tests use IP-first (ip_address or fqdn or hostname). Direct TCP asyncio.open_connection() from appliance is faster and more accurate than PowerShell Test-NetConnection from DC."
+    "ad_enrollment_lesson": "AD enumeration returns FQDNs (e.g., nvdc01.northvalley.local) that the appliance can't resolve because its DNS points to the router. Fix: resolve_missing_ips() runs bulk DNS lookup on the DC via PowerShell, then connectivity tests use IP-first (ip_address or fqdn or hostname). Direct TCP asyncio.open_connection() from appliance is faster and more accurate than PowerShell Test-NetConnection from DC.",
+    "perf_audit_lesson": "Health endpoint was 2.18s because DB/Redis/MinIO checks ran sequentially and MinIO (sync SDK) blocked the event loop. Fix: asyncio.gather() + run_in_executor() for sync calls. N+1 in compliance scoring: each site triggered a separate query. Fix: ROW_NUMBER() window function in a single query. Redis caching (120s TTL) for expensive aggregates. Pre-computed reverse lookup dicts beat inner loops. Migration 039: pg_stat_user_indexes with idx_scan=0 identifies safe-to-drop indexes."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",

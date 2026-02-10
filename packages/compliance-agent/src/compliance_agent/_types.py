@@ -96,6 +96,13 @@ class CheckType(str, Enum):
     SERVICE_HEALTH = "service_health"
     PROHIBITED_PORT = "prohibited_port"
 
+    # Linux checks (from runbooks)
+    SSH_CONFIG = "ssh_config"
+    KERNEL = "kernel"
+    CRON = "cron"
+    PERMISSIONS = "permissions"
+    ACCOUNTS = "accounts"
+
     # Workstation checks (from Go agent)
     WORKSTATION = "workstation"
     BITLOCKER = "bitlocker"

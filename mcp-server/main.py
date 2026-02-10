@@ -2572,6 +2572,77 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "cooldown_seconds": 86400,
             "max_retries": 1,
             "source": "builtin"
+        },
+        # --- Linux L1 Rules ---
+        {
+            "id": "L1-LIN-SSH-001",
+            "name": "SSH Root Login Remediation",
+            "description": "Fix PermitRootLogin when set to yes",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "ssh_config"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["run_linux_runbook:LIN-SSH-001"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-LIN-SSH-002",
+            "name": "SSH Password Auth Remediation",
+            "description": "Fix PasswordAuthentication when set to yes",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "ssh_config"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["run_linux_runbook:LIN-SSH-002"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-LIN-KERN-001",
+            "name": "Kernel Parameter Hardening",
+            "description": "Fix unsafe kernel parameters (ip_forward, ASLR, etc.)",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "kernel"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["run_linux_runbook:LIN-KERN-001"],
+            "severity": "high",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-LIN-CRON-001",
+            "name": "Cron Permission Hardening",
+            "description": "Fix insecure cron file permissions",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "cron"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["run_linux_runbook:LIN-CRON-001"],
+            "severity": "high",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-LIN-SUID-001",
+            "name": "SUID Binary Cleanup",
+            "description": "Remove unauthorized SUID binaries from temp directories",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "permissions"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["run_linux_runbook:LIN-SUID-001"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
         }
     ]
 

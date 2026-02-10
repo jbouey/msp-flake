@@ -1284,6 +1284,9 @@ class ApplianceAgent:
                 "runbook_id": runbook_id,
                 "phases": ["remediate", "verify"],
             }
+            # Route LIN-* runbooks to Linux executor, others to Windows
+            if runbook_id.startswith("LIN-"):
+                return await self._heal_run_linux_runbook(runbook_params, incident)
             return await self._heal_run_windows_runbook(runbook_params, incident)
         else:
             logger.warning(f"Unknown healing action: {action}")

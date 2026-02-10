@@ -262,12 +262,103 @@ async def retry_with_backoff(func, max_retries=10):
     raise Exception("Max retries exceeded")
 ```
 
+## Redis Caching for Expensive Aggregates
+
+```python
+# Cache helpers (db_queries.py)
+async def _cache_get(key: str):
+    r = await _get_redis()
+    if not r: return None
+    try:
+        data = await r.get(key)
+        if data: return json.loads(data)
+    except Exception: pass
+    return None
+
+async def _cache_set(key: str, value, ttl_seconds: int = 60):
+    r = await _get_redis()
+    if not r: return
+    try:
+        await r.setex(key, ttl_seconds, json.dumps(value, default=str))
+    except Exception: pass
+
+# Usage pattern — cache compliance scores (120s TTL)
+cached = await _cache_get("compliance:all_scores")
+if cached:
+    return cached
+# ... expensive query ...
+await _cache_set("compliance:all_scores", scores, ttl_seconds=120)
+```
+
+## Wrapping Blocking I/O in Async Handlers
+
+```python
+# MinIO (sync SDK) in async health check
+async def check_minio():
+    return await asyncio.get_event_loop().run_in_executor(
+        None, minio_client.bucket_exists, MINIO_BUCKET
+    )
+
+# Blocking SMTP in async handler
+from functools import partial
+def _send_smtp(message):
+    with smtplib.SMTP(host, port) as server:
+        server.starttls()
+        server.login(user, pwd)
+        server.send_message(message)
+
+await asyncio.get_event_loop().run_in_executor(None, partial(_send_smtp, msg))
+```
+
+## N+1 Query Elimination
+
+```sql
+-- Before: one query per site (N+1)
+-- After: single windowed query
+SELECT site_id, checks FROM (
+    SELECT site_id, checks,
+           ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY checked_at DESC) as rn
+    FROM compliance_bundles
+) ranked
+WHERE rn <= 50
+```
+
+## Pre-computed Reverse Lookups
+
+```python
+# Instead of nested loops: for cat, types in CATEGORIES.items(): for t in types: ...
+_CHECK_TYPE_TO_CATEGORY = {}
+for cat, types in CATEGORY_CHECKS.items():
+    for ct in types:
+        _CHECK_TYPE_TO_CATEGORY[ct] = cat
+
+# O(1) lookup instead of O(n*m)
+category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
+```
+
+## Index Maintenance
+
+```sql
+-- Find unused indexes (safe to drop if idx_scan = 0 over weeks)
+SELECT indexrelname, idx_scan, pg_size_pretty(pg_relation_size(indexrelid))
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0 AND indexrelname NOT LIKE '%_pkey'
+ORDER BY pg_relation_size(indexrelid) DESC;
+```
+
 ## Performance Summary
 
 | Area | Optimization | Impact |
 |------|--------------|--------|
+| Health endpoint | asyncio.gather() + run_in_executor | **350x faster** (2.18s → 6ms) |
+| SMTP | run_in_executor wrapper | Non-blocking event loop |
+| Compliance scoring | Pre-computed category dict | O(1) vs O(n*m) |
+| Compliance queries | ROW_NUMBER() window function | N+1 eliminated |
+| Expensive aggregates | Redis caching (120s TTL) | Cache hit = 0 DB queries |
 | DB Queries | Filtered indexes | 30-40% faster |
 | DB Queries | Connection pooling | 50% less latency |
+| DB Queries | Explicit columns vs SELECT * | Less bandwidth |
+| DB Indexes | Drop unused (pg_stat_user_indexes) | 2.6MB freed, faster writes |
 | React | useMemo/useCallback | 3-5x fewer re-renders |
 | React | Virtual scrolling | Handle 10K+ items |
 | React Query | Targeted invalidation | 60% less refetching |

@@ -2134,6 +2134,51 @@ LIN_CRYPTO_001 = LinuxRunbook(
 
 
 # =============================================================================
+# SUID BINARY DETECTION RUNBOOKS
+# =============================================================================
+
+LIN_SUID_001 = LinuxRunbook(
+    id="LIN-SUID-001",
+    name="Unauthorized SUID Binary Cleanup",
+    description="Detect and remove unauthorized SUID binaries in /tmp and world-writable directories",
+    hipaa_controls=["164.312(a)(1)", "164.308(a)(5)(ii)(C)"],
+    check_type="permissions",
+    severity="critical",
+    detect_script='''
+        SUID_FOUND=$(find /tmp /var/tmp /dev/shm -perm -4000 -type f 2>/dev/null)
+        if [ -z "$SUID_FOUND" ]; then
+            echo "COMPLIANT"
+            exit 0
+        else
+            COUNT=$(echo "$SUID_FOUND" | wc -l)
+            echo "DRIFT:suid_binaries_found=$COUNT"
+            echo "$SUID_FOUND"
+            exit 1
+        fi
+    ''',
+    remediate_script='''
+        REMOVED=0
+        for f in $(find /tmp /var/tmp /dev/shm -perm -4000 -type f 2>/dev/null); do
+            rm -f "$f" && REMOVED=$((REMOVED+1))
+        done
+        echo "REMEDIATED:removed=$REMOVED"
+    ''',
+    verify_script='''
+        SUID_FOUND=$(find /tmp /var/tmp /dev/shm -perm -4000 -type f 2>/dev/null)
+        if [ -z "$SUID_FOUND" ]; then
+            echo "VERIFIED"
+            exit 0
+        else
+            echo "VERIFY_FAILED"
+            exit 1
+        fi
+    ''',
+    l1_auto_heal=True,
+    timeout_seconds=30
+)
+
+
+# =============================================================================
 # RUNBOOK REGISTRY
 # =============================================================================
 
@@ -2182,6 +2227,8 @@ RUNBOOKS: Dict[str, LinuxRunbook] = {
     "LIN-BOOT-001": LIN_BOOT_001,
     # Cron
     "LIN-CRON-001": LIN_CRON_001,
+    # SUID
+    "LIN-SUID-001": LIN_SUID_001,
     # Banner
     "LIN-BANNER-001": LIN_BANNER_001,
     # Cryptographic Policy
