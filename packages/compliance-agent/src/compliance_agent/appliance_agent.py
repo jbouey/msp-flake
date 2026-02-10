@@ -289,7 +289,7 @@ class SimpleDriftChecker:
 
 # Default intervals (seconds) — overridable via ApplianceConfig attributes
 DEFAULT_RULES_SYNC_INTERVAL = 3600       # Sync L1 rules from server (1 hour)
-DEFAULT_LINUX_SCAN_INTERVAL = 300        # Linux drift check (5 min)
+DEFAULT_LINUX_SCAN_INTERVAL = 120        # Linux drift check (2 min)
 DEFAULT_NETWORK_POSTURE_INTERVAL = 600   # Network posture scan (10 min)
 DEFAULT_WINDOWS_SCAN_INTERVAL = 300      # Windows drift check (5 min)
 DEFAULT_WORKSTATION_SCAN_INTERVAL = 600  # Workstation compliance (10 min)

@@ -294,6 +294,74 @@ network:
   severity: medium
 
 # =============================================================================
+# KERNEL HARDENING
+# =============================================================================
+kernel:
+  enabled: true
+  sysctl_settings:
+    net.ipv4.ip_forward: 0
+    net.ipv4.conf.all.accept_redirects: 0
+    net.ipv4.conf.default.accept_redirects: 0
+    net.ipv4.tcp_syncookies: 1
+    net.ipv4.conf.all.log_martians: 1
+    net.ipv4.conf.all.accept_source_route: 0
+  hipaa_controls:
+    - "164.312(e)(1)"
+  severity: high
+
+# =============================================================================
+# CRON / SCHEDULED TASKS
+# =============================================================================
+cron:
+  enabled: true
+  crontab_permissions:
+    owner: "root"
+    mode: "0600"
+  restrict_at_cron: true
+  hipaa_controls:
+    - "164.312(a)(1)"
+  severity: high
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+logging:
+  enabled: true
+  rsyslog_required: true
+  log_retention_days: 90
+  hipaa_controls:
+    - "164.312(b)"
+  severity: high
+
+# =============================================================================
+# BOOT SECURITY
+# =============================================================================
+boot:
+  enabled: true
+  hipaa_controls:
+    - "164.312(a)(1)"
+  severity: medium
+
+# =============================================================================
+# LOGIN BANNER
+# =============================================================================
+banner:
+  enabled: true
+  hipaa_controls:
+    - "164.312(a)(1)"
+  severity: low
+
+# =============================================================================
+# CRYPTOGRAPHIC POLICY
+# =============================================================================
+crypto:
+  enabled: true
+  hipaa_controls:
+    - "164.312(a)(2)(iv)"
+    - "164.312(e)(2)(ii)"
+  severity: high
+
+# =============================================================================
 # AUTO-HEAL SETTINGS
 # =============================================================================
 auto_heal:
@@ -304,12 +372,16 @@ auto_heal:
     - services
     - audit
     - permissions
+    - kernel
+    - cron
+    - logging
 
   # L2 categories requiring LLM analysis
   l2_enabled:
     - patching
     - accounts
     - mac
+    - boot
 
   # Never auto-heal (always L3 escalation)
   l3_only:

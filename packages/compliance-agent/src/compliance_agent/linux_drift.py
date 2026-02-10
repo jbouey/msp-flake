@@ -279,8 +279,14 @@ class LinuxDriftDetector:
     def _get_enabled_checks(self) -> set:
         """Get set of enabled check types from baseline."""
         enabled = set()
-        for check_type in ["ssh_config", "firewall", "services", "audit",
-                           "patching", "encryption", "accounts", "permissions", "mac"]:
+        # All check types used by runbooks in the registry
+        all_check_types = [
+            "ssh_config", "firewall", "services", "audit",
+            "patching", "encryption", "accounts", "permissions", "mac",
+            "kernel", "cron", "logging", "network", "boot",
+            "banner", "crypto", "time_sync", "integrity", "incident_response",
+        ]
+        for check_type in all_check_types:
             config = self.baseline.get(check_type, {})
             if config.get("enabled", True):
                 enabled.add(check_type)
