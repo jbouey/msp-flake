@@ -111,7 +111,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.56"
+VERSION = "1.0.61"
 
 
 async def run_command(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
@@ -3668,33 +3668,37 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
         version_file = overlay_dir / "VERSION"
         version_file.write_text(version)
 
-        # Try systemd drop-in first (works on mutable filesystems)
-        dropin_dir = Path("/etc/systemd/system/compliance-agent.service.d")
+        # Clean macOS resource fork files from overlay
+        import glob as glob_mod
+        for rf in glob_mod.glob(str(overlay_dir / "**" / "._*"), recursive=True):
+            try:
+                Path(rf).unlink()
+            except OSError:
+                pass
+
+        # Create systemd drop-in in /run (tmpfs, writable on NixOS).
+        # This ensures PYTHONPATH is set BEFORE Python starts, so
+        # overlay modules are found by the import machinery.
+        dropin_dir = Path("/run/systemd/system/compliance-agent.service.d")
         try:
             dropin_dir.mkdir(parents=True, exist_ok=True)
             dropin_file = dropin_dir / "overlay.conf"
-            dropin_file.write_text(f'''[Service]
-Environment="PYTHONPATH={overlay_dir}"
-''')
-            logger.info("Created systemd PYTHONPATH override")
+            dropin_file.write_text(
+                f'[Service]\nEnvironment="PYTHONPATH={overlay_dir}"\n'
+                f'Environment="_MSP_OVERLAY={overlay_dir}"\n'
+            )
+            logger.info("Created systemd PYTHONPATH override in /run")
             import os
             os.system("systemctl daemon-reload")
-            asyncio.get_event_loop().call_later(3, self._do_restart)
-            return {
-                "status": "update_applied",
-                "version": version,
-                "restart_scheduled": True
-            }
-        except (PermissionError, OSError):
-            # NixOS read-only filesystem - restart with PYTHONPATH via os.execve
-            logger.info("Read-only filesystem detected, restarting with overlay PYTHONPATH")
-            asyncio.get_event_loop().call_later(3, self._do_overlay_restart, str(overlay_dir))
-            return {
-                "status": "update_applied",
-                "version": version,
-                "restart_scheduled": True,
-                "method": "overlay_execve"
-            }
+        except OSError:
+            logger.warning("Could not create systemd drop-in, overlay will self-activate via re-exec")
+
+        asyncio.get_event_loop().call_later(3, self._do_overlay_restart, str(overlay_dir))
+        return {
+            "status": "update_applied",
+            "version": version,
+            "restart_scheduled": True,
+        }
 
     def _do_overlay_restart(self, overlay_dir: str):
         """Restart agent via systemctl so _apply_overlay() runs on fresh start.
@@ -4165,59 +4169,42 @@ def _apply_overlay():
     """Check for and apply agent overlay (hot-update support).
 
     If /var/lib/msp/agent-overlay/ exists with a VERSION file,
-    we re-import ALL compliance_agent modules from the overlay and
-    re-invoke main() from the overlay code. This is necessary because
-    by the time this function runs, the nix-installed modules are
-    already loaded — simple sys.path changes don't affect them.
+    re-exec the process with PYTHONPATH set so Python's import
+    machinery loads overlay modules BEFORE the NixOS wrapper's
+    site.addsitedir() paths.
 
-    On NixOS, buildPythonApplication wrappers override PYTHONPATH,
-    so os.execve-based approaches don't work either. Instead we:
-    1. Fix sys.path and compliance_agent.__path__
-    2. Purge ALL cached compliance_agent modules
-    3. Re-import and call overlay's main() (which sees the overlay
-       is already at sys.path[0] and proceeds normally)
+    Previous approach (module purge + re-import) was unreliable
+    because the NixOS wrapper imports compliance_agent at module
+    level before main() can call _apply_overlay().
     """
+    import os
+
     overlay_dir = Path("/var/lib/msp/agent-overlay")
     version_file = overlay_dir / "VERSION"
     if not version_file.exists():
         return
 
     overlay_path = str(overlay_dir)
-    overlay_pkg_path = str(overlay_dir / "compliance_agent")
     version = version_file.read_text().strip()
 
-    # Already applied — overlay is first on sys.path, just proceed
-    if sys.path and sys.path[0] == overlay_path:
-        print(f"[overlay] Agent overlay v{version} active from {overlay_path}")
+    # Guard: already re-exec'd with overlay active
+    if os.environ.get('_MSP_OVERLAY') == overlay_path:
+        print(f"[overlay] Agent overlay v{version} active via PYTHONPATH")
         return
 
-    print(f"[overlay] Agent overlay v{version} detected, activating from {overlay_path}")
+    print(f"[overlay] Agent overlay v{version} detected, re-execing with PYTHONPATH")
 
-    # Step 1: Put overlay first on sys.path
-    while overlay_path in sys.path:
-        sys.path.remove(overlay_path)
-    sys.path.insert(0, overlay_path)
+    # Set PYTHONPATH so overlay is found first on next exec.
+    # Python processes PYTHONPATH in C startup, BEFORE any wrapper
+    # script code runs, so overlay modules take precedence.
+    current_pp = os.environ.get('PYTHONPATH', '')
+    os.environ['PYTHONPATH'] = overlay_path + (':' + current_pp if current_pp else '')
+    os.environ['_MSP_OVERLAY'] = overlay_path
 
-    # Step 2: Update compliance_agent.__path__ so submodule imports use overlay
-    import compliance_agent
-    if hasattr(compliance_agent, '__path__'):
-        while overlay_pkg_path in compliance_agent.__path__:
-            compliance_agent.__path__.remove(overlay_pkg_path)
-        compliance_agent.__path__.insert(0, overlay_pkg_path)
-
-    # Step 3: Purge ALL cached compliance_agent modules (including package itself)
-    to_purge = [k for k in sys.modules if k.startswith('compliance_agent')]
-    for mod_name in to_purge:
-        del sys.modules[mod_name]
-
-    print(f"[overlay] Purged {len(to_purge)} modules, re-importing from overlay")
-
-    # Step 4: Re-import main from overlay and run it (never returns)
-    from compliance_agent.appliance_agent import main as overlay_main
-    try:
-        overlay_main()
-    finally:
-        sys.exit(0)
+    # Re-exec the current process. sys.executable is the Python
+    # interpreter (/nix/store/.../python3.x). sys.argv[0] is the
+    # NixOS wrapper script which is a valid Python script.
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 def main():
