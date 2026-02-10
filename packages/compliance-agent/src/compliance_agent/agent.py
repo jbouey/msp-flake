@@ -29,6 +29,8 @@ from .mcp_client import MCPClient
 from .phone_home import PhoneHome
 from .models import DriftResult, RemediationResult, EvidenceBundle
 from .utils import apply_jitter
+from .auto_healer import AutoHealer, AutoHealerConfig
+from .workstation_checks import WorkstationComplianceChecker, ComplianceStatus
 
 
 logger = logging.getLogger(__name__)
@@ -90,6 +92,26 @@ class ComplianceAgent:
                 drift_detector=self.drift_detector,
                 portal_url=None  # Will derive from mcp_url
             )
+
+        # Auto-healer for Windows workstation healing (L1/L2/L3)
+        self.auto_healer: Optional[AutoHealer] = None
+        if getattr(config, 'enable_workstation_healing', True):
+            try:
+                healer_config = AutoHealerConfig(
+                    db_path=str(config.state_dir / "incidents.db"),
+                    rules_dir=Path(getattr(config, 'rules_dir', '/etc/msp/rules')),
+                    enable_level1=True,
+                    enable_level2=getattr(config, 'enable_level2', True),
+                    enable_level3=getattr(config, 'enable_level3', True),
+                )
+                self.auto_healer = AutoHealer(config=healer_config)
+                logger.info("Auto-healer initialized for workstation healing")
+            except Exception as e:
+                logger.warning(f"Auto-healer init failed (workstation healing disabled): {e}")
+
+        # Workstation check iteration counter (run every Nth iteration)
+        self._workstation_check_interval = getattr(config, 'workstation_check_interval', 3)
+        self._iteration_count = 0
 
         # Background tasks
         self._phone_home_task: Optional[asyncio.Task] = None
@@ -222,10 +244,16 @@ class ComplianceAgent:
         for drift in drifted:
             await self._remediate_and_record(drift)
         
-        # Step 3: Process offline queue (upload queued evidence)
+        # Step 3: Run workstation compliance checks (every Nth iteration)
+        self._iteration_count += 1
+        if (self.auto_healer and
+                self._iteration_count % self._workstation_check_interval == 0):
+            await self._check_and_heal_workstations()
+
+        # Step 4: Process offline queue (upload queued evidence)
         if self.mcp_client:
             await self._process_offline_queue()
-        
+
         iteration_end = datetime.now(timezone.utc)
         duration = (iteration_end - iteration_start).total_seconds()
         logger.info(f"Iteration completed in {duration:.1f}s")
@@ -276,6 +304,79 @@ class ComplianceAgent:
         # Submit evidence to MCP or queue for later
         await self._submit_evidence(evidence)
     
+    async def _check_and_heal_workstations(self):
+        """
+        Run workstation compliance checks and feed drifted results to auto-healer.
+
+        This bridges workstation detection into the L1/L2/L3 healing pipeline.
+        Runs less frequently than appliance drift checks (every Nth iteration).
+        """
+        if not self.auto_healer:
+            return
+
+        try:
+            from .workstation_discovery import discover_workstations
+            from .windows_collector import WindowsExecutor
+
+            # Discover workstations (from cache or AD)
+            workstations = await discover_workstations(self.config)
+            if not workstations:
+                logger.debug("No workstations discovered, skipping checks")
+                return
+
+            logger.info(f"Running compliance checks on {len(workstations)} workstation(s)")
+
+            executor = WindowsExecutor(self.config)
+            checker = WorkstationComplianceChecker(
+                executor=executor,
+                timeout_seconds=30,
+            )
+
+            for ws in workstations:
+                target = ws.get("ip_address") or ws.get("hostname")
+                hostname = ws.get("hostname", target)
+                creds = ws.get("credentials", {})
+
+                if not target:
+                    continue
+
+                try:
+                    result = await checker.run_all_checks(
+                        target=target,
+                        ip_address=ws.get("ip_address"),
+                        credentials=creds,
+                    )
+
+                    # Feed drifted checks into auto-healer
+                    for check in result.checks:
+                        if check.status == ComplianceStatus.DRIFTED:
+                            logger.info(
+                                f"Workstation drift: {hostname} - {check.check_type}"
+                            )
+                            raw_data = {
+                                "check_type": check.check_type,
+                                "drift_detected": True,
+                                "status": "fail",
+                                "details": check.details,
+                                "hipaa_controls": check.hipaa_controls,
+                                "hostname": hostname,
+                            }
+                            await self.auto_healer.heal(
+                                site_id=self.config.site_id,
+                                host_id=hostname,
+                                incident_type=check.check_type,
+                                severity="high",
+                                raw_data=raw_data,
+                            )
+
+                except Exception as e:
+                    logger.warning(f"Workstation check failed for {hostname}: {e}")
+
+        except ImportError as e:
+            logger.debug(f"Workstation check deps not available: {e}")
+        except Exception as e:
+            logger.error(f"Workstation check loop error: {e}", exc_info=True)
+
     async def _generate_evidence(
         self,
         drift: DriftResult,

@@ -21,7 +21,7 @@
       {"field": "check_type", "operator": "eq", "value": "critical_services"},
       {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
     ],
-    "actions": ["restart_service:sshd", "restart_service:chronyd"],
+    "actions": ["restart_service:sshd"],
     "severity": "high",
     "cooldown_seconds": 600,
     "max_retries": 3,
@@ -29,11 +29,11 @@
   },
   {
     "id": "L1-DISK-001",
-    "name": "Disk Space Alert",
-    "description": "Alert when disk usage exceeds threshold",
+    "name": "Disk Space Critical",
+    "description": "Clean disk when usage exceeds threshold",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "disk_space"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
     "actions": ["alert:disk_space_critical"],
     "severity": "high",
@@ -61,10 +61,14 @@
     "description": "Re-enable Windows Firewall on all profiles",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "firewall"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:firewall_disabled"],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-001", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.312(a)(1)", "164.312(e)(1)"],
     "severity": "critical",
+    "priority": 5,
     "cooldown_seconds": 300,
     "max_retries": 2,
     "source": "builtin"
@@ -72,41 +76,53 @@
   {
     "id": "L1-WIN-DEFENDER-001",
     "name": "Windows Defender Disabled",
-    "description": "Re-enable Windows Defender real-time protection",
+    "description": "Re-enable Windows Defender real-time protection and update signatures",
     "conditions": [
-      {"field": "check_type", "operator": "eq", "value": "windows_defender"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "check_type", "operator": "eq", "value": "defender"},
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:defender_disabled"],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-006", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.308(a)(5)(ii)(B)"],
     "severity": "critical",
+    "priority": 3,
     "cooldown_seconds": 300,
     "max_retries": 2,
     "source": "builtin"
   },
   {
     "id": "L1-WIN-BITLOCKER-001",
-    "name": "BitLocker Not Enabled",
-    "description": "Enable BitLocker encryption on system drive",
+    "name": "BitLocker Protection Suspended",
+    "description": "Resume BitLocker protection if suspended",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "bitlocker"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:bitlocker_disabled"],
-    "severity": "high",
-    "cooldown_seconds": 1800,
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-005", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.312(a)(2)(iv)", "164.312(e)(2)(ii)"],
+    "severity": "critical",
+    "priority": 3,
+    "cooldown_seconds": 600,
     "max_retries": 1,
     "source": "builtin"
   },
   {
     "id": "L1-WIN-AUDIT-001",
     "name": "Audit Policy Non-Compliant",
-    "description": "Configure HIPAA-compliant audit policy",
+    "description": "Configure HIPAA-required audit policies",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "audit_policy"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:audit_policy_drift"],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-002", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.312(b)", "164.308(a)(1)(ii)(D)"],
     "severity": "high",
+    "priority": 10,
     "cooldown_seconds": 600,
     "max_retries": 2,
     "source": "builtin"
@@ -117,10 +133,14 @@
     "description": "Configure HIPAA-compliant password policy",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "password_policy"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:password_policy_drift"],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-004", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.312(d)"],
     "severity": "high",
+    "priority": 10,
     "cooldown_seconds": 600,
     "max_retries": 2,
     "source": "builtin"
@@ -131,10 +151,14 @@
     "description": "Configure account lockout policy",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "lockout_policy"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:lockout_policy_drift"],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-003", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.312(a)(2)(i)"],
     "severity": "medium",
+    "priority": 20,
     "cooldown_seconds": 600,
     "max_retries": 2,
     "source": "builtin"
@@ -145,10 +169,13 @@
     "description": "Configure screen lock timeout (15 min HIPAA)",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "screen_lock"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
     "actions": ["alert:screen_lock_drift"],
+    "hipaa_controls": ["164.312(a)(2)(iii)"],
     "severity": "medium",
+    "priority": 20,
     "cooldown_seconds": 600,
     "max_retries": 2,
     "source": "builtin"
@@ -159,12 +186,86 @@
     "description": "Enable SMB signing for network security",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "smb_signing"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:smb_signing_drift"],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-006", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.312(e)(1)"],
     "severity": "high",
+    "priority": 10,
     "cooldown_seconds": 600,
     "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-GUEST-001",
+    "name": "Guest Account Enabled",
+    "description": "Disable unauthorized guest account access",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "guest_account"},
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["alert:guest_account_enabled"],
+    "hipaa_controls": ["164.312(a)(1)"],
+    "severity": "high",
+    "priority": 5,
+    "cooldown_seconds": 300,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-FWLOG-001",
+    "name": "Firewall Logging Disabled",
+    "description": "Enable firewall logging for security audit trail",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "firewall_logging"},
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["alert:firewall_logging_drift"],
+    "hipaa_controls": ["164.312(b)"],
+    "severity": "medium",
+    "priority": 15,
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-PERSIST-TASK-001",
+    "name": "Suspicious Scheduled Task Detected",
+    "description": "Remove suspicious scheduled tasks (persistence mechanism)",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "scheduled_task_persistence"},
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-018", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.308(a)(1)(ii)(D)", "164.312(b)"],
+    "severity": "critical",
+    "priority": 3,
+    "cooldown_seconds": 300,
+    "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-PERSIST-REG-001",
+    "name": "Suspicious Registry Run Key Detected",
+    "description": "Remove suspicious Run/RunOnce registry entries (persistence mechanism)",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "registry_run_persistence"},
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-019", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.308(a)(1)(ii)(D)", "164.312(b)"],
+    "severity": "critical",
+    "priority": 3,
+    "cooldown_seconds": 300,
+    "max_retries": 1,
     "source": "builtin"
   },
   {
@@ -173,10 +274,13 @@
     "description": "Configure NTLMv2 security settings",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "ntlm"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
     "actions": ["alert:ntlm_security_drift"],
+    "hipaa_controls": ["164.312(e)(1)"],
     "severity": "high",
+    "priority": 15,
     "cooldown_seconds": 600,
     "max_retries": 2,
     "source": "builtin"
@@ -187,10 +291,13 @@
     "description": "Re-enable User Account Control",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "uac"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
     "actions": ["alert:uac_disabled"],
+    "hipaa_controls": ["164.312(a)(1)"],
     "severity": "high",
+    "priority": 10,
     "cooldown_seconds": 600,
     "max_retries": 2,
     "source": "builtin"
@@ -201,94 +308,48 @@
     "description": "Enable Network Level Authentication for RDP",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "nla"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
     "actions": ["alert:nla_disabled"],
+    "hipaa_controls": ["164.312(a)(1)"],
     "severity": "high",
+    "priority": 15,
     "cooldown_seconds": 600,
     "max_retries": 2,
-    "source": "builtin"
-  },
-  {
-    "id": "L1-WIN-EVENTLOG-001",
-    "name": "Event Log Protection Disabled",
-    "description": "Enable event log protection",
-    "conditions": [
-      {"field": "check_type", "operator": "eq", "value": "event_log_protection"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
-    ],
-    "actions": ["alert:eventlog_protection_drift"],
-    "severity": "medium",
-    "cooldown_seconds": 600,
-    "max_retries": 2,
-    "source": "builtin"
-  },
-  {
-    "id": "L1-WIN-CREDGUARD-001",
-    "name": "Credential Guard Not Enabled",
-    "description": "Enable Credential Guard protection",
-    "conditions": [
-      {"field": "check_type", "operator": "eq", "value": "credential_guard"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
-    ],
-    "actions": ["alert:credguard_disabled"],
-    "severity": "high",
-    "cooldown_seconds": 1800,
-    "max_retries": 1,
     "source": "builtin"
   },
   {
     "id": "L1-WIN-BACKDOOR-001",
     "name": "Unauthorized Admin Account Detected",
-    "description": "Remove unauthorized administrator accounts",
+    "description": "Alert on unauthorized administrator accounts",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "unauthorized_users"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
     "actions": ["alert:unauthorized_admin"],
+    "hipaa_controls": ["164.312(a)(1)"],
     "severity": "critical",
+    "priority": 2,
     "cooldown_seconds": 300,
     "max_retries": 1,
     "source": "builtin"
   },
   {
-    "id": "L1-WIN-TIME-001",
-    "name": "Windows Time Service Failed",
-    "description": "Restart Windows Time service",
-    "conditions": [
-      {"field": "check_type", "operator": "eq", "value": "time_service"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
-    ],
-    "actions": ["alert:time_service_failed"],
-    "severity": "medium",
-    "cooldown_seconds": 300,
-    "max_retries": 2,
-    "source": "builtin"
-  },
-  {
-    "id": "L1-WIN-DNS-001",
-    "name": "DNS Client Service Failed",
-    "description": "Restart DNS Client service",
-    "conditions": [
-      {"field": "check_type", "operator": "eq", "value": "dns_client"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
-    ],
-    "actions": ["alert:dns_client_failed"],
-    "severity": "medium",
-    "cooldown_seconds": 300,
-    "max_retries": 2,
-    "source": "builtin"
-  },
-  {
     "id": "L1-WIN-PATCH-001",
     "name": "Critical Patches Missing",
-    "description": "Install missing critical Windows updates",
+    "description": "Alert on missing critical Windows updates",
     "conditions": [
-      {"field": "check_type", "operator": "eq", "value": "patching"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "check_type", "operator": "eq", "value": "patches"},
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:patches_missing"],
+    "actions": ["escalate"],
+    "action_params": {"reason": "Critical patches missing - requires maintenance window", "urgency": "high"},
+    "hipaa_controls": ["164.308(a)(5)(ii)(B)"],
     "severity": "high",
+    "priority": 10,
     "cooldown_seconds": 3600,
     "max_retries": 1,
     "source": "builtin"

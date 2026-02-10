@@ -320,7 +320,7 @@ class TestWorkstationComplianceChecker:
 
     @pytest.mark.asyncio
     async def test_run_all_checks(self, mock_executor, sample_credentials):
-        """Test running all 5 compliance checks."""
+        """Test running all compliance checks (7 basic + 5 extended = 12 full)."""
         import json
 
         # All checks return compliant
@@ -330,11 +330,17 @@ class TestWorkstationComplianceChecker:
         )
 
         checker = WorkstationComplianceChecker(executor=mock_executor)
-        result = await checker.run_all_checks("WS001", credentials=sample_credentials)
 
+        # Full coverage (default) returns 12 checks
+        result = await checker.run_all_checks("WS001", credentials=sample_credentials)
         assert isinstance(result, WorkstationComplianceResult)
-        assert len(result.checks) == 5
+        assert len(result.checks) == 12
         assert result.overall_status == ComplianceStatus.COMPLIANT
+
+        # Basic coverage returns 7 checks
+        result_basic = await checker.run_all_checks("WS001", credentials=sample_credentials, full_coverage=False)
+        assert len(result_basic.checks) == 7
+        assert result_basic.overall_status == ComplianceStatus.COMPLIANT
 
     @pytest.mark.asyncio
     async def test_run_all_checks_mixed_results(self, mock_executor, sample_credentials):

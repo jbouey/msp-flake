@@ -19,10 +19,14 @@
     "description": "Re-enable Windows Firewall on all profiles",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "firewall"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:firewall_disabled"],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-001", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.312(a)(1)", "164.312(e)(1)"],
     "severity": "critical",
+    "priority": 5,
     "cooldown_seconds": 300,
     "max_retries": 2,
     "source": "builtin"
@@ -30,29 +34,90 @@
   {
     "id": "L1-WIN-DEFENDER-001",
     "name": "Windows Defender Disabled",
-    "description": "Re-enable Windows Defender real-time protection",
+    "description": "Re-enable Windows Defender real-time protection and update signatures",
     "conditions": [
-      {"field": "check_type", "operator": "eq", "value": "windows_defender"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "check_type", "operator": "eq", "value": "defender"},
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:defender_disabled"],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-006", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.308(a)(5)(ii)(B)"],
     "severity": "critical",
+    "priority": 3,
     "cooldown_seconds": 300,
     "max_retries": 2,
     "source": "builtin"
   },
   {
     "id": "L1-WIN-BITLOCKER-001",
-    "name": "BitLocker Not Enabled",
-    "description": "Enable BitLocker encryption on system drive",
+    "name": "BitLocker Protection Suspended",
+    "description": "Resume BitLocker protection if suspended",
     "conditions": [
       {"field": "check_type", "operator": "eq", "value": "bitlocker"},
-      {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
-    "actions": ["alert:bitlocker_disabled"],
-    "severity": "high",
-    "cooldown_seconds": 1800,
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-005", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.312(a)(2)(iv)", "164.312(e)(2)(ii)"],
+    "severity": "critical",
+    "priority": 3,
+    "cooldown_seconds": 600,
     "max_retries": 1,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-AUDIT-001",
+    "name": "Audit Policy Non-Compliant",
+    "description": "Configure HIPAA-required audit policies (logon, object access, system)",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "audit_policy"},
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-002", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.312(b)", "164.308(a)(1)(ii)(D)"],
+    "severity": "high",
+    "priority": 10,
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-LOCKOUT-001",
+    "name": "Account Lockout Policy Non-Compliant",
+    "description": "Configure account lockout thresholds per HIPAA",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "lockout_policy"},
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["run_windows_runbook"],
+    "action_params": {"runbook_id": "RB-WIN-SEC-003", "phases": ["remediate", "verify"]},
+    "hipaa_controls": ["164.312(a)(2)(i)"],
+    "severity": "medium",
+    "priority": 20,
+    "cooldown_seconds": 600,
+    "max_retries": 2,
+    "source": "builtin"
+  },
+  {
+    "id": "L1-WIN-SCREEN-001",
+    "name": "Screen Lock Timeout Non-Compliant",
+    "description": "Configure screen lock timeout (15 min HIPAA requirement)",
+    "conditions": [
+      {"field": "check_type", "operator": "eq", "value": "screen_lock"},
+      {"field": "drift_detected", "operator": "eq", "value": true},
+      {"field": "status", "operator": "in", "value": ["fail", "error"]}
+    ],
+    "actions": ["alert:screen_lock_drift"],
+    "hipaa_controls": ["164.312(a)(2)(iii)"],
+    "severity": "medium",
+    "priority": 20,
+    "cooldown_seconds": 600,
+    "max_retries": 2,
     "source": "builtin"
   }
 ]

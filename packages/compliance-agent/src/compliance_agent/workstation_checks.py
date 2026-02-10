@@ -255,6 +255,181 @@ $result.compliant = $result.all_enabled
 $result | ConvertTo-Json -Depth 3
 '''
 
+    # =========================================================================
+    # Extended Compliance Checks (audit, SMB, guest, lockout, firewall logging)
+    # =========================================================================
+
+    AUDIT_POLICY_CHECK = '''
+# Check HIPAA-required audit policies
+$categories = @(
+    "Account Logon", "Account Management", "Logon/Logoff",
+    "Object Access", "Policy Change", "Privilege Use",
+    "System", "Detailed Tracking"
+)
+$results = @{}
+$noncompliant = @()
+
+foreach ($cat in $categories) {
+    $output = auditpol /get /category:"$cat" 2>$null
+    $hasAuditing = $output | Select-String "Success and Failure|Success|Failure" -Quiet
+    $noAuditing = $output | Select-String "No Auditing" -Quiet
+    $results[$cat] = @{
+        configured = [bool]$hasAuditing
+        no_auditing = [bool]$noAuditing
+    }
+    if ($noAuditing -and $cat -in @("Account Logon", "Account Management", "Logon/Logoff", "Object Access", "System")) {
+        $noncompliant += $cat
+    }
+}
+
+@{
+    categories = $results
+    noncompliant_categories = $noncompliant
+    missing_policies = $noncompliant
+    compliant = $noncompliant.Count -eq 0
+} | ConvertTo-Json -Depth 3
+'''
+
+    SMB_SIGNING_CHECK = '''
+$clientSigning = (Get-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanWorkstation\\Parameters" `
+    -Name "RequireSecuritySignature" -ErrorAction SilentlyContinue).RequireSecuritySignature
+$serverSigning = (Get-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters" `
+    -Name "RequireSecuritySignature" -ErrorAction SilentlyContinue).RequireSecuritySignature
+
+@{
+    client_signing_required = $clientSigning -eq 1
+    server_signing_required = $serverSigning -eq 1
+    compliant = ($clientSigning -eq 1) -and ($serverSigning -eq 1)
+} | ConvertTo-Json
+'''
+
+    GUEST_ACCOUNT_CHECK = '''
+$guest = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
+$guestEnabled = $false
+if ($guest) {
+    $guestEnabled = $guest.Enabled
+}
+
+@{
+    guest_exists = [bool]$guest
+    guest_enabled = $guestEnabled
+    compliant = -not $guestEnabled
+} | ConvertTo-Json
+'''
+
+    ACCOUNT_LOCKOUT_CHECK = r'''
+$lockoutInfo = net accounts 2>$null
+$threshold = 0
+$duration = 0
+
+foreach ($line in $lockoutInfo) {
+    if ($line -match "Lockout threshold:\s+(\d+)") { $threshold = [int]$Matches[1] }
+    if ($line -match "Lockout duration.*:\s+(\d+)") { $duration = [int]$Matches[1] }
+}
+
+@{
+    lockout_threshold = $threshold
+    lockout_duration_minutes = $duration
+    has_lockout_policy = $threshold -gt 0 -and $threshold -le 10
+    compliant = $threshold -gt 0 -and $threshold -le 10 -and $duration -ge 15
+} | ConvertTo-Json
+'''
+
+    FIREWALL_LOGGING_CHECK = '''
+$profiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+$result = @{
+    profiles = @{}
+    all_logging = $true
+}
+
+foreach ($profile in $profiles) {
+    $logEnabled = $profile.LogBlocked -eq "True" -or $profile.LogAllowed -eq "True"
+    $result.profiles[$profile.Name] = @{
+        log_allowed = [string]$profile.LogAllowed
+        log_blocked = [string]$profile.LogBlocked
+        log_file_name = $profile.LogFileName
+        log_max_size = $profile.LogMaxSizeKilobytes
+        logging_enabled = $logEnabled
+    }
+    if (-not $logEnabled) {
+        $result.all_logging = $false
+    }
+}
+
+$result.compliant = $result.all_logging
+$result | ConvertTo-Json -Depth 3
+'''
+
+    SCHEDULED_TASK_CHECK = r'''
+# Check for suspicious scheduled tasks (persistence mechanism)
+$suspiciousTasks = @()
+$systemMaintenance = Get-ScheduledTask -TaskPath "\\Microsoft\\Windows\\SystemMaintenance\\" -ErrorAction SilentlyContinue
+$customTasks = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
+    $_.TaskPath -notlike "\\Microsoft\\*" -and $_.State -ne "Disabled"
+}
+
+# Check for known suspicious patterns
+$allTasks = @($systemMaintenance) + @($customTasks) | Where-Object { $_ -ne $null }
+foreach ($task in $allTasks) {
+    $actions = $task.Actions
+    foreach ($action in $actions) {
+        $exec = $action.Execute
+        if ($exec -match "powershell|cmd\.exe|wscript|cscript|mshta|certutil|bitsadmin" -and $exec -notmatch "MpCmdRun") {
+            $suspiciousTasks += @{
+                name = $task.TaskName
+                path = $task.TaskPath
+                execute = $exec
+                arguments = $action.Arguments
+                state = $task.State.ToString()
+            }
+        }
+    }
+}
+
+@{
+    suspicious_tasks = $suspiciousTasks
+    suspicious_count = $suspiciousTasks.Count
+    compliant = $suspiciousTasks.Count -eq 0
+} | ConvertTo-Json -Depth 3
+'''
+
+    REGISTRY_PERSISTENCE_CHECK = r'''
+# Check for suspicious registry Run/RunOnce entries
+$runKeys = @(
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+    "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce"
+)
+
+$allowedEntries = @("SecurityHealth", "VMware User Process", "bginfo")
+$suspicious = @()
+
+foreach ($key in $runKeys) {
+    $entries = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+    if ($entries) {
+        $props = $entries.PSObject.Properties | Where-Object {
+            $_.Name -notlike "PS*" -and $_.Name -notin $allowedEntries
+        }
+        foreach ($prop in $props) {
+            if ($prop.Value -match "powershell|cmd\.exe|wscript|enc |hidden|bypass") {
+                $suspicious += @{
+                    key = $key
+                    name = $prop.Name
+                    value = $prop.Value
+                }
+            }
+        }
+    }
+}
+
+@{
+    suspicious_entries = $suspicious
+    suspicious_count = $suspicious.Count
+    compliant = $suspicious.Count -eq 0
+} | ConvertTo-Json -Depth 3
+'''
+
     SCREEN_LOCK_CHECK = '''
 # Check Group Policy settings for screen lock
 $inactivityTimeout = (Get-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" `
@@ -632,42 +807,195 @@ $hasScreensaverLock = $screensaverActive -eq "1" -and $screensaverSecure -eq "1"
                 duration_ms=(datetime.now(timezone.utc) - start).total_seconds() * 1000,
             )
 
+    async def _run_generic_check(
+        self,
+        target: str,
+        check_type: str,
+        script: str,
+        hipaa_controls: List[str],
+        credentials: Optional[Dict[str, str]] = None,
+    ) -> CheckResult:
+        """Generic check runner for any PowerShell check script."""
+        start = datetime.now(timezone.utc)
+        creds = credentials or self.default_credentials
+
+        try:
+            result = await self.executor.run_script(
+                target=target,
+                script=script,
+                credentials=creds,
+                timeout_seconds=self.timeout_seconds,
+            )
+
+            duration_ms = (datetime.now(timezone.utc) - start).total_seconds() * 1000
+
+            if result.success:
+                import json
+                data = json.loads(result.output.get("stdout", "{}"))
+                compliant = data.get("compliant", False)
+
+                return CheckResult(
+                    check_type=check_type,
+                    hostname=target,
+                    status=ComplianceStatus.COMPLIANT if compliant else ComplianceStatus.DRIFTED,
+                    compliant=compliant,
+                    details=data,
+                    hipaa_controls=hipaa_controls,
+                    duration_ms=duration_ms,
+                )
+            else:
+                return CheckResult(
+                    check_type=check_type,
+                    hostname=target,
+                    status=ComplianceStatus.ERROR,
+                    compliant=False,
+                    details={},
+                    error=result.error,
+                    hipaa_controls=hipaa_controls,
+                    duration_ms=duration_ms,
+                )
+
+        except Exception as e:
+            return CheckResult(
+                check_type=check_type,
+                hostname=target,
+                status=ComplianceStatus.ERROR,
+                compliant=False,
+                details={},
+                error=str(e),
+                hipaa_controls=hipaa_controls,
+                duration_ms=(datetime.now(timezone.utc) - start).total_seconds() * 1000,
+            )
+
+    async def check_audit_policy(
+        self, target: str, credentials: Optional[Dict[str, str]] = None,
+    ) -> CheckResult:
+        """Check audit policy compliance. HIPAA: §164.312(b)"""
+        return await self._run_generic_check(
+            target, "audit_policy", self.AUDIT_POLICY_CHECK,
+            ["§164.312(b)", "§164.308(a)(1)(ii)(D)"], credentials,
+        )
+
+    async def check_smb_signing(
+        self, target: str, credentials: Optional[Dict[str, str]] = None,
+    ) -> CheckResult:
+        """Check SMB signing. HIPAA: §164.312(e)(1)"""
+        return await self._run_generic_check(
+            target, "smb_signing", self.SMB_SIGNING_CHECK,
+            ["§164.312(e)(1)"], credentials,
+        )
+
+    async def check_guest_account(
+        self, target: str, credentials: Optional[Dict[str, str]] = None,
+    ) -> CheckResult:
+        """Check guest account status. HIPAA: §164.312(a)(1)"""
+        return await self._run_generic_check(
+            target, "guest_account", self.GUEST_ACCOUNT_CHECK,
+            ["§164.312(a)(1)"], credentials,
+        )
+
+    async def check_account_lockout(
+        self, target: str, credentials: Optional[Dict[str, str]] = None,
+    ) -> CheckResult:
+        """Check account lockout policy. HIPAA: §164.312(a)(2)(i)"""
+        return await self._run_generic_check(
+            target, "lockout_policy", self.ACCOUNT_LOCKOUT_CHECK,
+            ["§164.312(a)(2)(i)"], credentials,
+        )
+
+    async def check_firewall_logging(
+        self, target: str, credentials: Optional[Dict[str, str]] = None,
+    ) -> CheckResult:
+        """Check firewall logging. HIPAA: §164.312(b)"""
+        return await self._run_generic_check(
+            target, "firewall_logging", self.FIREWALL_LOGGING_CHECK,
+            ["§164.312(b)"], credentials,
+        )
+
+    async def check_scheduled_tasks(
+        self, target: str, credentials: Optional[Dict[str, str]] = None,
+    ) -> CheckResult:
+        """Check for suspicious scheduled tasks. HIPAA: §164.308(a)(1)(ii)(D)"""
+        return await self._run_generic_check(
+            target, "scheduled_task_persistence", self.SCHEDULED_TASK_CHECK,
+            ["§164.308(a)(1)(ii)(D)", "§164.312(b)"], credentials,
+        )
+
+    async def check_registry_persistence(
+        self, target: str, credentials: Optional[Dict[str, str]] = None,
+    ) -> CheckResult:
+        """Check for suspicious registry run entries. HIPAA: §164.308(a)(1)(ii)(D)"""
+        return await self._run_generic_check(
+            target, "registry_run_persistence", self.REGISTRY_PERSISTENCE_CHECK,
+            ["§164.308(a)(1)(ii)(D)", "§164.312(b)"], credentials,
+        )
+
     async def run_all_checks(
         self,
         target: str,
         ip_address: Optional[str] = None,
         credentials: Optional[Dict[str, str]] = None,
+        full_coverage: bool = True,
     ) -> WorkstationComplianceResult:
         """
-        Run all 5 compliance checks on a workstation.
+        Run compliance checks on a workstation.
 
         Args:
             target: Hostname or IP of workstation
             ip_address: IP address for reference
             credentials: WinRM credentials
+            full_coverage: If True, run all checks including extended.
+                          If False, run basic compliance checks only.
 
         Returns:
             WorkstationComplianceResult with all check results
         """
-        logger.info(f"Running all compliance checks on {target}")
+        logger.info(f"Running {'full' if full_coverage else 'basic'} compliance checks on {target}")
 
-        # Run all checks concurrently
-        results = await asyncio.gather(
+        # Basic compliance checks (always run)
+        basic_checks = [
             self.check_bitlocker(target, credentials),
             self.check_defender(target, credentials),
             self.check_patches(target, credentials),
             self.check_firewall(target, credentials),
             self.check_screen_lock(target, credentials),
+            self.check_audit_policy(target, credentials),
+            self.check_account_lockout(target, credentials),
+        ]
+
+        # Extended checks for full coverage
+        extended_checks = []
+        if full_coverage:
+            extended_checks = [
+                self.check_smb_signing(target, credentials),
+                self.check_guest_account(target, credentials),
+                self.check_firewall_logging(target, credentials),
+                self.check_scheduled_tasks(target, credentials),
+                self.check_registry_persistence(target, credentials),
+            ]
+
+        # Run all checks concurrently
+        results = await asyncio.gather(
+            *basic_checks, *extended_checks,
             return_exceptions=True,
         )
+
+        basic_types = [
+            "bitlocker", "defender", "patches", "firewall",
+            "screen_lock", "audit_policy", "lockout_policy",
+        ]
+        extended_types = [
+            "smb_signing", "guest_account", "firewall_logging",
+            "scheduled_task_persistence", "registry_run_persistence",
+        ]
+        all_types = basic_types + (extended_types if full_coverage else [])
 
         # Convert exceptions to error results
         checks = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                check_types = ["bitlocker", "defender", "patches", "firewall", "screen_lock"]
                 checks.append(CheckResult(
-                    check_type=check_types[i],
+                    check_type=all_types[i] if i < len(all_types) else f"check_{i}",
                     hostname=target,
                     status=ComplianceStatus.ERROR,
                     compliant=False,
