@@ -626,6 +626,89 @@ class DeterministicEngine:
                 priority=3,  # High priority — active persistence indicator
                 source="builtin"
             ),
+
+            # Linux firewall drift (remote targets)
+            Rule(
+                id="L1-LIN-FW-001",
+                name="Linux Firewall Drift",
+                description="Linux firewall disabled or flushed — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "firewall"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                    RuleCondition("runbook_id", MatchOperator.CONTAINS, "LIN-"),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-FW-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(e)(1)"],
+                priority=3,
+                source="builtin"
+            ),
+
+            # Linux audit daemon drift
+            Rule(
+                id="L1-LIN-AUDIT-001",
+                name="Linux Audit Daemon Drift",
+                description="auditd not running on Linux — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "audit"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-AUDIT-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(b)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # Linux services drift (auditd, rsyslog, sshd)
+            Rule(
+                id="L1-LIN-SVC-001",
+                name="Linux Service Drift",
+                description="Required Linux service not running — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "services"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                    RuleCondition("runbook_id", MatchOperator.CONTAINS, "LIN-"),
+                ],
+                action="run_linux_runbook",
+                action_params={"phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(a)(1)", "164.312(b)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # Linux logging drift (rsyslog)
+            Rule(
+                id="L1-LIN-LOG-001",
+                name="Linux Logging Drift",
+                description="rsyslog not running on Linux — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "logging"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-LOG-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(b)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # Linux permissions drift (general, non-SUID)
+            Rule(
+                id="L1-LIN-PERM-001",
+                name="Linux Permissions Drift",
+                description="Insecure file permissions on Linux — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "permissions"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                    RuleCondition("runbook_id", MatchOperator.CONTAINS, "LIN-"),
+                ],
+                action="run_linux_runbook",
+                action_params={"phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(a)(1)", "164.312(c)(1)"],
+                priority=8,
+                source="builtin"
+            ),
         ]
 
         self.rules.extend(builtin_rules)

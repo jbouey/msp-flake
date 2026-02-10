@@ -408,6 +408,13 @@ class AutoHealer:
             logger.info(f"L1 rule {match.rule.id} triggers escalation")
             return None  # Let L3 handle it
 
+        # Merge raw_data fields into action_params so handlers get
+        # context like runbook_id, distro, host from the drift result
+        if raw_data and match.action_params is not None:
+            for key in ("runbook_id", "distro", "host"):
+                if key not in match.action_params and key in raw_data:
+                    match.action_params[key] = raw_data[key]
+
         # Capture state before healing for telemetry
         state_before = self._capture_system_state(incident, host_id)
 
