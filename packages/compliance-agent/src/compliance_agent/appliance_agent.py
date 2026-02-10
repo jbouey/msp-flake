@@ -798,10 +798,12 @@ class ApplianceAgent:
         if self.drift_checker and self.config.enable_drift_detection:
             compliance_summary = await self._get_compliance_summary()
 
-        # Check if local credential store has fresh credentials
+        # Check if local credential store has fresh credentials (both types)
         has_local_creds = (
             self.credential_store.has_credentials("windows") and
-            not self.credential_store.needs_refresh("windows")
+            not self.credential_store.needs_refresh("windows") and
+            self.credential_store.has_credentials("linux") and
+            not self.credential_store.needs_refresh("linux")
         )
 
         checkin_response = await self.client.checkin(
