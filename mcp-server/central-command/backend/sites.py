@@ -1621,6 +1621,41 @@ async def appliance_checkin(checkin: ApplianceCheckin):
             except Exception:
                 pass  # Don't fail checkin if credentials lookup fails
 
+        # === STEP 5b: Get linux targets (SSH credentials) ===
+        linux_targets = []
+        if not checkin.has_local_credentials:
+            try:
+                ssh_creds = await conn.fetch("""
+                    SELECT credential_name, encrypted_data
+                    FROM site_credentials
+                    WHERE site_id = $1
+                    AND credential_type IN ('ssh_password', 'ssh_key')
+                    ORDER BY created_at DESC
+                """, checkin.site_id)
+
+                for cred in ssh_creds:
+                    if cred['encrypted_data']:
+                        try:
+                            cred_data = json.loads(cred['encrypted_data'])
+                            hostname = cred_data.get('host') or cred_data.get('target_host')
+                            target_entry = {
+                                "hostname": hostname,
+                                "port": cred_data.get('port', 22),
+                                "username": cred_data.get('username', 'root'),
+                            }
+                            if cred_data.get('password'):
+                                target_entry["password"] = cred_data['password']
+                            if cred_data.get('private_key'):
+                                target_entry["private_key"] = cred_data['private_key']
+                            if cred_data.get('distro'):
+                                target_entry["distro"] = cred_data['distro']
+                            if hostname:
+                                linux_targets.append(target_entry)
+                        except json.JSONDecodeError:
+                            pass
+            except Exception:
+                pass  # Don't fail checkin if SSH credentials lookup fails
+
         # === STEP 6: Get enabled runbooks (runbook config pull) ===
         enabled_runbooks = []
         try:
@@ -1690,6 +1725,7 @@ async def appliance_checkin(checkin: ApplianceCheckin):
         "merged_duplicates": len(merge_from_ids),
         "pending_orders": pending_orders,
         "windows_targets": windows_targets,
+        "linux_targets": linux_targets,
         "enabled_runbooks": enabled_runbooks,
         "trigger_enumeration": trigger_enumeration,
         "trigger_immediate_scan": trigger_immediate_scan,
