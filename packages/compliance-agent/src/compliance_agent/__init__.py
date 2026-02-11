@@ -1,6 +1,6 @@
 """MSP Compliance Agent - Evidence Capture & Remediation for NixOS"""
 
-__version__ = "1.0.56"
+__version__ = "1.0.68"
 
 # Three-Tier Remediation Architecture
 from .incident_db import IncidentDatabase, Incident, ResolutionLevel, IncidentOutcome
