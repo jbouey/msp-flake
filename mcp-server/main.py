@@ -2590,7 +2590,7 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "description": "Fix PermitRootLogin when set to yes",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "ssh_config"},
-                {"field": "drift_detected", "operator": "eq", "value": true},
+                {"field": "drift_detected", "operator": "eq", "value": True},
                 {"field": "runbook_id", "operator": "eq", "value": "LIN-SSH-001"}
             ],
             "actions": ["run_linux_runbook:LIN-SSH-001"],
@@ -2605,7 +2605,7 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "description": "Fix PasswordAuthentication when set to yes",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "ssh_config"},
-                {"field": "drift_detected", "operator": "eq", "value": true},
+                {"field": "drift_detected", "operator": "eq", "value": True},
                 {"field": "runbook_id", "operator": "eq", "value": "LIN-SSH-002"}
             ],
             "actions": ["run_linux_runbook:LIN-SSH-002"],
