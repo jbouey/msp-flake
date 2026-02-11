@@ -111,7 +111,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.61"
+VERSION = "1.0.64"
 
 
 async def run_command(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
