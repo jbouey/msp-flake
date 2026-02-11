@@ -269,11 +269,36 @@ backup:
   nist: ["CP-9", "CP-10"]
 ```
 
+## Flap Detection (auto_healer.py)
+
+Prevents infinite heal/recur loops when remediation "succeeds" but drift recurs (GPO override, false positive, external attacker).
+
+**Thresholds:** 3 successful-heal recurrences within 120 minutes triggers permanent suppression (persisted to SQLite `flap_suppressions` table, survives restarts).
+
+**Only counts successful heals:** `_track_flap()` is called AFTER successful L1/L2 healing, not on every `heal()` call. Incidents without matching rules do NOT increment the flap counter. This prevents false suppression of unhealed drift.
+
+**Granular keys:** Flap key includes runbook_id when available: `incident_type:runbook_id` (e.g., `ssh_config:LIN-SSH-002`). Prevents runbooks sharing the same `check_type` from cross-triggering each other's flap counters.
+
+**Synced rules override built-in rules.** Rules at `/var/lib/msp/rules/l1_rules.json` (synced hourly from Central Command) take precedence over built-in rules in `level1_deterministic.py`. Rule action format: `run_linux_runbook:LIN-SSH-001` (colon format from synced rules).
+
+## L1 Rule Coverage (level1_deterministic.py)
+
+**Linux L1 rules (14 built-in):** SSH-001..002, KERN-001, CRON-001, SUID-001, FW-001, AUDIT-001, SVC-001, LOG-001, PERM-001, NET-001, BANNER-001, CRYPTO-001, IR-001.
+
+**Windows L1 rules (8 built-in):** AV-001, FW-001, SVC-DNS, SEC-SMB, SVC-WUAUSERV, NET-PROFILE, SEC-SCREENLOCK, SEC-DEFENDER-EXCL. All route to existing Windows runbooks via `run_windows_runbook`.
+
+**Windows scan checks (appliance_agent.py):** windows_defender, firewall_status, password_policy, bitlocker_status, audit_policy, service_w32time, service_dns, service_spooler, service_wuauserv, smb_signing, network_profile, screen_lock_policy, defender_exclusions, backup_status, scheduled_task_persistence, registry_run_persistence.
+
+## Parallel Scan Cycles (appliance_agent.py)
+
+Linux, Windows, network posture, and workstation scans run in parallel via `asyncio.gather()`. Cycle timeout is 600s. Each scan method checks its own interval internally.
+
 ## Key Files
 - `compliance_agent/drift.py` - 6 drift checks
 - `compliance_agent/evidence.py` - Bundle generation
 - `compliance_agent/phi_scrubber.py` - PHI patterns
 - `compliance_agent/level1_deterministic.py` - Rule engine
-- `compliance_agent/auto_healer.py` - Healing orchestrator
+- `compliance_agent/auto_healer.py` - Healing orchestrator + flap detection
+- `compliance_agent/incident_db.py` - SQLite incident/flap tracking
 - `compliance_agent/rules/l1_baseline.json` - L1 rules
 - `baseline/hipaa-v1.yaml` - Compliance baseline

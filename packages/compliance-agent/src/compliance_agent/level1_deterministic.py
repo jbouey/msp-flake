@@ -553,6 +553,7 @@ class DeterministicEngine:
                 conditions=[
                     RuleCondition("check_type", MatchOperator.EQUALS, "ssh_config"),
                     RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                    RuleCondition("runbook_id", MatchOperator.EQUALS, "LIN-SSH-001"),
                 ],
                 action="run_linux_runbook",
                 action_params={"runbook_id": "LIN-SSH-001", "phases": ["remediate", "verify"]},
@@ -569,7 +570,7 @@ class DeterministicEngine:
                 conditions=[
                     RuleCondition("check_type", MatchOperator.EQUALS, "ssh_config"),
                     RuleCondition("drift_detected", MatchOperator.EQUALS, True),
-                    RuleCondition("details.drift_field", MatchOperator.EQUALS, "PasswordAuthentication"),
+                    RuleCondition("runbook_id", MatchOperator.EQUALS, "LIN-SSH-002"),
                 ],
                 action="run_linux_runbook",
                 action_params={"runbook_id": "LIN-SSH-002", "phases": ["remediate", "verify"]},

@@ -1,6 +1,6 @@
 {
   "session": 106,
-  "updated": "2026-02-11T04:52:00.000000Z",
+  "updated": "2026-02-11T05:03:37.723572Z",
   "agent_version": "1.0.64",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -113,9 +113,9 @@
     {
       "id": 20,
       "task": "Fix sed quoting in FULL_SPECTRUM_CHAOS.sh Linux attacks",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium",
-      "note": "LIN-SSH-RootLogin and LIN-SSH-PasswordAuth sed commands fail with 'unterminated s command' \u2014 single quotes in sed pattern get mangled by ssh_attack.py key-auth sudo wrapper. Need to escape or use different quoting."
+      "note": "Already fixed: ssh_attack.py uses the standard bash '\\'' escaping technique for single quotes in sudo wrapper. Both LIN-SSH-RootLogin and LIN-SSH-PasswordAuth sed attacks succeed in FULL_SPECTRUM test."
     },
     {
       "id": 21,
@@ -136,7 +136,7 @@
       "task": "Decouple Linux and Windows scan cycles into parallel async tasks",
       "status": "completed",
       "priority": "high",
-      "note": "Replaced sequential awaits with asyncio.gather() in _run_cycle(). Linux+Windows+network+workstation scans now parallel. Cycle timeout increased 300→600s."
+      "note": "Replaced sequential awaits with asyncio.gather() in _run_cycle(). Linux+Windows+network+workstation scans now parallel. Cycle timeout increased 300\u2192600s."
     },
     {
       "id": 23,
@@ -157,7 +157,7 @@
       "task": "Fix flap tracker counting failed heals toward suppression",
       "status": "completed",
       "priority": "medium",
-      "note": "Moved _track_flap() from before healing to after successful L1/L2 healing. Flap counter only increments on real resolve→recur cycles. Added test_no_flap_without_successful_healing."
+      "note": "Moved _track_flap() from before healing to after successful L1/L2 healing. Flap counter only increments on real resolve\u2192recur cycles. Added test_no_flap_without_successful_healing."
     },
     {
       "id": 26,
@@ -168,11 +168,11 @@
     }
   ],
   "completed_this_session": [
-    "Fixed flap tracker: _track_flap() now only counts successful heals (resolve→recur), not repeated detection. Prevents false suppression of unhealed incidents.",
+    "Fixed flap tracker: _track_flap() now only counts successful heals (resolve\u2192recur), not repeated detection. Prevents false suppression of unhealed incidents.",
     "Added 4 Linux L1 rules: LIN-NET-001 (network hardening), LIN-BANNER-001 (login banner), LIN-CRYPTO-001 (SSH crypto policy), LIN-IR-001 (incident response readiness)",
-    "Added 6 Windows L1 rules: SVC-DNS, SEC-SMB, SVC-WUAUSERV, NET-PROFILE, SEC-SCREENLOCK, SEC-DEFENDER-EXCL — all route to existing Windows runbooks",
-    "Added 5 Windows scan checks: smb_signing, service_wuauserv, network_profile, screen_lock_policy, defender_exclusions — with validation logic",
-    "Decoupled scan cycles: Linux/Windows/network/workstation scans now run in parallel via asyncio.gather(). Cycle timeout 300→600s. Linux detection latency ~2min instead of ~7min.",
+    "Added 6 Windows L1 rules: SVC-DNS, SEC-SMB, SVC-WUAUSERV, NET-PROFILE, SEC-SCREENLOCK, SEC-DEFENDER-EXCL \u2014 all route to existing Windows runbooks",
+    "Added 5 Windows scan checks: smb_signing, service_wuauserv, network_profile, screen_lock_policy, defender_exclusions \u2014 with validation logic",
+    "Decoupled scan cycles: Linux/Windows/network/workstation scans now run in parallel via asyncio.gather(). Cycle timeout 300\u2192600s. Linux detection latency ~2min instead of ~7min.",
     "Built and uploaded v1.0.65 overlay to VPS with all changes",
     "Migration 036 (credential versioning) confirmed already complete",
     "958 tests passing, 0 failures"
@@ -219,7 +219,7 @@
     "appliance_dhcp_lesson": "Appliance VM DHCP lease can change after reboot (.247 -> .254). Serial console (uart1 file mode) is essential for diagnosing boot issues when network is unreachable. The appliance banner shows current IP on login prompt.",
     "ad_enrollment_lesson": "AD enumeration returns FQDNs (e.g., nvdc01.northvalley.local) that the appliance can't resolve because its DNS points to the router. Fix: resolve_missing_ips() runs bulk DNS lookup on the DC via PowerShell, then connectivity tests use IP-first (ip_address or fqdn or hostname). Direct TCP asyncio.open_connection() from appliance is faster and more accurate than PowerShell Test-NetConnection from DC.",
     "perf_audit_lesson": "Health endpoint was 2.18s because DB/Redis/MinIO checks ran sequentially and MinIO (sync SDK) blocked the event loop. Fix: asyncio.gather() + run_in_executor() for sync calls. N+1 in compliance scoring: each site triggered a separate query. Fix: ROW_NUMBER() window function in a single query. Redis caching (120s TTL) for expensive aggregates. Pre-computed reverse lookup dicts beat inner loops. Migration 039: pg_stat_user_indexes with idx_scan=0 identifies safe-to-drop indexes.",
-    "overlay_structure_lesson": "Overlay tarball MUST preserve Python package structure: compliance_agent/ subdirectory required. Flat extraction (files at overlay root) means PYTHONPATH finds the overlay dir but 'from compliance_agent.X import Y' fails because there's no compliance_agent/ package. Previous overlay deployments appeared to work but were actually running NixOS store code — synced server-side L1 rules masked the issue.",
+    "overlay_structure_lesson": "Overlay tarball MUST preserve Python package structure: compliance_agent/ subdirectory required. Flat extraction (files at overlay root) means PYTHONPATH finds the overlay dir but 'from compliance_agent.X import Y' fails because there's no compliance_agent/ package. Previous overlay deployments appeared to work but were actually running NixOS store code \u2014 synced server-side L1 rules masked the issue.",
     "chaos_test_timing_lesson": "180s chaos test window is too short for serialized Linux+Windows scan cycles. Linux scan (~1.5min) runs first, then Windows scan (~5min, often timing out at 300s). If attacks land during Windows scan, Linux detection waits until next cycle = 5-7min. Need either 360s+ window or decoupled parallel scan cycles.",
     "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles."
   },
