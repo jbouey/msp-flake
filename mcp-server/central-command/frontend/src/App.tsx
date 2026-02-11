@@ -35,6 +35,7 @@ const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.S
 // These have default exports
 const FleetUpdates = lazy(() => import('./pages/FleetUpdates'));
 const CVEWatch = lazy(() => import('./pages/CVEWatch'));
+const ComplianceLibrary = lazy(() => import('./pages/ComplianceLibrary'));
 const Users = lazy(() => import('./pages/Users'));
 const FrameworkConfig = lazy(() => import('./pages/FrameworkConfig'));
 const Integrations = lazy(() => import('./pages/Integrations'));
@@ -143,6 +144,7 @@ const pageTitles: Record<string, string> = {
   '/learning': 'Learning Loop',
   '/fleet-updates': 'Fleet Updates',
   '/cve-watch': 'CVE Watch',
+  '/compliance-library': 'Compliance Library',
   '/reports': 'Reports',
   '/audit-logs': 'Audit Logs',
   '/settings/oauth': 'OAuth Settings',
@@ -266,6 +268,7 @@ const AppLayout: React.FC = () => {
               <Route path="/settings/oauth" element={<AdminOAuthSettings />} />
               <Route path="/fleet-updates" element={<FleetUpdates />} />
               <Route path="/cve-watch" element={<CVEWatch />} />
+              <Route path="/compliance-library" element={<ComplianceLibrary />} />
               <Route path="/docs" element={<Documentation />} />
               <Route path="/client/:siteId" element={<ClientDetail />} />
               <Route path="/reports" element={<ComingSoon title="Reports" />} />

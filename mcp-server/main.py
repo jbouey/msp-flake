@@ -60,6 +60,7 @@ from dashboard_api.exceptions_api import router as exceptions_router
 from dashboard_api.appliance_delegation import router as appliance_delegation_router
 from dashboard_api.learning_api import partner_learning_router
 from dashboard_api.cve_watch import router as cve_watch_router, cve_sync_loop
+from dashboard_api.framework_sync import router as framework_sync_router, framework_sync_loop
 from dashboard_api.websocket_manager import ws_manager
 
 # ============================================================================
@@ -453,18 +454,26 @@ async def lifespan(app: FastAPI):
     # Start periodic CVE Watch sync task
     cve_watch_task = asyncio.create_task(cve_sync_loop())
 
+    # Start weekly framework sync task
+    framework_sync_task = asyncio.create_task(framework_sync_loop())
+
     yield
 
     # Shutdown
     logger.info("Shutting down MCP Server...")
     ots_upgrade_task.cancel()
     cve_watch_task.cancel()
+    framework_sync_task.cancel()
     try:
         await asyncio.wait_for(asyncio.shield(ots_upgrade_task), timeout=10)
     except (asyncio.CancelledError, asyncio.TimeoutError):
         pass
     try:
         await asyncio.wait_for(asyncio.shield(cve_watch_task), timeout=5)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    try:
+        await asyncio.wait_for(asyncio.shield(framework_sync_task), timeout=5)
     except (asyncio.CancelledError, asyncio.TimeoutError):
         pass
     if redis_client:
@@ -559,6 +568,7 @@ app.include_router(exceptions_router)  # Compliance exceptions management
 app.include_router(appliance_delegation_router)  # Appliance delegation (signing keys, audit, escalations)
 app.include_router(partner_learning_router)  # Partner learning management (promotions, rules)
 app.include_router(cve_watch_router)  # CVE Watch — progressive vulnerability tracking
+app.include_router(framework_sync_router)  # Framework Sync — live compliance library
 
 # WebSocket endpoint for real-time event push
 @app.websocket("/ws/events")

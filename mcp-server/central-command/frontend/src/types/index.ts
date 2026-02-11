@@ -648,3 +648,59 @@ export const GO_AGENT_CHECK_HIPAA: Record<string, string> = {
   screen_lock: '§164.312(a)(2)(i)',
   services: '§164.308(a)(5)(ii)(B)',
 };
+
+// =============================================================================
+// Framework Sync Types (Compliance Library)
+// =============================================================================
+
+export interface FrameworkSyncStatus {
+  framework: string;
+  display_name: string;
+  version: string | null;
+  source_type: string;
+  source_url: string | null;
+  last_sync: string | null;
+  sync_status: string | null;
+  total_controls: number;
+  our_coverage: number;
+  coverage_pct: number;
+  enabled: boolean;
+}
+
+export interface FrameworkControl {
+  control_id: string;
+  control_name: string;
+  description: string;
+  category: string;
+  subcategory: string | null;
+  parent_control_id: string | null;
+  severity: string | null;
+  required: boolean;
+  mapped_check: string | null;
+  mapping_source: string | null;
+}
+
+export interface FrameworkCrosswalk {
+  source_control_id: string;
+  target_framework: string;
+  target_control_id: string;
+  mapping_type: string;
+  source_reference: string | null;
+}
+
+export interface CoverageAnalysis {
+  frameworks: Array<{
+    framework: string;
+    display_name: string;
+    total_controls: number;
+    our_coverage: number;
+    coverage_pct: number;
+    unmapped_controls: number;
+  }>;
+  check_matrix: Record<string, Record<string, string[]>>;
+}
+
+export interface FrameworkCategory {
+  category: string;
+  count: number;
+}

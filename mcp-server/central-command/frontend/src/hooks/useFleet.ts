@@ -3,9 +3,9 @@
  */
 
 import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi } from '../utils/api';
 import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice } from '../utils/api';
-import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig } from '../types';
+import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory } from '../types';
 import { useWebSocketStatus } from './useWebSocket';
 
 // Polling intervals
@@ -870,5 +870,71 @@ export function useCVEWatchConfig() {
     queryKey: ['cve-config'],
     queryFn: cveApi.getConfig,
     ...defaults,
+  });
+}
+
+// =============================================================================
+// Framework Sync Hooks (Compliance Library)
+// =============================================================================
+
+export function useFrameworkSyncStatus() {
+  const defaults = useQueryDefaults();
+  return useQuery<FrameworkSyncStatus[]>({
+    queryKey: ['framework-sync-status'],
+    queryFn: frameworkSyncApi.getStatus,
+    ...defaults,
+  });
+}
+
+export function useFrameworkControls(framework: string | null, params?: { category?: string; search?: string }) {
+  const defaults = useQueryDefaults();
+  return useQuery<FrameworkControl[]>({
+    queryKey: ['framework-controls', framework, params],
+    queryFn: () => frameworkSyncApi.getControls(framework!, params),
+    enabled: !!framework,
+    ...defaults,
+  });
+}
+
+export function useFrameworkCategories(framework: string | null) {
+  const defaults = useQueryDefaults();
+  return useQuery<FrameworkCategory[]>({
+    queryKey: ['framework-categories', framework],
+    queryFn: () => frameworkSyncApi.getCategories(framework!),
+    enabled: !!framework,
+    ...defaults,
+  });
+}
+
+export function useCoverageAnalysis() {
+  const defaults = useQueryDefaults();
+  return useQuery<CoverageAnalysis>({
+    queryKey: ['framework-coverage'],
+    queryFn: frameworkSyncApi.getCoverage,
+    ...defaults,
+  });
+}
+
+export function useTriggerFrameworkSync() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: frameworkSyncApi.triggerSync,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['framework-sync-status'] });
+      queryClient.invalidateQueries({ queryKey: ['framework-controls'] });
+      queryClient.invalidateQueries({ queryKey: ['framework-coverage'] });
+    },
+  });
+}
+
+export function useSyncFramework() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (framework: string) => frameworkSyncApi.syncFramework(framework),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['framework-sync-status'] });
+      queryClient.invalidateQueries({ queryKey: ['framework-controls'] });
+      queryClient.invalidateQueries({ queryKey: ['framework-coverage'] });
+    },
   });
 }

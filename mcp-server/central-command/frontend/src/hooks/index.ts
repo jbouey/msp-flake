@@ -61,6 +61,13 @@ export {
   useTriggerCVESync,
   useUpdateCVEStatus,
   useCVEWatchConfig,
+  // Framework Sync hooks (Compliance Library)
+  useFrameworkSyncStatus,
+  useFrameworkControls,
+  useFrameworkCategories,
+  useCoverageAnalysis,
+  useTriggerFrameworkSync,
+  useSyncFramework,
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';

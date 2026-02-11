@@ -102,6 +102,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/evidence/",        # Evidence chain - appliance submissions + admin ops
         "/incidents/",           # Incident resolve from appliances (machine-to-machine)
         "/api/cve-watch/",       # CVE Watch — admin data ingest + sync triggers
+        "/api/framework-sync/",  # Framework Sync — admin sync triggers
     )
 
     # Safe methods that don't require CSRF validation

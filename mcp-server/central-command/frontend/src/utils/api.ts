@@ -1279,4 +1279,43 @@ export const cveApi = {
     }),
 };
 
+// =============================================================================
+// FRAMEWORK SYNC API (Compliance Library)
+// =============================================================================
+
+import type { FrameworkSyncStatus, FrameworkControl, FrameworkCrosswalk, CoverageAnalysis, FrameworkCategory } from '../types';
+
+const FRAMEWORK_SYNC_BASE = '/api/framework-sync';
+
+async function fetchFrameworkSyncApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
+  return _fetchWithBase<T>(FRAMEWORK_SYNC_BASE, endpoint, options);
+}
+
+export const frameworkSyncApi = {
+  getStatus: () => fetchFrameworkSyncApi<FrameworkSyncStatus[]>('/status'),
+
+  getControls: (framework: string, params?: { category?: string; search?: string; limit?: number; offset?: number }) => {
+    const query = new URLSearchParams();
+    if (params?.category) query.set('category', params.category);
+    if (params?.search) query.set('search', params.search);
+    if (params?.limit) query.set('limit', String(params.limit));
+    if (params?.offset) query.set('offset', String(params.offset));
+    const queryString = query.toString();
+    return fetchFrameworkSyncApi<FrameworkControl[]>(`/controls/${framework}${queryString ? `?${queryString}` : ''}`);
+  },
+
+  getCrosswalks: (framework: string) =>
+    fetchFrameworkSyncApi<FrameworkCrosswalk[]>(`/crosswalks/${framework}`),
+
+  getCoverage: () => fetchFrameworkSyncApi<CoverageAnalysis>('/coverage'),
+
+  getCategories: (framework: string) =>
+    fetchFrameworkSyncApi<FrameworkCategory[]>(`/categories/${framework}`),
+
+  triggerSync: () => fetchFrameworkSyncApi<{ status: string }>('/sync', { method: 'POST' }),
+
+  syncFramework: (framework: string) =>
+    fetchFrameworkSyncApi<{ status: string }>(`/sync/${framework}`, { method: 'POST' }),
+};
+
 export { ApiError };
