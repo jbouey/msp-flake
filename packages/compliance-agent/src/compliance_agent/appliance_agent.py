@@ -1983,9 +1983,12 @@ class ApplianceAgent:
             )
 
         if targets_to_poll:
-            logger.info(f"Scanning {len(targets_to_poll)} Windows targets...")
-            for target in targets_to_poll:
-                await self._scan_windows_target(target)
+            logger.info(f"Scanning {len(targets_to_poll)} Windows targets in parallel...")
+            scan_tasks = [self._scan_windows_target(target) for target in targets_to_poll]
+            results = await asyncio.gather(*scan_tasks, return_exceptions=True)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Windows scan failed for {targets_to_poll[i].hostname}: {result}")
         elif self.windows_targets:
             logger.debug("All Windows hosts have active sensors - skipping WinRM poll")
 
@@ -2031,6 +2034,15 @@ class ApplianceAgent:
                 ("smb_signing", "Get-SmbServerConfiguration | Select-Object RequireSecuritySignature | ConvertTo-Json"),
                 # Network profile (domain machines should not be on Public)
                 ("network_profile", "Get-NetConnectionProfile | Select-Object Name,NetworkCategory,InterfaceAlias | ConvertTo-Json"),
+                # DNS configuration (detect DNS hijacking)
+                ("dns_config", """
+$adapter = Get-NetAdapter | Where-Object Status -eq Up | Select-Object -First 1
+$dns = (Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4).ServerAddresses
+$expected = @('192.168.88.250','192.168.88.1','127.0.0.1')
+$hijacked = @()
+foreach ($d in $dns) { if ($expected -notcontains $d) { $hijacked += $d } }
+@{Servers=$dns; Hijacked=$hijacked; Compliant=($hijacked.Count -eq 0)} | ConvertTo-Json -Compress
+"""),
                 # Screen lock policy (HIPAA requires <= 15 min timeout)
                 ("screen_lock_policy", """
 $result = @{Compliant=$true; Details=@()}
@@ -2254,6 +2266,14 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                                 for p in profiles
                             )
                             status = "fail" if has_public else "pass"
+                        except Exception:
+                            pass
+
+                    elif check_name == "dns_config" and check_result.status_code == 0:
+                        try:
+                            import json as json_module
+                            dns_data = json_module.loads(output)
+                            status = "pass" if dns_data.get("Compliant", False) else "fail"
                         except Exception:
                             pass
 

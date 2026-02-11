@@ -857,6 +857,22 @@ class DeterministicEngine:
                 source="builtin"
             ),
 
+            # Windows DNS hijack detection
+            Rule(
+                id="L1-WIN-DNS-HIJACK",
+                name="Windows DNS Configuration Drift",
+                description="DNS servers changed to unauthorized addresses — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "dns_config"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-NET-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(e)(1)"],
+                priority=3,
+                source="builtin"
+            ),
+
             # Windows Defender suspicious exclusions
             Rule(
                 id="L1-WIN-SEC-DEFENDER-EXCL",

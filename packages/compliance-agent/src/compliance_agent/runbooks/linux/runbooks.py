@@ -2096,6 +2096,8 @@ LIN_CRYPTO_001 = LinuxRunbook(
         fi
     ''',
     verify_script='''
+        # Brief pause to ensure config file is fully flushed after remediate
+        sleep 1
         SSHD_CONFIG="/etc/ssh/sshd_config"
         WEAK_CIPHERS="3des|arcfour|blowfish|cast128|rc4"
         WEAK_MACS="md5|sha1-96|umac-64"
