@@ -411,15 +411,24 @@ async def _sync_nvd_cves(pool):
 
 async def _sync_cpe(pool, cpe: str, headers: dict, last_sync, min_severity: str, delay: float) -> int:
     """Sync CVEs for a single CPE string."""
-    params = {
-        "cpeName": cpe,
-        "resultsPerPage": 200,
-    }
+    # NVD API v2.0: use virtualMatchString for wildcard CPEs (with *),
+    # cpeName only works for exact CPE names without wildcards
+    if "*" in cpe:
+        params = {"virtualMatchString": cpe, "resultsPerPage": 200}
+    else:
+        params = {"cpeName": cpe, "resultsPerPage": 200}
 
     # Incremental sync: only fetch modified since last sync
     # NVD API v2.0 requires ISO 8601 with timezone offset
+    # For initial sync (last_sync within 1 hour), use 120-day window
     if last_sync:
-        params["lastModStartDate"] = last_sync.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        age = (datetime.now(timezone.utc) - last_sync).total_seconds()
+        if age < 3600:
+            # First real sync — look back 120 days
+            start = datetime.now(timezone.utc) - timedelta(days=120)
+            params["lastModStartDate"] = start.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        else:
+            params["lastModStartDate"] = last_sync.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
         params["lastModEndDate"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
 
     # Severity filtering done post-fetch (cvssV3Severity param deprecated in NVD API v2.0)
