@@ -315,8 +315,10 @@ class AutoHealer:
                 error=f"Circuit breaker active: {remaining:.1f} min cooldown remaining"
             )
 
-        # Flap detector: check for resolve→recur loops
-        self._track_flap(circuit_key)
+        # Flap detector: check for resolve→recur loops.
+        # Only check existing state here — _track_flap() is called AFTER
+        # successful healing so we only count real resolve→recur cycles,
+        # not repeated detection of unhealed drift.
         if self._is_flapping(circuit_key):
             reason = (
                 f"{flap_type} resolved then recurred {self._max_flap_count}+ times "
@@ -361,12 +363,18 @@ class AutoHealer:
         if self.level1:
             result = await self._try_level1(incident, site_id, host_id, raw_data)
             if result:
+                # Only track flap on successful healing (real resolve→recur cycle)
+                if result.success:
+                    self._track_flap(circuit_key)
                 return result
 
         # Try Level 2 - LLM Planner
         if self.level2:
             result = await self._try_level2(incident, site_id, host_id)
             if result and not result.escalated:
+                # Only track flap on successful healing
+                if result.success:
+                    self._track_flap(circuit_key)
                 return result
 
         # Level 3 - Escalation

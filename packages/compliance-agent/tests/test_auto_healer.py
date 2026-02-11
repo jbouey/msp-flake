@@ -1025,22 +1025,29 @@ class TestPersistentFlapSuppression:
 
     @pytest.mark.asyncio
     async def test_flap_detection_persists_suppression_via_heal(self, auto_healer_config):
-        """Full integration: 3 flaps via heal() → persistent suppression → 4th call suppressed."""
+        """Full integration: 3 successful heals → flap counter reaches threshold → 4th call suppressed."""
         healer = AutoHealer(config=auto_healer_config)
 
-        # First 3 calls trigger flap detection on the 3rd
+        # First 3 calls succeed at L1 (dry run), each increments flap counter
         for i in range(3):
             result = await healer.heal(
                 site_id="site-1", host_id="host-1",
                 incident_type="firewall", severity="high",
                 raw_data={"check_type": "firewall", "drift_detected": True, "platform": "windows"}
             )
+            # All 3 should succeed via L1 dry run
+            assert result.success, f"Call {i+1} should succeed"
 
-        # 3rd call should have detected flap and recorded suppression
+        # 4th call: flap counter is 3, _is_flapping triggers
+        result = await healer.heal(
+            site_id="site-1", host_id="host-1",
+            incident_type="firewall", severity="high",
+            raw_data={"check_type": "firewall", "drift_detected": True, "platform": "windows"}
+        )
         assert result.action_taken == "flap_detected_escalation"
         assert healer.incident_db.is_flap_suppressed("site-1", "host-1", "firewall")
 
-        # 4th call: even after clearing in-memory tracker, persistent suppression blocks
+        # 5th call: even after clearing in-memory tracker, persistent suppression blocks
         healer._flap_tracker.clear()
         result = await healer.heal(
             site_id="site-1", host_id="host-1",
@@ -1048,6 +1055,25 @@ class TestPersistentFlapSuppression:
             raw_data={"check_type": "firewall", "drift_detected": True, "platform": "windows"}
         )
         assert result.action_taken == "flap_suppressed_awaiting_human"
+
+    @pytest.mark.asyncio
+    async def test_no_flap_without_successful_healing(self, auto_healer_config):
+        """Incidents without matching L1 rules should NOT increment flap counter."""
+        healer = AutoHealer(config=auto_healer_config)
+
+        # Call heal() with an incident type that has no L1 rule match
+        for i in range(5):
+            result = await healer.heal(
+                site_id="site-1", host_id="host-1",
+                incident_type="unknown_check", severity="low",
+                raw_data={"check_type": "unknown_check", "drift_detected": True}
+            )
+
+        # Should NOT be flap-suppressed — no healing ever succeeded
+        assert not healer.incident_db.is_flap_suppressed("site-1", "host-1", "unknown_check")
+        # Flap tracker should be empty for this key
+        circuit_key = ("site-1", "host-1", "unknown_check")
+        assert circuit_key not in healer._flap_tracker
 
 
 if __name__ == "__main__":

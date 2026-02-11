@@ -297,7 +297,7 @@ DEFAULT_WORKSTATION_DISCOVERY_INTERVAL = 3600  # AD workstation discovery (1 hou
 DEFAULT_ENUMERATION_INTERVAL = 3600      # AD enumeration refresh (1 hour)
 DEFAULT_DEVICE_DB_SYNC_INTERVAL = 600    # Sync targets from network-scanner device DB (10 min)
 DEFAULT_EVIDENCE_HEARTBEAT_INTERVAL = 3600  # Evidence heartbeat even if no change (1 hour)
-DEFAULT_CYCLE_TIMEOUT = 300              # Main loop cycle timeout (5 min)
+DEFAULT_CYCLE_TIMEOUT = 600              # Main loop cycle timeout (10 min) — accommodates parallel scans
 
 
 class ApplianceAgent:
@@ -854,20 +854,22 @@ class ApplianceAgent:
         # 5. Periodic AD re-enumeration (hourly, catches new domain devices)
         await self._maybe_reenumerate_ad()
 
-        # 6. Run Linux device scans first (fast, ~1min via SSH)
+        # 6-9. Run all scans in parallel (Linux ~1min, Windows ~6min, network, workstations)
+        # Each _maybe_scan_* method checks its own interval internally.
+        scan_tasks = []
         if self.linux_targets:
-            await self._maybe_scan_linux()
-
-        # 7. Run Windows device scans (slower, ~6min via WinRM)
+            scan_tasks.append(self._maybe_scan_linux())
         if self.windows_targets:
-            await self._maybe_scan_windows()
-
-        # 8. Run network posture scan (periodically)
-        await self._maybe_scan_network_posture()
-
-        # 9. Run workstation compliance scan (periodically)
+            scan_tasks.append(self._maybe_scan_windows())
+        scan_tasks.append(self._maybe_scan_network_posture())
         if self._workstation_enabled and self._domain_controller:
-            await self._maybe_scan_workstations()
+            scan_tasks.append(self._maybe_scan_workstations())
+
+        if scan_tasks:
+            results = await asyncio.gather(*scan_tasks, return_exceptions=True)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Scan task {i} failed: {result}")
 
         # 10. Deploy Go agents to workstations (if enumeration completed)
         if self.workstation_targets and self.discovered_domain:
@@ -2024,6 +2026,38 @@ class ApplianceAgent:
                 ("service_w32time", "Get-Service W32Time -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
                 ("service_dns", "Get-Service DNS -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
                 ("service_spooler", "Get-Service Spooler -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
+                ("service_wuauserv", "Get-Service wuauserv -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
+                # SMB signing enforcement
+                ("smb_signing", "Get-SmbServerConfiguration | Select-Object RequireSecuritySignature | ConvertTo-Json"),
+                # Network profile (domain machines should not be on Public)
+                ("network_profile", "Get-NetConnectionProfile | Select-Object Name,NetworkCategory,InterfaceAlias | ConvertTo-Json"),
+                # Screen lock policy (HIPAA requires <= 15 min timeout)
+                ("screen_lock_policy", """
+$result = @{Compliant=$true; Details=@()}
+$ssKey = 'HKCU:\\Control Panel\\Desktop'
+$timeout = (Get-ItemProperty -Path $ssKey -Name 'ScreenSaveTimeOut' -ErrorAction SilentlyContinue).ScreenSaveTimeOut
+$active = (Get-ItemProperty -Path $ssKey -Name 'ScreenSaveActive' -ErrorAction SilentlyContinue).ScreenSaveActive
+$secure = (Get-ItemProperty -Path $ssKey -Name 'ScreenSaverIsSecure' -ErrorAction SilentlyContinue).ScreenSaverIsSecure
+if (-not $timeout -or [int]$timeout -gt 900 -or [int]$timeout -eq 0) { $result.Compliant=$false; $result.Details += "Timeout=$timeout" }
+if ($active -ne '1') { $result.Compliant=$false; $result.Details += "Active=$active" }
+if ($secure -ne '1') { $result.Compliant=$false; $result.Details += "Secure=$secure" }
+$result | ConvertTo-Json -Compress
+"""),
+                # Defender exclusion audit (suspicious exclusion paths)
+                ("defender_exclusions", """
+$prefs = Get-MpPreference -ErrorAction SilentlyContinue
+$suspicious = @()
+$badPaths = @('C:\\Windows\\Temp','C:\\Temp','C:\\Users\\Public','C:\\ProgramData')
+$badExts = @('exe','dll','bat','cmd','ps1','vbs','js','scr')
+foreach ($p in @($prefs.ExclusionPath | Where-Object { $_ })) {
+    foreach ($bp in $badPaths) { if ($p -like "$bp*") { $suspicious += @{Type='path';Value=$p}; break } }
+}
+foreach ($e in @($prefs.ExclusionExtension | Where-Object { $_ })) {
+    $ne = $e.TrimStart('.')
+    if ($badExts -contains $ne) { $suspicious += @{Type='ext';Value=$ne} }
+}
+@{SuspiciousCount=$suspicious.Count; Items=$suspicious} | ConvertTo-Json -Compress
+"""),
                 # Windows Server Backup check (requires Windows Server Backup feature)
                 ("backup_status", """
 try {
@@ -2197,6 +2231,48 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                             status = "fail" if entries else "pass"
                         except Exception:
                             status = "pass" if output.strip() == "[]" else "fail"
+
+                    elif check_name == "smb_signing" and check_result.status_code == 0:
+                        try:
+                            import json as json_module
+                            smb_data = json_module.loads(output)
+                            signing_required = smb_data.get("RequireSecuritySignature", False)
+                            status = "pass" if signing_required else "fail"
+                        except Exception:
+                            pass
+
+                    elif check_name == "network_profile" and check_result.status_code == 0:
+                        try:
+                            import json as json_module
+                            profiles = json_module.loads(output)
+                            if isinstance(profiles, dict):
+                                profiles = [profiles]
+                            # Fail if any interface is on Public network
+                            has_public = any(
+                                p.get("NetworkCategory", 0) == 0 or
+                                str(p.get("NetworkCategory", "")).lower() == "public"
+                                for p in profiles
+                            )
+                            status = "fail" if has_public else "pass"
+                        except Exception:
+                            pass
+
+                    elif check_name == "screen_lock_policy" and check_result.status_code == 0:
+                        try:
+                            import json as json_module
+                            lock_data = json_module.loads(output)
+                            status = "pass" if lock_data.get("Compliant", False) else "fail"
+                        except Exception:
+                            status = "fail"
+
+                    elif check_name == "defender_exclusions" and check_result.status_code == 0:
+                        try:
+                            import json as json_module
+                            excl_data = json_module.loads(output)
+                            suspicious_count = excl_data.get("SuspiciousCount", 0)
+                            status = "fail" if suspicious_count > 0 else "pass"
+                        except Exception:
+                            pass
 
                     elif check_name.startswith("service_") and check_result.status_code == 0:
                         # Check if critical Windows service is running

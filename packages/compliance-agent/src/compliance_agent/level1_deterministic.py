@@ -709,6 +709,168 @@ class DeterministicEngine:
                 priority=8,
                 source="builtin"
             ),
+
+            # Linux network hardening drift (SYN cookies, RP filter, etc.)
+            Rule(
+                id="L1-LIN-NET-001",
+                name="Linux Network Hardening Drift",
+                description="Network sysctl params non-compliant — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "network"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-NET-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(e)(1)"],
+                priority=8,
+                source="builtin"
+            ),
+
+            # Linux login banner drift
+            Rule(
+                id="L1-LIN-BANNER-001",
+                name="Linux Login Banner Drift",
+                description="HIPAA authorized-use banner missing — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "banner"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-BANNER-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(d)"],
+                priority=15,
+                source="builtin"
+            ),
+
+            # Linux cryptographic policy drift (weak SSH ciphers)
+            Rule(
+                id="L1-LIN-CRYPTO-001",
+                name="Linux Cryptographic Policy Drift",
+                description="Weak SSH ciphers/MACs/KEX detected — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "crypto"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-CRYPTO-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(e)(1)", "164.312(e)(2)(ii)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # Linux incident response readiness drift
+            Rule(
+                id="L1-LIN-IR-001",
+                name="Linux Incident Response Readiness Drift",
+                description="IR tools/logging not configured — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "incident_response"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_linux_runbook",
+                action_params={"runbook_id": "LIN-IR-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(b)", "164.308(a)(6)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # --- Windows L1 Rules ---
+
+            # Windows DNS service down
+            Rule(
+                id="L1-WIN-SVC-DNS",
+                name="Windows DNS Service Down",
+                description="DNS service not running — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "service_dns"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SVC-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(b)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # Windows SMB signing not enforced
+            Rule(
+                id="L1-WIN-SEC-SMB",
+                name="Windows SMB Signing Drift",
+                description="SMB signing not required — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "smb_signing"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SEC-007", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(e)(1)", "164.312(e)(2)(i)"],
+                priority=8,
+                source="builtin"
+            ),
+
+            # Windows Update service down
+            Rule(
+                id="L1-WIN-SVC-WUAUSERV",
+                name="Windows Update Service Down",
+                description="Windows Update service not running — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "service_wuauserv"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SVC-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.308(a)(5)(ii)(B)"],
+                priority=10,
+                source="builtin"
+            ),
+
+            # Windows network profile on Public (should be Private/Domain)
+            Rule(
+                id="L1-WIN-NET-PROFILE",
+                name="Windows Network Profile Drift",
+                description="Network profile set to Public — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "network_profile"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-NET-003", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(e)(1)"],
+                priority=8,
+                source="builtin"
+            ),
+
+            # Windows screen lock not enforced
+            Rule(
+                id="L1-WIN-SEC-SCREENLOCK",
+                name="Windows Screen Lock Drift",
+                description="Screen lock timeout missing or too long — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "screen_lock_policy"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SEC-016", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(a)(2)(iii)"],
+                priority=8,
+                source="builtin"
+            ),
+
+            # Windows Defender suspicious exclusions
+            Rule(
+                id="L1-WIN-SEC-DEFENDER-EXCL",
+                name="Windows Defender Exclusion Drift",
+                description="Suspicious Defender exclusions detected — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "defender_exclusions"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SEC-017", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.308(a)(5)(ii)(B)", "164.312(b)"],
+                priority=5,
+                source="builtin"
+            ),
         ]
 
         self.rules.extend(builtin_rules)
