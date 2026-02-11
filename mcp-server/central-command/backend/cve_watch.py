@@ -87,13 +87,17 @@ async def get_cve_summary():
     # Config info
     config = await pool.fetchrow("SELECT last_sync_at, watched_cpes FROM cve_watch_config LIMIT 1")
 
+    watched = config["watched_cpes"] if config else []
+    if isinstance(watched, str):
+        watched = json.loads(watched)
+
     return {
         "total_cves": total_cves,
         "by_severity": by_severity,
         "by_status": by_status,
         "coverage_pct": coverage_pct,
         "last_sync": config["last_sync_at"].isoformat() if config and config["last_sync_at"] else None,
-        "watched_cpes": config["watched_cpes"] if config else [],
+        "watched_cpes": watched,
     }
 
 
@@ -275,8 +279,12 @@ async def get_config():
             "last_sync_at": None,
         }
 
+    cpes = config["watched_cpes"] or []
+    if isinstance(cpes, str):
+        cpes = json.loads(cpes)
+
     return {
-        "watched_cpes": config["watched_cpes"] or [],
+        "watched_cpes": cpes,
         "sync_interval_hours": config["sync_interval_hours"],
         "min_severity": config["min_severity"],
         "enabled": config["enabled"],
@@ -358,6 +366,9 @@ async def _sync_nvd_cves(pool):
         return
 
     watched_cpes = config["watched_cpes"] or []
+    # Handle JSONB returned as string (double-encoded) vs native list
+    if isinstance(watched_cpes, str):
+        watched_cpes = json.loads(watched_cpes)
     api_key = config.get("nvd_api_key")
     last_sync = config["last_sync_at"]
     min_severity = config["min_severity"] or "medium"
@@ -374,10 +385,12 @@ async def _sync_nvd_cves(pool):
     delay = 0.6 if api_key else 6.0
 
     total_synced = 0
-    logger.info(f"Starting CVE sync for {len(watched_cpes)} CPEs...")
+    logger.info(f"Starting CVE sync for {len(watched_cpes)} CPEs (delay={delay}s)...")
 
-    for cpe in watched_cpes:
+    for i, cpe in enumerate(watched_cpes):
         try:
+            if i > 0:
+                await asyncio.sleep(delay)  # Rate limit between CPEs
             count = await _sync_cpe(pool, cpe, headers, last_sync, min_severity, delay)
             total_synced += count
             logger.info(f"  CPE {cpe}: {count} CVEs synced")
@@ -404,33 +417,44 @@ async def _sync_cpe(pool, cpe: str, headers: dict, last_sync, min_severity: str,
     }
 
     # Incremental sync: only fetch modified since last sync
+    # NVD API v2.0 requires ISO 8601 with timezone offset
     if last_sync:
-        params["lastModStartDate"] = last_sync.strftime("%Y-%m-%dT%H:%M:%S.000")
-        params["lastModEndDate"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000")
+        params["lastModStartDate"] = last_sync.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        params["lastModEndDate"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
 
-    # Severity filter
-    severity_map = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW"}
-    if min_severity in severity_map:
-        params["cvssV3Severity"] = severity_map[min_severity]
+    # Severity filtering done post-fetch (cvssV3Severity param deprecated in NVD API v2.0)
+    severity_min_rank = SEVERITY_ORDER.get(min_severity, 2)  # Default: medium
 
     count = 0
     start_index = 0
+    max_retries = 3
 
     while True:
         params["startIndex"] = start_index
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(NVD_API_URL, params=params, headers=headers)
-            if resp.status_code == 403:
-                logger.warning("NVD API rate limited, waiting 30s...")
-                await asyncio.sleep(30)
-                continue
-            resp.raise_for_status()
-            data = resp.json()
+        for attempt in range(max_retries):
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.get(NVD_API_URL, params=params, headers=headers)
+                if resp.status_code == 403 or resp.status_code == 429:
+                    wait = 30 * (attempt + 1)
+                    logger.warning(f"NVD API rate limited ({resp.status_code}), waiting {wait}s...")
+                    await asyncio.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                break
+        else:
+            logger.error(f"NVD API rate limit exceeded after {max_retries} retries")
+            return count
+
+        data = resp.json()
 
         for vuln in data.get("vulnerabilities", []):
-            await _upsert_cve(pool, vuln["cve"])
-            count += 1
+            cve_data = vuln["cve"]
+            # Filter by minimum severity
+            sev = _extract_severity(cve_data)
+            if SEVERITY_ORDER.get(sev, 4) <= severity_min_rank:
+                await _upsert_cve(pool, cve_data)
+                count += 1
 
         total_results = data.get("totalResults", 0)
         if start_index + 200 >= total_results:
@@ -440,6 +464,16 @@ async def _sync_cpe(pool, cpe: str, headers: dict, last_sync, min_severity: str,
         await asyncio.sleep(delay)
 
     return count
+
+
+def _extract_severity(cve_data: dict) -> str:
+    """Extract severity from CVE metrics without full parsing."""
+    metrics = cve_data.get("metrics", {})
+    for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+        metric_list = metrics.get(key, [])
+        if metric_list:
+            return metric_list[0].get("cvssData", {}).get("baseSeverity", "unknown").lower()
+    return "unknown"
 
 
 async def _upsert_cve(pool, cve_data: dict):
