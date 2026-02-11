@@ -54,6 +54,13 @@ export {
   useSiteDevices,
   useSiteDeviceSummary,
   useSiteMedicalDevices,
+  // CVE Watch hooks
+  useCVESummary,
+  useCVEs,
+  useCVEDetail,
+  useTriggerCVESync,
+  useUpdateCVEStatus,
+  useCVEWatchConfig,
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';

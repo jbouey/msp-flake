@@ -3,9 +3,9 @@
  */
 
 import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi } from '../utils/api';
 import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice } from '../utils/api';
-import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary } from '../types';
+import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig } from '../types';
 import { useWebSocketStatus } from './useWebSocket';
 
 // Polling intervals
@@ -804,6 +804,71 @@ export function useSiteMedicalDevices(siteId: string | null, limit?: number, off
     queryKey: ['devices', siteId, 'medical', limit, offset],
     queryFn: () => devicesApi.getMedicalDevices(siteId!, limit, offset),
     enabled: !!siteId,
+    ...defaults,
+  });
+}
+
+// =============================================================================
+// CVE Watch Hooks
+// =============================================================================
+
+export function useCVESummary() {
+  const defaults = useQueryDefaults();
+  return useQuery<CVESummary>({
+    queryKey: ['cve-summary'],
+    queryFn: cveApi.getSummary,
+    ...defaults,
+  });
+}
+
+export function useCVEs(params?: { severity?: string; status?: string; search?: string }) {
+  const defaults = useQueryDefaults();
+  return useQuery<CVEEntry[]>({
+    queryKey: ['cves', params],
+    queryFn: () => cveApi.getCVEs(params),
+    ...defaults,
+  });
+}
+
+export function useCVEDetail(cveId: string | null) {
+  const defaults = useQueryDefaults();
+  return useQuery<CVEDetail>({
+    queryKey: ['cve', cveId],
+    queryFn: () => cveApi.getCVE(cveId!),
+    enabled: !!cveId,
+    ...defaults,
+  });
+}
+
+export function useTriggerCVESync() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: cveApi.triggerSync,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cves'] });
+      queryClient.invalidateQueries({ queryKey: ['cve-summary'] });
+    },
+  });
+}
+
+export function useUpdateCVEStatus() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ cveId, status, notes }: { cveId: string; status: string; notes?: string }) =>
+      cveApi.updateStatus(cveId, status, notes),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cves'] });
+      queryClient.invalidateQueries({ queryKey: ['cve-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['cve'] });
+    },
+  });
+}
+
+export function useCVEWatchConfig() {
+  const defaults = useQueryDefaults();
+  return useQuery<CVEWatchConfig>({
+    queryKey: ['cve-config'],
+    queryFn: cveApi.getConfig,
     ...defaults,
   });
 }

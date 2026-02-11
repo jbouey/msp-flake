@@ -1232,4 +1232,51 @@ export const devicesApi = {
   },
 };
 
+// =============================================================================
+// CVE WATCH API
+// =============================================================================
+
+import type { CVESummary, CVEEntry, CVEDetail, CVEWatchConfig } from '../types';
+
+const CVE_BASE = '/api/cve-watch';
+
+async function fetchCveApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
+  return _fetchWithBase<T>(CVE_BASE, endpoint, options);
+}
+
+export const cveApi = {
+  getSummary: () => fetchCveApi<CVESummary>('/summary'),
+
+  getCVEs: (params?: { severity?: string; status?: string; search?: string; limit?: number; offset?: number }) => {
+    const query = new URLSearchParams();
+    if (params?.severity) query.set('severity', params.severity);
+    if (params?.status) query.set('status', params.status);
+    if (params?.search) query.set('search', params.search);
+    if (params?.limit) query.set('limit', String(params.limit));
+    if (params?.offset) query.set('offset', String(params.offset));
+    const queryString = query.toString();
+    return fetchCveApi<CVEEntry[]>(`/cves${queryString ? `?${queryString}` : ''}`);
+  },
+
+  getCVE: (cveId: string) => fetchCveApi<CVEDetail>(`/cves/${cveId}`),
+
+  triggerSync: () => fetchCveApi<{ status: string }>('/sync', { method: 'POST' }),
+
+  updateStatus: (cveId: string, status: string, notes?: string) =>
+    fetchCveApi<{ status: string }>(`/cves/${cveId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status, notes }),
+      headers: { 'Content-Type': 'application/json' },
+    }),
+
+  getConfig: () => fetchCveApi<CVEWatchConfig>('/config'),
+
+  updateConfig: (config: Partial<CVEWatchConfig>) =>
+    fetchCveApi<CVEWatchConfig>('/config', {
+      method: 'PUT',
+      body: JSON.stringify(config),
+      headers: { 'Content-Type': 'application/json' },
+    }),
+};
+
 export { ApiError };

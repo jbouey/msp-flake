@@ -590,6 +590,47 @@ export const GO_AGENT_TIER_COLORS: Record<GoAgentCapabilityTier, string> = {
   full_remediation: 'green',
 };
 
+// =============================================================================
+// CVE Watch Types
+// =============================================================================
+
+export interface CVESummary {
+  total_cves: number;
+  by_severity: { critical: number; high: number; medium: number; low: number };
+  by_status: { open: number; mitigated: number; accepted_risk: number; not_affected: number };
+  coverage_pct: number;
+  last_sync: string | null;
+  watched_cpes: string[];
+}
+
+export interface CVEEntry {
+  id: string;
+  cve_id: string;
+  severity: string;
+  cvss_score: number | null;
+  published_date: string;
+  description: string;
+  affected_count: number;
+  status: string;
+}
+
+export interface CVEDetail extends CVEEntry {
+  last_modified: string | null;
+  nvd_status: string;
+  references: { url: string; source: string }[];
+  cwe_ids: string[];
+  affected_appliances: { appliance_id: string; site_id: string; status: string; notes: string | null; mitigated_at: string | null; mitigated_by: string | null }[];
+}
+
+export interface CVEWatchConfig {
+  watched_cpes: string[];
+  sync_interval_hours: number;
+  min_severity: string;
+  enabled: boolean;
+  has_api_key: boolean;
+  last_sync_at: string | null;
+}
+
 export const GO_AGENT_CHECK_LABELS: Record<string, string> = {
   bitlocker: 'BitLocker',
   defender: 'Defender',

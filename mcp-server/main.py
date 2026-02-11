@@ -59,6 +59,7 @@ from dashboard_api.billing import router as billing_router
 from dashboard_api.exceptions_api import router as exceptions_router
 from dashboard_api.appliance_delegation import router as appliance_delegation_router
 from dashboard_api.learning_api import partner_learning_router
+from dashboard_api.cve_watch import router as cve_watch_router, cve_sync_loop
 from dashboard_api.websocket_manager import ws_manager
 
 # ============================================================================
@@ -449,13 +450,21 @@ async def lifespan(app: FastAPI):
     # Start periodic OTS proof upgrade task
     ots_upgrade_task = asyncio.create_task(_ots_upgrade_loop())
 
+    # Start periodic CVE Watch sync task
+    cve_watch_task = asyncio.create_task(cve_sync_loop())
+
     yield
 
     # Shutdown
     logger.info("Shutting down MCP Server...")
     ots_upgrade_task.cancel()
+    cve_watch_task.cancel()
     try:
         await asyncio.wait_for(asyncio.shield(ots_upgrade_task), timeout=10)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    try:
+        await asyncio.wait_for(asyncio.shield(cve_watch_task), timeout=5)
     except (asyncio.CancelledError, asyncio.TimeoutError):
         pass
     if redis_client:
@@ -549,6 +558,7 @@ app.include_router(billing_router)  # Stripe billing for partners
 app.include_router(exceptions_router)  # Compliance exceptions management
 app.include_router(appliance_delegation_router)  # Appliance delegation (signing keys, audit, escalations)
 app.include_router(partner_learning_router)  # Partner learning management (promotions, rules)
+app.include_router(cve_watch_router)  # CVE Watch — progressive vulnerability tracking
 
 # WebSocket endpoint for real-time event push
 @app.websocket("/ws/events")
@@ -2580,7 +2590,8 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "description": "Fix PermitRootLogin when set to yes",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "ssh_config"},
-                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+                {"field": "drift_detected", "operator": "eq", "value": true},
+                {"field": "runbook_id", "operator": "eq", "value": "LIN-SSH-001"}
             ],
             "actions": ["run_linux_runbook:LIN-SSH-001"],
             "severity": "critical",
@@ -2594,7 +2605,8 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "description": "Fix PasswordAuthentication when set to yes",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "ssh_config"},
-                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+                {"field": "drift_detected", "operator": "eq", "value": true},
+                {"field": "runbook_id", "operator": "eq", "value": "LIN-SSH-002"}
             ],
             "actions": ["run_linux_runbook:LIN-SSH-002"],
             "severity": "critical",
