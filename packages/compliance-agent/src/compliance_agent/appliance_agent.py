@@ -322,6 +322,7 @@ class ApplianceAgent:
         self.network_posture_detector: Optional[NetworkPostureDetector] = None
         self.windows_executor: Optional[WindowsExecutor] = None
         self.enabled_runbooks: List[str] = []  # Runbooks enabled for this appliance
+        self._healing_tasks: set = set()  # Background healing tasks (survive cycle timeout)
         self.running = False
         self._last_rules_sync = datetime.min.replace(tzinfo=timezone.utc)
         self._last_windows_scan = datetime.min.replace(tzinfo=timezone.utc)
@@ -593,6 +594,12 @@ class ApplianceAgent:
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
             logger.info("gRPC server stopped")
+
+        # Cancel any in-flight healing tasks
+        if self._healing_tasks:
+            logger.info(f"Cancelling {len(self._healing_tasks)} in-flight healing tasks")
+            for task in list(self._healing_tasks):
+                task.cancel()
 
     def _should_submit_evidence(self, check_type: str, result: str) -> bool:
         """
@@ -2430,14 +2437,22 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
             # Run drift detection on all targets
             drift_results = await self.linux_drift_detector.detect_all()
 
-            # Sort results: non-compliant l1_eligible first (healing priority)
-            # This ensures healing runs before the cycle timeout expires
-            drift_results.sort(key=lambda d: (
-                d.compliant,            # False (0) before True (1) = drifted first
-                not d.l1_eligible,      # l1_eligible=True (0) before False (1)
-            ))
+            # Phase 1: Fire off healing as background tasks (survive cycle timeout)
+            # Healing runs independently so the 600s cycle budget doesn't cut it off.
+            for drift in drift_results:
+                if not drift.compliant and drift.l1_eligible and self.auto_healer:
+                    evidence_data = drift.to_dict()
+                    if "output" in evidence_data:
+                        evidence_data["output"] = str(evidence_data["output"])[:500]
+                    evidence_data["phi_scrubbed"] = True
+                    task = asyncio.create_task(
+                        self._heal_linux_drift(drift, evidence_data),
+                        name=f"heal-{drift.runbook_id}-{drift.target}"
+                    )
+                    self._healing_tasks.add(task)
+                    task.add_done_callback(self._healing_tasks.discard)
 
-            # Submit evidence for each result (PHI-hardened)
+            # Phase 2: Submit evidence (can be interrupted by cycle timeout — OK)
             for drift in drift_results:
                 evidence_data = drift.to_dict()
                 # Strip verbose output from passing checks (defense in depth)
@@ -2465,46 +2480,6 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                     )
                     self._track_evidence_result(bid, linux_check_type)
 
-                # If drift detected and L1-eligible, attempt auto-remediation
-                if not drift.compliant and drift.l1_eligible and self.auto_healer:
-                    try:
-                        raw_data = {
-                            "check_type": drift.check_type,
-                            "drift_detected": True,
-                            "status": "fail",
-                            "details": evidence_data,
-                            "host": drift.target,
-                            "runbook_id": drift.runbook_id,
-                            "distro": drift.distro,
-                        }
-                        logger.info(f"Linux drift detected, attempting healing: {drift.runbook_id} on {drift.target}")
-                        heal_result = await self.auto_healer.heal(
-                            site_id=self.config.site_id,
-                            host_id=drift.target,
-                            incident_type=drift.check_type,
-                            severity=drift.severity,
-                            raw_data=raw_data,
-                        )
-                        if heal_result.success:
-                            logger.info(f"Linux healing {drift.check_type}: {heal_result.resolution_level} → {heal_result.action_taken} (SUCCESS)")
-                            # Report pattern to learning flywheel for L1/L2 promotions
-                            if heal_result.action_taken:
-                                try:
-                                    await self.client.report_pattern(
-                                        check_type=drift.check_type,
-                                        issue_signature=f"{drift.check_type}:{drift.target}",
-                                        resolution_steps=[heal_result.action_taken],
-                                        success=True,
-                                        execution_time_ms=heal_result.resolution_time_ms,
-                                    )
-                                    logger.debug(f"Reported pattern for {drift.check_type} to learning loop")
-                                except Exception as e:
-                                    logger.debug(f"Pattern report failed (non-critical): {e}")
-                        else:
-                            logger.warning(f"Linux healing failed: {heal_result.error}")
-                    except Exception as heal_err:
-                        logger.warning(f"Linux healing attempt failed for {drift.runbook_id}: {heal_err}")
-
             # Log summary
             compliant_count = sum(1 for d in drift_results if d.compliant)
             drift_count = sum(1 for d in drift_results if not d.compliant)
@@ -2514,6 +2489,44 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
             logger.error(f"Linux drift detection failed: {e}")
 
         self._last_linux_scan = now
+
+    async def _heal_linux_drift(self, drift, evidence_data: dict):
+        """Heal a single Linux drift result. Runs as a background task."""
+        try:
+            raw_data = {
+                "check_type": drift.check_type,
+                "drift_detected": True,
+                "status": "fail",
+                "details": evidence_data,
+                "host": drift.target,
+                "runbook_id": drift.runbook_id,
+                "distro": drift.distro,
+            }
+            logger.info(f"Linux drift detected, attempting healing: {drift.runbook_id} on {drift.target}")
+            heal_result = await self.auto_healer.heal(
+                site_id=self.config.site_id,
+                host_id=drift.target,
+                incident_type=drift.check_type,
+                severity=drift.severity,
+                raw_data=raw_data,
+            )
+            if heal_result.success:
+                logger.info(f"Linux healing {drift.check_type}: {heal_result.resolution_level} → {heal_result.action_taken} (SUCCESS)")
+                if heal_result.action_taken:
+                    try:
+                        await self.client.report_pattern(
+                            check_type=drift.check_type,
+                            issue_signature=f"{drift.check_type}:{drift.target}",
+                            resolution_steps=[heal_result.action_taken],
+                            success=True,
+                            execution_time_ms=heal_result.resolution_time_ms,
+                        )
+                    except Exception as e:
+                        logger.debug(f"Pattern report failed (non-critical): {e}")
+            else:
+                logger.warning(f"Linux healing failed: {heal_result.error}")
+        except Exception as heal_err:
+            logger.warning(f"Linux healing attempt failed for {drift.runbook_id}: {heal_err}")
 
     # =========================================================================
     # Network Posture Scanning (Linux + Windows)
