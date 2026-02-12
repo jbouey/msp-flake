@@ -2430,6 +2430,13 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
             # Run drift detection on all targets
             drift_results = await self.linux_drift_detector.detect_all()
 
+            # Sort results: non-compliant l1_eligible first (healing priority)
+            # This ensures healing runs before the cycle timeout expires
+            drift_results.sort(key=lambda d: (
+                d.compliant,            # False (0) before True (1) = drifted first
+                not d.l1_eligible,      # l1_eligible=True (0) before False (1)
+            ))
+
             # Submit evidence for each result (PHI-hardened)
             for drift in drift_results:
                 evidence_data = drift.to_dict()
