@@ -1562,7 +1562,8 @@ async def resubmit_expired_proofs(
                 failed += 1
                 await db.execute(text("""
                     UPDATE ots_proofs
-                    SET error = 'Resubmission failed - all calendars returned errors'
+                    SET error = 'Resubmission failed - all calendars returned errors',
+                        last_upgrade_attempt = NOW()
                     WHERE bundle_id = :bundle_id
                 """), {"bundle_id": proof.bundle_id})
 

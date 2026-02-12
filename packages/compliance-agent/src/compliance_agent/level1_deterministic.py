@@ -619,7 +619,7 @@ class DeterministicEngine:
                 conditions=[
                     RuleCondition("check_type", MatchOperator.EQUALS, "permissions"),
                     RuleCondition("drift_detected", MatchOperator.EQUALS, True),
-                    RuleCondition("details.suid_found", MatchOperator.EQUALS, True),
+                    RuleCondition("runbook_id", MatchOperator.EQUALS, "LIN-SUID-001"),
                 ],
                 action="run_linux_runbook",
                 action_params={"runbook_id": "LIN-SUID-001", "phases": ["remediate", "verify"]},
@@ -886,6 +886,38 @@ class DeterministicEngine:
                 action_params={"runbook_id": "RB-WIN-SEC-017", "phases": ["remediate", "verify"]},
                 hipaa_controls=["164.308(a)(5)(ii)(B)", "164.312(b)"],
                 priority=5,
+                source="builtin"
+            ),
+
+            # Suspicious scheduled task persistence
+            Rule(
+                id="L1-PERSIST-TASK-001",
+                name="Scheduled Task Persistence Detected",
+                description="Suspicious scheduled tasks in root namespace — remove",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "scheduled_task_persistence"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SEC-018", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.308(a)(5)(ii)(C)", "164.312(a)(1)"],
+                priority=3,
+                source="builtin"
+            ),
+
+            # Suspicious registry Run key persistence
+            Rule(
+                id="L1-PERSIST-REG-001",
+                name="Registry Run Key Persistence Detected",
+                description="Suspicious registry Run key entries — remove",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "registry_run_persistence"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SEC-019", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.308(a)(5)(ii)(C)", "164.312(a)(1)"],
+                priority=3,
                 source="builtin"
             ),
         ]

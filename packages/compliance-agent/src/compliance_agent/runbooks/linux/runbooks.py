@@ -1565,6 +1565,7 @@ LIN_NET_001 = LinuxRunbook(
             fi
         }
 
+        check_param "net.ipv4.ip_forward" "0"
         check_param "net.ipv4.tcp_syncookies" "1"
         check_param "net.ipv4.icmp_echo_ignore_broadcasts" "1"
         check_param "net.ipv4.conf.all.rp_filter" "1"
@@ -1580,6 +1581,7 @@ LIN_NET_001 = LinuxRunbook(
     ''',
     remediate_script='''
         # Apply immediately
+        sysctl -w net.ipv4.ip_forward=0
         sysctl -w net.ipv4.tcp_syncookies=1
         sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1
         sysctl -w net.ipv4.conf.all.rp_filter=1
@@ -1589,6 +1591,9 @@ LIN_NET_001 = LinuxRunbook(
         cat > /etc/sysctl.d/99-hipaa-network.conf << 'SYSCTLEOF'
 # HIPAA Network Hardening - managed by compliance-agent
 # Do not edit manually - changes will be overwritten
+
+# Disable IP forwarding (not a router)
+net.ipv4.ip_forward = 0
 
 # Enable SYN cookies (SYN flood protection)
 net.ipv4.tcp_syncookies = 1
@@ -1609,7 +1614,8 @@ SYSCTLEOF
     ''',
     verify_script='''
         FAIL=false
-        for PARAM in "net.ipv4.tcp_syncookies=1" "net.ipv4.icmp_echo_ignore_broadcasts=1" \
+        for PARAM in "net.ipv4.ip_forward=0" "net.ipv4.tcp_syncookies=1" \
+                     "net.ipv4.icmp_echo_ignore_broadcasts=1" \
                      "net.ipv4.conf.all.rp_filter=1" "net.ipv4.conf.all.log_martians=1"; do
             KEY=$(echo "$PARAM" | cut -d= -f1)
             EXPECTED=$(echo "$PARAM" | cut -d= -f2)

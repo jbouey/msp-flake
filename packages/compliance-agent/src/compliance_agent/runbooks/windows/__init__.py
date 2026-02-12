@@ -222,6 +222,7 @@ def get_runbooks_by_check_type(check_type: str) -> List[WindowsRunbook]:
 
         # Network checks
         "dns_client": ["RB-WIN-NET-001"],
+        "dns_config": ["RB-WIN-NET-001"],
         "network_adapter": ["RB-WIN-NET-002"],
         "network_profile": ["RB-WIN-NET-003"],
         "netbios": ["RB-WIN-NET-004"],
@@ -269,6 +270,10 @@ def get_runbooks_by_check_type(check_type: str) -> List[WindowsRunbook]:
         "usb_devices": ["RB-WIN-ACCESS-005", "RB-WIN-SEC-015"],
         "usb_device_audit": ["RB-WIN-ACCESS-005", "RB-WIN-SEC-015"],
         "removable_media": ["RB-WIN-ACCESS-005", "RB-WIN-SEC-015"],
+
+        # Persistence detection
+        "scheduled_task_persistence": ["RB-WIN-SEC-018"],
+        "registry_run_persistence": ["RB-WIN-SEC-019"],
 
         # Critical services (generic)
         "critical_services": ["RB-WIN-SVC-001", "RB-WIN-SVC-002", "RB-WIN-SVC-004"],

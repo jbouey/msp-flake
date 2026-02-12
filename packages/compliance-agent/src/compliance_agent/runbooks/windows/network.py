@@ -76,14 +76,32 @@ try {
     $IsDomainJoined = (Get-WmiObject Win32_ComputerSystem).PartOfDomain
 
     if ($IsDomainJoined) {
-        # Get DC as DNS server
-        $DC = ([System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()).DomainControllers[0].IPAddress
+        # Get DC as DNS server (with fallback if AD lookup fails due to hijacked DNS)
+        $DC = $null
+        try {
+            $DC = ([System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()).DomainControllers[0].IPAddress
+        } catch {
+            # AD lookup failed (DNS may be hijacked) — try nltest fallback
+            try {
+                $nltest = nltest /dsgetdc: 2>&1
+                if ($nltest -match 'DC:\\\\(\S+)') { $DC = [System.Net.Dns]::GetHostAddresses($Matches[1])[0].IPAddressToString }
+            } catch {}
+        }
+        if (-not $DC) {
+            # Last resort: use gateway as likely DC on small networks
+            $gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop
+            if ($gw) { $DC = $gw }
+        }
 
-        $Adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" }
-        foreach ($Adapter in $Adapters) {
-            # Set DC as primary DNS
-            Set-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -ServerAddresses $DC
-            $Result.Actions += "Set DNS to DC ($DC) on $($Adapter.Name)"
+        if ($DC) {
+            $Adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" }
+            foreach ($Adapter in $Adapters) {
+                # Set DC as primary DNS
+                Set-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -ServerAddresses $DC
+                $Result.Actions += "Set DNS to DC ($DC) on $($Adapter.Name)"
+            }
+        } else {
+            $Result.Error = "Could not determine DC IP for DNS restoration"
         }
     } else {
         # Standalone - use DHCP or set reliable DNS

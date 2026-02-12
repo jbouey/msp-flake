@@ -369,6 +369,144 @@ async def _ots_upgrade_loop():
         await asyncio.sleep(900)  # 15 minutes
 
 
+async def _ots_resubmit_expired_loop():
+    """One-time background drain of expired OTS proofs.
+
+    Runs in batches of 500 with 30s delays. Uses last_upgrade_attempt
+    as a cooldown to avoid tight-looping on persistent calendar failures.
+    Exits when no eligible expired proofs remain.
+    """
+    await asyncio.sleep(90)  # Let upgrade loop start first
+
+    total_resubmitted = 0
+    total_failed = 0
+    consecutive_zero = 0
+
+    while True:
+        try:
+            from dashboard_api.evidence_chain import submit_hash_to_ots
+            async with async_session() as db:
+                # Skip proofs that failed resubmission in the last hour
+                result = await db.execute(text("""
+                    SELECT bundle_id, bundle_hash, site_id
+                    FROM ots_proofs
+                    WHERE status = 'expired'
+                    AND (last_upgrade_attempt IS NULL
+                         OR last_upgrade_attempt < NOW() - INTERVAL '1 hour')
+                    ORDER BY submitted_at ASC
+                    LIMIT 500
+                """))
+                expired_proofs = result.fetchall()
+
+                if not expired_proofs:
+                    logger.info(
+                        "OTS resubmission drain complete",
+                        total_resubmitted=total_resubmitted,
+                        total_failed=total_failed,
+                    )
+                    return
+
+                batch_ok = 0
+                batch_fail = 0
+
+                for proof in expired_proofs:
+                    try:
+                        ots_result = await submit_hash_to_ots(
+                            proof.bundle_hash, proof.bundle_id
+                        )
+                        if ots_result:
+                            submitted_at = ots_result["submitted_at"]
+                            if submitted_at.tzinfo is not None:
+                                submitted_at = submitted_at.replace(tzinfo=None)
+
+                            await db.execute(text("""
+                                UPDATE ots_proofs
+                                SET status = 'pending',
+                                    proof_data = :proof_data,
+                                    calendar_url = :calendar_url,
+                                    submitted_at = :submitted_at,
+                                    error = NULL,
+                                    upgrade_attempts = 0,
+                                    last_upgrade_attempt = NULL
+                                WHERE bundle_id = :bundle_id
+                            """), {
+                                "proof_data": ots_result["proof_data"],
+                                "calendar_url": ots_result["calendar_url"],
+                                "submitted_at": submitted_at,
+                                "bundle_id": proof.bundle_id,
+                            })
+
+                            await db.execute(text("""
+                                UPDATE compliance_bundles
+                                SET ots_status = 'pending',
+                                    ots_proof = :proof_data,
+                                    ots_calendar_url = :calendar_url,
+                                    ots_submitted_at = :submitted_at,
+                                    ots_error = NULL
+                                WHERE bundle_id = :bundle_id
+                            """), {
+                                "proof_data": ots_result["proof_data"],
+                                "calendar_url": ots_result["calendar_url"],
+                                "submitted_at": submitted_at,
+                                "bundle_id": proof.bundle_id,
+                            })
+                            batch_ok += 1
+                        else:
+                            batch_fail += 1
+                            await db.execute(text("""
+                                UPDATE ots_proofs
+                                SET error = 'Resubmission failed - all calendars returned errors',
+                                    last_upgrade_attempt = NOW()
+                                WHERE bundle_id = :bundle_id
+                            """), {"bundle_id": proof.bundle_id})
+                    except Exception as e:
+                        batch_fail += 1
+                        logger.warning(f"OTS resubmit failed {proof.bundle_id[:8]}: {e}")
+
+                    if (batch_ok + batch_fail) % 50 == 0:
+                        await db.commit()
+
+                await db.commit()
+
+                total_resubmitted += batch_ok
+                total_failed += batch_fail
+
+                remaining = await db.execute(text(
+                    "SELECT COUNT(*) FROM ots_proofs WHERE status = 'expired'"
+                ))
+                remaining_count = remaining.scalar() or 0
+
+                logger.info(
+                    "OTS resubmission batch",
+                    batch_ok=batch_ok,
+                    batch_fail=batch_fail,
+                    total_resubmitted=total_resubmitted,
+                    total_failed=total_failed,
+                    remaining=remaining_count,
+                )
+
+                # Back off if calendars seem down
+                if batch_ok == 0 and batch_fail > 0:
+                    consecutive_zero += 1
+                    if consecutive_zero >= 5:
+                        logger.error(
+                            "OTS resubmission stopped: 5 consecutive zero-success batches. "
+                            "Calendars may be down. Will retry on next server restart."
+                        )
+                        return
+                else:
+                    consecutive_zero = 0
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.exception(f"OTS resubmission batch failed: {e}")
+
+        # 30s between batches; 5 min if last batch had zero successes
+        delay = 300 if consecutive_zero > 0 else 30
+        await asyncio.sleep(delay)
+
+
 # ============================================================================
 # Lifespan Events
 # ============================================================================
@@ -451,6 +589,9 @@ async def lifespan(app: FastAPI):
     # Start periodic OTS proof upgrade task
     ots_upgrade_task = asyncio.create_task(_ots_upgrade_loop())
 
+    # Start one-time OTS expired proof resubmission drain
+    ots_resubmit_task = asyncio.create_task(_ots_resubmit_expired_loop())
+
     # Start periodic CVE Watch sync task
     cve_watch_task = asyncio.create_task(cve_sync_loop())
 
@@ -462,10 +603,15 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down MCP Server...")
     ots_upgrade_task.cancel()
+    ots_resubmit_task.cancel()
     cve_watch_task.cancel()
     framework_sync_task.cancel()
     try:
         await asyncio.wait_for(asyncio.shield(ots_upgrade_task), timeout=10)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    try:
+        await asyncio.wait_for(asyncio.shield(ots_resubmit_task), timeout=5)
     except (asyncio.CancelledError, asyncio.TimeoutError):
         pass
     try:
@@ -2658,9 +2804,39 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "description": "Remove unauthorized SUID binaries from temp directories",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "permissions"},
-                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+                {"field": "drift_detected", "operator": "eq", "value": True},
+                {"field": "runbook_id", "operator": "eq", "value": "LIN-SUID-001"}
             ],
             "actions": ["run_linux_runbook:LIN-SUID-001"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        # --- Windows Persistence Detection ---
+        {
+            "id": "L1-PERSIST-TASK-001",
+            "name": "Scheduled Task Persistence Detected",
+            "description": "Remove suspicious scheduled tasks from root namespace",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "scheduled_task_persistence"},
+                {"field": "drift_detected", "operator": "eq", "value": True}
+            ],
+            "actions": ["run_windows_runbook:RB-WIN-SEC-018"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-PERSIST-REG-001",
+            "name": "Registry Run Key Persistence Detected",
+            "description": "Remove suspicious registry Run key entries",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "registry_run_persistence"},
+                {"field": "drift_detected", "operator": "eq", "value": True}
+            ],
+            "actions": ["run_windows_runbook:RB-WIN-SEC-019"],
             "severity": "critical",
             "cooldown_seconds": 300,
             "max_retries": 2,
