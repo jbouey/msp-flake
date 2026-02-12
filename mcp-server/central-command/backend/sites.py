@@ -52,6 +52,9 @@ class OrderType(str, Enum):
     RUN_COMMAND = "run_command"
     COLLECT_LOGS = "collect_logs"
     REBOOT = "reboot"
+    FORCE_CHECKIN = "force_checkin"
+    RUN_DRIFT = "run_drift"
+    SYNC_RULES = "sync_rules"
 
 
 class HealingTier(str, Enum):
@@ -395,7 +398,7 @@ def calculate_live_status(last_checkin):
         return 'pending'
     now = datetime.now(timezone.utc)
     age = now - last_checkin
-    if age < timedelta(minutes=5):
+    if age < timedelta(minutes=15):
         return 'online'
     elif age < timedelta(hours=1):
         return 'stale'
@@ -776,6 +779,58 @@ async def clear_stale_appliances(site_id: str, request: ClearStaleRequest, user:
             'stale_hours': request.stale_hours,
             'deleted_count': stale_count or 0
         }
+
+
+class BroadcastOrderCreate(BaseModel):
+    """Model for broadcasting an order to all appliances in a site."""
+    order_type: OrderType
+    parameters: dict = {}
+
+
+@router.post("/{site_id}/orders/broadcast")
+async def broadcast_order(site_id: str, order: BroadcastOrderCreate, user: dict = Depends(require_operator)):
+    """Broadcast an order to all appliances in a site. Requires operator or admin access."""
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=1)
+    created_orders = []
+
+    async with pool.acquire() as conn:
+        # Get all appliances for this site
+        appliances = await conn.fetch("""
+            SELECT appliance_id FROM site_appliances
+            WHERE site_id = $1
+        """, site_id)
+
+        if not appliances:
+            raise HTTPException(status_code=404, detail=f"No appliances found for site {site_id}")
+
+        for row in appliances:
+            order_id = generate_order_id()
+            await conn.execute("""
+                INSERT INTO admin_orders (
+                    order_id, appliance_id, site_id, order_type,
+                    parameters, priority, status, created_at, expires_at
+                ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)
+            """,
+                order_id,
+                row['appliance_id'],
+                site_id,
+                order.order_type.value,
+                json.dumps(order.parameters),
+                0,
+                'pending',
+                now,
+                expires_at
+            )
+            created_orders.append({
+                "order_id": order_id,
+                "appliance_id": row['appliance_id'],
+                "order_type": order.order_type.value,
+                "status": "pending",
+            })
+
+    return created_orders
 
 
 # =============================================================================
