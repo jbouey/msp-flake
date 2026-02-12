@@ -1,21 +1,21 @@
 {
-  "session": 106,
-  "updated": "2026-02-11T05:03:37.723572Z",
-  "agent_version": "1.0.64",
+  "session": 108,
+  "updated": "2026-02-12T05:30:00Z",
+  "agent_version": "1.0.70",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "v1.0.64_overlay_granular_flap_linux_healing",
-    "vm_appliance": "v1.0.57_rebuilt_flap_fix_domain_dedup",
+    "physical_appliance": "v1.0.70_heal_priority_chaos_fixes",
+    "vm_appliance": "v1.0.70_heal_priority_chaos_fixes",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_22_promoted_stats_fixed_cicd_deploying",
     "incident_resolution": "pipeline_active",
     "evidence_pipeline": "end_to_end_live_182k_bundles_all_signed_worm_active",
     "compliance_packets": "live_endpoint_real_data_deployed_to_vps",
-    "ots_proofs": "2705_anchored_251_pending_78699_expired",
+    "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
     "fleet_updates": "proven_end_to_end_overlay_plus_nixos_rebuild"
   },
   "current_blocker": "None - evidence pipeline end-to-end operational",
@@ -53,9 +53,9 @@
     {
       "id": 2,
       "task": "Rotate leaked credentials from old settings.local.json",
-      "status": "pending",
+      "status": "completed",
       "priority": "high",
-      "note": "Anthropic API key, AWS access keys, bearer tokens were in permission strings. Still in shell history"
+      "note": "Infra rotated: PostgreSQL, Redis, MinIO, session/API secrets. Fixed hardcoded REDIS_URL bug in docker-compose.yml. External pending: Anthropic API key, AWS keys (AKIA2J4U2R6VFUUEUKXD), SMTP, Microsoft/Google OAuth secrets \u2014 user must rotate at provider consoles."
     },
     {
       "id": 6,
@@ -72,8 +72,8 @@
     {
       "id": 10,
       "task": "Re-submit expired OTS proofs",
-      "status": "pending",
-      "note": "78,699 expired proofs can't be upgraded (calendar pruned). Need batch job to re-submit hashes for fresh calendar commitments"
+      "status": "completed",
+      "note": "Added _ots_resubmit_expired_loop() background task in main.py. Runs on server startup, drains 78K expired proofs in 500-proof batches with 30s delays. Backs off to 5min on calendar failures, stops after 5 consecutive zero-success batches. Also set last_upgrade_attempt on failed resubmissions to prevent tight retry loops."
     },
     {
       "id": 11,
@@ -127,9 +127,9 @@
     {
       "id": 17,
       "task": "Remove argparse bootstrap shim after nix rebuild",
-      "status": "pending",
+      "status": "completed",
       "priority": "low",
-      "note": "After both appliances have the fixed _apply_overlay() from nix rebuild, the argparse.py bootstrap in the overlay tarball is no longer needed. Can be removed from future tarballs."
+      "note": "No action needed. The argparse.py shim was never included in production tarballs (package-agent.sh only copies compliance_agent/ source). Both appliances have the fixed _apply_overlay() via PYTHONPATH+os.execv (physical v1.0.64, VM v1.0.57)."
     },
     {
       "id": 22,
@@ -168,35 +168,39 @@
     }
   ],
   "completed_this_session": [
-    "Fixed flap tracker: _track_flap() now only counts successful heals (resolve\u2192recur), not repeated detection. Prevents false suppression of unhealed incidents.",
-    "Added 4 Linux L1 rules: LIN-NET-001 (network hardening), LIN-BANNER-001 (login banner), LIN-CRYPTO-001 (SSH crypto policy), LIN-IR-001 (incident response readiness)",
-    "Added 6 Windows L1 rules: SVC-DNS, SEC-SMB, SVC-WUAUSERV, NET-PROFILE, SEC-SCREENLOCK, SEC-DEFENDER-EXCL \u2014 all route to existing Windows runbooks",
-    "Added 5 Windows scan checks: smb_signing, service_wuauserv, network_profile, screen_lock_policy, defender_exclusions \u2014 with validation logic",
-    "Decoupled scan cycles: Linux/Windows/network/workstation scans now run in parallel via asyncio.gather(). Cycle timeout 300\u2192600s. Linux detection latency ~2min instead of ~7min.",
-    "Built and uploaded v1.0.65 overlay to VPS with all changes",
-    "Migration 036 (credential versioning) confirmed already complete",
-    "958 tests passing, 0 failures"
+    "Task #10: OTS expired proof background drain loop — _ots_resubmit_expired_loop() in main.py drains 78K expired proofs",
+    "Task #17: Argparse shim confirmed not needed — both appliances have fixed _apply_overlay()",
+    "Chaos test: 6 unhealed vectors diagnosed and patched",
+    "Fixed L1-SUID-001 condition: match on runbook_id instead of non-existent details.suid_found",
+    "Added L1-PERSIST-TASK-001 + L1-PERSIST-REG-001 rules (agent + server-side)",
+    "Added ip_forward check to LIN-NET-001 detect/remediate/verify",
+    "Fixed RB-WIN-NET-001 DNS remediation chicken-and-egg (DC IP fallback via nltest + gateway)",
+    "Added check_type_map entries: scheduled_task_persistence, registry_run_persistence, dns_config",
+    "Fixed server-side L1-LIN-SUID-001 to match runbook_id",
+    "Prioritized healing in Linux drift processing — non-compliant l1_eligible items processed first",
+    "Chaos test run 3: SRV-Task persistence HEALED (new rule), Audit HEALED, still hitting 600s cycle timeout for ip_forward/cron/SUID",
+    "961 tests passing"
   ],
   "recent_commits": [
     {
-      "hash": "574286a",
-      "message": "fix: Granular flap detection \u2014 use runbook_id to prevent false positives"
+      "hash": "83b6d22",
+      "message": "fix: Prioritize healing in Linux drift processing to survive cycle timeout"
     },
     {
-      "hash": "7844a51",
-      "message": "perf: Backend performance audit fixes \u2014 parallel health, async SMTP, N+1 elimination, Redis caching"
+      "hash": "b65ef69",
+      "message": "fix: Patch 6 unhealed chaos test vectors in auto-healing pipeline"
     },
     {
-      "hash": "cdc7d7b",
-      "message": "feat: Bridge workstation checks into L1/L2/L3 auto-healer pipeline"
+      "hash": "9bb32e1",
+      "message": "fix: Include control_mappings.yaml in backend deploy for framework seeding"
     },
     {
-      "hash": "ebb84fb",
-      "message": "docs: Update skill docs \u2014 flap suppression table, test count, key files"
+      "hash": "3b1b1d4",
+      "message": "fix: CVE Watch — use virtualMatchString for wildcard CPEs + 120-day initial window"
     },
     {
-      "hash": "b7c5683",
-      "message": "feat: Persistent flap suppression \u2014 break infinite L3 escalation loops"
+      "hash": "883b91b",
+      "message": "feat: Compliance Library — live framework sync from official sources"
     }
   ],
   "key_findings": {
@@ -220,7 +224,7 @@
     "ad_enrollment_lesson": "AD enumeration returns FQDNs (e.g., nvdc01.northvalley.local) that the appliance can't resolve because its DNS points to the router. Fix: resolve_missing_ips() runs bulk DNS lookup on the DC via PowerShell, then connectivity tests use IP-first (ip_address or fqdn or hostname). Direct TCP asyncio.open_connection() from appliance is faster and more accurate than PowerShell Test-NetConnection from DC.",
     "perf_audit_lesson": "Health endpoint was 2.18s because DB/Redis/MinIO checks ran sequentially and MinIO (sync SDK) blocked the event loop. Fix: asyncio.gather() + run_in_executor() for sync calls. N+1 in compliance scoring: each site triggered a separate query. Fix: ROW_NUMBER() window function in a single query. Redis caching (120s TTL) for expensive aggregates. Pre-computed reverse lookup dicts beat inner loops. Migration 039: pg_stat_user_indexes with idx_scan=0 identifies safe-to-drop indexes.",
     "overlay_structure_lesson": "Overlay tarball MUST preserve Python package structure: compliance_agent/ subdirectory required. Flat extraction (files at overlay root) means PYTHONPATH finds the overlay dir but 'from compliance_agent.X import Y' fails because there's no compliance_agent/ package. Previous overlay deployments appeared to work but were actually running NixOS store code \u2014 synced server-side L1 rules masked the issue.",
-    "chaos_test_timing_lesson": "180s chaos test window is too short for serialized Linux+Windows scan cycles. Linux scan (~1.5min) runs first, then Windows scan (~5min, often timing out at 300s). If attacks land during Windows scan, Linux detection waits until next cycle = 5-7min. Need either 360s+ window or decoupled parallel scan cycles.",
+    "chaos_test_timing_lesson": "180s chaos test window is marginal for a full heal cycle. Even with parallel scans via asyncio.gather(), the 600s cycle timeout in _run_cycle() can abort the Linux drift processing loop before all drifts are healed. Root cause: drift results are processed sequentially (evidence submission + healing for each). SSH/FW/SVC healing consumes most of the budget, leaving NET/CRON/SUID unhealed. Fix applied: sort drift_results so non-compliant l1_eligible items are processed first (healing before evidence-only items). Remaining issue: ip_forward/cron/SUID still not healing in 180s window — likely need dedicated healing task queue that survives cycle boundaries.",
     "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles."
   },
   "deployment_flow": [
