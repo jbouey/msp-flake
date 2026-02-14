@@ -857,6 +857,38 @@ class DeterministicEngine:
                 source="builtin"
             ),
 
+            # Windows BitLocker disabled
+            Rule(
+                id="L1-WIN-SEC-BITLOCKER",
+                name="Windows BitLocker Disabled",
+                description="BitLocker drive encryption off — remediate via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "bitlocker_status"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SEC-005", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(a)(2)(iv)", "164.312(e)(2)(ii)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # Windows NetLogon service down
+            Rule(
+                id="L1-WIN-SVC-NETLOGON",
+                name="Windows NetLogon Service Down",
+                description="NetLogon service not running — restore domain authentication",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "service_netlogon"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SVC-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(d)", "164.312(a)(1)"],
+                priority=3,
+                source="builtin"
+            ),
+
             # Windows DNS hijack detection
             Rule(
                 id="L1-WIN-DNS-HIJACK",

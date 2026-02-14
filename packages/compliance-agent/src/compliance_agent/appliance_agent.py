@@ -2037,6 +2037,7 @@ class ApplianceAgent:
                 ("service_dns", "Get-Service DNS -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
                 ("service_spooler", "Get-Service Spooler -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
                 ("service_wuauserv", "Get-Service wuauserv -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
+                ("service_netlogon", "Get-Service Netlogon -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
                 # SMB signing enforcement
                 ("smb_signing", "Get-SmbServerConfiguration | Select-Object RequireSecuritySignature | ConvertTo-Json"),
                 # SMBv1 protocol (EternalBlue attack surface)

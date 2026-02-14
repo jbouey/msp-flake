@@ -2547,10 +2547,10 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "name": "BitLocker Encryption",
             "description": "Enable drive encryption",
             "conditions": [
-                {"field": "check_type", "operator": "eq", "value": "bitlocker"},
+                {"field": "check_type", "operator": "eq", "value": "bitlocker_status"},
                 {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
             ],
-            "actions": ["enable_bitlocker"],
+            "actions": ["run_windows_runbook:RB-WIN-SEC-005"],
             "severity": "critical",
             "cooldown_seconds": 3600,
             "max_retries": 1,
@@ -2716,10 +2716,10 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "name": "Screen Lock Policy",
             "description": "Enforce screen lock timeout and password requirement",
             "conditions": [
-                {"field": "check_type", "operator": "eq", "value": "screen_lock"},
+                {"field": "check_type", "operator": "eq", "value": "screen_lock_policy"},
                 {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
             ],
-            "actions": ["set_screen_lock_policy"],
+            "actions": ["run_windows_runbook:RB-WIN-SEC-016"],
             "severity": "high",
             "cooldown_seconds": 300,
             "max_retries": 2,
@@ -2851,6 +2851,34 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
                 {"field": "drift_detected", "operator": "eq", "value": True}
             ],
             "actions": ["run_windows_runbook:RB-WIN-SEC-021"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-SMB-SIGNING-001",
+            "name": "SMB Signing Not Required",
+            "description": "Enforce SMB signing to prevent relay attacks",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "smb_signing"},
+                {"field": "drift_detected", "operator": "eq", "value": True}
+            ],
+            "actions": ["run_windows_runbook:RB-WIN-SEC-007"],
+            "severity": "high",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-SVC-NETLOGON-001",
+            "name": "NetLogon Service Down",
+            "description": "Restore NetLogon service for domain authentication",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "service_netlogon"},
+                {"field": "drift_detected", "operator": "eq", "value": True}
+            ],
+            "actions": ["run_windows_runbook:RB-WIN-SVC-001"],
             "severity": "critical",
             "cooldown_seconds": 300,
             "max_retries": 2,
