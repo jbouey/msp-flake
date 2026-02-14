@@ -920,6 +920,38 @@ class DeterministicEngine:
                 priority=3,
                 source="builtin"
             ),
+
+            # SMBv1 protocol enabled (EternalBlue attack surface)
+            Rule(
+                id="L1-WIN-SEC-SMB1",
+                name="SMBv1 Protocol Enabled",
+                description="SMBv1 protocol enabled — disable to prevent EternalBlue-class attacks",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "smb1_protocol"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SEC-020", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(e)(1)", "164.312(e)(2)(i)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # WMI event subscription persistence
+            Rule(
+                id="L1-PERSIST-WMI-001",
+                name="WMI Event Subscription Persistence Detected",
+                description="Suspicious WMI event subscriptions — remove persistence mechanism",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "wmi_event_persistence"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SEC-021", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.308(a)(5)(ii)(C)", "164.312(a)(1)"],
+                priority=3,
+                source="builtin"
+            ),
         ]
 
         self.rules.extend(builtin_rules)

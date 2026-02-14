@@ -2039,6 +2039,20 @@ class ApplianceAgent:
                 ("service_wuauserv", "Get-Service wuauserv -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
                 # SMB signing enforcement
                 ("smb_signing", "Get-SmbServerConfiguration | Select-Object RequireSecuritySignature | ConvertTo-Json"),
+                # SMBv1 protocol (EternalBlue attack surface)
+                ("smb1_protocol", "Get-SmbServerConfiguration | Select-Object EnableSMB1Protocol | ConvertTo-Json"),
+                # WMI event subscription persistence
+                ("wmi_event_persistence", """
+$safe = @('BVTFilter','SCM Event Log Filter')
+$suspicious = @()
+$filters = Get-WmiObject -Namespace root\\subscription -Class __EventFilter -ErrorAction SilentlyContinue
+foreach ($f in $filters) { if ($f.Name -notin $safe -and $f.Name -notlike 'Microsoft-Windows-*') { $suspicious += @{Name=$f.Name;Type='Filter'} } }
+foreach ($cls in @('CommandLineEventConsumer','ActiveScriptEventConsumer')) {
+    $consumers = Get-WmiObject -Namespace root\\subscription -Class $cls -ErrorAction SilentlyContinue
+    foreach ($c in $consumers) { if ($c.Name -notin $safe) { $suspicious += @{Name=$c.Name;Type=$cls} } }
+}
+@{SuspiciousCount=$suspicious.Count;Items=$suspicious} | ConvertTo-Json -Compress
+"""),
                 # Network profile (domain machines should not be on Public)
                 ("network_profile", "Get-NetConnectionProfile | Select-Object Name,NetworkCategory,InterfaceAlias | ConvertTo-Json"),
                 # DNS configuration (detect DNS hijacking)
@@ -2257,6 +2271,24 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                             smb_data = json_module.loads(output)
                             signing_required = smb_data.get("RequireSecuritySignature", False)
                             status = "pass" if signing_required else "fail"
+                        except Exception:
+                            pass
+
+                    elif check_name == "smb1_protocol" and check_result.status_code == 0:
+                        try:
+                            import json as json_module
+                            smb1_data = json_module.loads(output)
+                            smb1_enabled = smb1_data.get("EnableSMB1Protocol", True)
+                            status = "fail" if smb1_enabled else "pass"
+                        except Exception:
+                            pass
+
+                    elif check_name == "wmi_event_persistence" and check_result.status_code == 0:
+                        try:
+                            import json as json_module
+                            wmi_data = json_module.loads(output)
+                            suspicious_count = wmi_data.get("SuspiciousCount", 0)
+                            status = "fail" if suspicious_count > 0 else "pass"
                         except Exception:
                             pass
 

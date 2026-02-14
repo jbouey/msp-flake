@@ -239,7 +239,7 @@ class TestCategoryRunbooks:
         """Test security category has expected runbooks."""
         from compliance_agent.runbooks.windows.security import SECURITY_RUNBOOKS
 
-        assert len(SECURITY_RUNBOOKS) == 20
+        assert len(SECURITY_RUNBOOKS) == 22
         assert "RB-WIN-SEC-001" in SECURITY_RUNBOOKS  # Firewall
         assert "RB-WIN-SEC-002" in SECURITY_RUNBOOKS  # Audit Policy
         assert "RB-WIN-SEC-003" in SECURITY_RUNBOOKS  # Account Lockout

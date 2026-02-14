@@ -2534,6 +2534,331 @@ if ($remaining.Count -gt 0) {
 
 
 # =============================================================================
+# RB-WIN-SEC-020: SMBv1 Protocol Disabling
+# =============================================================================
+
+RUNBOOK_SMB1_DISABLE = WindowsRunbook(
+    id="RB-WIN-SEC-020",
+    name="SMBv1 Protocol Disabling",
+    description="Disable insecure SMBv1 protocol to prevent EternalBlue-class attacks",
+    version="1.0",
+    hipaa_controls=["164.312(e)(1)", "164.312(e)(2)(i)"],
+    severity="high",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=30,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
+
+    detect_script=r'''
+# Check if SMBv1 protocol is enabled
+$Result = @{
+    Drifted = $false
+    Issues = @()
+}
+
+try {
+    # Check via SMB Server Configuration
+    $SmbConfig = Get-SmbServerConfiguration -ErrorAction Stop
+    $Result.EnableSMB1Protocol = $SmbConfig.EnableSMB1Protocol
+
+    if ($SmbConfig.EnableSMB1Protocol) {
+        $Result.Drifted = $true
+        $Result.Issues += "SMBv1 protocol is enabled on server"
+    }
+
+    # Also check Windows Optional Feature (may differ from config)
+    $Feature = Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -ErrorAction SilentlyContinue
+    if ($Feature) {
+        $Result.SMB1FeatureState = $Feature.State.ToString()
+        if ($Feature.State -eq "Enabled") {
+            $Result.Drifted = $true
+            $Result.Issues += "SMB1Protocol Windows feature is enabled"
+        }
+    }
+} catch {
+    $Result.Error = $_.Exception.Message
+    # If Get-SmbServerConfiguration fails, check registry directly
+    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+    $smb1Val = (Get-ItemProperty -Path $regPath -Name SMB1 -ErrorAction SilentlyContinue).SMB1
+    if ($null -eq $smb1Val -or $smb1Val -ne 0) {
+        $Result.Drifted = $true
+        $Result.Issues += "SMBv1 not explicitly disabled in registry"
+    }
+    $Result.SMB1RegistryValue = $smb1Val
+}
+
+$Result | ConvertTo-Json -Depth 2
+''',
+
+    remediate_script=r'''
+# Disable SMBv1 protocol
+$Result = @{ Success = $false; Actions = @() }
+
+try {
+    # Disable via SMB Server Configuration (immediate effect)
+    Set-SmbServerConfiguration -EnableSMB1Protocol $false -Confirm:$false -ErrorAction Stop
+    $Result.Actions += "Disabled SMBv1 via Set-SmbServerConfiguration"
+
+    # Also set registry value for persistence across reboots
+    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+    Set-ItemProperty -Path $regPath -Name SMB1 -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    $Result.Actions += "Set SMB1=0 in registry"
+
+    # Disable Windows Optional Feature (prevents re-enablement)
+    $Feature = Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -ErrorAction SilentlyContinue
+    if ($Feature -and $Feature.State -eq "Enabled") {
+        Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -NoRestart -ErrorAction SilentlyContinue
+        $Result.Actions += "Disabled SMB1Protocol Windows feature (reboot may be needed)"
+    }
+
+    $Result.Success = $true
+    $Result.Message = "SMBv1 protocol disabled"
+} catch {
+    $Result.Error = $_.Exception.Message
+    # Fallback: try registry-only approach
+    try {
+        $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+        Set-ItemProperty -Path $regPath -Name SMB1 -Value 0 -Type DWord
+        $Result.Actions += "Fallback: Set SMB1=0 in registry"
+        $Result.Success = $true
+    } catch {
+        $Result.FallbackError = $_.Exception.Message
+    }
+}
+
+$Result | ConvertTo-Json
+''',
+
+    verify_script=r'''
+$SmbConfig = Get-SmbServerConfiguration -ErrorAction SilentlyContinue
+$enabled = if ($SmbConfig) { $SmbConfig.EnableSMB1Protocol } else { $null }
+$regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+$regVal = (Get-ItemProperty -Path $regPath -Name SMB1 -ErrorAction SilentlyContinue).SMB1
+@{
+    EnableSMB1Protocol = $enabled
+    SMB1RegistryValue = $regVal
+    Verified = ($enabled -eq $false -or $regVal -eq 0)
+} | ConvertTo-Json
+''',
+
+    timeout_seconds=120,
+    requires_reboot=False,
+    disruptive=False,
+    evidence_fields=["EnableSMB1Protocol", "SMB1FeatureState", "SMB1RegistryValue", "Issues"]
+)
+
+
+# =============================================================================
+# RB-WIN-SEC-021: WMI Event Subscription Persistence Detection
+# =============================================================================
+
+RUNBOOK_WMI_PERSIST = WindowsRunbook(
+    id="RB-WIN-SEC-021",
+    name="WMI Event Subscription Persistence Removal",
+    description="Detect and remove malicious WMI event subscriptions used for persistence",
+    version="1.0",
+    hipaa_controls=["164.308(a)(5)(ii)(C)", "164.312(a)(1)"],
+    severity="critical",
+    constraints=ExecutionConstraints(
+        max_retries=2,
+        retry_delay_seconds=30,
+        requires_maintenance_window=False,
+        allow_concurrent=True
+    ),
+
+    detect_script=r'''
+# Check for suspicious WMI event subscriptions (persistence mechanism)
+$Result = @{
+    Drifted = $false
+    Issues = @()
+    Filters = @()
+    Consumers = @()
+    Bindings = @()
+}
+
+# Known safe system WMI filter/consumer names
+$SafeNames = @(
+    'BVTFilter',
+    'SCM Event Log Filter',
+    '__InstanceOperationEvent',
+    'Microsoft-Windows-*',
+    'WMI Self-Instrumentation*'
+)
+
+function Test-IsSafe($name) {
+    foreach ($safe in $SafeNames) {
+        if ($name -like $safe) { return $true }
+    }
+    return $false
+}
+
+try {
+    # Check EventFilters
+    $filters = Get-WmiObject -Namespace root\subscription -Class __EventFilter -ErrorAction SilentlyContinue
+    foreach ($f in $filters) {
+        if (-not (Test-IsSafe $f.Name)) {
+            $Result.Drifted = $true
+            $Result.Filters += @{
+                Name = $f.Name
+                Query = $f.QueryLanguage + ": " + $f.Query
+            }
+            $Result.Issues += "Suspicious EventFilter: $($f.Name)"
+        }
+    }
+
+    # Check EventConsumers (multiple types)
+    $consumerClasses = @(
+        'CommandLineEventConsumer',
+        'ActiveScriptEventConsumer',
+        'LogFileEventConsumer'
+    )
+    foreach ($cls in $consumerClasses) {
+        $consumers = Get-WmiObject -Namespace root\subscription -Class $cls -ErrorAction SilentlyContinue
+        foreach ($c in $consumers) {
+            if (-not (Test-IsSafe $c.Name)) {
+                $Result.Drifted = $true
+                $consumerInfo = @{ Name = $c.Name; Type = $cls }
+                if ($c.CommandLineTemplate) { $consumerInfo.Command = $c.CommandLineTemplate }
+                if ($c.ScriptText) { $consumerInfo.Script = $c.ScriptText.Substring(0, [Math]::Min(200, $c.ScriptText.Length)) }
+                $Result.Consumers += $consumerInfo
+                $Result.Issues += "Suspicious $cls`: $($c.Name)"
+            }
+        }
+    }
+
+    # Check FilterToConsumerBindings
+    $bindings = Get-WmiObject -Namespace root\subscription -Class __FilterToConsumerBinding -ErrorAction SilentlyContinue
+    foreach ($b in $bindings) {
+        $filterName = ($b.Filter -split '"')[1]
+        $consumerName = ($b.Consumer -split '"')[1]
+        if (-not (Test-IsSafe $filterName) -or -not (Test-IsSafe $consumerName)) {
+            $Result.Drifted = $true
+            $Result.Bindings += @{
+                Filter = $filterName
+                Consumer = $consumerName
+            }
+        }
+    }
+} catch {
+    $Result.Error = $_.Exception.Message
+}
+
+$Result.TotalSuspicious = $Result.Filters.Count + $Result.Consumers.Count
+$Result | ConvertTo-Json -Depth 3
+''',
+
+    remediate_script=r'''
+# Remove suspicious WMI event subscriptions
+$Result = @{ Success = $false; Actions = @(); Errors = @() }
+
+$SafeNames = @(
+    'BVTFilter',
+    'SCM Event Log Filter',
+    '__InstanceOperationEvent',
+    'Microsoft-Windows-*',
+    'WMI Self-Instrumentation*'
+)
+
+function Test-IsSafe($name) {
+    foreach ($safe in $SafeNames) {
+        if ($name -like $safe) { return $true }
+    }
+    return $false
+}
+
+try {
+    # Remove bindings first (must be removed before filters/consumers)
+    $bindings = Get-WmiObject -Namespace root\subscription -Class __FilterToConsumerBinding -ErrorAction SilentlyContinue
+    foreach ($b in $bindings) {
+        $filterName = ($b.Filter -split '"')[1]
+        $consumerName = ($b.Consumer -split '"')[1]
+        if (-not (Test-IsSafe $filterName) -or -not (Test-IsSafe $consumerName)) {
+            try {
+                $b | Remove-WmiObject
+                $Result.Actions += "Removed binding: $filterName -> $consumerName"
+            } catch {
+                $Result.Errors += "Failed to remove binding: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    # Remove suspicious EventFilters
+    $filters = Get-WmiObject -Namespace root\subscription -Class __EventFilter -ErrorAction SilentlyContinue
+    foreach ($f in $filters) {
+        if (-not (Test-IsSafe $f.Name)) {
+            try {
+                $f | Remove-WmiObject
+                $Result.Actions += "Removed EventFilter: $($f.Name)"
+            } catch {
+                $Result.Errors += "Failed to remove filter $($f.Name): $($_.Exception.Message)"
+            }
+        }
+    }
+
+    # Remove suspicious EventConsumers
+    $consumerClasses = @(
+        'CommandLineEventConsumer',
+        'ActiveScriptEventConsumer',
+        'LogFileEventConsumer'
+    )
+    foreach ($cls in $consumerClasses) {
+        $consumers = Get-WmiObject -Namespace root\subscription -Class $cls -ErrorAction SilentlyContinue
+        foreach ($c in $consumers) {
+            if (-not (Test-IsSafe $c.Name)) {
+                try {
+                    $c | Remove-WmiObject
+                    $Result.Actions += "Removed $cls`: $($c.Name)"
+                } catch {
+                    $Result.Errors += "Failed to remove consumer $($c.Name): $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
+    $Result.Success = ($Result.Errors.Count -eq 0)
+    $Result.Message = "Removed $($Result.Actions.Count) WMI persistence objects"
+} catch {
+    $Result.Error = $_.Exception.Message
+}
+
+$Result | ConvertTo-Json -Depth 2
+''',
+
+    verify_script=r'''
+# Verify no suspicious WMI subscriptions remain
+$suspicious = 0
+$SafeNames = @('BVTFilter','SCM Event Log Filter','__InstanceOperationEvent','Microsoft-Windows-*','WMI Self-Instrumentation*')
+
+function Test-IsSafe($name) {
+    foreach ($safe in $SafeNames) { if ($name -like $safe) { return $true } }
+    return $false
+}
+
+$filters = Get-WmiObject -Namespace root\subscription -Class __EventFilter -ErrorAction SilentlyContinue
+foreach ($f in $filters) { if (-not (Test-IsSafe $f.Name)) { $suspicious++ } }
+
+$consumerClasses = @('CommandLineEventConsumer','ActiveScriptEventConsumer','LogFileEventConsumer')
+foreach ($cls in $consumerClasses) {
+    $consumers = Get-WmiObject -Namespace root\subscription -Class $cls -ErrorAction SilentlyContinue
+    foreach ($c in $consumers) { if (-not (Test-IsSafe $c.Name)) { $suspicious++ } }
+}
+
+@{
+    SuspiciousRemaining = $suspicious
+    Verified = ($suspicious -eq 0)
+} | ConvertTo-Json
+''',
+
+    timeout_seconds=120,
+    requires_reboot=False,
+    disruptive=False,
+    evidence_fields=["TotalSuspicious", "Filters", "Consumers", "Bindings", "Issues"]
+)
+
+
+# =============================================================================
 # Combined Security Runbook Registry
 # =============================================================================
 
@@ -2557,5 +2882,7 @@ SECURITY_RUNBOOKS: Dict[str, WindowsRunbook] = {
     "RB-WIN-SEC-017": RUNBOOK_DEFENDER_EXCLUSIONS,
     "RB-WIN-SEC-018": RUNBOOK_SCHED_TASK_PERSIST,
     "RB-WIN-SEC-019": RUNBOOK_REGISTRY_PERSIST,
+    "RB-WIN-SEC-020": RUNBOOK_SMB1_DISABLE,
+    "RB-WIN-SEC-021": RUNBOOK_WMI_PERSIST,
     "RB-WIN-ACCESS-001": RUNBOOK_ACCESS_CONTROL,
 }

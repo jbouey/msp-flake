@@ -274,6 +274,10 @@ def get_runbooks_by_check_type(check_type: str) -> List[WindowsRunbook]:
         # Persistence detection
         "scheduled_task_persistence": ["RB-WIN-SEC-018"],
         "registry_run_persistence": ["RB-WIN-SEC-019"],
+        "wmi_event_persistence": ["RB-WIN-SEC-021"],
+
+        # SMBv1 protocol
+        "smb1_protocol": ["RB-WIN-SEC-020"],
 
         # Critical services (generic)
         "critical_services": ["RB-WIN-SVC-001", "RB-WIN-SVC-002", "RB-WIN-SVC-004"],

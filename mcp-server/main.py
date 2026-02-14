@@ -2561,10 +2561,10 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "name": "SMBv1 Protocol Disabled",
             "description": "Disable insecure SMBv1 protocol",
             "conditions": [
-                {"field": "check_type", "operator": "eq", "value": "smb1_disabled"},
+                {"field": "check_type", "operator": "eq", "value": "smb1_protocol"},
                 {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
             ],
-            "actions": ["disable_smb1"],
+            "actions": ["run_windows_runbook:RB-WIN-SEC-020"],
             "severity": "high",
             "cooldown_seconds": 3600,
             "max_retries": 2,
@@ -2837,6 +2837,20 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
                 {"field": "drift_detected", "operator": "eq", "value": True}
             ],
             "actions": ["run_windows_runbook:RB-WIN-SEC-019"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-PERSIST-WMI-001",
+            "name": "WMI Event Subscription Persistence Detected",
+            "description": "Remove suspicious WMI event subscriptions used for persistence",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "wmi_event_persistence"},
+                {"field": "drift_detected", "operator": "eq", "value": True}
+            ],
+            "actions": ["run_windows_runbook:RB-WIN-SEC-021"],
             "severity": "critical",
             "cooldown_seconds": 300,
             "max_retries": 2,
