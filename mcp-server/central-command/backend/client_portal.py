@@ -1386,6 +1386,214 @@ async def cancel_transfer(user: dict = Depends(require_client_owner)):
 
 
 # =============================================================================
+# HEALING LOGS + PROMOTION ENDPOINTS
+# =============================================================================
+
+class ForwardRequest(BaseModel):
+    """Forward a promotion candidate to partner manager."""
+    notes: Optional[str] = None
+
+
+@auth_router.get("/healing-logs")
+async def list_healing_logs(
+    site_id: Optional[str] = None,
+    success: Optional[bool] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(require_client_user)
+):
+    """List auto-healing execution logs for client org's sites."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        query = """
+            SELECT et.execution_id, et.site_id, s.clinic_name,
+                   et.runbook_id, et.incident_type, et.success,
+                   et.resolution_level, et.started_at, et.completed_at,
+                   et.duration_seconds, et.error_message, et.hostname
+            FROM execution_telemetry et
+            JOIN sites s ON s.site_id = et.site_id
+            WHERE s.client_org_id = $1
+        """
+        params: list = [org_id]
+        param_idx = 2
+
+        if site_id:
+            query += f" AND et.site_id = ${param_idx}"
+            params.append(site_id)
+            param_idx += 1
+
+        if success is not None:
+            query += f" AND et.success = ${param_idx}"
+            params.append(success)
+            param_idx += 1
+
+        query += f" ORDER BY et.created_at DESC LIMIT ${param_idx} OFFSET ${param_idx + 1}"
+        params.extend([limit, offset])
+
+        rows = await conn.fetch(query, *params)
+
+        # Get total count for pagination
+        count_query = """
+            SELECT COUNT(*) FROM execution_telemetry et
+            JOIN sites s ON s.site_id = et.site_id
+            WHERE s.client_org_id = $1
+        """
+        total = await conn.fetchval(count_query, org_id)
+
+        return {
+            "logs": [
+                {
+                    "execution_id": r["execution_id"],
+                    "site_id": r["site_id"],
+                    "clinic_name": r["clinic_name"],
+                    "runbook_id": r["runbook_id"],
+                    "incident_type": r["incident_type"],
+                    "success": r["success"],
+                    "resolution_level": r["resolution_level"],
+                    "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+                    "completed_at": r["completed_at"].isoformat() if r["completed_at"] else None,
+                    "duration_seconds": r["duration_seconds"],
+                    "error_message": r["error_message"],
+                    "hostname": r["hostname"],
+                }
+                for r in rows
+            ],
+            "total": total or 0,
+            "limit": limit,
+            "offset": offset,
+        }
+
+
+@auth_router.get("/promotion-candidates")
+async def list_promotion_candidates(user: dict = Depends(require_client_user)):
+    """List promotion-eligible patterns for client org's sites."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                aps.id,
+                aps.pattern_signature,
+                aps.site_id,
+                s.clinic_name,
+                aps.check_type,
+                aps.total_occurrences,
+                aps.success_rate,
+                aps.recommended_action,
+                aps.first_seen::text,
+                aps.last_seen::text,
+                COALESCE(lpc.approval_status, 'not_submitted') as approval_status,
+                lpc.client_endorsed_at IS NOT NULL as client_endorsed
+            FROM aggregated_pattern_stats aps
+            JOIN sites s ON s.site_id = aps.site_id
+            LEFT JOIN learning_promotion_candidates lpc
+                ON lpc.pattern_signature = aps.pattern_signature
+                AND lpc.site_id = aps.site_id
+            WHERE s.client_org_id = $1
+              AND aps.promotion_eligible = TRUE
+            ORDER BY aps.success_rate DESC, aps.total_occurrences DESC
+        """, org_id)
+
+        return {
+            "candidates": [
+                {
+                    "id": str(r["id"]),
+                    "pattern_signature": r["pattern_signature"],
+                    "site_id": r["site_id"],
+                    "clinic_name": r["clinic_name"],
+                    "check_type": r["check_type"],
+                    "total_occurrences": r["total_occurrences"],
+                    "success_rate": float(r["success_rate"]) if r["success_rate"] else 0,
+                    "recommended_action": r["recommended_action"],
+                    "first_seen": r["first_seen"],
+                    "last_seen": r["last_seen"],
+                    "approval_status": r["approval_status"],
+                    "client_endorsed": r["client_endorsed"],
+                }
+                for r in rows
+            ],
+            "total": len(rows),
+        }
+
+
+@auth_router.post("/promotion-candidates/{pattern_id}/forward")
+async def forward_promotion_candidate(
+    pattern_id: str,
+    body: ForwardRequest,
+    user: dict = Depends(require_client_user)
+):
+    """Forward a promotion candidate to the partner manager for review."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        # Verify candidate belongs to a site owned by this client org
+        candidate = await conn.fetchrow("""
+            SELECT aps.id, aps.pattern_signature, aps.site_id,
+                   aps.check_type, aps.recommended_action,
+                   s.clinic_name, s.partner_id
+            FROM aggregated_pattern_stats aps
+            JOIN sites s ON s.site_id = aps.site_id
+            WHERE aps.id = $1
+              AND s.client_org_id = $2
+              AND aps.promotion_eligible = TRUE
+        """, int(pattern_id), org_id)
+
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        # Upsert endorsement into learning_promotion_candidates
+        import uuid as uuid_mod
+        await conn.execute("""
+            INSERT INTO learning_promotion_candidates (
+                id, site_id, pattern_signature,
+                client_endorsed_at, client_endorsed_by, client_notes
+            ) VALUES ($1, $2, $3, NOW(), $4, $5)
+            ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                client_endorsed_at = NOW(),
+                client_endorsed_by = EXCLUDED.client_endorsed_by,
+                client_notes = EXCLUDED.client_notes
+        """,
+            str(uuid_mod.uuid4()),
+            candidate["site_id"],
+            candidate["pattern_signature"],
+            user["user_id"],
+            body.notes
+        )
+
+        # Notify the partner (if partner exists)
+        partner_id = candidate["partner_id"]
+        if partner_id:
+            check_desc = candidate["check_type"] or candidate["recommended_action"] or "healing pattern"
+            try:
+                # Create a notification visible on partner dashboard
+                await conn.execute("""
+                    INSERT INTO client_notifications (
+                        client_org_id, type, severity, title, message
+                    ) VALUES ($1, 'info', 'info',
+                        $2, $3)
+                """,
+                    org_id,
+                    f"Promotion Endorsed: {check_desc}",
+                    f"You endorsed the '{check_desc}' healing pattern at {candidate['clinic_name']} for partner review."
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create endorsement notification: {e}")
+
+        logger.info(f"Client {user['email']} forwarded pattern {candidate['pattern_signature'][:8]} for site {candidate['site_id']}")
+
+        return {
+            "status": "forwarded",
+            "pattern_id": pattern_id,
+            "site_id": candidate["site_id"],
+            "message": "Pattern forwarded to your partner manager for review.",
+        }
+
+
+# =============================================================================
 # BILLING ENDPOINTS (Stripe Integration)
 # =============================================================================
 

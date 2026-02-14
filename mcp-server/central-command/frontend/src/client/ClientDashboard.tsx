@@ -368,7 +368,7 @@ export const ClientDashboard: React.FC = () => {
         </div>
 
         {/* Quick Links */}
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-5 gap-6">
           <Link
             to="/client/evidence"
             className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
@@ -381,7 +381,7 @@ export const ClientDashboard: React.FC = () => {
               </div>
               <div>
                 <h3 className="font-semibold text-slate-900">Evidence Archive</h3>
-                <p className="text-sm text-slate-500">View and download compliance evidence</p>
+                <p className="text-sm text-slate-500">View compliance evidence</p>
               </div>
             </div>
           </Link>
@@ -398,7 +398,24 @@ export const ClientDashboard: React.FC = () => {
               </div>
               <div>
                 <h3 className="font-semibold text-slate-900">Monthly Reports</h3>
-                <p className="text-sm text-slate-500">Download compliance report PDFs</p>
+                <p className="text-sm text-slate-500">Compliance report PDFs</p>
+              </div>
+            </div>
+          </Link>
+
+          <Link
+            to="/client/healing-logs"
+            className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-emerald-100 rounded-lg flex items-center justify-center">
+                <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900">Healing Activity</h3>
+                <p className="text-sm text-slate-500">Auto-healing logs & approvals</p>
               </div>
             </div>
           </Link>

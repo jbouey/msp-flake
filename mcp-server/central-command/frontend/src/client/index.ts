@@ -7,3 +7,4 @@ export { ClientReports } from './ClientReports';
 export { ClientNotifications } from './ClientNotifications';
 export { ClientSettings } from './ClientSettings';
 export { ClientHelp } from './ClientHelp';
+export { ClientHealingLogs } from './ClientHealingLogs';
