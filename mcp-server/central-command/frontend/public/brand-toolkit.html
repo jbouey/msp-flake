@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OsirisCare — Brand Toolkit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Serif+Display&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --teal: #3CBCB4;
+    --teal-dark: #14A89E;
+    --teal-deep: #0d9488;
+    --teal-glow: rgba(60, 188, 180, 0.25);
+    --slate-900: #0f172a;
+    --slate-800: #1e293b;
+    --slate-700: #334155;
+    --slate-500: #64748b;
+    --slate-400: #94a3b8;
+    --slate-300: #cbd5e1;
+    --slate-200: #e2e8f0;
+    --slate-100: #f1f5f9;
+    --slate-50: #f8fafc;
+    --bg: #FAFBFD;
+  }
+
+  body {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--slate-800);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .font-display { font-family: 'DM Serif Display', Georgia, serif; }
+
+  /* Dot grid background */
+  .dot-grid {
+    background-image: radial-gradient(circle, var(--slate-300) 0.5px, transparent 0.5px);
+    background-size: 24px 24px;
+    opacity: 0.25;
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Header */
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(250, 251, 253, 0.88);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid var(--slate-200);
+  }
+
+  .header-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .logo-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--teal-dark), var(--teal-deep));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 12px var(--teal-glow);
+    flex-shrink: 0;
+  }
+
+  .logo-mark svg { width: 20px; height: 20px; }
+
+  .header-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--slate-900);
+    letter-spacing: -0.01em;
+  }
+
+  .header-subtitle {
+    font-size: 0.8rem;
+    color: var(--slate-400);
+    margin-left: auto;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  /* Page hero */
+  .hero {
+    position: relative;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 4rem 2rem 2rem;
+  }
+
+  .hero h1 {
+    font-size: clamp(2rem, 4vw, 3rem);
+    color: var(--slate-900);
+    line-height: 1.15;
+    margin-bottom: 0.75rem;
+  }
+
+  .hero h1 em {
+    font-style: normal;
+    color: var(--teal-deep);
+  }
+
+  .hero p {
+    font-size: 1.1rem;
+    color: var(--slate-500);
+    max-width: 540px;
+    font-weight: 300;
+    line-height: 1.7;
+  }
+
+  /* Swatch bar */
+  .swatch-bar {
+    max-width: 1200px;
+    margin: 2rem auto 3rem;
+    padding: 0 2rem;
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .swatch {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.85rem;
+    border-radius: 999px;
+    border: 1px solid var(--slate-200);
+    background: white;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--slate-700);
+    cursor: default;
+  }
+
+  .swatch .dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* Asset grid */
+  .assets {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem 6rem;
+    display: grid;
+    gap: 3rem;
+  }
+
+  .asset-card {
+    position: relative;
+    background: white;
+    border-radius: 16px;
+    border: 1px solid var(--slate-200);
+    overflow: hidden;
+    transition: box-shadow 0.3s ease;
+  }
+
+  .asset-card:hover {
+    box-shadow: 0 8px 40px rgba(15, 23, 42, 0.06), 0 0 0 1px var(--slate-200);
+  }
+
+  .asset-meta {
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    border-bottom: 1px solid var(--slate-100);
+  }
+
+  .asset-meta h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--slate-900);
+  }
+
+  .asset-meta .dims {
+    font-size: 0.72rem;
+    color: var(--slate-400);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    margin-left: auto;
+    background: var(--slate-50);
+    padding: 0.25rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid var(--slate-100);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .asset-canvas-wrap {
+    padding: 1.5rem;
+    background: var(--slate-50);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 180px;
+  }
+
+  .asset-canvas-wrap canvas {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+
+  .asset-actions {
+    padding: 1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .btn-download {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 1.1rem;
+    border-radius: 10px;
+    border: none;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: linear-gradient(135deg, var(--teal-dark), var(--teal-deep));
+    color: white;
+    box-shadow: 0 2px 8px var(--teal-glow);
+  }
+
+  .btn-download:hover {
+    box-shadow: 0 4px 16px rgba(20, 168, 158, 0.35);
+    transform: translateY(-1px);
+  }
+
+  .btn-download:active { transform: translateY(0); }
+
+  .btn-download svg { width: 14px; height: 14px; }
+
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 1.1rem;
+    border-radius: 10px;
+    border: 1px solid var(--slate-200);
+    background: white;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--slate-600);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-secondary:hover { border-color: var(--slate-300); background: var(--slate-50); }
+
+  /* Loading state */
+  .loading-shimmer {
+    background: linear-gradient(90deg, var(--slate-100) 25%, var(--slate-50) 50%, var(--slate-100) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+    border-radius: 8px;
+    width: 100%;
+    aspect-ratio: 4/1;
+  }
+
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .hero { padding: 2.5rem 1.25rem 1.5rem; }
+    .swatch-bar { padding: 0 1.25rem; }
+    .assets { padding: 0 1.25rem 4rem; }
+    .header-subtitle { display: none; }
+  }
+
+  /* Fade-in */
+  .fade-in {
+    opacity: 0;
+    transform: translateY(12px);
+    animation: fadeUp 0.5s ease forwards;
+  }
+
+  @keyframes fadeUp {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .fade-in:nth-child(2) { animation-delay: 0.08s; }
+  .fade-in:nth-child(3) { animation-delay: 0.16s; }
+  .fade-in:nth-child(4) { animation-delay: 0.24s; }
+  .fade-in:nth-child(5) { animation-delay: 0.32s; }
+  .fade-in:nth-child(6) { animation-delay: 0.40s; }
+</style>
+</head>
+<body>
+
+<div class="dot-grid"></div>
+
+<header>
+  <div class="header-inner">
+    <div class="logo-mark">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M13 2C8.5 2 4 5.5 4 10.5c0 4 2.5 7.5 6.5 9 .3-5 2.5-9.5 6.5-12.5.5-.4 1.1.1.8.7C15.5 12 14 16.5 13.5 21c.5.1 1 .1 1.5.1C20 21.1 22 17 22 13 22 7 18 2 13 2z" fill="white"/></svg>
+    </div>
+    <span class="header-title">OsirisCare</span>
+    <span class="header-subtitle">Brand Toolkit</span>
+  </div>
+</header>
+
+<section class="hero">
+  <h1 class="font-display">Marketing <em>Assets</em></h1>
+  <p>Download production-ready graphics for LinkedIn, social media, and marketing collateral. Each asset is rendered to exact platform specifications.</p>
+</section>
+
+<div class="swatch-bar">
+  <div class="swatch"><div class="dot" style="background: #14A89E;"></div>Teal #14A89E</div>
+  <div class="swatch"><div class="dot" style="background: #0d9488;"></div>Deep #0d9488</div>
+  <div class="swatch"><div class="dot" style="background: #3CBCB4;"></div>Light #3CBCB4</div>
+  <div class="swatch"><div class="dot" style="background: #0f172a;"></div>Slate #0f172a</div>
+  <div class="swatch"><div class="dot" style="background: #f1f5f9;"></div>BG #f1f5f9</div>
+  <div class="swatch"><div class="dot" style="background: linear-gradient(135deg, #14A89E, #0d9488); border: 1px solid rgba(0,0,0,0.06);"></div>Gradient</div>
+</div>
+
+<div class="assets" id="assets"></div>
+
+<script>
+// ─────────────────────────────────────────────
+// Brand Constants
+// ─────────────────────────────────────────────
+const BRAND = {
+  teal: '#3CBCB4',
+  tealDark: '#14A89E',
+  tealDeep: '#0d9488',
+  slate900: '#0f172a',
+  slate800: '#1e293b',
+  slate700: '#334155',
+  slate500: '#64748b',
+  slate400: '#94a3b8',
+  slate300: '#cbd5e1',
+  slate200: '#e2e8f0',
+  slate100: '#f1f5f9',
+  slate50: '#f8fafc',
+  white: '#ffffff',
+};
+
+// ─────────────────────────────────────────────
+// Canvas Drawing Helpers
+// ─────────────────────────────────────────────
+function createGradient(ctx, x0, y0, x1, y1) {
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  g.addColorStop(0, BRAND.tealDark);
+  g.addColorStop(1, BRAND.tealDeep);
+  return g;
+}
+
+function drawDotGrid(ctx, w, h, spacing = 24, radius = 0.8, opacity = 0.12) {
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = BRAND.slate400;
+  for (let x = spacing; x < w; x += spacing) {
+    for (let y = spacing; y < h; y += spacing) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawLeaf(ctx, cx, cy, scale, color, opacity = 1) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+  ctx.translate(-12, -12);
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = color;
+
+  // Back leaf
+  ctx.save();
+  ctx.globalAlpha = opacity * 0.35;
+  const back = new Path2D('M12 3C7 3 3 7.5 3 12.5c0 3 1.5 5.5 4 7 .5-4.5 3-8 7-10 .5-.3 1 .2.7.7-2.5 4-3.5 8-3.2 11.3C12.2 21.8 13 22 14 22c5 0 8-4 8-9C22 7 17 3 12 3z');
+  ctx.fill(back);
+  ctx.restore();
+
+  // Front leaf
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = color;
+  const front = new Path2D('M13 2C8.5 2 4 5.5 4 10.5c0 4 2.5 7.5 6.5 9 .3-5 2.5-9.5 6.5-12.5.5-.4 1.1.1.8.7C15.5 12 14 16.5 13.5 21c.5.1 1 .1 1.5.1C20 21.1 22 17 22 13 22 7 18 2 13 2z');
+  ctx.fill(front);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function drawLogoBox(ctx, x, y, size) {
+  const r = size * 0.22;
+  ctx.save();
+  ctx.fillStyle = createGradient(ctx, x, y, x + size, y + size);
+  ctx.beginPath();
+  ctx.roundRect(x, y, size, size, r);
+  ctx.fill();
+  ctx.shadowColor = 'rgba(20, 168, 158, 0.2)';
+  ctx.shadowBlur = size * 0.5;
+  ctx.shadowOffsetY = size * 0.08;
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.restore();
+  drawLeaf(ctx, x + size / 2, y + size / 2, size / 22, BRAND.white);
+}
+
+function drawWaveform(ctx, x, y, w, h, color, lineWidth = 2, opacity = 0.12) {
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  const mid = y + h / 2;
+  ctx.moveTo(x, mid);
+  ctx.lineTo(x + w * 0.3, mid);
+  ctx.lineTo(x + w * 0.38, y + h * 0.1);
+  ctx.lineTo(x + w * 0.45, y + h * 0.85);
+  ctx.lineTo(x + w * 0.52, y + h * 0.25);
+  ctx.lineTo(x + w * 0.58, y + h * 0.7);
+  ctx.lineTo(x + w * 0.64, mid);
+  ctx.lineTo(x + w, mid);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+}
+
+// ─────────────────────────────────────────────
+// Asset Definitions
+// ─────────────────────────────────────────────
+const ASSETS = [
+  {
+    id: 'linkedin-banner',
+    name: 'LinkedIn Company Banner',
+    width: 1584,
+    height: 396,
+    render(ctx, w, h) {
+      // Background
+      ctx.fillStyle = BRAND.white;
+      ctx.fillRect(0, 0, w, h);
+      drawDotGrid(ctx, w, h, 28, 1, 0.08);
+
+      // Left teal accent bar
+      const grad = createGradient(ctx, 0, 0, 0, h);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 6, h);
+
+      // Waveform decoration
+      drawWaveform(ctx, w * 0.55, h * 0.15, w * 0.42, h * 0.7, BRAND.tealDark, 3, 0.08);
+
+      // Subtle right-side leaf watermark
+      drawLeaf(ctx, w - 140, h / 2, 8, BRAND.tealDark, 0.04);
+
+      // Logo box
+      drawLogoBox(ctx, 80, h / 2 - 32, 64);
+
+      // Brand name
+      ctx.fillStyle = BRAND.slate900;
+      ctx.font = '700 52px "DM Serif Display", Georgia, serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('OsirisCare', 168, h / 2 - 14);
+
+      // Tagline
+      ctx.fillStyle = BRAND.slate500;
+      ctx.font = '400 20px "DM Sans", system-ui, sans-serif';
+      ctx.fillText('Compliance infrastructure for healthcare', 170, h / 2 + 28);
+
+      // Thin bottom border
+      ctx.fillStyle = BRAND.slate200;
+      ctx.fillRect(0, h - 1, w, 1);
+    },
+  },
+  {
+    id: 'linkedin-personal',
+    name: 'LinkedIn Personal Banner',
+    width: 1584,
+    height: 396,
+    render(ctx, w, h) {
+      // Background — dark
+      ctx.fillStyle = BRAND.slate900;
+      ctx.fillRect(0, 0, w, h);
+      drawDotGrid(ctx, w, h, 28, 1, 0.06);
+
+      // Gradient sweep at bottom
+      const g = ctx.createLinearGradient(0, h * 0.6, 0, h);
+      g.addColorStop(0, 'transparent');
+      g.addColorStop(1, 'rgba(20, 168, 158, 0.08)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+
+      // Decorative leaf — left side (behind profile pic area)
+      drawLeaf(ctx, 180, h / 2, 12, BRAND.teal, 0.06);
+
+      // Waveform — left/center area
+      drawWaveform(ctx, 60, h * 0.1, w * 0.45, h * 0.8, BRAND.teal, 2.5, 0.07);
+
+      // Right-aligned content (clear of profile pic on left)
+      const rx = w - 780;
+
+      // Logo mark — right side
+      drawLogoBox(ctx, rx, 50, 48);
+
+      // "Building" text
+      ctx.fillStyle = BRAND.slate400;
+      ctx.font = '300 18px "DM Sans", system-ui, sans-serif';
+      ctx.letterSpacing = '0.08em';
+      ctx.fillText('BUILDING', rx, h / 2 + 8);
+
+      // Main text
+      ctx.fillStyle = BRAND.white;
+      ctx.font = '700 44px "DM Serif Display", Georgia, serif';
+      ctx.fillText('Compliance infrastructure', rx, h / 2 + 55);
+      ctx.fillStyle = BRAND.teal;
+      ctx.fillText('for healthcare', rx, h / 2 + 105);
+
+      // Bottom accent line
+      const lineGrad = createGradient(ctx, rx, 0, rx + 260, 0);
+      ctx.fillStyle = lineGrad;
+      ctx.fillRect(rx, h - 40, 260, 3);
+    },
+  },
+  {
+    id: 'post-square',
+    name: 'LinkedIn Post — Feature Card',
+    width: 1200,
+    height: 1200,
+    render(ctx, w, h) {
+      // Background
+      ctx.fillStyle = '#f7fafa';
+      ctx.fillRect(0, 0, w, h);
+      drawDotGrid(ctx, w, h, 24, 0.8, 0.06);
+
+      // Top teal accent
+      const topGrad = createGradient(ctx, 0, 0, w, 0);
+      ctx.fillStyle = topGrad;
+      ctx.fillRect(0, 0, w, 5);
+
+      // Logo in corner
+      drawLogoBox(ctx, 72, 72, 52);
+      ctx.fillStyle = BRAND.slate900;
+      ctx.font = '600 22px "DM Sans", system-ui, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('OsirisCare', 140, 98);
+
+      // Dashboard card
+      const cardX = 72, cardY = 200, cardW = w - 144, cardH = 720;
+      ctx.save();
+      ctx.fillStyle = BRAND.white;
+      ctx.shadowColor = 'rgba(0,0,0,0.06)';
+      ctx.shadowBlur = 40;
+      ctx.shadowOffsetY = 8;
+      roundRect(ctx, cardX, cardY, cardW, cardH, 20);
+      ctx.fill();
+      ctx.restore();
+
+      // Card border
+      ctx.strokeStyle = BRAND.slate200;
+      ctx.lineWidth = 1;
+      roundRect(ctx, cardX, cardY, cardW, cardH, 20);
+      ctx.stroke();
+
+      // Score section
+      ctx.fillStyle = BRAND.slate400;
+      ctx.font = '500 15px "DM Sans", system-ui, sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.fillText('COMPLIANCE SCORE', cardX + 48, cardY + 44);
+
+      ctx.fillStyle = BRAND.slate900;
+      ctx.font = '700 96px "DM Serif Display", Georgia, serif';
+      ctx.fillText('96.4', cardX + 44, cardY + 72);
+      ctx.fillStyle = BRAND.tealDark;
+      ctx.font = '500 36px "DM Sans", system-ui, sans-serif';
+      ctx.fillText('%', cardX + 290, cardY + 96);
+
+      // Score ring
+      const ringX = cardX + cardW - 140, ringY = cardY + 120, ringR = 60;
+      ctx.beginPath();
+      ctx.arc(ringX, ringY, ringR, 0, Math.PI * 2);
+      ctx.strokeStyle = BRAND.slate100;
+      ctx.lineWidth = 10;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(ringX, ringY, ringR, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * 0.964));
+      ctx.strokeStyle = BRAND.tealDark;
+      ctx.lineWidth = 10;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+
+      // Divider
+      ctx.fillStyle = BRAND.slate100;
+      ctx.fillRect(cardX + 48, cardY + 220, cardW - 96, 1);
+
+      // Metric pills
+      const metrics = [
+        { label: 'Passed', value: '142', color: '#34C759' },
+        { label: 'Auto-Healed', value: '8', color: BRAND.tealDark },
+        { label: 'Warnings', value: '3', color: '#FF9500' },
+        { label: 'Critical', value: '0', color: '#FF3B30' },
+      ];
+      metrics.forEach((m, i) => {
+        const mx = cardX + 48 + i * (cardW - 96) / 4;
+        const my = cardY + 252;
+
+        // Colored dot
+        ctx.beginPath();
+        ctx.arc(mx + 8, my + 10, 5, 0, Math.PI * 2);
+        ctx.fillStyle = m.color;
+        ctx.fill();
+
+        ctx.fillStyle = BRAND.slate500;
+        ctx.font = '400 14px "DM Sans", system-ui, sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.fillText(m.label, mx + 20, my + 3);
+
+        ctx.fillStyle = BRAND.slate900;
+        ctx.font = '700 28px "DM Sans", system-ui, sans-serif';
+        ctx.fillText(m.value, mx + 20, my + 26);
+      });
+
+      // Divider
+      ctx.fillStyle = BRAND.slate100;
+      ctx.fillRect(cardX + 48, cardY + 320, cardW - 96, 1);
+
+      // Activity items
+      ctx.fillStyle = BRAND.slate400;
+      ctx.font = '500 13px "DM Sans", system-ui, sans-serif';
+      ctx.fillText('RECENT HEALING ACTIVITY', cardX + 48, cardY + 348);
+
+      const activities = [
+        { time: '2m ago', text: 'Windows Defender re-enabled on WS01', tag: 'L1', tagColor: BRAND.tealDark },
+        { time: '8m ago', text: 'DNS config restored to compliant state', tag: 'L1', tagColor: BRAND.tealDark },
+        { time: '14m ago', text: 'Backup schedule corrected via LLM planner', tag: 'L2', tagColor: '#5856D6' },
+        { time: '22m ago', text: 'SMB signing enforced on domain controller', tag: 'L1', tagColor: BRAND.tealDark },
+        { time: '1h ago', text: 'Password policy restored to 14-char minimum', tag: 'L1', tagColor: BRAND.tealDark },
+      ];
+
+      activities.forEach((a, i) => {
+        const ay = cardY + 384 + i * 60;
+
+        // Tag pill
+        ctx.save();
+        ctx.fillStyle = a.tagColor + '18';
+        roundRect(ctx, cardX + 48, ay, 36, 24, 6);
+        ctx.fill();
+        ctx.fillStyle = a.tagColor;
+        ctx.font = '700 11px "DM Sans", system-ui, sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(a.tag, cardX + 56, ay + 12);
+        ctx.restore();
+
+        ctx.fillStyle = BRAND.slate800;
+        ctx.font = '400 16px "DM Sans", system-ui, sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.fillText(a.text, cardX + 96, ay + 2);
+
+        ctx.fillStyle = BRAND.slate400;
+        ctx.font = '400 13px "DM Sans", system-ui, sans-serif';
+        ctx.fillText(a.time, cardX + cardW - 120, ay + 4);
+      });
+
+      // Bottom tagline
+      ctx.fillStyle = BRAND.slate400;
+      ctx.font = '400 16px "DM Sans", system-ui, sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.fillText('osiriscare.net', 72, h - 70);
+
+      ctx.fillStyle = BRAND.tealDeep;
+      ctx.font = '500 16px "DM Sans", system-ui, sans-serif';
+      ctx.fillText('Compliance infrastructure for healthcare', 72, h - 44);
+    },
+  },
+  {
+    id: 'post-landscape',
+    name: 'LinkedIn Post — Value Prop',
+    width: 1200,
+    height: 627,
+    render(ctx, w, h) {
+      // Background
+      ctx.fillStyle = BRAND.white;
+      ctx.fillRect(0, 0, w, h);
+      drawDotGrid(ctx, w, h, 24, 0.8, 0.06);
+
+      // Left panel
+      const panelW = w * 0.48;
+      ctx.fillStyle = BRAND.slate900;
+      roundRect(ctx, 0, 0, panelW, h, 0);
+      ctx.fill();
+      drawDotGrid(ctx, panelW, h, 28, 1, 0.04);
+
+      // Diagonal slice accent
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(panelW - 40, 0);
+      ctx.lineTo(panelW + 20, 0);
+      ctx.lineTo(panelW - 20, h);
+      ctx.lineTo(panelW - 80, h);
+      ctx.closePath();
+      const sliceGrad = createGradient(ctx, panelW - 40, 0, panelW, h);
+      ctx.fillStyle = sliceGrad;
+      ctx.fill();
+      ctx.restore();
+
+      // Left side — large text
+      drawLogoBox(ctx, 60, 60, 48);
+
+      ctx.fillStyle = BRAND.white;
+      ctx.font = '700 48px "DM Serif Display", Georgia, serif';
+      ctx.textBaseline = 'top';
+      ctx.fillText('Enterprise', 60, 150);
+      ctx.fillText('monitoring.', 60, 210);
+
+      ctx.fillStyle = BRAND.teal;
+      ctx.font = '700 48px "DM Serif Display", Georgia, serif';
+      ctx.fillText('Small practice', 60, 300);
+      ctx.fillText('pricing.', 60, 360);
+
+      // Bottom left
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.font = '400 15px "DM Sans", system-ui, sans-serif';
+      ctx.fillText('Starting at $200/mo', 60, h - 60);
+
+      // Right side — features
+      const rx = panelW + 60;
+      const features = [
+        { icon: '01', title: 'Continuous Observation', desc: 'Real-time drift detection across all endpoints with evidence-grade logging.' },
+        { icon: '02', title: 'Three-Tier Response', desc: 'Deterministic rules, LLM-guided remediation, and human escalation paths.' },
+        { icon: '03', title: 'Cryptographic Evidence', desc: 'Tamper-evident hash chains with Bitcoin-anchored timestamps.' },
+        { icon: '04', title: '75% Cost Reduction', desc: 'Automated compliance replaces manual MSP processes at a fraction of the cost.' },
+      ];
+
+      features.forEach((f, i) => {
+        const fy = 50 + i * 140;
+
+        // Number
+        ctx.fillStyle = BRAND.tealDark;
+        ctx.font = '700 13px "DM Sans", system-ui, sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.fillText(f.icon, rx, fy);
+
+        // Title
+        ctx.fillStyle = BRAND.slate900;
+        ctx.font = '600 19px "DM Sans", system-ui, sans-serif';
+        ctx.fillText(f.title, rx, fy + 22);
+
+        // Description
+        ctx.fillStyle = BRAND.slate500;
+        ctx.font = '400 14px "DM Sans", system-ui, sans-serif';
+        const words = f.desc.split(' ');
+        let line = '', ly = fy + 50;
+        words.forEach(word => {
+          const test = line + word + ' ';
+          if (ctx.measureText(test).width > (w - rx - 60)) {
+            ctx.fillText(line.trim(), rx, ly);
+            line = word + ' ';
+            ly += 20;
+          } else {
+            line = test;
+          }
+        });
+        ctx.fillText(line.trim(), rx, ly);
+      });
+
+      // Bottom right
+      ctx.fillStyle = BRAND.slate300;
+      ctx.font = '400 14px "DM Sans", system-ui, sans-serif';
+      ctx.fillText('osiriscare.net', rx, h - 50);
+    },
+  },
+  {
+    id: 'profile-pic',
+    name: 'Profile Picture / Avatar',
+    width: 400,
+    height: 400,
+    render(ctx, w, h) {
+      const cx = w / 2, cy = h / 2, r = 180;
+
+      // Transparent background
+      ctx.clearRect(0, 0, w, h);
+
+      // Teal gradient circle
+      ctx.save();
+      const g = ctx.createRadialGradient(cx - 40, cy - 40, 0, cx, cy, r);
+      g.addColorStop(0, BRAND.tealDark);
+      g.addColorStop(1, BRAND.tealDeep);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Subtle inner shadow
+      const ig = ctx.createRadialGradient(cx, cy + 20, r * 0.5, cx, cy, r);
+      ig.addColorStop(0, 'transparent');
+      ig.addColorStop(1, 'rgba(0,0,0,0.1)');
+      ctx.fillStyle = ig;
+      ctx.fill();
+      ctx.restore();
+
+      // White leaf
+      drawLeaf(ctx, cx, cy, 7.5, BRAND.white);
+    },
+  },
+  {
+    id: 'social-card',
+    name: 'Social / OG Card',
+    width: 1200,
+    height: 630,
+    render(ctx, w, h) {
+      // Background
+      ctx.fillStyle = BRAND.white;
+      ctx.fillRect(0, 0, w, h);
+      drawDotGrid(ctx, w, h, 24, 0.8, 0.06);
+
+      // Top gradient bar
+      const topG = createGradient(ctx, 0, 0, w, 0);
+      ctx.fillStyle = topG;
+      ctx.fillRect(0, 0, w, 5);
+
+      // Large decorative leaf
+      drawLeaf(ctx, w - 180, h / 2 + 30, 14, BRAND.tealDark, 0.04);
+
+      // Waveform
+      drawWaveform(ctx, w * 0.5, h * 0.2, w * 0.45, h * 0.6, BRAND.tealDark, 2, 0.06);
+
+      // Logo box
+      drawLogoBox(ctx, 80, h / 2 - 90, 64);
+
+      // Brand name
+      ctx.fillStyle = BRAND.slate900;
+      ctx.font = '700 64px "DM Serif Display", Georgia, serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('OsirisCare', 80, h / 2 + 20);
+
+      // Tagline
+      ctx.fillStyle = BRAND.slate500;
+      ctx.font = '300 22px "DM Sans", system-ui, sans-serif';
+      ctx.fillText('Compliance infrastructure for healthcare', 82, h / 2 + 70);
+
+      // URL
+      ctx.fillStyle = BRAND.tealDeep;
+      ctx.font = '500 16px "DM Sans", system-ui, sans-serif';
+      ctx.fillText('osiriscare.net', 82, h / 2 + 110);
+
+      // Bottom border
+      ctx.fillStyle = BRAND.slate200;
+      ctx.fillRect(0, h - 1, w, 1);
+    },
+  },
+];
+
+// ─────────────────────────────────────────────
+// Rendering Engine
+// ─────────────────────────────────────────────
+async function loadFonts() {
+  // Ensure fonts are loaded before rendering
+  await document.fonts.ready;
+  // Double-check specific fonts
+  const checks = [
+    new FontFace('DM Serif Display', 'url(https://fonts.gstatic.com/s/dmserifddisplay/v15/-nFnOHM81r4j6k0gjAW3mujVU2B2K_d709jy92k.woff2)'),
+    new FontFace('DM Sans', 'url(https://fonts.gstatic.com/s/dmsans/v15/rP2tp2ywxg089UriI5-g4vlH9VoD8CmcqZG40F9JadbnoEwA_ot_R7oR.woff2)'),
+  ];
+  try {
+    for (const f of checks) {
+      const loaded = await f.load();
+      document.fonts.add(loaded);
+    }
+  } catch (e) {
+    // Fonts from CSS link should already be loaded
+  }
+  return document.fonts.ready;
+}
+
+function renderAsset(asset) {
+  const canvas = document.createElement('canvas');
+  canvas.width = asset.width;
+  canvas.height = asset.height;
+  canvas.style.display = 'block';
+  const ctx = canvas.getContext('2d');
+
+  // Scale for retina-quality
+  const dpr = 1; // Keep at 1 for exact pixel dimensions
+  ctx.scale(dpr, dpr);
+
+  asset.render(ctx, asset.width, asset.height);
+  return canvas;
+}
+
+function downloadCanvas(canvas, filename) {
+  const link = document.createElement('a');
+  link.download = filename + '.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+}
+
+function buildUI() {
+  const container = document.getElementById('assets');
+
+  ASSETS.forEach((asset, index) => {
+    const card = document.createElement('div');
+    card.className = 'asset-card fade-in';
+
+    // Meta row
+    const meta = document.createElement('div');
+    meta.className = 'asset-meta';
+    meta.innerHTML = `
+      <h3>${asset.name}</h3>
+      <span class="dims">${asset.width} × ${asset.height}</span>
+    `;
+    card.appendChild(meta);
+
+    // Canvas area
+    const canvasWrap = document.createElement('div');
+    canvasWrap.className = 'asset-canvas-wrap';
+    const shimmer = document.createElement('div');
+    shimmer.className = 'loading-shimmer';
+    shimmer.style.aspectRatio = `${asset.width}/${asset.height}`;
+    canvasWrap.appendChild(shimmer);
+    card.appendChild(canvasWrap);
+
+    // Actions
+    const actions = document.createElement('div');
+    actions.className = 'asset-actions';
+    const dlBtn = document.createElement('button');
+    dlBtn.className = 'btn-download';
+    dlBtn.innerHTML = `
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V3"/></svg>
+      Download PNG
+    `;
+    dlBtn.disabled = true;
+    dlBtn.style.opacity = '0.5';
+    actions.appendChild(dlBtn);
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn-secondary';
+    copyBtn.textContent = 'Copy to clipboard';
+    copyBtn.disabled = true;
+    copyBtn.style.opacity = '0.5';
+    actions.appendChild(copyBtn);
+
+    card.appendChild(actions);
+    container.appendChild(card);
+
+    // Render after a tiny delay for stagger effect
+    setTimeout(async () => {
+      const canvas = renderAsset(asset);
+      canvasWrap.innerHTML = '';
+      canvasWrap.appendChild(canvas);
+
+      dlBtn.disabled = false;
+      dlBtn.style.opacity = '1';
+      copyBtn.disabled = false;
+      copyBtn.style.opacity = '1';
+
+      dlBtn.onclick = () => downloadCanvas(canvas, `osiriscare-${asset.id}`);
+      copyBtn.onclick = async () => {
+        try {
+          canvas.toBlob(async (blob) => {
+            await navigator.clipboard.write([
+              new ClipboardItem({ 'image/png': blob })
+            ]);
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => { copyBtn.textContent = 'Copy to clipboard'; }, 2000);
+          });
+        } catch (e) {
+          copyBtn.textContent = 'Copy failed';
+          setTimeout(() => { copyBtn.textContent = 'Copy to clipboard'; }, 2000);
+        }
+      };
+    }, 200 + index * 100);
+  });
+}
+
+// ─────────────────────────────────────────────
+// Boot
+// ─────────────────────────────────────────────
+loadFonts().then(() => {
+  // Extra delay to ensure font rendering is settled
+  setTimeout(buildUI, 300);
+});
+</script>
+</body>
+</html>

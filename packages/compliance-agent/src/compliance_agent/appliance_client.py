@@ -131,6 +131,7 @@ class CentralCommandClient:
         method: str,
         endpoint: str,
         json_data: Optional[Dict] = None,
+        pre_scrubbed: bool = False,
         **kwargs
     ) -> tuple[int, Dict[str, Any]]:
         """
@@ -140,7 +141,8 @@ class CentralCommandClient:
             Tuple of (status_code, response_json)
         """
         # Scrub PHI from outbound payloads at the transport boundary
-        if json_data is not None:
+        # Skip if caller already scrubbed (e.g. submit_evidence signs after scrubbing)
+        if json_data is not None and not pre_scrubbed:
             json_data = self._scrub_outbound(json_data)
 
         url = f"{self.config.api_endpoint}{endpoint}"
@@ -329,8 +331,8 @@ class CentralCommandClient:
             "summary": summary
         }
 
-        # Scrub PHI BEFORE signing so the signature matches what the server
-        # receives (since _request() also scrubs via _scrub_outbound).
+        # Scrub PHI BEFORE signing. We pass pre_scrubbed=True to _request()
+        # to prevent a second scrub from corrupting the signed_data string.
         payload = self._scrub_outbound(payload)
 
         # Sign the scrubbed payload (matches server-side verification)
@@ -357,7 +359,8 @@ class CentralCommandClient:
         status, response = await self._request(
             'POST',
             f'/api/evidence/sites/{self.config.site_id}/submit',
-            json_data=payload
+            json_data=payload,
+            pre_scrubbed=True  # Already scrubbed at line 334 before signing
         )
 
         if status in (200, 201):

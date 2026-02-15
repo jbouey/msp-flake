@@ -604,6 +604,9 @@ async def _match_cves_to_fleet(pool) -> int:
     matched = 0
     for cve in cves:
         affected_cpes = cve["affected_cpes"] or []
+        # Handle JSONB returned as string (asyncpg without json codec init)
+        if isinstance(affected_cpes, str):
+            affected_cpes = json.loads(affected_cpes)
         for appliance in appliances:
             if _cpe_matches_appliance(affected_cpes, appliance):
                 try:
