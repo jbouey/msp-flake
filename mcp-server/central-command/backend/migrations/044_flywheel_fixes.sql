@@ -10,7 +10,11 @@ BEGIN;
 
 -- ============================================================================
 -- 1. Fix pattern_signature column truncation (VARCHAR(64) → VARCHAR(255))
+--    Must drop dependent view first, then recreate after ALTER
 -- ============================================================================
+
+-- Drop dependent view
+DROP VIEW IF EXISTS v_promotion_ready_patterns;
 
 ALTER TABLE aggregated_pattern_stats
     ALTER COLUMN pattern_signature TYPE VARCHAR(255);
@@ -23,6 +27,29 @@ ALTER TABLE learning_promotion_candidates
 
 ALTER TABLE promoted_rule_deployments
     ALTER COLUMN pattern_signature TYPE VARCHAR(255);
+
+-- Recreate the view with updated column types
+CREATE VIEW v_promotion_ready_patterns AS
+SELECT aps.site_id,
+    aps.pattern_signature,
+    aps.total_occurrences,
+    aps.l2_resolutions,
+    aps.success_rate,
+    aps.recommended_action,
+    aps.first_seen,
+    aps.last_seen,
+    s.clinic_name AS site_name,
+    CASE
+        WHEN lpc.approval_status IS NOT NULL THEN lpc.approval_status
+        ELSE 'not_submitted'::character varying
+    END AS approval_status
+FROM aggregated_pattern_stats aps
+    LEFT JOIN sites s ON s.site_id::text = aps.site_id::text
+    LEFT JOIN learning_promotion_candidates lpc
+        ON lpc.pattern_signature::text = aps.pattern_signature::text
+        AND lpc.site_id::text = aps.site_id::text
+WHERE aps.promotion_eligible = true
+ORDER BY aps.success_rate DESC, aps.total_occurrences DESC;
 
 -- ============================================================================
 -- 2. Add tracking columns to l1_rules (safe: IF NOT EXISTS)
