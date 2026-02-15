@@ -44,6 +44,7 @@ const IntegrationResources = lazy(() => import('./pages/IntegrationResources'));
 const SetPassword = lazy(() => import('./pages/SetPassword'));
 const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
 const AdminOAuthSettings = lazy(() => import('./pages/AdminOAuthSettings'));
+const LandingPage = lazy(() => import('./pages/LandingPage'));
 
 // Lazy-loaded portal/partner/client modules
 const PortalDashboard = lazy(() => import('./portal/PortalDashboard').then(m => ({ default: m.PortalDashboard })));
@@ -329,6 +330,7 @@ const App: React.FC = () => {
             <Suspense fallback={<PageLoader />}>
               <Routes>
                 {/* Public routes - no auth required */}
+                <Route path="/welcome" element={<LandingPage />} />
                 <Route path="/set-password" element={<SetPassword />} />
                 <Route path="/auth/oauth/success" element={<OAuthCallback />} />
 
