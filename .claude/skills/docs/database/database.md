@@ -10,7 +10,7 @@
 
 ## PostgreSQL Schema
 
-### Core Tables (39 migrations)
+### Core Tables (43 migrations)
 
 ```sql
 -- Sites and appliances
@@ -65,6 +65,70 @@ CREATE TABLE orders (
 CREATE INDEX idx_orders_pending
 ON orders(appliance_id, status)
 WHERE status = 'pending';
+
+-- CVE Watch (migration 040)
+CREATE TABLE cve_entries (
+    id UUID PRIMARY KEY,
+    cve_id VARCHAR(20) UNIQUE,     -- CVE-2025-1234
+    severity VARCHAR(10),           -- critical/high/medium/low
+    cvss_score DECIMAL(3,1),
+    affected_cpes JSONB,
+    published_date TIMESTAMPTZ
+);
+
+CREATE TABLE cve_fleet_matches (
+    id UUID PRIMARY KEY,
+    cve_id UUID REFERENCES cve_entries(id),
+    appliance_id VARCHAR(255),
+    site_id VARCHAR(255),
+    status VARCHAR(20) DEFAULT 'open',  -- open/mitigated/accepted_risk
+    UNIQUE(cve_id, appliance_id)
+);
+
+CREATE TABLE cve_watch_config (
+    id UUID PRIMARY KEY,
+    watched_cpes JSONB,             -- CPE strings to monitor
+    sync_interval_hours INTEGER DEFAULT 6,
+    last_sync_at TIMESTAMPTZ,
+    enabled BOOLEAN DEFAULT true
+);
+
+-- Compliance Library / Framework Sync (migration 041)
+CREATE TABLE compliance_frameworks (
+    id UUID PRIMARY KEY,
+    name VARCHAR(100) UNIQUE,       -- HIPAA, SOC2, PCI-DSS, etc.
+    version VARCHAR(50),
+    source_url TEXT,                 -- OSCAL/official source
+    total_controls INTEGER DEFAULT 0,
+    last_synced_at TIMESTAMPTZ,
+    enabled BOOLEAN DEFAULT true
+);
+
+CREATE TABLE framework_controls (
+    id UUID PRIMARY KEY,
+    framework_id UUID REFERENCES compliance_frameworks(id),
+    control_id VARCHAR(50),         -- AC-1, 164.312(a)(1), etc.
+    title TEXT,
+    description TEXT,
+    category VARCHAR(100),
+    UNIQUE(framework_id, control_id)
+);
+
+CREATE TABLE control_check_mappings (
+    id UUID PRIMARY KEY,
+    control_id UUID REFERENCES framework_controls(id),
+    check_type VARCHAR(100),        -- Maps to agent check types
+    UNIQUE(control_id, check_type)
+);
+
+CREATE TABLE framework_sync_log (
+    id UUID PRIMARY KEY,
+    framework_id UUID REFERENCES compliance_frameworks(id),
+    synced_at TIMESTAMPTZ DEFAULT NOW(),
+    controls_added INTEGER DEFAULT 0,
+    controls_updated INTEGER DEFAULT 0,
+    source VARCHAR(50)              -- oscal_nist, yaml_seed, manual
+);
 ```
 
 ### Multi-Tenant Pattern
@@ -240,7 +304,12 @@ migrations/
 ├── 002_orders_table.sql
 ├── 003_partner_infrastructure.sql
 ├── ...
-└── 026_latest.sql
+├── 026_latest.sql
+├── ...
+├── 040_cve_watch.sql
+├── 041_framework_sync.sql
+├── 042_client_healing_logs.sql
+└── 043_fix_evidence_chain_race.sql
 ```
 
 ### Migration Pattern
@@ -255,7 +324,7 @@ CREATE INDEX IF NOT EXISTS idx_name ON table(column);
 ```
 
 ## Key Files
-- `mcp-server/migrations/*.sql` - 26 migration files
+- `mcp-server/migrations/*.sql` - 43 migration files
 - `compliance_agent/incident_db.py` - SQLite incident tracking
 - `compliance_agent/offline_queue.py` - Evidence queue
 - `backend/db_queries.py` - PostgreSQL queries

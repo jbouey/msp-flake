@@ -10,13 +10,13 @@
 ## Directory Structure
 ```
 src/
-├── pages/          # 31 page components
+├── pages/          # 33 page components
 ├── components/     # Domain-organized components
 │   ├── shared/     # Button, Badge, Spinner, GlassCard, OsirisCareLeaf
 │   ├── fleet/      # FleetOverview, ClientCard
 │   ├── incidents/  # IncidentFeed, IncidentRow
 │   └── learning/   # PatternCard, PromotionTimeline
-├── hooks/          # 51+ custom hooks
+├── hooks/          # 77 custom hooks
 ├── contexts/       # Auth, Partner contexts
 ├── utils/          # API client (api.ts)
 ├── types/          # TypeScript interfaces
@@ -229,6 +229,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   <Route path="/incidents" element={<Incidents />} />
   <Route path="/runbooks" element={<Runbooks />} />
   <Route path="/learning" element={<Learning />} />
+  <Route path="/cve-watch" element={<CVEWatch />} />
+  <Route path="/compliance-library" element={<ComplianceLibrary />} />
   <Route path="/fleet-updates" element={<FleetUpdates />} />
 </Routes>
 
@@ -256,7 +258,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 ## Key Files
 - `src/utils/api.ts` - All API modules (1000+ lines)
-- `src/hooks/` - 51+ React Query hooks
+- `src/hooks/` - 77 React Query hooks
 - `src/contexts/AuthContext.tsx` - Auth state
 - `src/components/shared/` - Reusable UI
 - `src/types/index.ts` - TypeScript interfaces

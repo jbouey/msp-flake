@@ -293,6 +293,25 @@ nix build .#appliance-iso
 - **Compression:** zstd level 19
 - **Size:** ~1.1GB
 
+## Agent Overlay System
+
+Hot-patch agent code without full NixOS rebuild. Tarball extracted to `/var/lib/msp/agent-overlay/`.
+
+**Critical:** Tarball must preserve Python package structure:
+```
+agent-overlay/
+  VERSION                           # Overlay version file (triggers _apply_overlay)
+  compliance_agent/                 # REQUIRED subdirectory for PYTHONPATH imports
+    __init__.py
+    appliance_agent.py
+    auto_healer.py
+    ...
+```
+
+NixOS wrapper does `from compliance_agent.appliance_agent import main`. Systemd drop-in sets `PYTHONPATH=/var/lib/msp/agent-overlay` so overlay modules are found before NixOS store modules.
+
+**Build:** `mkdir -p /tmp/overlay-build/compliance_agent && cp -R src/compliance_agent/* /tmp/overlay-build/compliance_agent/ && cp VERSION /tmp/overlay-build/`
+
 ## Key Files
 - `flake.nix` - Root flake
 - `iso/appliance-image.nix` - ISO builder

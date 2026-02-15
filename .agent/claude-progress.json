@@ -1,6 +1,6 @@
 {
-  "session": 108,
-  "updated": "2026-02-12T05:30:00Z",
+  "session": 109,
+  "updated": "2026-02-15T06:45:00Z",
   "agent_version": "1.0.70",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -13,12 +13,12 @@
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_22_promoted_stats_fixed_cicd_deploying",
     "incident_resolution": "pipeline_active",
-    "evidence_pipeline": "end_to_end_live_182k_bundles_all_signed_worm_active",
+    "evidence_pipeline": "end_to_end_live_203k_bundles_chain_repaired_advisory_lock",
     "compliance_packets": "live_endpoint_real_data_deployed_to_vps",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
     "fleet_updates": "proven_end_to_end_overlay_plus_nixos_rebuild"
   },
-  "current_blocker": "None - evidence pipeline end-to-end operational",
+  "current_blocker": "None - evidence chain repaired, advisory lock prevents future races",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -168,43 +168,42 @@
     }
   ],
   "completed_this_session": [
-    "Task #10: OTS expired proof background drain loop — _ots_resubmit_expired_loop() in main.py drains 78K expired proofs",
-    "Task #17: Argparse shim confirmed not needed — both appliances have fixed _apply_overlay()",
-    "Chaos test: 6 unhealed vectors diagnosed and patched",
-    "Fixed L1-SUID-001 condition: match on runbook_id instead of non-existent details.suid_found",
-    "Added L1-PERSIST-TASK-001 + L1-PERSIST-REG-001 rules (agent + server-side)",
-    "Added ip_forward check to LIN-NET-001 detect/remediate/verify",
-    "Fixed RB-WIN-NET-001 DNS remediation chicken-and-egg (DC IP fallback via nltest + gateway)",
-    "Added check_type_map entries: scheduled_task_persistence, registry_run_persistence, dns_config",
-    "Fixed server-side L1-LIN-SUID-001 to match runbook_id",
-    "Prioritized healing in Linux drift processing — non-compliant l1_eligible items processed first",
-    "Chaos test run 3: SRV-Task persistence HEALED (new rule), Audit HEALED, still hitting 600s cycle timeout for ip_forward/cron/SUID",
-    "961 tests passing"
+    "Client portal healing logs + promotion approval flow (3 backend endpoints, ClientHealingLogs.tsx, migration 042)",
+    "OsirisCare marketing landing page at www.osiriscare.net with hostname-based React routing",
+    "Caddy + DNS config for www.osiriscare.net and osiriscare.net bare domain redirect",
+    "Evidence chain audit: found 1,137 broken hash chain links (0.55%) from race condition",
+    "Fixed evidence chain race condition: pg_advisory_xact_lock(hashtext(site_id)) serializes per-site submissions",
+    "Repaired all 1,137 broken links: re-sequenced positions, fixed prev_hash, recomputed chain_hash",
+    "Added unique index on (site_id, chain_position) as belt-and-suspenders",
+    "Fixed genesis prev_hash: uses zero sentinel instead of NULL (NOT NULL column)",
+    "Chaos test: 3x back-to-back full spectrum test running (Run 1: 7/16 healed in 300s)",
+    "macOS runbook plan: 17 HIPAA checks proposed, 13/17 L1-healable, uses SSH",
+    "main.py bug fix: client_portal routers not imported (only in server.py)"
   ],
   "recent_commits": [
     {
-      "hash": "83b6d22",
-      "message": "fix: Prioritize healing in Linux drift processing to survive cycle timeout"
+      "hash": "3a68713",
+      "message": "fix: Evidence chain race condition — advisory lock + repair 1,137 broken links"
     },
     {
-      "hash": "b65ef69",
-      "message": "fix: Patch 6 unhealed chaos test vectors in auto-healing pipeline"
+      "hash": "2fcdc87",
+      "message": "feat: Serve landing page at www.osiriscare.net with hostname detection"
     },
     {
-      "hash": "9bb32e1",
-      "message": "fix: Include control_mappings.yaml in backend deploy for framework seeding"
+      "hash": "3ee12e9",
+      "message": "feat: Add OsirisCare marketing landing page at /welcome"
     },
     {
-      "hash": "3b1b1d4",
-      "message": "fix: CVE Watch — use virtualMatchString for wildcard CPEs + 120-day initial window"
+      "hash": "37ebf33",
+      "message": "feat: Client portal healing logs + promotion approval flow"
     },
     {
-      "hash": "883b91b",
-      "message": "feat: Compliance Library — live framework sync from official sources"
+      "hash": "07c46d6",
+      "message": "fix: Unblock healing pipelines — disable 19 broken AUTO-* rules, add missing L1 rules"
     }
   ],
   "key_findings": {
-    "evidence_pipeline_status": "182,685 bundles in DB (111K physical, 71K test). Feb bundles all Ed25519 signed (2,408 signed). Hash chain 111K+ positions deep. Agent submits JSON to /api/evidence/sites/{site_id}/submit with Ed25519 signature + signed_data",
+    "evidence_pipeline_status": "203,076 bundles across 2 sites. Hash chain fully repaired (0 broken links). Race condition fixed with pg_advisory_xact_lock + unique index on (site_id, chain_position). Genesis bundles use 64-zero sentinel for prev_hash. Agent submits to /api/evidence/sites/{site_id}/submit with Ed25519 signature.",
     "minio_worm_status": "evidence-worm-v2 bucket with COMPLIANCE 90d Object Lock. WORM uploads active (verified latest bundle in MinIO). Transient Docker DNS issue resolved after container restart",
     "compliance_packet_data": "Real HIPAA compliance packets LIVE at /api/evidence/sites/{site_id}/compliance-packet. Jan: 28.3% (109K bundles, early setup). Feb: 52.1% (2.4K bundles, all signed, 2.2K BTC-anchored). 15 check types mapped to HIPAA controls. MTTR 0.3-0.5h",
     "ots_status": "2,705 anchored to Bitcoin, 251 pending, 78,699 expired. Fixed construct_ots_file (missing version byte). Uses opentimestamps-client reference library. Upgrade loop: 15min/500 batch",

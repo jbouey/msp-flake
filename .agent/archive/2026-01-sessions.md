@@ -1368,3 +1368,174 @@ All classes added to `packages/compliance-agent/src/compliance_agent/local_resil
 [truncated...]
 
 ---
+
+## 2026-01-27-session74-learning-promotion-workflow.md
+
+# Session 74: Learning System Partner Promotion Workflow
+
+**Date:** 2026-01-27
+**Status:** COMPLETE
+**Agent Version:** 1.0.48
+**ISO Version:** v48
+
+## Summary
+
+Implemented complete partner-facing learning system promotion workflow with dashboard UI, API endpoints, database migration, and end-to-end testing.
+
+## Accomplishments
+
+### 1. Partner Learning API (learning_api.py)
+Created 8 API endpoints for partner learning management:
+- Stats dashboard (pending candidates, active rules, resolution rates)
+- Candidate list and details
+- Approve/reject workflow
+- Promoted rules management
+- Execution history
+
+### 2. Database Migration (032_learning_promotion.sql)
+- `promoted_rules` table for generated L1 rules
+- `v_partner_promotion_candidates` view
+- `v_partner_learning_stats` view
+- Unique constraint for upsert operations
+- Nullable columns for dashboard approvals
+
+### 3. Frontend Component (PartnerLearning.tsx)
+- Stats cards with metrics
+- Candidates table with approve/reject
+- Approval modal with custom name and notes
+- Promoted rules list with enable/disable toggle
+- Empty states for new partners
+
+### 4. VPS Deployment Architecture Discovery
+Critical finding: Docker compose volume mounts override built images.
+- Backend: `/opt/mcp-server/dashboard_api_mount/` → `/app/dashboard_api`
+- Frontend: `/opt/mcp-server/frontend_dist/` → `/usr/share/nginx/html`
+
+### 5. End-to-End Testing
+- Created test pattern data
+- Approved pattern with custom name
+- Rule generated: `L1-PROMOTED-PRINT-SP`
+- Stats API verified working
+
+## Files Created
+- `mcp-server/central-command/backend/learning_api.py` (~350 lines)
+- `mcp-server/central-command/backend/migrations/032_learning_promotion.sql` (~93 lines)
+- `mcp-server/central-command/frontend/src/partner/PartnerLearning.tsx` (~500 lines)
+
+[truncated...]
+
+---
+
+## 2026-01-27-session75-production-readiness.md
+
+# Session 75 - Production Readiness Audit & Critical Security Fixes
+
+**Date:** 2026-01-27
+**Duration:** Extended session (continuation from Session 74)
+**Agent Version:** v1.0.49
+
+---
+
+## Session Goals
+
+1. Complete production readiness audit
+2. Fix critical security issues
+3. Verify learning system sync working
+4. Fix infrastructure issues on physical appliance
+
+---
+
+## Key Accomplishments
+
+### 1. Production Readiness Audit - COMPLETE
+
+Created comprehensive 10-section audit document covering:
+- Environment Variables & Secrets (no hardcoded secrets)
+- Clock Synchronization (VPS and appliance NTP verified)
+- DNS Resolution (both systems resolve correctly)
+- File Permissions (signing key now 600)
+- TLS Certificate (expires Mar 31, ~63 days)
+- Database Connection Pooling (pool settings configured)
+- Async/Blocking Code (no blocking calls in async)
+- Rate Limits & External Services (retry logic, circuit breakers)
+- Systemd Service Ordering (correct dependencies)
+- Proto & Contract Drift (protos in sync)
+
+**Result:** System rated **Production Ready**
+- 0 Critical Issues (1 fixed during audit)
+- 3 Warning Issues (non-blocking)
+
+### 2. CRITICAL Security Fix - VPS Signing Key
+
+**Issue:** `/opt/mcp-server/secrets/signing.key` had 644 permissions
+- World-readable on the VPS
+- Anyone with server access could sign orders
+
+**Fix Applied:**
+```bash
+chmod 600 /opt/mcp-server/secrets/signing.key
+chown 1000:1000 /opt/mcp-server/secrets/signing.key
+```
+
+### 3. STATE_DIR Path Mismatch Fix
+
+[truncated...]
+
+---
+
+## 2026-01-28-session-78-learning-sync-security-fixes.md
+
+# Session 78 - Learning Sync & Security Fixes
+
+**Date:** 2026-01-28
+**Duration:** ~2 hours
+**Status:** COMPLETE
+
+---
+
+## Session Goals
+
+1. Fix Central Command learning sync (500/422 errors)
+2. Audit Linux healing system
+3. Audit learning storage system
+4. Fix all identified critical/high priority issues
+
+---
+
+## Accomplishments
+
+### 1. Central Command Learning Sync Fix
+
+**Problem:** `/api/agent/sync/pattern-stats` returning 500 errors
+
+**Root Causes:**
+- Transaction rollback not happening after SQL exceptions (InFailedSQLTransactionError)
+- asyncpg requires datetime objects, received ISO strings (DataError)
+
+**Fixes Applied (VPS `main.py`):**
+```python
+# Added rollback after exceptions
+except Exception as e:
+    await db.rollback()
+    logger.error(f"Error: {e}")
+
+# Added datetime parsing
+def parse_iso_timestamp(iso_string):
+    try:
+        return datetime.fromisoformat(iso_string.replace('Z', '+00:00'))
+    except (ValueError, AttributeError):
+        return datetime.now(timezone.utc)
+```
+
+**Result:** Learning sync fully operational
+- Pattern sync: 26 completed
+- Execution report: 152 completed
+
+### 2. SQL Injection Vulnerability Fix
+
+**File:** `packages/compliance-agent/src/compliance_agent/incident_db.py`
+
+
+[truncated...]
+
+---

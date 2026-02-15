@@ -224,4 +224,6 @@ class Settings(BaseModel):
 - `compliance_agent/grpc_server.py` - gRPC servicer
 - `compliance_agent/level1_deterministic.py` - Rule engine
 - `compliance_agent/auto_healer.py` - Healing orchestrator (circuit breaker + persistent flap suppression)
+- `backend/cve_watch.py` - CVE Watch (NVD sync + fleet matching + 7 REST endpoints)
+- `backend/framework_sync.py` - Compliance Library (OSCAL sync from NIST GitHub + YAML seed + 7 REST endpoints, 498 lines)
 - `compliance_agent/incident_db.py` - SQLite incident DB + flap_suppressions table
