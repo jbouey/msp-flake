@@ -309,7 +309,8 @@ migrations/
 ├── 040_cve_watch.sql
 ├── 041_framework_sync.sql
 ├── 042_client_healing_logs.sql
-└── 043_fix_evidence_chain_race.sql
+├── 043_fix_evidence_chain_race.sql
+└── 044_flywheel_fixes.sql
 ```
 
 ### Migration Pattern
@@ -324,7 +325,7 @@ CREATE INDEX IF NOT EXISTS idx_name ON table(column);
 ```
 
 ## Key Files
-- `mcp-server/migrations/*.sql` - 43 migration files
+- `mcp-server/migrations/*.sql` - 44 migration files
 - `compliance_agent/incident_db.py` - SQLite incident tracking
 - `compliance_agent/offline_queue.py` - Evidence queue
 - `backend/db_queries.py` - PostgreSQL queries
