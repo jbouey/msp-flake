@@ -3024,7 +3024,7 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             text("""
                 SELECT rule_id, incident_pattern, runbook_id, confidence
                 FROM l1_rules
-                WHERE enabled = true
+                WHERE enabled = true AND COALESCE(source, 'promoted') != 'builtin'
                 ORDER BY confidence DESC
             """)
         )

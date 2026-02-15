@@ -404,7 +404,7 @@ async def promote_pattern_in_db(db: AsyncSession, pattern_id: str) -> Optional[s
         return None
 
     # Create L1 rule
-    rule_id = f"RB-AUTO-{pattern.pattern_signature[:8].upper()}"
+    rule_id = f"RB-AUTO-{pattern.pattern_signature.upper()}"
 
     try:
         await db.execute(text("""

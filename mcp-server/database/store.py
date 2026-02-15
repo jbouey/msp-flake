@@ -446,7 +446,7 @@ class IncidentStore:
                 return None
 
             # Generate rule ID
-            rule_id = f"RB-AUTO-{pattern.pattern_signature.upper()[:8]}"
+            rule_id = f"RB-AUTO-{pattern.pattern_signature.upper()}"
 
             # Create L1 rule
             rule = RuleRecord(

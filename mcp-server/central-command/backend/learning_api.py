@@ -146,7 +146,7 @@ def map_action_to_runbook(action: Optional[str], check_type: Optional[str]) -> s
 def generate_rule_from_pattern(pattern: dict, custom_name: Optional[str] = None) -> dict:
     """Generate L1 rule from pattern stats."""
 
-    rule_id = f"L1-PROMOTED-{pattern['pattern_signature'][:8].upper()}"
+    rule_id = f"L1-PROMOTED-{pattern['pattern_signature'].upper()}"
 
     # Build conditions from pattern
     conditions = []
