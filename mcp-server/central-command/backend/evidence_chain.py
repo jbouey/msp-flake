@@ -91,6 +91,58 @@ def read_bitcoin_varint(data: bytes, pos: int) -> tuple:
         return int.from_bytes(data[pos + 1:pos + 9], 'little'), 9
 
 
+def read_ots_varint(data: bytes, pos: int) -> tuple:
+    """Parse an OTS/LEB128 unsigned varint from bytes at position.
+
+    Despite the OTS library naming it "varint", this uses unsigned LEB128
+    encoding (7-bit chunks with continuation bit), NOT Bitcoin compact integers.
+
+    Returns:
+        (value, bytes_consumed) tuple.
+    """
+    value = 0
+    shift = 0
+    start = pos
+    while pos < len(data):
+        b = data[pos]
+        value |= (b & 0x7F) << shift
+        pos += 1
+        if not (b & 0x80):
+            return value, pos - start
+        shift += 7
+    raise IndexError("Unterminated LEB128 varint")
+
+
+def extract_btc_block_height(data: bytes, tag_pos: int) -> int:
+    """Extract Bitcoin block height from OTS attestation data.
+
+    OTS Bitcoin attestation format after the 8-byte tag:
+        ots_varint(payload_length) + payload
+
+    The payload contains the block height encoded as OTS varint (LEB128).
+
+    Args:
+        data: The raw OTS attestation/upgrade data.
+        tag_pos: Position of BTC_ATTESTATION_TAG in data.
+
+    Returns:
+        The Bitcoin block height, or None if parsing fails.
+    """
+    try:
+        # Read payload length (LEB128 varint) right after the 8-byte tag
+        payload_len, pl_size = read_ots_varint(data, tag_pos + 8)
+        if payload_len <= 0 or payload_len > 8:
+            return None
+        payload_start = tag_pos + 8 + pl_size
+        if payload_start + payload_len > len(data):
+            return None
+        # Block height is LEB128-encoded in the payload
+        block_height, _ = read_ots_varint(data, payload_start)
+        return block_height
+    except (IndexError, ValueError):
+        return None
+
+
 # =============================================================================
 # Ed25519 Signature Verification
 # =============================================================================
@@ -587,14 +639,11 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
                                     upgrade_data = await resp.read()
 
                                     if BTC_ATTESTATION_TAG in upgrade_data:
-                                        # Extract block height (varint after 8-byte tag)
+                                        # Extract block height from BTC attestation payload
                                         pos = upgrade_data.find(BTC_ATTESTATION_TAG)
                                         block_height = None
                                         if pos >= 0:
-                                            try:
-                                                block_height, _ = read_bitcoin_varint(upgrade_data, pos + 8)
-                                            except (IndexError, ValueError):
-                                                block_height = None
+                                            block_height = extract_btc_block_height(upgrade_data, pos)
 
                                         # Store upgraded proof (proper v1 format)
                                         upgraded_ots = (OTS_MAGIC + b'\x01\x08' +

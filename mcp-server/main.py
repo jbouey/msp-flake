@@ -353,9 +353,59 @@ async def check_rate_limit(site_id: str, action: str = "default") -> tuple[bool,
 # Background Tasks
 # ============================================================================
 
+async def _ots_repair_block_heights():
+    """One-time repair: re-extract bitcoin_block from stored proof data.
+
+    Fixes proofs with bitcoin_block=3 (varint payload length was stored
+    instead of the actual LEB128-decoded block height).
+    """
+    try:
+        import base64
+        from dashboard_api.evidence_chain import BTC_ATTESTATION_TAG, extract_btc_block_height
+        async with async_session() as db:
+            result = await db.execute(text("""
+                SELECT bundle_id, proof_data, bitcoin_block
+                FROM ots_proofs
+                WHERE status = 'anchored'
+                  AND bitcoin_block IS NOT NULL
+                  AND (bitcoin_block <= 10 OR bitcoin_block > 100000000)
+                LIMIT 5000
+            """))
+            bad_proofs = result.fetchall()
+            if not bad_proofs:
+                logger.info("OTS block height repair: no proofs need fixing")
+                return
+
+            fixed = 0
+            for proof in bad_proofs:
+                try:
+                    proof_bytes = base64.b64decode(proof.proof_data)
+                    tag_pos = proof_bytes.find(BTC_ATTESTATION_TAG)
+                    if tag_pos >= 0:
+                        correct_height = extract_btc_block_height(proof_bytes, tag_pos)
+                        if correct_height and correct_height != proof.bitcoin_block:
+                            await db.execute(text("""
+                                UPDATE ots_proofs
+                                SET bitcoin_block = :height
+                                WHERE bundle_id = :bid
+                            """), {"height": correct_height, "bid": proof.bundle_id})
+                            fixed += 1
+                except Exception:
+                    continue  # Skip malformed proofs
+
+            await db.commit()
+            logger.info(f"OTS block height repair: fixed {fixed}/{len(bad_proofs)} proofs")
+    except Exception as e:
+        logger.exception(f"OTS block height repair failed: {e}")
+
+
 async def _ots_upgrade_loop():
     """Periodically upgrade pending OTS proofs (every 15 minutes)."""
     await asyncio.sleep(30)  # Wait 30s after startup
+
+    # One-time repair of incorrect block heights on first run
+    await _ots_repair_block_heights()
+
     while True:
         try:
             from dashboard_api.evidence_chain import upgrade_pending_proofs
