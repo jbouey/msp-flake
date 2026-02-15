@@ -14,9 +14,9 @@ BEGIN;
 -- 1. Add missing indexes (evidence_bundles had 518K seq scans vs 18 idx scans)
 -- ============================================================================
 
--- evidence_bundles: hot path for every checkin cycle
-CREATE INDEX IF NOT EXISTS idx_evidence_bundles_site_id
-    ON evidence_bundles(site_id);
+-- evidence_bundles: hot path for every checkin cycle (keyed by appliance_id, not site_id)
+CREATE INDEX IF NOT EXISTS idx_evidence_bundles_appliance_id
+    ON evidence_bundles(appliance_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_bundles_created_at
     ON evidence_bundles(created_at DESC);
 
