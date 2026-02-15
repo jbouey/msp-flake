@@ -191,8 +191,8 @@ class WindowsExecutor:
                 auth=(target.username, target.password),
                 transport=target.transport,
                 server_cert_validation='validate' if target.verify_ssl else 'ignore',
-                read_timeout_sec=60,
-                operation_timeout_sec=55
+                read_timeout_sec=120,
+                operation_timeout_sec=110
             )
             self._session_cache[cache_key] = session
             self._session_timestamps[cache_key] = datetime.now(timezone.utc)

@@ -545,35 +545,18 @@ class DeterministicEngine:
 
             # --- Linux L1 Rules ---
 
-            # SSH PermitRootLogin drift
+            # SSH configuration drift (PermitRootLogin, PasswordAuthentication, etc.)
+            # Matches all ssh_config drifts — specific runbook_id comes from the drift result
             Rule(
                 id="L1-SSH-001",
-                name="SSH Root Login Drift",
-                description="PermitRootLogin not set to 'no' — remediate via runbook",
+                name="SSH Configuration Drift",
+                description="SSH configuration non-compliant — remediate via runbook",
                 conditions=[
                     RuleCondition("check_type", MatchOperator.EQUALS, "ssh_config"),
                     RuleCondition("drift_detected", MatchOperator.EQUALS, True),
-                    RuleCondition("runbook_id", MatchOperator.EQUALS, "LIN-SSH-001"),
                 ],
                 action="run_linux_runbook",
-                action_params={"runbook_id": "LIN-SSH-001", "phases": ["remediate", "verify"]},
-                hipaa_controls=["164.312(d)", "164.312(a)(1)"],
-                priority=5,
-                source="builtin"
-            ),
-
-            # SSH PasswordAuthentication drift
-            Rule(
-                id="L1-SSH-002",
-                name="SSH Password Auth Drift",
-                description="PasswordAuthentication not set to 'no' — remediate via runbook",
-                conditions=[
-                    RuleCondition("check_type", MatchOperator.EQUALS, "ssh_config"),
-                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
-                    RuleCondition("runbook_id", MatchOperator.EQUALS, "LIN-SSH-002"),
-                ],
-                action="run_linux_runbook",
-                action_params={"runbook_id": "LIN-SSH-002", "phases": ["remediate", "verify"]},
+                action_params={"phases": ["remediate", "verify"]},
                 hipaa_controls=["164.312(d)", "164.312(a)(1)"],
                 priority=5,
                 source="builtin"
@@ -619,7 +602,7 @@ class DeterministicEngine:
                 conditions=[
                     RuleCondition("check_type", MatchOperator.EQUALS, "permissions"),
                     RuleCondition("drift_detected", MatchOperator.EQUALS, True),
-                    RuleCondition("runbook_id", MatchOperator.EQUALS, "LIN-SUID-001"),
+                    RuleCondition("distro", MatchOperator.NOT_EQUALS, None),
                 ],
                 action="run_linux_runbook",
                 action_params={"runbook_id": "LIN-SUID-001", "phases": ["remediate", "verify"]},
@@ -636,7 +619,7 @@ class DeterministicEngine:
                 conditions=[
                     RuleCondition("check_type", MatchOperator.EQUALS, "firewall"),
                     RuleCondition("drift_detected", MatchOperator.EQUALS, True),
-                    RuleCondition("runbook_id", MatchOperator.CONTAINS, "LIN-"),
+                    RuleCondition("distro", MatchOperator.NOT_EQUALS, None),
                 ],
                 action="run_linux_runbook",
                 action_params={"runbook_id": "LIN-FW-001", "phases": ["remediate", "verify"]},
@@ -669,7 +652,7 @@ class DeterministicEngine:
                 conditions=[
                     RuleCondition("check_type", MatchOperator.EQUALS, "services"),
                     RuleCondition("drift_detected", MatchOperator.EQUALS, True),
-                    RuleCondition("runbook_id", MatchOperator.CONTAINS, "LIN-"),
+                    RuleCondition("distro", MatchOperator.NOT_EQUALS, None),
                 ],
                 action="run_linux_runbook",
                 action_params={"phases": ["remediate", "verify"]},
@@ -702,7 +685,7 @@ class DeterministicEngine:
                 conditions=[
                     RuleCondition("check_type", MatchOperator.EQUALS, "permissions"),
                     RuleCondition("drift_detected", MatchOperator.EQUALS, True),
-                    RuleCondition("runbook_id", MatchOperator.CONTAINS, "LIN-"),
+                    RuleCondition("distro", MatchOperator.NOT_EQUALS, None),
                 ],
                 action="run_linux_runbook",
                 action_params={"phases": ["remediate", "verify"]},

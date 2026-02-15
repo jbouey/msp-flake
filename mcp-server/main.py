@@ -2746,29 +2746,13 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
         # --- Linux L1 Rules ---
         {
             "id": "L1-LIN-SSH-001",
-            "name": "SSH Root Login Remediation",
-            "description": "Fix PermitRootLogin when set to yes",
+            "name": "SSH Configuration Drift",
+            "description": "Fix SSH config drift (PermitRootLogin, PasswordAuthentication, etc.)",
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "ssh_config"},
-                {"field": "drift_detected", "operator": "eq", "value": True},
-                {"field": "runbook_id", "operator": "eq", "value": "LIN-SSH-001"}
+                {"field": "drift_detected", "operator": "eq", "value": True}
             ],
-            "actions": ["run_linux_runbook:LIN-SSH-001"],
-            "severity": "critical",
-            "cooldown_seconds": 300,
-            "max_retries": 2,
-            "source": "builtin"
-        },
-        {
-            "id": "L1-LIN-SSH-002",
-            "name": "SSH Password Auth Remediation",
-            "description": "Fix PasswordAuthentication when set to yes",
-            "conditions": [
-                {"field": "check_type", "operator": "eq", "value": "ssh_config"},
-                {"field": "drift_detected", "operator": "eq", "value": True},
-                {"field": "runbook_id", "operator": "eq", "value": "LIN-SSH-002"}
-            ],
-            "actions": ["run_linux_runbook:LIN-SSH-002"],
+            "actions": ["run_linux_runbook"],
             "severity": "critical",
             "cooldown_seconds": 300,
             "max_retries": 2,
@@ -2809,9 +2793,9 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
             "conditions": [
                 {"field": "check_type", "operator": "eq", "value": "permissions"},
                 {"field": "drift_detected", "operator": "eq", "value": True},
-                {"field": "runbook_id", "operator": "eq", "value": "LIN-SUID-001"}
+                {"field": "distro", "operator": "ne", "value": None}
             ],
-            "actions": ["run_linux_runbook:LIN-SUID-001"],
+            "actions": ["run_linux_runbook"],
             "severity": "critical",
             "cooldown_seconds": 300,
             "max_retries": 2,

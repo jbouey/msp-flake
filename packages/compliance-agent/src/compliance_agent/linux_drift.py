@@ -152,9 +152,13 @@ class LinuxDriftDetector:
         self.targets = [t for t in self.targets if t.hostname != hostname]
         self.executor.remove_target(hostname)
 
-    async def detect_all(self) -> List[DriftResult]:
+    async def detect_all(self, on_result=None) -> List[DriftResult]:
         """
         Run all detection checks on all targets.
+
+        Args:
+            on_result: Optional callback invoked with each DriftResult as
+                       soon as it's available (enables incremental healing).
 
         Returns:
             List of DriftResult for each check on each target
@@ -163,12 +167,12 @@ class LinuxDriftDetector:
 
         for target in self.targets:
             try:
-                results = await self.detect_host(target)
+                results = await self.detect_host(target, on_result=on_result)
                 all_results.extend(results)
             except Exception as e:
                 logger.error(f"Detection failed for {target.hostname}: {e}")
                 # Add a failure result
-                all_results.append(DriftResult(
+                err_result = DriftResult(
                     target=target.hostname,
                     runbook_id="DETECT-ERROR",
                     check_type="connectivity",
@@ -177,19 +181,23 @@ class LinuxDriftDetector:
                     drift_description=f"Detection failed: {e}",
                     raw_output="",
                     hipaa_controls=[],
-                ))
+                )
+                all_results.append(err_result)
+                if on_result:
+                    on_result(err_result)
 
         # Store for evidence
         self._detection_history.extend(all_results)
 
         return all_results
 
-    async def detect_host(self, target: LinuxTarget) -> List[DriftResult]:
+    async def detect_host(self, target: LinuxTarget, on_result=None) -> List[DriftResult]:
         """
         Run all detection checks on a single host.
 
         Args:
             target: Linux target to check
+            on_result: Optional callback invoked with each DriftResult immediately
 
         Returns:
             List of DriftResult for each check
@@ -246,7 +254,7 @@ class LinuxDriftDetector:
                     else:
                         drift_desc = stdout.strip()[:200] or "Non-compliant state detected"
 
-                results.append(DriftResult(
+                result = DriftResult(
                     target=target.hostname,
                     runbook_id=runbook_id,
                     check_type=runbook.check_type,
@@ -258,11 +266,14 @@ class LinuxDriftDetector:
                     distro=distro,
                     l1_eligible=runbook.l1_auto_heal,
                     l2_eligible=runbook.l2_llm_eligible and not runbook.l1_auto_heal,
-                ))
+                )
+                results.append(result)
+                if on_result:
+                    on_result(result)
 
             except Exception as e:
                 logger.error(f"Check {runbook_id} failed on {target.hostname}: {e}")
-                results.append(DriftResult(
+                err_result = DriftResult(
                     target=target.hostname,
                     runbook_id=runbook_id,
                     check_type=runbook.check_type,
@@ -272,7 +283,10 @@ class LinuxDriftDetector:
                     raw_output="",
                     hipaa_controls=runbook.hipaa_controls,
                     distro=distro,
-                ))
+                )
+                results.append(err_result)
+                if on_result:
+                    on_result(err_result)
 
         return results
 

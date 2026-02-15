@@ -2467,12 +2467,11 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
         logger.info(f"Scanning {len(self.linux_targets)} Linux targets...")
 
         try:
-            # Run drift detection on all targets
-            drift_results = await self.linux_drift_detector.detect_all()
-
-            # Phase 1: Fire off healing as background tasks (survive cycle timeout)
-            # Healing runs independently so the 600s cycle budget doesn't cut it off.
-            for drift in drift_results:
+            # Incremental healing callback — fires as each drift is detected,
+            # so healing starts immediately instead of waiting for all runbooks.
+            # Previously, detect_all() took >10 min and got killed by cycle timeout
+            # before Phase 1 (healing) could start.
+            def _on_drift_detected(drift):
                 if not drift.compliant and drift.l1_eligible and self.auto_healer:
                     evidence_data = drift.to_dict()
                     if "output" in evidence_data:
@@ -2484,6 +2483,11 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                     )
                     self._healing_tasks.add(task)
                     task.add_done_callback(self._healing_tasks.discard)
+
+            # Run drift detection — healing fires incrementally via callback
+            drift_results = await self.linux_drift_detector.detect_all(
+                on_result=_on_drift_detected
+            )
 
             # Phase 2: Submit evidence (can be interrupted by cycle timeout — OK)
             for drift in drift_results:

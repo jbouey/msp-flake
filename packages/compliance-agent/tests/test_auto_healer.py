@@ -461,7 +461,7 @@ rules:
         assert match.action == "custom_firewall_action"
 
     def test_ssh_root_login_rule_matches(self, temp_db, temp_rules_dir):
-        """Test SSH-001 matches PermitRootLogin drift (via runbook_id)."""
+        """Test consolidated SSH-001 matches any ssh_config drift."""
         engine = DeterministicEngine(
             rules_dir=temp_rules_dir,
             incident_db=temp_db,
@@ -482,12 +482,12 @@ rules:
             data=data
         )
 
-        assert match is not None, "Expected SSH-001 rule to match PermitRootLogin drift"
+        assert match is not None, "Expected SSH-001 rule to match ssh_config drift"
         assert match.rule.id == "L1-SSH-001"
-        assert match.action_params["runbook_id"] == "LIN-SSH-001"
+        assert match.action == "run_linux_runbook"
 
-    def test_ssh_password_auth_rule_matches(self, temp_db, temp_rules_dir):
-        """Test SSH-002 matches PasswordAuthentication drift (via runbook_id)."""
+    def test_ssh_password_auth_also_matches_consolidated_rule(self, temp_db, temp_rules_dir):
+        """Test consolidated SSH-001 also matches PasswordAuthentication drift."""
         engine = DeterministicEngine(
             rules_dir=temp_rules_dir,
             incident_db=temp_db,
@@ -508,36 +508,9 @@ rules:
             data=data
         )
 
-        assert match is not None, "Expected SSH-002 rule to match PasswordAuthentication drift"
-        assert match.rule.id == "L1-SSH-002"
-        assert match.action_params["runbook_id"] == "LIN-SSH-002"
-
-    def test_ssh_rules_dont_cross_match(self, temp_db, temp_rules_dir):
-        """Test SSH-001 does NOT match SSH-002 drift and vice versa."""
-        engine = DeterministicEngine(
-            rules_dir=temp_rules_dir,
-            incident_db=temp_db,
-            action_executor=None
-        )
-
-        # PasswordAuth drift should NOT match SSH-001
-        data = {
-            "check_type": "ssh_config",
-            "drift_detected": True,
-            "runbook_id": "LIN-SSH-002",
-            "details": {"drift_description": "PasswordAuthentication=yes"},
-        }
-
-        match = engine.match(
-            incident_id="INC-TEST-SSH-CROSS",
-            incident_type="ssh_config",
-            severity="high",
-            data=data
-        )
-
-        assert match is not None
-        # Should match SSH-002, NOT SSH-001
-        assert match.rule.id == "L1-SSH-002", f"Expected SSH-002 but got {match.rule.id}"
+        assert match is not None, "Expected SSH-001 to match all ssh_config drifts"
+        assert match.rule.id == "L1-SSH-001"
+        assert match.action == "run_linux_runbook"
 
     def test_exists_operator(self, temp_db, temp_rules_dir):
         """Test the EXISTS operator in rule conditions."""
