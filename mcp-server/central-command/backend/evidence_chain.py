@@ -842,21 +842,28 @@ async def submit_evidence(
     elif not bundle.check_result:
         bundle.check_result = "unknown"
 
-    # Get previous bundle for chain linking
+    # Acquire per-site advisory lock to serialize chain position assignment.
+    # Without this, concurrent submissions race on chain_position (caused 1,125 broken links).
+    await db.execute(text(
+        "SELECT pg_advisory_xact_lock(hashtext(:site_id))"
+    ), {"site_id": site_id})
+
+    # Get previous bundle for chain linking (safe under advisory lock)
     prev_result = await db.execute(text("""
         SELECT bundle_id, bundle_hash, chain_position
         FROM compliance_bundles
         WHERE site_id = :site_id
-        ORDER BY checked_at DESC
+        ORDER BY chain_position DESC
         LIMIT 1
     """), {"site_id": site_id})
     prev_bundle = prev_result.fetchone()
 
-    prev_hash = prev_bundle.bundle_hash if prev_bundle else None
+    GENESIS_HASH = "0" * 64
+    prev_hash = prev_bundle.bundle_hash if prev_bundle else GENESIS_HASH
     chain_position = (prev_bundle.chain_position + 1) if prev_bundle else 1
 
     # Compute chain hash (includes previous hash for integrity)
-    chain_data = f"{bundle.bundle_hash}:{prev_hash or 'genesis'}:{chain_position}"
+    chain_data = f"{bundle.bundle_hash}:{prev_hash}:{chain_position}"
     chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
 
     # Store the signed_data for future verification
