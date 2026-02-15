@@ -327,6 +327,19 @@ async def get_pending_orders(site_id: str, appliance_id: str):
         appliance_id_hyphen = appliance_id.replace(':', '-')
 
     async with pool.acquire() as conn:
+        # Expire stale orders in both tables (piggyback on polling)
+        try:
+            await conn.execute("""
+                UPDATE admin_orders SET status = 'expired'
+                WHERE status = 'pending' AND expires_at < NOW()
+            """)
+            await conn.execute("""
+                UPDATE orders SET status = 'expired'
+                WHERE status = 'pending' AND expires_at < NOW()
+            """)
+        except Exception:
+            pass  # Non-critical: expiration is best-effort
+
         # Get admin orders
         rows = await conn.fetch("""
             SELECT order_id, order_type, parameters, priority,
@@ -866,9 +879,25 @@ async def acknowledge_order(order_id: str):
         """, now, order_id)
 
         if not result:
+            # Try healing orders table (orders created by L1/L2/L3 engine)
+            result = await conn.fetchrow("""
+                UPDATE orders o
+                SET status = 'acknowledged',
+                    acknowledged_at = $1
+                FROM appliances a
+                WHERE o.order_id = $2
+                AND o.status = 'pending'
+                AND o.appliance_id = a.id
+                RETURNING o.order_id, o.appliance_id::text as appliance_id, a.site_id, 'healing'::text as order_type
+            """, now, order_id)
+
+        if not result:
             # Check if order exists but is already acknowledged
             existing = await conn.fetchrow("""
                 SELECT order_id, status FROM admin_orders WHERE order_id = $1
+                UNION ALL
+                SELECT order_id, status FROM orders WHERE order_id = $1
+                LIMIT 1
             """, order_id)
 
             if existing:
@@ -891,7 +920,7 @@ async def acknowledge_order(order_id: str):
             "order_id": result['order_id'],
             "appliance_id": result['appliance_id'],
             "site_id": result['site_id'],
-            "order_type": result['order_type'],
+            "order_type": result['order_type'] if result['order_type'] else 'healing',
             "acknowledged_at": now.isoformat()
         }
 
@@ -912,7 +941,7 @@ async def complete_order(order_id: str, request: OrderCompleteRequest):
         result_data['error_message'] = request.error_message
 
     async with pool.acquire() as conn:
-        # Update the order status
+        # Try admin_orders first
         result = await conn.fetchrow("""
             UPDATE admin_orders
             SET status = $1,
@@ -924,9 +953,26 @@ async def complete_order(order_id: str, request: OrderCompleteRequest):
         """, new_status, now, json.dumps(result_data), order_id)
 
         if not result:
-            # Check if order exists
+            # Try healing orders table (orders created by L1/L2/L3 engine)
+            result = await conn.fetchrow("""
+                UPDATE orders o
+                SET status = $1,
+                    completed_at = $2,
+                    result = $3::jsonb
+                FROM appliances a
+                WHERE o.order_id = $4
+                AND o.status IN ('pending', 'acknowledged')
+                AND o.appliance_id = a.id
+                RETURNING o.order_id, o.appliance_id::text as appliance_id, a.site_id, 'healing'::text as order_type, o.acknowledged_at
+            """, new_status, now, json.dumps(result_data), order_id)
+
+        if not result:
+            # Check if order exists in either table
             existing = await conn.fetchrow("""
                 SELECT order_id, status FROM admin_orders WHERE order_id = $1
+                UNION ALL
+                SELECT order_id, status FROM orders WHERE order_id = $1
+                LIMIT 1
             """, order_id)
 
             if existing:
@@ -954,7 +1000,7 @@ async def complete_order(order_id: str, request: OrderCompleteRequest):
             "order_id": result['order_id'],
             "appliance_id": result['appliance_id'],
             "site_id": result['site_id'],
-            "order_type": result['order_type'],
+            "order_type": result['order_type'] if result['order_type'] else 'healing',
             "completed_at": now.isoformat(),
             "execution_time_ms": execution_time_ms,
             "success": request.success,
