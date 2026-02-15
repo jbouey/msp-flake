@@ -443,19 +443,8 @@ class AutoHealer:
         end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
-        # Record resolution in incident DB for learning system
+        # Resolution already recorded inside level1.execute() — don't double-count
         success = result.get("success", False)
-        try:
-            self.incident_db.resolve_incident(
-                incident_id=incident.id,
-                resolution_level=ResolutionLevel.LEVEL1_DETERMINISTIC,
-                resolution_action=match.action,
-                outcome=IncidentOutcome.SUCCESS if success else IncidentOutcome.FAILURE,
-                resolution_time_ms=duration_ms
-            )
-            logger.debug(f"Recorded L1 resolution for incident {incident.id}")
-        except Exception as e:
-            logger.warning(f"Failed to record L1 resolution: {e}")
 
         healing_result = HealingResult(
             incident_id=incident.id,
@@ -546,19 +535,8 @@ class AutoHealer:
         end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
-        # Record resolution in incident DB for learning system
+        # Resolution already recorded inside level2.execute() — don't double-count
         success = result.get("success", False)
-        try:
-            self.incident_db.resolve_incident(
-                incident_id=incident.id,
-                resolution_level=ResolutionLevel.LEVEL2_LLM,
-                resolution_action=decision.recommended_action,
-                outcome=IncidentOutcome.SUCCESS if success else IncidentOutcome.FAILURE,
-                resolution_time_ms=duration_ms
-            )
-            logger.debug(f"Recorded L2 resolution for incident {incident.id}")
-        except Exception as e:
-            logger.warning(f"Failed to record L2 resolution: {e}")
 
         healing_result = HealingResult(
             incident_id=incident.id,
@@ -606,18 +584,7 @@ class AutoHealer:
         end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
-        # Record escalation in incident DB for learning system
-        try:
-            self.incident_db.resolve_incident(
-                incident_id=incident.id,
-                resolution_level=ResolutionLevel.LEVEL3_HUMAN,
-                resolution_action="escalated",
-                outcome=IncidentOutcome.ESCALATED,
-                resolution_time_ms=duration_ms
-            )
-            logger.debug(f"Recorded L3 escalation for incident {incident.id}")
-        except Exception as e:
-            logger.warning(f"Failed to record L3 escalation: {e}")
+        # Escalation already recorded inside level3.escalate() — don't double-count
 
         return HealingResult(
             incident_id=incident.id,
