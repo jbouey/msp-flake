@@ -190,7 +190,7 @@
       {"field": "status", "operator": "in", "value": ["fail", "error"]}
     ],
     "actions": ["run_windows_runbook"],
-    "action_params": {"runbook_id": "RB-WIN-SEC-006", "phases": ["remediate", "verify"]},
+    "action_params": {"runbook_id": "RB-WIN-SEC-007", "phases": ["remediate", "verify"]},
     "hipaa_controls": ["164.312(e)(1)"],
     "severity": "high",
     "priority": 10,

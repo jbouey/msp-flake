@@ -473,6 +473,38 @@ class DeterministicEngine:
                 source="builtin"
             ),
 
+            # Windows firewall status (agent sends check_type="firewall_status")
+            Rule(
+                id="L1-FW-002",
+                name="Windows Firewall Disabled",
+                description="Windows Firewall profile disabled — re-enable via runbook",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "firewall_status"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SEC-001", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(e)(1)"],
+                priority=5,
+                source="builtin"
+            ),
+
+            # Windows audit policy drift
+            Rule(
+                id="L1-AUDIT-002",
+                name="Windows Audit Policy Drift",
+                description="Audit policy changed from compliant baseline — restore",
+                conditions=[
+                    RuleCondition("check_type", MatchOperator.EQUALS, "audit_policy"),
+                    RuleCondition("drift_detected", MatchOperator.EQUALS, True),
+                ],
+                action="run_windows_runbook",
+                action_params={"runbook_id": "RB-WIN-SEC-002", "phases": ["remediate", "verify"]},
+                hipaa_controls=["164.312(b)"],
+                priority=5,
+                source="builtin"
+            ),
+
             # Encryption volume issue - escalate (no auto-fix)
             Rule(
                 id="L1-ENCRYPT-001",
