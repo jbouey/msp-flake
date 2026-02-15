@@ -265,18 +265,19 @@ class WindowsExecutor:
             except asyncio.TimeoutError:
                 last_error = f"Execution timed out after {timeout}s"
                 logger.warning(f"Timeout on {target.hostname}, attempt {attempt + 1}/{retries + 1}")
+                # Invalidate session on timeout — stale sessions cause repeated failures
+                self.invalidate_session(target.hostname)
 
             except Exception as e:
                 last_error = str(e)
                 logger.warning(f"Error on {target.hostname}: {e}, attempt {attempt + 1}/{retries + 1}")
-                # Invalidate session on connection errors
-                if "connection" in str(e).lower() or "winrm" in str(e).lower():
-                    self.invalidate_session(target.hostname)
+                # Invalidate session on any error — connection, timeout, or WinRM fault
+                self.invalidate_session(target.hostname)
 
-            # If we have more attempts, wait before retrying
+            # If we have more attempts, wait before retrying with a fresh session
             if attempt < retries:
                 delay = retry_delay * (self._retry_backoff ** attempt)
-                logger.info(f"Retrying in {delay:.1f}s...")
+                logger.info(f"Retrying in {delay:.1f}s with fresh session...")
                 await asyncio.sleep(delay)
                 retry_count += 1
 

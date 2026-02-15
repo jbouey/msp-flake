@@ -76,19 +76,50 @@ try {
     $IsDomainJoined = (Get-WmiObject Win32_ComputerSystem).PartOfDomain
 
     if ($IsDomainJoined) {
-        # Get DC as DNS server (with fallback if AD lookup fails due to hijacked DNS)
         $DC = $null
-        try {
-            $DC = ([System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()).DomainControllers[0].IPAddress
-        } catch {
-            # AD lookup failed (DNS may be hijacked) — try nltest fallback
+
+        # Step 1: Check if THIS machine is a Domain Controller
+        # If so, DNS should point to itself (loopback or own IP)
+        $isDC = (Get-WmiObject Win32_ComputerSystem).DomainRole -ge 4
+        if ($isDC) {
+            # DC should use its own IP as DNS — get the primary adapter IP
+            $myIP = (Get-NetIPAddress -AddressFamily IPv4 |
+                Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.PrefixOrigin -ne 'WellKnown' } |
+                Select-Object -First 1).IPAddress
+            if ($myIP) {
+                $DC = $myIP
+                $Result.Actions += "Machine is a DC, using own IP ($myIP)"
+            }
+        }
+
+        # Step 2: Try AD lookup (works if DNS is not hijacked)
+        if (-not $DC) {
             try {
-                $nltest = nltest /dsgetdc: 2>&1
-                if ($nltest -match 'DC:\\\\(\S+)') { $DC = [System.Net.Dns]::GetHostAddresses($Matches[1])[0].IPAddressToString }
+                $DC = ([System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()).DomainControllers[0].IPAddress
             } catch {}
         }
+
+        # Step 3: Try nltest (also DNS-dependent but different path)
         if (-not $DC) {
-            # Last resort: use gateway as likely DC on small networks
+            try {
+                $nltest = nltest /dsgetdc: 2>&1
+                if ($nltest -match 'DC:\\\\(\S+)') {
+                    $DC = [System.Net.Dns]::GetHostAddresses($Matches[1])[0].IPAddressToString
+                }
+            } catch {}
+        }
+
+        # Step 4: Try reading cached DC from registry (survives DNS hijack)
+        if (-not $DC) {
+            try {
+                $cached = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters' -Name 'DynamicSiteName' -ErrorAction SilentlyContinue)
+                $dcList = nltest /dsgetdc: /force 2>&1
+                if ($dcList -match '(\d+\.\d+\.\d+\.\d+)') { $DC = $Matches[1] }
+            } catch {}
+        }
+
+        # Step 5: Last resort — gateway (likely DC on small networks)
+        if (-not $DC) {
             $gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop
             if ($gw) { $DC = $gw }
         }
@@ -96,7 +127,6 @@ try {
         if ($DC) {
             $Adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" }
             foreach ($Adapter in $Adapters) {
-                # Set DC as primary DNS
                 Set-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -ServerAddresses $DC
                 $Result.Actions += "Set DNS to DC ($DC) on $($Adapter.Name)"
             }
@@ -107,7 +137,6 @@ try {
         # Standalone - use DHCP or set reliable DNS
         $Adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" }
         foreach ($Adapter in $Adapters) {
-            # Check if DHCP
             $IPConfig = Get-NetIPConfiguration -InterfaceIndex $Adapter.ifIndex
             if ($IPConfig.NetIPv4Interface.Dhcp -eq "Enabled") {
                 Set-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -ResetServerAddresses
@@ -131,16 +160,24 @@ $Result | ConvertTo-Json
     verify_script=r'''
 $Adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" }
 $HasDNS = $false
+$StillHijacked = $false
+$PublicDNS = @("8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1")
+$IsDomainJoined = (Get-WmiObject Win32_ComputerSystem).PartOfDomain
 foreach ($Adapter in $Adapters) {
     $DNS = Get-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4
     if ($DNS.ServerAddresses.Count -gt 0) {
         $HasDNS = $true
-        break
+        # On domain-joined machines, public DNS means still hijacked
+        if ($IsDomainJoined) {
+            foreach ($Server in $DNS.ServerAddresses) {
+                if ($Server -in $PublicDNS) { $StillHijacked = $true }
+            }
+        }
     }
 }
 @{
     HasDNSServers = $HasDNS
-    Verified = $HasDNS
+    Verified = ($HasDNS -and -not $StillHijacked)
 } | ConvertTo-Json
 ''',
 
