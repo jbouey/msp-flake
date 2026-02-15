@@ -46,6 +46,10 @@ const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
 const AdminOAuthSettings = lazy(() => import('./pages/AdminOAuthSettings'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 
+// Detect if serving from marketing domain (www.osiriscare.net or osiriscare.net)
+const isLandingSite = typeof window !== 'undefined' &&
+  (window.location.hostname === 'www.osiriscare.net' || window.location.hostname === 'osiriscare.net');
+
 // Lazy-loaded portal/partner/client modules
 const PortalDashboard = lazy(() => import('./portal/PortalDashboard').then(m => ({ default: m.PortalDashboard })));
 const PortalLogin = lazy(() => import('./portal/PortalLogin').then(m => ({ default: m.PortalLogin })));
@@ -330,7 +334,6 @@ const App: React.FC = () => {
             <Suspense fallback={<PageLoader />}>
               <Routes>
                 {/* Public routes - no auth required */}
-                <Route path="/welcome" element={<LandingPage />} />
                 <Route path="/set-password" element={<SetPassword />} />
                 <Route path="/auth/oauth/success" element={<OAuthCallback />} />
 
@@ -346,8 +349,8 @@ const App: React.FC = () => {
                 {/* Client routes - magic link / cookie auth (lazy loaded module) */}
                 <Route path="/client/*" element={<ClientRoutes />} />
 
-                {/* Admin routes - auth required */}
-                <Route path="/*" element={<AuthenticatedApp />} />
+                {/* www.osiriscare.net → landing page; dashboard.osiriscare.net → admin */}
+                <Route path="/*" element={isLandingSite ? <LandingPage /> : <AuthenticatedApp />} />
               </Routes>
             </Suspense>
           </BrowserRouter>

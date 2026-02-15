@@ -57,11 +57,17 @@ export const LandingPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
+            <a
+              href="https://dashboard.osiriscare.net"
+              className="hidden sm:inline-flex text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors font-body"
+            >
+              Dashboard
+            </a>
             <Link
               to="/client/login"
               className="hidden sm:inline-flex text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors font-body"
             >
-              Sign In
+              Client Sign In
             </Link>
             <Link
               to="/partner/login"
