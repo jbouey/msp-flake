@@ -508,6 +508,77 @@ async def _ots_resubmit_expired_loop():
         await asyncio.sleep(delay)
 
 
+async def _flywheel_promotion_loop():
+    """Periodically scan patterns for L2→L1 auto-promotion (every 30 minutes).
+
+    Two promotion paths:
+    1. patterns table: auto-promote patterns with >=5 occurrences and >=90% success
+    2. aggregated_pattern_stats: update promotion_eligible flag for partner dashboard
+    """
+    await asyncio.sleep(120)  # Wait 2 min after startup
+    while True:
+        try:
+            async with async_session() as db:
+                # Path 1: Auto-promote qualifying patterns from patterns table
+                result = await db.execute(text("""
+                    SELECT pattern_id, pattern_signature, incident_type, runbook_id,
+                           occurrences, success_count, failure_count
+                    FROM patterns
+                    WHERE status = 'pending'
+                      AND occurrences >= 5
+                      AND success_count > 0
+                      AND CAST(success_count AS FLOAT) / occurrences >= 0.90
+                    ORDER BY occurrences DESC
+                    LIMIT 10
+                """))
+                candidates = result.fetchall()
+
+                promoted_count = 0
+                for candidate in candidates:
+                    try:
+                        from dashboard_api.db_queries import promote_pattern_in_db
+                        rule_id = await promote_pattern_in_db(db, candidate.pattern_id)
+                        if rule_id:
+                            promoted_count += 1
+                            logger.info(
+                                "Flywheel auto-promoted pattern",
+                                pattern_id=candidate.pattern_id[:8],
+                                incident_type=candidate.incident_type,
+                                rule_id=rule_id,
+                                occurrences=candidate.occurrences,
+                                success_rate=f"{candidate.success_count / candidate.occurrences:.1%}",
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to promote pattern {candidate.pattern_id[:8]}: {e}")
+
+                # Path 2: Update promotion_eligible on aggregated_pattern_stats
+                eligible_result = await db.execute(text("""
+                    UPDATE aggregated_pattern_stats
+                    SET promotion_eligible = true
+                    WHERE total_occurrences >= 5
+                      AND success_rate >= 0.90
+                      AND last_seen > NOW() - INTERVAL '7 days'
+                      AND promotion_eligible = false
+                    RETURNING pattern_signature
+                """))
+                newly_eligible = eligible_result.fetchall()
+                await db.commit()
+
+                if promoted_count > 0 or newly_eligible:
+                    logger.info(
+                        "Flywheel promotion scan complete",
+                        auto_promoted=promoted_count,
+                        newly_eligible=len(newly_eligible),
+                    )
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.exception(f"Flywheel promotion scan failed: {e}")
+
+        await asyncio.sleep(1800)  # 30 minutes
+
+
 # ============================================================================
 # Lifespan Events
 # ============================================================================
@@ -599,6 +670,9 @@ async def lifespan(app: FastAPI):
     # Start weekly framework sync task
     framework_sync_task = asyncio.create_task(framework_sync_loop())
 
+    # Start flywheel promotion scanner (every 30 min)
+    flywheel_task = asyncio.create_task(_flywheel_promotion_loop())
+
     yield
 
     # Shutdown
@@ -607,6 +681,7 @@ async def lifespan(app: FastAPI):
     ots_resubmit_task.cancel()
     cve_watch_task.cancel()
     framework_sync_task.cancel()
+    flywheel_task.cancel()
     try:
         await asyncio.wait_for(asyncio.shield(ots_upgrade_task), timeout=10)
     except (asyncio.CancelledError, asyncio.TimeoutError):
@@ -621,6 +696,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await asyncio.wait_for(asyncio.shield(framework_sync_task), timeout=5)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    try:
+        await asyncio.wait_for(asyncio.shield(flywheel_task), timeout=5)
     except (asyncio.CancelledError, asyncio.TimeoutError):
         pass
     if redis_client:
@@ -1752,6 +1831,12 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
             if existing:
                 # Merge stats (take max of each counter to handle idempotent syncs)
                 # NOTE: success_rate stored as decimal (0.0-1.0), not percentage
+                # Compute promotion_eligible SERVER-SIDE (don't trust agent flag)
+                merged_occ = max(existing.total_occurrences, stat.total_occurrences)
+                merged_sc = max(existing.success_count, stat.success_count)
+                merged_rate = merged_sc / merged_occ if merged_occ > 0 else 0
+                is_eligible = merged_occ >= 5 and merged_rate >= 0.90
+
                 await db.execute(text("""
                     UPDATE aggregated_pattern_stats
                     SET total_occurrences = GREATEST(total_occurrences, :occ),
@@ -1785,15 +1870,17 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
                     "sc": stat.success_count,
                     "time": stat.total_resolution_time_ms,
                     "action": stat.recommended_action,
-                    "eligible": stat.promotion_eligible,
+                    "eligible": is_eligible,
                     "last_seen": last_seen_dt,
                 })
                 merged += 1
             else:
                 # Insert new pattern
                 # NOTE: success_rate stored as decimal (0.0-1.0), not percentage
+                # Compute promotion_eligible SERVER-SIDE
                 success_rate = (stat.success_count / stat.total_occurrences) if stat.total_occurrences > 0 else 0
                 avg_time = stat.total_resolution_time_ms / stat.total_occurrences if stat.total_occurrences > 0 else 0
+                is_eligible = stat.total_occurrences >= 5 and success_rate >= 0.90
 
                 await db.execute(text("""
                     INSERT INTO aggregated_pattern_stats (
@@ -1818,7 +1905,7 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
                     "rate": success_rate,
                     "avg": avg_time,
                     "action": stat.recommended_action,
-                    "eligible": stat.promotion_eligible,
+                    "eligible": is_eligible,
                     "first_seen": last_seen_dt,
                     "last_seen": last_seen_dt,
                 })

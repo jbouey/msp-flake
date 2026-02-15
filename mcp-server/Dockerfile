@@ -37,7 +37,8 @@ RUN pip install --no-cache-dir \
     weasyprint \
     sendgrid \
     bcrypt \
-    minio
+    minio \
+    opentimestamps-client
 
 # Copy application code
 COPY . /app
