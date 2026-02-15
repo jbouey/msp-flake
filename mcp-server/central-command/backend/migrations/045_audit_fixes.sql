@@ -53,7 +53,8 @@ CREATE INDEX IF NOT EXISTS idx_notifications_site_id
 -- ============================================================================
 -- 2. Trigger to update l1_rules counters from execution_telemetry
 --    execution_telemetry columns: runbook_id, resolution_level, success (bool)
---    l1_rules columns: runbook_id, match_count, success_count, failure_count, success_rate
+--    l1_rules columns: runbook_id, match_count, success_count, failure_count
+--    l1_rules.success_rate is GENERATED ALWAYS — do NOT set it explicitly
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION update_l1_rule_counters()
@@ -61,16 +62,11 @@ RETURNS TRIGGER AS $$
 BEGIN
     -- Only process L1 resolution level entries with a runbook_id
     IF NEW.resolution_level = 'L1' AND NEW.runbook_id IS NOT NULL THEN
+        -- success_rate is a GENERATED ALWAYS column (auto-computed from success_count/match_count)
         UPDATE l1_rules SET
             match_count = match_count + 1,
             success_count = success_count + CASE WHEN NEW.success THEN 1 ELSE 0 END,
-            failure_count = failure_count + CASE WHEN NOT NEW.success THEN 1 ELSE 0 END,
-            success_rate = CASE
-                WHEN (match_count + 1) > 0
-                THEN (success_count + CASE WHEN NEW.success THEN 1 ELSE 0 END)::float
-                     / (match_count + 1)::float
-                ELSE 0.0
-            END
+            failure_count = failure_count + CASE WHEN NOT NEW.success THEN 1 ELSE 0 END
         WHERE runbook_id = NEW.runbook_id;
     END IF;
     RETURN NEW;
