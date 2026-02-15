@@ -62,12 +62,15 @@ RETURNS TRIGGER AS $$
 BEGIN
     -- Only process L1 resolution level entries with a runbook_id
     IF NEW.resolution_level = 'L1' AND NEW.runbook_id IS NOT NULL THEN
-        -- success_rate is a GENERATED ALWAYS column (auto-computed from success_count/match_count)
+        -- Agent records rule_id in execution_telemetry.runbook_id field
+        -- (see CLAUDE.md: "execution_telemetry.runbook_id uses internal IDs")
+        -- Match against l1_rules.rule_id, not l1_rules.runbook_id
+        -- success_rate is a GENERATED ALWAYS column (auto-computed)
         UPDATE l1_rules SET
             match_count = match_count + 1,
             success_count = success_count + CASE WHEN NEW.success THEN 1 ELSE 0 END,
             failure_count = failure_count + CASE WHEN NOT NEW.success THEN 1 ELSE 0 END
-        WHERE runbook_id = NEW.runbook_id;
+        WHERE rule_id = NEW.runbook_id;
     END IF;
     RETURN NEW;
 END;

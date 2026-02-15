@@ -578,6 +578,7 @@ async def _flywheel_promotion_loop():
                       AND occurrences >= 5
                       AND success_count > 0
                       AND CAST(success_count AS FLOAT) / occurrences >= 0.90
+                      AND runbook_id NOT LIKE 'AUTO-%'
                     ORDER BY occurrences DESC
                     LIMIT 10
                 """))
