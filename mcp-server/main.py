@@ -369,7 +369,7 @@ async def _ots_repair_block_heights():
                 WHERE status = 'anchored'
                   AND bitcoin_block IS NOT NULL
                   AND (bitcoin_block <= 10 OR bitcoin_block > 100000000)
-                LIMIT 5000
+                LIMIT 100000
             """))
             bad_proofs = result.fetchall()
             if not bad_proofs:
