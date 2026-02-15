@@ -1268,6 +1268,16 @@ class ApplianceAgent:
                 "phases": ["remediate", "verify"],
             }
             return await self._heal_run_windows_runbook(runbook_params, incident)
+        elif action.startswith("run_windows_runbook:"):
+            # Synced rules use run_windows_runbook:<RUNBOOK_ID> format
+            runbook_id = action.split(":", 1)[1]
+            logger.info(f"Executing Windows runbook from colon-format: {runbook_id}")
+            runbook_params = {
+                **params,
+                "runbook_id": runbook_id,
+                "phases": params.get("phases", ["remediate", "verify"]),
+            }
+            return await self._heal_run_windows_runbook(runbook_params, incident)
         elif action.startswith("run_linux_runbook:"):
             # Synced rules may use run_linux_runbook:<RUNBOOK_ID> format
             runbook_id = action.split(":", 1)[1]

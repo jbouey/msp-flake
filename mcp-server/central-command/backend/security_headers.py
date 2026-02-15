@@ -63,11 +63,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         """Process request and add security headers to response."""
         response = await call_next(request)
 
-        # Content Security Policy
-        csp = self.csp
-        if self.CSP_REPORT_URI:
-            csp += f"; report-uri {self.CSP_REPORT_URI}"
-        response.headers["Content-Security-Policy"] = csp
+        # CSP is set by Caddy (edge proxy) — do NOT duplicate here.
+        # Duplicate CSP headers cause browsers to apply the most restrictive
+        # union, which can block legitimate functionality.
 
         # Prevent clickjacking
         response.headers["X-Frame-Options"] = "DENY"
