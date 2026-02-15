@@ -561,7 +561,8 @@ async def _ots_resubmit_expired_loop():
 async def _flywheel_promotion_loop():
     """Periodically scan patterns for L2→L1 auto-promotion (every 30 minutes).
 
-    Two promotion paths:
+    Three steps:
+    0. Generate patterns from L2 execution telemetry (bridge telemetry → patterns)
     1. patterns table: auto-promote patterns with >=5 occurrences and >=90% success
     2. aggregated_pattern_stats: update promotion_eligible flag for partner dashboard
     """
@@ -569,6 +570,36 @@ async def _flywheel_promotion_loop():
     while True:
         try:
             async with async_session() as db:
+                # Step 0: Generate/update patterns from L2 execution telemetry
+                # The agent reports telemetry but not patterns — bridge the gap
+                try:
+                    await db.execute(text("""
+                        INSERT INTO patterns (
+                            pattern_id, pattern_signature, incident_type, runbook_id,
+                            occurrences, success_count, failure_count, status
+                        )
+                        SELECT
+                            LEFT(md5(et.incident_type || ':' || et.runbook_id || ':' || et.hostname), 16) as pattern_id,
+                            et.incident_type || ':' || et.incident_type || ':' || et.hostname as pattern_signature,
+                            et.incident_type,
+                            et.runbook_id,
+                            COUNT(*) as occurrences,
+                            SUM(CASE WHEN et.success THEN 1 ELSE 0 END) as success_count,
+                            SUM(CASE WHEN NOT et.success THEN 1 ELSE 0 END) as failure_count,
+                            'pending' as status
+                        FROM execution_telemetry et
+                        WHERE et.resolution_level = 'L2'
+                          AND et.incident_type IS NOT NULL
+                          AND et.runbook_id IS NOT NULL
+                        GROUP BY et.incident_type, et.runbook_id, et.hostname
+                        HAVING COUNT(*) >= 5
+                        ON CONFLICT (pattern_signature) DO NOTHING
+                    """))
+                    await db.commit()
+                except Exception as e:
+                    logger.debug(f"Flywheel pattern generation: {e}")
+                    await db.rollback()
+
                 # Path 1: Auto-promote qualifying patterns from patterns table
                 result = await db.execute(text("""
                     SELECT pattern_id, pattern_signature, incident_type, runbook_id,
