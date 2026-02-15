@@ -13,8 +13,10 @@ BEGIN;
 --    Must drop dependent view first, then recreate after ALTER
 -- ============================================================================
 
--- Drop dependent view
+-- Drop ALL dependent views (3 views reference pattern_signature)
 DROP VIEW IF EXISTS v_promotion_ready_patterns;
+DROP VIEW IF EXISTS v_partner_learning_stats;
+DROP VIEW IF EXISTS v_partner_promotion_candidates;
 
 ALTER TABLE aggregated_pattern_stats
     ALTER COLUMN pattern_signature TYPE VARCHAR(255);
@@ -45,6 +47,44 @@ SELECT aps.site_id,
     END AS approval_status
 FROM aggregated_pattern_stats aps
     LEFT JOIN sites s ON s.site_id::text = aps.site_id::text
+    LEFT JOIN learning_promotion_candidates lpc
+        ON lpc.pattern_signature::text = aps.pattern_signature::text
+        AND lpc.site_id::text = aps.site_id::text
+WHERE aps.promotion_eligible = true
+ORDER BY aps.success_rate DESC, aps.total_occurrences DESC;
+
+-- Recreate v_partner_learning_stats
+CREATE VIEW v_partner_learning_stats AS
+SELECT s.partner_id,
+    count(DISTINCT CASE WHEN aps.promotion_eligible
+        AND COALESCE(lpc.approval_status, 'not_submitted'::character varying)::text = 'not_submitted'::text
+        THEN aps.id ELSE NULL::integer END) AS pending_candidates,
+    count(DISTINCT pr.id) FILTER (WHERE pr.status::text = 'active'::text) AS active_promoted_rules,
+    COALESCE(avg(aps.success_rate) FILTER (WHERE aps.promotion_eligible), 0::double precision) AS avg_success_rate,
+    COALESCE(sum(aps.l1_resolutions), 0::bigint) AS total_l1_resolutions,
+    COALESCE(sum(aps.l2_resolutions), 0::bigint) AS total_l2_resolutions,
+    COALESCE(sum(aps.l3_resolutions), 0::bigint) AS total_l3_resolutions,
+    COALESCE(sum(aps.total_occurrences), 0::bigint) AS total_incidents
+FROM sites s
+    LEFT JOIN aggregated_pattern_stats aps ON aps.site_id::text = s.site_id::text
+    LEFT JOIN learning_promotion_candidates lpc
+        ON lpc.pattern_signature::text = aps.pattern_signature::text
+        AND lpc.site_id::text = aps.site_id::text
+    LEFT JOIN promoted_rules pr ON pr.partner_id = s.partner_id
+WHERE s.partner_id IS NOT NULL
+GROUP BY s.partner_id;
+
+-- Recreate v_partner_promotion_candidates
+CREATE VIEW v_partner_promotion_candidates AS
+SELECT aps.id, aps.site_id, s.clinic_name AS site_name, s.partner_id,
+    aps.pattern_signature, aps.check_type, aps.total_occurrences,
+    aps.l1_resolutions, aps.l2_resolutions, aps.l3_resolutions,
+    aps.success_count, aps.success_rate, aps.avg_resolution_time_ms,
+    aps.recommended_action, aps.first_seen, aps.last_seen, aps.promotion_eligible,
+    COALESCE(lpc.approval_status, 'not_submitted'::character varying) AS approval_status,
+    lpc.approved_at, lpc.rejection_reason
+FROM aggregated_pattern_stats aps
+    JOIN sites s ON s.site_id::text = aps.site_id::text
     LEFT JOIN learning_promotion_candidates lpc
         ON lpc.pattern_signature::text = aps.pattern_signature::text
         AND lpc.site_id::text = aps.site_id::text
