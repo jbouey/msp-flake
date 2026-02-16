@@ -294,14 +294,59 @@ class WindowsExecutor:
             retry_count=retry_count
         )
 
+    # pywinrm's run_ps() encodes scripts as UTF-16LE base64 and passes them
+    # via 'powershell -encodedcommand <base64>'. This goes through cmd.exe
+    # which has an 8,191 character limit. Scripts > ~2KB raw text will exceed
+    # this after encoding (~4x expansion: UTF-16 doubles, base64 adds 33%).
+    _MAX_INLINE_SCRIPT_LEN = 2000
+
+    def _execute_via_tempfile(self, session, script: str):
+        """Execute a long PowerShell script by writing it to a temp file first.
+
+        Uses cmd.exe echo to write base64 chunks (safe for base64 charset),
+        then a short PowerShell command to decode and execute.
+        """
+        import base64 as b64mod
+        script_id = hashlib.md5(script.encode()).hexdigest()[:8]
+        temp_b64 = f"C:\\Windows\\Temp\\msp_{script_id}.b64"
+        temp_ps1 = f"C:\\Windows\\Temp\\msp_{script_id}.ps1"
+
+        encoded = b64mod.b64encode(script.encode('utf-8')).decode('ascii')
+
+        # Write base64 content in chunks using cmd.exe echo (6000 chars per chunk,
+        # well under cmd.exe's 8191 char limit). echo adds \r\n which we strip later.
+        chunk_size = 6000
+        chunks = [encoded[i:i + chunk_size] for i in range(0, len(encoded), chunk_size)]
+
+        for i, chunk in enumerate(chunks):
+            op = '>' if i == 0 else '>>'
+            result = session.run_cmd(f'echo {chunk}{op}"{temp_b64}"')
+            if result.status_code != 0:
+                stderr = result.std_err.decode('utf-8', errors='replace') if result.std_err else ""
+                logger.error(f"Failed to write script chunk {i}: {stderr}")
+                return result
+
+        # Decode base64 file to .ps1 and execute (~300 chars, well under limit)
+        decode_run = (
+            f"$r=(Get-Content '{temp_b64}' -Raw) -replace '\\s',''; "
+            f"$b=[Convert]::FromBase64String($r); "
+            f"[IO.File]::WriteAllText('{temp_ps1}',[Text.Encoding]::UTF8.GetString($b)); "
+            f"Remove-Item '{temp_b64}' -Force -EA SilentlyContinue; "
+            f"try {{ & '{temp_ps1}' }} finally {{ Remove-Item '{temp_ps1}' -Force -EA SilentlyContinue }}"
+        )
+        return session.run_ps(decode_run)
+
     def _execute_sync(self, target: WindowsTarget, script: str, skip_phi_scrub: bool = False) -> Dict:
         """Synchronous script execution (runs in thread pool)."""
         import json
 
         session = self._get_session(target)
 
-        # Execute PowerShell script
-        result = session.run_ps(script)
+        # For long scripts, write to temp file then execute (avoids cmd.exe 8191 char limit)
+        if len(script) > self._MAX_INLINE_SCRIPT_LEN:
+            result = self._execute_via_tempfile(session, script)
+        else:
+            result = session.run_ps(script)
 
         std_out = result.std_out.decode('utf-8', errors='replace') if result.std_out else ""
         std_err = result.std_err.decode('utf-8', errors='replace') if result.std_err else ""
