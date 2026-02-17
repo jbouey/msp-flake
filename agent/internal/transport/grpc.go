@@ -7,7 +7,11 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +27,9 @@ import (
 // Version is set at build time
 var Version = "0.1.0"
 
+// HealChanSize is the buffer size for the heal command channel
+const HealChanSize = 32
+
 // GRPCClient manages the gRPC connection to the appliance
 type GRPCClient struct {
 	conn      *grpc.ClientConn
@@ -35,6 +42,11 @@ type GRPCClient struct {
 
 	// For streaming drift events
 	driftStream pb.ComplianceAgent_ReportDriftClient
+	streamCtx   context.Context
+	streamDone  chan struct{} // closed when ack reader exits
+
+	// HealCmds delivers HealCommands from both drift acks and heartbeat responses
+	HealCmds chan *pb.HealCommand
 
 	// For fallback HTTP mode
 	httpEndpoint string
@@ -48,6 +60,7 @@ func NewGRPCClient(ctx context.Context, cfg *config.Config) (*GRPCClient, error)
 		hostname:     hostname,
 		config:       cfg,
 		httpEndpoint: cfg.HTTPEndpoint,
+		HealCmds:     make(chan *pb.HealCommand, HealChanSize),
 	}
 
 	if err := client.connect(ctx); err != nil {
@@ -157,7 +170,8 @@ func (c *GRPCClient) Register(ctx context.Context) (*pb.RegisterResponse, error)
 	return resp, nil
 }
 
-// StartDriftStream starts the bidirectional drift streaming
+// StartDriftStream starts the bidirectional drift stream and launches
+// a goroutine to read DriftAck messages (which may contain HealCommands).
 func (c *GRPCClient) StartDriftStream(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -172,7 +186,71 @@ func (c *GRPCClient) StartDriftStream(ctx context.Context) error {
 	}
 
 	c.driftStream = stream
+	c.streamCtx = ctx
+	c.streamDone = make(chan struct{})
+
+	// Launch ack reader goroutine
+	go c.readDriftAcks()
+
 	return nil
+}
+
+// readDriftAcks continuously reads DriftAck messages from the server.
+// When a DriftAck contains a HealCommand, it's sent to the HealCmds channel.
+func (c *GRPCClient) readDriftAcks() {
+	defer close(c.streamDone)
+
+	for {
+		c.mu.RLock()
+		stream := c.driftStream
+		c.mu.RUnlock()
+
+		if stream == nil {
+			return
+		}
+
+		ack, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				log.Println("[gRPC] Drift stream closed by server")
+			} else {
+				log.Printf("[gRPC] Drift stream recv error: %v", err)
+			}
+			return
+		}
+
+		if ack.Error != "" {
+			log.Printf("[gRPC] Server reported error for event %s: %s", ack.EventId, ack.Error)
+		}
+
+		// Check for embedded heal command
+		if cmd := ack.GetHealCommand(); cmd != nil {
+			log.Printf("[gRPC] Received heal command via drift ack: %s/%s (id=%s)",
+				cmd.CheckType, cmd.Action, cmd.CommandId)
+			select {
+			case c.HealCmds <- cmd:
+			default:
+				log.Printf("[gRPC] Heal command channel full, dropping command %s", cmd.CommandId)
+			}
+		}
+	}
+}
+
+// StreamActive returns true if the drift stream ack reader is still running.
+func (c *GRPCClient) StreamActive() bool {
+	c.mu.RLock()
+	done := c.streamDone
+	c.mu.RUnlock()
+
+	if done == nil {
+		return false
+	}
+	select {
+	case <-done:
+		return false
+	default:
+		return true
+	}
 }
 
 // SendDrift sends a drift event via the stream
@@ -190,14 +268,14 @@ func (c *GRPCClient) SendDrift(ctx context.Context, event *pb.DriftEvent) error 
 	event.Timestamp = time.Now().Unix()
 
 	if c.driftStream != nil {
-		// Use streaming
+		// Use persistent stream — acks are read by the ack goroutine
 		if err := c.driftStream.Send(event); err != nil {
 			return fmt.Errorf("failed to send drift: %w", err)
 		}
 		return nil
 	}
 
-	// Fall back to one-shot stream
+	// Fall back to one-shot stream (no persistent stream active)
 	stream, err := c.client.ReportDrift(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create drift stream: %w", err)
@@ -207,16 +285,29 @@ func (c *GRPCClient) SendDrift(ctx context.Context, event *pb.DriftEvent) error 
 		return fmt.Errorf("failed to send drift: %w", err)
 	}
 
-	// Receive ack
-	if _, err := stream.Recv(); err != nil && err != io.EOF {
+	// Receive ack and check for heal command
+	ack, err := stream.Recv()
+	if err != nil && err != io.EOF {
 		return fmt.Errorf("failed to receive ack: %w", err)
+	}
+	if ack != nil {
+		if cmd := ack.GetHealCommand(); cmd != nil {
+			log.Printf("[gRPC] Received heal command via one-shot ack: %s/%s (id=%s)",
+				cmd.CheckType, cmd.Action, cmd.CommandId)
+			select {
+			case c.HealCmds <- cmd:
+			default:
+				log.Printf("[gRPC] Heal command channel full, dropping command %s", cmd.CommandId)
+			}
+		}
 	}
 
 	stream.CloseSend()
 	return nil
 }
 
-// SendHeartbeat sends a heartbeat to the appliance
+// SendHeartbeat sends a heartbeat to the appliance and delivers any
+// pending HealCommands from the response to the HealCmds channel.
 func (c *GRPCClient) SendHeartbeat(ctx context.Context) (*pb.HeartbeatResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -233,6 +324,17 @@ func (c *GRPCClient) SendHeartbeat(ctx context.Context) (*pb.HeartbeatResponse, 
 	resp, err := c.client.Heartbeat(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("heartbeat failed: %w", err)
+	}
+
+	// Deliver pending commands from heartbeat response
+	for _, cmd := range resp.GetPendingCommands() {
+		log.Printf("[gRPC] Received heal command via heartbeat: %s/%s (id=%s)",
+			cmd.CheckType, cmd.Action, cmd.CommandId)
+		select {
+		case c.HealCmds <- cmd:
+		default:
+			log.Printf("[gRPC] Heal command channel full, dropping command %s", cmd.CommandId)
+		}
 	}
 
 	return resp, nil
@@ -304,6 +406,15 @@ func (c *GRPCClient) Close() error {
 
 	if c.driftStream != nil {
 		c.driftStream.CloseSend()
+		c.driftStream = nil
+	}
+
+	// Wait for ack reader to exit
+	if c.streamDone != nil {
+		select {
+		case <-c.streamDone:
+		case <-time.After(2 * time.Second):
+		}
 	}
 
 	if c.conn != nil {
@@ -322,6 +433,15 @@ func (c *GRPCClient) Reconnect(ctx context.Context) error {
 		c.driftStream = nil
 	}
 
+	// Wait for ack reader to exit
+	if c.streamDone != nil {
+		select {
+		case <-c.streamDone:
+		case <-time.After(2 * time.Second):
+		}
+		c.streamDone = nil
+	}
+
 	if c.conn != nil {
 		c.conn.Close()
 	}
@@ -334,13 +454,33 @@ func (c *GRPCClient) Reconnect(ctx context.Context) error {
 // Helper functions
 
 func getOSVersion() string {
-	// On Windows, this would use syscalls to get version
-	// For now, return a placeholder
-	return "Windows"
+	if runtime.GOOS != "windows" {
+		return runtime.GOOS + "/" + runtime.GOARCH
+	}
+	// On Windows, read version from registry or RtlGetVersion
+	// For cross-compiled builds, return what we know
+	return "Windows/" + runtime.GOARCH
 }
 
 func getMACAddress() string {
-	// This would get the primary MAC address
-	// For now, return empty
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		// Skip loopback, down, and virtual interfaces
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		mac := iface.HardwareAddr.String()
+		if mac == "" {
+			continue
+		}
+		// Skip common virtual adapter prefixes
+		if strings.HasPrefix(mac, "00:00:00") {
+			continue
+		}
+		return mac
+	}
 	return ""
 }

@@ -1,4 +1,4 @@
-// +build windows
+//go:build windows
 
 // Package eventlog provides real-time Windows Event Log monitoring for compliance events.
 // This replaces polling with instant detection (<1 second vs 5 minutes).
@@ -6,7 +6,9 @@ package eventlog
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -156,14 +158,14 @@ func (w *Watcher) subscribeChannel(channel EventChannel) error {
 
 	// Subscribe to events
 	handle, _, callErr := procEvtSubscribe.Call(
-		0,                                        // Session (0 = local)
-		0,                                        // SignalEvent (not used with callback)
-		uintptr(unsafe.Pointer(channelPath)),    // ChannelPath
-		uintptr(unsafe.Pointer(query)),          // Query
-		0,                                        // Bookmark (not used)
-		uintptr(unsafe.Pointer(callbackData)),   // Context for callback
-		syscall.NewCallback(eventCallback),       // Callback function
-		uintptr(EvtSubscribeToFutureEvents),     // Flags
+		0,                                      // Session (0 = local)
+		0,                                      // SignalEvent (not used with callback)
+		uintptr(unsafe.Pointer(channelPath)),   // ChannelPath
+		uintptr(unsafe.Pointer(query)),         // Query
+		0,                                      // Bookmark (not used)
+		uintptr(unsafe.Pointer(callbackData)),  // Context for callback
+		syscall.NewCallback(eventCallback),     // Callback function
+		uintptr(EvtSubscribeToFutureEvents),    // Flags
 	)
 
 	if handle == 0 {
@@ -200,9 +202,9 @@ func eventCallback(action, userContext, event uintptr) uintptr {
 	return 0
 }
 
-// parseEvent extracts compliance information from a Windows event
+// parseEvent extracts compliance information from a Windows event XML
 func (w *Watcher) parseEvent(eventHandle uintptr, channel EventChannel) *ComplianceEvent {
-	// Get event XML for parsing
+	// Render event as XML
 	var bufferSize uint32 = 65536
 	buffer := make([]uint16, bufferSize)
 	var bufferUsed, propertyCount uint32
@@ -218,52 +220,158 @@ func (w *Watcher) parseEvent(eventHandle uintptr, channel EventChannel) *Complia
 	)
 
 	if ret == 0 {
-		// Failed to render, create basic event
-		return w.createBasicEvent(channel)
+		// Failed to render — fall back to channel-based event
+		return w.createEventFromChannel(channel, 0)
 	}
 
-	// Parse XML to extract EventID
-	// For now, return based on channel type
-	return w.createBasicEvent(channel)
+	// Convert UTF-16 buffer to string
+	charCount := bufferUsed / 2
+	if charCount > bufferSize {
+		charCount = bufferSize
+	}
+	xml := syscall.UTF16ToString(buffer[:charCount])
+
+	// Extract EventID from XML: <EventID>NNNN</EventID>
+	eventID := extractXMLValue(xml, "EventID")
+	var eid uint32
+	if eventID != "" {
+		fmt.Sscanf(eventID, "%d", &eid)
+	}
+
+	return w.createEventFromChannel(channel, eid)
 }
 
-// createBasicEvent creates a compliance event based on the channel
-func (w *Watcher) createBasicEvent(channel EventChannel) *ComplianceEvent {
+// extractXMLValue extracts the text content of a simple XML element.
+// e.g. extractXMLValue(xml, "EventID") returns "5001" from "<EventID>5001</EventID>"
+func extractXMLValue(xml, tag string) string {
+	openTag := "<" + tag
+	closeTag := "</" + tag + ">"
+
+	start := strings.Index(xml, openTag)
+	if start < 0 {
+		return ""
+	}
+	// Skip past the opening tag (handles attributes like <EventID Qualifiers='0'>)
+	gt := strings.Index(xml[start:], ">")
+	if gt < 0 {
+		return ""
+	}
+	contentStart := start + gt + 1
+
+	end := strings.Index(xml[contentStart:], closeTag)
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(xml[contentStart : contentStart+end])
+}
+
+// createEventFromChannel creates a ComplianceEvent with event-ID-specific details
+func (w *Watcher) createEventFromChannel(channel EventChannel, eventID uint32) *ComplianceEvent {
 	event := &ComplianceEvent{
 		Channel:   channel.Name,
+		EventID:   eventID,
 		Timestamp: time.Now(),
-		Passed:    false, // Events we monitor are typically failures/changes
+		Passed:    false,
 	}
 
-	// Determine check type and HIPAA control based on channel
+	// Use EventID for specific messaging when available
 	switch {
-	case contains(channel.Name, "Firewall"):
+	case strings.Contains(channel.Name, "Firewall"):
 		event.CheckType = "firewall"
-		event.Expected = "Enabled"
-		event.Actual = "Changed/Disabled"
 		event.HIPAAControl = "164.312(e)(1)"
-	case contains(channel.Name, "Defender"):
+		switch eventID {
+		case 2003:
+			event.Expected = "Firewall profile unchanged"
+			event.Actual = "Firewall profile setting changed"
+		case 2004:
+			event.Expected = "No new firewall rules"
+			event.Actual = "Firewall rule added"
+		case 2005:
+			event.Expected = "Firewall rules unchanged"
+			event.Actual = "Firewall rule modified"
+		case 2006:
+			event.Expected = "Firewall rules intact"
+			event.Actual = "Firewall rule deleted"
+		default:
+			event.Expected = "Firewall enabled"
+			event.Actual = "Firewall configuration changed"
+		}
+
+	case strings.Contains(channel.Name, "Defender"):
 		event.CheckType = "defender"
-		event.Expected = "Real-time protection enabled"
-		event.Actual = "Protection disabled or changed"
 		event.HIPAAControl = "164.308(a)(5)(ii)(B)"
-	case contains(channel.Name, "BitLocker"):
+		switch eventID {
+		case 5001:
+			event.Expected = "Real-time protection enabled"
+			event.Actual = "Real-time protection disabled"
+		case 5010:
+			event.Expected = "Scan enabled"
+			event.Actual = "Antispyware scanning disabled"
+		case 5012:
+			event.Expected = "Antimalware active"
+			event.Actual = "Antimalware engine disabled"
+		default:
+			event.Expected = "Defender protection active"
+			event.Actual = "Defender configuration changed"
+		}
+
+	case strings.Contains(channel.Name, "BitLocker"):
 		event.CheckType = "bitlocker"
-		event.Expected = "Protection enabled"
-		event.Actual = "Protection status changed"
 		event.HIPAAControl = "164.312(a)(2)(iv)"
+		switch eventID {
+		case 24620:
+			event.Expected = "BitLocker protection on"
+			event.Actual = "BitLocker protection suspended"
+		case 24621:
+			event.Expected = "BitLocker enabled"
+			event.Actual = "BitLocker protection resumed"
+			event.Passed = true // Resume is a good thing
+		default:
+			event.Expected = "BitLocker protection enabled"
+			event.Actual = "BitLocker status changed"
+		}
+
 	case channel.Name == "Security":
 		event.CheckType = "security_audit"
-		event.Expected = "Normal activity"
-		event.Actual = "Security event detected"
 		event.HIPAAControl = "164.312(b)"
+		switch eventID {
+		case 4625:
+			event.Expected = "Successful authentication"
+			event.Actual = "Failed logon attempt"
+		case 4740:
+			event.Expected = "Account active"
+			event.Actual = "Account locked out"
+		case 4672:
+			event.Expected = "Standard privileges"
+			event.Actual = "Special privileges assigned to logon"
+			event.Passed = true // Informational, not a failure
+		case 4719:
+			event.Expected = "Audit policy unchanged"
+			event.Actual = "System audit policy changed"
+		default:
+			event.Expected = "Normal security activity"
+			event.Actual = fmt.Sprintf("Security event %d", eventID)
+		}
+
 	case channel.Name == "System":
 		event.CheckType = "service_status"
-		event.Expected = "Services running"
-		event.Actual = "Service state changed"
 		event.HIPAAControl = "164.308(a)(1)"
+		switch eventID {
+		case 7036:
+			event.Expected = "Critical services running"
+			event.Actual = "Service entered stopped/running state"
+		case 7040:
+			event.Expected = "Service startup type unchanged"
+			event.Actual = "Service startup type changed"
+		default:
+			event.Expected = "System services stable"
+			event.Actual = fmt.Sprintf("System event %d", eventID)
+		}
+
 	default:
 		event.CheckType = "unknown"
+		event.Expected = "No events"
+		event.Actual = fmt.Sprintf("Event %d on %s", eventID, channel.Name)
 	}
 
 	return event
@@ -297,20 +405,6 @@ func (w *Watcher) IsRunning() bool {
 	return w.running
 }
 
-// Helper function
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 // ConvertToDriftEvent converts a ComplianceEvent to a protobuf DriftEvent
 func (e *ComplianceEvent) ConvertToDriftEvent(agentID, hostname string) *pb.DriftEvent {
 	return &pb.DriftEvent{
@@ -325,6 +419,7 @@ func (e *ComplianceEvent) ConvertToDriftEvent(agentID, hostname string) *pb.Drif
 		Metadata: map[string]string{
 			"source":    "eventlog",
 			"channel":   e.Channel,
+			"event_id":  fmt.Sprintf("%d", e.EventID),
 			"real_time": "true",
 		},
 	}

@@ -7,7 +7,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v6.33.3
-// source: compliance.proto
+// source: proto/compliance.proto
 
 package proto
 
@@ -60,11 +60,11 @@ func (x CapabilityTier) String() string {
 }
 
 func (CapabilityTier) Descriptor() protoreflect.EnumDescriptor {
-	return file_compliance_proto_enumTypes[0].Descriptor()
+	return file_proto_compliance_proto_enumTypes[0].Descriptor()
 }
 
 func (CapabilityTier) Type() protoreflect.EnumType {
-	return &file_compliance_proto_enumTypes[0]
+	return &file_proto_compliance_proto_enumTypes[0]
 }
 
 func (x CapabilityTier) Number() protoreflect.EnumNumber {
@@ -73,7 +73,7 @@ func (x CapabilityTier) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CapabilityTier.Descriptor instead.
 func (CapabilityTier) EnumDescriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{0}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{0}
 }
 
 // RegisterRequest is sent when an agent first connects
@@ -90,7 +90,7 @@ type RegisterRequest struct {
 
 func (x *RegisterRequest) Reset() {
 	*x = RegisterRequest{}
-	mi := &file_compliance_proto_msgTypes[0]
+	mi := &file_proto_compliance_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -102,7 +102,7 @@ func (x *RegisterRequest) String() string {
 func (*RegisterRequest) ProtoMessage() {}
 
 func (x *RegisterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[0]
+	mi := &file_proto_compliance_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -115,7 +115,7 @@ func (x *RegisterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterRequest.ProtoReflect.Descriptor instead.
 func (*RegisterRequest) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{0}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *RegisterRequest) GetHostname() string {
@@ -167,7 +167,7 @@ type RegisterResponse struct {
 
 func (x *RegisterResponse) Reset() {
 	*x = RegisterResponse{}
-	mi := &file_compliance_proto_msgTypes[1]
+	mi := &file_proto_compliance_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -179,7 +179,7 @@ func (x *RegisterResponse) String() string {
 func (*RegisterResponse) ProtoMessage() {}
 
 func (x *RegisterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[1]
+	mi := &file_proto_compliance_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -192,7 +192,7 @@ func (x *RegisterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterResponse.ProtoReflect.Descriptor instead.
 func (*RegisterResponse) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{1}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *RegisterResponse) GetAgentId() string {
@@ -248,7 +248,7 @@ type DriftEvent struct {
 
 func (x *DriftEvent) Reset() {
 	*x = DriftEvent{}
-	mi := &file_compliance_proto_msgTypes[2]
+	mi := &file_proto_compliance_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -260,7 +260,7 @@ func (x *DriftEvent) String() string {
 func (*DriftEvent) ProtoMessage() {}
 
 func (x *DriftEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[2]
+	mi := &file_proto_compliance_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -273,7 +273,7 @@ func (x *DriftEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DriftEvent.ProtoReflect.Descriptor instead.
 func (*DriftEvent) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{2}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *DriftEvent) GetAgentId() string {
@@ -340,18 +340,21 @@ func (x *DriftEvent) GetMetadata() map[string]string {
 }
 
 // DriftAck acknowledges receipt of a drift event
+// Can optionally include a heal command for the agent to execute immediately
 type DriftAck struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	Received      bool                   `protobuf:"varint,2,opt,name=received,proto3" json:"received,omitempty"`
-	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	EventId  string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	Received bool                   `protobuf:"varint,2,opt,name=received,proto3" json:"received,omitempty"`
+	Error    string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	// Optional heal command - if set, agent should execute this heal
+	HealCommand   *HealCommand `protobuf:"bytes,4,opt,name=heal_command,json=healCommand,proto3" json:"heal_command,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DriftAck) Reset() {
 	*x = DriftAck{}
-	mi := &file_compliance_proto_msgTypes[3]
+	mi := &file_proto_compliance_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -363,7 +366,7 @@ func (x *DriftAck) String() string {
 func (*DriftAck) ProtoMessage() {}
 
 func (x *DriftAck) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[3]
+	mi := &file_proto_compliance_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -376,7 +379,7 @@ func (x *DriftAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DriftAck.ProtoReflect.Descriptor instead.
 func (*DriftAck) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{3}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *DriftAck) GetEventId() string {
@@ -400,7 +403,91 @@ func (x *DriftAck) GetError() string {
 	return ""
 }
 
-// HealingResult reports the outcome of self-healing
+func (x *DriftAck) GetHealCommand() *HealCommand {
+	if x != nil {
+		return x.HealCommand
+	}
+	return nil
+}
+
+// HealCommand tells Go agent to execute a specific remediation
+type HealCommand struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CommandId      string                 `protobuf:"bytes,1,opt,name=command_id,json=commandId,proto3" json:"command_id,omitempty"`                                                    // Unique ID for tracking
+	CheckType      string                 `protobuf:"bytes,2,opt,name=check_type,json=checkType,proto3" json:"check_type,omitempty"`                                                    // firewall, defender, bitlocker, screenlock, patches
+	Action         string                 `protobuf:"bytes,3,opt,name=action,proto3" json:"action,omitempty"`                                                                           // enable, start, configure, etc.
+	Params         map[string]string      `protobuf:"bytes,4,rep,name=params,proto3" json:"params,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Action-specific parameters
+	TimeoutSeconds int64                  `protobuf:"varint,5,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`                                    // Max execution time (default 60)
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *HealCommand) Reset() {
+	*x = HealCommand{}
+	mi := &file_proto_compliance_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HealCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HealCommand) ProtoMessage() {}
+
+func (x *HealCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_compliance_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HealCommand.ProtoReflect.Descriptor instead.
+func (*HealCommand) Descriptor() ([]byte, []int) {
+	return file_proto_compliance_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *HealCommand) GetCommandId() string {
+	if x != nil {
+		return x.CommandId
+	}
+	return ""
+}
+
+func (x *HealCommand) GetCheckType() string {
+	if x != nil {
+		return x.CheckType
+	}
+	return ""
+}
+
+func (x *HealCommand) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *HealCommand) GetParams() map[string]string {
+	if x != nil {
+		return x.Params
+	}
+	return nil
+}
+
+func (x *HealCommand) GetTimeoutSeconds() int64 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+// HealingResult reports the outcome of self-healing or commanded healing
 type HealingResult struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -410,13 +497,14 @@ type HealingResult struct {
 	ErrorMessage  string                 `protobuf:"bytes,5,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	Timestamp     int64                  `protobuf:"varint,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Artifacts     map[string]string      `protobuf:"bytes,7,rep,name=artifacts,proto3" json:"artifacts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // e.g., bitlocker recovery key
+	CommandId     string                 `protobuf:"bytes,8,opt,name=command_id,json=commandId,proto3" json:"command_id,omitempty"`                                                          // If responding to HealCommand, include its ID
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HealingResult) Reset() {
 	*x = HealingResult{}
-	mi := &file_compliance_proto_msgTypes[4]
+	mi := &file_proto_compliance_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -428,7 +516,7 @@ func (x *HealingResult) String() string {
 func (*HealingResult) ProtoMessage() {}
 
 func (x *HealingResult) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[4]
+	mi := &file_proto_compliance_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -441,7 +529,7 @@ func (x *HealingResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealingResult.ProtoReflect.Descriptor instead.
 func (*HealingResult) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{4}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *HealingResult) GetAgentId() string {
@@ -493,6 +581,13 @@ func (x *HealingResult) GetArtifacts() map[string]string {
 	return nil
 }
 
+func (x *HealingResult) GetCommandId() string {
+	if x != nil {
+		return x.CommandId
+	}
+	return ""
+}
+
 // HealingAck acknowledges healing result
 type HealingAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -504,7 +599,7 @@ type HealingAck struct {
 
 func (x *HealingAck) Reset() {
 	*x = HealingAck{}
-	mi := &file_compliance_proto_msgTypes[5]
+	mi := &file_proto_compliance_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -516,7 +611,7 @@ func (x *HealingAck) String() string {
 func (*HealingAck) ProtoMessage() {}
 
 func (x *HealingAck) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[5]
+	mi := &file_proto_compliance_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -529,7 +624,7 @@ func (x *HealingAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealingAck.ProtoReflect.Descriptor instead.
 func (*HealingAck) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{5}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *HealingAck) GetEventId() string {
@@ -559,7 +654,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_compliance_proto_msgTypes[6]
+	mi := &file_proto_compliance_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -571,7 +666,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[6]
+	mi := &file_proto_compliance_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -584,7 +679,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{6}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *HeartbeatRequest) GetAgentId() string {
@@ -615,18 +710,19 @@ func (x *HeartbeatRequest) GetHealingCount() int32 {
 	return 0
 }
 
-// HeartbeatResponse can signal config changes
+// HeartbeatResponse can signal config changes and pending commands
 type HeartbeatResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Acknowledged  bool                   `protobuf:"varint,1,opt,name=acknowledged,proto3" json:"acknowledged,omitempty"`
-	ConfigChanged bool                   `protobuf:"varint,2,opt,name=config_changed,json=configChanged,proto3" json:"config_changed,omitempty"` // If true, agent should re-register
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Acknowledged    bool                   `protobuf:"varint,1,opt,name=acknowledged,proto3" json:"acknowledged,omitempty"`
+	ConfigChanged   bool                   `protobuf:"varint,2,opt,name=config_changed,json=configChanged,proto3" json:"config_changed,omitempty"`      // If true, agent should re-register
+	PendingCommands []*HealCommand         `protobuf:"bytes,3,rep,name=pending_commands,json=pendingCommands,proto3" json:"pending_commands,omitempty"` // Commands queued for this agent
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_compliance_proto_msgTypes[7]
+	mi := &file_proto_compliance_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -638,7 +734,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[7]
+	mi := &file_proto_compliance_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -651,7 +747,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{7}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *HeartbeatResponse) GetAcknowledged() bool {
@@ -668,6 +764,13 @@ func (x *HeartbeatResponse) GetConfigChanged() bool {
 	return false
 }
 
+func (x *HeartbeatResponse) GetPendingCommands() []*HealCommand {
+	if x != nil {
+		return x.PendingCommands
+	}
+	return nil
+}
+
 // RMMStatusReport reports detected RMM tools
 type RMMStatusReport struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -681,7 +784,7 @@ type RMMStatusReport struct {
 
 func (x *RMMStatusReport) Reset() {
 	*x = RMMStatusReport{}
-	mi := &file_compliance_proto_msgTypes[8]
+	mi := &file_proto_compliance_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -693,7 +796,7 @@ func (x *RMMStatusReport) String() string {
 func (*RMMStatusReport) ProtoMessage() {}
 
 func (x *RMMStatusReport) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[8]
+	mi := &file_proto_compliance_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -706,7 +809,7 @@ func (x *RMMStatusReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RMMStatusReport.ProtoReflect.Descriptor instead.
 func (*RMMStatusReport) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{8}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *RMMStatusReport) GetAgentId() string {
@@ -750,7 +853,7 @@ type RMMAgent struct {
 
 func (x *RMMAgent) Reset() {
 	*x = RMMAgent{}
-	mi := &file_compliance_proto_msgTypes[9]
+	mi := &file_proto_compliance_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -762,7 +865,7 @@ func (x *RMMAgent) String() string {
 func (*RMMAgent) ProtoMessage() {}
 
 func (x *RMMAgent) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[9]
+	mi := &file_proto_compliance_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -775,7 +878,7 @@ func (x *RMMAgent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RMMAgent.ProtoReflect.Descriptor instead.
 func (*RMMAgent) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{9}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *RMMAgent) GetName() string {
@@ -816,7 +919,7 @@ type RMMAck struct {
 
 func (x *RMMAck) Reset() {
 	*x = RMMAck{}
-	mi := &file_compliance_proto_msgTypes[10]
+	mi := &file_proto_compliance_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -828,7 +931,7 @@ func (x *RMMAck) String() string {
 func (*RMMAck) ProtoMessage() {}
 
 func (x *RMMAck) ProtoReflect() protoreflect.Message {
-	mi := &file_compliance_proto_msgTypes[10]
+	mi := &file_proto_compliance_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -841,7 +944,7 @@ func (x *RMMAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RMMAck.ProtoReflect.Descriptor instead.
 func (*RMMAck) Descriptor() ([]byte, []int) {
-	return file_compliance_proto_rawDescGZIP(), []int{10}
+	return file_proto_compliance_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *RMMAck) GetReceived() bool {
@@ -851,11 +954,11 @@ func (x *RMMAck) GetReceived() bool {
 	return false
 }
 
-var File_compliance_proto protoreflect.FileDescriptor
+var File_proto_compliance_proto protoreflect.FileDescriptor
 
-const file_compliance_proto_rawDesc = "" +
+const file_proto_compliance_proto_rawDesc = "" +
 	"\n" +
-	"\x10compliance.proto\x12\n" +
+	"\x16proto/compliance.proto\x12\n" +
 	"compliance\"\xc1\x01\n" +
 	"\x0fRegisterRequest\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x1d\n" +
@@ -888,11 +991,23 @@ const file_compliance_proto_rawDesc = "" +
 	"\bmetadata\x18\t \x03(\v2$.compliance.DriftEvent.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"W\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x93\x01\n" +
 	"\bDriftAck\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1a\n" +
 	"\breceived\x18\x02 \x01(\bR\breceived\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\xc8\x02\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\x12:\n" +
+	"\fheal_command\x18\x04 \x01(\v2\x17.compliance.HealCommandR\vhealCommand\"\x84\x02\n" +
+	"\vHealCommand\x12\x1d\n" +
+	"\n" +
+	"command_id\x18\x01 \x01(\tR\tcommandId\x12\x1d\n" +
+	"\n" +
+	"check_type\x18\x02 \x01(\tR\tcheckType\x12\x16\n" +
+	"\x06action\x18\x03 \x01(\tR\x06action\x12;\n" +
+	"\x06params\x18\x04 \x03(\v2#.compliance.HealCommand.ParamsEntryR\x06params\x12'\n" +
+	"\x0ftimeout_seconds\x18\x05 \x01(\x03R\x0etimeoutSeconds\x1a9\n" +
+	"\vParamsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe7\x02\n" +
 	"\rHealingResult\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1a\n" +
 	"\bhostname\x18\x02 \x01(\tR\bhostname\x12\x1d\n" +
@@ -901,7 +1016,9 @@ const file_compliance_proto_rawDesc = "" +
 	"\asuccess\x18\x04 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\x12\x1c\n" +
 	"\ttimestamp\x18\x06 \x01(\x03R\ttimestamp\x12F\n" +
-	"\tartifacts\x18\a \x03(\v2(.compliance.HealingResult.ArtifactsEntryR\tartifacts\x1a<\n" +
+	"\tartifacts\x18\a \x03(\v2(.compliance.HealingResult.ArtifactsEntryR\tartifacts\x12\x1d\n" +
+	"\n" +
+	"command_id\x18\b \x01(\tR\tcommandId\x1a<\n" +
 	"\x0eArtifactsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"C\n" +
@@ -914,10 +1031,11 @@ const file_compliance_proto_rawDesc = "" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\x12\x1f\n" +
 	"\vdrift_count\x18\x03 \x01(\x05R\n" +
 	"driftCount\x12#\n" +
-	"\rhealing_count\x18\x04 \x01(\x05R\fhealingCount\"^\n" +
+	"\rhealing_count\x18\x04 \x01(\x05R\fhealingCount\"\xa2\x01\n" +
 	"\x11HeartbeatResponse\x12\"\n" +
 	"\facknowledged\x18\x01 \x01(\bR\facknowledged\x12%\n" +
-	"\x0econfig_changed\x18\x02 \x01(\bR\rconfigChanged\"\xa5\x01\n" +
+	"\x0econfig_changed\x18\x02 \x01(\bR\rconfigChanged\x12B\n" +
+	"\x10pending_commands\x18\x03 \x03(\v2\x17.compliance.HealCommandR\x0fpendingCommands\"\xa5\x01\n" +
 	"\x0fRMMStatusReport\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1a\n" +
 	"\bhostname\x18\x02 \x01(\tR\bhostname\x12=\n" +
@@ -942,80 +1060,85 @@ const file_compliance_proto_rawDesc = "" +
 	"\x0fReportRMMStatus\x12\x1b.compliance.RMMStatusReport\x1a\x12.compliance.RMMAckB#Z!github.com/osiriscare/agent/protob\x06proto3"
 
 var (
-	file_compliance_proto_rawDescOnce sync.Once
-	file_compliance_proto_rawDescData []byte
+	file_proto_compliance_proto_rawDescOnce sync.Once
+	file_proto_compliance_proto_rawDescData []byte
 )
 
-func file_compliance_proto_rawDescGZIP() []byte {
-	file_compliance_proto_rawDescOnce.Do(func() {
-		file_compliance_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_compliance_proto_rawDesc), len(file_compliance_proto_rawDesc)))
+func file_proto_compliance_proto_rawDescGZIP() []byte {
+	file_proto_compliance_proto_rawDescOnce.Do(func() {
+		file_proto_compliance_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_compliance_proto_rawDesc), len(file_proto_compliance_proto_rawDesc)))
 	})
-	return file_compliance_proto_rawDescData
+	return file_proto_compliance_proto_rawDescData
 }
 
-var file_compliance_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_compliance_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
-var file_compliance_proto_goTypes = []any{
+var file_proto_compliance_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_proto_compliance_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_proto_compliance_proto_goTypes = []any{
 	(CapabilityTier)(0),       // 0: compliance.CapabilityTier
 	(*RegisterRequest)(nil),   // 1: compliance.RegisterRequest
 	(*RegisterResponse)(nil),  // 2: compliance.RegisterResponse
 	(*DriftEvent)(nil),        // 3: compliance.DriftEvent
 	(*DriftAck)(nil),          // 4: compliance.DriftAck
-	(*HealingResult)(nil),     // 5: compliance.HealingResult
-	(*HealingAck)(nil),        // 6: compliance.HealingAck
-	(*HeartbeatRequest)(nil),  // 7: compliance.HeartbeatRequest
-	(*HeartbeatResponse)(nil), // 8: compliance.HeartbeatResponse
-	(*RMMStatusReport)(nil),   // 9: compliance.RMMStatusReport
-	(*RMMAgent)(nil),          // 10: compliance.RMMAgent
-	(*RMMAck)(nil),            // 11: compliance.RMMAck
-	nil,                       // 12: compliance.RegisterResponse.CheckConfigEntry
-	nil,                       // 13: compliance.DriftEvent.MetadataEntry
-	nil,                       // 14: compliance.HealingResult.ArtifactsEntry
+	(*HealCommand)(nil),       // 5: compliance.HealCommand
+	(*HealingResult)(nil),     // 6: compliance.HealingResult
+	(*HealingAck)(nil),        // 7: compliance.HealingAck
+	(*HeartbeatRequest)(nil),  // 8: compliance.HeartbeatRequest
+	(*HeartbeatResponse)(nil), // 9: compliance.HeartbeatResponse
+	(*RMMStatusReport)(nil),   // 10: compliance.RMMStatusReport
+	(*RMMAgent)(nil),          // 11: compliance.RMMAgent
+	(*RMMAck)(nil),            // 12: compliance.RMMAck
+	nil,                       // 13: compliance.RegisterResponse.CheckConfigEntry
+	nil,                       // 14: compliance.DriftEvent.MetadataEntry
+	nil,                       // 15: compliance.HealCommand.ParamsEntry
+	nil,                       // 16: compliance.HealingResult.ArtifactsEntry
 }
-var file_compliance_proto_depIdxs = []int32{
+var file_proto_compliance_proto_depIdxs = []int32{
 	0,  // 0: compliance.RegisterResponse.capability_tier:type_name -> compliance.CapabilityTier
-	12, // 1: compliance.RegisterResponse.check_config:type_name -> compliance.RegisterResponse.CheckConfigEntry
-	13, // 2: compliance.DriftEvent.metadata:type_name -> compliance.DriftEvent.MetadataEntry
-	14, // 3: compliance.HealingResult.artifacts:type_name -> compliance.HealingResult.ArtifactsEntry
-	10, // 4: compliance.RMMStatusReport.detected_agents:type_name -> compliance.RMMAgent
-	1,  // 5: compliance.ComplianceAgent.Register:input_type -> compliance.RegisterRequest
-	3,  // 6: compliance.ComplianceAgent.ReportDrift:input_type -> compliance.DriftEvent
-	5,  // 7: compliance.ComplianceAgent.ReportHealing:input_type -> compliance.HealingResult
-	7,  // 8: compliance.ComplianceAgent.Heartbeat:input_type -> compliance.HeartbeatRequest
-	9,  // 9: compliance.ComplianceAgent.ReportRMMStatus:input_type -> compliance.RMMStatusReport
-	2,  // 10: compliance.ComplianceAgent.Register:output_type -> compliance.RegisterResponse
-	4,  // 11: compliance.ComplianceAgent.ReportDrift:output_type -> compliance.DriftAck
-	6,  // 12: compliance.ComplianceAgent.ReportHealing:output_type -> compliance.HealingAck
-	8,  // 13: compliance.ComplianceAgent.Heartbeat:output_type -> compliance.HeartbeatResponse
-	11, // 14: compliance.ComplianceAgent.ReportRMMStatus:output_type -> compliance.RMMAck
-	10, // [10:15] is the sub-list for method output_type
-	5,  // [5:10] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	13, // 1: compliance.RegisterResponse.check_config:type_name -> compliance.RegisterResponse.CheckConfigEntry
+	14, // 2: compliance.DriftEvent.metadata:type_name -> compliance.DriftEvent.MetadataEntry
+	5,  // 3: compliance.DriftAck.heal_command:type_name -> compliance.HealCommand
+	15, // 4: compliance.HealCommand.params:type_name -> compliance.HealCommand.ParamsEntry
+	16, // 5: compliance.HealingResult.artifacts:type_name -> compliance.HealingResult.ArtifactsEntry
+	5,  // 6: compliance.HeartbeatResponse.pending_commands:type_name -> compliance.HealCommand
+	11, // 7: compliance.RMMStatusReport.detected_agents:type_name -> compliance.RMMAgent
+	1,  // 8: compliance.ComplianceAgent.Register:input_type -> compliance.RegisterRequest
+	3,  // 9: compliance.ComplianceAgent.ReportDrift:input_type -> compliance.DriftEvent
+	6,  // 10: compliance.ComplianceAgent.ReportHealing:input_type -> compliance.HealingResult
+	8,  // 11: compliance.ComplianceAgent.Heartbeat:input_type -> compliance.HeartbeatRequest
+	10, // 12: compliance.ComplianceAgent.ReportRMMStatus:input_type -> compliance.RMMStatusReport
+	2,  // 13: compliance.ComplianceAgent.Register:output_type -> compliance.RegisterResponse
+	4,  // 14: compliance.ComplianceAgent.ReportDrift:output_type -> compliance.DriftAck
+	7,  // 15: compliance.ComplianceAgent.ReportHealing:output_type -> compliance.HealingAck
+	9,  // 16: compliance.ComplianceAgent.Heartbeat:output_type -> compliance.HeartbeatResponse
+	12, // 17: compliance.ComplianceAgent.ReportRMMStatus:output_type -> compliance.RMMAck
+	13, // [13:18] is the sub-list for method output_type
+	8,  // [8:13] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
-func init() { file_compliance_proto_init() }
-func file_compliance_proto_init() {
-	if File_compliance_proto != nil {
+func init() { file_proto_compliance_proto_init() }
+func file_proto_compliance_proto_init() {
+	if File_proto_compliance_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_compliance_proto_rawDesc), len(file_compliance_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_compliance_proto_rawDesc), len(file_proto_compliance_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   14,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_compliance_proto_goTypes,
-		DependencyIndexes: file_compliance_proto_depIdxs,
-		EnumInfos:         file_compliance_proto_enumTypes,
-		MessageInfos:      file_compliance_proto_msgTypes,
+		GoTypes:           file_proto_compliance_proto_goTypes,
+		DependencyIndexes: file_proto_compliance_proto_depIdxs,
+		EnumInfos:         file_proto_compliance_proto_enumTypes,
+		MessageInfos:      file_proto_compliance_proto_msgTypes,
 	}.Build()
-	File_compliance_proto = out.File
-	file_compliance_proto_goTypes = nil
-	file_compliance_proto_depIdxs = nil
+	File_proto_compliance_proto = out.File
+	file_proto_compliance_proto_goTypes = nil
+	file_proto_compliance_proto_depIdxs = nil
 }

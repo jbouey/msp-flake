@@ -6,7 +6,7 @@
 // Features:
 // - 6 compliance checks: BitLocker, Defender, Patches, Firewall, ScreenLock, RMM
 // - Real-time Windows Event Log monitoring (<1s detection vs 5min polling)
-// - gRPC streaming for efficient communication
+// - gRPC bidirectional streaming for drift events and heal commands
 // - SQLite offline queue for network resilience
 // - mTLS for secure appliance communication
 // - Windows service integration
@@ -25,6 +25,7 @@ import (
 	"github.com/osiriscare/agent/internal/checks"
 	"github.com/osiriscare/agent/internal/config"
 	"github.com/osiriscare/agent/internal/eventlog"
+	"github.com/osiriscare/agent/internal/healing"
 	"github.com/osiriscare/agent/internal/transport"
 	pb "github.com/osiriscare/agent/proto"
 )
@@ -124,6 +125,25 @@ func main() {
 		defer offlineQueue.Close()
 	}
 
+	// Start persistent drift stream with ack reader
+	if grpcClient != nil && grpcClient.IsConnected() {
+		if err := grpcClient.StartDriftStream(ctx); err != nil {
+			log.Printf("Failed to start drift stream: %v (will use one-shot mode)", err)
+		} else {
+			log.Println("Bidirectional drift stream established")
+		}
+	}
+
+	// Start heal command executor goroutine
+	if grpcClient != nil {
+		go runHealExecutor(ctx, grpcClient)
+	}
+
+	// Start heartbeat loop (delivers pending commands too)
+	if grpcClient != nil && grpcClient.IsConnected() {
+		go runHeartbeatLoop(ctx, grpcClient)
+	}
+
 	// Initialize Windows Event Log watcher for real-time detection
 	// This provides <1 second detection vs 5 minute polling
 	hostname := checks.GetHostname()
@@ -175,6 +195,61 @@ func main() {
 			return
 		case <-ticker.C:
 			runChecks(ctx, checkRegistry, grpcClient, offlineQueue, regResp)
+		}
+	}
+}
+
+// runHealExecutor consumes HealCommands from the gRPC client channel,
+// executes them locally, and reports results back to the appliance.
+func runHealExecutor(ctx context.Context, client *transport.GRPCClient) {
+	log.Println("[heal] Heal command executor started")
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("[heal] Heal command executor stopped")
+			return
+		case cmd := <-client.HealCmds:
+			result := healing.Execute(ctx, cmd)
+
+			// Report result back to appliance
+			healResult := &pb.HealingResult{
+				CheckType:    result.CheckType,
+				Success:      result.Success,
+				ErrorMessage: result.Error,
+				CommandId:    result.CommandID,
+				Artifacts:    result.Artifacts,
+			}
+
+			if err := client.SendHealingResult(ctx, healResult); err != nil {
+				log.Printf("[heal] Failed to report result for %s: %v", cmd.CommandId, err)
+			}
+		}
+	}
+}
+
+// runHeartbeatLoop sends periodic heartbeats to the appliance.
+// Heartbeat responses may contain pending HealCommands which are
+// automatically routed to the HealCmds channel by SendHeartbeat.
+func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	log.Println("[heartbeat] Heartbeat loop started (60s interval)")
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("[heartbeat] Heartbeat loop stopped")
+			return
+		case <-ticker.C:
+			resp, err := client.SendHeartbeat(ctx)
+			if err != nil {
+				log.Printf("[heartbeat] Failed: %v", err)
+				continue
+			}
+			if resp.ConfigChanged {
+				log.Println("[heartbeat] Config changed — re-registration needed")
+				// TODO: trigger re-registration
+			}
 		}
 	}
 }

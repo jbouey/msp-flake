@@ -1,10 +1,10 @@
-// +build !windows
+//go:build !windows
 
 // Package eventlog provides a stub for non-Windows systems.
 package eventlog
 
 import (
-	"context"
+	"fmt"
 	"time"
 
 	pb "github.com/osiriscare/agent/proto"
@@ -62,10 +62,8 @@ func (e *ComplianceEvent) ConvertToDriftEvent(agentID, hostname string) *pb.Drif
 		Metadata: map[string]string{
 			"source":    "eventlog",
 			"channel":   e.Channel,
+			"event_id":  fmt.Sprintf("%d", e.EventID),
 			"real_time": "true",
 		},
 	}
 }
-
-// Run context helper for interface compatibility
-func (w *Watcher) Run(ctx context.Context) {}
