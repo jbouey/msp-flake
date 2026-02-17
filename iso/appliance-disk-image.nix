@@ -212,7 +212,8 @@ EOF
 
       # Signal getty to re-read /etc/issue.
       # Use --no-block to avoid deadlock when running inside nixos-rebuild activation.
-      printf '\033c' > /dev/tty1 2>/dev/null || true
+      # Use timeout on tty write — blocks indefinitely if no physical console.
+      timeout 2 bash -c 'printf "\033c" > /dev/tty1' 2>/dev/null || true
       ${pkgs.systemd}/bin/systemctl --no-block restart getty@tty1.service 2>/dev/null || true
     '';
   };
