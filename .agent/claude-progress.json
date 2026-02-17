@@ -1,14 +1,14 @@
 {
-  "session": 113,
-  "updated": "2026-02-17T07:54:05.970931Z",
-  "agent_version": "1.0.72",
+  "session": 114,
+  "updated": "2026-02-17T17:16:53.750222Z",
+  "agent_version": "1.0.73",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "v1.0.72_overlay_dns_heal_fixed_tempfile_executor",
-    "vm_appliance": "v1.0.70_heal_priority_chaos_fixes",
+    "physical_appliance": "v1.0.73_overlay_audit_fixes_service_fixes_rebuilt",
+    "vm_appliance": "v1.0.73_overlay_audit_fixes_service_fixes_rebuilt",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_46_promoted_9_enabled_counter_trigger_live_51_builtin_seeded_pattern_gen_from_L2",
@@ -170,24 +170,24 @@
   "completed_this_session": [],
   "recent_commits": [
     {
-      "hash": "fdea87c",
-      "message": "fix: WinRM long script execution via temp file (cmd.exe 8191 char limit)"
+      "hash": "356d229",
+      "message": "fix: console-branding timeout on tty1 write (blocks without physical console)"
     },
     {
-      "hash": "5cf6e11",
-      "message": "fix: DC DNS healing (DomainRole check) + WinRM session invalidation on all errors"
+      "hash": "daf82a8",
+      "message": "fix: local-portal port 8083→8084 (conflict with scanner) + getty --no-block"
     },
     {
-      "hash": "d67766f",
-      "message": "feat: Flywheel generates patterns from L2 telemetry + filter fix"
+      "hash": "ac549c2",
+      "message": "fix: console-branding rm symlink before write + watchdog add util-linux"
     },
     {
-      "hash": "0ad09ba",
-      "message": "fix: Order completion now handles both admin_orders and healing orders"
+      "hash": "a67c079",
+      "message": "feat: GPO pipeline hardening — cert warnings, rollback, 43 new tests"
     },
     {
-      "hash": "e38ba5d",
-      "message": "fix: Runbook ID mismatch \u2014 seed 51 builtin rules + fix truncation"
+      "hash": "cc135f1",
+      "message": "fix: NixOS hardening — SSH, resource limits, firewall, service ordering"
     }
   ],
   "key_findings": {
@@ -213,6 +213,10 @@
     "overlay_structure_lesson": "Overlay tarball MUST preserve Python package structure: compliance_agent/ subdirectory required. Flat extraction (files at overlay root) means PYTHONPATH finds the overlay dir but 'from compliance_agent.X import Y' fails because there's no compliance_agent/ package. Previous overlay deployments appeared to work but were actually running NixOS store code \u2014 synced server-side L1 rules masked the issue.",
     "chaos_test_timing_lesson": "180s chaos test window is marginal for a full heal cycle. Even with parallel scans via asyncio.gather(), the 600s cycle timeout in _run_cycle() can abort the Linux drift processing loop before all drifts are healed. Root cause: drift results were processed sequentially (evidence submission + healing for each). SSH/FW/SVC healing consumed most of the budget, leaving NET/CRON/SUID unhealed. FIXED: healing now fires as background asyncio.create_task() calls that survive the cycle timeout. Evidence submission remains inline (deferrable). Tasks tracked in _healing_tasks set, cancelled on agent stop.",
     "winrm_cmdline_limit_lesson": "pywinrm run_ps() encodes scripts as UTF-16LE base64 via 'powershell -encodedcommand <base64>'. This goes through cmd.exe which has 8,191 char limit. A ~4.7KB PowerShell script becomes ~12.7KB after encoding (2x UTF-16 + 1.33x base64). Fix: _execute_via_tempfile() writes base64 chunks via cmd.exe echo (6000 chars/chunk), then a short run_ps() call decodes and executes. Threshold: _MAX_INLINE_SCRIPT_LEN = 2000.",
+    "nixos_etc_symlink_lesson": "NixOS manages /etc/issue as a symlink to a read-only nix store path. Scripts cannot write directly with 'cat > /etc/issue'. Must rm -f the symlink first, then write. Same pattern applies to any /etc file managed by NixOS.",
+    "systemd_activation_deadlock_lesson": "During nixos-rebuild test, systemd holds a transaction lock for the activation. Running 'systemctl restart' inside a oneshot service (e.g., console-branding) that triggers during activation causes a deadlock — the restart waits for the lock that activation holds. Fix: 'systemctl --no-block restart' to fire-and-forget.",
+    "tty_write_blocking_lesson": "Writing to /dev/tty1 (e.g., printf '\\033c' > /dev/tty1) blocks indefinitely when no physical console is attached — common on VMs or headless hardware. Fix: wrap with 'timeout 2 bash -c \"...\"' to bound the wait.",
+    "appliance_port_layout": "Port layout on appliance: 22=SSH, 80=nginx, 8080=web-ui, 8081=scanner-web (localhost), 8082=scanner-api (localhost), 8083=go-agent-checkins (0.0.0.0), 8084=local-portal (0.0.0.0), 50051=gRPC. Firewall exposes: 22, 80, 8080, 50051, 8084.",
     "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles."
   },
   "deployment_flow": [

@@ -1,7 +1,7 @@
 # Testing Patterns
 
 ## Overview
-- **970+ tests**: 957 agent tests (35 files) + 55 backend tests (3 files)
+- **1037+ tests**: 994 agent tests (39 files) + 55 backend tests (3 files)
 - **595+ fixtures** for isolation
 - **pytest-asyncio** for async testing
 
@@ -154,3 +154,7 @@ USE_REAL_VMS=1 pytest tests/test_auto_healer_integration.py -v
 - `tests/test_drift.py` - 6 compliance checks
 - `tests/test_learning_loop.py` - Pattern promotion
 - `tests/test_health_gate.py` - A/B partition rollback
+- `tests/test_agent_ca.py` - CA generation, cert issuance, server certs (real crypto)
+- `tests/test_gpo_deployment.py` - GPO pipeline, rollback, verify
+- `tests/test_dns_registration.py` - DNS SRV record registration
+- `tests/test_agent_deployment.py` - WinRM deployment pipeline, concurrent

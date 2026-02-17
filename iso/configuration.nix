@@ -35,10 +35,8 @@
   };
 
   users.users.root = {
-    # Emergency password for console access - baked into image so it works in emergency mode
-    # Password: osiris2024
-    hashedPassword = "$6$w8KL8dUxFMVF4DmE$NQX0TULi8a8pSytrYP83Xu4vz6sydv0PdtZpSe5Dd7henertz6cpJHmMgTtdQ67ijLgiHkaMuhsNDn//CS8eV1";
-    # Root SSH access disabled for security - use msp user instead
+    # Root hashedPassword set in appliance-disk-image.nix (not here)
+    # to avoid conflicting with installer ISO's initialHashedPassword
     openssh.authorizedKeys.keys = [ ];
   };
 
@@ -127,6 +125,7 @@
   systemd.services.msp-health-check = {
     description = "MSP Appliance Health Check";
     after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
 
     path = with pkgs; [ gawk coreutils procps chrony systemd gnugrep ];
 

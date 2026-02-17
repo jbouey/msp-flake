@@ -238,6 +238,27 @@ serviceConfig = {
 };
 ```
 
+## Appliance Port Layout
+
+```
+Port   Service                 Bind        Firewall
+22     SSH                     0.0.0.0     open
+80     nginx                   0.0.0.0     open
+8080   web-ui                  0.0.0.0     open
+8081   scanner-web             127.0.0.1   closed
+8082   scanner-api             127.0.0.1   closed
+8083   go-agent-checkins       0.0.0.0     closed (agent-only)
+8084   local-portal            0.0.0.0     open
+50051  gRPC (compliance)       0.0.0.0     open
+```
+
+## NixOS /etc Gotchas
+
+- NixOS manages `/etc` files as symlinks to the read-only nix store
+- Scripts that write to `/etc/issue`, `/etc/motd`, etc. must `rm -f` the symlink first
+- `systemctl restart` inside activation-triggered oneshot services deadlocks (use `--no-block`)
+- Writing to `/dev/tty1` blocks when no console attached (use `timeout 2 bash -c '...'`)
+
 ## Network Configuration (nftables)
 
 ```nix
@@ -255,8 +276,8 @@ networking.nftables = {
         # Allow localhost
         iif lo accept
 
-        # SSH, status page, sensor API, gRPC
-        tcp dport { 22, 80, 8080, 50051 } accept
+        # SSH, status page, sensor API, local-portal, gRPC
+        tcp dport { 22, 80, 8080, 8084, 50051 } accept
       }
 
       chain output {

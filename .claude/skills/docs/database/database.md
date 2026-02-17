@@ -10,7 +10,7 @@
 
 ## PostgreSQL Schema
 
-### Core Tables (46 migrations)
+### Core Tables (47 migrations)
 
 ```sql
 -- Sites and appliances
@@ -312,7 +312,8 @@ migrations/
 ├── 043_fix_evidence_chain_race.sql
 ├── 044_flywheel_fixes.sql
 ├── 045_audit_fixes.sql
-└── 046_runbook_id_fix.sql
+├── 046_runbook_id_fix.sql
+└── 047_audit_indexes.sql
 ```
 
 ### Migration Pattern
@@ -327,7 +328,7 @@ CREATE INDEX IF NOT EXISTS idx_name ON table(column);
 ```
 
 ## Key Files
-- `mcp-server/migrations/*.sql` - 46 migration files
+- `mcp-server/migrations/*.sql` - 47 migration files
 - `compliance_agent/incident_db.py` - SQLite incident tracking
 - `compliance_agent/offline_queue.py` - Evidence queue
 - `backend/db_queries.py` - PostgreSQL queries

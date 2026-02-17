@@ -438,9 +438,9 @@ EOF
     };
   };
 
-  # Lab-only initial password — production builds MUST override via SOPS secrets
-  # This is set as mkDefault so production configs can override it to null
-  users.users.root.initialPassword = lib.mkDefault "osiris2024";
+  # Emergency password for console access - baked into installed image
+  # Password: osiris2024 | Lab-only — production MUST override via SOPS
+  users.users.root.hashedPassword = lib.mkDefault "$6$w8KL8dUxFMVF4DmE$NQX0TULi8a8pSytrYP83Xu4vz6sydv0PdtZpSe5Dd7henertz6cpJHmMgTtdQ67ijLgiHkaMuhsNDn//CS8eV1";
 
   # Lab SSH keys — production appliances receive keys via Central Command provisioning API
   users.users.root.openssh.authorizedKeys.keys = [

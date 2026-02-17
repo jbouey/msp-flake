@@ -842,8 +842,8 @@ in
     };
   };
 
-  # Root password for live ISO debugging (not for installed system)
-  users.users.root.initialPassword = "osiris2024";
+  # Root password set via hashedPassword in configuration.nix (osiris2024)
+  # Do NOT set initialPassword here — having both triggers NixOS warnings
 
   # ============================================================================
   # Reduce image size - disable unnecessary features
