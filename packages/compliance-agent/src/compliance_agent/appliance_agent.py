@@ -2061,37 +2061,38 @@ class ApplianceAgent:
 
         self._last_windows_scan = now
 
-    async def _scan_windows_target(self, target: WindowsTarget):
-        """Run compliance checks on a single Windows target."""
-        try:
-            import winrm
+    def _scan_windows_target_sync(self, target: WindowsTarget):
+        """Synchronous WinRM scan — runs in thread pool to avoid blocking event loop."""
+        import winrm
+        import base64 as b64mod
+        import hashlib
+        import json as json_module
 
-            # Build WinRM endpoint
-            protocol = "https" if target.use_ssl else "http"
-            endpoint = f"{protocol}://{target.hostname}:{target.port}/wsman"
+        protocol = "https" if target.use_ssl else "http"
+        endpoint = f"{protocol}://{target.hostname}:{target.port}/wsman"
 
-            session = winrm.Session(
-                endpoint,
-                auth=(target.username, target.password),
-                transport=target.transport,
-                server_cert_validation='ignore' if not target.use_ssl else 'validate',
-            )
+        session = winrm.Session(
+            endpoint,
+            auth=(target.username, target.password),
+            transport=target.transport,
+            server_cert_validation='ignore' if not target.use_ssl else 'validate',
+        )
 
-            # Test connectivity
-            result = session.run_ps("$env:COMPUTERNAME")
-            if result.status_code != 0:
-                raise RuntimeError(f"WinRM failed: {result.std_err.decode()}")
+        # Test connectivity
+        result = session.run_ps("$env:COMPUTERNAME")
+        if result.status_code != 0:
+            raise RuntimeError(f"WinRM failed: {result.std_err.decode()}")
 
-            computer_name = result.std_out.decode().strip()
-            logger.info(f"Connected to Windows: {computer_name}")
+        computer_name = result.std_out.decode().strip()
+        logger.info(f"Connected to Windows: {computer_name}")
 
-            # Run compliance checks in 2 batched WinRM calls (was 20+ calls).
-            # Split into 2 batches to stay under cmd.exe 8191 char limit.
-            # Each batch collects results as JSON with {check: {o:output, c:code}}.
-            batch_header = "$x=@{};function X($n,$s){try{$o=& $s 2>$null;$x[$n]=@{o=[string]$o;c=0}}catch{$x[$n]=@{o=$_.Exception.Message;c=1}}}\n"
+        # Run compliance checks in 2 batched WinRM calls (was 20+ calls).
+        # Split into 2 batches to stay under cmd.exe 8191 char limit.
+        # Each batch collects results as JSON with {check: {o:output, c:code}}.
+        batch_header = "$x=@{};function X($n,$s){try{$o=& $s 2>$null;$x[$n]=@{o=[string]$o;c=0}}catch{$x[$n]=@{o=$_.Exception.Message;c=1}}}\n"
 
-            # Batch 1: Simple one-liner checks (services, firewall, SMB, etc)
-            batch1_ps = batch_header + r"""
+        # Batch 1: Simple one-liner checks (services, firewall, SMB, etc)
+        batch1_ps = batch_header + r"""
 X 'windows_defender' {$s=Get-MpComputerStatus;@{Enabled=$s.AntivirusEnabled;RealTimeEnabled=$s.RealTimeProtectionEnabled;Updated=$s.AntivirusSignatureLastUpdated}|ConvertTo-Json}
 X 'firewall_status' {Get-NetFirewallProfile|Select-Object Name,Enabled|ConvertTo-Json}
 X 'password_policy' {net accounts|Select-String 'password|lockout'|Out-String}
@@ -2108,8 +2109,8 @@ X 'network_profile' {Get-NetConnectionProfile|Select-Object Name,NetworkCategory
 $x|ConvertTo-Json -Depth 3 -Compress
 """
 
-            # Batch 2: Complex multi-line checks (persistence, policy, config)
-            batch2_ps = batch_header + r"""
+        # Batch 2: Complex multi-line checks (persistence, policy, config)
+        batch2_ps = batch_header + r"""
 X 'wmi_event_persistence' {
 $safe=@('BVTFilter','SCM Event Log Filter');$sus=@()
 $f=Get-WmiObject -Namespace root\subscription -Class __EventFilter -EA SilentlyContinue
@@ -2125,52 +2126,53 @@ X 'registry_run_persistence' {$f=@();foreach($p in @('HKLM:\SOFTWARE\Microsoft\W
 $x|ConvertTo-Json -Depth 3 -Compress
 """
 
-            # Execute both batches (2 WinRM calls instead of 20+)
-            # For scripts > 2KB, use temp file to bypass cmd.exe 8191 char limit
-            # (pywinrm encodes as UTF-16LE base64 via -encodedcommand = ~4x expansion)
-            import base64 as b64mod
-            import hashlib
-            import json as json_module
+        def _run_ps_safe(sess, script, batch_label):
+            """Run PowerShell, using temp file for long scripts."""
+            if len(script) <= 2000:
+                return sess.run_ps(script)
+            script_id = hashlib.md5(script.encode()).hexdigest()[:8]
+            temp_b64 = f"C:\\Windows\\Temp\\msp_scan_{script_id}.b64"
+            encoded = b64mod.b64encode(script.encode('utf-8')).decode('ascii')
+            chunk_size = 6000
+            chunks = [encoded[i:i + chunk_size] for i in range(0, len(encoded), chunk_size)]
+            for i, chunk in enumerate(chunks):
+                op = '>' if i == 0 else '>>'
+                r = sess.run_cmd(f'echo {chunk}{op}"{temp_b64}"')
+                if r.status_code != 0:
+                    logger.warning(f"Failed writing {batch_label} chunk {i}: {r.std_err.decode()[:200]}")
+                    return r
+            decode_run = (
+                f"$r=(Get-Content '{temp_b64}' -Raw) -replace '\\s',''; "
+                f"$b=[Convert]::FromBase64String($r); "
+                f"$s=[Text.Encoding]::UTF8.GetString($b); "
+                f"Remove-Item '{temp_b64}' -Force -EA SilentlyContinue; "
+                f"Invoke-Expression $s"
+            )
+            return sess.run_ps(decode_run)
 
-            def _run_ps_safe(sess, script, batch_label):
-                """Run PowerShell, using temp file for long scripts."""
-                if len(script) <= 2000:
-                    return sess.run_ps(script)
-                # Write base64-encoded script via cmd.exe echo chunks, then decode+execute
-                script_id = hashlib.md5(script.encode()).hexdigest()[:8]
-                temp_b64 = f"C:\\Windows\\Temp\\msp_scan_{script_id}.b64"
-                temp_ps1 = f"C:\\Windows\\Temp\\msp_scan_{script_id}.ps1"
-                encoded = b64mod.b64encode(script.encode('utf-8')).decode('ascii')
-                chunk_size = 6000
-                chunks = [encoded[i:i + chunk_size] for i in range(0, len(encoded), chunk_size)]
-                for i, chunk in enumerate(chunks):
-                    op = '>' if i == 0 else '>>'
-                    r = sess.run_cmd(f'echo {chunk}{op}"{temp_b64}"')
-                    if r.status_code != 0:
-                        logger.warning(f"Failed writing {batch_label} chunk {i}: {r.std_err.decode()[:200]}")
-                        return r
-                # Use Invoke-Expression instead of & to bypass execution policy
-                decode_run = (
-                    f"$r=(Get-Content '{temp_b64}' -Raw) -replace '\\s',''; "
-                    f"$b=[Convert]::FromBase64String($r); "
-                    f"$s=[Text.Encoding]::UTF8.GetString($b); "
-                    f"Remove-Item '{temp_b64}' -Force -EA SilentlyContinue; "
-                    f"Invoke-Expression $s"
-                )
-                return sess.run_ps(decode_run)
+        all_results = {}
+        for batch_idx, batch_ps in enumerate([batch1_ps, batch2_ps], 1):
+            try:
+                batch_result = _run_ps_safe(session, batch_ps, f"batch{batch_idx}")
+                batch_output = batch_result.std_out.decode().strip()
+                if batch_result.status_code != 0 or not batch_output:
+                    logger.warning(f"Windows scan batch {batch_idx} failed on {target.hostname}: {batch_result.std_err.decode()[:200]}")
+                    continue
+                batch_data = json_module.loads(batch_output)
+                all_results.update(batch_data)
+            except Exception as e:
+                logger.warning(f"Windows scan batch {batch_idx} error on {target.hostname}: {e}")
 
-            all_results = {}
-            for batch_idx, batch_ps in enumerate([batch1_ps, batch2_ps], 1):
-                try:
-                    batch_result = _run_ps_safe(session, batch_ps, f"batch{batch_idx}")
-                    batch_output = batch_result.std_out.decode().strip()
-                    if batch_result.status_code != 0 or not batch_output:
-                        logger.warning(f"Windows scan batch {batch_idx} failed on {target.hostname}: {batch_result.std_err.decode()[:200]}")
-                        continue
-                    batch_data = json_module.loads(batch_output)
-                    all_results.update(batch_data)
-                except Exception as e:
-                    logger.warning(f"Windows scan batch {batch_idx} error on {target.hostname}: {e}")
+        return computer_name, all_results
+
+    async def _scan_windows_target(self, target: WindowsTarget):
+        """Run compliance checks on a single Windows target."""
+        try:
+            # Run blocking WinRM calls in a thread to avoid starving
+            # the asyncio event loop (which Linux asyncssh scans need).
+            computer_name, all_results = await asyncio.to_thread(
+                self._scan_windows_target_sync, target
+            )
 
             if not all_results:
                 logger.warning(f"No scan results from {target.hostname}")
@@ -2476,8 +2478,6 @@ $x|ConvertTo-Json -Depth 3 -Compress
                 except Exception as e:
                     logger.warning(f"Windows check {check_name} failed on {target.hostname}: {e}")
 
-        except ImportError:
-            logger.error("pywinrm not installed - Windows scanning disabled")
         except Exception as e:
             logger.error(f"Failed to scan Windows target {target.hostname}: {e}")
 
