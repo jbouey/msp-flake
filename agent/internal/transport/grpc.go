@@ -242,18 +242,34 @@ func (c *GRPCClient) StartDriftStream(ctx context.Context) error {
 
 // readDriftAcks continuously reads DriftAck messages from the server.
 // When a DriftAck contains a HealCommand, it's sent to the HealCmds channel.
+//
+// Captures stream and done references once at start to avoid mutex contention
+// with Close()/Reconnect()/StartDriftStream() — prevents deadlock where Close
+// holds Lock while waiting for streamDone, and this goroutine tries to RLock.
 func (c *GRPCClient) readDriftAcks() {
-	defer close(c.streamDone)
+	// Capture references once — never re-read under lock during the loop
+	c.mu.RLock()
+	stream := c.driftStream
+	done := c.streamDone
+	c.mu.RUnlock()
+
+	defer close(done)
+
+	if stream == nil {
+		return
+	}
+
+	defer func() {
+		// Mark stream as inactive so SendDrift falls back to one-shot.
+		// Only nil our own stream, not a replacement set by StartDriftStream.
+		c.mu.Lock()
+		if c.driftStream == stream {
+			c.driftStream = nil
+		}
+		c.mu.Unlock()
+	}()
 
 	for {
-		c.mu.RLock()
-		stream := c.driftStream
-		c.mu.RUnlock()
-
-		if stream == nil {
-			return
-		}
-
 		ack, err := stream.Recv()
 		if err != nil {
 			if err == io.EOF {
@@ -444,23 +460,32 @@ func (c *GRPCClient) GetAgentID() string {
 	return c.agentID
 }
 
-// Close closes the gRPC connection
+// Close closes the gRPC connection.
+// Releases the mutex before waiting for the ack reader to prevent deadlock.
 func (c *GRPCClient) Close() error {
+	// Grab stream references and nil them under lock
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	stream := c.driftStream
+	done := c.streamDone
+	c.driftStream = nil
+	c.mu.Unlock()
 
-	if c.driftStream != nil {
-		c.driftStream.CloseSend()
-		c.driftStream = nil
+	// Signal stream closure outside of lock (ack reader may hold RLock during Recv)
+	if stream != nil {
+		stream.CloseSend()
 	}
 
-	// Wait for ack reader to exit
-	if c.streamDone != nil {
+	// Wait for ack reader to drain remaining acks and exit
+	if done != nil {
 		select {
-		case <-c.streamDone:
-		case <-time.After(2 * time.Second):
+		case <-done:
+		case <-time.After(5 * time.Second):
+			log.Println("[gRPC] Timed out waiting for drift ack reader to exit")
 		}
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if c.conn != nil {
 		return c.conn.Close()
@@ -468,24 +493,32 @@ func (c *GRPCClient) Close() error {
 	return nil
 }
 
-// Reconnect attempts to reconnect to the appliance
+// Reconnect attempts to reconnect to the appliance.
+// Releases the mutex before waiting for the ack reader to prevent deadlock.
 func (c *GRPCClient) Reconnect(ctx context.Context) error {
+	// Close stream outside of lock to avoid deadlock with ack reader
+	c.mu.Lock()
+	stream := c.driftStream
+	done := c.streamDone
+	c.driftStream = nil
+	c.mu.Unlock()
+
+	if stream != nil {
+		stream.CloseSend()
+	}
+
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			log.Println("[gRPC] Timed out waiting for drift ack reader to exit")
+		}
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.driftStream != nil {
-		c.driftStream.CloseSend()
-		c.driftStream = nil
-	}
-
-	// Wait for ack reader to exit
-	if c.streamDone != nil {
-		select {
-		case <-c.streamDone:
-		case <-time.After(2 * time.Second):
-		}
-		c.streamDone = nil
-	}
+	c.streamDone = nil
 
 	if c.conn != nil {
 		c.conn.Close()

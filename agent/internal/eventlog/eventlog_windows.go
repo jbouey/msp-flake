@@ -133,6 +133,10 @@ func (w *Watcher) Start() error {
 		}
 	}
 
+	if len(w.subscriptions) == 0 {
+		return fmt.Errorf("failed to subscribe to any event log channels")
+	}
+
 	w.running = true
 	log.Printf("[EventLog] Monitoring %d event channels for real-time compliance detection", len(w.subscriptions))
 	return nil

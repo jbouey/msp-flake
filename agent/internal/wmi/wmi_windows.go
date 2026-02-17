@@ -6,7 +6,6 @@ package wmi
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	"github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
@@ -113,6 +112,9 @@ func queryWindows(ctx context.Context, namespace, query string) ([]QueryResult, 
 			default:
 				val = valRaw.Value()
 			}
+
+			// Free VARIANT resources (BSTR strings, COM references)
+			valRaw.Clear()
 
 			qr[propName] = val
 		}
@@ -280,17 +282,30 @@ func registryKeyExistsWindows(ctx context.Context, hive uint32, subKey string) (
 	reg := regRaw.ToIDispatch()
 	defer reg.Release()
 
-	// Call EnumKey - if it succeeds, the key exists
-	_, err = oleutil.CallMethod(reg, "EnumKey", hive, subKey)
+	// Call EnumKey and check ReturnValue (0=exists, 2=not found, 5=access denied)
+	outParams, err := oleutil.CallMethod(reg, "EnumKey", hive, subKey)
 	if err != nil {
-		// Key doesn't exist
-		return false, nil
+		return false, fmt.Errorf("EnumKey COM call failed: %w", err)
 	}
 
-	return true, nil
+	out := outParams.ToIDispatch()
+	defer out.Release()
+
+	retValRaw, err := oleutil.GetProperty(out, "ReturnValue")
+	if err != nil {
+		return false, fmt.Errorf("failed to get EnumKey ReturnValue: %w", err)
+	}
+
+	retVal := int(retValRaw.Val)
+	retValRaw.Clear()
+
+	switch retVal {
+	case 0:
+		return true, nil
+	case 2:
+		return false, nil // Key not found
+	default:
+		return false, fmt.Errorf("EnumKey returned error code %d for key %s", retVal, subKey)
+	}
 }
 
-// Helper to convert string to int (for registry string values that are actually numbers)
-func parseRegistryInt(s string) (int, error) {
-	return strconv.Atoi(s)
-}

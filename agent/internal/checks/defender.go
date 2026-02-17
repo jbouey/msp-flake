@@ -4,6 +4,7 @@ package checks
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/osiriscare/agent/internal/wmi"
@@ -103,20 +104,33 @@ func (c *DefenderCheck) Run(ctx context.Context) CheckResult {
 	return result
 }
 
-// parseDMTDate parses WMI DMT format date string
+// parseDMTDate parses WMI CIM_DATETIME format: yyyymmddHHMMSS.ffffff±UUU
+// where UUU is the UTC offset in minutes (e.g., +000=UTC, -300=EST).
 func parseDMTDate(dmt string) (time.Time, error) {
-	// DMT format: yyyymmddHHMMSS.ffffff+000 or yyyymmddHHMMSS.ffffff-000
 	if len(dmt) < 14 {
 		return time.Time{}, fmt.Errorf("invalid DMT format")
 	}
 
-	// Extract basic parts
 	layout := "20060102150405"
 	dateStr := dmt[:14]
 
 	t, err := time.Parse(layout, dateStr)
 	if err != nil {
 		return time.Time{}, err
+	}
+
+	// Parse UTC offset: position 21 is sign, 22-24 is minutes offset
+	if len(dmt) >= 25 {
+		sign := dmt[21]
+		if sign == '+' || sign == '-' {
+			if minutes, parseErr := strconv.Atoi(dmt[22:25]); parseErr == nil {
+				if sign == '-' {
+					minutes = -minutes
+				}
+				loc := time.FixedZone("WMI", minutes*60)
+				t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc)
+			}
+		}
 	}
 
 	return t, nil
