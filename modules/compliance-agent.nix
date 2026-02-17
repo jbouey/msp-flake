@@ -436,6 +436,11 @@ in
         Group = "compliance-agent";
         Restart = "always";
         RestartSec = "10s";
+        StartLimitIntervalSec = 300;
+        StartLimitBurst = 5;
+        MemoryMax = "512M";
+        CPUQuota = "80%";
+        LimitNOFILE = 4096;
 
         # Hot-update overlay: if /var/lib/msp/agent-overlay exists,
         # prepend it to PYTHONPATH so updated code takes priority
@@ -575,6 +580,11 @@ in
         Group = "mcp-server";
         Restart = "always";
         RestartSec = "5s";
+        StartLimitIntervalSec = 300;
+        StartLimitBurst = 5;
+        MemoryMax = "256M";
+        CPUQuota = "50%";
+        LimitNOFILE = 2048;
 
         ExecStart = "${pkgs.python311.withPackages (ps: with ps; [ fastapi uvicorn redis aiohttp pyyaml pydantic ])}/bin/python -m uvicorn mcp_server:app --host 127.0.0.1 --port ${toString cfg.mcpServer.port}";
         WorkingDirectory = "/var/lib/mcp-server";
@@ -684,6 +694,11 @@ in
         Group = "compliance-agent";
         Restart = "always";
         RestartSec = "5s";
+        StartLimitIntervalSec = 300;
+        StartLimitBurst = 5;
+        MemoryMax = "256M";
+        CPUQuota = "50%";
+        LimitNOFILE = 2048;
 
         ExecStart = "${cfg.package}/bin/compliance-web --host ${cfg.webUI.bindAddress} --port ${toString cfg.webUI.port} --evidence-dir /var/lib/compliance-agent/evidence --db-path /var/lib/compliance-agent/incidents.db --site-id ${cfg.siteId} --host-id ${cfg.hostId}";
 

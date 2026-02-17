@@ -378,9 +378,9 @@ EOF
     useDHCP = true;
     firewall = {
       enable = true;
-      # 80=status, 22=ssh, 8080=compliance-agent, 50051=grpc
-      # 8081=scanner-api, 8082=go-agent, 8083=local-portal
-      allowedTCPPorts = [ 80 22 8080 50051 8081 8082 8083 ];
+      # 22=ssh, 80=status, 8080=compliance-agent-sensor, 50051=grpc, 8083=local-portal
+      # 8081 (scanner-api) and 8082 (go-agent-metrics) bind to localhost only
+      allowedTCPPorts = [ 22 80 8080 50051 8083 ];
       allowedUDPPorts = [ 5353 ];
     };
   };
@@ -427,16 +427,17 @@ EOF
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = lib.mkForce "yes";  # Enabled for lab management
-      PasswordAuthentication = lib.mkForce true;  # Password auth for emergency access
+      PermitRootLogin = lib.mkForce "prohibit-password";  # Key-only — no password login
+      PasswordAuthentication = lib.mkForce false;  # Disabled for security
       KbdInteractiveAuthentication = lib.mkForce false;
     };
   };
 
-  # Root password for console/SSH access (lab + emergency)
-  users.users.root.initialPassword = "osiris2024";
+  # Lab-only initial password — production builds MUST override via SOPS secrets
+  # This is set as mkDefault so production configs can override it to null
+  users.users.root.initialPassword = lib.mkDefault "osiris2024";
 
-  # Lab management SSH key + per-site keys provisioned via config.yaml or central API
+  # Lab SSH keys — production appliances receive keys via Central Command provisioning API
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE8uV6E//e4fQXlDEMoE0uADd/nAzKwqA0btaoHc28Bl macs-imac-vm-access"
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"

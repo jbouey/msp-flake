@@ -600,6 +600,7 @@ in
     description = "OsirisCare Compliance Agent";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "msp-auto-provision.service" "msp-health-gate.service" ];
+    requires = [ "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
 
     serviceConfig = {
@@ -638,6 +639,7 @@ in
     description = "MSP Network Scanner (EYES) - Device Discovery";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "msp-auto-provision.service" ];
+    requires = [ "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
 
     serviceConfig = {
