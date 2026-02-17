@@ -2149,12 +2149,13 @@ $x|ConvertTo-Json -Depth 3 -Compress
                     if r.status_code != 0:
                         logger.warning(f"Failed writing {batch_label} chunk {i}: {r.std_err.decode()[:200]}")
                         return r
+                # Use Invoke-Expression instead of & to bypass execution policy
                 decode_run = (
                     f"$r=(Get-Content '{temp_b64}' -Raw) -replace '\\s',''; "
                     f"$b=[Convert]::FromBase64String($r); "
-                    f"[IO.File]::WriteAllText('{temp_ps1}',[Text.Encoding]::UTF8.GetString($b)); "
+                    f"$s=[Text.Encoding]::UTF8.GetString($b); "
                     f"Remove-Item '{temp_b64}' -Force -EA SilentlyContinue; "
-                    f"try {{ & '{temp_ps1}' }} finally {{ Remove-Item '{temp_ps1}' -Force -EA SilentlyContinue }}"
+                    f"Invoke-Expression $s"
                 )
                 return sess.run_ps(decode_run)
 
