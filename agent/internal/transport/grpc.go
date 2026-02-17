@@ -55,7 +55,11 @@ type GRPCClient struct {
 
 // NewGRPCClient creates a new gRPC client
 func NewGRPCClient(ctx context.Context, cfg *config.Config) (*GRPCClient, error) {
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		log.Printf("[gRPC] WARNING: failed to get hostname: %v", err)
+		hostname = "unknown"
+	}
 
 	client := &GRPCClient{
 		hostname:     hostname,
@@ -190,7 +194,7 @@ func (c *GRPCClient) Register(ctx context.Context) (*pb.RegisterResponse, error)
 		if err := c.connect(ctx); err != nil {
 			return nil, fmt.Errorf("mTLS reconnect failed: %w", err)
 		}
-		log.Println("[gRPC] Reconnected with mTLS")
+		log.Printf("[gRPC] Reconnected with mTLS (agent_id=%s)", c.agentID)
 	}
 
 	return resp, nil

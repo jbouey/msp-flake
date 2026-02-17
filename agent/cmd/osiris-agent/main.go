@@ -271,9 +271,12 @@ func runHealExecutor(ctx context.Context, client *transport.GRPCClient) {
 }
 
 // runHeartbeatLoop sends periodic heartbeats to the appliance.
+// Also attempts to re-establish the drift stream if it has disconnected.
 func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
+
+	streamRetryCount := 0
 
 	log.Println("[heartbeat] Heartbeat loop started (60s interval)")
 	for {
@@ -289,6 +292,23 @@ func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient) {
 			}
 			if resp.ConfigChanged {
 				log.Println("[heartbeat] Config changed — re-registration needed")
+			}
+
+			// Re-establish drift stream if it has disconnected
+			if !client.StreamActive() && client.IsConnected() {
+				streamRetryCount++
+				// Retry every 5th heartbeat (~5 min) to avoid hammering
+				if streamRetryCount%5 == 0 {
+					log.Println("[heartbeat] Drift stream inactive, attempting to re-establish...")
+					if err := client.StartDriftStream(ctx); err != nil {
+						log.Printf("[heartbeat] Failed to re-establish drift stream: %v", err)
+					} else {
+						log.Println("[heartbeat] Drift stream re-established")
+						streamRetryCount = 0
+					}
+				}
+			} else {
+				streamRetryCount = 0
 			}
 		}
 	}

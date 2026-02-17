@@ -363,9 +363,17 @@ class AutoHealer:
         if self.level1:
             result = await self._try_level1(incident, site_id, host_id, raw_data)
             if result:
-                # Only track flap on successful healing (real resolve→recur cycle)
+                # Only track flap on successful healing (real resolve→recur cycle).
+                # Skip flap tracking for gpo_managed rules — these are expected
+                # to recur because Group Policy re-applies settings every ~90 min.
                 if result.success:
-                    self._track_flap(circuit_key)
+                    matched_rule = self._find_matched_rule(incident.incident_type, severity, raw_data)
+                    if matched_rule and matched_rule.gpo_managed:
+                        logger.debug(
+                            f"Skipping flap tracking for GPO-managed rule {matched_rule.id}"
+                        )
+                    else:
+                        self._track_flap(circuit_key)
                 return result
 
         # Try Level 2 - LLM Planner
@@ -394,6 +402,18 @@ class AutoHealer:
             resolution_time_ms=duration_ms,
             error="No healing levels enabled"
         )
+
+    def _find_matched_rule(self, incident_type: str, severity: str, raw_data: Dict[str, Any]):
+        """Look up the L1 rule that would match this incident (for gpo_managed check)."""
+        if not self.level1:
+            return None
+        match = self.level1.match(
+            incident_id="lookup",
+            incident_type=incident_type,
+            severity=severity,
+            data=raw_data
+        )
+        return match.rule if match else None
 
     async def _try_level1(
         self,

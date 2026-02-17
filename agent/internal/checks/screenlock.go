@@ -94,27 +94,36 @@ func (c *ScreenLockCheck) Run(ctx context.Context) CheckResult {
 	return result
 }
 
-// checkScreenSaverSettings checks screen saver configuration
+// checkScreenSaverSettings checks screen saver configuration.
+// Checks both HKLM policy path (where Group Policy / healing writes) and HKCU
+// user settings. HKLM policy takes precedence when present.
 func checkScreenSaverSettings(ctx context.Context) (active bool, timeoutSeconds int, passwordProtected bool, err error) {
-	// Query registry for screen saver settings
-	// HKCU\Control Panel\Desktop
+	// First check HKLM machine policy (set by GPO and healing scripts)
+	policyPath := `SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`
+	policyTimeout, policyErr := wmi.GetRegistryDWORD(ctx, wmi.HKEY_LOCAL_MACHINE, policyPath, "InactivityTimeoutSecs")
+	if policyErr == nil && policyTimeout > 0 {
+		// Machine policy is enforced — this is the authoritative source
+		active = true
+		timeoutSeconds = int(policyTimeout)
+		passwordProtected = true // Machine policy implies password on resume
+		return active, timeoutSeconds, passwordProtected, nil
+	}
+
+	// Fall back to HKCU user settings
 	desktopPath := `Control Panel\Desktop`
 
 	// ScreenSaveActive: "1" = enabled, "0" = disabled
-	activeStr, err := wmi.GetRegistryString(ctx, wmi.HKEY_CURRENT_USER, desktopPath, "ScreenSaveActive")
-	if err != nil {
-		// If we can't read, try checking if screen saver is set at all
+	activeStr, readErr := wmi.GetRegistryString(ctx, wmi.HKEY_CURRENT_USER, desktopPath, "ScreenSaveActive")
+	if readErr != nil {
 		activeStr = "0"
 	}
 	active = (activeStr == "1")
 
 	// ScreenSaveTimeOut: timeout in seconds (stored as string)
-	timeoutStr, err := wmi.GetRegistryString(ctx, wmi.HKEY_CURRENT_USER, desktopPath, "ScreenSaveTimeOut")
-	if err != nil {
-		// Default to 0 if not set (no timeout configured)
+	timeoutStr, readErr := wmi.GetRegistryString(ctx, wmi.HKEY_CURRENT_USER, desktopPath, "ScreenSaveTimeOut")
+	if readErr != nil {
 		timeoutSeconds = 0
 	} else {
-		// Parse the timeout value
 		if t, parseErr := parseTimeoutString(timeoutStr); parseErr == nil {
 			timeoutSeconds = t
 		} else {
@@ -123,9 +132,8 @@ func checkScreenSaverSettings(ctx context.Context) (active bool, timeoutSeconds 
 	}
 
 	// ScreenSaverIsSecure: "1" = password required, "0" = no password
-	secureStr, err := wmi.GetRegistryString(ctx, wmi.HKEY_CURRENT_USER, desktopPath, "ScreenSaverIsSecure")
-	if err != nil {
-		// If not set, assume no password protection
+	secureStr, readErr := wmi.GetRegistryString(ctx, wmi.HKEY_CURRENT_USER, desktopPath, "ScreenSaverIsSecure")
+	if readErr != nil {
 		passwordProtected = false
 	} else {
 		passwordProtected = (secureStr == "1")

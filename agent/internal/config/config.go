@@ -3,6 +3,7 @@ package config
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 )
@@ -43,7 +44,9 @@ func Load(configFile, applianceAddr string) (*Config, error) {
 	if configFile != "" {
 		data, err := os.ReadFile(configFile)
 		if err == nil {
-			json.Unmarshal(data, cfg)
+			if jsonErr := json.Unmarshal(data, cfg); jsonErr != nil {
+				log.Printf("[config] WARNING: failed to parse %s: %v", configFile, jsonErr)
+			}
 		}
 	}
 
@@ -51,7 +54,9 @@ func Load(configFile, applianceAddr string) (*Config, error) {
 	if cfg.ApplianceAddr == "" {
 		defaultConfig := filepath.Join(cfg.DataDir, "config.json")
 		if data, err := os.ReadFile(defaultConfig); err == nil {
-			json.Unmarshal(data, cfg)
+			if jsonErr := json.Unmarshal(data, cfg); jsonErr != nil {
+				log.Printf("[config] WARNING: failed to parse %s: %v", defaultConfig, jsonErr)
+			}
 		}
 	}
 

@@ -41,7 +41,16 @@ func DiscoverAppliance(domain string) (string, error) {
 }
 
 // DiscoverApplianceWithRetry retries SRV discovery with linear backoff.
+// maxRetries is clamped to [1, 10] and backoff is capped at 60s.
 func DiscoverApplianceWithRetry(domain string, maxRetries int) (string, error) {
+	if maxRetries < 1 {
+		maxRetries = 1
+	} else if maxRetries > 10 {
+		maxRetries = 10
+	}
+
+	const maxDelay = 60 * time.Second
+
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {
 		addr, err := DiscoverAppliance(domain)
@@ -51,6 +60,9 @@ func DiscoverApplianceWithRetry(domain string, maxRetries int) (string, error) {
 		lastErr = err
 		if i < maxRetries-1 {
 			delay := RetryDelay * time.Duration(i+1)
+			if delay > maxDelay {
+				delay = maxDelay
+			}
 			log.Printf("[discovery] SRV lookup attempt %d/%d failed: %v, retrying in %v", i+1, maxRetries, err, delay)
 			time.Sleep(delay)
 		}

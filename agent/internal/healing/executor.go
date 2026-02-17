@@ -16,8 +16,10 @@ import (
 // Execute runs a HealCommand and returns the result.
 func Execute(ctx context.Context, cmd *pb.HealCommand) *Result {
 	timeout := time.Duration(cmd.TimeoutSeconds) * time.Second
-	if timeout == 0 {
+	if timeout <= 0 {
 		timeout = 60 * time.Second
+	} else if timeout > 10*time.Minute {
+		timeout = 10 * time.Minute
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -54,8 +56,10 @@ func Execute(ctx context.Context, cmd *pb.HealCommand) *Result {
 }
 
 // runPS executes a PowerShell command and returns stdout+stderr.
+// Uses -ErrorAction Stop so PowerShell script errors propagate as non-zero exit.
 func runPS(ctx context.Context, script string) (string, error) {
-	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	wrappedScript := "$ErrorActionPreference='Stop'; " + script
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", wrappedScript)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }

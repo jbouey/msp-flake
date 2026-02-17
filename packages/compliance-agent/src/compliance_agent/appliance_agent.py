@@ -1519,9 +1519,13 @@ class ApplianceAgent:
         try:
             from .runbooks.windows.executor import WindowsExecutor
 
-            # Create executor and run the runbook
-            executor = WindowsExecutor(targets=[target])
-            results = await executor.run_runbook(
+            # Reuse centralized executor to share WinRM session cache
+            # (avoids shell quota exhaustion from creating fresh sessions)
+            if not self.windows_executor:
+                self.windows_executor = WindowsExecutor(targets=[target])
+            elif target.hostname not in self.windows_executor.targets:
+                self.windows_executor.add_target(target)
+            results = await self.windows_executor.run_runbook(
                 target=target,
                 runbook_id=runbook_id,
                 phases=phases,

@@ -111,6 +111,7 @@ class Rule:
     cooldown_seconds: int = 300
     max_retries: int = 1
     source: str = "builtin"  # builtin, custom, promoted
+    gpo_managed: bool = False  # Skip flap detection for settings controlled by Group Policy
 
     def matches(self, incident_type: str, severity: str, data: Dict[str, Any]) -> bool:
         """Check if this rule matches an incident."""
@@ -152,7 +153,8 @@ class Rule:
             priority=yaml_data.get("priority", 100),
             cooldown_seconds=yaml_data.get("cooldown_seconds", 300),
             max_retries=yaml_data.get("max_retries", 1),
-            source=source
+            source=source,
+            gpo_managed=yaml_data.get("gpo_managed", False),
         )
 
     @classmethod
@@ -190,7 +192,8 @@ class Rule:
             priority=json_data.get("priority", 5),  # Read from JSON, default 5 (higher than built-in 10)
             cooldown_seconds=json_data.get("cooldown_seconds", 300),
             max_retries=json_data.get("max_retries", 1),
-            source="synced"
+            source="synced",
+            gpo_managed=json_data.get("gpo_managed", False),
         )
 
     def to_yaml(self) -> Dict[str, Any]:
@@ -215,7 +218,8 @@ class Rule:
             "priority": self.priority,
             "cooldown_seconds": self.cooldown_seconds,
             "max_retries": self.max_retries,
-            "source": self.source
+            "source": self.source,
+            "gpo_managed": self.gpo_managed,
         }
 
 
@@ -486,7 +490,8 @@ class DeterministicEngine:
                 action_params={"runbook_id": "RB-WIN-SEC-001", "phases": ["remediate", "verify"]},
                 hipaa_controls=["164.312(e)(1)"],
                 priority=5,
-                source="builtin"
+                source="builtin",
+                gpo_managed=True,
             ),
 
             # Windows audit policy drift
@@ -502,7 +507,8 @@ class DeterministicEngine:
                 action_params={"runbook_id": "RB-WIN-SEC-002", "phases": ["remediate", "verify"]},
                 hipaa_controls=["164.312(b)"],
                 priority=5,
-                source="builtin"
+                source="builtin",
+                gpo_managed=True,
             ),
 
             # Encryption volume issue - escalate (no auto-fix)
@@ -837,7 +843,8 @@ class DeterministicEngine:
                 action_params={"runbook_id": "RB-WIN-SVC-001", "phases": ["remediate", "verify"]},
                 hipaa_controls=["164.308(a)(5)(ii)(B)"],
                 priority=10,
-                source="builtin"
+                source="builtin",
+                gpo_managed=True,
             ),
 
             # Windows network profile on Public (should be Private/Domain)
@@ -853,7 +860,8 @@ class DeterministicEngine:
                 action_params={"runbook_id": "RB-WIN-NET-003", "phases": ["remediate", "verify"]},
                 hipaa_controls=["164.312(e)(1)"],
                 priority=8,
-                source="builtin"
+                source="builtin",
+                gpo_managed=True,
             ),
 
             # Windows screen lock not enforced
@@ -869,7 +877,8 @@ class DeterministicEngine:
                 action_params={"runbook_id": "RB-WIN-SEC-016", "phases": ["remediate", "verify"]},
                 hipaa_controls=["164.312(a)(2)(iii)"],
                 priority=8,
-                source="builtin"
+                source="builtin",
+                gpo_managed=True,
             ),
 
             # Windows BitLocker disabled
@@ -933,7 +942,8 @@ class DeterministicEngine:
                 action_params={"runbook_id": "RB-WIN-SEC-017", "phases": ["remediate", "verify"]},
                 hipaa_controls=["164.308(a)(5)(ii)(B)", "164.312(b)"],
                 priority=5,
-                source="builtin"
+                source="builtin",
+                gpo_managed=True,
             ),
 
             # Suspicious scheduled task persistence
