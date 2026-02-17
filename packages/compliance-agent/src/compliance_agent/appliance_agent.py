@@ -2088,41 +2088,41 @@ class ApplianceAgent:
             # Run compliance checks in 2 batched WinRM calls (was 20+ calls).
             # Split into 2 batches to stay under cmd.exe 8191 char limit.
             # Each batch collects results as JSON with {check: {o:output, c:code}}.
-            batch_header = "$r=@{};function R($n,$s){try{$o=& $s 2>$null;$r[$n]=@{o=[string]$o;c=0}}catch{$r[$n]=@{o=$_.Exception.Message;c=1}}}\n"
+            batch_header = "$x=@{};function X($n,$s){try{$o=& $s 2>$null;$x[$n]=@{o=[string]$o;c=0}}catch{$x[$n]=@{o=$_.Exception.Message;c=1}}}\n"
 
             # Batch 1: Simple one-liner checks (services, firewall, SMB, etc)
             batch1_ps = batch_header + r"""
-R 'windows_defender' {$s=Get-MpComputerStatus;@{Enabled=$s.AntivirusEnabled;RealTimeEnabled=$s.RealTimeProtectionEnabled;Updated=$s.AntivirusSignatureLastUpdated}|ConvertTo-Json}
-R 'firewall_status' {Get-NetFirewallProfile|Select-Object Name,Enabled|ConvertTo-Json}
-R 'password_policy' {net accounts|Select-String 'password|lockout'|Out-String}
-R 'bitlocker_status' {Get-BitLockerVolume -MountPoint C: -EA SilentlyContinue|Select-Object MountPoint,ProtectionStatus|ConvertTo-Json}
-R 'audit_policy' {auditpol /get /subcategory:'Logon'|Out-String}
-R 'service_w32time' {Get-Service W32Time -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
-R 'service_dns' {Get-Service DNS -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
-R 'service_spooler' {Get-Service Spooler -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
-R 'service_wuauserv' {Get-Service wuauserv -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
-R 'service_netlogon' {Get-Service Netlogon -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
-R 'smb_signing' {Get-SmbServerConfiguration|Select-Object RequireSecuritySignature|ConvertTo-Json}
-R 'smb1_protocol' {Get-SmbServerConfiguration|Select-Object EnableSMB1Protocol|ConvertTo-Json}
-R 'network_profile' {Get-NetConnectionProfile|Select-Object Name,NetworkCategory,InterfaceAlias|ConvertTo-Json}
-$r|ConvertTo-Json -Depth 3 -Compress
+X 'windows_defender' {$s=Get-MpComputerStatus;@{Enabled=$s.AntivirusEnabled;RealTimeEnabled=$s.RealTimeProtectionEnabled;Updated=$s.AntivirusSignatureLastUpdated}|ConvertTo-Json}
+X 'firewall_status' {Get-NetFirewallProfile|Select-Object Name,Enabled|ConvertTo-Json}
+X 'password_policy' {net accounts|Select-String 'password|lockout'|Out-String}
+X 'bitlocker_status' {Get-BitLockerVolume -MountPoint C: -EA SilentlyContinue|Select-Object MountPoint,ProtectionStatus|ConvertTo-Json}
+X 'audit_policy' {auditpol /get /subcategory:'Logon'|Out-String}
+X 'service_w32time' {Get-Service W32Time -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
+X 'service_dns' {Get-Service DNS -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
+X 'service_spooler' {Get-Service Spooler -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
+X 'service_wuauserv' {Get-Service wuauserv -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
+X 'service_netlogon' {Get-Service Netlogon -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
+X 'smb_signing' {Get-SmbServerConfiguration|Select-Object RequireSecuritySignature|ConvertTo-Json}
+X 'smb1_protocol' {Get-SmbServerConfiguration|Select-Object EnableSMB1Protocol|ConvertTo-Json}
+X 'network_profile' {Get-NetConnectionProfile|Select-Object Name,NetworkCategory,InterfaceAlias|ConvertTo-Json}
+$x|ConvertTo-Json -Depth 3 -Compress
 """
 
             # Batch 2: Complex multi-line checks (persistence, policy, config)
             batch2_ps = batch_header + r"""
-R 'wmi_event_persistence' {
+X 'wmi_event_persistence' {
 $safe=@('BVTFilter','SCM Event Log Filter');$sus=@()
 $f=Get-WmiObject -Namespace root\subscription -Class __EventFilter -EA SilentlyContinue
-foreach($x in $f){if($x.Name -notin $safe -and $x.Name -notlike 'Microsoft-Windows-*'){$sus+=@{Name=$x.Name;Type='Filter'}}}
-foreach($c in @('CommandLineEventConsumer','ActiveScriptEventConsumer')){$cs=Get-WmiObject -Namespace root\subscription -Class $c -EA SilentlyContinue;foreach($x in $cs){if($x.Name -notin $safe){$sus+=@{Name=$x.Name;Type=$c}}}}
+foreach($i in $f){if($i.Name -notin $safe -and $i.Name -notlike 'Microsoft-Windows-*'){$sus+=@{Name=$i.Name;Type='Filter'}}}
+foreach($c in @('CommandLineEventConsumer','ActiveScriptEventConsumer')){$cs=Get-WmiObject -Namespace root\subscription -Class $c -EA SilentlyContinue;foreach($i in $cs){if($i.Name -notin $safe){$sus+=@{Name=$i.Name;Type=$c}}}}
 @{SuspiciousCount=$sus.Count;Items=$sus}|ConvertTo-Json -Compress}
-R 'dns_config' {$a=Get-NetAdapter|?{$_.Status -eq 'Up'}|Select -First 1;$d=(Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4).ServerAddresses;$e=@('192.168.88.250','192.168.88.1','127.0.0.1');$h=@();foreach($x in $d){if($e -notcontains $x){$h+=$x}};@{Servers=$d;Hijacked=$h;Compliant=($h.Count -eq 0)}|ConvertTo-Json -Compress}
-R 'screen_lock_policy' {$r2=@{Compliant=$true;Details=@()};$k='HKCU:\Control Panel\Desktop';$t=(Get-ItemProperty $k -Name 'ScreenSaveTimeOut' -EA SilentlyContinue).ScreenSaveTimeOut;$a=(Get-ItemProperty $k -Name 'ScreenSaveActive' -EA SilentlyContinue).ScreenSaveActive;$s=(Get-ItemProperty $k -Name 'ScreenSaverIsSecure' -EA SilentlyContinue).ScreenSaverIsSecure;if(-not $t -or [int]$t -gt 900 -or [int]$t -eq 0){$r2.Compliant=$false;$r2.Details+="Timeout=$t"};if($a -ne '1'){$r2.Compliant=$false;$r2.Details+="Active=$a"};if($s -ne '1'){$r2.Compliant=$false;$r2.Details+="Secure=$s"};$r2|ConvertTo-Json -Compress}
-R 'defender_exclusions' {$p=Get-MpPreference -EA SilentlyContinue;$sus=@();$bp=@('C:\Windows\Temp','C:\Temp','C:\Users\Public','C:\ProgramData');$be=@('exe','dll','bat','cmd','ps1','vbs','js','scr');foreach($x in @($p.ExclusionPath|?{$_})){foreach($b in $bp){if($x -like "$b*"){$sus+=@{Type='path';Value=$x};break}}};foreach($x in @($p.ExclusionExtension|?{$_})){$n=$x.TrimStart('.');if($be -contains $n){$sus+=@{Type='ext';Value=$n}}};@{SuspiciousCount=$sus.Count;Items=$sus}|ConvertTo-Json -Compress}
-R 'backup_status' {try{$w=Get-WBSummary -EA Stop;if($w.LastSuccessfulBackupTime){$a=(Get-Date)-$w.LastSuccessfulBackupTime;@{BackupType='WindowsServerBackup';BackupAgeHours=[math]::Round($a.TotalHours,1)}|ConvertTo-Json}else{@{BackupType='WindowsServerBackup';Error='NoBackupConfigured'}|ConvertTo-Json}}catch{@{BackupType='NotInstalled';Error=$_.Exception.Message}|ConvertTo-Json}}
-R 'scheduled_task_persistence' {$sus=Get-ScheduledTask -EA SilentlyContinue|?{$_.TaskName -notmatch '^(Microsoft|Google|Adobe|Mozilla|OneDrive|MicrosoftEdge|Optimize|Scheduled|User_Feed|CreateExplorerShellUnelevatedTask)' -and $_.TaskPath -eq '\' -and $_.State -ne 'Disabled'}|%{$a=($_.Actions|Select -First 1).Execute;if($a -and $a -notmatch '(svchost|taskhost|consent|SystemSettings|WindowsUpdate|defrag|SilentCleanup)'){@{TaskName=$_.TaskName;Execute=$a;State=$_.State.ToString()}}};if($sus){$sus|ConvertTo-Json -Compress}else{'[]'}}
-R 'registry_run_persistence' {$f=@();foreach($p in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce')){$props=Get-ItemProperty $p -EA SilentlyContinue;if($props){$props.PSObject.Properties|?{$_.Name -notmatch '^(PS|VMware|SecurityHealth|RealTimeProtection|Windows)' -and $_.Value -match '\.(exe|bat|cmd|ps1|vbs|js)' -and $_.Value -notmatch '(Program Files|Windows|Microsoft|VMware)'}|%{$f+=@{Name=$_.Name;Value=$_.Value;Path=$p}}}};if($f.Count -gt 0){$f|ConvertTo-Json -Compress}else{'[]'}}
-$r|ConvertTo-Json -Depth 3 -Compress
+X 'dns_config' {$a=Get-NetAdapter|?{$_.Status -eq 'Up'}|Select -First 1;$d=(Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4).ServerAddresses;$e=@('192.168.88.250','192.168.88.1','127.0.0.1');$h=@();foreach($i in $d){if($e -notcontains $i){$h+=$i}};@{Servers=$d;Hijacked=$h;Compliant=($h.Count -eq 0)}|ConvertTo-Json -Compress}
+X 'screen_lock_policy' {$r2=@{Compliant=$true;Details=@()};$k='HKCU:\Control Panel\Desktop';$t=(Get-ItemProperty $k -Name 'ScreenSaveTimeOut' -EA SilentlyContinue).ScreenSaveTimeOut;$a=(Get-ItemProperty $k -Name 'ScreenSaveActive' -EA SilentlyContinue).ScreenSaveActive;$s=(Get-ItemProperty $k -Name 'ScreenSaverIsSecure' -EA SilentlyContinue).ScreenSaverIsSecure;if(-not $t -or [int]$t -gt 900 -or [int]$t -eq 0){$r2.Compliant=$false;$r2.Details+="Timeout=$t"};if($a -ne '1'){$r2.Compliant=$false;$r2.Details+="Active=$a"};if($s -ne '1'){$r2.Compliant=$false;$r2.Details+="Secure=$s"};$r2|ConvertTo-Json -Compress}
+X 'defender_exclusions' {$p=Get-MpPreference -EA SilentlyContinue;$sus=@();$bp=@('C:\Windows\Temp','C:\Temp','C:\Users\Public','C:\ProgramData');$be=@('exe','dll','bat','cmd','ps1','vbs','js','scr');foreach($i in @($p.ExclusionPath|?{$_})){foreach($b in $bp){if($i -like "$b*"){$sus+=@{Type='path';Value=$i};break}}};foreach($i in @($p.ExclusionExtension|?{$_})){$n=$i.TrimStart('.');if($be -contains $n){$sus+=@{Type='ext';Value=$n}}};@{SuspiciousCount=$sus.Count;Items=$sus}|ConvertTo-Json -Compress}
+X 'backup_status' {try{$w=Get-WBSummary -EA Stop;if($w.LastSuccessfulBackupTime){$a=(Get-Date)-$w.LastSuccessfulBackupTime;@{BackupType='WindowsServerBackup';BackupAgeHours=[math]::Round($a.TotalHours,1)}|ConvertTo-Json}else{@{BackupType='WindowsServerBackup';Error='NoBackupConfigured'}|ConvertTo-Json}}catch{@{BackupType='NotInstalled';Error=$_.Exception.Message}|ConvertTo-Json}}
+X 'scheduled_task_persistence' {$sus=Get-ScheduledTask -EA SilentlyContinue|?{$_.TaskName -notmatch '^(Microsoft|Google|Adobe|Mozilla|OneDrive|MicrosoftEdge|Optimize|Scheduled|User_Feed|CreateExplorerShellUnelevatedTask)' -and $_.TaskPath -eq '\' -and $_.State -ne 'Disabled'}|%{$a=($_.Actions|Select -First 1).Execute;if($a -and $a -notmatch '(svchost|taskhost|consent|SystemSettings|WindowsUpdate|defrag|SilentCleanup)'){@{TaskName=$_.TaskName;Execute=$a;State=$_.State.ToString()}}};if($sus){$sus|ConvertTo-Json -Compress}else{'[]'}}
+X 'registry_run_persistence' {$f=@();foreach($p in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce')){$props=Get-ItemProperty $p -EA SilentlyContinue;if($props){$props.PSObject.Properties|?{$_.Name -notmatch '^(PS|VMware|SecurityHealth|RealTimeProtection|Windows)' -and $_.Value -match '\.(exe|bat|cmd|ps1|vbs|js)' -and $_.Value -notmatch '(Program Files|Windows|Microsoft|VMware)'}|%{$f+=@{Name=$_.Name;Value=$_.Value;Path=$p}}}};if($f.Count -gt 0){$f|ConvertTo-Json -Compress}else{'[]'}}
+$x|ConvertTo-Json -Depth 3 -Compress
 """
 
             # Execute both batches (2 WinRM calls instead of 20+)
