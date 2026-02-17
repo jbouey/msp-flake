@@ -47,6 +47,34 @@ let
     doCheck = false;
   };
 
+  # Build the Go appliance daemon (replaces Python compliance-agent)
+  # Feature-flagged: enabled by /var/lib/msp/.use-go-daemon or config.yaml use_go_daemon: true
+  appliance-daemon-go = pkgs.buildGoModule {
+    pname = "appliance-daemon";
+    version = "0.1.0";
+    src = ../appliance;
+
+    vendorHash = "sha256-veNRrlrYbVidNt+eXFfdcusM5iwLzemEe+NrVEM61GE=";
+
+    ldflags = [
+      "-s" "-w"
+      "-X github.com/osiriscare/appliance/internal/daemon.Version=0.1.0"
+    ];
+
+    subPackages = [
+      "cmd/appliance-daemon"
+      "cmd/grpc-server"
+      "cmd/checkin-receiver"
+    ];
+
+    CGO_ENABLED = "0";
+
+    meta = with lib; {
+      description = "OsirisCare Appliance Daemon (Go) - gRPC, L1 healing, phone-home";
+      license = licenses.unfree;
+    };
+  };
+
   # Build the local-portal package (WINDOW)
   local-portal = pkgs.python311Packages.buildPythonApplication {
     pname = "local-portal";
@@ -264,13 +292,16 @@ EOF
   };
 
   # ============================================================================
-  # Full Compliance Agent
+  # Full Compliance Agent (Python — runs unless Go daemon is enabled)
   # ============================================================================
   systemd.services.compliance-agent = {
     description = "OsirisCare Compliance Agent";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "msp-auto-provision.service" "msp-health-gate.service" ];
     wants = [ "network-online.target" ];
+
+    # Don't start if Go daemon feature flag is set
+    unitConfig.ConditionPathExists = "!/var/lib/msp/.use-go-daemon";
 
     serviceConfig = {
       Type = "simple";
@@ -291,6 +322,38 @@ EOF
     environment = {
       HEALING_DRY_RUN = "false";
       STATE_DIR = "/var/lib/msp";
+    };
+  };
+
+  # ============================================================================
+  # Go Appliance Daemon (feature-flagged replacement for Python agent)
+  # Enable: touch /var/lib/msp/.use-go-daemon && systemctl restart appliance-daemon
+  # Disable: rm /var/lib/msp/.use-go-daemon && systemctl stop appliance-daemon && systemctl start compliance-agent
+  # ============================================================================
+  systemd.services.appliance-daemon = {
+    description = "OsirisCare Appliance Daemon (Go)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "msp-auto-provision.service" "msp-health-gate.service" ];
+    wants = [ "network-online.target" ];
+
+    # Only start if Go daemon feature flag is set
+    unitConfig.ConditionPathExists = "/var/lib/msp/.use-go-daemon";
+
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${appliance-daemon-go}/bin/appliance-daemon --config /var/lib/msp/config.yaml";
+      Restart = "always";
+      RestartSec = "10s";
+      WorkingDirectory = "/var/lib/msp";
+      StandardOutput = "journal";
+      StandardError = "journal";
+      SyslogIdentifier = "appliance-daemon";
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      ReadWritePaths = [ "/var/lib/msp" "/etc/msp" ];
+      NoNewPrivileges = true;
+      MemoryMax = "256M";
     };
   };
 
@@ -372,7 +435,7 @@ EOF
     vim curl htop
     iproute2 iputils dnsutils
     nmap arp-scan
-    compliance-agent network-scanner local-portal
+    compliance-agent appliance-daemon-go network-scanner local-portal
     jq yq
   ];
 
@@ -422,8 +485,9 @@ EOF
     mkdir -p /var/lib/msp/update
     mkdir -p /var/lib/msp/update/downloads
     mkdir -p /var/lib/msp/exports
+    mkdir -p /var/lib/msp/ca
     mkdir -p /etc/msp/certs
-    chmod 700 /var/lib/msp /etc/msp/certs
+    chmod 700 /var/lib/msp /var/lib/msp/ca /etc/msp/certs
   '';
 
   # ============================================================================
