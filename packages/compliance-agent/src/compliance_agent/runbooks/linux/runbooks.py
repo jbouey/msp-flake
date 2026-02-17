@@ -2006,7 +2006,7 @@ LIN_CRYPTO_001 = LinuxRunbook(
         # Weak MAC patterns to reject
         WEAK_MACS="md5|sha1-96|umac-64"
         # Weak KexAlgorithm patterns to reject
-        WEAK_KEX="diffie-hellman-group1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1"
+        WEAK_KEX="diffie-hellman-group1-sha1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1"
 
         # Check configured ciphers
         CIPHERS_LINE=$(grep -E "^Ciphers " "$SSHD_CONFIG" 2>/dev/null | awk '{print $2}')
@@ -2106,7 +2106,7 @@ LIN_CRYPTO_001 = LinuxRunbook(
         sleep 2
         WEAK_CIPHERS="3des|arcfour|blowfish|cast128|rc4"
         WEAK_MACS="md5|sha1-96|umac-64"
-        WEAK_KEX="diffie-hellman-group1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1"
+        WEAK_KEX="diffie-hellman-group1-sha1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1"
         FAIL=false
 
         # Use sshd -T to check ACTIVE config (handles Include directives, defaults)
