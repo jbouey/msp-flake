@@ -183,7 +183,7 @@ in
       W=50
       dash_url="http://$IP"
       ssh_cmd="ssh msp@$IP"
-      portal_url="http://$IP:8083"
+      portal_url="http://$IP:8084"
 
       pad() {
         local label="$1" value="$2"
@@ -210,9 +210,10 @@ in
 \e[0m
 EOF
 
-      # Clear tty1 and signal getty to re-read /etc/issue
+      # Signal getty to re-read /etc/issue.
+      # Use --no-block to avoid deadlock when running inside nixos-rebuild activation.
       printf '\033c' > /dev/tty1 2>/dev/null || true
-      ${pkgs.systemd}/bin/systemctl restart getty@tty1.service 2>/dev/null || true
+      ${pkgs.systemd}/bin/systemctl --no-block restart getty@tty1.service 2>/dev/null || true
     '';
   };
 
@@ -223,7 +224,7 @@ EOF
     ──────────────────────────────────────
     Dashboard:  http://osiriscare.local
     SSH:        ssh msp@osiriscare.local
-    Portal:     http://osiriscare.local:8083
+    Portal:     http://osiriscare.local:8084
 
     Agent:      journalctl -u compliance-agent -f
     Health:     systemctl status msp-health-check
@@ -322,7 +323,7 @@ EOF
     environment = {
       DB_PATH = "/var/lib/msp/devices.db";
       # API port is 8081, Go agent listener is api_port+1 = 8082
-      # local-portal uses 8083
+      # local-portal uses 8084
       API_PORT = "8081";
       DAILY_SCAN_HOUR = "2";
       # Medical devices are excluded by default in config
@@ -341,7 +342,7 @@ EOF
     serviceConfig = {
       Type = "simple";
       # Bind to localhost only - use reverse proxy for network access
-      ExecStart = "${local-portal}/bin/local-portal --port 8083 --host 127.0.0.1";
+      ExecStart = "${local-portal}/bin/local-portal --port 8084 --host 127.0.0.1";
       Restart = "always";
       RestartSec = "10s";
       WorkingDirectory = "/var/lib/msp";
@@ -381,9 +382,9 @@ EOF
     useDHCP = true;
     firewall = {
       enable = true;
-      # 22=ssh, 80=status, 8080=compliance-agent-sensor, 50051=grpc, 8083=local-portal
+      # 22=ssh, 80=status, 8080=compliance-agent-sensor, 50051=grpc, 8084=local-portal
       # 8081 (scanner-api) and 8082 (go-agent-metrics) bind to localhost only
-      allowedTCPPorts = [ 22 80 8080 50051 8083 ];
+      allowedTCPPorts = [ 22 80 8080 50051 8084 ];
       allowedUDPPorts = [ 5353 ];
     };
   };

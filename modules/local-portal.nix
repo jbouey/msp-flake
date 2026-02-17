@@ -28,7 +28,7 @@ in
 
     port = mkOption {
       type = types.port;
-      default = 8083;
+      default = 8084;
       description = "Port for Local Portal web UI";
     };
 
