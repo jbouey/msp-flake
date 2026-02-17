@@ -6,12 +6,17 @@ Falls back to mock data when database is empty.
 
 import json
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+# Cache TTL (seconds) — configurable via environment
+CACHE_TTL_SCORES = int(os.environ.get("CACHE_TTL_SCORES", "120"))
+CACHE_TTL_METRICS = int(os.environ.get("CACHE_TTL_METRICS", "120"))
 
 
 async def _get_redis():
@@ -109,6 +114,7 @@ async def get_incidents_from_db(
     db: AsyncSession,
     site_id: Optional[str] = None,
     limit: int = 50,
+    offset: int = 0,
     resolved: Optional[bool] = None
 ) -> List[Dict[str, Any]]:
     """Get incidents from database."""
@@ -139,8 +145,9 @@ async def get_incidents_from_db(
         else:
             query_str += " AND i.status != 'resolved'"
     
-    query_str += " ORDER BY i.reported_at DESC LIMIT :limit"
+    query_str += " ORDER BY i.reported_at DESC LIMIT :limit OFFSET :offset"
     params["limit"] = limit
+    params["offset"] = offset
     
     result = await db.execute(text(query_str), params)
     rows = result.fetchall()
@@ -163,6 +170,7 @@ async def get_events_from_db(
     db: AsyncSession,
     site_id: Optional[str] = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> List[Dict[str, Any]]:
     """
     Get recent events from compliance_bundles.
@@ -187,8 +195,9 @@ async def get_events_from_db(
         query_str += " AND cb.site_id = :site_id"
         params["site_id"] = site_id
 
-    query_str += " ORDER BY cb.created_at DESC LIMIT :limit"
+    query_str += " ORDER BY cb.created_at DESC LIMIT :limit OFFSET :offset"
     params["limit"] = limit
+    params["offset"] = offset
 
     result = await db.execute(text(query_str), params)
     rows = result.fetchall()
@@ -604,7 +613,7 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
         result_scores["has_data"] = categories_with_data > 0
         scores[site_id] = result_scores
 
-    await _cache_set("compliance:all_scores", scores, ttl_seconds=120)
+    await _cache_set("compliance:all_scores", scores, ttl_seconds=CACHE_TTL_SCORES)
     return scores
 
 
@@ -1409,7 +1418,7 @@ async def get_all_healing_metrics(db: AsyncSession) -> Dict[str, Dict[str, Any]]
             "last_incident": inc.last_incident if inc else None,
         }
 
-    await _cache_set("healing:all_metrics", results, ttl_seconds=120)
+    await _cache_set("healing:all_metrics", results, ttl_seconds=CACHE_TTL_METRICS)
     return results
 
 
@@ -1454,7 +1463,8 @@ async def get_global_healing_metrics(db: AsyncSession) -> Dict[str, Any]:
 async def get_runbook_executions_from_db(
     db: AsyncSession,
     runbook_id: str,
-    limit: int = 20
+    limit: int = 20,
+    offset: int = 0,
 ) -> List[Dict[str, Any]]:
     """Get recent executions of a specific runbook from orders table."""
     result = await db.execute(text("""
@@ -1475,8 +1485,8 @@ async def get_runbook_executions_from_db(
         WHERE o.runbook_id = :runbook_id
         AND o.status IN ('completed', 'failed')
         ORDER BY o.completed_at DESC NULLS LAST
-        LIMIT :limit
-    """), {"runbook_id": runbook_id, "limit": limit})
+        LIMIT :limit OFFSET :offset
+    """), {"runbook_id": runbook_id, "limit": limit, "offset": offset})
 
     rows = result.fetchall()
 

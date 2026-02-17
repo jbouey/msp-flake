@@ -445,6 +445,7 @@ async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)
 async def get_incidents(
     site_id: Optional[str] = None,
     limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
     level: Optional[str] = None,
     resolved: Optional[bool] = None,
     db: AsyncSession = Depends(get_db),
@@ -460,7 +461,7 @@ async def get_incidents(
     Returns:
         List of incidents with resolution details.
     """
-    incidents = await get_incidents_from_db(db, site_id=site_id, limit=limit, resolved=resolved)
+    incidents = await get_incidents_from_db(db, site_id=site_id, limit=limit, offset=offset, resolved=resolved)
 
     def safe_check_type(ct: str) -> CheckType:
         """Safely convert check type, defaulting to BACKUP for unknown types."""
@@ -531,6 +532,7 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
 async def get_events(
     site_id: Optional[str] = None,
     limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     """Get recent events from compliance bundles.
@@ -546,7 +548,7 @@ async def get_events(
     Returns:
         List of recent events with check results.
     """
-    events = await get_events_from_db(db, site_id=site_id, limit=limit)
+    events = await get_events_from_db(db, site_id=site_id, limit=limit, offset=offset)
     return events
 
 
@@ -608,10 +610,11 @@ async def get_runbook_detail(runbook_id: str, db: AsyncSession = Depends(get_db)
 async def get_runbook_executions(
     runbook_id: str,
     limit: int = Query(default=20, le=100),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     """Get recent executions of a specific runbook from orders table."""
-    executions = await get_runbook_executions_from_db(db, runbook_id, limit)
+    executions = await get_runbook_executions_from_db(db, runbook_id, limit, offset=offset)
 
     return [
         RunbookExecution(
@@ -1097,15 +1100,43 @@ async def get_onboarding_metrics(db: AsyncSession = Depends(get_db)):
 
     total = sum(stage_counts.values())
 
+    # Calculate real metrics from sites table
+    ship_result = await db.execute(text("""
+        SELECT AVG(EXTRACT(EPOCH FROM (shipped_at - lead_at)) / 86400.0)
+        FROM sites WHERE shipped_at IS NOT NULL AND lead_at IS NOT NULL
+    """))
+    avg_ship = round(ship_result.scalar() or 0.0, 1)
+
+    active_result = await db.execute(text("""
+        SELECT AVG(EXTRACT(EPOCH FROM (active_at - lead_at)) / 86400.0)
+        FROM sites WHERE active_at IS NOT NULL AND lead_at IS NOT NULL
+    """))
+    avg_active = round(active_result.scalar() or 0.0, 1)
+
+    stalled_result = await db.execute(text("""
+        SELECT COUNT(*) FROM sites
+        WHERE onboarding_stage NOT IN ('active', 'compliant')
+        AND created_at < NOW() - INTERVAL '14 days'
+    """))
+    stalled = stalled_result.scalar() or 0
+
+    conn_result = await db.execute(text("""
+        SELECT COUNT(*) FROM sites
+        WHERE onboarding_stage = 'connectivity'
+        AND connectivity_at IS NOT NULL
+        AND connectivity_at < NOW() - INTERVAL '3 days'
+    """))
+    conn_issues = conn_result.scalar() or 0
+
     return OnboardingMetrics(
         total_prospects=total,
         acquisition=acquisition,
         activation=activation,
-        avg_days_to_ship=0.0,
-        avg_days_to_active=0.0,
-        stalled_count=0,
-        at_risk_count=0,
-        connectivity_issues=0,
+        avg_days_to_ship=avg_ship,
+        avg_days_to_active=avg_active,
+        stalled_count=stalled,
+        at_risk_count=stalled,
+        connectivity_issues=conn_issues,
     )
 
 
@@ -1160,34 +1191,63 @@ async def create_prospect(prospect: ProspectCreate, db: AsyncSession = Depends(g
 
 
 @router.patch("/onboarding/{client_id}/stage")
-async def advance_stage(client_id: int, request: StageAdvance):
+async def advance_stage(client_id: str, request: StageAdvance, db: AsyncSession = Depends(get_db)):
     """Move client to next stage."""
-    return {
-        "status": "advanced",
-        "client_id": client_id,
-        "new_stage": request.new_stage,
-        "notes": request.notes,
+    now = datetime.now(timezone.utc)
+    stage_val = request.new_stage.value
+
+    await db.execute(text("""
+        UPDATE sites
+        SET onboarding_stage = :new_stage
+        WHERE site_id = :client_id
+    """), {"new_stage": stage_val, "client_id": client_id})
+
+    # Set stage timestamp column if it exists
+    stage_col_map = {
+        'lead': 'lead_at', 'discovery': 'discovery_at', 'proposal': 'proposal_at',
+        'contract': 'contract_at', 'intake': 'intake_at', 'creds': 'creds_at',
+        'shipped': 'shipped_at', 'received': 'received_at', 'connectivity': 'connectivity_at',
+        'scanning': 'scanning_at', 'baseline': 'baseline_at', 'active': 'active_at',
     }
+    ts_col = stage_col_map.get(stage_val)
+    if ts_col:
+        try:
+            await db.execute(
+                text(f"UPDATE sites SET {ts_col} = :now WHERE site_id = :client_id"),
+                {"now": now, "client_id": client_id},
+            )
+        except Exception:
+            pass  # Column may not exist
+
+    if request.notes:
+        await db.execute(text("""
+            UPDATE sites SET notes = COALESCE(notes || E'\\n', '') || :note
+            WHERE site_id = :client_id
+        """), {"note": request.notes, "client_id": client_id})
+
+    await db.commit()
+    return {"status": "advanced", "client_id": client_id, "new_stage": stage_val}
 
 
 @router.patch("/onboarding/{client_id}/blockers")
-async def update_blockers(client_id: int, request: BlockerUpdate):
+async def update_blockers(client_id: str, request: BlockerUpdate, db: AsyncSession = Depends(get_db)):
     """Update blockers for a client."""
-    return {
-        "status": "updated",
-        "client_id": client_id,
-        "blockers": request.blockers,
-    }
+    await db.execute(text("""
+        UPDATE sites SET blockers = :blockers WHERE site_id = :client_id
+    """), {"blockers": json.dumps(request.blockers), "client_id": client_id})
+    await db.commit()
+    return {"status": "updated", "client_id": client_id, "blockers": request.blockers}
 
 
 @router.post("/onboarding/{client_id}/note")
-async def add_note(client_id: int, request: NoteAdd):
+async def add_note(client_id: str, request: NoteAdd, db: AsyncSession = Depends(get_db)):
     """Add a note to client's onboarding record."""
-    return {
-        "status": "added",
-        "client_id": client_id,
-        "note": request.note,
-    }
+    await db.execute(text("""
+        UPDATE sites SET notes = COALESCE(notes || E'\\n', '') || :note
+        WHERE site_id = :client_id
+    """), {"note": request.note, "client_id": client_id})
+    await db.commit()
+    return {"status": "added", "client_id": client_id, "note": request.note}
 
 
 # =============================================================================
@@ -1603,7 +1663,7 @@ async def create_notification(
             "created_at": notif.created_at.isoformat() if notif.created_at else None,
         })
     except Exception as e:
-        logger.debug(f"Failed to broadcast notification event: {e}")
+        logger.warning(f"Failed to broadcast notification event: {e}")
 
     return notif
 
