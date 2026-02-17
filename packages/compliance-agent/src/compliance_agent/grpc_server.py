@@ -181,6 +181,11 @@ if GRPC_AVAILABLE:
                     logger.info(f"Issued certificates for {request.hostname}")
                 except Exception as e:
                     logger.error(f"Failed to issue certs for {request.hostname}: {e}")
+            elif request.needs_certificates and not self.agent_ca:
+                logger.warning(
+                    f"Agent {request.hostname} requested certificates but agent_ca is not configured. "
+                    "Agent will operate without mTLS until CA is initialized."
+                )
 
             # Build response using protobuf message
             return compliance_pb2.RegisterResponse(
@@ -489,6 +494,9 @@ def serve_sync(
         server.add_insecure_port(listen_addr)
         logger.warning(f"Starting gRPC server on {listen_addr} (insecure - no TLS configured)")
 
+    if agent_ca is None:
+        logger.warning("gRPC server starting without agent_ca — certificate enrollment disabled")
+
     server.start()
     server.wait_for_termination()
 
@@ -531,6 +539,9 @@ async def serve(
     else:
         server.add_insecure_port(listen_addr)
         logger.warning(f"Starting gRPC server on {listen_addr} (insecure - no TLS configured)")
+
+    if agent_ca is None:
+        logger.warning("gRPC server starting without agent_ca — certificate enrollment disabled")
 
     await server.start()
     await server.wait_for_termination()

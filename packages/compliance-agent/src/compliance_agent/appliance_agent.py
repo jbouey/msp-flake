@@ -3470,8 +3470,8 @@ $x|ConvertTo-Json -Depth 3 -Compress
                 self._gpo_deployed = True
                 try:
                     gpo_flag.write_text(f"{result.gpo_id}\n{result.sysvol_path}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to write GPO flag file %s: %s", gpo_flag, e)
                 logger.info(
                     f"GPO deployment complete: '{result.gpo_name}' "
                     f"(ID={result.gpo_id}, SYSVOL={result.sysvol_path})"

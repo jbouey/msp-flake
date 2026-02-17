@@ -63,7 +63,14 @@ class GPODeploymentEngine:
         2. Create startup script in SYSVOL
         3. Create GPO with startup script
         4. Link GPO to domain root
+
+        On failure at any step, rolls back artifacts created in prior steps.
         """
+        artifacts: Dict[str, Optional[str]] = {
+            "sysvol_dir": None,
+            "script_path": None,
+            "gpo_id": None,
+        }
         try:
             # Step 1: Upload binary to SYSVOL
             sysvol_dir = await self._upload_to_sysvol(agent_binary_path)
@@ -73,24 +80,29 @@ class GPODeploymentEngine:
                     gpo_name=GPO_NAME,
                     error="Failed to upload binary to SYSVOL",
                 )
+            artifacts["sysvol_dir"] = sysvol_dir
 
             # Step 2: Create startup script
             script_path = await self._create_startup_script(sysvol_dir)
             if not script_path:
+                await self._rollback(artifacts)
                 return GPODeploymentResult(
                     success=False,
                     gpo_name=GPO_NAME,
                     error="Failed to create startup script",
                 )
+            artifacts["script_path"] = script_path
 
             # Step 3: Create GPO and link to domain
             gpo_id = await self._create_and_link_gpo(script_path)
             if not gpo_id:
+                await self._rollback(artifacts)
                 return GPODeploymentResult(
                     success=False,
                     gpo_name=GPO_NAME,
                     error="Failed to create GPO",
                 )
+            artifacts["gpo_id"] = gpo_id
 
             return GPODeploymentResult(
                 success=True,
@@ -100,9 +112,37 @@ class GPODeploymentEngine:
             )
         except Exception as e:
             logger.error("GPO deployment failed: %s", e)
+            await self._rollback(artifacts)
             return GPODeploymentResult(
                 success=False, gpo_name=GPO_NAME, error=str(e)
             )
+
+    async def _rollback(self, artifacts: Dict[str, Optional[str]]) -> None:
+        """Clean up artifacts from a failed deployment."""
+        # Remove GPO if it was created
+        if artifacts.get("gpo_id"):
+            try:
+                ps_remove_gpo = f'''
+                Import-Module GroupPolicy
+                Remove-GPO -Name "{GPO_NAME}" -ErrorAction SilentlyContinue
+                Write-Output "GPO_REMOVED"
+                '''
+                await self._run_on_dc(ps_remove_gpo, timeout=30)
+                logger.info("Rollback: removed GPO '%s'", GPO_NAME)
+            except Exception as e:
+                logger.warning("Rollback: failed to remove GPO: %s", e)
+
+        # Remove SYSVOL directory if it was created
+        if artifacts.get("sysvol_dir"):
+            try:
+                ps_remove_dir = f'''
+                Remove-Item -Recurse -Force -Path "{artifacts["sysvol_dir"]}" -ErrorAction SilentlyContinue
+                Write-Output "DIR_REMOVED"
+                '''
+                await self._run_on_dc(ps_remove_dir, timeout=30)
+                logger.info("Rollback: removed SYSVOL dir '%s'", artifacts["sysvol_dir"])
+            except Exception as e:
+                logger.warning("Rollback: failed to remove SYSVOL dir: %s", e)
 
     async def _upload_to_sysvol(
         self, local_binary_path: str
