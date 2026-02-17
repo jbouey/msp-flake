@@ -2114,34 +2114,21 @@ LIN_CRYPTO_001 = LinuxRunbook(
         ACTIVE_CONFIG=$(sshd -T 2>/dev/null)
 
         if [ -n "$ACTIVE_CONFIG" ]; then
-            # Verify active ciphers (sshd -T outputs lowercase field names)
             CIPHERS=$(echo "$ACTIVE_CONFIG" | grep "^ciphers " | awk '{print $2}')
-            if echo "$CIPHERS" | grep -qiE "$WEAK_CIPHERS"; then
-                FAIL=true
-            fi
+            if echo "$CIPHERS" | grep -qiE "$WEAK_CIPHERS"; then FAIL=true; fi
             MACS=$(echo "$ACTIVE_CONFIG" | grep "^macs " | awk '{print $2}')
-            if echo "$MACS" | grep -qiE "$WEAK_MACS"; then
-                FAIL=true
-            fi
+            if echo "$MACS" | grep -qiE "$WEAK_MACS"; then FAIL=true; fi
             KEX=$(echo "$ACTIVE_CONFIG" | grep "^kexalgorithms " | awk '{print $2}')
-            if echo "$KEX" | grep -qiE "$WEAK_KEX"; then
-                FAIL=true
-            fi
+            if echo "$KEX" | grep -qiE "$WEAK_KEX"; then FAIL=true; fi
         else
             # Fallback: check the config file directly
             SSHD_CONFIG="/etc/ssh/sshd_config"
             CIPHERS=$(grep -E "^Ciphers " "$SSHD_CONFIG" 2>/dev/null | awk '{print $2}')
-            if [ -n "$CIPHERS" ] && echo "$CIPHERS" | grep -qiE "$WEAK_CIPHERS"; then
-                FAIL=true
-            fi
+            if [ -n "$CIPHERS" ] && echo "$CIPHERS" | grep -qiE "$WEAK_CIPHERS"; then FAIL=true; fi
             MACS=$(grep -E "^MACs " "$SSHD_CONFIG" 2>/dev/null | awk '{print $2}')
-            if [ -n "$MACS" ] && echo "$MACS" | grep -qiE "$WEAK_MACS"; then
-                FAIL=true
-            fi
+            if [ -n "$MACS" ] && echo "$MACS" | grep -qiE "$WEAK_MACS"; then FAIL=true; fi
             KEX=$(grep -E "^KexAlgorithms " "$SSHD_CONFIG" 2>/dev/null | awk '{print $2}')
-            if [ -n "$KEX" ] && echo "$KEX" | grep -qiE "$WEAK_KEX"; then
-                FAIL=true
-            fi
+            if [ -n "$KEX" ] && echo "$KEX" | grep -qiE "$WEAK_KEX"; then FAIL=true; fi
         fi
 
         if $FAIL; then
