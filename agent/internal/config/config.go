@@ -12,6 +12,7 @@ type Config struct {
 	// Connection settings
 	ApplianceAddr string `json:"appliance_addr"`
 	DataDir       string `json:"data_dir"`
+	Domain        string `json:"domain"` // AD domain for SRV discovery
 
 	// TLS settings
 	CertFile string `json:"cert_file"`

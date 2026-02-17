@@ -1,24 +1,24 @@
 {
-  "session": 109,
-  "updated": "2026-02-15T06:45:00Z",
-  "agent_version": "1.0.70",
+  "session": 113,
+  "updated": "2026-02-17T07:54:05.970931Z",
+  "agent_version": "1.0.72",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "v1.0.70_heal_priority_chaos_fixes",
+    "physical_appliance": "v1.0.72_overlay_dns_heal_fixed_tempfile_executor",
     "vm_appliance": "v1.0.70_heal_priority_chaos_fixes",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
-    "learning_flywheel": "active_22_promoted_stats_fixed_cicd_deploying",
+    "learning_flywheel": "active_46_promoted_9_enabled_counter_trigger_live_51_builtin_seeded_pattern_gen_from_L2",
     "incident_resolution": "pipeline_active",
     "evidence_pipeline": "end_to_end_live_203k_bundles_chain_repaired_advisory_lock",
     "compliance_packets": "live_endpoint_real_data_deployed_to_vps",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
     "fleet_updates": "proven_end_to_end_overlay_plus_nixos_rebuild"
   },
-  "current_blocker": "None - evidence chain repaired, advisory lock prevents future races",
+  "current_blocker": "WS (.251) WinRM not starting after reboot (port 5985 connection refused). SRV healing works but scan cycle slightly too slow for 180s chaos window. Linux chaos test verification broken (iMac SSH to .242 times out).",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -167,39 +167,27 @@
       "note": "Built overlay with all session 106 changes (L1 rules, flap fix, scan checks, parallel scans). Uploaded to root@178.156.162.116:/var/www/updates/agent-overlay.tar.gz"
     }
   ],
-  "completed_this_session": [
-    "Client portal healing logs + promotion approval flow (3 backend endpoints, ClientHealingLogs.tsx, migration 042)",
-    "OsirisCare marketing landing page at www.osiriscare.net with hostname-based React routing",
-    "Caddy + DNS config for www.osiriscare.net and osiriscare.net bare domain redirect",
-    "Evidence chain audit: found 1,137 broken hash chain links (0.55%) from race condition",
-    "Fixed evidence chain race condition: pg_advisory_xact_lock(hashtext(site_id)) serializes per-site submissions",
-    "Repaired all 1,137 broken links: re-sequenced positions, fixed prev_hash, recomputed chain_hash",
-    "Added unique index on (site_id, chain_position) as belt-and-suspenders",
-    "Fixed genesis prev_hash: uses zero sentinel instead of NULL (NOT NULL column)",
-    "Chaos test: 3x back-to-back full spectrum test running (Run 1: 7/16 healed in 300s)",
-    "macOS runbook plan: 17 HIPAA checks proposed, 13/17 L1-healable, uses SSH",
-    "main.py bug fix: client_portal routers not imported (only in server.py)"
-  ],
+  "completed_this_session": [],
   "recent_commits": [
     {
-      "hash": "3a68713",
-      "message": "fix: Evidence chain race condition — advisory lock + repair 1,137 broken links"
+      "hash": "fdea87c",
+      "message": "fix: WinRM long script execution via temp file (cmd.exe 8191 char limit)"
     },
     {
-      "hash": "2fcdc87",
-      "message": "feat: Serve landing page at www.osiriscare.net with hostname detection"
+      "hash": "5cf6e11",
+      "message": "fix: DC DNS healing (DomainRole check) + WinRM session invalidation on all errors"
     },
     {
-      "hash": "3ee12e9",
-      "message": "feat: Add OsirisCare marketing landing page at /welcome"
+      "hash": "d67766f",
+      "message": "feat: Flywheel generates patterns from L2 telemetry + filter fix"
     },
     {
-      "hash": "37ebf33",
-      "message": "feat: Client portal healing logs + promotion approval flow"
+      "hash": "0ad09ba",
+      "message": "fix: Order completion now handles both admin_orders and healing orders"
     },
     {
-      "hash": "07c46d6",
-      "message": "fix: Unblock healing pipelines — disable 19 broken AUTO-* rules, add missing L1 rules"
+      "hash": "e38ba5d",
+      "message": "fix: Runbook ID mismatch \u2014 seed 51 builtin rules + fix truncation"
     }
   ],
   "key_findings": {
@@ -224,6 +212,7 @@
     "perf_audit_lesson": "Health endpoint was 2.18s because DB/Redis/MinIO checks ran sequentially and MinIO (sync SDK) blocked the event loop. Fix: asyncio.gather() + run_in_executor() for sync calls. N+1 in compliance scoring: each site triggered a separate query. Fix: ROW_NUMBER() window function in a single query. Redis caching (120s TTL) for expensive aggregates. Pre-computed reverse lookup dicts beat inner loops. Migration 039: pg_stat_user_indexes with idx_scan=0 identifies safe-to-drop indexes.",
     "overlay_structure_lesson": "Overlay tarball MUST preserve Python package structure: compliance_agent/ subdirectory required. Flat extraction (files at overlay root) means PYTHONPATH finds the overlay dir but 'from compliance_agent.X import Y' fails because there's no compliance_agent/ package. Previous overlay deployments appeared to work but were actually running NixOS store code \u2014 synced server-side L1 rules masked the issue.",
     "chaos_test_timing_lesson": "180s chaos test window is marginal for a full heal cycle. Even with parallel scans via asyncio.gather(), the 600s cycle timeout in _run_cycle() can abort the Linux drift processing loop before all drifts are healed. Root cause: drift results were processed sequentially (evidence submission + healing for each). SSH/FW/SVC healing consumed most of the budget, leaving NET/CRON/SUID unhealed. FIXED: healing now fires as background asyncio.create_task() calls that survive the cycle timeout. Evidence submission remains inline (deferrable). Tasks tracked in _healing_tasks set, cancelled on agent stop.",
+    "winrm_cmdline_limit_lesson": "pywinrm run_ps() encodes scripts as UTF-16LE base64 via 'powershell -encodedcommand <base64>'. This goes through cmd.exe which has 8,191 char limit. A ~4.7KB PowerShell script becomes ~12.7KB after encoding (2x UTF-16 + 1.33x base64). Fix: _execute_via_tempfile() writes base64 chunks via cmd.exe echo (6000 chars/chunk), then a short run_ps() call decodes and executes. Threshold: _MAX_INLINE_SCRIPT_LEN = 2000.",
     "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles."
   },
   "deployment_flow": [

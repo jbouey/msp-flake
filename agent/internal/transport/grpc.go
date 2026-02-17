@@ -25,20 +25,21 @@ import (
 )
 
 // Version is set at build time
-var Version = "0.1.0"
+var Version = "0.3.0"
 
 // HealChanSize is the buffer size for the heal command channel
 const HealChanSize = 32
 
 // GRPCClient manages the gRPC connection to the appliance
 type GRPCClient struct {
-	conn      *grpc.ClientConn
-	client    pb.ComplianceAgentClient
-	agentID   string
-	hostname  string
-	connected bool
-	mu        sync.RWMutex
-	config    *config.Config
+	conn       *grpc.ClientConn
+	client     pb.ComplianceAgentClient
+	agentID    string
+	hostname   string
+	connected  bool
+	needsCerts bool // true when no TLS certs present (enrollment needed)
+	mu         sync.RWMutex
+	config     *config.Config
 
 	// For streaming drift events
 	driftStream pb.ComplianceAgent_ReportDriftClient
@@ -79,10 +80,13 @@ func (c *GRPCClient) connect(ctx context.Context) error {
 	var opts []grpc.DialOption
 
 	if err != nil || tlsConfig == nil {
-		// Fall back to insecure connection (development mode)
+		// No certs yet — connect insecure for certificate enrollment
+		log.Println("[gRPC] No TLS certs found, connecting insecure for enrollment")
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		c.needsCerts = true
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
+		c.needsCerts = false
 	}
 
 	// Add keepalive parameters
@@ -145,7 +149,8 @@ func (c *GRPCClient) loadTLS() (*tls.Config, error) {
 	}, nil
 }
 
-// Register registers the agent with the appliance
+// Register registers the agent with the appliance.
+// If needsCerts is true, requests certificate enrollment and reconnects with mTLS.
 func (c *GRPCClient) Register(ctx context.Context) (*pb.RegisterResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -155,10 +160,11 @@ func (c *GRPCClient) Register(ctx context.Context) (*pb.RegisterResponse, error)
 	}
 
 	req := &pb.RegisterRequest{
-		Hostname:     c.hostname,
-		OsVersion:    getOSVersion(),
-		AgentVersion: Version,
-		MacAddress:   getMACAddress(),
+		Hostname:          c.hostname,
+		OsVersion:         getOSVersion(),
+		AgentVersion:      Version,
+		MacAddress:        getMACAddress(),
+		NeedsCertificates: c.needsCerts,
 	}
 
 	resp, err := c.client.Register(ctx, req)
@@ -167,7 +173,42 @@ func (c *GRPCClient) Register(ctx context.Context) (*pb.RegisterResponse, error)
 	}
 
 	c.agentID = resp.AgentId
+
+	// Handle certificate enrollment
+	if c.needsCerts && len(resp.CaCertPem) > 0 && len(resp.AgentCertPem) > 0 && len(resp.AgentKeyPem) > 0 {
+		if err := c.saveCerts(resp.CaCertPem, resp.AgentCertPem, resp.AgentKeyPem); err != nil {
+			return nil, fmt.Errorf("failed to save certificates: %w", err)
+		}
+		log.Println("[gRPC] Certificates enrolled, reconnecting with mTLS...")
+
+		// Close insecure connection and reconnect with TLS
+		if c.conn != nil {
+			c.conn.Close()
+		}
+		c.connected = false
+
+		if err := c.connect(ctx); err != nil {
+			return nil, fmt.Errorf("mTLS reconnect failed: %w", err)
+		}
+		log.Println("[gRPC] Reconnected with mTLS")
+	}
+
 	return resp, nil
+}
+
+// saveCerts writes CA, agent cert, and agent key to disk.
+func (c *GRPCClient) saveCerts(caCert, agentCert, agentKey []byte) error {
+	if err := os.WriteFile(c.config.CAFile, caCert, 0644); err != nil {
+		return fmt.Errorf("write CA cert: %w", err)
+	}
+	if err := os.WriteFile(c.config.CertFile, agentCert, 0644); err != nil {
+		return fmt.Errorf("write agent cert: %w", err)
+	}
+	if err := os.WriteFile(c.config.KeyFile, agentKey, 0600); err != nil {
+		return fmt.Errorf("write agent key: %w", err)
+	}
+	log.Printf("[gRPC] Saved certificates to %s", c.config.DataDir)
+	return nil
 }
 
 // StartDriftStream starts the bidirectional drift stream and launches

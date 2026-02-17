@@ -84,6 +84,7 @@ type RegisterRequest struct {
 	AgentVersion      string                 `protobuf:"bytes,3,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
 	InstalledSoftware []string               `protobuf:"bytes,4,rep,name=installed_software,json=installedSoftware,proto3" json:"installed_software,omitempty"`
 	MacAddress        string                 `protobuf:"bytes,5,opt,name=mac_address,json=macAddress,proto3" json:"mac_address,omitempty"`
+	NeedsCertificates bool                   `protobuf:"varint,6,opt,name=needs_certificates,json=needsCertificates,proto3" json:"needs_certificates,omitempty"` // True on first connect when agent has no certs
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -153,6 +154,13 @@ func (x *RegisterRequest) GetMacAddress() string {
 	return ""
 }
 
+func (x *RegisterRequest) GetNeedsCertificates() bool {
+	if x != nil {
+		return x.NeedsCertificates
+	}
+	return false
+}
+
 // RegisterResponse provides agent configuration
 type RegisterResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
@@ -161,6 +169,9 @@ type RegisterResponse struct {
 	EnabledChecks        []string               `protobuf:"bytes,3,rep,name=enabled_checks,json=enabledChecks,proto3" json:"enabled_checks,omitempty"`
 	CapabilityTier       CapabilityTier         `protobuf:"varint,4,opt,name=capability_tier,json=capabilityTier,proto3,enum=compliance.CapabilityTier" json:"capability_tier,omitempty"`
 	CheckConfig          map[string]string      `protobuf:"bytes,5,rep,name=check_config,json=checkConfig,proto3" json:"check_config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	CaCertPem            []byte                 `protobuf:"bytes,6,opt,name=ca_cert_pem,json=caCertPem,proto3" json:"ca_cert_pem,omitempty"`          // CA certificate for TLS verification
+	AgentCertPem         []byte                 `protobuf:"bytes,7,opt,name=agent_cert_pem,json=agentCertPem,proto3" json:"agent_cert_pem,omitempty"` // Signed client certificate for this agent
+	AgentKeyPem          []byte                 `protobuf:"bytes,8,opt,name=agent_key_pem,json=agentKeyPem,proto3" json:"agent_key_pem,omitempty"`    // Private key for the client certificate
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -226,6 +237,27 @@ func (x *RegisterResponse) GetCapabilityTier() CapabilityTier {
 func (x *RegisterResponse) GetCheckConfig() map[string]string {
 	if x != nil {
 		return x.CheckConfig
+	}
+	return nil
+}
+
+func (x *RegisterResponse) GetCaCertPem() []byte {
+	if x != nil {
+		return x.CaCertPem
+	}
+	return nil
+}
+
+func (x *RegisterResponse) GetAgentCertPem() []byte {
+	if x != nil {
+		return x.AgentCertPem
+	}
+	return nil
+}
+
+func (x *RegisterResponse) GetAgentKeyPem() []byte {
+	if x != nil {
+		return x.AgentKeyPem
 	}
 	return nil
 }
@@ -959,7 +991,7 @@ var File_proto_compliance_proto protoreflect.FileDescriptor
 const file_proto_compliance_proto_rawDesc = "" +
 	"\n" +
 	"\x16proto/compliance.proto\x12\n" +
-	"compliance\"\xc1\x01\n" +
+	"compliance\"\xf0\x01\n" +
 	"\x0fRegisterRequest\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x1d\n" +
 	"\n" +
@@ -967,13 +999,17 @@ const file_proto_compliance_proto_rawDesc = "" +
 	"\ragent_version\x18\x03 \x01(\tR\fagentVersion\x12-\n" +
 	"\x12installed_software\x18\x04 \x03(\tR\x11installedSoftware\x12\x1f\n" +
 	"\vmac_address\x18\x05 \x01(\tR\n" +
-	"macAddress\"\xe1\x02\n" +
+	"macAddress\x12-\n" +
+	"\x12needs_certificates\x18\x06 \x01(\bR\x11needsCertificates\"\xcb\x03\n" +
 	"\x10RegisterResponse\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x124\n" +
 	"\x16check_interval_seconds\x18\x02 \x01(\x05R\x14checkIntervalSeconds\x12%\n" +
 	"\x0eenabled_checks\x18\x03 \x03(\tR\renabledChecks\x12C\n" +
 	"\x0fcapability_tier\x18\x04 \x01(\x0e2\x1a.compliance.CapabilityTierR\x0ecapabilityTier\x12P\n" +
-	"\fcheck_config\x18\x05 \x03(\v2-.compliance.RegisterResponse.CheckConfigEntryR\vcheckConfig\x1a>\n" +
+	"\fcheck_config\x18\x05 \x03(\v2-.compliance.RegisterResponse.CheckConfigEntryR\vcheckConfig\x12\x1e\n" +
+	"\vca_cert_pem\x18\x06 \x01(\fR\tcaCertPem\x12$\n" +
+	"\x0eagent_cert_pem\x18\a \x01(\fR\fagentCertPem\x12\"\n" +
+	"\ragent_key_pem\x18\b \x01(\fR\vagentKeyPem\x1a>\n" +
 	"\x10CheckConfigEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf0\x02\n" +

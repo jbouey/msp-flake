@@ -53,13 +53,37 @@
 - `46a3db1` fix: Trigger must not SET generated column l1_rules.success_rate
 - `6a5271e` fix: Flywheel trigger matches rule_id + exclude AUTO-* placeholders
 
+### Appliance Rebuild (v1.0.57)
+- Bumped version to 1.0.57 in default.nix, pyproject.toml, setup.py (all synced)
+- Pushed to GitHub, ran `nixos-rebuild switch --flake github:jbouey/msp-flake#osiriscare-appliance-disk`
+- New derivation `7l0nyk0w3pjpfmy0li8zbz6m38x8q7mw-compliance-agent-1.0.56` (Nix name cached, but wheel is 1.0.57)
+- Verified `run_windows_runbook:` handler at line 1271 in installed code
+- Agent running, scanning Linux (.242) and Windows (.250, .251) targets
+- Flap suppressions: 0 active (cleared earlier in session)
+
+### Infrastructure Status (end of session)
+- All 5 VMs running: northvalley-dc, northvalley-ws01, northvalley-linux, northvalley-srv01, osiriscare-appliance
+- WinRM: DC (.250) OK, WS (.251) OK, SRV01 (.244) OK
+- Linux SSH: (.242) OK — agent SSHing as osiris, auth succeeding
+- `msp-console-branding.service` failing (read-only /etc/issue) — cosmetic only
+- `local-portal.service` failing — non-critical
+
+## Commits
+- `3bc32d0` fix: Migration 045 audit fixes + CSP dedup + Windows runbook colon handler
+- `83b9b76` fix: Migration 045 evidence_bundles index uses appliance_id not site_id
+- `46a3db1` fix: Trigger must not SET generated column l1_rules.success_rate
+- `6a5271e` fix: Flywheel trigger matches rule_id + exclude AUTO-* placeholders
+- `dec66a9` docs: Session 110 flywheel pipeline fix + database doc update
+- `f1a0eef` chore: Bump compliance-agent version to 1.0.57
+
 ## Known Issues
-- Appliance running v1.0.56 — needs NixOS rebuild for `run_windows_runbook:` handler
-- `Unknown action: run_windows_runbook:RB-WIN-SEC-016` errors in agent logs
 - RB-AUTO-BITLOCKE at 30% success rate — rule needs investigation/tuning
 - Execution telemetry POST blocked by CSRF when called from external scripts
+- Nix derivation name still says 1.0.56 due to flake cache (actual code is 1.0.57)
+- `msp-console-branding.service` fails on read-only /etc/issue
+- `local-portal.service` fails on startup
 
 ## Next Priorities
-1. **Appliance rebuild** — Deploy new agent code with `run_windows_runbook:` handler
+1. **Full spectrum chaos lab test** — All targets ready, agent rebuilt, flap suppressions cleared
 2. **BitLocker rule tuning** — Investigate 70% failure rate
-3. **Chaos lab full spectrum** — Re-run with cleared flap suppressions + new agent
+3. **Version sync** — Next rebuild will show 1.0.57 in Nix derivation name (cache cleared)

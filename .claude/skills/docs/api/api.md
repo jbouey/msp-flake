@@ -63,7 +63,7 @@ async def list_incidents(
     pass
 ```
 
-## gRPC API
+## gRPC API (Go Agent v0.3.0)
 
 ### Service Definition
 ```protobuf
@@ -71,56 +71,56 @@ syntax = "proto3";
 package compliance;
 
 service ComplianceAgent {
-  // Agent registration
   rpc Register(RegisterRequest) returns (RegisterResponse);
-
-  // Streaming drift events
   rpc ReportDrift(stream DriftEvent) returns (stream DriftAck);
-
-  // Healing results
   rpc ReportHealing(HealingResult) returns (HealingAck);
-
-  // Heartbeat
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc ReportRMMStatus(RMMStatusReport) returns (RMMAck);
 }
 
-message DriftEvent {
+message RegisterRequest {
+  string hostname = 1;
+  string os_version = 2;
+  string agent_version = 3;
+  string mac_address = 4;
+  CapabilityTier capability = 5;
+  bool needs_certificates = 6;  // mTLS auto-enrollment
+}
+
+message RegisterResponse {
   string agent_id = 1;
-  string hostname = 2;
-  string check_type = 3;
-  bool passed = 4;
-  string expected = 5;
-  string actual = 6;
-  string hipaa_control = 7;
-  int64 timestamp = 8;
-  map<string, string> metadata = 9;
-}
-
-enum CapabilityTier {
-  MONITOR_ONLY = 0;
-  SELF_HEAL = 1;
-  FULL_REMEDIATION = 2;
+  bytes ca_cert_pem = 6;      // CA cert for TLS verification
+  bytes agent_cert_pem = 7;   // Signed client cert
+  bytes agent_key_pem = 8;    // Client private key
 }
 ```
 
+### Certificate Auto-Enrollment (mTLS)
+1. Agent boots with no certs → connects insecure, sets `needs_certificates=true`
+2. Server issues ECDSA P-256 cert via `AgentCA.issue_agent_cert()`
+3. Agent saves certs to disk, reconnects with mTLS
+4. All subsequent connections use mutual TLS
+
+### Agent Discovery
+- DNS SRV: `_osiris-grpc._tcp.<domain>` → appliance IP:50051
+- Fallback: `OSIRIS_APPLIANCE_ADDR` env or config file
+- Domain detection: `USERDNSDOMAIN` env (Windows) or WMI fallback
+
+### GPO Deployment
+- Agent binary uploaded to `\\domain\SYSVOL\domain\OsirisCare\`
+- Idempotent startup script checks hash, installs/updates as needed
+- `sc.exe failure` configures restart backoff (1min/2min/5min)
+
 ### Go Client Usage
 ```go
-conn, _ := grpc.Dial("appliance:50051", grpc.WithInsecure())
-client := pb.NewComplianceAgentClient(conn)
+// Agent auto-discovers appliance and connects with mTLS
+client, _ := transport.NewGRPCClient(ctx, cfg)
+resp, _ := client.Register(ctx)  // Auto-enrolls certs if needed
 
-// Register
-resp, _ := client.Register(ctx, &pb.RegisterRequest{
-    Hostname: hostname,
-    AgentVersion: "1.0.44",
-})
-
-// Stream drift events
-stream, _ := client.ReportDrift(ctx)
-stream.Send(&pb.DriftEvent{
-    AgentId: resp.AgentId,
-    CheckType: "firewall",
-    Passed: false,
-})
+// Bidirectional drift stream with heal commands
+client.StartDriftStream(ctx)
+client.SendDrift(ctx, &pb.DriftEvent{CheckType: "firewall", Passed: false})
+// HealCommands arrive on client.HealCmds channel
 ```
 
 ## Authentication
@@ -274,5 +274,9 @@ export const sitesApi = {
 - `backend/auth.py` - Authentication endpoints
 - `backend/sites.py` - Site management
 - `backend/integrations/api.py` - OAuth + cloud
-- `proto/compliance.proto` - gRPC definitions
+- `agent/proto/compliance.proto` - gRPC service definition (Go agent)
+- `packages/compliance-agent/src/compliance_agent/grpc_server.py` - Python gRPC server
+- `packages/compliance-agent/src/compliance_agent/agent_ca.py` - ECDSA P-256 CA for agent mTLS
+- `packages/compliance-agent/src/compliance_agent/dns_registration.py` - DNS SRV record registration
+- `packages/compliance-agent/src/compliance_agent/gpo_deployment.py` - GPO-based agent deployment
 - `frontend/src/utils/api.ts` - TypeScript client

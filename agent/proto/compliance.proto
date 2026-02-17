@@ -34,6 +34,7 @@ message RegisterRequest {
   string agent_version = 3;
   repeated string installed_software = 4;
   string mac_address = 5;
+  bool needs_certificates = 6;  // True on first connect when agent has no certs
 }
 
 // RegisterResponse provides agent configuration
@@ -43,6 +44,9 @@ message RegisterResponse {
   repeated string enabled_checks = 3;
   CapabilityTier capability_tier = 4;
   map<string, string> check_config = 5;
+  bytes ca_cert_pem = 6;       // CA certificate for TLS verification
+  bytes agent_cert_pem = 7;    // Signed client certificate for this agent
+  bytes agent_key_pem = 8;     // Private key for the client certificate
 }
 
 // CapabilityTier defines what actions the agent can take

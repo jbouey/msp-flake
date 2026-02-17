@@ -126,41 +126,46 @@ cursor = conn.execute(query, params)
 conn.commit()
 ```
 
-## gRPC Integration
+## gRPC Integration (Go Agent v0.3.0)
 
 ### Proto Definition
 ```protobuf
 service ComplianceAgent {
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc ReportDrift(stream DriftEvent) returns (stream DriftAck);
+  rpc ReportHealing(HealingResult) returns (HealingAck);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc ReportRMMStatus(RMMStatusReport) returns (RMMAck);
 }
 
-message DriftEvent {
-  string agent_id = 1;
-  string hostname = 2;
-  string check_type = 3;
-  bool passed = 4;
-  string expected = 5;
-  string actual = 6;
-}
+// RegisterRequest includes needs_certificates (field 6) for mTLS auto-enrollment
+// RegisterResponse includes ca_cert_pem (6), agent_cert_pem (7), agent_key_pem (8)
+// DriftAck includes optional HealCommand for bidirectional healing
+// HeartbeatResponse includes repeated HealCommand pending_commands
 ```
 
-### Python Servicer
+### Python Servicer (with CA)
 ```python
 class ComplianceAgentServicer(compliance_pb2_grpc.ComplianceAgentServicer):
-    def ReportDrift(self, request_iterator, context):
-        for event in request_iterator:
-            logger.info(f"Drift: {event.hostname}/{event.check_type}")
+    def __init__(self, agent_registry, ..., agent_ca=None):
+        self.agent_ca = agent_ca  # AgentCA for mTLS enrollment
 
-            if not event.passed:
-                self._route_drift_to_healing(event)
-
-            yield compliance_pb2.DriftAck(
-                event_id=f"{event.agent_id}-{event.timestamp}",
-                received=True
-            )
+    def Register(self, request, context):
+        # If agent needs certs, issue via CA
+        if request.needs_certificates and self.agent_ca:
+            cert_pem, key_pem, ca_pem = self.agent_ca.issue_agent_cert(
+                hostname=request.hostname, agent_id=agent_id)
+            return RegisterResponse(..., ca_cert_pem=ca_pem,
+                agent_cert_pem=cert_pem, agent_key_pem=key_pem)
 ```
+
+### Agent Deployment Pipeline
+```
+Boot → CA Init → gRPC Server (TLS) → DNS SRV Registration → GPO Deployment
+```
+- `agent_ca.py`: ECDSA P-256 CA, 10-year validity, 365-day agent certs
+- `dns_registration.py`: Registers `_osiris-grpc._tcp` SRV record via PowerShell on DC
+- `gpo_deployment.py`: Uploads agent to SYSVOL, creates idempotent startup script, links GPO
 
 ## Error Handling
 
@@ -221,11 +226,17 @@ class Settings(BaseModel):
 - `backend/sites.py` - Site management
 - `backend/escalation_engine.py` - L3 notifications (861 lines)
 - `backend/l2_planner.py` - LLM integration (507 lines)
-- `compliance_agent/grpc_server.py` - gRPC servicer
+- `compliance_agent/grpc_server.py` - gRPC servicer (with agent_ca for mTLS enrollment)
+- `compliance_agent/agent_ca.py` - ECDSA P-256 CA for agent mTLS auto-enrollment
+- `compliance_agent/dns_registration.py` - DNS SRV record registration via WinRM on DC
+- `compliance_agent/gpo_deployment.py` - GPO-based zero-friction agent deployment
 - `compliance_agent/level1_deterministic.py` - Rule engine (92 rules: builtin + YAML + JSON synced)
 - `compliance_agent/auto_healer.py` - Healing orchestrator (circuit breaker + persistent flap suppression)
+- `compliance_agent/runbooks/windows/executor.py` - WinRM executor (session cache, retry backoff, tempfile for scripts >2KB to bypass cmd.exe 8191 char limit)
 - `compliance_agent/appliance_client.py` - MCP server client (PHI scrub at transport boundary, pre_scrubbed flag for signed payloads)
 - `backend/cve_watch.py` - CVE Watch (NVD sync + fleet matching + 7 REST endpoints; asyncpg returns JSONB as string—needs isinstance guard)
 - `backend/evidence_chain.py` - OTS blockchain anchoring (LEB128 varint parser, BTC block height extraction)
 - `backend/framework_sync.py` - Compliance Library (OSCAL sync from NIST GitHub + YAML seed + 7 REST endpoints, 498 lines)
+- `backend/sites.py` - Site management + order acknowledge/complete (handles both admin_orders AND healing orders tables, auto-expires stale orders)
 - `compliance_agent/incident_db.py` - SQLite incident DB + flap_suppressions table
+- `main.py` - Flywheel promotion loop (Step 0: generates patterns from L2 telemetry, Step 1-3: evaluate/promote/sync). l1_rules query filters source != 'builtin' to avoid double-serve.

@@ -133,15 +133,17 @@ if GRPC_AVAILABLE:
             mcp_client=None,
             healing_engine=None,
             config=None,
+            agent_ca=None,
         ):
             self.registry = agent_registry
             self.mcp_client = mcp_client
             self.healing_engine = healing_engine
             self.config = config
+            self.agent_ca = agent_ca
 
         def Register(self, request, context):
-            """Handle agent registration."""
-            logger.info(f"Go agent registration: {request.hostname}")
+            """Handle agent registration and optional certificate enrollment."""
+            logger.info(f"Go agent registration: {request.hostname} (needs_certs={request.needs_certificates})")
 
             # Generate agent ID
             agent_id = f"go-{request.hostname}-{uuid.uuid4().hex[:8]}"
@@ -163,6 +165,23 @@ if GRPC_AVAILABLE:
                     f"{list(request.installed_software)[:5]}"
                 )
 
+            # Issue certificates if requested and CA is available
+            ca_cert_pem = b""
+            agent_cert_pem = b""
+            agent_key_pem = b""
+            if request.needs_certificates and self.agent_ca:
+                try:
+                    cert_pem, key_pem, ca_pem = self.agent_ca.issue_agent_cert(
+                        hostname=request.hostname,
+                        agent_id=agent_id,
+                    )
+                    ca_cert_pem = ca_pem
+                    agent_cert_pem = cert_pem
+                    agent_key_pem = key_pem
+                    logger.info(f"Issued certificates for {request.hostname}")
+                except Exception as e:
+                    logger.error(f"Failed to issue certs for {request.hostname}: {e}")
+
             # Build response using protobuf message
             return compliance_pb2.RegisterResponse(
                 agent_id=agent_id,
@@ -177,6 +196,9 @@ if GRPC_AVAILABLE:
                 ],
                 capability_tier=tier,
                 check_config={},
+                ca_cert_pem=ca_cert_pem,
+                agent_cert_pem=agent_cert_pem,
+                agent_key_pem=agent_key_pem,
             )
 
         # Mapping from Go agent check types to heal actions for immediate response
@@ -437,6 +459,7 @@ def serve_sync(
     tls_cert_file: Optional[str] = None,
     tls_key_file: Optional[str] = None,
     ca_cert_file: Optional[str] = None,
+    agent_ca=None,
 ) -> None:
     """Start the gRPC server (synchronous version for threading)."""
     if not GRPC_AVAILABLE:
@@ -450,6 +473,7 @@ def serve_sync(
         mcp_client,
         healing_engine,
         config,
+        agent_ca=agent_ca,
     )
 
     # Register the servicer with the server
@@ -478,6 +502,7 @@ async def serve(
     tls_cert_file: Optional[str] = None,
     tls_key_file: Optional[str] = None,
     ca_cert_file: Optional[str] = None,
+    agent_ca=None,
 ) -> None:
     """Start the gRPC server (async version)."""
     if not GRPC_AVAILABLE:
@@ -491,6 +516,7 @@ async def serve(
         mcp_client,
         healing_engine,
         config,
+        agent_ca=agent_ca,
     )
 
     # Register the servicer with the server

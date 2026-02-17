@@ -103,6 +103,15 @@ from .grpc_server import (
     serve as grpc_serve,
 )
 
+# Certificate Authority for agent mTLS enrollment
+from .agent_ca import AgentCA
+
+# DNS SRV record registration for agent auto-discovery
+from .dns_registration import DNSRegistrar
+
+# GPO-based agent deployment (production path)
+from .gpo_deployment import GPODeploymentEngine
+
 # Import compliance_pb2 for HealCommand creation (if gRPC available)
 try:
     from . import compliance_pb2
@@ -400,6 +409,13 @@ class ApplianceAgent:
         self._grpc_server_task: Optional[asyncio.Task] = None
         self.agent_registry: Optional[AgentRegistry] = None
 
+        # Certificate Authority for agent mTLS
+        self.agent_ca: Optional[AgentCA] = None
+
+        # GPO deployment state
+        self._gpo_deployed = False
+        self._dns_srv_registered = False
+
         # Local credential storage (reduces credential-over-wire exposure)
         self.credential_store = CredentialStore(
             state_dir=config.state_dir,
@@ -509,6 +525,16 @@ class ApplianceAgent:
         # Start sensor API web server for dual-mode architecture
         if self._sensor_enabled:
             await self._start_sensor_server()
+
+        # Initialize Certificate Authority for agent mTLS
+        try:
+            ca_dir = self.config.state_dir / "ca"
+            self.agent_ca = AgentCA(ca_dir=ca_dir)
+            self.agent_ca.ensure_ca()
+            logger.info("Certificate Authority initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize CA: {e}")
+            self.agent_ca = None
 
         # Start gRPC server for Go agent communication
         if self._grpc_enabled and GRPC_AVAILABLE:
@@ -761,6 +787,9 @@ class ApplianceAgent:
         Go agents on Windows workstations connect via gRPC (port 50051)
         for persistent streaming of drift events. This solves the scalability
         problem of polling 25-50 workstations per site via WinRM.
+
+        If CA is initialized, generates a server certificate and enables mTLS.
+        Agents without certs connect insecure for enrollment, then reconnect with mTLS.
         """
         if not GRPC_AVAILABLE:
             logger.warning("gRPC server disabled - grpcio not installed")
@@ -770,13 +799,32 @@ class ApplianceAgent:
             # Initialize agent registry
             self.agent_registry = AgentRegistry()
 
+            # Generate server TLS certs from CA if available
+            tls_cert = None
+            tls_key = None
+            ca_cert = None
+
+            if self.agent_ca:
+                try:
+                    appliance_ips = get_ip_addresses()
+                    if appliance_ips:
+                        cert_pem, key_pem = self.agent_ca.generate_server_cert(appliance_ips[0])
+                        tls_cert = str(self.agent_ca.server_cert_path)
+                        tls_key = str(self.agent_ca.server_key_path)
+                        ca_cert = str(self.agent_ca.ca_cert_path)
+                        logger.info("gRPC server using CA-generated TLS certificates")
+                except Exception as e:
+                    logger.warning(f"Failed to generate server TLS cert: {e}")
+
+            # Fall back to config-provided certs
+            if not tls_cert:
+                tls_cert = str(self.config.grpc_tls_cert_file) if getattr(self.config, 'grpc_tls_cert_file', None) else None
+                tls_key = str(self.config.grpc_tls_key_file) if getattr(self.config, 'grpc_tls_key_file', None) else None
+                ca_cert = str(self.config.grpc_ca_cert_file) if getattr(self.config, 'grpc_ca_cert_file', None) else None
+
             # Start gRPC server in background task
             async def serve():
                 try:
-                    # Pass TLS config if available
-                    tls_cert = str(self.config.grpc_tls_cert_file) if getattr(self.config, 'grpc_tls_cert_file', None) else None
-                    tls_key = str(self.config.grpc_tls_key_file) if getattr(self.config, 'grpc_tls_key_file', None) else None
-                    ca_cert = str(self.config.grpc_ca_cert_file) if getattr(self.config, 'grpc_ca_cert_file', None) else None
                     await grpc_serve(
                         port=self._grpc_port,
                         agent_registry=self.agent_registry,
@@ -785,12 +833,14 @@ class ApplianceAgent:
                         tls_cert_file=tls_cert,
                         tls_key_file=tls_key,
                         ca_cert_file=ca_cert,
+                        agent_ca=self.agent_ca,
                     )
                 except asyncio.CancelledError:
                     pass
 
             self._grpc_server_task = asyncio.create_task(serve())
-            logger.info(f"gRPC server started on port {self._grpc_port} (Go agents)")
+            tls_status = "mTLS" if tls_cert else "insecure"
+            logger.info(f"gRPC server started on port {self._grpc_port} ({tls_status}, Go agents)")
 
         except Exception as e:
             logger.warning(f"Failed to start gRPC server: {e}")
@@ -2035,140 +2085,123 @@ class ApplianceAgent:
             computer_name = result.std_out.decode().strip()
             logger.info(f"Connected to Windows: {computer_name}")
 
-            # Run basic compliance checks
-            checks = [
-                ("windows_defender", "$status = Get-MpComputerStatus; @{Enabled=$status.AntivirusEnabled;RealTimeEnabled=$status.RealTimeProtectionEnabled;Updated=$status.AntivirusSignatureLastUpdated} | ConvertTo-Json"),
-                ("firewall_status", "Get-NetFirewallProfile | Select-Object Name,Enabled | ConvertTo-Json"),
-                ("password_policy", "net accounts | Select-String 'password|lockout'"),
-                ("bitlocker_status", "Get-BitLockerVolume -MountPoint C: -ErrorAction SilentlyContinue | Select-Object MountPoint,ProtectionStatus | ConvertTo-Json"),
-                ("audit_policy", "auditpol /get /subcategory:'Logon'"),
-                # Critical Windows Services check
-                ("service_w32time", "Get-Service W32Time -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
-                ("service_dns", "Get-Service DNS -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
-                ("service_spooler", "Get-Service Spooler -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
-                ("service_wuauserv", "Get-Service wuauserv -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
-                ("service_netlogon", "Get-Service Netlogon -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json"),
-                # SMB signing enforcement
-                ("smb_signing", "Get-SmbServerConfiguration | Select-Object RequireSecuritySignature | ConvertTo-Json"),
-                # SMBv1 protocol (EternalBlue attack surface)
-                ("smb1_protocol", "Get-SmbServerConfiguration | Select-Object EnableSMB1Protocol | ConvertTo-Json"),
-                # WMI event subscription persistence
-                ("wmi_event_persistence", """
-$safe = @('BVTFilter','SCM Event Log Filter')
-$suspicious = @()
-$filters = Get-WmiObject -Namespace root\\subscription -Class __EventFilter -ErrorAction SilentlyContinue
-foreach ($f in $filters) { if ($f.Name -notin $safe -and $f.Name -notlike 'Microsoft-Windows-*') { $suspicious += @{Name=$f.Name;Type='Filter'} } }
-foreach ($cls in @('CommandLineEventConsumer','ActiveScriptEventConsumer')) {
-    $consumers = Get-WmiObject -Namespace root\\subscription -Class $cls -ErrorAction SilentlyContinue
-    foreach ($c in $consumers) { if ($c.Name -notin $safe) { $suspicious += @{Name=$c.Name;Type=$cls} } }
-}
-@{SuspiciousCount=$suspicious.Count;Items=$suspicious} | ConvertTo-Json -Compress
-"""),
-                # Network profile (domain machines should not be on Public)
-                ("network_profile", "Get-NetConnectionProfile | Select-Object Name,NetworkCategory,InterfaceAlias | ConvertTo-Json"),
-                # DNS configuration (detect DNS hijacking)
-                ("dns_config", """
-$adapter = Get-NetAdapter | Where-Object Status -eq Up | Select-Object -First 1
-$dns = (Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4).ServerAddresses
-$expected = @('192.168.88.250','192.168.88.1','127.0.0.1')
-$hijacked = @()
-foreach ($d in $dns) { if ($expected -notcontains $d) { $hijacked += $d } }
-@{Servers=$dns; Hijacked=$hijacked; Compliant=($hijacked.Count -eq 0)} | ConvertTo-Json -Compress
-"""),
-                # Screen lock policy (HIPAA requires <= 15 min timeout)
-                ("screen_lock_policy", """
-$result = @{Compliant=$true; Details=@()}
-$ssKey = 'HKCU:\\Control Panel\\Desktop'
-$timeout = (Get-ItemProperty -Path $ssKey -Name 'ScreenSaveTimeOut' -ErrorAction SilentlyContinue).ScreenSaveTimeOut
-$active = (Get-ItemProperty -Path $ssKey -Name 'ScreenSaveActive' -ErrorAction SilentlyContinue).ScreenSaveActive
-$secure = (Get-ItemProperty -Path $ssKey -Name 'ScreenSaverIsSecure' -ErrorAction SilentlyContinue).ScreenSaverIsSecure
-if (-not $timeout -or [int]$timeout -gt 900 -or [int]$timeout -eq 0) { $result.Compliant=$false; $result.Details += "Timeout=$timeout" }
-if ($active -ne '1') { $result.Compliant=$false; $result.Details += "Active=$active" }
-if ($secure -ne '1') { $result.Compliant=$false; $result.Details += "Secure=$secure" }
-$result | ConvertTo-Json -Compress
-"""),
-                # Defender exclusion audit (suspicious exclusion paths)
-                ("defender_exclusions", """
-$prefs = Get-MpPreference -ErrorAction SilentlyContinue
-$suspicious = @()
-$badPaths = @('C:\\Windows\\Temp','C:\\Temp','C:\\Users\\Public','C:\\ProgramData')
-$badExts = @('exe','dll','bat','cmd','ps1','vbs','js','scr')
-foreach ($p in @($prefs.ExclusionPath | Where-Object { $_ })) {
-    foreach ($bp in $badPaths) { if ($p -like "$bp*") { $suspicious += @{Type='path';Value=$p}; break } }
-}
-foreach ($e in @($prefs.ExclusionExtension | Where-Object { $_ })) {
-    $ne = $e.TrimStart('.')
-    if ($badExts -contains $ne) { $suspicious += @{Type='ext';Value=$ne} }
-}
-@{SuspiciousCount=$suspicious.Count; Items=$suspicious} | ConvertTo-Json -Compress
-"""),
-                # Windows Server Backup check (requires Windows Server Backup feature)
-                ("backup_status", """
-try {
-    $wsb = Get-WBSummary -ErrorAction Stop
-    if ($wsb.LastSuccessfulBackupTime) {
-        $age = (Get-Date) - $wsb.LastSuccessfulBackupTime
-        @{
-            BackupType = 'WindowsServerBackup'
-            LastBackup = $wsb.LastSuccessfulBackupTime.ToString('o')
-            BackupAgeHours = [math]::Round($age.TotalHours, 1)
-            LastResult = $wsb.LastBackupResultHR
-            NextBackup = $wsb.NextBackupTime
-        } | ConvertTo-Json
-    } else {
-        @{BackupType = 'WindowsServerBackup'; Error = 'NoBackupConfigured'} | ConvertTo-Json
-    }
-} catch {
-    @{BackupType = 'NotInstalled'; Error = $_.Exception.Message} | ConvertTo-Json
-}
-"""),
-                # Persistence detection: suspicious scheduled tasks
-                ("scheduled_task_persistence", """
-$suspicious = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
-    $_.TaskName -notmatch '^(Microsoft|Google|Adobe|Mozilla|OneDrive|MicrosoftEdge|Optimize|Scheduled|User_Feed|CreateExplorerShellUnelevatedTask)' -and
-    $_.TaskPath -eq '\\' -and
-    $_.State -ne 'Disabled'
-} | ForEach-Object {
-    $action = ($_.Actions | Select-Object -First 1).Execute
-    if ($action -and $action -notmatch '(svchost|taskhost|consent|SystemSettings|WindowsUpdate|defrag|SilentCleanup)') {
-        @{TaskName=$_.TaskName; Execute=$action; State=$_.State.ToString()}
-    }
-}
-if ($suspicious) { $suspicious | ConvertTo-Json -Compress } else { '[]' }
-"""),
-                # Persistence detection: suspicious Run registry keys
-                ("registry_run_persistence", """
-$found = @()
-$paths = @(
-    'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run',
-    'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce'
-)
-foreach ($p in $paths) {
-    $props = Get-ItemProperty -Path $p -ErrorAction SilentlyContinue
-    if ($props) {
-        $props.PSObject.Properties | Where-Object {
-            $_.Name -notmatch '^(PS|VMware|SecurityHealth|RealTimeProtection|Windows)' -and
-            $_.Value -match '\\.(exe|bat|cmd|ps1|vbs|js)' -and
-            $_.Value -notmatch '(Program Files|Windows|Microsoft|VMware)'
-        } | ForEach-Object {
-            $found += @{Name=$_.Name; Value=$_.Value; Path=$p}
-        }
-    }
-}
-if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
-"""),
+            # Run compliance checks in 2 batched WinRM calls (was 20+ calls).
+            # Split into 2 batches to stay under cmd.exe 8191 char limit.
+            # Each batch collects results as JSON with {check: {o:output, c:code}}.
+            batch_header = "$r=@{};function R($n,$s){try{$o=& $s 2>$null;$r[$n]=@{o=[string]$o;c=0}}catch{$r[$n]=@{o=$_.Exception.Message;c=1}}}\n"
+
+            # Batch 1: Simple one-liner checks (services, firewall, SMB, etc)
+            batch1_ps = batch_header + r"""
+R 'windows_defender' {$s=Get-MpComputerStatus;@{Enabled=$s.AntivirusEnabled;RealTimeEnabled=$s.RealTimeProtectionEnabled;Updated=$s.AntivirusSignatureLastUpdated}|ConvertTo-Json}
+R 'firewall_status' {Get-NetFirewallProfile|Select-Object Name,Enabled|ConvertTo-Json}
+R 'password_policy' {net accounts|Select-String 'password|lockout'|Out-String}
+R 'bitlocker_status' {Get-BitLockerVolume -MountPoint C: -EA SilentlyContinue|Select-Object MountPoint,ProtectionStatus|ConvertTo-Json}
+R 'audit_policy' {auditpol /get /subcategory:'Logon'|Out-String}
+R 'service_w32time' {Get-Service W32Time -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
+R 'service_dns' {Get-Service DNS -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
+R 'service_spooler' {Get-Service Spooler -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
+R 'service_wuauserv' {Get-Service wuauserv -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
+R 'service_netlogon' {Get-Service Netlogon -EA SilentlyContinue|Select-Object Name,Status,StartType|ConvertTo-Json}
+R 'smb_signing' {Get-SmbServerConfiguration|Select-Object RequireSecuritySignature|ConvertTo-Json}
+R 'smb1_protocol' {Get-SmbServerConfiguration|Select-Object EnableSMB1Protocol|ConvertTo-Json}
+R 'network_profile' {Get-NetConnectionProfile|Select-Object Name,NetworkCategory,InterfaceAlias|ConvertTo-Json}
+$r|ConvertTo-Json -Depth 3 -Compress
+"""
+
+            # Batch 2: Complex multi-line checks (persistence, policy, config)
+            batch2_ps = batch_header + r"""
+R 'wmi_event_persistence' {
+$safe=@('BVTFilter','SCM Event Log Filter');$sus=@()
+$f=Get-WmiObject -Namespace root\subscription -Class __EventFilter -EA SilentlyContinue
+foreach($x in $f){if($x.Name -notin $safe -and $x.Name -notlike 'Microsoft-Windows-*'){$sus+=@{Name=$x.Name;Type='Filter'}}}
+foreach($c in @('CommandLineEventConsumer','ActiveScriptEventConsumer')){$cs=Get-WmiObject -Namespace root\subscription -Class $c -EA SilentlyContinue;foreach($x in $cs){if($x.Name -notin $safe){$sus+=@{Name=$x.Name;Type=$c}}}}
+@{SuspiciousCount=$sus.Count;Items=$sus}|ConvertTo-Json -Compress}
+R 'dns_config' {$a=Get-NetAdapter|?{$_.Status -eq 'Up'}|Select -First 1;$d=(Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4).ServerAddresses;$e=@('192.168.88.250','192.168.88.1','127.0.0.1');$h=@();foreach($x in $d){if($e -notcontains $x){$h+=$x}};@{Servers=$d;Hijacked=$h;Compliant=($h.Count -eq 0)}|ConvertTo-Json -Compress}
+R 'screen_lock_policy' {$r2=@{Compliant=$true;Details=@()};$k='HKCU:\Control Panel\Desktop';$t=(Get-ItemProperty $k -Name 'ScreenSaveTimeOut' -EA SilentlyContinue).ScreenSaveTimeOut;$a=(Get-ItemProperty $k -Name 'ScreenSaveActive' -EA SilentlyContinue).ScreenSaveActive;$s=(Get-ItemProperty $k -Name 'ScreenSaverIsSecure' -EA SilentlyContinue).ScreenSaverIsSecure;if(-not $t -or [int]$t -gt 900 -or [int]$t -eq 0){$r2.Compliant=$false;$r2.Details+="Timeout=$t"};if($a -ne '1'){$r2.Compliant=$false;$r2.Details+="Active=$a"};if($s -ne '1'){$r2.Compliant=$false;$r2.Details+="Secure=$s"};$r2|ConvertTo-Json -Compress}
+R 'defender_exclusions' {$p=Get-MpPreference -EA SilentlyContinue;$sus=@();$bp=@('C:\Windows\Temp','C:\Temp','C:\Users\Public','C:\ProgramData');$be=@('exe','dll','bat','cmd','ps1','vbs','js','scr');foreach($x in @($p.ExclusionPath|?{$_})){foreach($b in $bp){if($x -like "$b*"){$sus+=@{Type='path';Value=$x};break}}};foreach($x in @($p.ExclusionExtension|?{$_})){$n=$x.TrimStart('.');if($be -contains $n){$sus+=@{Type='ext';Value=$n}}};@{SuspiciousCount=$sus.Count;Items=$sus}|ConvertTo-Json -Compress}
+R 'backup_status' {try{$w=Get-WBSummary -EA Stop;if($w.LastSuccessfulBackupTime){$a=(Get-Date)-$w.LastSuccessfulBackupTime;@{BackupType='WindowsServerBackup';BackupAgeHours=[math]::Round($a.TotalHours,1)}|ConvertTo-Json}else{@{BackupType='WindowsServerBackup';Error='NoBackupConfigured'}|ConvertTo-Json}}catch{@{BackupType='NotInstalled';Error=$_.Exception.Message}|ConvertTo-Json}}
+R 'scheduled_task_persistence' {$sus=Get-ScheduledTask -EA SilentlyContinue|?{$_.TaskName -notmatch '^(Microsoft|Google|Adobe|Mozilla|OneDrive|MicrosoftEdge|Optimize|Scheduled|User_Feed|CreateExplorerShellUnelevatedTask)' -and $_.TaskPath -eq '\' -and $_.State -ne 'Disabled'}|%{$a=($_.Actions|Select -First 1).Execute;if($a -and $a -notmatch '(svchost|taskhost|consent|SystemSettings|WindowsUpdate|defrag|SilentCleanup)'){@{TaskName=$_.TaskName;Execute=$a;State=$_.State.ToString()}}};if($sus){$sus|ConvertTo-Json -Compress}else{'[]'}}
+R 'registry_run_persistence' {$f=@();foreach($p in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce')){$props=Get-ItemProperty $p -EA SilentlyContinue;if($props){$props.PSObject.Properties|?{$_.Name -notmatch '^(PS|VMware|SecurityHealth|RealTimeProtection|Windows)' -and $_.Value -match '\.(exe|bat|cmd|ps1|vbs|js)' -and $_.Value -notmatch '(Program Files|Windows|Microsoft|VMware)'}|%{$f+=@{Name=$_.Name;Value=$_.Value;Path=$p}}}};if($f.Count -gt 0){$f|ConvertTo-Json -Compress}else{'[]'}}
+$r|ConvertTo-Json -Depth 3 -Compress
+"""
+
+            # Execute both batches (2 WinRM calls instead of 20+)
+            # For scripts > 2KB, use temp file to bypass cmd.exe 8191 char limit
+            # (pywinrm encodes as UTF-16LE base64 via -encodedcommand = ~4x expansion)
+            import base64 as b64mod
+            import hashlib
+            import json as json_module
+
+            def _run_ps_safe(sess, script, batch_label):
+                """Run PowerShell, using temp file for long scripts."""
+                if len(script) <= 2000:
+                    return sess.run_ps(script)
+                # Write base64-encoded script via cmd.exe echo chunks, then decode+execute
+                script_id = hashlib.md5(script.encode()).hexdigest()[:8]
+                temp_b64 = f"C:\\Windows\\Temp\\msp_scan_{script_id}.b64"
+                temp_ps1 = f"C:\\Windows\\Temp\\msp_scan_{script_id}.ps1"
+                encoded = b64mod.b64encode(script.encode('utf-8')).decode('ascii')
+                chunk_size = 6000
+                chunks = [encoded[i:i + chunk_size] for i in range(0, len(encoded), chunk_size)]
+                for i, chunk in enumerate(chunks):
+                    op = '>' if i == 0 else '>>'
+                    r = sess.run_cmd(f'echo {chunk}{op}"{temp_b64}"')
+                    if r.status_code != 0:
+                        logger.warning(f"Failed writing {batch_label} chunk {i}: {r.std_err.decode()[:200]}")
+                        return r
+                decode_run = (
+                    f"$r=(Get-Content '{temp_b64}' -Raw) -replace '\\s',''; "
+                    f"$b=[Convert]::FromBase64String($r); "
+                    f"[IO.File]::WriteAllText('{temp_ps1}',[Text.Encoding]::UTF8.GetString($b)); "
+                    f"Remove-Item '{temp_b64}' -Force -EA SilentlyContinue; "
+                    f"try {{ & '{temp_ps1}' }} finally {{ Remove-Item '{temp_ps1}' -Force -EA SilentlyContinue }}"
+                )
+                return sess.run_ps(decode_run)
+
+            all_results = {}
+            for batch_idx, batch_ps in enumerate([batch1_ps, batch2_ps], 1):
+                try:
+                    batch_result = _run_ps_safe(session, batch_ps, f"batch{batch_idx}")
+                    batch_output = batch_result.std_out.decode().strip()
+                    if batch_result.status_code != 0 or not batch_output:
+                        logger.warning(f"Windows scan batch {batch_idx} failed on {target.hostname}: {batch_result.std_err.decode()[:200]}")
+                        continue
+                    batch_data = json_module.loads(batch_output)
+                    all_results.update(batch_data)
+                except Exception as e:
+                    logger.warning(f"Windows scan batch {batch_idx} error on {target.hostname}: {e}")
+
+            if not all_results:
+                logger.warning(f"No scan results from {target.hostname}")
+                return
+
+            # Process each check from the batched results
+            check_names = [
+                "windows_defender", "firewall_status", "password_policy",
+                "bitlocker_status", "audit_policy",
+                "service_w32time", "service_dns", "service_spooler",
+                "service_wuauserv", "service_netlogon",
+                "smb_signing", "smb1_protocol", "wmi_event_persistence",
+                "network_profile", "dns_config", "screen_lock_policy",
+                "defender_exclusions", "backup_status",
+                "scheduled_task_persistence", "registry_run_persistence",
             ]
 
-            for check_name, ps_cmd in checks:
+            for check_name in check_names:
+                check_data = all_results.get(check_name)
+                if not check_data:
+                    logger.debug(f"No result for {check_name} on {target.hostname}")
+                    continue
+
                 try:
-                    check_result = session.run_ps(ps_cmd)
-                    output = check_result.std_out.decode().strip()
+                    output = str(check_data.get("o", ""))
+                    status_code = int(check_data.get("c", 1))
 
                     # Default: pass if command succeeded
-                    status = "pass" if check_result.status_code == 0 else "fail"
+                    status = "pass" if status_code == 0 else "fail"
 
                     # For specific checks, validate the actual output
-                    if check_name == "firewall_status" and check_result.status_code == 0:
+                    if check_name == "firewall_status" and status_code == 0:
                         # Check if all firewall profiles are enabled
                         try:
                             import json as json_module
@@ -2181,7 +2214,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             pass  # Keep original status if parsing fails
 
-                    elif check_name == "windows_defender" and check_result.status_code == 0:
+                    elif check_name == "windows_defender" and status_code == 0:
                         # Check if Windows Defender is enabled AND real-time protection is on
                         try:
                             import json as json_module
@@ -2195,7 +2228,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                             output_lower = output.lower()
                             status = "pass" if ('"enabled": true' in output_lower and '"realtimeenabled": true' in output_lower) else "fail"
 
-                    elif check_name == "bitlocker_status" and check_result.status_code == 0:
+                    elif check_name == "bitlocker_status" and status_code == 0:
                         # Check if BitLocker protection is on
                         try:
                             import json as json_module
@@ -2207,7 +2240,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                             # If no BitLocker volume found, that's a fail
                             status = "fail" if not output.strip() else status
 
-                    elif check_name == "password_policy" and check_result.status_code == 0:
+                    elif check_name == "password_policy" and status_code == 0:
                         # Check for minimum password requirements
                         try:
                             # Look for minimum password length >= 8
@@ -2219,7 +2252,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             pass
 
-                    elif check_name == "audit_policy" and check_result.status_code == 0:
+                    elif check_name == "audit_policy" and status_code == 0:
                         # Check that Logon auditing is enabled (Success and/or Failure)
                         # The query is for subcategory:'Logon' specifically
                         if "Success" in output or "Failure" in output:
@@ -2254,9 +2287,9 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                             else:
                                 status = "fail"
                         except Exception:
-                            status = "fail" if check_result.status_code != 0 else status
+                            status = "fail" if status_code != 0 else status
 
-                    elif check_name == "scheduled_task_persistence" and check_result.status_code == 0:
+                    elif check_name == "scheduled_task_persistence" and status_code == 0:
                         try:
                             import json as json_module
                             tasks = json_module.loads(output) if output.strip() else []
@@ -2266,7 +2299,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             status = "pass" if output.strip() == "[]" else "fail"
 
-                    elif check_name == "registry_run_persistence" and check_result.status_code == 0:
+                    elif check_name == "registry_run_persistence" and status_code == 0:
                         try:
                             import json as json_module
                             entries = json_module.loads(output) if output.strip() else []
@@ -2276,7 +2309,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             status = "pass" if output.strip() == "[]" else "fail"
 
-                    elif check_name == "smb_signing" and check_result.status_code == 0:
+                    elif check_name == "smb_signing" and status_code == 0:
                         try:
                             import json as json_module
                             smb_data = json_module.loads(output)
@@ -2285,7 +2318,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             pass
 
-                    elif check_name == "smb1_protocol" and check_result.status_code == 0:
+                    elif check_name == "smb1_protocol" and status_code == 0:
                         try:
                             import json as json_module
                             smb1_data = json_module.loads(output)
@@ -2294,7 +2327,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             pass
 
-                    elif check_name == "wmi_event_persistence" and check_result.status_code == 0:
+                    elif check_name == "wmi_event_persistence" and status_code == 0:
                         try:
                             import json as json_module
                             wmi_data = json_module.loads(output)
@@ -2303,7 +2336,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             pass
 
-                    elif check_name == "network_profile" and check_result.status_code == 0:
+                    elif check_name == "network_profile" and status_code == 0:
                         try:
                             import json as json_module
                             profiles = json_module.loads(output)
@@ -2319,7 +2352,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             pass
 
-                    elif check_name == "dns_config" and check_result.status_code == 0:
+                    elif check_name == "dns_config" and status_code == 0:
                         try:
                             import json as json_module
                             dns_data = json_module.loads(output)
@@ -2327,7 +2360,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             pass
 
-                    elif check_name == "screen_lock_policy" and check_result.status_code == 0:
+                    elif check_name == "screen_lock_policy" and status_code == 0:
                         try:
                             import json as json_module
                             lock_data = json_module.loads(output)
@@ -2335,7 +2368,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             status = "fail"
 
-                    elif check_name == "defender_exclusions" and check_result.status_code == 0:
+                    elif check_name == "defender_exclusions" and status_code == 0:
                         try:
                             import json as json_module
                             excl_data = json_module.loads(output)
@@ -2344,7 +2377,7 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                         except Exception:
                             pass
 
-                    elif check_name.startswith("service_") and check_result.status_code == 0:
+                    elif check_name.startswith("service_") and status_code == 0:
                         # Check if critical Windows service is running
                         try:
                             import json as json_module
@@ -2748,11 +2781,17 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                     self._domain_controller = self.discovered_domain.domain_controllers[0]
                     logger.info(f"Auto-set domain controller: {self._domain_controller}")
 
+                # Register DNS SRV record for agent auto-discovery
+                await self._register_dns_srv()
+
                 # Trigger immediate AD enumeration to discover all domain machines
                 try:
                     await self._enumerate_ad_targets()
                 except Exception as e:
                     logger.warning(f"Initial AD enumeration failed: {e}")
+
+                # Deploy agents via GPO (one-time per domain)
+                await self._deploy_via_gpo()
             else:
                 logger.warning("No AD domain discovered - manual configuration required")
                 self._domain_discovery_complete = True  # Mark complete even if failed
@@ -3335,6 +3374,107 @@ if ($found.Count -gt 0) { $found | ConvertTo-Json -Compress } else { '[]' }
                 logger.info(f"Reported deployment results: {successful}/{len(results)} successful")
         except Exception as e:
             logger.error(f"Error reporting deployment results: {e}")
+
+    # =========================================================================
+    # DNS SRV Registration + GPO Deployment (Production Path)
+    # =========================================================================
+
+    async def _register_dns_srv(self):
+        """Register DNS SRV record so Go agents can auto-discover the appliance."""
+        if self._dns_srv_registered:
+            return
+
+        if not self.discovered_domain or not self._domain_controller:
+            logger.debug("Skipping DNS SRV registration — no domain/DC available")
+            return
+
+        creds = await self._get_domain_credentials()
+        if not creds:
+            logger.warning("No domain credentials for DNS SRV registration")
+            return
+
+        appliance_ips = get_ip_addresses()
+        if not appliance_ips:
+            logger.warning("Cannot determine appliance IP for DNS SRV registration")
+            return
+
+        try:
+            if not self.windows_executor:
+                self.windows_executor = WindowsExecutor([])
+
+            registrar = DNSRegistrar(
+                domain=self.discovered_domain.domain_name,
+                appliance_ip=appliance_ips[0],
+                grpc_port=self._grpc_port,
+            )
+            success = await registrar.register_srv_record(
+                executor=self.windows_executor,
+                dc_host=self._domain_controller,
+                credentials=creds,
+            )
+            if success:
+                self._dns_srv_registered = True
+                logger.info(
+                    f"DNS SRV registered: _osiris-grpc._tcp.{self.discovered_domain.domain_name} "
+                    f"-> {appliance_ips[0]}:{self._grpc_port}"
+                )
+            else:
+                logger.warning("DNS SRV registration failed — agents will need manual config")
+        except Exception as e:
+            logger.error(f"DNS SRV registration error: {e}")
+
+    async def _deploy_via_gpo(self):
+        """Deploy Go agent via GPO for zero-friction production deployment."""
+        if self._gpo_deployed:
+            return
+
+        # Check persistent flag
+        gpo_flag = self.config.state_dir / ".gpo-deployed"
+        if gpo_flag.exists():
+            self._gpo_deployed = True
+            logger.debug("GPO deployment already complete (persistent flag)")
+            return
+
+        if not self.discovered_domain or not self._domain_controller:
+            logger.debug("Skipping GPO deployment — no domain/DC available")
+            return
+
+        creds = await self._get_domain_credentials()
+        if not creds:
+            logger.warning("No domain credentials for GPO deployment")
+            return
+
+        # Check if agent binary exists
+        agent_binary = Path("/var/lib/msp/agent/osiris-agent.exe")
+        if not agent_binary.exists():
+            logger.warning(f"Agent binary not found at {agent_binary} — skipping GPO deployment")
+            return
+
+        try:
+            if not self.windows_executor:
+                self.windows_executor = WindowsExecutor([])
+
+            engine = GPODeploymentEngine(
+                domain=self.discovered_domain.domain_name,
+                dc_host=self._domain_controller,
+                executor=self.windows_executor,
+                credentials=creds,
+            )
+            result = await engine.deploy_via_gpo(str(agent_binary))
+            if result.success:
+                self._gpo_deployed = True
+                try:
+                    gpo_flag.write_text(f"{result.gpo_id}\n{result.sysvol_path}")
+                except Exception:
+                    pass
+                logger.info(
+                    f"GPO deployment complete: '{result.gpo_name}' "
+                    f"(ID={result.gpo_id}, SYSVOL={result.sysvol_path})"
+                )
+            else:
+                logger.error(f"GPO deployment failed: {result.error}")
+        except Exception as e:
+            logger.error(f"GPO deployment error: {e}")
 
     # =========================================================================
     # Learning System - L2->L1 Promotion

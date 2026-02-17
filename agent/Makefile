@@ -1,6 +1,6 @@
 .PHONY: all proto build-linux build-windows clean test fmt vet
 
-VERSION := 0.1.0
+VERSION := 0.3.0
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
 

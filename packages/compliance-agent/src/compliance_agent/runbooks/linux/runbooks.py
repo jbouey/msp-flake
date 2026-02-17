@@ -2102,30 +2102,46 @@ LIN_CRYPTO_001 = LinuxRunbook(
         fi
     ''',
     verify_script='''
-        # Brief pause to ensure config file is fully flushed after remediate
-        sleep 1
-        SSHD_CONFIG="/etc/ssh/sshd_config"
+        # Brief pause to ensure sshd has reloaded after remediate
+        sleep 2
         WEAK_CIPHERS="3des|arcfour|blowfish|cast128|rc4"
         WEAK_MACS="md5|sha1-96|umac-64"
         WEAK_KEX="diffie-hellman-group1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1"
         FAIL=false
 
-        # Verify ciphers
-        CIPHERS=$(grep -E "^Ciphers " "$SSHD_CONFIG" 2>/dev/null | awk '{print $2}')
-        if [ -z "$CIPHERS" ] || echo "$CIPHERS" | grep -qiE "$WEAK_CIPHERS"; then
-            FAIL=true
-        fi
+        # Use sshd -T to check ACTIVE config (handles Include directives, defaults)
+        # Fall back to grepping the config file if sshd -T not available
+        ACTIVE_CONFIG=$(sshd -T 2>/dev/null)
 
-        # Verify MACs
-        MACS=$(grep -E "^MACs " "$SSHD_CONFIG" 2>/dev/null | awk '{print $2}')
-        if [ -z "$MACS" ] || echo "$MACS" | grep -qiE "$WEAK_MACS"; then
-            FAIL=true
-        fi
-
-        # Verify KexAlgorithms
-        KEX=$(grep -E "^KexAlgorithms " "$SSHD_CONFIG" 2>/dev/null | awk '{print $2}')
-        if [ -z "$KEX" ] || echo "$KEX" | grep -qiE "$WEAK_KEX"; then
-            FAIL=true
+        if [ -n "$ACTIVE_CONFIG" ]; then
+            # Verify active ciphers (sshd -T outputs lowercase field names)
+            CIPHERS=$(echo "$ACTIVE_CONFIG" | grep "^ciphers " | awk '{print $2}')
+            if echo "$CIPHERS" | grep -qiE "$WEAK_CIPHERS"; then
+                FAIL=true
+            fi
+            MACS=$(echo "$ACTIVE_CONFIG" | grep "^macs " | awk '{print $2}')
+            if echo "$MACS" | grep -qiE "$WEAK_MACS"; then
+                FAIL=true
+            fi
+            KEX=$(echo "$ACTIVE_CONFIG" | grep "^kexalgorithms " | awk '{print $2}')
+            if echo "$KEX" | grep -qiE "$WEAK_KEX"; then
+                FAIL=true
+            fi
+        else
+            # Fallback: check the config file directly
+            SSHD_CONFIG="/etc/ssh/sshd_config"
+            CIPHERS=$(grep -E "^Ciphers " "$SSHD_CONFIG" 2>/dev/null | awk '{print $2}')
+            if [ -n "$CIPHERS" ] && echo "$CIPHERS" | grep -qiE "$WEAK_CIPHERS"; then
+                FAIL=true
+            fi
+            MACS=$(grep -E "^MACs " "$SSHD_CONFIG" 2>/dev/null | awk '{print $2}')
+            if [ -n "$MACS" ] && echo "$MACS" | grep -qiE "$WEAK_MACS"; then
+                FAIL=true
+            fi
+            KEX=$(grep -E "^KexAlgorithms " "$SSHD_CONFIG" 2>/dev/null | awk '{print $2}')
+            if [ -n "$KEX" ] && echo "$KEX" | grep -qiE "$WEAK_KEX"; then
+                FAIL=true
+            fi
         fi
 
         if $FAIL; then

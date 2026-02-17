@@ -1,15 +1,16 @@
 // OsirisCare Go Agent - Workstation compliance monitoring
 //
 // This agent runs on Windows workstations and reports drift events
-// to the NixOS compliance appliance via gRPC or HTTP fallback.
+// to the NixOS compliance appliance via gRPC.
 //
 // Features:
 // - 6 compliance checks: BitLocker, Defender, Patches, Firewall, ScreenLock, RMM
 // - Real-time Windows Event Log monitoring (<1s detection vs 5min polling)
 // - gRPC bidirectional streaming for drift events and heal commands
 // - SQLite offline queue for network resilience
-// - mTLS for secure appliance communication
-// - Windows service integration
+// - mTLS with certificate auto-enrollment
+// - Windows Service Control Manager (SCM) integration
+// - DNS SRV auto-discovery of appliance
 package main
 
 import (
@@ -24,52 +25,59 @@ import (
 
 	"github.com/osiriscare/agent/internal/checks"
 	"github.com/osiriscare/agent/internal/config"
+	"github.com/osiriscare/agent/internal/discovery"
 	"github.com/osiriscare/agent/internal/eventlog"
 	"github.com/osiriscare/agent/internal/healing"
+	"github.com/osiriscare/agent/internal/service"
 	"github.com/osiriscare/agent/internal/transport"
 	pb "github.com/osiriscare/agent/proto"
 )
 
 var (
-	// Build-time variables
-	Version   = "0.1.0"
+	Version   = "0.3.0"
 	BuildTime = "unknown"
 )
 
+// Command-line flags (parsed before SCM detection)
+var (
+	flagAppliance = flag.String("appliance", "", "Appliance gRPC address (host:port)")
+	flagConfig    = flag.String("config", "", "Config file path (optional)")
+	flagVersion   = flag.Bool("version", false, "Print version and exit")
+	flagDryRun    = flag.Bool("dry-run", false, "Run checks once and exit (don't connect)")
+)
+
 func main() {
-	// Parse flags
-	applianceAddr := flag.String("appliance", "", "Appliance gRPC address (host:port)")
-	configFile := flag.String("config", "", "Config file path (optional)")
-	version := flag.Bool("version", false, "Print version and exit")
-	dryRun := flag.Bool("dry-run", false, "Run checks once and exit (don't connect)")
 	flag.Parse()
 
-	if *version {
+	if *flagVersion {
 		fmt.Printf("osiris-agent %s (built %s)\n", Version, BuildTime)
 		os.Exit(0)
 	}
 
-	// Setup logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Printf("OsirisCare Agent v%s starting...", Version)
 
-	// Load configuration
-	cfg, err := config.Load(*configFile, *applianceAddr)
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
-	}
-
-	// Dry run mode - just run checks and exit
-	if *dryRun {
+	// Dry run: always interactive
+	if *flagDryRun {
 		runDryRun()
 		return
 	}
 
-	// Create context with cancellation
+	// Windows Service Control Manager detection
+	if service.IsWindowsService() {
+		log.Println("Running as Windows service")
+		svc := &service.AgentService{RunFunc: runAgent}
+		if err := service.Run(svc); err != nil {
+			log.Fatalf("Service failed: %v", err)
+		}
+		return
+	}
+
+	// Interactive mode (console)
+	log.Println("Running in interactive mode")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle shutdown signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -77,6 +85,46 @@ func main() {
 		log.Printf("Shutdown signal received: %v", sig)
 		cancel()
 	}()
+
+	if err := runAgent(ctx); err != nil {
+		log.Fatalf("Agent failed: %v", err)
+	}
+}
+
+// runAgent is the core agent logic. It receives a context that is cancelled
+// on shutdown (either from SCM or SIGINT/SIGTERM).
+func runAgent(ctx context.Context) error {
+	cfg, err := config.Load(*flagConfig, *flagAppliance)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// DNS SRV discovery if no appliance address configured
+	if cfg.ApplianceAddr == "" {
+		log.Println("[discovery] No appliance address configured, attempting DNS SRV discovery...")
+		domain := cfg.Domain
+		if domain == "" {
+			domain = discovery.DiscoverDomain()
+			if domain != "" {
+				log.Printf("[discovery] Detected domain: %s", domain)
+				cfg.Domain = domain
+			}
+		}
+		if domain != "" {
+			addr, err := discovery.DiscoverApplianceWithRetry(domain, discovery.MaxRetries)
+			if err != nil {
+				log.Printf("[discovery] SRV discovery failed: %v (will start without appliance connection)", err)
+			} else {
+				cfg.ApplianceAddr = addr
+				log.Printf("[discovery] Discovered appliance: %s", addr)
+				if saveErr := cfg.Save(); saveErr != nil {
+					log.Printf("[discovery] Failed to cache config: %v", saveErr)
+				}
+			}
+		} else {
+			log.Println("[discovery] Could not detect AD domain — agent will operate offline")
+		}
+	}
 
 	// Initialize gRPC transport
 	var grpcClient *transport.GRPCClient
@@ -102,21 +150,22 @@ func main() {
 		}
 	}
 
-	// Set default check interval if not registered
-	checkInterval := 300 // 5 minutes default
+	// Check interval and enabled checks
+	checkInterval := 300
 	enabledChecks := []string{"bitlocker", "defender", "patches", "firewall", "screenlock", "rmm_detection"}
 
 	if regResp != nil {
-		checkInterval = int(regResp.CheckIntervalSeconds)
+		if regResp.CheckIntervalSeconds > 0 {
+			checkInterval = int(regResp.CheckIntervalSeconds)
+		}
 		if len(regResp.EnabledChecks) > 0 {
 			enabledChecks = regResp.EnabledChecks
 		}
 	}
 
-	// Initialize check registry with enabled checks
 	checkRegistry := checks.NewRegistry(enabledChecks)
 
-	// Initialize offline queue for network failures
+	// Offline queue
 	offlineQueue, err := transport.NewOfflineQueue(cfg.DataDir)
 	if err != nil {
 		log.Printf("Failed to initialize offline queue: %v", err)
@@ -125,7 +174,7 @@ func main() {
 		defer offlineQueue.Close()
 	}
 
-	// Start persistent drift stream with ack reader
+	// Start persistent drift stream
 	if grpcClient != nil && grpcClient.IsConnected() {
 		if err := grpcClient.StartDriftStream(ctx); err != nil {
 			log.Printf("Failed to start drift stream: %v (will use one-shot mode)", err)
@@ -134,30 +183,27 @@ func main() {
 		}
 	}
 
-	// Start heal command executor goroutine
+	// Heal command executor
 	if grpcClient != nil {
 		go runHealExecutor(ctx, grpcClient)
 	}
 
-	// Start heartbeat loop (delivers pending commands too)
+	// Heartbeat loop
 	if grpcClient != nil && grpcClient.IsConnected() {
 		go runHeartbeatLoop(ctx, grpcClient)
 	}
 
-	// Initialize Windows Event Log watcher for real-time detection
-	// This provides <1 second detection vs 5 minute polling
+	// Real-time Windows Event Log monitoring
 	hostname := checks.GetHostname()
 	eventWatcher := eventlog.NewWatcher(hostname, func(event *eventlog.ComplianceEvent) {
 		log.Printf("[REALTIME] Compliance event detected: %s (channel: %s)", event.CheckType, event.Channel)
 
-		// Convert to drift event
 		agentID := ""
 		if regResp != nil {
 			agentID = regResp.AgentId
 		}
 		driftEvent := event.ConvertToDriftEvent(agentID, hostname)
 
-		// Send immediately via gRPC
 		if grpcClient != nil && grpcClient.IsConnected() {
 			if err := grpcClient.SendDrift(ctx, driftEvent); err != nil {
 				log.Printf("[REALTIME] Failed to send event, queueing: %v", err)
@@ -172,27 +218,25 @@ func main() {
 		}
 	})
 
-	// Start event log monitoring
 	if err := eventWatcher.Start(); err != nil {
 		log.Printf("Failed to start event log watcher: %v (polling will still work)", err)
 	} else {
 		defer eventWatcher.Stop()
 	}
 
-	// Main loop
+	// Main compliance check loop
 	ticker := time.NewTicker(time.Duration(checkInterval) * time.Second)
 	defer ticker.Stop()
 
 	log.Printf("Starting compliance check loop (interval: %ds, checks: %v)", checkInterval, enabledChecks)
 
-	// Initial check run
 	runChecks(ctx, checkRegistry, grpcClient, offlineQueue, regResp)
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("Shutting down gracefully")
-			return
+			return nil
 		case <-ticker.C:
 			runChecks(ctx, checkRegistry, grpcClient, offlineQueue, regResp)
 		}
@@ -211,7 +255,6 @@ func runHealExecutor(ctx context.Context, client *transport.GRPCClient) {
 		case cmd := <-client.HealCmds:
 			result := healing.Execute(ctx, cmd)
 
-			// Report result back to appliance
 			healResult := &pb.HealingResult{
 				CheckType:    result.CheckType,
 				Success:      result.Success,
@@ -228,8 +271,6 @@ func runHealExecutor(ctx context.Context, client *transport.GRPCClient) {
 }
 
 // runHeartbeatLoop sends periodic heartbeats to the appliance.
-// Heartbeat responses may contain pending HealCommands which are
-// automatically routed to the HealCmds channel by SendHeartbeat.
 func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -248,7 +289,6 @@ func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient) {
 			}
 			if resp.ConfigChanged {
 				log.Println("[heartbeat] Config changed — re-registration needed")
-				// TODO: trigger re-registration
 			}
 		}
 	}
@@ -282,7 +322,6 @@ func runChecks(
 			log.Printf("  [FAIL] %s: expected=%q, actual=%q", result.CheckType, result.Expected, result.Actual)
 			failCount++
 
-			// Create drift event
 			agentID := ""
 			if reg != nil {
 				agentID = reg.AgentId
@@ -300,7 +339,6 @@ func runChecks(
 				Metadata:     result.Metadata,
 			}
 
-			// Try to send via gRPC
 			if client != nil && client.IsConnected() {
 				if err := client.SendDrift(ctx, event); err != nil {
 					log.Printf("Failed to send drift event, queueing: %v", err)
@@ -309,7 +347,6 @@ func runChecks(
 					}
 				}
 			} else if queue != nil {
-				// Queue if not connected
 				queue.Enqueue(event)
 			}
 		}
@@ -318,12 +355,10 @@ func runChecks(
 	elapsed := time.Since(start)
 	log.Printf("Checks complete in %v: %d passed, %d failed", elapsed, passCount, failCount)
 
-	// Drain offline queue if connected
 	if client != nil && client.IsConnected() && queue != nil {
 		drainQueue(ctx, client, queue)
 	}
 
-	// Log queue status
 	if queue != nil {
 		queueSize := queue.Count()
 		if queueSize > 0 {
@@ -348,7 +383,6 @@ func drainQueue(ctx context.Context, client *transport.GRPCClient, queue *transp
 	sent := 0
 	for _, event := range events {
 		if err := client.SendDrift(ctx, event); err != nil {
-			// Re-queue on failure
 			queue.Enqueue(event)
 			break
 		}
@@ -365,7 +399,6 @@ func runDryRun() {
 
 	ctx := context.Background()
 
-	// Run all checks
 	registry := checks.NewRegistry([]string{
 		"bitlocker",
 		"defender",
@@ -391,7 +424,7 @@ func runDryRun() {
 		fmt.Printf("[%s] %s\n", status, result.CheckType)
 
 		if result.HIPAAControl != "" {
-			fmt.Printf("  HIPAA Control: §%s\n", result.HIPAAControl)
+			fmt.Printf("  HIPAA Control: %s\n", result.HIPAAControl)
 		}
 
 		if result.Error != nil {
