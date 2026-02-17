@@ -1,6 +1,6 @@
 {
   "session": 114,
-  "updated": "2026-02-17T17:42:22.912954Z",
+  "updated": "2026-02-17T19:35:10.345735Z",
   "agent_version": "1.0.73",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -18,7 +18,7 @@
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
     "fleet_updates": "proven_end_to_end_overlay_plus_nixos_rebuild"
   },
-  "current_blocker": "WS (.251) WinRM not starting after reboot (port 5985 connection refused). SRV healing works but scan cycle slightly too slow for 180s chaos window. Linux chaos test verification broken (iMac SSH to .242 times out).",
+  "current_blocker": "SRV healing works but scan cycle slightly too slow for 180s chaos window. Linux chaos test verification broken (iMac SSH to .242 times out). VM appliance DHCP IP drift (.247 -> .254).",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -167,15 +167,19 @@
       "note": "Built overlay with all session 106 changes (L1 rules, flap fix, scan checks, parallel scans). Uploaded to root@178.156.162.116:/var/www/updates/agent-overlay.tar.gz"
     }
   ],
-  "completed_this_session": [],
+  "completed_this_session": [
+      "GPO live integration test — all 9 steps passed against AD DC (NVDC01 .250)",
+      "WS (.251) trust relationship fix — Reset-ComputerMachinePassword restored SecureChannel",
+      "Domain admin WinRM auth verified on both DC (.250) and WS (.251)"
+    ],
   "recent_commits": [
+    {
+      "hash": "7207c52",
+      "message": "docs: audit and correct all technical skill docs against codebase"
+    },
     {
       "hash": "5629e34",
       "message": "fix: resolve NixOS trace warnings (health-check ordering + root password conflict)"
-    },
-    {
-      "hash": "356d229",
-      "message": "fix: console-branding timeout on tty1 write (blocks without physical console)"
     },
     {
       "hash": "daf82a8",
@@ -221,6 +225,8 @@
     "systemd_activation_deadlock_lesson": "During nixos-rebuild test, systemd holds a transaction lock for the activation. Running 'systemctl restart' inside a oneshot service (e.g., console-branding) that triggers during activation causes a deadlock \u2014 the restart waits for the lock that activation holds. Fix: 'systemctl --no-block restart' to fire-and-forget.",
     "tty_write_blocking_lesson": "Writing to /dev/tty1 (e.g., printf '\\033c' > /dev/tty1) blocks indefinitely when no physical console is attached \u2014 common on VMs or headless hardware. Fix: wrap with 'timeout 2 bash -c \"...\"' to bound the wait.",
     "appliance_port_layout": "Port layout on appliance: 22=SSH, 80=nginx, 8080=web-ui, 8081=scanner-web (localhost), 8082=scanner-api (localhost), 8083=go-agent-checkins (0.0.0.0), 8084=local-portal (0.0.0.0), 50051=gRPC. Firewall exposes: 22, 80, 8080, 50051, 8084.",
+    "ws_trust_fix_lesson": "Broken trust relationship (error 1789) means machine account password is out of sync with AD. NTLM domain auth still works (doesn't need machine trust), but Kerberos/GPO fails. Fix: Reset-ComputerMachinePassword -Server NVDC01 run from DC side. Verify: Test-ComputerSecureChannel returns True. Test-ComputerSecureChannel -Repair via WinRM on the broken WS returns HTTP 400 — use DC-side reset instead.",
+    "nix_store_pythonpath_lesson": "After nixos-rebuild, nix store hashes change. PYTHONPATH from previous sessions becomes invalid. Build dynamically: for pkg in pywinrm requests-2 ...; do ls -d /nix/store/*${pkg}*/lib/python*/site-packages; done"
     "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles."
   },
   "deployment_flow": [

@@ -1062,6 +1062,7 @@ ISSUE
     description = "MSP Appliance First Boot Setup";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "msp-auto-provision.service" ];
+    requires = [ "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
 
     path = with pkgs; [ systemd iproute2 gnugrep coreutils ];
