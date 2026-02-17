@@ -21,7 +21,7 @@ Key files: `iso/appliance-image.nix`, `iso/configuration.nix`, `flake.nix`
 ```
 packages/compliance-agent/   # Python agent (main work area)
   src/compliance_agent/      # Core modules
-  tests/                     # pytest tests (950+ passing)
+  tests/                     # pytest tests (1037+ passing)
   venv/                      # Python 3.13 virtualenv
 modules/                     # NixOS modules
 mcp-server/central-command/  # Dashboard backend + frontend
@@ -35,7 +35,7 @@ docs/                        # Detailed reference docs
 cd packages/compliance-agent && source venv/bin/activate
 python -m pytest tests/ -v --tb=short        # Run tests
 python -m pytest tests/test_agent.py -v      # Single file
-./scripts/preflight.sh                       # Preflight check
+nix flake check --no-build                   # Validate NixOS configs
 ```
 
 ## Three-Tier Auto-Healing
@@ -77,11 +77,11 @@ from compliance_agent._types import (
 | test | @pytest.mark.asyncio, AsyncMock | `.claude/skills/docs/testing/testing.md` |
 | hipaa | 6 drift checks, EvidenceBundle, L1 | `.claude/skills/docs/hipaa/compliance.md` |
 | backend | L1→L2→L3, FastAPI router, Depends | `.claude/skills/docs/backend/backend.md` |
-| db | asyncpg pool, WAL, 41 migrations | `.claude/skills/docs/database/database.md` |
-| nixos | A/B partition, health gate, nftables | `.claude/skills/docs/nixos/infrastructure.md` |
-| frontend | useQuery, useMutation, 77 hooks | `.claude/skills/docs/frontend/frontend.md` |
+| db | asyncpg pool, WAL, 49 migrations | `.claude/skills/docs/database/database.md` |
+| nixos | rebuild watchdog, nftables, overlay | `.claude/skills/docs/nixos/infrastructure.md` |
+| frontend | useQuery, useMutation, 78 hooks | `.claude/skills/docs/frontend/frontend.md` |
 | api | /api REST, gRPC proto, OAuth flow | `.claude/skills/docs/api/api.md` |
-| perf | gather, memo, virtual scroll, batch | `.claude/skills/docs/performance/performance.md` |
+| perf | gather, useMemo, useCallback, batch | `.claude/skills/docs/performance/performance.md` |
 
 ## Quick Lab Reference
 
@@ -89,6 +89,7 @@ from compliance_agent._types import (
 |--------|-----|------|
 | iMac Host | 192.168.88.50 | jrelly (SSH key) |
 | Physical Appliance | 192.168.88.241 | root (SSH key) |
+| VM Appliance | 192.168.88.254 | root (SSH key, DHCP) |
 | VPS | 178.156.162.116 | root (SSH key) |
 
 Full credentials in `.agent/reference/LAB_CREDENTIALS.md` when needed.
