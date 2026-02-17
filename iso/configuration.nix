@@ -186,7 +186,7 @@
     description = "MSP Rebuild Safety Watchdog";
     after = [ "local-fs.target" ];
 
-    path = with pkgs; [ nix coreutils systemd ];
+    path = with pkgs; [ nix coreutils systemd util-linux ];
 
     serviceConfig = {
       Type = "oneshot";

@@ -194,6 +194,9 @@ in
         printf '%s%*s' "$content" "$spaces" ""
       }
 
+      # NixOS manages /etc/issue as a symlink to the read-only nix store.
+      # Remove the symlink so we can write a regular file with dynamic IP.
+      rm -f /etc/issue
       cat > /etc/issue <<EOF
 \e[1;36m
     ┌──────────────────────────────────────────────────┐
