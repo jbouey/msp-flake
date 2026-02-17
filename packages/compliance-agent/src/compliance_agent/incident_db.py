@@ -91,7 +91,7 @@ class IncidentDatabase:
         """Initialize database schema."""
         conn = sqlite3.connect(self.db_path, timeout=30)
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=FULL")
+        conn.execute("PRAGMA synchronous=NORMAL")
 
         # Main incidents table
         conn.execute("""

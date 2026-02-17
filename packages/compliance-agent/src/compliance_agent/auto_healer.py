@@ -173,6 +173,7 @@ class AutoHealer:
         self._flap_tracker: Dict[tuple, tuple] = {}
         self._max_flap_count = 3  # resolve→recur cycles before escalating
         self._flap_window_minutes = 120  # time window to count flaps (must exceed drift_report_cooldown * max_flap_count)
+        self._heal_call_count = 0  # for periodic cache eviction
 
         logger.info(
             f"AutoHealer initialized: L1={config.enable_level1}, "
@@ -181,6 +182,36 @@ class AutoHealer:
             f"CircuitBreaker=max {config.max_heal_attempts_per_incident} attempts/{config.cooldown_period_minutes}min cooldown, "
             f"FlapDetector=max {self._max_flap_count} recurrences/{self._flap_window_minutes}min"
         )
+
+    def _evict_stale_entries(self) -> None:
+        """Remove expired entries from in-memory tracking caches.
+
+        Called every 100 heal() invocations to prevent unbounded growth
+        from circuit keys that never recur after their window expires.
+        """
+        now = datetime.now(timezone.utc)
+
+        # Evict expired cooldowns and their associated heal attempts
+        expired = [k for k, v in self._cooldowns.items() if now >= v]
+        for key in expired:
+            del self._cooldowns[key]
+            self._heal_attempts.pop(key, None)
+
+        # Evict expired flap tracker entries
+        expired = [
+            k for k, (_, first_time) in self._flap_tracker.items()
+            if (now - first_time).total_seconds() / 60 > self._flap_window_minutes
+        ]
+        for key in expired:
+            del self._flap_tracker[key]
+
+        # Evict expired heal attempt windows (10-min window)
+        expired = [
+            k for k, (_, first_time) in self._heal_attempts.items()
+            if k not in self._cooldowns and (now - first_time).total_seconds() / 60 > 10
+        ]
+        for key in expired:
+            del self._heal_attempts[key]
 
     def _is_flapping(self, circuit_key: tuple) -> bool:
         """Check if an incident type is flapping (resolve→recur loop)."""
@@ -269,6 +300,11 @@ class AutoHealer:
         Returns the result of the healing attempt.
         """
         start_time = datetime.now(timezone.utc)
+
+        # Periodic cache eviction to prevent unbounded growth
+        self._heal_call_count += 1
+        if self._heal_call_count % 100 == 0:
+            self._evict_stale_entries()
 
         # Build granular flap key: include runbook_id when available
         # so different runbooks within the same check_type don't cross-trigger.

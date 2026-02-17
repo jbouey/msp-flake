@@ -703,11 +703,10 @@ async def get_compliance_history_for_site(
             else:
                 continue
 
-            # Find category
-            for category, check_types in CATEGORY_CHECKS.items():
-                if check_type in check_types:
-                    daily_data[date_str][category].append(score)
-                    break
+            # Find category via O(1) reverse lookup
+            category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
+            if category:
+                daily_data[date_str][category].append(score)
 
     # Calculate daily averages
     history = []
@@ -850,10 +849,9 @@ async def get_monthly_compliance_report(
             else:
                 continue
 
-            for category, check_types in CATEGORY_CHECKS.items():
-                if check_type in check_types:
-                    category_scores[category].append(score)
-                    break
+            category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
+            if category:
+                category_scores[category].append(score)
 
     # Calculate monthly averages
     monthly_scores = {}

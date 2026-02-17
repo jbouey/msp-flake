@@ -71,9 +71,15 @@ class RuleCondition:
         elif self.operator == MatchOperator.REGEX:
             return bool(re.search(self.value, str(actual_value)))
         elif self.operator == MatchOperator.GREATER_THAN:
-            return float(actual_value) > float(self.value)
+            try:
+                return float(actual_value) > float(self.value)
+            except (ValueError, TypeError):
+                return False
         elif self.operator == MatchOperator.LESS_THAN:
-            return float(actual_value) < float(self.value)
+            try:
+                return float(actual_value) < float(self.value)
+            except (ValueError, TypeError):
+                return False
         elif self.operator == MatchOperator.IN:
             return actual_value in self.value
         elif self.operator == MatchOperator.NOT_IN:

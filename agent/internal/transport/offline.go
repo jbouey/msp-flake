@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -254,9 +256,18 @@ func (q *OfflineQueue) DequeueAll(limit int) ([]*pb.DriftEvent, error) {
 		ids = append(ids, id)
 	}
 
-	// Delete processed events
-	for _, id := range ids {
-		q.db.Exec("DELETE FROM events WHERE id = ?", id)
+	// Batch delete processed events
+	if len(ids) > 0 {
+		placeholders := make([]string, len(ids))
+		args := make([]interface{}, len(ids))
+		for i, id := range ids {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		query := fmt.Sprintf("DELETE FROM events WHERE id IN (%s)", strings.Join(placeholders, ","))
+		if _, err := q.db.Exec(query, args...); err != nil {
+			log.Printf("[OfflineQueue] Failed to delete %d dequeued events: %v", len(ids), err)
+		}
 	}
 
 	return events, nil

@@ -9,9 +9,11 @@ to mock data for demo/development purposes.
 
 import json
 import logging
+from enum import Enum
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Query, HTTPException, Request, Depends, Response
+from pydantic import BaseModel
 from .websocket_manager import broadcast_event
 
 logger = logging.getLogger(__name__)
@@ -1108,22 +1110,41 @@ async def get_onboarding_metrics(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/onboarding/{client_id}", response_model=OnboardingClient)
-async def get_onboarding_detail(client_id: int):
+async def get_onboarding_detail(client_id: int, db: AsyncSession = Depends(get_db)):
     """Get detailed onboarding status for a single client."""
-    clients = await get_onboarding_pipeline()
+    clients = await get_onboarding_pipeline(db)
     for client in clients:
-        if client.id == client_id:
+        if client.id == str(client_id):
             return client
     raise HTTPException(status_code=404, detail=f"Client {client_id} not found")
 
 
 @router.post("/onboarding", response_model=OnboardingClient)
-async def create_prospect(prospect: ProspectCreate):
+async def create_prospect(prospect: ProspectCreate, db: AsyncSession = Depends(get_db)):
     """Create new prospect (Lead stage)."""
     now = datetime.now(timezone.utc)
 
+    # Insert into DB
+    result = await db.execute(text("""
+        INSERT INTO sites (site_id, clinic_name, contact_name, contact_email, contact_phone,
+                           onboarding_stage, notes, lead_at, created_at)
+        VALUES (:site_id, :name, :contact_name, :contact_email, :contact_phone,
+                'lead', :notes, :now, :now)
+        RETURNING site_id
+    """), {
+        "site_id": prospect.name.lower().replace(" ", "-").replace("'", ""),
+        "name": prospect.name,
+        "contact_name": prospect.contact_name,
+        "contact_email": prospect.contact_email,
+        "contact_phone": prospect.contact_phone,
+        "notes": prospect.notes,
+        "now": now,
+    })
+    await db.commit()
+    row = result.fetchone()
+
     return OnboardingClient(
-        id=100,  # Would be from DB
+        id=row.site_id if row else prospect.name.lower().replace(" ", "-"),
         name=prospect.name,
         contact_name=prospect.contact_name,
         contact_email=prospect.contact_email,
@@ -1133,9 +1154,7 @@ async def create_prospect(prospect: ProspectCreate):
         days_in_stage=0,
         notes=prospect.notes,
         lead_at=now,
-        progress_percent=stage_progress.get(stage_val, 50),
-        phase=1,
-        phase_progress=14,
+        progress_percent=10,
         created_at=now,
     )
 
@@ -1359,9 +1378,6 @@ async def execute_command(request: CommandRequest):
 # =============================================================================
 # NOTIFICATIONS
 # =============================================================================
-
-from pydantic import BaseModel
-from enum import Enum
 
 class NotificationSeverity(str, Enum):
     CRITICAL = "critical"
