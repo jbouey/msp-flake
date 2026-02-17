@@ -155,7 +155,9 @@ func (q *OfflineQueue) EnqueueRaw(eventType string, payload []byte) error {
 func (q *OfflineQueue) enforceLimit() error {
 	// First, prune old events
 	cutoff := time.Now().Add(-q.maxAge)
-	q.db.Exec("DELETE FROM events WHERE created_at < ?", cutoff)
+	if _, err := q.db.Exec("DELETE FROM events WHERE created_at < ?", cutoff); err != nil {
+		log.Printf("[OfflineQueue] Failed to prune old events: %v", err)
+	}
 
 	// Check count
 	var count int

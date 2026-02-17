@@ -28,7 +28,7 @@ import (
 var Version = "0.3.0"
 
 // HealChanSize is the buffer size for the heal command channel
-const HealChanSize = 32
+const HealChanSize = 128
 
 // GRPCClient manages the gRPC connection to the appliance
 type GRPCClient struct {
@@ -357,8 +357,11 @@ func (c *GRPCClient) SendDrift(ctx context.Context, event *pb.DriftEvent) error 
 				cmd.CheckType, cmd.Action, cmd.CommandId)
 			select {
 			case c.HealCmds <- cmd:
+				if len(c.HealCmds) > cap(c.HealCmds)*3/4 {
+					log.Printf("[gRPC] WARNING: heal channel at %d/%d capacity", len(c.HealCmds), cap(c.HealCmds))
+				}
 			default:
-				log.Printf("[gRPC] Heal command channel full, dropping command %s", cmd.CommandId)
+				log.Printf("[gRPC] CRITICAL: heal channel full (%d/%d), dropping command %s", len(c.HealCmds), cap(c.HealCmds), cmd.CommandId)
 			}
 		}
 	}
@@ -393,8 +396,11 @@ func (c *GRPCClient) SendHeartbeat(ctx context.Context) (*pb.HeartbeatResponse, 
 			cmd.CheckType, cmd.Action, cmd.CommandId)
 		select {
 		case c.HealCmds <- cmd:
+			if len(c.HealCmds) > cap(c.HealCmds)*3/4 {
+				log.Printf("[gRPC] WARNING: heal channel at %d/%d capacity", len(c.HealCmds), cap(c.HealCmds))
+			}
 		default:
-			log.Printf("[gRPC] Heal command channel full, dropping command %s", cmd.CommandId)
+			log.Printf("[gRPC] CRITICAL: heal channel full (%d/%d), dropping command %s", len(c.HealCmds), cap(c.HealCmds), cmd.CommandId)
 		}
 	}
 

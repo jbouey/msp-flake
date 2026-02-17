@@ -13,6 +13,11 @@ import (
 
 // queryWindows executes a WMI query on Windows using COM/OLE
 func queryWindows(ctx context.Context, namespace, query string) ([]QueryResult, error) {
+	// Check context before expensive COM operations
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
 	// Initialize COM
 	if err := ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED); err != nil {
 		oleErr, ok := err.(*ole.OleError)
@@ -35,6 +40,11 @@ func queryWindows(ctx context.Context, namespace, query string) ([]QueryResult, 
 		return nil, fmt.Errorf("failed to get IDispatch: %w", err)
 	}
 	defer wmi.Release()
+
+	// Check context before connecting
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
 	// Connect to namespace
 	serviceRaw, err := oleutil.CallMethod(wmi, "ConnectServer", ".", namespace)
@@ -128,6 +138,9 @@ func queryWindows(ctx context.Context, namespace, query string) ([]QueryResult, 
 
 // getRegistryDWORDWindows reads a DWORD registry value using WMI StdRegProv
 func getRegistryDWORDWindows(ctx context.Context, hive uint32, subKey, valueName string) (uint32, error) {
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
 	// Initialize COM
 	if err := ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED); err != nil {
 		oleErr, ok := err.(*ole.OleError)
@@ -186,6 +199,9 @@ func getRegistryDWORDWindows(ctx context.Context, hive uint32, subKey, valueName
 
 // getRegistryStringWindows reads a string registry value using WMI StdRegProv
 func getRegistryStringWindows(ctx context.Context, hive uint32, subKey, valueName string) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
 	// Initialize COM
 	if err := ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED); err != nil {
 		oleErr, ok := err.(*ole.OleError)
@@ -244,6 +260,9 @@ func getRegistryStringWindows(ctx context.Context, hive uint32, subKey, valueNam
 
 // registryKeyExistsWindows checks if a registry key exists using WMI StdRegProv
 func registryKeyExistsWindows(ctx context.Context, hive uint32, subKey string) (bool, error) {
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
 	// Initialize COM
 	if err := ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED); err != nil {
 		oleErr, ok := err.(*ole.OleError)

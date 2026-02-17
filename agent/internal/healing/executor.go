@@ -15,12 +15,11 @@ import (
 
 // Execute runs a HealCommand and returns the result.
 func Execute(ctx context.Context, cmd *pb.HealCommand) *Result {
-	timeout := time.Duration(cmd.TimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	} else if timeout > 10*time.Minute {
-		timeout = 10 * time.Minute
+	ts := cmd.TimeoutSeconds
+	if ts <= 0 || ts > 600 {
+		ts = 60
 	}
+	timeout := time.Duration(ts) * time.Second
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

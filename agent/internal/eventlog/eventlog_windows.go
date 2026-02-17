@@ -52,6 +52,7 @@ type EventCallback func(event *ComplianceEvent)
 // Watcher monitors Windows Event Log for compliance-relevant events
 type Watcher struct {
 	subscriptions []uintptr
+	callbackPins  []*channelCallbackData // prevents GC from collecting callback data held by Windows
 	callback      EventCallback
 	hostname      string
 	mu            sync.Mutex
@@ -106,6 +107,7 @@ func NewWatcher(hostname string, callback EventCallback) *Watcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Watcher{
 		subscriptions: make([]uintptr, 0),
+		callbackPins:  make([]*channelCallbackData, 0),
 		callback:      callback,
 		hostname:      hostname,
 		ctx:           ctx,
@@ -177,6 +179,7 @@ func (w *Watcher) subscribeChannel(channel EventChannel) error {
 	}
 
 	w.subscriptions = append(w.subscriptions, handle)
+	w.callbackPins = append(w.callbackPins, callbackData)
 	return nil
 }
 
@@ -213,7 +216,7 @@ func (w *Watcher) parseEvent(eventHandle uintptr, channel EventChannel) *Complia
 	buffer := make([]uint16, bufferSize)
 	var bufferUsed, propertyCount uint32
 
-	ret, _, _ := procEvtRender.Call(
+	ret, _, lastErr := procEvtRender.Call(
 		0, // Context
 		eventHandle,
 		uintptr(EvtRenderEventXml),
@@ -225,6 +228,7 @@ func (w *Watcher) parseEvent(eventHandle uintptr, channel EventChannel) *Complia
 
 	if ret == 0 {
 		// Failed to render — fall back to channel-based event
+		log.Printf("[EventLog] EvtRender failed for %s: %v", channel.Name, lastErr)
 		return w.createEventFromChannel(channel, 0)
 	}
 
@@ -397,6 +401,7 @@ func (w *Watcher) Stop() {
 		procEvtClose.Call(handle)
 	}
 	w.subscriptions = nil
+	w.callbackPins = nil
 	w.running = false
 
 	log.Println("[EventLog] Stopped Windows Event Log monitoring")

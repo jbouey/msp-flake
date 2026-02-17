@@ -261,10 +261,9 @@ func getRunningProcesses(ctx context.Context) (map[string]bool, error) {
 	return result, nil
 }
 
+var sanitizeReplacer = strings.NewReplacer(" ", "_", "-", "_")
+
 // sanitizeKey converts RMM name to metadata key format
 func sanitizeKey(name string) string {
-	key := strings.ToLower(name)
-	key = strings.ReplaceAll(key, " ", "_")
-	key = strings.ReplaceAll(key, "-", "_")
-	return key
+	return sanitizeReplacer.Replace(strings.ToLower(name))
 }
