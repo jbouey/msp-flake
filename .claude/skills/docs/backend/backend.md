@@ -19,7 +19,7 @@ Incident → L1 Deterministic (70-80%, <100ms, $0)
 
 ### L1 Deterministic Rules
 ```yaml
-# rules/l1_baseline.json
+# /var/lib/msp/rules/l1_rules.json (synced from Central Command)
 - id: L1-FIREWALL-001
   conditions:
     - field: check_type
@@ -237,6 +237,6 @@ class Settings(BaseModel):
 - `backend/cve_watch.py` - CVE Watch (NVD sync + fleet matching + 7 REST endpoints; asyncpg returns JSONB as string—needs isinstance guard)
 - `backend/evidence_chain.py` - OTS blockchain anchoring (LEB128 varint parser, BTC block height extraction)
 - `backend/framework_sync.py` - Compliance Library (OSCAL sync from NIST GitHub + YAML seed + 7 REST endpoints, 498 lines)
-- `backend/sites.py` - Site management + order acknowledge/complete (handles both admin_orders AND healing orders tables, auto-expires stale orders)
+- `backend/sites.py` - Site management + order acknowledge/complete (admin_orders table, auto-expires stale orders)
 - `compliance_agent/incident_db.py` - SQLite incident DB + flap_suppressions table
 - `main.py` - Flywheel promotion loop (Step 0: generates patterns from L2 telemetry, Step 1-3: evaluate/promote/sync). l1_rules query filters source != 'builtin' to avoid double-serve.

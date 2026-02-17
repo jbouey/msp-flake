@@ -172,7 +172,7 @@ evidence_required:
 
 ## PHI Scrubber
 
-### 12 Detection Patterns
+### 14 Detection Patterns
 ```python
 PHI_PATTERNS = {
     'ssn': r'\b\d{3}-\d{2}-\d{4}\b',
@@ -182,8 +182,13 @@ PHI_PATTERNS = {
     'email': r'\b[\w.-]+@[\w.-]+\.\w+\b',
     'credit_card': r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b',
     'dob': r'\bDOB\s*[=:]?\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}',
+    'address': r'\b\d+\s+\w+\s+(St|Ave|Blvd|Dr|Rd|Ln|Way)\b',
     'zip': r'\b\d{5}(-\d{4})?\b',
     'ip_address': r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b',
+    'account_number': r'\baccount\s*#?\s*\d{6,}\b',
+    'insurance_id': r'\b(ins|insurance)\s*(id|#)\s*[:=]?\s*\w+',
+    'medicare': r'\b\d{1}[A-Z]{1,2}\d{1,4}[A-Z]?\d?\b',
+    'drivers_license': r'\b[A-Z]{1,2}\d{5,8}\b',
 }
 ```
 
@@ -283,9 +288,11 @@ Prevents infinite heal/recur loops when remediation "succeeds" but drift recurs 
 
 ## L1 Rule Coverage (level1_deterministic.py)
 
-**Linux L1 rules (14 built-in):** SSH-001..002, KERN-001, CRON-001, SUID-001, FW-001, AUDIT-001, SVC-001, LOG-001, PERM-001, NET-001, BANNER-001, CRYPTO-001, IR-001.
+**Linux L1 rules (24 built-in):** SSH-001..004, KERN-001, CRON-001, SUID-001, FW-001, AUDIT-001, SVC-001..002, LOG-001, PERM-001, NET-001, BANNER-001, CRYPTO-001, IR-001, plus cross-platform rules (PATCH, AV, BACKUP, LOG, FW, AUDIT, ENCRYPT, CERT, DISK, SERVICE).
 
-**Windows L1 rules (8 built-in):** AV-001, FW-001, SVC-DNS, SEC-SMB, SVC-WUAUSERV, NET-PROFILE, SEC-SCREENLOCK, SEC-DEFENDER-EXCL. All route to existing Windows runbooks via `run_windows_runbook`.
+**Windows L1 rules (10 built-in):** AV-001, FW-001, SVC-DNS, SEC-SMB, SVC-WUAUSERV, NET-PROFILE, SEC-SCREENLOCK, SEC-DEFENDER-EXCL, plus cross-platform rules. All route to existing Windows runbooks via `run_windows_runbook`.
+
+**Total built-in rules:** 38 (Linux-specific + Windows-specific + cross-platform).
 
 **Windows scan checks (appliance_agent.py):** windows_defender, firewall_status, password_policy, bitlocker_status, audit_policy, service_w32time, service_dns, service_spooler, service_wuauserv, smb_signing, network_profile, screen_lock_policy, defender_exclusions, backup_status, scheduled_task_persistence, registry_run_persistence.
 
@@ -300,5 +307,5 @@ Linux, Windows, network posture, and workstation scans run in parallel via `asyn
 - `compliance_agent/level1_deterministic.py` - Rule engine
 - `compliance_agent/auto_healer.py` - Healing orchestrator + flap detection
 - `compliance_agent/incident_db.py` - SQLite incident/flap tracking
-- `compliance_agent/rules/l1_baseline.json` - L1 rules
+- `/var/lib/msp/rules/l1_rules.json` - Synced L1 rules (override built-in)
 - `baseline/hipaa-v1.yaml` - Compliance baseline

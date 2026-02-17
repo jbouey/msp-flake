@@ -1,13 +1,13 @@
 # Testing Patterns
 
 ## Overview
-- **1037+ tests**: 994 agent tests (39 files) + 55 backend tests (3 files)
-- **595+ fixtures** for isolation
+- **1037+ tests**: agent tests (45 files) + 114 backend tests (3 files)
 - **pytest-asyncio** for async testing
+- **Go tests**: 24 tests across 3 files (`agent/internal/`)
 
 ### Backend Tests (mcp-server/central-command/backend/tests/)
 - `test_auth.py` — 25 tests: password complexity, bcrypt/SHA-256 hashing, session tokens
-- `test_evidence_chain.py` — 30 tests: Ed25519 signatures, OTS file construction/parsing, timestamp replay
+- `test_evidence_chain.py` — 43 tests: Ed25519 signatures, OTS file construction/parsing, timestamp replay
 - `test_production_security.py` — 46 tests: CSRF tokens (requires starlette installed)
 - **Note:** Backend tests stub FastAPI/SQLAlchemy at module level to test pure functions without full server deps
 - Run: `python3.13 -m pytest tests/ -v --tb=short` (from backend dir)
@@ -149,7 +149,6 @@ USE_REAL_VMS=1 pytest tests/test_auto_healer_integration.py -v
 | API | test_web_ui.py, test_partner_api.py | Mock HTTP |
 
 ## Key Test Files
-- `tests/conftest.py` - Shared fixtures
 - `tests/test_auto_healer_integration.py` - Full healing pipeline
 - `tests/test_drift.py` - 6 compliance checks
 - `tests/test_learning_loop.py` - Pattern promotion

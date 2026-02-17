@@ -16,7 +16,7 @@ src/
 │   ├── fleet/      # FleetOverview, ClientCard
 │   ├── incidents/  # IncidentFeed, IncidentRow
 │   └── learning/   # PatternCard, PromotionTimeline
-├── hooks/          # 77 custom hooks
+├── hooks/          # 78 custom hooks
 ├── contexts/       # Auth, Partner contexts
 ├── utils/          # API client (api.ts)
 ├── types/          # TypeScript interfaces

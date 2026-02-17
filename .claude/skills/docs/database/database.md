@@ -10,7 +10,7 @@
 
 ## PostgreSQL Schema
 
-### Core Tables (47 migrations)
+### Core Tables (49 migrations)
 
 ```sql
 -- Sites and appliances
@@ -328,7 +328,7 @@ CREATE INDEX IF NOT EXISTS idx_name ON table(column);
 ```
 
 ## Key Files
-- `mcp-server/migrations/*.sql` - 47 migration files
+- `mcp-server/migrations/*.sql` - 49 migration files
 - `compliance_agent/incident_db.py` - SQLite incident tracking
 - `compliance_agent/offline_queue.py` - Evidence queue
 - `backend/db_queries.py` - PostgreSQL queries

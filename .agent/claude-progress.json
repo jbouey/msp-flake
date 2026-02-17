@@ -1,6 +1,6 @@
 {
   "session": 114,
-  "updated": "2026-02-17T17:16:53.750222Z",
+  "updated": "2026-02-17T17:42:22.912954Z",
   "agent_version": "1.0.73",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -170,12 +170,16 @@
   "completed_this_session": [],
   "recent_commits": [
     {
+      "hash": "5629e34",
+      "message": "fix: resolve NixOS trace warnings (health-check ordering + root password conflict)"
+    },
+    {
       "hash": "356d229",
       "message": "fix: console-branding timeout on tty1 write (blocks without physical console)"
     },
     {
       "hash": "daf82a8",
-      "message": "fix: local-portal port 8083→8084 (conflict with scanner) + getty --no-block"
+      "message": "fix: local-portal port 8083\u21928084 (conflict with scanner) + getty --no-block"
     },
     {
       "hash": "ac549c2",
@@ -183,11 +187,11 @@
     },
     {
       "hash": "a67c079",
-      "message": "feat: GPO pipeline hardening — cert warnings, rollback, 43 new tests"
+      "message": "feat: GPO pipeline hardening \u2014 cert warnings, rollback, 43 new tests"
     },
     {
       "hash": "cc135f1",
-      "message": "fix: NixOS hardening — SSH, resource limits, firewall, service ordering"
+      "message": "fix: NixOS hardening \u2014 SSH, resource limits, firewall, service ordering"
     }
   ],
   "key_findings": {
@@ -214,8 +218,8 @@
     "chaos_test_timing_lesson": "180s chaos test window is marginal for a full heal cycle. Even with parallel scans via asyncio.gather(), the 600s cycle timeout in _run_cycle() can abort the Linux drift processing loop before all drifts are healed. Root cause: drift results were processed sequentially (evidence submission + healing for each). SSH/FW/SVC healing consumed most of the budget, leaving NET/CRON/SUID unhealed. FIXED: healing now fires as background asyncio.create_task() calls that survive the cycle timeout. Evidence submission remains inline (deferrable). Tasks tracked in _healing_tasks set, cancelled on agent stop.",
     "winrm_cmdline_limit_lesson": "pywinrm run_ps() encodes scripts as UTF-16LE base64 via 'powershell -encodedcommand <base64>'. This goes through cmd.exe which has 8,191 char limit. A ~4.7KB PowerShell script becomes ~12.7KB after encoding (2x UTF-16 + 1.33x base64). Fix: _execute_via_tempfile() writes base64 chunks via cmd.exe echo (6000 chars/chunk), then a short run_ps() call decodes and executes. Threshold: _MAX_INLINE_SCRIPT_LEN = 2000.",
     "nixos_etc_symlink_lesson": "NixOS manages /etc/issue as a symlink to a read-only nix store path. Scripts cannot write directly with 'cat > /etc/issue'. Must rm -f the symlink first, then write. Same pattern applies to any /etc file managed by NixOS.",
-    "systemd_activation_deadlock_lesson": "During nixos-rebuild test, systemd holds a transaction lock for the activation. Running 'systemctl restart' inside a oneshot service (e.g., console-branding) that triggers during activation causes a deadlock — the restart waits for the lock that activation holds. Fix: 'systemctl --no-block restart' to fire-and-forget.",
-    "tty_write_blocking_lesson": "Writing to /dev/tty1 (e.g., printf '\\033c' > /dev/tty1) blocks indefinitely when no physical console is attached — common on VMs or headless hardware. Fix: wrap with 'timeout 2 bash -c \"...\"' to bound the wait.",
+    "systemd_activation_deadlock_lesson": "During nixos-rebuild test, systemd holds a transaction lock for the activation. Running 'systemctl restart' inside a oneshot service (e.g., console-branding) that triggers during activation causes a deadlock \u2014 the restart waits for the lock that activation holds. Fix: 'systemctl --no-block restart' to fire-and-forget.",
+    "tty_write_blocking_lesson": "Writing to /dev/tty1 (e.g., printf '\\033c' > /dev/tty1) blocks indefinitely when no physical console is attached \u2014 common on VMs or headless hardware. Fix: wrap with 'timeout 2 bash -c \"...\"' to bound the wait.",
     "appliance_port_layout": "Port layout on appliance: 22=SSH, 80=nginx, 8080=web-ui, 8081=scanner-web (localhost), 8082=scanner-api (localhost), 8083=go-agent-checkins (0.0.0.0), 8084=local-portal (0.0.0.0), 50051=gRPC. Firewall exposes: 22, 80, 8080, 50051, 8084.",
     "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles."
   },

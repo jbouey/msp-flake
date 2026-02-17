@@ -70,49 +70,30 @@ in {
 }
 ```
 
-## A/B Partition Update System
+## Partition Layout
 
-### Partition Layout
+### Actual Disk Layout (msp-auto-install)
 ```
-/dev/sda1 → ESP (EFI System Partition)
-/dev/sda2 → Partition A (NixOS root - 10GB)
-/dev/sda3 → Partition B (NixOS root - 10GB)
-/dev/sda4 → MSP-DATA (ext4 - persistent data)
-```
-
-### Update Flow
-```
-1. Detect active partition (kernel cmdline → ab_state → mount)
-2. Download ISO to standby partition
-3. SHA256 verification
-4. Set next boot target
-5. Reboot → Health Gate (max 3 attempts)
-   ├─ Success → Commit
-   └─ Failure → Rollback
+/dev/sda1 → ESP (512MiB, FAT32)
+/dev/sda2 → MSP-DATA (2GB, ext4, persistent data at /var/lib/msp)
+/dev/sda3 → NixOS root (remaining disk)
 ```
 
-### Health Gate Service
-```nix
-systemd.services.msp-health-gate = {
-  description = "Post-boot health verification";
-  after = [ "network-online.target" ];
-  before = [ "compliance-agent.service" ];
-  wantedBy = [ "multi-user.target" ];
-
-  serviceConfig = {
-    Type = "oneshot";
-    ExecStart = "${pkgs.compliance-agent}/bin/health-gate --verify";
-    RemainAfterExit = true;
-  };
-};
+### Update System
+Updates use `nixos-rebuild test` (activate without persisting) + watchdog verification:
+```
+1. Central Command inserts nixos_rebuild order
+2. Agent runs nixos-rebuild test via systemd-run
+3. New config activates, agent restarts
+4. Agent verifies health, writes .rebuild-verified
+5. Watchdog timer persists with nixos-rebuild switch
+6. If agent fails to verify within 10min, watchdog rolls back
 ```
 
 ### State Files
 ```
-/boot/ab_state              # GRUB source format: set active_partition="A"
-/var/lib/msp/update/
-├── update_state.json       # Pending update metadata
-└── boot_count              # Boot attempt counter
+/var/lib/msp/.rebuild-in-progress   # Marker with timestamp + prev system + flake ref
+/var/lib/msp/.rebuild-verified      # Agent health verification flag
 ```
 
 ## Docker Deployment

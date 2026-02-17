@@ -9,7 +9,6 @@ pool = await asyncpg.create_pool(
     DATABASE_URL,
     min_size=2,      # Minimum connections
     max_size=10,     # Maximum connections
-    max_inactive_connection_lifetime=300  # 5 min idle timeout
 )
 ```
 
@@ -166,18 +165,6 @@ async def report_drift_with_backpressure(stream, events):
 
 ## Component Optimization
 
-### React.memo for List Items
-```typescript
-const ClientCard = React.memo<{ client: Client }>(({ client }) => {
-    return (
-        <div className="card">
-            <h3>{client.name}</h3>
-            <HealthGauge value={client.health} />
-        </div>
-    );
-});
-```
-
 ### useMemo for Expensive Computations
 ```typescript
 const sortedClients = useMemo(() => {
@@ -200,36 +187,8 @@ const handleSelect = useCallback((id: string) => {
 }, [onSelect]);
 ```
 
-### Virtual Scrolling for Large Lists
-```typescript
-import { useVirtualizer } from '@tanstack/react-virtual';
-
-function LargeList({ items }: { items: Item[] }) {
-    const parentRef = useRef<HTMLDivElement>(null);
-
-    const virtualizer = useVirtualizer({
-        count: items.length,
-        getScrollElement: () => parentRef.current,
-        estimateSize: () => 50,
-    });
-
-    return (
-        <div ref={parentRef} style={{ height: '400px', overflow: 'auto' }}>
-            <div style={{ height: virtualizer.getTotalSize() }}>
-                {virtualizer.getVirtualItems().map(vItem => (
-                    <div key={vItem.key} style={{
-                        position: 'absolute',
-                        top: vItem.start,
-                        height: vItem.size,
-                    }}>
-                        <ItemRow item={items[vItem.index]} />
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-}
-```
+### Pagination for Large Lists
+Large datasets use server-side pagination (`limit`/`offset` params) rather than client-side virtual scrolling. TanStack Query handles cache invalidation on page change.
 
 ## Evidence Queue Optimization
 
@@ -360,7 +319,7 @@ ORDER BY pg_relation_size(indexrelid) DESC;
 | DB Queries | Explicit columns vs SELECT * | Less bandwidth |
 | DB Indexes | Drop unused (pg_stat_user_indexes) | 2.6MB freed, faster writes |
 | React | useMemo/useCallback | 3-5x fewer re-renders |
-| React | Virtual scrolling | Handle 10K+ items |
+| React | Server-side pagination | Bounded result sets |
 | React Query | Targeted invalidation | 60% less refetching |
 | gRPC | Batch processing | 5x throughput |
 | Evidence | Batch uploads | 4x upload speed |
