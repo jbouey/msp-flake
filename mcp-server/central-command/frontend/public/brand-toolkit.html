@@ -469,30 +469,31 @@ const ASSETS = [
       ctx.fillRect(0, 0, w, h);
       drawDotGrid(ctx, w, h, 28, 1, 0.08);
 
-      // Left teal accent bar
+      // Right teal accent bar
       const grad = createGradient(ctx, 0, 0, 0, h);
       ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 6, h);
+      ctx.fillRect(w - 6, 0, 6, h);
 
-      // Waveform decoration
-      drawWaveform(ctx, w * 0.55, h * 0.15, w * 0.42, h * 0.7, BRAND.tealDark, 3, 0.08);
+      // Waveform decoration — left side (behind profile area, subtle)
+      drawWaveform(ctx, w * 0.03, h * 0.15, w * 0.42, h * 0.7, BRAND.tealDark, 3, 0.05);
 
-      // Subtle right-side leaf watermark
-      drawLeaf(ctx, w - 140, h / 2, 8, BRAND.tealDark, 0.04);
+      // Subtle left-side leaf watermark
+      drawLeaf(ctx, 140, h / 2, 8, BRAND.tealDark, 0.03);
 
-      // Logo box
-      drawLogoBox(ctx, 80, h / 2 - 32, 64);
+      // Logo box — right side
+      const rx = w - 580;
+      drawLogoBox(ctx, rx, h / 2 - 32, 64);
 
-      // Brand name
+      // Brand name — right of logo
       ctx.fillStyle = BRAND.slate900;
       ctx.font = '700 52px "DM Serif Display", Georgia, serif';
       ctx.textBaseline = 'middle';
-      ctx.fillText('OsirisCare', 168, h / 2 - 14);
+      ctx.fillText('OsirisCare', rx + 88, h / 2 - 14);
 
-      // Tagline
+      // Tagline — right of logo
       ctx.fillStyle = BRAND.slate500;
       ctx.font = '400 20px "DM Sans", system-ui, sans-serif';
-      ctx.fillText('Compliance infrastructure for healthcare', 170, h / 2 + 28);
+      ctx.fillText('Compliance infrastructure for healthcare', rx + 90, h / 2 + 28);
 
       // Thin bottom border
       ctx.fillStyle = BRAND.slate200;
