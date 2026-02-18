@@ -150,15 +150,23 @@ func (p *Processor) CompletePendingRebuild(ctx context.Context) {
 
 	log.Printf("[orders] Completing deferred rebuild order %s", orderID)
 
-	// Check if rebuild was successful (system is up)
+	// System came up and is checking in — rebuild was successful
 	result := map[string]interface{}{
-		"status":  "rebuild_complete",
-		"message": "System successfully restarted after rebuild",
+		"status":              "rebuild_complete",
+		"completed_after_restart": true,
+		"message":             "System successfully restarted after rebuild",
 	}
 
 	p.complete(ctx, orderID, true, result, "")
 
-	// Cleanup
+	// Write .rebuild-verified marker — the NixOS watchdog timer reads this
+	// to know it's safe to persist the rebuild with `nixos-rebuild switch`.
+	// If this file doesn't appear within 10 minutes, the watchdog rolls back.
+	verifiedPath := filepath.Join(p.stateDir, ".rebuild-verified")
+	os.WriteFile(verifiedPath, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
+	log.Printf("[orders] Wrote %s — watchdog will persist rebuild", verifiedPath)
+
+	// Cleanup rebuild state files
 	os.Remove(pendingFile)
 	os.Remove(filepath.Join(p.stateDir, ".rebuild-in-progress"))
 }
@@ -237,18 +245,33 @@ func (p *Processor) handleNixOSRebuild(ctx context.Context, params map[string]in
 		os.WriteFile(pendingPath, []byte(orderID), 0o644)
 	}
 
-	// Run nixos-rebuild test (via systemd-run for isolation)
-	cmd := exec.CommandContext(ctx, "systemd-run", "--wait", "--collect",
+	log.Printf("[orders] Two-phase rebuild: nixos-rebuild test --flake %s --refresh", flakeRef)
+
+	// Run nixos-rebuild test via systemd-run to escape ProtectSystem=strict sandbox.
+	// --unit=msp-rebuild: predictable unit name for tracking/cancellation
+	// --pipe: forward stdout/stderr through to CombinedOutput
+	// --collect: clean up unit after completion
+	// --wait: block until rebuild finishes
+	cmd := exec.CommandContext(ctx, "systemd-run",
+		"--unit=msp-rebuild", "--wait", "--pipe", "--collect",
 		"--property=TimeoutStartSec=600",
 		"nixos-rebuild", "test", "--flake", flakeRef, "--refresh")
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		os.Remove(markerPath)
-		return nil, fmt.Errorf("nixos-rebuild test failed: %v\n%s", err, string(output))
+		// Truncate output for error reporting
+		outStr := string(output)
+		if len(outStr) > 500 {
+			outStr = outStr[len(outStr)-500:]
+		}
+		log.Printf("[orders] nixos-rebuild test failed (exit %v)", err)
+		return nil, fmt.Errorf("nixos-rebuild test failed: %v\n%s", err, outStr)
 	}
 
-	// Schedule restart
+	log.Printf("[orders] nixos-rebuild test succeeded, scheduling daemon restart in 10s")
+
+	// Schedule restart — the daemon will come back up and call CompletePendingRebuild()
 	go func() {
 		time.Sleep(10 * time.Second)
 		exec.Command("systemctl", "restart", "appliance-daemon").Run()
@@ -257,7 +280,7 @@ func (p *Processor) handleNixOSRebuild(ctx context.Context, params map[string]in
 	return map[string]interface{}{
 		"status":          "test_activated",
 		"previous_system": currentSystem,
-		"message":         "NixOS rebuild test activated, restart scheduled",
+		"message":         "NixOS rebuild test activated. Watchdog will persist after successful checkin or rollback after 10min.",
 	}, nil
 }
 

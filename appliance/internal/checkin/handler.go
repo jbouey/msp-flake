@@ -4,17 +4,20 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
 // Handler serves the /api/appliances/checkin HTTP endpoint.
 type Handler struct {
-	db *DB
+	db        *DB
+	authToken string // If non-empty, validates Bearer token on every request
 }
 
 // NewHandler creates a new checkin handler.
-func NewHandler(db *DB) *Handler {
-	return &Handler{db: db}
+// If authToken is non-empty, all requests must include a matching Bearer token.
+func NewHandler(db *DB, authToken string) *Handler {
+	return &Handler{db: db, authToken: authToken}
 }
 
 // ServeHTTP handles POST /api/appliances/checkin.
@@ -22,6 +25,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+
+	// Validate Bearer token if configured
+	if h.authToken != "" {
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != h.authToken {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "invalid or missing Bearer token",
+			})
+			return
+		}
 	}
 
 	// Parse request

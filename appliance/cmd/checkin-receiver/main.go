@@ -24,8 +24,9 @@ import (
 )
 
 var (
-	flagPort = flag.Int("port", 8001, "HTTP listen port")
-	flagDB   = flag.String("db", "", "PostgreSQL connection string (or DATABASE_URL env)")
+	flagPort      = flag.Int("port", 8001, "HTTP listen port")
+	flagDB        = flag.String("db", "", "PostgreSQL connection string (or DATABASE_URL env)")
+	flagAuthToken = flag.String("auth-token", "", "Bearer token for auth (or AUTH_TOKEN env); if empty, no auth")
 )
 
 func main() {
@@ -43,6 +44,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	authToken := *flagAuthToken
+	if authToken == "" {
+		authToken = os.Getenv("AUTH_TOKEN")
+	}
+
 	db, err := checkin.NewDB(ctx, connStr)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -50,7 +56,12 @@ func main() {
 	defer db.Close()
 	log.Println("Connected to PostgreSQL")
 
-	handler := checkin.NewHandler(db)
+	handler := checkin.NewHandler(db, authToken)
+	if authToken != "" {
+		log.Println("Bearer token auth enabled")
+	} else {
+		log.Println("WARNING: No auth token configured — checkin endpoint is open")
+	}
 	mux := http.NewServeMux()
 	checkin.RegisterRoutes(mux, handler)
 

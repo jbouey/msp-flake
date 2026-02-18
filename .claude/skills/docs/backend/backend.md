@@ -237,6 +237,6 @@ class Settings(BaseModel):
 - `backend/cve_watch.py` - CVE Watch (NVD sync + fleet matching + 7 REST endpoints; asyncpg returns JSONB as string—needs isinstance guard)
 - `backend/evidence_chain.py` - OTS blockchain anchoring (LEB128 varint parser, BTC block height extraction)
 - `backend/framework_sync.py` - Compliance Library (OSCAL sync from NIST GitHub + YAML seed + 7 REST endpoints, 498 lines)
-- `backend/sites.py` - Site management + order acknowledge/complete (admin_orders table, auto-expires stale orders)
+- `backend/sites.py` - Site management + order acknowledge/complete (admin_orders table, auto-expires stale orders). OrderType enum: force_checkin, run_drift, sync_rules, restart_agent, nixos_rebuild, update_agent, update_iso, view_logs, diagnostic, deploy_sensor, remove_sensor, deploy_linux_sensor, remove_linux_sensor, sensor_status, update_credentials
 - `compliance_agent/incident_db.py` - SQLite incident DB + flap_suppressions table
 - `main.py` - Flywheel promotion loop (Step 0: generates patterns from L2 telemetry, Step 1-3: evaluate/promote/sync). l1_rules query filters source != 'builtin' to avoid double-serve.

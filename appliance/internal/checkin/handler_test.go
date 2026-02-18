@@ -9,7 +9,7 @@ import (
 )
 
 func TestHandlerMethodNotAllowed(t *testing.T) {
-	handler := &Handler{db: nil}
+	handler := &Handler{db: nil, authToken: ""}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/appliances/checkin", nil)
 	w := httptest.NewRecorder()
@@ -22,7 +22,7 @@ func TestHandlerMethodNotAllowed(t *testing.T) {
 }
 
 func TestHandlerBadJSON(t *testing.T) {
-	handler := &Handler{db: nil}
+	handler := &Handler{db: nil, authToken: ""}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/appliances/checkin",
 		bytes.NewBufferString("not json"))
@@ -42,7 +42,7 @@ func TestHandlerBadJSON(t *testing.T) {
 }
 
 func TestHandlerMissingRequiredFields(t *testing.T) {
-	handler := &Handler{db: nil}
+	handler := &Handler{db: nil, authToken: ""}
 
 	tests := []struct {
 		name string
@@ -71,7 +71,7 @@ func TestHandlerMissingRequiredFields(t *testing.T) {
 
 func TestRegisterRoutes(t *testing.T) {
 	mux := http.NewServeMux()
-	handler := &Handler{db: nil}
+	handler := &Handler{db: nil, authToken: ""}
 	RegisterRoutes(mux, handler)
 
 	// Verify route exists by sending request
@@ -82,6 +82,75 @@ func TestRegisterRoutes(t *testing.T) {
 	// Should get 405 (method not allowed) not 404
 	if w.Code == http.StatusNotFound {
 		t.Fatal("route not registered — got 404")
+	}
+}
+
+func TestHandlerAuthRejectsNoToken(t *testing.T) {
+	handler := &Handler{db: nil, authToken: "secret-token-123"}
+
+	body, _ := json.Marshal(CheckinRequest{
+		SiteID: "site-1", Hostname: "ws01", MACAddress: "aa:bb:cc:dd:ee:ff",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/appliances/checkin", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without token, got %d", w.Code)
+	}
+}
+
+func TestHandlerAuthRejectsWrongToken(t *testing.T) {
+	handler := &Handler{db: nil, authToken: "secret-token-123"}
+
+	body, _ := json.Marshal(CheckinRequest{
+		SiteID: "site-1", Hostname: "ws01", MACAddress: "aa:bb:cc:dd:ee:ff",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/appliances/checkin", bytes.NewBuffer(body))
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with wrong token, got %d", w.Code)
+	}
+}
+
+func TestHandlerAuthPassesCorrectToken(t *testing.T) {
+	handler := &Handler{db: nil, authToken: "secret-token-123"}
+
+	// Use a request missing required fields so it stops at validation, not at nil db
+	body, _ := json.Marshal(CheckinRequest{SiteID: "site-1"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/appliances/checkin", bytes.NewBuffer(body))
+	req.Header.Set("Authorization", "Bearer secret-token-123")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	// Should get 400 (validation error), NOT 401 (auth rejected)
+	if w.Code == http.StatusUnauthorized {
+		t.Fatal("expected auth to pass with correct token")
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 after auth passes, got %d", w.Code)
+	}
+}
+
+func TestHandlerNoAuthWhenUnconfigured(t *testing.T) {
+	handler := &Handler{db: nil, authToken: ""}
+
+	// Use incomplete request so it stops at validation (400), not at nil db
+	body, _ := json.Marshal(CheckinRequest{SiteID: "site-1"})
+
+	// No auth header, no configured token → should pass auth, hit validation
+	req := httptest.NewRequest(http.MethodPost, "/api/appliances/checkin", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code == http.StatusUnauthorized {
+		t.Fatal("should not require auth when token is unconfigured")
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 

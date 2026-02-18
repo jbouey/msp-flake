@@ -334,6 +334,8 @@ Both services use systemd `ConditionPathExists` for mutual exclusion:
 
 The Go daemon (`appliance-daemon-go`) is built via `pkgs.buildGoModule` in both `appliance-image.nix` and `appliance-disk-image.nix`. It includes 3 subpackages: `appliance-daemon`, `checkin-receiver`, `grpc-server`.
 
+**Production status:** Go daemon deployed to physical HP T640 (2026-02-18). Memory: 5.6MB (vs Python 112MB, 17x reduction). Checkin cycle: ~50ms. 82 L1 rules loaded (38 builtin + 44 synced). Go 1.22 compatible (NixOS 24.05).
+
 ## Key Files
 - `flake.nix` - Root flake
 - `iso/appliance-image.nix` - ISO builder
@@ -342,4 +344,4 @@ The Go daemon (`appliance-daemon-go`) is built via `pkgs.buildGoModule` in both 
 - `flake/Modules/secrets.nix` - SOPS configuration
 - `docker-compose.yml` - Container stack
 - `scripts/deploy-vbox-vms.sh` - VM deployment
-- `appliance/` - Go appliance daemon module (141 tests)
+- `appliance/` - Go appliance daemon module (150 tests, 10 packages)

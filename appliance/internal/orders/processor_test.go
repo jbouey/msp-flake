@@ -355,12 +355,18 @@ func TestCompletePendingRebuild(t *testing.T) {
 		t.Fatalf("expected rebuild-ord-001, got %s", completedID)
 	}
 
-	// Files should be cleaned up
+	// Rebuild state files should be cleaned up
 	if _, err := os.Stat(pendingPath); err == nil {
 		t.Fatal("pending file should be removed")
 	}
 	if _, err := os.Stat(markerPath); err == nil {
 		t.Fatal("marker file should be removed")
+	}
+
+	// .rebuild-verified should exist (watchdog marker)
+	verifiedPath := filepath.Join(dir, ".rebuild-verified")
+	if _, err := os.Stat(verifiedPath); err != nil {
+		t.Fatalf(".rebuild-verified should exist: %v", err)
 	}
 }
 
