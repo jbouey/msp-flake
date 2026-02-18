@@ -1211,14 +1211,19 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     appliance_id = str(appliance[0])
     now = datetime.now(timezone.utc)
 
-    # Deduplicate: Check for existing open/escalated incident of same type (last hour)
+    # Deduplicate: Check for existing incident of same type (open OR recently resolved)
+    # This prevents flapping: L1 heals → drift recurs → new incident every cycle
     existing_check = await db.execute(
         text("""
-            SELECT id FROM incidents
+            SELECT id, status FROM incidents
             WHERE appliance_id = :appliance_id
             AND incident_type = :incident_type
-            AND status IN ('open', 'resolving', 'escalated')
-            AND created_at > NOW() - INTERVAL '1 hour'
+            AND (
+                (status IN ('open', 'resolving', 'escalated'))
+                OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '2 hours')
+            )
+            AND created_at > NOW() - INTERVAL '4 hours'
+            ORDER BY created_at DESC
             LIMIT 1
         """),
         {"appliance_id": appliance_id, "incident_type": incident.incident_type}
@@ -1226,10 +1231,32 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     existing_incident = existing_check.fetchone()
 
     if existing_incident:
-        # Return existing incident instead of creating duplicate
+        existing_id = str(existing_incident[0])
+        existing_status = existing_incident[1]
+
+        # If previously resolved but drift recurred, reopen instead of creating new
+        if existing_status == 'resolved':
+            await db.execute(
+                text("""
+                    UPDATE incidents SET status = 'resolving', resolved_at = NULL
+                    WHERE id = :id
+                """),
+                {"id": existing_id}
+            )
+            await db.commit()
+            return {
+                "status": "reopened",
+                "incident_id": existing_id,
+                "resolution_tier": None,
+                "order_id": None,
+                "runbook_id": None,
+                "timestamp": now.isoformat()
+            }
+
+        # Still open/resolving — plain dedup
         return {
             "status": "deduplicated",
-            "incident_id": str(existing_incident[0]),
+            "incident_id": existing_id,
             "resolution_tier": None,
             "order_id": None,
             "runbook_id": None,
