@@ -993,6 +993,118 @@ async def download_monthly_report(month: str, user: dict = Depends(require_clien
 
 
 # =============================================================================
+# ON-DEMAND COMPLIANCE SNAPSHOT
+# =============================================================================
+
+@auth_router.get("/reports/current")
+async def get_current_compliance_snapshot(user: dict = Depends(require_client_user)):
+    """Generate a real-time compliance snapshot.
+
+    Returns current compliance posture across all sites — not limited to
+    monthly cadence. Clients can pull this anytime.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        # Get all sites for this org
+        sites = await conn.fetch("""
+            SELECT s.site_id, s.clinic_name, s.status, s.tier
+            FROM sites s
+            JOIN client_org_sites cos ON cos.site_id = s.id
+            WHERE cos.client_org_id = $1
+        """, org_id)
+
+        site_ids = [s["site_id"] for s in sites]
+
+        if not site_ids:
+            return {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "overall_score": 100.0,
+                "sites": [],
+                "controls": {"passed": 0, "failed": 0, "warnings": 0, "total": 0},
+                "healing": {"total": 0, "auto_healed": 0, "pending": 0},
+                "checks": [],
+            }
+
+        # Latest check result per check_type per site
+        checks = await conn.fetch("""
+            WITH latest AS (
+                SELECT DISTINCT ON (site_id, check_type)
+                    site_id, check_type, check_result, hipaa_control,
+                    hostname, checked_at, details
+                FROM evidence_bundles
+                WHERE site_id = ANY($1)
+                ORDER BY site_id, check_type, checked_at DESC
+            )
+            SELECT * FROM latest ORDER BY site_id, check_type
+        """, site_ids)
+
+        total = len(checks)
+        passed = sum(1 for c in checks if c["check_result"] == "pass")
+        failed = sum(1 for c in checks if c["check_result"] == "fail")
+        warnings = sum(1 for c in checks if c["check_result"] == "warn")
+        score = round((passed / total) * 100, 1) if total > 0 else 100.0
+
+        # Recent healing activity (last 30 days)
+        healing = await conn.fetchrow("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'completed') as auto_healed,
+                COUNT(*) FILTER (WHERE status = 'pending' OR status = 'escalated') as pending
+            FROM execution_telemetry
+            WHERE site_id = ANY($1)
+              AND executed_at > NOW() - INTERVAL '30 days'
+        """, site_ids)
+
+        # Per-site breakdown
+        site_results = []
+        for site in sites:
+            site_checks = [c for c in checks if c["site_id"] == site["site_id"]]
+            st = len(site_checks)
+            sp = sum(1 for c in site_checks if c["check_result"] == "pass")
+            site_results.append({
+                "site_id": site["site_id"],
+                "clinic_name": site["clinic_name"],
+                "score": round((sp / st) * 100, 1) if st > 0 else 100.0,
+                "passed": sp,
+                "failed": sum(1 for c in site_checks if c["check_result"] == "fail"),
+                "total": st,
+            })
+
+        # Individual check details for the report
+        check_details = [
+            {
+                "site_id": c["site_id"],
+                "check_type": c["check_type"],
+                "result": c["check_result"],
+                "hipaa_control": c["hipaa_control"],
+                "hostname": c["hostname"],
+                "checked_at": c["checked_at"].isoformat() if c["checked_at"] else None,
+            }
+            for c in checks
+        ]
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "overall_score": score,
+            "sites": site_results,
+            "controls": {
+                "passed": passed,
+                "failed": failed,
+                "warnings": warnings,
+                "total": total,
+            },
+            "healing": {
+                "total": healing["total"] if healing else 0,
+                "auto_healed": healing["auto_healed"] if healing else 0,
+                "pending": healing["pending"] if healing else 0,
+            },
+            "checks": check_details,
+        }
+
+
+# =============================================================================
 # NOTIFICATIONS ENDPOINTS
 # =============================================================================
 

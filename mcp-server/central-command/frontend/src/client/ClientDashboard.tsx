@@ -397,8 +397,8 @@ export const ClientDashboard: React.FC = () => {
                 </svg>
               </div>
               <div>
-                <h3 className="font-semibold text-slate-900">Monthly Reports</h3>
-                <p className="text-sm text-slate-500">Compliance report PDFs</p>
+                <h3 className="font-semibold text-slate-900">Compliance Reports</h3>
+                <p className="text-sm text-slate-500">Real-time & monthly PDFs</p>
               </div>
             </div>
           </Link>
