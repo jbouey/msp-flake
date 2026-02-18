@@ -2,10 +2,14 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/osiriscare/appliance/internal/grpcserver"
+	"github.com/osiriscare/appliance/internal/l2bridge"
 )
 
 func testConfig() *Config {
@@ -33,6 +37,12 @@ func TestNewDaemon(t *testing.T) {
 	}
 	if d.l2Client != nil {
 		t.Fatal("expected L2 client to be nil when L2 disabled")
+	}
+	if d.winrmExec == nil {
+		t.Fatal("expected WinRM executor to be initialized")
+	}
+	if d.sshExec == nil {
+		t.Fatal("expected SSH executor to be initialized")
 	}
 }
 
@@ -100,9 +110,6 @@ func TestHealIncidentHealingDisabled(t *testing.T) {
 	cfg.HealingEnabled = false
 	d := New(cfg)
 
-	// processHealRequests should skip when healing is disabled
-	// We can't easily test the channel loop, but we can verify the daemon
-	// is correctly configured
 	if d.config.HealingEnabled {
 		t.Fatal("healing should be disabled")
 	}
@@ -156,18 +163,55 @@ func TestProcessOrdersUnknownType(t *testing.T) {
 	d.processOrders(context.Background(), rawOrders)
 }
 
-func TestCompleteOrder(t *testing.T) {
-	d := New(testConfig())
+func TestCompleteOrderHTTP(t *testing.T) {
+	// Set up a mock HTTP server that accepts order completions
+	var receivedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if !contains(r.URL.Path, "/api/orders/") || !contains(r.URL.Path, "/complete") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("expected Bearer test-key, got %s", r.Header.Get("Authorization"))
+		}
 
-	// Should not panic
-	err := d.completeOrder(context.Background(), "test-order", true, map[string]interface{}{"status": "ok"}, "")
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig()
+	cfg.APIEndpoint = server.URL
+	d := New(cfg)
+
+	err := d.completeOrder(context.Background(), "test-order-123", true, map[string]interface{}{"healed": true}, "")
 	if err != nil {
 		t.Fatalf("completeOrder: %v", err)
 	}
 
-	err = d.completeOrder(context.Background(), "test-order-fail", false, nil, "something went wrong")
-	if err != nil {
-		t.Fatalf("completeOrder: %v", err)
+	if receivedBody["success"] != true {
+		t.Fatalf("expected success=true, got %v", receivedBody["success"])
+	}
+	result, ok := receivedBody["result"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected result map in body")
+	}
+	if result["healed"] != true {
+		t.Fatalf("expected healed=true, got %v", result["healed"])
+	}
+}
+
+func TestCompleteOrderHTTPFailure(t *testing.T) {
+	cfg := testConfig()
+	cfg.APIEndpoint = "http://127.0.0.1:1" // unreachable
+	d := New(cfg)
+
+	err := d.completeOrder(context.Background(), "test-order-fail", false, nil, "something went wrong")
+	if err == nil {
+		t.Fatal("expected error for unreachable server")
 	}
 }
 
@@ -185,6 +229,127 @@ func TestEscalateToL3(t *testing.T) {
 	d.escalateToL3("incident-123", req, "test escalation")
 }
 
+func TestBuildWinRMTarget(t *testing.T) {
+	d := New(testConfig())
+
+	// No credentials → nil
+	req := grpcserver.HealRequest{
+		Hostname: "ws01.test.local",
+		Metadata: map[string]string{},
+	}
+	if d.buildWinRMTarget(req) != nil {
+		t.Fatal("expected nil target without credentials")
+	}
+
+	// With credentials
+	req.Metadata = map[string]string{
+		"winrm_username": "DOMAIN\\admin",
+		"winrm_password": "secret",
+		"ip_address":     "192.168.1.10",
+	}
+	target := d.buildWinRMTarget(req)
+	if target == nil {
+		t.Fatal("expected non-nil target")
+	}
+	if target.Hostname != "192.168.1.10" {
+		t.Fatalf("expected IP 192.168.1.10, got %s", target.Hostname)
+	}
+	if target.Username != "DOMAIN\\admin" {
+		t.Fatalf("expected DOMAIN\\admin, got %s", target.Username)
+	}
+	if target.Port != 5985 {
+		t.Fatalf("expected port 5985, got %d", target.Port)
+	}
+}
+
+func TestBuildSSHTarget(t *testing.T) {
+	d := New(testConfig())
+
+	// No credentials → nil
+	req := grpcserver.HealRequest{
+		Hostname: "linux01.test.local",
+		Metadata: map[string]string{},
+	}
+	if d.buildSSHTarget(req) != nil {
+		t.Fatal("expected nil target without credentials")
+	}
+
+	// With password
+	req.Metadata = map[string]string{
+		"ssh_username": "admin",
+		"ssh_password": "secret",
+	}
+	target := d.buildSSHTarget(req)
+	if target == nil {
+		t.Fatal("expected non-nil target")
+	}
+	if target.Username != "admin" {
+		t.Fatalf("expected admin, got %s", target.Username)
+	}
+	if target.Password == nil || *target.Password != "secret" {
+		t.Fatal("expected password=secret")
+	}
+
+	// With key
+	req.Metadata = map[string]string{
+		"ssh_private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\ntest\n-----END OPENSSH PRIVATE KEY-----",
+		"ip_address":      "10.0.0.5",
+	}
+	target = d.buildSSHTarget(req)
+	if target == nil {
+		t.Fatal("expected non-nil target")
+	}
+	if target.Username != "root" { // default when not specified
+		t.Fatalf("expected root, got %s", target.Username)
+	}
+	if target.Hostname != "10.0.0.5" {
+		t.Fatalf("expected 10.0.0.5, got %s", target.Hostname)
+	}
+}
+
+func TestExecuteL2ActionNoCredentials(t *testing.T) {
+	d := New(testConfig())
+
+	decision := &l2bridge.LLMDecision{
+		RecommendedAction: "Restart-Service -Name 'wuauserv'",
+		Confidence:        0.85,
+		RunbookID:         "L2-test",
+	}
+
+	req := grpcserver.HealRequest{
+		AgentID:   "agent-1",
+		Hostname:  "ws01.test.local",
+		CheckType: "service_wuauserv",
+		Metadata:  map[string]string{},
+	}
+
+	// Should escalate to L3 (no credentials) without panicking
+	d.executeL2Action(context.Background(), decision, req, "incident-test")
+}
+
+func TestExecuteL2ActionLinuxPlatform(t *testing.T) {
+	d := New(testConfig())
+
+	decision := &l2bridge.LLMDecision{
+		RecommendedAction: "systemctl restart sshd",
+		Confidence:        0.90,
+	}
+
+	req := grpcserver.HealRequest{
+		AgentID:   "agent-1",
+		Hostname:  "linux01.test.local",
+		CheckType: "ssh_config",
+		Metadata: map[string]string{
+			"platform":     "linux",
+			"ssh_username": "root",
+			"ssh_password": "password",
+		},
+	}
+
+	// Will fail (can't connect) but should not panic
+	d.executeL2Action(context.Background(), decision, req, "incident-linux-test")
+}
+
 func TestDaemonShutdown(t *testing.T) {
 	d := New(testConfig())
 
@@ -196,4 +361,17 @@ func TestDaemonShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
+}
+
+func containsAt(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

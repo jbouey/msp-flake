@@ -1,6 +1,6 @@
 {
-  "session": 117,
-  "updated": "2026-02-17T21:15:00Z",
+  "session": 118,
+  "updated": "2026-02-18T00:05:00.000000Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -168,11 +168,19 @@
     }
   ],
   "completed_this_session": [
-      "4-track audit plan verified complete (22/22 items) — only C3 msp-first-boot requires was missing",
-      "Built and uploaded v1.0.74 overlay to VPS",
-      "Issued update orders for both appliances (physical + VM)"
-    ],
+    "Issued nixos_rebuild order to physical appliance via VPS DB insert (ORD-REBUILD-20260217)",
+    "Updated NixOS infrastructure skill doc with Go daemon feature flag + appliance/ structure",
+    "Created session 118 log"
+  ],
   "recent_commits": [
+    {
+      "hash": "a50d103",
+      "message": "feat: NixOS packaging for Go daemon — buildGoModule + feature-flagged service"
+    },
+    {
+      "hash": "c23b924",
+      "message": "feat: Go appliance daemon — 10 packages, 141 tests, L1→L2→L3 pipeline"
+    },
     {
       "hash": "03693aa",
       "message": "fix: msp-first-boot hard dependency on auto-provision service"
@@ -188,14 +196,6 @@
     {
       "hash": "daf82a8",
       "message": "fix: local-portal port 8083\u21928084 (conflict with scanner) + getty --no-block"
-    },
-    {
-      "hash": "ac549c2",
-      "message": "fix: console-branding rm symlink before write + watchdog add util-linux"
-    },
-    {
-      "hash": "a67c079",
-      "message": "feat: GPO pipeline hardening \u2014 cert warnings, rollback, 43 new tests"
     }
   ],
   "key_findings": {
@@ -225,7 +225,7 @@
     "systemd_activation_deadlock_lesson": "During nixos-rebuild test, systemd holds a transaction lock for the activation. Running 'systemctl restart' inside a oneshot service (e.g., console-branding) that triggers during activation causes a deadlock \u2014 the restart waits for the lock that activation holds. Fix: 'systemctl --no-block restart' to fire-and-forget.",
     "tty_write_blocking_lesson": "Writing to /dev/tty1 (e.g., printf '\\033c' > /dev/tty1) blocks indefinitely when no physical console is attached \u2014 common on VMs or headless hardware. Fix: wrap with 'timeout 2 bash -c \"...\"' to bound the wait.",
     "appliance_port_layout": "Port layout on appliance: 22=SSH, 80=nginx, 8080=web-ui, 8081=scanner-web (localhost), 8082=scanner-api (localhost), 8083=go-agent-checkins (0.0.0.0), 8084=local-portal (0.0.0.0), 50051=gRPC. Firewall exposes: 22, 80, 8080, 50051, 8084.",
-    "ws_trust_fix_lesson": "Broken trust relationship (error 1789) means machine account password is out of sync with AD. NTLM domain auth still works (doesn't need machine trust), but Kerberos/GPO fails. Fix: Reset-ComputerMachinePassword -Server NVDC01 run from DC side. Verify: Test-ComputerSecureChannel returns True. Test-ComputerSecureChannel -Repair via WinRM on the broken WS returns HTTP 400 — use DC-side reset instead.",
+    "ws_trust_fix_lesson": "Broken trust relationship (error 1789) means machine account password is out of sync with AD. NTLM domain auth still works (doesn't need machine trust), but Kerberos/GPO fails. Fix: Reset-ComputerMachinePassword -Server NVDC01 run from DC side. Verify: Test-ComputerSecureChannel returns True. Test-ComputerSecureChannel -Repair via WinRM on the broken WS returns HTTP 400 \u2014 use DC-side reset instead.",
     "nix_store_pythonpath_lesson": "After nixos-rebuild, nix store hashes change. PYTHONPATH from previous sessions becomes invalid. Build dynamically: for pkg in pywinrm requests-2 ...; do ls -d /nix/store/*${pkg}*/lib/python*/site-packages; done",
     "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles."
   },

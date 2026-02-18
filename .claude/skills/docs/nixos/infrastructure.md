@@ -4,16 +4,22 @@
 
 ### Flake Structure
 ```
-flake.nix                    # Root orchestrator
-├── flake-compliance.nix     # Compliance agent packaging
+flake.nix                        # Root orchestrator
+├── flake-compliance.nix         # Compliance agent packaging
 ├── iso/
-│   ├── appliance-image.nix  # Bootable ISO builder
-│   └── configuration.nix    # Base system config
+│   ├── appliance-image.nix      # Bootable ISO builder
+│   ├── appliance-disk-image.nix # Installed system config (nixos-rebuild target)
+│   └── configuration.nix        # Base system config
+├── appliance/                   # Go appliance daemon module
+│   ├── cmd/                     # 3 binaries: appliance-daemon, checkin-receiver, grpc-server
+│   ├── internal/                # 10 packages: ca, checkin, daemon, discovery, grpcserver,
+│   │                            #   healing, l2bridge, orders, sshexec, winrm
+│   └── go.mod                   # github.com/osiriscare/appliance
 └── flake/Modules/
-    ├── compliance-agent.nix # Main service module
-    ├── secrets.nix          # SOPS/age secrets
-    ├── timesync.nix         # NTP configuration
-    └── ssh-hardening.nix    # SSH security
+    ├── compliance-agent.nix     # Main service module
+    ├── secrets.nix              # SOPS/age secrets
+    ├── timesync.nix             # NTP configuration
+    └── ssh-hardening.nix        # SSH security
 ```
 
 ### Module Pattern
@@ -314,10 +320,26 @@ NixOS wrapper does `from compliance_agent.appliance_agent import main`. Systemd 
 
 **Build:** `mkdir -p /tmp/overlay-build/compliance_agent && cp -R src/compliance_agent/* /tmp/overlay-build/compliance_agent/ && cp VERSION /tmp/overlay-build/`
 
+## Go Daemon Feature Flag
+
+The Go appliance daemon runs alongside the Python agent, toggled by a file-based feature flag:
+
+```
+/var/lib/msp/.use-go-daemon    # Touch to enable Go daemon, remove for Python
+```
+
+Both services use systemd `ConditionPathExists` for mutual exclusion:
+- Python `compliance-agent.service`: `ConditionPathExists = !/var/lib/msp/.use-go-daemon`
+- Go `appliance-daemon.service`: `ConditionPathExists = /var/lib/msp/.use-go-daemon`
+
+The Go daemon (`appliance-daemon-go`) is built via `pkgs.buildGoModule` in both `appliance-image.nix` and `appliance-disk-image.nix`. It includes 3 subpackages: `appliance-daemon`, `checkin-receiver`, `grpc-server`.
+
 ## Key Files
 - `flake.nix` - Root flake
 - `iso/appliance-image.nix` - ISO builder
+- `iso/appliance-disk-image.nix` - Installed system (nixos-rebuild target)
 - `modules/compliance-agent.nix` - Service definition
 - `flake/Modules/secrets.nix` - SOPS configuration
 - `docker-compose.yml` - Container stack
 - `scripts/deploy-vbox-vms.sh` - VM deployment
+- `appliance/` - Go appliance daemon module (141 tests)

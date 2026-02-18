@@ -55,6 +55,13 @@ class OrderType(str, Enum):
     FORCE_CHECKIN = "force_checkin"
     RUN_DRIFT = "run_drift"
     SYNC_RULES = "sync_rules"
+    NIXOS_REBUILD = "nixos_rebuild"
+    UPDATE_ISO = "update_iso"
+    DIAGNOSTIC = "diagnostic"
+    DEPLOY_SENSOR = "deploy_sensor"
+    REMOVE_SENSOR = "remove_sensor"
+    UPDATE_CREDENTIALS = "update_credentials"
+    RESTART_AGENT = "restart_agent"
 
 
 class HealingTier(str, Enum):

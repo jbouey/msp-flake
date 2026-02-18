@@ -1,11 +1,15 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/osiriscare/appliance/internal/ca"
@@ -13,6 +17,8 @@ import (
 	"github.com/osiriscare/appliance/internal/healing"
 	"github.com/osiriscare/appliance/internal/l2bridge"
 	"github.com/osiriscare/appliance/internal/orders"
+	"github.com/osiriscare/appliance/internal/sshexec"
+	"github.com/osiriscare/appliance/internal/winrm"
 )
 
 // Version is set at build time.
@@ -20,14 +26,16 @@ var Version = "0.1.0"
 
 // Daemon is the main appliance daemon that orchestrates all subsystems.
 type Daemon struct {
-	config   *Config
-	phoneCli *PhoneHomeClient
-	grpcSrv  *grpcserver.Server
-	registry *grpcserver.AgentRegistry
-	agentCA  *ca.AgentCA
-	l1Engine *healing.Engine
-	l2Client *l2bridge.Client
+	config    *Config
+	phoneCli  *PhoneHomeClient
+	grpcSrv   *grpcserver.Server
+	registry  *grpcserver.AgentRegistry
+	agentCA   *ca.AgentCA
+	l1Engine  *healing.Engine
+	l2Client  *l2bridge.Client
 	orderProc *orders.Processor
+	winrmExec *winrm.Executor
+	sshExec   *sshexec.Executor
 }
 
 // New creates a new daemon with the given configuration.
@@ -52,6 +60,10 @@ func New(cfg *Config) *Daemon {
 		socketPath := filepath.Join(cfg.StateDir, "l2.sock")
 		d.l2Client = l2bridge.NewClient(socketPath, 30*time.Second)
 	}
+
+	// Initialize WinRM and SSH executors
+	d.winrmExec = winrm.NewExecutor()
+	d.sshExec = sshexec.NewExecutor()
 
 	// Initialize order processor with completion callback
 	d.orderProc = orders.NewProcessor(cfg.StateDir, d.completeOrder)
@@ -120,6 +132,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if d.l2Client != nil {
 				d.l2Client.Close()
 			}
+			d.sshExec.CloseAll()
 			return nil
 		case <-ticker.C:
 			d.runCycle(ctx)
@@ -190,21 +203,48 @@ func (d *Daemon) processOrders(ctx context.Context, rawOrders []map[string]inter
 	}
 }
 
-// completeOrder reports order completion back to Central Command via phone-home.
+// completeOrder reports order completion back to Central Command via HTTP POST.
 func (d *Daemon) completeOrder(ctx context.Context, orderID string, success bool, result map[string]interface{}, errMsg string) error {
 	log.Printf("[daemon] Order %s completion: success=%v", orderID, success)
 
-	// Build completion payload for next checkin
-	// In production, this would POST directly to /api/appliances/orders/<id>/complete
-	// For now, log the completion (the Python daemon does this via the checkin response)
+	payload := map[string]interface{}{
+		"success": success,
+	}
 	if result != nil {
-		data, _ := json.Marshal(result)
-		log.Printf("[daemon] Order %s result: %s", orderID, string(data))
+		payload["result"] = result
 	}
 	if errMsg != "" {
-		log.Printf("[daemon] Order %s error: %s", orderID, errMsg)
+		payload["error_message"] = errMsg
 	}
 
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal completion: %w", err)
+	}
+
+	url := strings.TrimRight(d.config.APIEndpoint, "/") + "/api/orders/" + orderID + "/complete"
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create completion request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+d.config.APIKey)
+
+	resp, err := d.phoneCli.client.Do(httpReq)
+	if err != nil {
+		log.Printf("[daemon] Order %s completion POST failed: %v (will retry on next cycle)", orderID, err)
+		return fmt.Errorf("completion request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[daemon] Order %s completion returned %d: %s", orderID, resp.StatusCode, string(respBody))
+		return fmt.Errorf("completion returned %d", resp.StatusCode)
+	}
+
+	log.Printf("[daemon] Order %s completion accepted by Central Command", orderID)
 	return nil
 }
 
@@ -233,7 +273,7 @@ func (d *Daemon) processHealRequests(ctx context.Context) {
 }
 
 // healIncident routes an incident through L1 deterministic → L2 LLM → L3 escalation.
-func (d *Daemon) healIncident(_ context.Context, req grpcserver.HealRequest) {
+func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 	incidentID := fmt.Sprintf("drift-%s-%s-%d", req.Hostname, req.CheckType, time.Now().UnixMilli())
 
 	// Build incident data map for L1 matching.
@@ -302,8 +342,7 @@ func (d *Daemon) healIncident(_ context.Context, req grpcserver.HealRequest) {
 		if decision.ShouldExecute() {
 			log.Printf("[daemon] L2 decision: %s (confidence=%.2f) for %s/%s",
 				decision.RecommendedAction, decision.Confidence, req.Hostname, req.CheckType)
-			// L2 auto-execution would use the WinRM/SSH executors here
-			// For now, log the decision (wiring executors is a follow-up task)
+			d.executeL2Action(ctx, decision, req, incidentID)
 			return
 		}
 
@@ -318,6 +357,129 @@ func (d *Daemon) healIncident(_ context.Context, req grpcserver.HealRequest) {
 	log.Printf("[daemon] No L1 match and L2 unavailable for %s/%s — escalating to L3",
 		req.Hostname, req.CheckType)
 	d.escalateToL3(incidentID, req, "No L1 rule match, L2 not available")
+}
+
+// executeL2Action dispatches an L2 decision to the appropriate executor (WinRM or SSH).
+func (d *Daemon) executeL2Action(ctx context.Context, decision *l2bridge.LLMDecision, req grpcserver.HealRequest, incidentID string) {
+	platform, _ := req.Metadata["platform"]
+	if platform == "" {
+		platform = "windows" // default: gRPC drift events come from Windows agents
+	}
+
+	script, _ := decision.ActionParams["script"].(string)
+	if script == "" {
+		script = decision.RecommendedAction
+	}
+
+	runbookID := decision.RunbookID
+	if runbookID == "" {
+		runbookID = "L2-AUTO-" + incidentID
+	}
+
+	hipaaControls := []string{}
+	if req.HIPAAControl != "" {
+		hipaaControls = []string{req.HIPAAControl}
+	}
+
+	switch platform {
+	case "windows":
+		target := d.buildWinRMTarget(req)
+		if target == nil {
+			log.Printf("[daemon] L2 no WinRM target for %s — escalating to L3", req.Hostname)
+			d.escalateToL3(incidentID, req, "No WinRM credentials for target")
+			return
+		}
+		result := d.winrmExec.Execute(target, script, runbookID, "l2_auto", 300, 1, 30.0, hipaaControls)
+		if result.Success {
+			log.Printf("[daemon] L2 healed %s/%s via WinRM in %.1fs (hash=%s)",
+				req.Hostname, req.CheckType, result.DurationSecs, result.OutputHash)
+		} else {
+			log.Printf("[daemon] L2 WinRM execution failed for %s/%s: %s — escalating to L3",
+				req.Hostname, req.CheckType, result.Error)
+			d.escalateToL3(incidentID, req, "L2 WinRM execution failed: "+result.Error)
+		}
+
+	case "linux":
+		target := d.buildSSHTarget(req)
+		if target == nil {
+			log.Printf("[daemon] L2 no SSH target for %s — escalating to L3", req.Hostname)
+			d.escalateToL3(incidentID, req, "No SSH credentials for target")
+			return
+		}
+		result := d.sshExec.Execute(ctx, target, script, runbookID, "l2_auto", 60, 1, 5.0, true, hipaaControls)
+		if result.Success {
+			log.Printf("[daemon] L2 healed %s/%s via SSH in %.1fs (hash=%s)",
+				req.Hostname, req.CheckType, result.DurationSecs, result.OutputHash)
+		} else {
+			log.Printf("[daemon] L2 SSH execution failed for %s/%s: %s — escalating to L3",
+				req.Hostname, req.CheckType, result.Error)
+			d.escalateToL3(incidentID, req, "L2 SSH execution failed: "+result.Error)
+		}
+
+	default:
+		log.Printf("[daemon] L2 unknown platform %q for %s — escalating to L3", platform, req.Hostname)
+		d.escalateToL3(incidentID, req, fmt.Sprintf("Unknown platform: %s", platform))
+	}
+}
+
+// buildWinRMTarget creates a WinRM target from the heal request metadata.
+// Credentials come from the checkin response's windows_targets list, cached in the daemon.
+func (d *Daemon) buildWinRMTarget(req grpcserver.HealRequest) *winrm.Target {
+	// Extract credentials from metadata (populated during drift report with target info)
+	username, _ := req.Metadata["winrm_username"]
+	password, _ := req.Metadata["winrm_password"]
+	ipAddr, _ := req.Metadata["ip_address"]
+
+	if username == "" || password == "" {
+		return nil
+	}
+
+	hostname := req.Hostname
+	if ipAddr != "" {
+		hostname = ipAddr
+	}
+
+	return &winrm.Target{
+		Hostname: hostname,
+		Port:     5985,
+		Username: username,
+		Password: password,
+		UseSSL:   false,
+	}
+}
+
+// buildSSHTarget creates an SSH target from the heal request metadata.
+func (d *Daemon) buildSSHTarget(req grpcserver.HealRequest) *sshexec.Target {
+	username, _ := req.Metadata["ssh_username"]
+	password, _ := req.Metadata["ssh_password"]
+	key, _ := req.Metadata["ssh_private_key"]
+	ipAddr, _ := req.Metadata["ip_address"]
+
+	if username == "" {
+		username = "root"
+	}
+	if password == "" && key == "" {
+		return nil
+	}
+
+	hostname := req.Hostname
+	if ipAddr != "" {
+		hostname = ipAddr
+	}
+
+	target := &sshexec.Target{
+		Hostname: hostname,
+		Port:     22,
+		Username: username,
+	}
+	if password != "" {
+		target.Password = &password
+	}
+	if key != "" {
+		target.PrivateKey = &key
+	}
+
+	return target
 }
 
 // escalateToL3 logs an incident that requires human intervention.
