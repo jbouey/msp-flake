@@ -2905,11 +2905,22 @@ $x|ConvertTo-Json -Depth 3 -Compress
                     online_count=len(online_workstations),
                 )
 
-                # Submit site summary (PHI-hardened - summaries only, no per-workstation details)
+                # Build full workstation data for Central Command
+                # Includes per-workstation details for the Workstations dashboard tab
                 summary = evidence.get("site_summary", {})
-                summary["phi_scrubbed"] = True  # Transport layer scrubs in _request()
-                summary_json = json.dumps(summary, sort_keys=True)
-                summary_hash = hashlib.sha256(summary_json.encode()).hexdigest()
+                ws_bundles = evidence.get("workstation_bundles", [])
+
+                # Include all discovered workstations (online + offline)
+                all_ws = [ws.to_dict() for ws in self.workstations]
+
+                ws_evidence_data = {
+                    "site_summary": summary,
+                    "workstation_bundles": ws_bundles,
+                    "all_workstations": all_ws,
+                }
+
+                ws_json = json.dumps(ws_evidence_data, sort_keys=True)
+                ws_hash = hashlib.sha256(ws_json.encode()).hexdigest()
 
                 # Submit with deduplication (signing happens in client)
                 compliance_rate = summary.get("overall_compliance_rate", 0)
@@ -2917,10 +2928,10 @@ $x|ConvertTo-Json -Depth 3 -Compress
 
                 if self._should_submit_evidence("workstation", check_result):
                     bid = await self.client.submit_evidence(
-                        bundle_hash=summary_hash,
+                        bundle_hash=ws_hash,
                         check_type="workstation",
                         check_result=check_result,
-                        evidence_data=summary,
+                        evidence_data=ws_evidence_data,
                         host=f"site:{self.config.site_id}",
                         hipaa_control="164.312(a)(2)(iv)",
                         signer=self.signer,

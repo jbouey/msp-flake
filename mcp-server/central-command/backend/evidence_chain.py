@@ -980,6 +980,14 @@ async def submit_evidence(
             bundle.agent_signature
         )
 
+    # Populate workstation tables when workstation evidence arrives
+    if bundle.check_type == "workstation" and bundle.checks:
+        background_tasks.add_task(
+            populate_workstation_tables,
+            site_id,
+            bundle.checks,
+        )
+
     logger.info(f"Evidence submitted: site={site_id} bundle={bundle.bundle_id[:8]} chain={chain_position}")
 
     return EvidenceSubmitResponse(
@@ -1113,6 +1121,243 @@ async def upload_to_worm_background(
 
     except Exception as e:
         logger.error(f"WORM upload failed for {bundle_id}: {e}")
+
+
+async def populate_workstation_tables(site_id: str, checks: List[Dict[str, Any]]):
+    """Populate workstations, workstation_checks, and site_workstation_summaries tables.
+
+    Called as a background task when workstation evidence is submitted.
+    Extracts per-workstation data from evidence checks and upserts into
+    the workstation tables so the dashboard Workstations tab shows data.
+    """
+    try:
+        import sys
+        try:
+            from main import async_session
+        except ImportError:
+            if 'server' in sys.modules:
+                async_session = sys.modules['server'].async_session
+            else:
+                logger.error("Cannot get DB session for workstation table population")
+                return
+
+        # Extract workstation data from checks[0].details
+        if not checks:
+            return
+
+        details = checks[0].get("details", {})
+        if not details:
+            return
+
+        # Handle both old format (flat summary) and new format (structured)
+        if "site_summary" in details:
+            site_summary = details["site_summary"]
+            ws_bundles = details.get("workstation_bundles", [])
+            all_ws = details.get("all_workstations", [])
+        else:
+            # Legacy format: details IS the site_summary
+            site_summary = details
+            ws_bundles = []
+            all_ws = []
+
+        now = datetime.now(timezone.utc)
+
+        async with async_session() as db:
+            # 1. Upsert all discovered workstations
+            for ws in all_ws:
+                hostname = ws.get("hostname", "")
+                if not hostname:
+                    continue
+
+                await db.execute(text("""
+                    INSERT INTO workstations (
+                        site_id, hostname, distinguished_name, ip_address,
+                        mac_address, os_name, os_version, online, last_seen,
+                        compliance_status, updated_at
+                    ) VALUES (
+                        :site_id, :hostname, :dn, :ip,
+                        :mac, :os_name, :os_version, :online, :last_seen,
+                        :status, :now
+                    )
+                    ON CONFLICT (site_id, hostname) DO UPDATE SET
+                        ip_address = COALESCE(EXCLUDED.ip_address, workstations.ip_address),
+                        distinguished_name = COALESCE(EXCLUDED.distinguished_name, workstations.distinguished_name),
+                        mac_address = COALESCE(EXCLUDED.mac_address, workstations.mac_address),
+                        os_name = COALESCE(EXCLUDED.os_name, workstations.os_name),
+                        os_version = COALESCE(EXCLUDED.os_version, workstations.os_version),
+                        online = EXCLUDED.online,
+                        last_seen = COALESCE(EXCLUDED.last_seen, workstations.last_seen),
+                        compliance_status = EXCLUDED.compliance_status,
+                        updated_at = :now
+                """), {
+                    "site_id": site_id,
+                    "hostname": hostname,
+                    "dn": ws.get("distinguished_name"),
+                    "ip": ws.get("ip_address"),
+                    "mac": ws.get("mac_address"),
+                    "os_name": ws.get("os_name"),
+                    "os_version": ws.get("os_version"),
+                    "online": ws.get("online", False),
+                    "last_seen": ws.get("last_seen"),
+                    "status": ws.get("compliance_status", "unknown"),
+                    "now": now,
+                })
+
+            # 2. Insert per-workstation compliance check results
+            for bundle in ws_bundles:
+                ws_hostname = bundle.get("workstation_id", "")
+                if not ws_hostname:
+                    continue
+
+                # Get the workstation UUID
+                ws_result = await db.execute(text("""
+                    SELECT id FROM workstations
+                    WHERE site_id = :site_id AND hostname = :hostname
+                """), {"site_id": site_id, "hostname": ws_hostname})
+                ws_row = ws_result.fetchone()
+
+                if not ws_row:
+                    # Workstation not in all_ws list; create it from bundle data
+                    await db.execute(text("""
+                        INSERT INTO workstations (
+                            site_id, hostname, ip_address, os_name,
+                            online, compliance_status, compliance_percentage,
+                            last_compliance_check, updated_at
+                        ) VALUES (
+                            :site_id, :hostname, :ip, :os_name,
+                            true, :status, :pct, :now, :now
+                        )
+                        ON CONFLICT (site_id, hostname) DO UPDATE SET
+                            compliance_status = EXCLUDED.compliance_status,
+                            compliance_percentage = EXCLUDED.compliance_percentage,
+                            last_compliance_check = EXCLUDED.last_compliance_check,
+                            updated_at = EXCLUDED.updated_at
+                    """), {
+                        "site_id": site_id,
+                        "hostname": ws_hostname,
+                        "ip": bundle.get("ip_address"),
+                        "os_name": bundle.get("os_name"),
+                        "status": bundle.get("overall_status", "unknown"),
+                        "pct": bundle.get("compliance_percentage", 0),
+                        "now": now,
+                    })
+                    ws_result = await db.execute(text("""
+                        SELECT id FROM workstations
+                        WHERE site_id = :site_id AND hostname = :hostname
+                    """), {"site_id": site_id, "hostname": ws_hostname})
+                    ws_row = ws_result.fetchone()
+
+                if not ws_row:
+                    continue
+
+                ws_id = ws_row[0]
+
+                # Update workstation compliance fields
+                await db.execute(text("""
+                    UPDATE workstations SET
+                        compliance_status = :status,
+                        compliance_percentage = :pct,
+                        last_compliance_check = :now,
+                        online = true
+                    WHERE id = :ws_id
+                """), {
+                    "status": bundle.get("overall_status", "unknown"),
+                    "pct": bundle.get("compliance_percentage", 0),
+                    "now": now,
+                    "ws_id": ws_id,
+                })
+
+                # Insert individual check results
+                for check in bundle.get("checks", []):
+                    check_type = check.get("check_type", "")
+                    if not check_type:
+                        continue
+
+                    hipaa_controls = check.get("hipaa_controls", [])
+                    if isinstance(hipaa_controls, list):
+                        hipaa_arr = "{" + ",".join(f'"{c}"' for c in hipaa_controls) + "}"
+                    else:
+                        hipaa_arr = "{}"
+
+                    await db.execute(text("""
+                        INSERT INTO workstation_checks (
+                            workstation_id, site_id, check_type, status,
+                            compliant, details, hipaa_controls, checked_at
+                        ) VALUES (
+                            :ws_id, :site_id, :check_type, :status,
+                            :compliant, CAST(:details AS jsonb), :hipaa::text[],
+                            :now
+                        )
+                    """), {
+                        "ws_id": ws_id,
+                        "site_id": site_id,
+                        "check_type": check_type,
+                        "status": check.get("status", "unknown"),
+                        "compliant": check.get("compliant", False),
+                        "details": json.dumps(check.get("details", {})),
+                        "hipaa": hipaa_arr,
+                        "now": now,
+                    })
+
+            # 3. Upsert site workstation summary
+            if site_summary:
+                summary_hash = hashlib.sha256(
+                    json.dumps(site_summary, sort_keys=True, default=str).encode()
+                ).hexdigest()
+                bundle_id = site_summary.get("bundle_id", str(hash(now.isoformat())))
+
+                await db.execute(text("""
+                    INSERT INTO site_workstation_summaries (
+                        bundle_id, site_id, total_workstations, online_workstations,
+                        compliant_workstations, drifted_workstations, error_workstations,
+                        unknown_workstations, check_compliance, overall_compliance_rate,
+                        evidence_hash, last_scan, updated_at
+                    ) VALUES (
+                        :bundle_id, :site_id, :total, :online,
+                        :compliant, :drifted, :error, :unknown,
+                        CAST(:check_compliance AS jsonb), :rate,
+                        :hash, :now, :now
+                    )
+                    ON CONFLICT (site_id) DO UPDATE SET
+                        bundle_id = EXCLUDED.bundle_id,
+                        total_workstations = EXCLUDED.total_workstations,
+                        online_workstations = EXCLUDED.online_workstations,
+                        compliant_workstations = EXCLUDED.compliant_workstations,
+                        drifted_workstations = EXCLUDED.drifted_workstations,
+                        error_workstations = EXCLUDED.error_workstations,
+                        unknown_workstations = EXCLUDED.unknown_workstations,
+                        check_compliance = EXCLUDED.check_compliance,
+                        overall_compliance_rate = EXCLUDED.overall_compliance_rate,
+                        evidence_hash = EXCLUDED.evidence_hash,
+                        last_scan = EXCLUDED.last_scan,
+                        updated_at = EXCLUDED.updated_at
+                """), {
+                    "bundle_id": bundle_id,
+                    "site_id": site_id,
+                    "total": site_summary.get("total_workstations", 0),
+                    "online": site_summary.get("online_workstations", 0),
+                    "compliant": site_summary.get("compliant_workstations", 0),
+                    "drifted": site_summary.get("drifted_workstations", 0),
+                    "error": site_summary.get("error_workstations", 0),
+                    "unknown": site_summary.get("unknown_workstations", 0),
+                    "check_compliance": json.dumps(site_summary.get("check_compliance", {})),
+                    "rate": site_summary.get("overall_compliance_rate", 0),
+                    "hash": summary_hash,
+                    "now": now,
+                })
+
+            await db.commit()
+
+            # Count for logging
+            ws_count = len(all_ws) or len(ws_bundles)
+            check_count = sum(len(b.get("checks", [])) for b in ws_bundles)
+            logger.info(
+                f"Workstation tables populated: site={site_id} "
+                f"workstations={ws_count} checks={check_count}"
+            )
+
+    except Exception as e:
+        logger.error(f"Failed to populate workstation tables for {site_id}: {e}")
 
 
 async def submit_ots_proof_background(db: AsyncSession, bundle_id: str, bundle_hash: str, site_id: str):

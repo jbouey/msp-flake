@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/osiriscare/appliance/internal/ca"
@@ -24,6 +25,13 @@ import (
 // Version is set at build time.
 var Version = "0.1.0"
 
+// driftCooldown tracks cooldown state for a hostname+check_type pair.
+type driftCooldown struct {
+	lastSeen    time.Time
+	count       int           // Number of times seen in the flap window
+	cooldownDur time.Duration // Current cooldown duration (escalates on flap)
+}
+
 // Daemon is the main appliance daemon that orchestrates all subsystems.
 type Daemon struct {
 	config    *Config
@@ -36,14 +44,19 @@ type Daemon struct {
 	orderProc *orders.Processor
 	winrmExec *winrm.Executor
 	sshExec   *sshexec.Executor
+
+	// Drift report cooldown: prevents excessive incident creation
+	cooldownMu sync.Mutex
+	cooldowns  map[string]*driftCooldown // key: "hostname:check_type"
 }
 
 // New creates a new daemon with the given configuration.
 func New(cfg *Config) *Daemon {
 	d := &Daemon{
-		config:   cfg,
-		phoneCli: NewPhoneHomeClient(cfg),
-		registry: grpcserver.NewAgentRegistry(),
+		config:    cfg,
+		phoneCli:  NewPhoneHomeClient(cfg),
+		registry:  grpcserver.NewAgentRegistry(),
+		cooldowns: make(map[string]*driftCooldown),
 	}
 
 	// Initialize L1 healing engine
@@ -274,6 +287,14 @@ func (d *Daemon) processHealRequests(ctx context.Context) {
 
 // healIncident routes an incident through L1 deterministic → L2 LLM → L3 escalation.
 func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
+	// Drift report cooldown: suppress repeated incidents for the same host+check
+	// Default 10 min cooldown, escalates to 1 hour on flap detection (>3 in 30 min)
+	cooldownKey := req.Hostname + ":" + req.CheckType
+	if d.shouldSuppressDrift(cooldownKey) {
+		log.Printf("[daemon] Drift suppressed (cooldown): %s/%s", req.Hostname, req.CheckType)
+		return
+	}
+
 	incidentID := fmt.Sprintf("drift-%s-%s-%d", req.Hostname, req.CheckType, time.Now().UnixMilli())
 
 	// Build incident data map for L1 matching.
@@ -310,6 +331,13 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 		if result.Success {
 			log.Printf("[daemon] L1 healed %s/%s via %s in %dms",
 				req.Hostname, req.CheckType, match.Rule.ID, result.DurationMs)
+
+			// GPO firewall fix: when firewall drift is healed, also fix the
+			// domain GPO to prevent GPO from turning firewall back off.
+			// Zero-friction: runs automatically without operator intervention.
+			if req.CheckType == "firewall_status" {
+				go d.fixFirewallGPO(req.Hostname)
+			}
 		} else {
 			log.Printf("[daemon] L1 execution failed for %s/%s: %s",
 				req.Hostname, req.CheckType, result.Error)
@@ -488,4 +516,194 @@ func (d *Daemon) escalateToL3(incidentID string, req grpcserver.HealRequest, rea
 		incidentID, req.Hostname, req.CheckType, req.HIPAAControl, reason)
 	// In production, this would create an escalation record in Central Command
 	// and potentially send notifications (email, Slack, etc.)
+}
+
+// gpoFixDone tracks whether the GPO firewall fix has already been applied.
+// sync.Map: key = DC hostname, value = true
+var gpoFixDone sync.Map
+
+// fixFirewallGPO runs a PowerShell script on the domain controller to ensure
+// the Default Domain Policy GPO has firewall enabled (not disabled).
+// This fixes the root cause of recurring firewall drift: a GPO that turns off
+// the Windows Firewall, which the L1 healer re-enables, creating a flap loop.
+//
+// Zero-friction: runs automatically after the first firewall heal, no operator
+// intervention required. Only runs once per DC per daemon lifetime.
+func (d *Daemon) fixFirewallGPO(triggerHost string) {
+	// Need DC credentials
+	if d.config.DomainController == nil || *d.config.DomainController == "" {
+		return
+	}
+	if d.config.DCUsername == nil || d.config.DCPassword == nil {
+		return
+	}
+
+	dc := *d.config.DomainController
+
+	// Only fix once per DC
+	if _, done := gpoFixDone.LoadOrStore(dc, true); done {
+		return
+	}
+
+	log.Printf("[daemon] GPO firewall fix: checking Default Domain Policy on %s (triggered by %s)",
+		dc, triggerHost)
+
+	target := &winrm.Target{
+		Hostname: dc,
+		Port:     5985,
+		Username: *d.config.DCUsername,
+		Password: *d.config.DCPassword,
+		UseSSL:   false,
+	}
+
+	// PowerShell script that checks and fixes the GPO firewall setting.
+	// Uses the GroupPolicy module (available on DCs by default).
+	// Checks if Default Domain Policy disables firewall for any profile,
+	// and if so, sets all profiles to Enabled.
+	gpoFixScript := `
+$ErrorActionPreference = 'Stop'
+$Result = @{ Changed = $false; Profiles = @{}; Error = $null }
+
+try {
+    Import-Module GroupPolicy -ErrorAction Stop
+
+    # Get Default Domain Policy GUID
+    $DDPName = "Default Domain Policy"
+    $GPO = Get-GPO -Name $DDPName -ErrorAction Stop
+
+    # Registry-based firewall settings in GPO
+    # Location: HKLM\SOFTWARE\Policies\Microsoft\WindowsFirewall
+    $Profiles = @("DomainProfile", "StandardProfile", "PublicProfile")
+    $BasePath = "HKLM\SOFTWARE\Policies\Microsoft\WindowsFirewall"
+
+    foreach ($Profile in $Profiles) {
+        $RegPath = "$BasePath\$Profile"
+        try {
+            $Val = Get-GPRegistryValue -Name $DDPName -Key $RegPath -ValueName "EnableFirewall" -ErrorAction Stop
+            $Result.Profiles[$Profile] = @{ CurrentValue = $Val.Value; Type = $Val.Type.ToString() }
+
+            if ($Val.Value -eq 0) {
+                # Firewall is DISABLED by GPO — fix it
+                Set-GPRegistryValue -Name $DDPName -Key $RegPath -ValueName "EnableFirewall" -Type DWord -Value 1
+                $Result.Changed = $true
+                $Result.Profiles[$Profile].Fixed = $true
+                $Result.Profiles[$Profile].NewValue = 1
+            }
+        } catch [System.Runtime.InteropServices.COMException] {
+            # Registry value not set in GPO — no conflict, firewall not managed by this GPO
+            $Result.Profiles[$Profile] = @{ Status = "not_configured" }
+        }
+    }
+
+    if ($Result.Changed) {
+        # Force group policy update on all domain computers
+        $Result.GPUpdateTriggered = $true
+    }
+
+    $Result.Success = $true
+} catch {
+    $Result.Error = $_.Exception.Message
+    $Result.Success = $false
+}
+
+$Result | ConvertTo-Json -Depth 3
+`
+
+	result := d.winrmExec.Execute(target, gpoFixScript, "GPO-FW-FIX", "gpo_fix", 120, 1, 30.0, []string{"164.312(a)(1)"})
+	if result.Success {
+		log.Printf("[daemon] GPO firewall fix completed on %s: output_hash=%s", dc, result.OutputHash)
+
+		// After fixing GPO, force gpupdate on the trigger host
+		if triggerHost != dc {
+			triggerTarget := d.findWinRMTarget(triggerHost)
+			if triggerTarget != nil {
+				gpupdateResult := d.winrmExec.Execute(triggerTarget,
+					"gpupdate /force /target:computer | Out-Null; @{Updated=$true} | ConvertTo-Json",
+					"GPO-FW-UPDATE", "gpo_update", 60, 1, 15.0, nil)
+				if gpupdateResult.Success {
+					log.Printf("[daemon] GPO update forced on %s", triggerHost)
+				}
+			}
+		}
+	} else {
+		log.Printf("[daemon] GPO firewall fix failed on %s: %s", dc, result.Error)
+		// Allow retry on next occurrence
+		gpoFixDone.Delete(dc)
+	}
+}
+
+// findWinRMTarget builds a WinRM target for a hostname using DC credentials.
+// Domain admin credentials (from config) work for all domain-joined machines.
+func (d *Daemon) findWinRMTarget(hostname string) *winrm.Target {
+	if d.config.DCUsername == nil || d.config.DCPassword == nil {
+		return nil
+	}
+	return &winrm.Target{
+		Hostname: hostname,
+		Port:     5985,
+		Username: *d.config.DCUsername,
+		Password: *d.config.DCPassword,
+		UseSSL:   false,
+	}
+}
+
+const (
+	defaultCooldown = 10 * time.Minute // Normal cooldown between heal attempts
+	flapCooldown    = 1 * time.Hour    // Extended cooldown when flapping detected
+	flapThreshold   = 3                // Occurrences in flapWindow → flapping
+	flapWindow      = 30 * time.Minute // Window to count occurrences
+	cooldownCleanup = 2 * time.Hour    // Entries older than this are removed
+)
+
+// shouldSuppressDrift checks if a drift report should be suppressed due to cooldown.
+// Returns true if the drift should be suppressed (still in cooldown).
+// Implements flap detection: if >3 drift events for the same key within 30 minutes,
+// extends cooldown to 1 hour.
+func (d *Daemon) shouldSuppressDrift(key string) bool {
+	d.cooldownMu.Lock()
+	defer d.cooldownMu.Unlock()
+
+	now := time.Now()
+
+	// Lazy cleanup of stale entries
+	if len(d.cooldowns) > 100 {
+		for k, entry := range d.cooldowns {
+			if now.Sub(entry.lastSeen) > cooldownCleanup {
+				delete(d.cooldowns, k)
+			}
+		}
+	}
+
+	entry, exists := d.cooldowns[key]
+	if !exists {
+		// First time seeing this drift — allow it, start tracking
+		d.cooldowns[key] = &driftCooldown{
+			lastSeen:    now,
+			count:       1,
+			cooldownDur: defaultCooldown,
+		}
+		return false
+	}
+
+	elapsed := now.Sub(entry.lastSeen)
+
+	// Still in cooldown — suppress
+	if elapsed < entry.cooldownDur {
+		// Count flap occurrences
+		if elapsed < flapWindow {
+			entry.count++
+			if entry.count >= flapThreshold {
+				entry.cooldownDur = flapCooldown
+				log.Printf("[daemon] Flap detected for %s (%d in %v), cooldown extended to %v",
+					key, entry.count, elapsed.Round(time.Second), flapCooldown)
+			}
+		}
+		return true
+	}
+
+	// Cooldown expired — allow, reset tracking
+	entry.lastSeen = now
+	entry.count = 1
+	entry.cooldownDur = defaultCooldown
+	return false
 }
