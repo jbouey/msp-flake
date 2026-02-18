@@ -1011,8 +1011,7 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
         sites = await conn.fetch("""
             SELECT s.site_id, s.clinic_name, s.status, s.tier
             FROM sites s
-            JOIN client_org_sites cos ON cos.site_id = s.id
-            WHERE cos.client_org_id = $1
+            WHERE s.client_org_id = $1
         """, org_id)
 
         site_ids = [s["site_id"] for s in sites]
