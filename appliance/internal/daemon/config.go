@@ -3,6 +3,7 @@ package daemon
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,6 +144,22 @@ func (c *Config) QueueDBPath() string {
 // RulesDir returns the L1 rules directory.
 func (c *Config) RulesDir() string {
 	return filepath.Join(c.StateDir, "rules")
+}
+
+// GRPCListenAddr returns the address agents should connect to.
+// Uses the appliance's LAN IP and the configured gRPC port.
+func (c *Config) GRPCListenAddr() string {
+	// Try to find the LAN IP
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
+				return fmt.Sprintf("%s:%d", ipNet.IP.String(), c.GRPCPort)
+			}
+		}
+	}
+	// Fallback
+	return fmt.Sprintf("0.0.0.0:%d", c.GRPCPort)
 }
 
 func isFalsy(v string) bool {

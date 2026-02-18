@@ -286,7 +286,12 @@ func (e *Executor) getSession(target *Target) (*gowinrm.Client, error) {
 	}
 
 	endpoint := gowinrm.NewEndpoint(target.Hostname, port, target.UseSSL, !target.VerifySSL, nil, nil, nil, 120*time.Second)
-	client, err := gowinrm.NewClient(endpoint, target.Username, target.Password)
+
+	// Use NTLM auth (required for domain environments; Basic is rarely enabled)
+	params := gowinrm.NewParameters("PT120S", "en-US", 153600)
+	params.TransportDecorator = func() gowinrm.Transporter { return &gowinrm.ClientNTLM{} }
+
+	client, err := gowinrm.NewClientWithParameters(endpoint, target.Username, target.Password, params)
 	if err != nil {
 		return nil, fmt.Errorf("create WinRM client for %s: %w", target.Hostname, err)
 	}

@@ -45,6 +45,9 @@ type Daemon struct {
 	winrmExec *winrm.Executor
 	sshExec   *sshexec.Executor
 
+	// Auto-deploy: spread agent to discovered workstations
+	deployer *autoDeployer
+
 	// Drift report cooldown: prevents excessive incident creation
 	cooldownMu sync.Mutex
 	cooldowns  map[string]*driftCooldown // key: "hostname:check_type"
@@ -80,6 +83,9 @@ func New(cfg *Config) *Daemon {
 
 	// Initialize order processor with completion callback
 	d.orderProc = orders.NewProcessor(cfg.StateDir, d.completeOrder)
+
+	// Initialize auto-deployer for zero-friction agent spread
+	d.deployer = newAutoDeployer(d)
 
 	return d
 }
@@ -159,6 +165,12 @@ func (d *Daemon) runCycle(ctx context.Context) {
 
 	// Phone home to Central Command
 	d.runCheckin(ctx)
+
+	// Auto-deploy agents to discovered workstations (zero-friction).
+	// Runs async so slow DC responses don't block the main loop.
+	if d.config.WorkstationEnabled {
+		go d.deployer.runAutoDeployIfNeeded(ctx)
+	}
 
 	elapsed := time.Since(start)
 	log.Printf("[daemon] Cycle complete in %v (agents=%d)",
