@@ -31,9 +31,7 @@
 /* Glass morphism utilities */
 @layer components {
   .glass {
-    background: rgba(255, 255, 255, 0.72);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: rgba(255, 255, 255, 0.92);
     border: 1px solid rgba(255, 255, 255, 0.18);
   }
 
@@ -54,16 +52,12 @@
   }
 
   .glass-sidebar {
-    background: rgba(255, 255, 255, 0.88);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: rgba(255, 255, 255, 0.97);
     border-right: 1px solid rgba(60, 60, 67, 0.08);
   }
 
   .glass-header {
-    background: rgba(255, 255, 255, 0.78);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: rgba(255, 255, 255, 0.97);
     border-bottom: 1px solid rgba(60, 60, 67, 0.08);
   }
 }

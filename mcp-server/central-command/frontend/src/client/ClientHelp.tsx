@@ -551,7 +551,7 @@ export const ClientHelp: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-800 via-slate-700 to-teal-900">
       {/* Header */}
-      <header className="bg-white/10 backdrop-blur-sm border-b border-white/10">
+      <header className="bg-white/15 border-b border-white/10">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <button
             onClick={() => navigate('/client/dashboard')}
