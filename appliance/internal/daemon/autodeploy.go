@@ -8,25 +8,42 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/osiriscare/appliance/internal/discovery"
 	"github.com/osiriscare/appliance/internal/winrm"
 )
 
+// escapePSString escapes a string for safe interpolation inside a PowerShell
+// double-quoted string. Prevents injection if passwords contain " or $.
+func escapePSString(s string) string {
+	s = strings.ReplaceAll(s, "`", "``")
+	s = strings.ReplaceAll(s, "\"", "`\"")
+	s = strings.ReplaceAll(s, "$", "`$")
+	return s
+}
+
 const (
 	// Agent paths
-	agentBinaryName = "osiris-agent.exe"
-	agentInstallDir = `C:\OsirisCare`
+	agentBinaryName  = "osiris-agent.exe"
+	agentInstallDir  = `C:\OsirisCare`
 	agentServiceName = "OsirisCareAgent"
 
 	// Timing
-	autoDeployInterval  = 1 * time.Hour  // Re-check for new workstations
-	deployCheckInterval = 5 * time.Minute // Minimum between status checks on same host
+	autoDeployInterval = 1 * time.Hour // Re-check for new workstations
+
+	// DC proxy temp path for staging binaries
+	dcTempDir = `C:\Windows\Temp`
 )
 
 // autoDeployer manages automatic Go agent deployment to discovered workstations.
+// Deployment fallback chain:
+//  1. Direct WinRM (NTLM) — fast, works when workstation allows NTLM
+//  2. DC Proxy (Kerberos via Invoke-Command) — always works in domain
+//  3. Log + retry next cycle — if DC is also unreachable
 type autoDeployer struct {
 	daemon *Daemon
 
@@ -36,6 +53,10 @@ type autoDeployer struct {
 	lastEnumTime time.Time            // last AD enumeration
 	agentB64     string               // cached base64 of agent binary
 	agentLoaded  bool
+	running      int32 // atomic guard: 1 = cycle in progress
+
+	// Track which hosts need DC proxy (avoid retrying direct NTLM every cycle)
+	needsProxy sync.Map // hostname → true
 }
 
 func newAutoDeployer(d *Daemon) *autoDeployer {
@@ -47,7 +68,8 @@ func newAutoDeployer(d *Daemon) *autoDeployer {
 }
 
 // runAutoDeployIfNeeded is called each daemon cycle. It checks if it's time
-// to enumerate and deploy, and runs if so.
+// to enumerate and deploy, and runs if so. Uses atomic guard to prevent
+// overlapping runs when the main loop ticks faster than AD enumeration.
 func (ad *autoDeployer) runAutoDeployIfNeeded(ctx context.Context) {
 	cfg := ad.daemon.config
 
@@ -58,6 +80,12 @@ func (ad *autoDeployer) runAutoDeployIfNeeded(ctx context.Context) {
 	if cfg.DCUsername == nil || cfg.DCPassword == nil {
 		return
 	}
+
+	// Atomic guard: only one cycle at a time
+	if !atomic.CompareAndSwapInt32(&ad.running, 0, 1) {
+		return
+	}
+	defer atomic.StoreInt32(&ad.running, 0)
 
 	// Check timing
 	ad.mu.Lock()
@@ -73,12 +101,124 @@ func (ad *autoDeployer) runAutoDeployIfNeeded(ctx context.Context) {
 	ad.runAutoDeployOnce(ctx)
 }
 
+// ensureWinRMViaGPO configures WinRM on all domain computers via Group Policy.
+// This helps future direct NTLM connections succeed. Even if it doesn't take
+// effect immediately, the DC proxy path handles deployment in the meantime.
+// Only runs once per daemon lifetime.
+var winrmGPODone sync.Map
+
+func (ad *autoDeployer) ensureWinRMViaGPO(ctx context.Context) {
+	cfg := ad.daemon.config
+	dc := *cfg.DomainController
+
+	if _, done := winrmGPODone.LoadOrStore(dc, true); done {
+		return
+	}
+
+	log.Printf("[autodeploy] Configuring WinRM on domain workstations via GPO on %s", dc)
+
+	target := ad.dcTarget()
+
+	gpoScript := `
+$ErrorActionPreference = 'Stop'
+$Result = @{ Changed = $false; Computers = @() }
+
+try {
+    Import-Module GroupPolicy -ErrorAction Stop
+    Import-Module ActiveDirectory -ErrorAction SilentlyContinue
+    $GPOName = "Default Domain Policy"
+    $BasePath = "HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service"
+
+    # Enable WinRM service auto-start
+    try {
+        $val = Get-GPRegistryValue -Name $GPOName -Key $BasePath -ValueName "AllowAutoConfig" -ErrorAction Stop
+        if ($val.Value -ne 1) {
+            Set-GPRegistryValue -Name $GPOName -Key $BasePath -ValueName "AllowAutoConfig" -Type DWord -Value 1
+            $Result.Changed = $true
+        }
+    } catch {
+        Set-GPRegistryValue -Name $GPOName -Key $BasePath -ValueName "AllowAutoConfig" -Type DWord -Value 1
+        $Result.Changed = $true
+    }
+
+    # Allow all IPs for WinRM (IPv4 filter)
+    try {
+        $val = Get-GPRegistryValue -Name $GPOName -Key $BasePath -ValueName "IPv4Filter" -ErrorAction Stop
+    } catch {
+        Set-GPRegistryValue -Name $GPOName -Key $BasePath -ValueName "IPv4Filter" -Type String -Value "*"
+        $Result.Changed = $true
+    }
+
+    # Set WinRM service startup to Automatic
+    $svcPath = "HKLM\SYSTEM\CurrentControlSet\Services\WinRM"
+    try {
+        $val = Get-GPRegistryValue -Name $GPOName -Key $svcPath -ValueName "Start" -ErrorAction Stop
+    } catch {
+        Set-GPRegistryValue -Name $GPOName -Key $svcPath -ValueName "Start" -Type DWord -Value 2
+        $Result.Changed = $true
+    }
+
+    # Enable WinRM firewall rule
+    $fwPath = "HKLM\SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules"
+    try {
+        $val = Get-GPRegistryValue -Name $GPOName -Key $fwPath -ValueName "WinRM-HTTP-In-TCP" -ErrorAction Stop
+    } catch {
+        Set-GPRegistryValue -Name $GPOName -Key $fwPath -ValueName "WinRM-HTTP-In-TCP" -Type String -Value "v2.31|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=5985|App=System|Name=WinRM HTTP|"
+        $Result.Changed = $true
+    }
+
+    # Allow unencrypted traffic for HTTP WinRM (enables NTLM over HTTP)
+    $clientPath = "HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client"
+    try {
+        $val = Get-GPRegistryValue -Name $GPOName -Key $clientPath -ValueName "AllowUnencryptedTraffic" -ErrorAction Stop
+    } catch {
+        Set-GPRegistryValue -Name $GPOName -Key $clientPath -ValueName "AllowUnencryptedTraffic" -Type DWord -Value 1
+        Set-GPRegistryValue -Name $GPOName -Key $BasePath -ValueName "AllowUnencryptedTraffic" -Type DWord -Value 1
+        $Result.Changed = $true
+    }
+
+    # Force gpupdate on workstations via DCOM (doesn't need WinRM)
+    if ($Result.Changed) {
+        try {
+            $Computers = Get-ADComputer -Filter {OperatingSystem -like "*Windows*" -and OperatingSystem -notlike "*Server*"} -Properties Name |
+                Select-Object -ExpandProperty Name
+            foreach ($Computer in $Computers) {
+                try {
+                    Invoke-GPUpdate -Computer $Computer -Force -RandomDelayInMinutes 0 -ErrorAction SilentlyContinue
+                    $Result.Computers += $Computer
+                } catch { }
+            }
+        } catch { }
+    }
+
+    $Result.Success = $true
+} catch {
+    $Result.Error = $_.Exception.Message
+    $Result.Success = $false
+}
+
+$Result | ConvertTo-Json -Compress
+`
+
+	result := ad.daemon.winrmExec.Execute(target, gpoScript, "WINRM-GPO", "autodeploy", 120, 1, 15.0, nil)
+	if result.Success {
+		stdout, _ := result.Output["std_out"].(string)
+		log.Printf("[autodeploy] WinRM GPO configured on %s: %s", dc, stdout)
+	} else {
+		log.Printf("[autodeploy] WinRM GPO config failed on %s: %s (will use DC proxy)", dc, result.Error)
+		winrmGPODone.Delete(dc) // allow retry
+	}
+}
+
 // runAutoDeployOnce performs one full cycle: enumerate → check → deploy.
 func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 	cfg := ad.daemon.config
 	dc := *cfg.DomainController
 	username := *cfg.DCUsername
 	password := *cfg.DCPassword
+
+	// Ensure WinRM is enabled on domain workstations via GPO (best-effort)
+	ad.ensureWinRMViaGPO(ctx)
 
 	// Build AD enumerator using the daemon's WinRM executor
 	executor := &adScriptExec{
@@ -117,18 +257,42 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		}
 	}
 
-	log.Printf("[autodeploy] %d/%d workstations reachable via WinRM", len(reachable), len(workstations))
-
-	if len(reachable) == 0 {
-		return
+	// Workstations with WinRM port closed need DC proxy via Invoke-Command.
+	// The DC can reach them even if we can't directly.
+	var unreachableDirect []discovery.ADComputer
+	for i := range workstations {
+		found := false
+		for _, r := range reachable {
+			if r.Hostname == workstations[i].Hostname {
+				found = true
+				break
+			}
+		}
+		if !found {
+			unreachableDirect = append(unreachableDirect, workstations[i])
+		}
 	}
 
-	// Deploy to each reachable workstation
+	log.Printf("[autodeploy] %d/%d reachable directly, %d need DC proxy",
+		len(reachable), len(workstations), len(unreachableDirect))
+
+	// Deploy to each workstation with fallback chain
 	deployed := 0
 	skipped := 0
 	failed := 0
 
-	for _, ws := range reachable {
+	// Combine all workstations — reachable first, then unreachable (DC proxy only)
+	allTargets := append(reachable, unreachableDirect...)
+
+	for _, ws := range allTargets {
+		// Bail out if daemon is shutting down
+		select {
+		case <-ctx.Done():
+			log.Printf("[autodeploy] Context cancelled, aborting deploy loop")
+			return
+		default:
+		}
+
 		hostname := ws.Hostname
 		if hostname == "" {
 			continue
@@ -143,24 +307,10 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		}
 		ad.mu.Unlock()
 
-		// Check if agent is already running on this workstation
-		target := ad.buildTarget(ws)
-		if target == nil {
-			continue
-		}
-
-		installed, running := ad.checkAgentStatus(ctx, target)
-		if installed && running {
-			ad.mu.Lock()
-			ad.deployed[hostname] = time.Now()
-			ad.mu.Unlock()
-			skipped++
-			continue
-		}
-
-		// Deploy the agent
-		if err := ad.deployAgent(ctx, target, ws); err != nil {
-			log.Printf("[autodeploy] Deploy to %s failed: %v", hostname, err)
+		// Deploy with fallback chain
+		err := ad.deployWithFallback(ctx, ws)
+		if err != nil {
+			log.Printf("[autodeploy] Deploy to %s failed (all methods): %v", hostname, err)
 			failed++
 		} else {
 			log.Printf("[autodeploy] Successfully deployed agent to %s", hostname)
@@ -175,7 +325,75 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		deployed, skipped, failed)
 }
 
-// buildTarget creates a WinRM target for a workstation using DC admin credentials.
+// deployWithFallback tries to deploy to a workstation using the fallback chain:
+// 1. Direct WinRM (if not known to need proxy) — single probe, no retries
+// 2. DC Proxy via Invoke-Command (Kerberos/Negotiate)
+//
+// IMPORTANT: The direct WinRM probe uses exactly 1 attempt (no retries) to
+// avoid triggering domain account lockout (default threshold: 5 attempts).
+// Each 401 failure counts against the lockout counter.
+func (ad *autoDeployer) deployWithFallback(ctx context.Context, ws discovery.ADComputer) error {
+	hostname := ws.Hostname
+
+	// Check if we already know this host needs DC proxy
+	_, knownNeedsProxy := ad.needsProxy.Load(hostname)
+
+	// Fallback 1: Try direct WinRM — single probe with 0 retries
+	// Skip status check (it would be another NTLM attempt). The probe
+	// itself tells us if direct WinRM works. We avoid wasting lockout attempts.
+	if !knownNeedsProxy {
+		target := ad.buildTarget(ws)
+		if target != nil {
+			// Single probe: try a lightweight command with 0 retries
+			probeResult := ad.daemon.winrmExec.Execute(target,
+				fmt.Sprintf(`$svc = Get-Service -Name "%s" -EA SilentlyContinue; if ($svc -and $svc.Status -eq "Running") { "RUNNING" } else { "NOT_RUNNING" }`, agentServiceName),
+				"AGENT-PROBE", "autodeploy", 15, 0, 10.0, nil)
+
+			if probeResult.Success {
+				stdout, _ := probeResult.Output["std_out"].(string)
+				if strings.TrimSpace(stdout) == "RUNNING" {
+					return nil // Already deployed and running
+				}
+				// Direct WinRM works — proceed with full deploy
+				err := ad.deployAgentDirect(ctx, target, ws)
+				if err == nil {
+					return nil
+				}
+				log.Printf("[autodeploy] [%s] Direct deploy failed: %v — trying DC proxy", hostname, err)
+			} else if strings.Contains(probeResult.Error, "401") {
+				log.Printf("[autodeploy] [%s] Direct WinRM auth failed (401) — switching to DC proxy", hostname)
+				ad.needsProxy.Store(hostname, true)
+			} else {
+				log.Printf("[autodeploy] [%s] Direct WinRM failed: %s — trying DC proxy", hostname, probeResult.Error)
+			}
+		}
+	}
+
+	// Fallback 2: DC Proxy via Invoke-Command (Kerberos)
+	log.Printf("[autodeploy] [%s] Deploying via DC proxy (Kerberos)", hostname)
+
+	// First check if already installed via DC proxy
+	installed, running := ad.checkAgentStatusViaDC(ctx, hostname)
+	if installed && running {
+		return nil
+	}
+
+	return ad.deployAgentViaDC(ctx, ws)
+}
+
+// dcTarget returns a WinRM target for the domain controller.
+func (ad *autoDeployer) dcTarget() *winrm.Target {
+	cfg := ad.daemon.config
+	return &winrm.Target{
+		Hostname: *cfg.DomainController,
+		Port:     5985,
+		Username: *cfg.DCUsername,
+		Password: *cfg.DCPassword,
+		UseSSL:   false,
+	}
+}
+
+// buildTarget creates a WinRM target for direct workstation connection.
 func (ad *autoDeployer) buildTarget(ws discovery.ADComputer) *winrm.Target {
 	cfg := ad.daemon.config
 	if cfg.DCUsername == nil || cfg.DCPassword == nil {
@@ -200,7 +418,7 @@ func (ad *autoDeployer) buildTarget(ws discovery.ADComputer) *winrm.Target {
 	}
 }
 
-// checkAgentStatus checks if the OsirisCare agent service is installed and running.
+// checkAgentStatus checks agent status via direct WinRM.
 func (ad *autoDeployer) checkAgentStatus(_ context.Context, target *winrm.Target) (installed bool, running bool) {
 	script := fmt.Sprintf(`
 $svc = Get-Service -Name "%s" -ErrorAction SilentlyContinue
@@ -211,12 +429,11 @@ if ($svc) {
 }
 `, agentServiceName)
 
-	result := ad.daemon.winrmExec.Execute(target, script, "AGENT-CHECK", "autodeploy", 15, 1, 10.0, nil)
+	result := ad.daemon.winrmExec.Execute(target, script, "AGENT-CHECK", "autodeploy", 15, 0, 10.0, nil)
 	if !result.Success {
 		return false, false
 	}
 
-	// stdout is in Output["std_out"]
 	stdout, _ := result.Output["std_out"].(string)
 	if stdout == "" {
 		return false, false
@@ -233,6 +450,85 @@ if ($svc) {
 	return status.Installed, status.Running
 }
 
+// checkAgentStatusViaDC checks agent status via DC proxy (Invoke-Command).
+// Uses the same 3-tier auth fallback as deployAgentViaDC: Kerberos → Negotiate → IP+Negotiate.
+func (ad *autoDeployer) checkAgentStatusViaDC(_ context.Context, hostname string) (installed bool, running bool) {
+	cfg := ad.daemon.config
+
+	script := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+try {
+    $Computer = "%s"
+    $secPass = ConvertTo-SecureString "%s" -AsPlainText -Force
+    $cred = New-Object PSCredential("%s", $secPass)
+
+    # 3-tier session fallback: Kerberos → Negotiate → IP+Negotiate
+    $session = $null
+    try {
+        $session = New-PSSession -ComputerName $Computer -Credential $cred -ErrorAction Stop
+    } catch {
+        try {
+            $session = New-PSSession -ComputerName $Computer -Credential $cred -Authentication Negotiate -ErrorAction Stop
+        } catch {
+            try {
+                $ip = [string]((Resolve-DnsName $Computer -Type A -EA Stop | Select-Object -First 1).IPAddress)
+                $currentTH = (Get-Item WSMan:\localhost\Client\TrustedHosts -EA SilentlyContinue).Value
+                if ($currentTH -notlike "*$ip*") {
+                    if ($currentTH -and $currentTH -ne "") {
+                        Set-Item WSMan:\localhost\Client\TrustedHosts -Value "$currentTH,$ip" -Force
+                    } else {
+                        Set-Item WSMan:\localhost\Client\TrustedHosts -Value $ip -Force
+                    }
+                }
+                $session = New-PSSession -ComputerName $ip -Credential $cred -Authentication Negotiate -ErrorAction Stop
+            } catch {
+                throw "All session methods failed: $_"
+            }
+        }
+    }
+
+    $result = Invoke-Command -Session $session -ScriptBlock {
+        param($svcName)
+        $svc = Get-Service -Name $svcName -ErrorAction SilentlyContinue
+        if ($svc) {
+            @{ installed = $true; running = ($svc.Status -eq "Running") }
+        } else {
+            @{ installed = $false; running = $false }
+        }
+    } -ArgumentList "%s" -ErrorAction Stop
+    Remove-PSSession $session -EA SilentlyContinue
+    $result | ConvertTo-Json -Compress
+} catch {
+    @{ installed = $false; running = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+`, escapePSString(hostname), escapePSString(*cfg.DCPassword), escapePSString(*cfg.DCUsername), agentServiceName)
+
+	result := ad.daemon.winrmExec.Execute(ad.dcTarget(), script, "AGENT-CHECK-PROXY", "autodeploy", 30, 0, 15.0, nil)
+	if !result.Success {
+		return false, false
+	}
+
+	stdout, _ := result.Output["std_out"].(string)
+	if stdout == "" {
+		return false, false
+	}
+
+	var status struct {
+		Installed bool   `json:"installed"`
+		Running   bool   `json:"running"`
+		Error     string `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &status); err != nil {
+		return false, false
+	}
+
+	if status.Error != "" {
+		log.Printf("[autodeploy] [%s] DC proxy status check error: %s", hostname, status.Error)
+	}
+
+	return status.Installed, status.Running
+}
+
 // loadAgentBinary reads and base64-encodes the agent binary (cached).
 func (ad *autoDeployer) loadAgentBinary() (string, error) {
 	ad.mu.Lock()
@@ -242,7 +538,6 @@ func (ad *autoDeployer) loadAgentBinary() (string, error) {
 		return ad.agentB64, nil
 	}
 
-	// Look for agent binary in standard locations
 	paths := []string{
 		filepath.Join(ad.daemon.config.StateDir, "agent", agentBinaryName),
 		"/var/lib/msp/agent/" + agentBinaryName,
@@ -269,72 +564,393 @@ func (ad *autoDeployer) loadAgentBinary() (string, error) {
 	return ad.agentB64, nil
 }
 
-// deployAgent deploys the Go agent to a single workstation via WinRM.
-// 5-step pipeline: mkdir → write binary → write config → install service → verify.
-func (ad *autoDeployer) deployAgent(ctx context.Context, target *winrm.Target, ws discovery.ADComputer) error {
+// deployAgentDirect deploys the agent via direct WinRM to the workstation.
+// This is the fast path — works when the workstation accepts NTLM auth.
+func (ad *autoDeployer) deployAgentDirect(ctx context.Context, target *winrm.Target, ws discovery.ADComputer) error {
 	agentB64, err := ad.loadAgentBinary()
 	if err != nil {
 		return err
 	}
 
-	// Get the appliance's gRPC listen address for the agent config
 	grpcAddr := ad.daemon.config.GRPCListenAddr()
-
 	hostname := ws.Hostname
 
-	// Step 1: Create install directory
-	log.Printf("[autodeploy] [%s] Step 1/5: Creating directory", hostname)
+	// Step 1: Create install directory (0 retries — probe already confirmed WinRM works)
+	log.Printf("[autodeploy] [%s] Direct: Step 1/5 Creating directory", hostname)
 	mkdirResult := ad.daemon.winrmExec.Execute(target,
 		fmt.Sprintf(`New-Item -ItemType Directory -Force -Path "%s" | Out-Null; "OK"`, agentInstallDir),
-		"AGENT-DEPLOY-MKDIR", "autodeploy", 30, 1, 10.0, nil)
+		"AGENT-DEPLOY-MKDIR", "autodeploy", 30, 0, 10.0, nil)
 	if !mkdirResult.Success {
 		return fmt.Errorf("mkdir failed: %s", mkdirResult.Error)
 	}
 
-	// Step 2: Write agent binary (base64 decode on target)
-	log.Printf("[autodeploy] [%s] Step 2/5: Writing agent binary (%d bytes encoded)", hostname, len(agentB64))
+	// Step 2: Write agent binary (chunked base64)
+	log.Printf("[autodeploy] [%s] Direct: Step 2/5 Writing binary (%d bytes encoded)", hostname, len(agentB64))
+	if err := ad.writeB64ChunksToTarget(target, agentB64, hostname); err != nil {
+		return err
+	}
 
-	// Write base64 in chunks to avoid WinRM command size limits
-	chunkSize := 400000 // ~400KB chunks (safe for WinRM)
+	// Step 3: Write config
+	log.Printf("[autodeploy] [%s] Direct: Step 3/5 Writing config", hostname)
+	if err := ad.writeConfigToTarget(target, grpcAddr); err != nil {
+		return err
+	}
+
+	// Step 4: Install service
+	log.Printf("[autodeploy] [%s] Direct: Step 4/5 Installing service", hostname)
+	if err := ad.installServiceOnTarget(target); err != nil {
+		return err
+	}
+
+	// Step 5: Verify
+	log.Printf("[autodeploy] [%s] Direct: Step 5/5 Verifying", hostname)
+	installed, running := ad.checkAgentStatus(ctx, target)
+	if !installed || !running {
+		return fmt.Errorf("verification failed: installed=%v running=%v", installed, running)
+	}
+
+	return nil
+}
+
+// stageAgentToNETLOGON downloads the agent binary from the appliance's HTTP file
+// server to the DC's NETLOGON share. NETLOGON is readable by all domain computers,
+// making it an efficient distribution point. Only stages once per daemon lifetime.
+//
+// Uses Invoke-WebRequest (native HTTP) instead of WinRM chunk upload — transfers
+// 16MB in seconds instead of hours.
+var netlogonStaged sync.Map
+
+func (ad *autoDeployer) stageAgentToNETLOGON(ctx context.Context) error {
+	cfg := ad.daemon.config
+	dc := *cfg.DomainController
+
+	if _, done := netlogonStaged.Load(dc); done {
+		return nil
+	}
+
+	// Make sure the binary exists locally
+	if _, err := ad.loadAgentBinary(); err != nil {
+		return err
+	}
+
+	dcTarget := ad.dcTarget()
+
+	// Get the appliance's LAN IP for the download URL
+	applianceIP := ad.daemon.config.GRPCListenAddr()
+	// GRPCListenAddr returns "ip:port", extract just the IP
+	if idx := strings.LastIndex(applianceIP, ":"); idx >= 0 {
+		applianceIP = applianceIP[:idx]
+	}
+
+	downloadURL := fmt.Sprintf("http://%s:8090/agent/%s", applianceIP, agentBinaryName)
+
+	log.Printf("[autodeploy] Staging agent binary to NETLOGON via HTTP download from %s", downloadURL)
+
+	// Single WinRM command: download from appliance HTTP server → save to NETLOGON
+	stageScript := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+try {
+    # Download agent binary from appliance HTTP file server
+    $tempPath = "%s\%s"
+    Invoke-WebRequest -Uri "%s" -OutFile $tempPath -UseBasicParsing -ErrorAction Stop
+
+    # Copy to NETLOGON share (readable by all domain PCs)
+    $netlogon = (Get-SmbShare -Name NETLOGON -ErrorAction Stop).Path
+    $dest = Join-Path $netlogon "%s"
+    Copy-Item -Path $tempPath -Destination $dest -Force
+    Remove-Item -Path $tempPath -Force -EA SilentlyContinue
+
+    @{ Success = $true; Path = $dest; Size = (Get-Item $dest).Length } | ConvertTo-Json -Compress
+} catch {
+    @{ Success = $false; Error = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+`, dcTempDir, agentBinaryName, downloadURL, agentBinaryName)
+
+	result := ad.daemon.winrmExec.Execute(dcTarget, stageScript, "NETLOGON-STAGE", "autodeploy", 120, 1, 30.0, nil)
+	if !result.Success {
+		return fmt.Errorf("NETLOGON stage failed: %s", result.Error)
+	}
+
+	stdout, _ := result.Output["std_out"].(string)
+	log.Printf("[autodeploy] Agent staged to NETLOGON: %s", stdout)
+
+	// Check if the script reported success
+	if strings.Contains(stdout, `"Success":false`) {
+		return fmt.Errorf("NETLOGON stage script error: %s", stdout)
+	}
+
+	netlogonStaged.Store(dc, true)
+	return nil
+}
+
+// deployAgentViaDC deploys the agent through the DC using Invoke-Command.
+// Uses NETLOGON share for binary distribution (fast SMB) and registers SPNs +
+// TrustedHosts to fix common Kerberos/NTLM issues.
+//
+// Fallback chain within DC proxy:
+//   a) Kerberos PSSession (default, works when SPNs are correct)
+//   b) Negotiate with TrustedHosts (works when Kerberos SPNs are broken)
+//   c) Log error for manual investigation
+func (ad *autoDeployer) deployAgentViaDC(ctx context.Context, ws discovery.ADComputer) error {
+	cfg := ad.daemon.config
+	grpcAddr := cfg.GRPCListenAddr()
+	hostname := ws.Hostname
+	dcTarget := ad.dcTarget()
+
+	// Stage agent binary to NETLOGON (once per daemon lifetime)
+	if err := ad.stageAgentToNETLOGON(ctx); err != nil {
+		return fmt.Errorf("stage to NETLOGON: %w", err)
+	}
+
+	log.Printf("[autodeploy] [%s] DC proxy: Deploying via NETLOGON + Invoke-Command", hostname)
+
+	configJSON := fmt.Sprintf(`{"appliance_addr":"%s","check_interval":300}`, grpcAddr)
+
+	// Get domain name for NETLOGON UNC path
+	// Single script on DC that:
+	// 1. Registers HTTP SPN for workstation (fixes Kerberos)
+	// 2. Adds workstation to TrustedHosts (enables Negotiate fallback)
+	// 3. Creates PSSession with Negotiate auth
+	// 4. Copies binary from NETLOGON via UNC path (fast SMB)
+	// 5. Writes config + installs service
+	deployScript := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+$Result = @{ Step = "init"; Method = "unknown" }
+
+try {
+    $Computer = "%s"
+    $secPass = ConvertTo-SecureString "%s" -AsPlainText -Force
+    $cred = New-Object PSCredential("%s", $secPass)
+    $domain = (Get-ADDomain).DNSRoot
+
+    # Fix 1: Register HTTP SPN for workstation (required for Kerberos WinRM)
+    $Result.Step = "spn"
+    try {
+        setspn -S "HTTP/$Computer" "$Computer" 2>&1 | Out-Null
+        setspn -S "HTTP/$Computer.$domain" "$Computer" 2>&1 | Out-Null
+    } catch { }
+
+    # Fix 2: Add workstation to TrustedHosts (allows Negotiate/NTLM fallback)
+    $Result.Step = "trustedhosts"
+    $current = (Get-Item WSMan:\localhost\Client\TrustedHosts -EA SilentlyContinue).Value
+    if ($current -notlike "*$Computer*") {
+        if ($current -and $current -ne "") {
+            Set-Item WSMan:\localhost\Client\TrustedHosts -Value "$current,$Computer" -Force
+        } else {
+            Set-Item WSMan:\localhost\Client\TrustedHosts -Value $Computer -Force
+        }
+    }
+
+    # Try creating PSSession — Kerberos first, then Negotiate, then Enable-PSRemoting via CIM
+    $session = $null
+    $Result.Step = "session"
+    $lastSessionErr = $null
+
+    # Attempt 1: Default (Kerberos)
+    try {
+        $session = New-PSSession -ComputerName $Computer -Credential $cred -ErrorAction Stop
+        $Result.Method = "kerberos"
+    } catch {
+        $lastSessionErr = $_
+        # Attempt 2: Negotiate (NTLM fallback)
+        try {
+            $session = New-PSSession -ComputerName $Computer -Credential $cred -Authentication Negotiate -ErrorAction Stop
+            $Result.Method = "negotiate"
+        } catch {
+            $lastSessionErr = $_
+            # Attempt 3: Use IP with TrustedHosts
+            try {
+                $ip = [string]((Resolve-DnsName $Computer -Type A -EA Stop | Select-Object -First 1).IPAddress)
+                $currentTH = (Get-Item WSMan:\localhost\Client\TrustedHosts).Value
+                if ($currentTH -notlike "*$ip*") {
+                    Set-Item WSMan:\localhost\Client\TrustedHosts -Value "$currentTH,$ip" -Force
+                }
+                $session = New-PSSession -ComputerName $ip -Credential $cred -Authentication Negotiate -ErrorAction Stop
+                $Result.Method = "negotiate_ip"
+            } catch {
+                $lastSessionErr = $_
+            }
+        }
+    }
+
+    # Attempt 4: Enable PSRemoting via CIM scheduled task (DCOM, bypasses WinRM)
+    if (-not $session) {
+        $Result.Step = "enable_psremoting"
+        try {
+            $cs = New-CimSession -ComputerName $Computer -ErrorAction Stop
+            $a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -Command Enable-PSRemoting -Force -SkipNetworkProfileCheck; Set-Item WSMan:\localhost\Service\Auth\Negotiate -Value true; Set-Item WSMan:\localhost\Service\Auth\Kerberos -Value true; Restart-Service WinRM -Force"
+            Register-ScheduledTask -TaskName "OsirisEnablePSR" -Action $a -CimSession $cs -Force -User "SYSTEM" -RunLevel Highest -EA Stop
+            Start-ScheduledTask -TaskName "OsirisEnablePSR" -CimSession $cs
+            Start-Sleep -Seconds 20
+            Unregister-ScheduledTask -TaskName "OsirisEnablePSR" -CimSession $cs -Confirm:$false -EA SilentlyContinue
+            Remove-CimSession $cs -EA SilentlyContinue
+
+            # Retry session after enabling PSRemoting
+            $Result.Step = "session_retry"
+            try {
+                $session = New-PSSession -ComputerName $Computer -Credential $cred -ErrorAction Stop
+                $Result.Method = "kerberos_after_enable"
+            } catch {
+                try {
+                    $session = New-PSSession -ComputerName $Computer -Credential $cred -Authentication Negotiate -ErrorAction Stop
+                    $Result.Method = "negotiate_after_enable"
+                } catch {
+                    throw "All session methods failed (including after Enable-PSRemoting). Last error: $_"
+                }
+            }
+        } catch {
+            if ($lastSessionErr) {
+                throw "All session methods failed. CIM enable error: $_. Original session error: $lastSessionErr"
+            }
+            throw "All session methods failed. CIM error: $_"
+        }
+    }
+
+    # Step 2: Create directory on workstation
+    $Result.Step = "mkdir"
+    Invoke-Command -Session $session -ScriptBlock {
+        New-Item -ItemType Directory -Force -Path "%s" | Out-Null
+    } -ErrorAction Stop
+
+    # Step 3: Copy binary from NETLOGON (fast SMB, no WinRM transfer needed)
+    $Result.Step = "copy"
+    $netlogonPath = "\\$domain\NETLOGON\%s"
+    Invoke-Command -Session $session -ScriptBlock {
+        param($src, $dest)
+        Copy-Item -Path $src -Destination $dest -Force -ErrorAction Stop
+    } -ArgumentList $netlogonPath, "%s\%s" -ErrorAction Stop
+
+    # Step 4: Write config
+    $Result.Step = "config"
+    $configContent = '%s'
+    Invoke-Command -Session $session -ScriptBlock {
+        param($cfg, $dir)
+        Set-Content -Path "$dir\config.json" -Value $cfg -Encoding UTF8
+    } -ArgumentList $configContent, "%s" -ErrorAction Stop
+
+    # Step 5: Install and start service
+    $Result.Step = "service"
+    Invoke-Command -Session $session -ScriptBlock {
+        param($svcName, $exePath, $configPath)
+        $existing = Get-Service -Name $svcName -ErrorAction SilentlyContinue
+        if ($existing) {
+            Stop-Service -Name $svcName -Force -EA SilentlyContinue
+            Start-Sleep -Seconds 2
+            sc.exe delete $svcName | Out-Null
+            Start-Sleep -Seconds 2
+        }
+        $binPath = """$exePath"" --config ""$configPath"""
+        New-Service -Name $svcName -BinaryPathName $binPath -DisplayName "OsirisCare Compliance Agent" -Description "HIPAA compliance monitoring agent" -StartupType Automatic -ErrorAction Stop
+        Start-Service -Name $svcName -ErrorAction Stop
+        sc.exe failure $svcName reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
+        Start-Sleep -Seconds 3
+        $svc = Get-Service -Name $svcName
+        if ($svc.Status -ne "Running") {
+            throw "Service not running: $($svc.Status)"
+        }
+    } -ArgumentList "%s", "%s\%s", "%s\config.json" -ErrorAction Stop
+
+    # Verify
+    $Result.Step = "verify"
+    $svcStatus = Invoke-Command -Session $session -ScriptBlock {
+        param($svcName)
+        $svc = Get-Service -Name $svcName -EA SilentlyContinue
+        if ($svc) { @{ installed = $true; running = ($svc.Status -eq "Running") } }
+        else { @{ installed = $false; running = $false } }
+    } -ArgumentList "%s" -ErrorAction Stop
+
+    Remove-PSSession $session -EA SilentlyContinue
+
+    $Result.Success = $true
+    $Result.Installed = $svcStatus.installed
+    $Result.Running = $svcStatus.running
+} catch {
+    $Result.Success = $false
+    $Result.Error = $_.Exception.Message
+    if ($session) { Remove-PSSession $session -EA SilentlyContinue }
+}
+
+$Result | ConvertTo-Json -Compress
+`,
+		escapePSString(hostname), escapePSString(*cfg.DCPassword), escapePSString(*cfg.DCUsername),
+		agentInstallDir,                           // mkdir
+		agentBinaryName,                           // NETLOGON source filename
+		agentInstallDir, agentBinaryName,          // copy destination
+		configJSON, agentInstallDir,               // config
+		agentServiceName, agentInstallDir, agentBinaryName, agentInstallDir, // service
+		agentServiceName, // verify
+	)
+
+	deployResult := ad.daemon.winrmExec.Execute(dcTarget, deployScript, "AGENT-DEPLOY-PROXY", "autodeploy", 300, 1, 60.0, nil)
+
+	stdout, _ := deployResult.Output["std_out"].(string)
+	log.Printf("[autodeploy] [%s] DC proxy result: %s", hostname, stdout)
+
+	if !deployResult.Success {
+		return fmt.Errorf("DC proxy deploy failed: %s", deployResult.Error)
+	}
+
+	// Parse result
+	var proxyResult struct {
+		Success   bool   `json:"Success"`
+		Step      string `json:"Step"`
+		Method    string `json:"Method"`
+		Error     string `json:"Error,omitempty"`
+		Installed bool   `json:"Installed"`
+		Running   bool   `json:"Running"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &proxyResult); err != nil {
+		if deployResult.Success {
+			return nil
+		}
+		return fmt.Errorf("DC proxy parse error: %v (raw: %s)", err, stdout)
+	}
+
+	if !proxyResult.Success {
+		return fmt.Errorf("DC proxy failed at step '%s' (method=%s): %s",
+			proxyResult.Step, proxyResult.Method, proxyResult.Error)
+	}
+
+	if !proxyResult.Installed || !proxyResult.Running {
+		return fmt.Errorf("DC proxy verification failed: installed=%v running=%v",
+			proxyResult.Installed, proxyResult.Running)
+	}
+
+	log.Printf("[autodeploy] [%s] DC proxy: Deployed via %s — agent installed and running",
+		hostname, proxyResult.Method)
+	return nil
+}
+
+// writeB64ChunksToTarget writes base64-encoded data in chunks to a target via WinRM.
+func (ad *autoDeployer) writeB64ChunksToTarget(target *winrm.Target, b64Data string, label string) error {
 	tempB64File := agentInstallDir + `\agent.b64`
 
 	// Clear any previous temp file
 	ad.daemon.winrmExec.Execute(target,
-		fmt.Sprintf(`Remove-Item -Path "%s" -Force -ErrorAction SilentlyContinue`, tempB64File),
-		"AGENT-DEPLOY-CLEAN", "autodeploy", 10, 1, 5.0, nil)
+		fmt.Sprintf(`New-Item -ItemType Directory -Force -Path "%s" | Out-Null; Remove-Item -Path "%s" -Force -ErrorAction SilentlyContinue`, agentInstallDir, tempB64File),
+		"DEPLOY-PREP-"+label, "autodeploy", 10, 0, 5.0, nil)
 
-	for i := 0; i < len(agentB64); i += chunkSize {
+	chunkSize := 400000
+	for i := 0; i < len(b64Data); i += chunkSize {
 		end := i + chunkSize
-		if end > len(agentB64) {
-			end = len(agentB64)
+		if end > len(b64Data) {
+			end = len(b64Data)
 		}
-		chunk := agentB64[i:end]
+		chunk := b64Data[i:end]
 
 		appendScript := fmt.Sprintf(`Add-Content -Path "%s" -Value "%s" -NoNewline`, tempB64File, chunk)
 		chunkResult := ad.daemon.winrmExec.Execute(target,
-			appendScript, "AGENT-DEPLOY-CHUNK", "autodeploy", 60, 1, 30.0, nil)
+			appendScript, "DEPLOY-CHUNK-"+label, "autodeploy", 60, 1, 30.0, nil)
 		if !chunkResult.Success {
 			return fmt.Errorf("write chunk %d failed: %s", i/chunkSize, chunkResult.Error)
 		}
 	}
 
-	// Decode base64 to exe
-	decodeScript := fmt.Sprintf(`
-$b64 = Get-Content -Path "%s" -Raw
-$bytes = [Convert]::FromBase64String($b64)
-[IO.File]::WriteAllBytes("%s\%s", $bytes)
-Remove-Item -Path "%s" -Force
-"OK"
-`, tempB64File, agentInstallDir, agentBinaryName, tempB64File)
+	return nil
+}
 
-	decodeResult := ad.daemon.winrmExec.Execute(target,
-		decodeScript, "AGENT-DEPLOY-DECODE", "autodeploy", 120, 1, 60.0, nil)
-	if !decodeResult.Success {
-		return fmt.Errorf("decode binary failed: %s", decodeResult.Error)
-	}
-
-	// Step 3: Write config file
-	log.Printf("[autodeploy] [%s] Step 3/5: Writing config", hostname)
+// writeConfigToTarget writes the agent config to a workstation via direct WinRM.
+func (ad *autoDeployer) writeConfigToTarget(target *winrm.Target, grpcAddr string) error {
 	configJSON := fmt.Sprintf(`{
     "appliance_addr": "%s",
     "check_interval": 300
@@ -352,16 +968,34 @@ Set-Content -Path "%s\config.json" -Value @'
 	if !configResult.Success {
 		return fmt.Errorf("write config failed: %s", configResult.Error)
 	}
+	return nil
+}
 
-	// Step 4: Install as Windows service
-	log.Printf("[autodeploy] [%s] Step 4/5: Installing service", hostname)
+// installServiceOnTarget installs and starts the agent service via direct WinRM.
+func (ad *autoDeployer) installServiceOnTarget(target *winrm.Target) error {
+	// First decode the base64 to exe
+	tempB64File := agentInstallDir + `\agent.b64`
+	decodeScript := fmt.Sprintf(`
+$b64 = Get-Content -Path "%s" -Raw
+$bytes = [Convert]::FromBase64String($b64)
+[IO.File]::WriteAllBytes("%s\%s", $bytes)
+Remove-Item -Path "%s" -Force
+"OK"
+`, tempB64File, agentInstallDir, agentBinaryName, tempB64File)
+
+	decodeResult := ad.daemon.winrmExec.Execute(target,
+		decodeScript, "AGENT-DEPLOY-DECODE", "autodeploy", 120, 1, 60.0, nil)
+	if !decodeResult.Success {
+		return fmt.Errorf("decode binary failed: %s", decodeResult.Error)
+	}
+
+	// Install service
 	serviceScript := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 $serviceName = "%s"
 $exePath = "%s\%s"
 $configPath = "%s\config.json"
 
-# Remove existing service if present
 $existing = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
 if ($existing) {
     Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
@@ -370,18 +1004,10 @@ if ($existing) {
     Start-Sleep -Seconds 2
 }
 
-# Create new service
-New-Service -Name $serviceName `+
-		"`"+`-BinaryPathName "`+"$exePath --config `\"$configPath`\"\""+` `+
-		"`"+`-DisplayName "OsirisCare Compliance Agent" `+
-		"`"+`-Description "HIPAA compliance monitoring agent" `+
-		"`"+`-StartupType Automatic `+
-		"`"+`-ErrorAction Stop
+New-Service -Name $serviceName -BinaryPathName """$exePath"" --config ""$configPath""" -DisplayName "OsirisCare Compliance Agent" -Description "HIPAA compliance monitoring agent" -StartupType Automatic -ErrorAction Stop
 
-# Start service
 Start-Service -Name $serviceName -ErrorAction Stop
 
-# Set recovery: restart on failure
 sc.exe failure $serviceName reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
 
 Start-Sleep -Seconds 3
@@ -397,14 +1023,6 @@ if ($svc.Status -ne "Running") {
 	if !svcResult.Success {
 		return fmt.Errorf("service install failed: %s", svcResult.Error)
 	}
-
-	// Step 5: Verify
-	log.Printf("[autodeploy] [%s] Step 5/5: Verifying", hostname)
-	installed, running := ad.checkAgentStatus(ctx, target)
-	if !installed || !running {
-		return fmt.Errorf("verification failed: installed=%v running=%v", installed, running)
-	}
-
 	return nil
 }
 

@@ -119,6 +119,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Complete any deferred NixOS rebuild orders from prior restart
 	d.orderProc.CompletePendingRebuild(ctx)
 
+	// Start HTTP file server for agent binary distribution.
+	// Domain controllers download the agent binary via Invoke-WebRequest
+	// instead of slow WinRM chunk uploads.
+	go d.serveAgentFiles(ctx)
+
 	// Start gRPC server
 	d.grpcSrv = grpcserver.NewServer(grpcserver.Config{
 		Port:   d.config.GRPCPort,
@@ -271,6 +276,30 @@ func (d *Daemon) completeOrder(ctx context.Context, orderID string, success bool
 
 	log.Printf("[daemon] Order %s completion accepted by Central Command", orderID)
 	return nil
+}
+
+// serveAgentFiles serves the agent binary directory over HTTP for DC downloads.
+// Used by the auto-deploy DC proxy path — DC downloads agent binary via
+// Invoke-WebRequest instead of slow WinRM chunk uploads.
+func (d *Daemon) serveAgentFiles(ctx context.Context) {
+	agentDir := filepath.Join(d.config.StateDir, "agent")
+	mux := http.NewServeMux()
+	mux.Handle("/agent/", http.StripPrefix("/agent/", http.FileServer(http.Dir(agentDir))))
+
+	srv := &http.Server{
+		Addr:    ":8090",
+		Handler: mux,
+	}
+
+	go func() {
+		<-ctx.Done()
+		srv.Close()
+	}()
+
+	log.Printf("[daemon] Agent file server on :8090 (serving %s)", agentDir)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("[daemon] Agent file server error: %v", err)
+	}
 }
 
 // processHealRequests reads from the gRPC server's heal channel and routes
