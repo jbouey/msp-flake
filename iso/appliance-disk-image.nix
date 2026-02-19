@@ -447,8 +447,9 @@ EOF
     firewall = {
       enable = true;
       # 22=ssh, 80=status, 8080=compliance-agent-sensor, 50051=grpc, 8084=local-portal
+      # 8090=agent-file-server (DC downloads agent binary for auto-deploy)
       # 8081 (scanner-api) and 8082 (go-agent-metrics) bind to localhost only
-      allowedTCPPorts = [ 22 80 8080 50051 8084 ];
+      allowedTCPPorts = [ 22 80 8080 50051 8084 8090 ];
       allowedUDPPorts = [ 5353 ];
     };
   };
@@ -469,6 +470,50 @@ EOF
   services.chrony = {
     enable = true;
     servers = [ "time.nist.gov" "pool.ntp.org" ];
+  };
+
+  # ============================================================================
+  # Static IP from config.yaml (optional — falls back to DHCP if not set)
+  # Add "static_ip: 192.168.88.247/24" and "gateway: 192.168.88.1" to config.yaml
+  # Requires nixos-rebuild after adding the service; IP applied on every boot.
+  # ============================================================================
+  systemd.services.msp-static-ip = {
+    description = "MSP Static IP from config.yaml";
+    wantedBy = [ "network-online.target" ];
+    after = [ "network.target" ];
+    before = [ "network-online.target" ];
+
+    path = with pkgs; [ iproute2 yq gnugrep ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+
+    script = ''
+      CONFIG="/var/lib/msp/config.yaml"
+      [ -f "$CONFIG" ] || exit 0
+
+      STATIC_IP=$(yq -r '.static_ip // empty' "$CONFIG" 2>/dev/null)
+      [ -z "$STATIC_IP" ] && exit 0
+
+      GATEWAY=$(yq -r '.gateway // empty' "$CONFIG" 2>/dev/null)
+
+      # Find first non-loopback interface
+      IFACE=$(ip -o link show | grep -v lo: | head -1 | awk -F': ' '{print $2}')
+      [ -z "$IFACE" ] && exit 1
+
+      echo "Applying static IP $STATIC_IP on $IFACE (gateway: $GATEWAY)"
+
+      # Flush DHCP addresses and set static
+      ip addr flush dev "$IFACE"
+      ip addr add "$STATIC_IP" dev "$IFACE"
+      ip link set "$IFACE" up
+
+      if [ -n "$GATEWAY" ]; then
+        ip route replace default via "$GATEWAY" dev "$IFACE"
+      fi
+    '';
   };
 
   # ============================================================================
