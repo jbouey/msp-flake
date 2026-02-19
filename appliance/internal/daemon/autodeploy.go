@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/osiriscare/appliance/internal/discovery"
+	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/winrm"
 )
 
@@ -43,7 +44,9 @@ const (
 // Deployment fallback chain:
 //  1. Direct WinRM (NTLM) — fast, works when workstation allows NTLM
 //  2. DC Proxy (Kerberos via Invoke-Command) — always works in domain
-//  3. Log + retry next cycle — if DC is also unreachable
+//  3. DC Proxy: CIM scheduled task to enable PSRemoting, then retry
+//  4. DC Proxy: WMI process creation to enable PSRemoting, then retry
+//  5. Escalate to operator after maxConsecutiveFailures (default 3)
 type autoDeployer struct {
 	daemon *Daemon
 
@@ -57,13 +60,21 @@ type autoDeployer struct {
 
 	// Track which hosts need DC proxy (avoid retrying direct NTLM every cycle)
 	needsProxy sync.Map // hostname → true
+
+	// Track consecutive deployment failures per host for escalation
+	failures   map[string]int       // hostname → consecutive failure count
+	escalated  map[string]time.Time // hostname → time of last escalation
 }
+
+const maxConsecutiveFailures = 3 // Escalate after this many failures
 
 func newAutoDeployer(d *Daemon) *autoDeployer {
 	return &autoDeployer{
 		daemon:    d,
 		deployed:  make(map[string]time.Time),
 		lastCheck: make(map[string]time.Time),
+		failures:  make(map[string]int),
+		escalated: make(map[string]time.Time),
 	}
 }
 
@@ -102,8 +113,12 @@ func (ad *autoDeployer) runAutoDeployIfNeeded(ctx context.Context) {
 }
 
 // ensureWinRMViaGPO configures WinRM on all domain computers via Group Policy.
-// This helps future direct NTLM connections succeed. Even if it doesn't take
-// effect immediately, the DC proxy path handles deployment in the meantime.
+// Two-pronged approach:
+//  1. Registry-based GPO settings: auto-start WinRM, firewall rules, auth config
+//  2. PowerShell startup script: runs Enable-PSRemoting -Force on every boot
+// The startup script is the primary mechanism — it creates the WS-Management
+// listener which registry settings alone don't do. Registry settings serve as
+// belt-and-suspenders for service config and firewall rules.
 // Only runs once per daemon lifetime.
 var winrmGPODone sync.Map
 
@@ -121,13 +136,15 @@ func (ad *autoDeployer) ensureWinRMViaGPO(ctx context.Context) {
 
 	gpoScript := `
 $ErrorActionPreference = 'Stop'
-$Result = @{ Changed = $false; Computers = @() }
+$Result = @{ Changed = $false; Computers = @(); StartupScript = $false }
 
 try {
     Import-Module GroupPolicy -ErrorAction Stop
     Import-Module ActiveDirectory -ErrorAction SilentlyContinue
     $GPOName = "Default Domain Policy"
     $BasePath = "HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service"
+
+    # --- Part 1: Registry-based GPO settings ---
 
     # Enable WinRM service auto-start
     try {
@@ -177,8 +194,65 @@ try {
         $Result.Changed = $true
     }
 
+    # --- Part 2: GPO Startup Script (runs Enable-PSRemoting -Force on boot) ---
+    # This is critical because registry settings alone don't create the WS-Management
+    # HTTP listener. Enable-PSRemoting does everything: listener, auth, firewall.
+
+    $gpoId = (Get-GPO -Name $GPOName).Id
+    $base = "\\$env:USERDNSDOMAIN\SysVol\$env:USERDNSDOMAIN\Policies\{$gpoId}\Machine\Scripts"
+    $dir = "$base\Startup"
+
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+
+    # Only write if script doesn't exist (idempotent)
+    $scriptPath = "$dir\Setup-WinRM.ps1"
+    if (-not (Test-Path $scriptPath)) {
+        $script = @'
+$ErrorActionPreference = 'SilentlyContinue'
+Enable-PSRemoting -Force -SkipNetworkProfileCheck
+Set-Item WSMan:\localhost\Service\Auth\Basic $true
+Set-Item WSMan:\localhost\Service\Auth\Negotiate $true
+Set-Item WSMan:\localhost\Service\Auth\Kerberos $true
+Set-Item WSMan:\localhost\Service\AllowUnencrypted $true
+Set-Item WSMan:\localhost\Client\TrustedHosts '*' -Force
+netsh advfirewall firewall add rule name="WinRM HTTP" dir=in action=allow protocol=tcp localport=5985
+netsh advfirewall firewall add rule name="DCOM RPC" dir=in action=allow protocol=tcp localport=135
+Restart-Service WinRM -Force
+'@
+        Set-Content -Path $scriptPath -Value $script -Force
+        $Result.StartupScript = $true
+        $Result.Changed = $true
+    }
+
+    # Ensure psscripts.ini references the startup script (Group Policy reads this)
+    $iniPath = "$base\psscripts.ini"
+    if (-not (Test-Path $iniPath)) {
+        $crlf = [char]13 + [char]10
+        $ini = "[Startup]" + $crlf + "0CmdLine=Setup-WinRM.ps1" + $crlf + "0Parameters="
+        Set-Content -Path $iniPath -Value $ini -Encoding Unicode -Force
+        $Result.Changed = $true
+    }
+
     # Force gpupdate on workstations via DCOM (doesn't need WinRM)
     if ($Result.Changed) {
+        # Bump GPO version to force clients to re-download
+        $dn = (Get-ADDomain).DistinguishedName
+        $gpo = [ADSI]"LDAP://CN={$gpoId},CN=Policies,CN=System,$dn"
+        $ver = [int]$gpo.Properties["versionNumber"].Value
+        $newVer = $ver + 65536
+        $gpo.Properties["versionNumber"].Value = $newVer
+        $gpo.CommitChanges()
+
+        # Update GPT.INI version on SYSVOL
+        $gptIni = "\\$env:USERDNSDOMAIN\SysVol\$env:USERDNSDOMAIN\Policies\{$gpoId}\GPT.INI"
+        $content = Get-Content $gptIni -Raw
+        if ($content -match 'Version=(\d+)') {
+            $content = $content -replace "Version=$([int]$Matches[1])", "Version=$newVer"
+            Set-Content -Path $gptIni -Value $content -Force
+        }
+
         try {
             $Computers = Get-ADComputer -Filter {OperatingSystem -like "*Windows*" -and OperatingSystem -notlike "*Server*"} -Properties Name |
                 Select-Object -ExpandProperty Name
@@ -305,12 +379,27 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 			skipped++
 			continue
 		}
+		// Skip if escalated recently (back off for 4 hours after escalation)
+		if t, ok := ad.escalated[hostname]; ok && time.Since(t) < 4*time.Hour {
+			ad.mu.Unlock()
+			log.Printf("[autodeploy] Skipping %s — escalated %s ago, backing off", hostname, time.Since(t).Round(time.Minute))
+			skipped++
+			continue
+		}
 		ad.mu.Unlock()
 
 		// Deploy with fallback chain
 		err := ad.deployWithFallback(ctx, ws)
 		if err != nil {
 			log.Printf("[autodeploy] Deploy to %s failed (all methods): %v", hostname, err)
+			ad.mu.Lock()
+			ad.failures[hostname]++
+			failCount := ad.failures[hostname]
+			ad.mu.Unlock()
+
+			if failCount >= maxConsecutiveFailures {
+				ad.escalateDeployFailure(hostname, failCount, err)
+			}
 			failed++
 		} else {
 			// Post-deploy verification: confirm agent is actually running.
@@ -321,13 +410,20 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 				log.Printf("[autodeploy] Successfully deployed agent to %s (verified running)", hostname)
 				ad.mu.Lock()
 				ad.deployed[hostname] = time.Now()
+				ad.failures[hostname] = 0 // Reset failure counter on success
 				ad.mu.Unlock()
 				deployed++
 			} else if installed {
 				log.Printf("[autodeploy] Agent installed on %s but NOT running — marking as failed", hostname)
+				ad.mu.Lock()
+				ad.failures[hostname]++
+				ad.mu.Unlock()
 				failed++
 			} else {
 				log.Printf("[autodeploy] Post-deploy verification failed for %s — agent not found", hostname)
+				ad.mu.Lock()
+				ad.failures[hostname]++
+				ad.mu.Unlock()
 				failed++
 			}
 		}
@@ -572,6 +668,39 @@ func (ad *autoDeployer) verifyAgentPostDeploy(ctx context.Context, ws discovery.
 	log.Printf("[autodeploy] [%s] Post-deploy verify (DC proxy): installed=%v running=%v",
 		hostname, installed, running)
 	return installed, running
+}
+
+// escalateDeployFailure reports persistent deployment failures as incidents
+// for operator investigation. After maxConsecutiveFailures, we stop hammering
+// the workstation and back off for 4 hours. This handles the real-world case
+// where PSRemoting/DCOM are both blocked and require manual intervention
+// (e.g., local GPO, physical access, or VPN-isolated workstation).
+func (ad *autoDeployer) escalateDeployFailure(hostname string, failCount int, lastErr error) {
+	ad.mu.Lock()
+	ad.escalated[hostname] = time.Now()
+	ad.mu.Unlock()
+
+	errMsg := fmt.Sprintf("Agent deployment to %s has failed %d consecutive times. "+
+		"Last error: %v. The workstation may need manual WinRM/PSRemoting enablement. "+
+		"Backing off for 4 hours. Remediation: run 'Enable-PSRemoting -Force' locally, "+
+		"or verify GPO startup script is applied and reboot.",
+		hostname, failCount, lastErr)
+
+	log.Printf("[autodeploy] ESCALATION: %s", errMsg)
+
+	// Report as incident to Central Command via the daemon's healing pipeline
+	req := grpcserver.HealRequest{
+		AgentID:   "appliance-daemon",
+		Hostname:  hostname,
+		CheckType: "WIN-DEPLOY-UNREACHABLE",
+		Expected:  "agent_deployed",
+		Actual:    fmt.Sprintf("deploy_failed_%d_attempts", failCount),
+		Metadata: map[string]string{
+			"error":       lastErr.Error(),
+			"remediation": "Enable-PSRemoting -Force on workstation, or reboot for GPO startup script",
+		},
+	}
+	ad.daemon.healIncident(context.Background(), req)
 }
 
 // loadAgentBinary reads and base64-encodes the agent binary (cached).
@@ -820,7 +949,8 @@ try {
 
     # Attempt 4: Enable PSRemoting via CIM scheduled task (DCOM, bypasses WinRM)
     if (-not $session) {
-        $Result.Step = "enable_psremoting"
+        $Result.Step = "enable_psremoting_cim"
+        $cimErr = $null
         try {
             $cs = New-CimSession -ComputerName $Computer -ErrorAction Stop
             $a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -Command Enable-PSRemoting -Force -SkipNetworkProfileCheck; Set-Item WSMan:\localhost\Service\Auth\Negotiate -Value true; Set-Item WSMan:\localhost\Service\Auth\Kerberos -Value true; Restart-Service WinRM -Force"
@@ -831,23 +961,59 @@ try {
             Remove-CimSession $cs -EA SilentlyContinue
 
             # Retry session after enabling PSRemoting
-            $Result.Step = "session_retry"
+            $Result.Step = "session_retry_cim"
             try {
                 $session = New-PSSession -ComputerName $Computer -Credential $cred -ErrorAction Stop
-                $Result.Method = "kerberos_after_enable"
+                $Result.Method = "kerberos_after_cim"
             } catch {
                 try {
                     $session = New-PSSession -ComputerName $Computer -Credential $cred -Authentication Negotiate -ErrorAction Stop
-                    $Result.Method = "negotiate_after_enable"
+                    $Result.Method = "negotiate_after_cim"
                 } catch {
-                    throw "All session methods failed (including after Enable-PSRemoting). Last error: $_"
+                    $cimErr = $_
                 }
             }
         } catch {
-            if ($lastSessionErr) {
-                throw "All session methods failed. CIM enable error: $_. Original session error: $lastSessionErr"
+            $cimErr = $_
+        }
+    }
+
+    # Attempt 5: Enable PSRemoting via WMI process creation (older DCOM path, sometimes works when CIM doesn't)
+    if (-not $session) {
+        $Result.Step = "enable_psremoting_wmi"
+        $wmiErr = $null
+        try {
+            $wmiCmd = 'powershell.exe -NoProfile -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck; Set-Item WSMan:\localhost\Service\Auth\Negotiate $true; Set-Item WSMan:\localhost\Service\Auth\Kerberos $true; Restart-Service WinRM -Force"'
+            $wmiResult = Invoke-WmiMethod -Class Win32_Process -Name Create -ComputerName $Computer -Credential $cred -ArgumentList @($wmiCmd) -ErrorAction Stop
+            if ($wmiResult.ReturnValue -eq 0) {
+                Start-Sleep -Seconds 25
+
+                # Retry session after WMI-based enablement
+                $Result.Step = "session_retry_wmi"
+                try {
+                    $session = New-PSSession -ComputerName $Computer -Credential $cred -ErrorAction Stop
+                    $Result.Method = "kerberos_after_wmi"
+                } catch {
+                    try {
+                        $session = New-PSSession -ComputerName $Computer -Credential $cred -Authentication Negotiate -ErrorAction Stop
+                        $Result.Method = "negotiate_after_wmi"
+                    } catch {
+                        $wmiErr = $_
+                    }
+                }
+            } else {
+                $wmiErr = "WMI Create process returned $($wmiResult.ReturnValue)"
             }
-            throw "All session methods failed. CIM error: $_"
+        } catch {
+            $wmiErr = $_
+        }
+
+        if (-not $session) {
+            $errParts = @()
+            if ($lastSessionErr) { $errParts += "PSSession: $lastSessionErr" }
+            if ($cimErr) { $errParts += "CIM: $cimErr" }
+            if ($wmiErr) { $errParts += "WMI: $wmiErr" }
+            throw ("All remote methods failed. " + ($errParts -join ". "))
         }
     }
 
