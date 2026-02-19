@@ -48,6 +48,9 @@ type Daemon struct {
 	// Auto-deploy: spread agent to discovered workstations
 	deployer *autoDeployer
 
+	// Drift scanner: periodic security checks on Windows targets
+	scanner *driftScanner
+
 	// Drift report cooldown: prevents excessive incident creation
 	cooldownMu sync.Mutex
 	cooldowns  map[string]*driftCooldown // key: "hostname:check_type"
@@ -86,6 +89,9 @@ func New(cfg *Config) *Daemon {
 
 	// Initialize auto-deployer for zero-friction agent spread
 	d.deployer = newAutoDeployer(d)
+
+	// Initialize drift scanner for periodic security checks
+	d.scanner = newDriftScanner(d)
 
 	return d
 }
@@ -175,6 +181,12 @@ func (d *Daemon) runCycle(ctx context.Context) {
 	// Runs async so slow DC responses don't block the main loop.
 	if d.config.WorkstationEnabled {
 		go d.deployer.runAutoDeployIfNeeded(ctx)
+	}
+
+	// Drift scanning: periodic security checks on Windows targets.
+	// Detects firewall disabled, rogue users, rogue tasks, stopped services.
+	if d.config.WorkstationEnabled {
+		go d.scanner.runDriftScanIfNeeded(ctx)
 	}
 
 	elapsed := time.Since(start)

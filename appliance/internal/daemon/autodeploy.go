@@ -313,11 +313,23 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 			log.Printf("[autodeploy] Deploy to %s failed (all methods): %v", hostname, err)
 			failed++
 		} else {
-			log.Printf("[autodeploy] Successfully deployed agent to %s", hostname)
-			ad.mu.Lock()
-			ad.deployed[hostname] = time.Now()
-			ad.mu.Unlock()
-			deployed++
+			// Post-deploy verification: confirm agent is actually running.
+			// Wait briefly for service to start, then check status.
+			time.Sleep(5 * time.Second)
+			installed, running := ad.verifyAgentPostDeploy(ctx, ws)
+			if running {
+				log.Printf("[autodeploy] Successfully deployed agent to %s (verified running)", hostname)
+				ad.mu.Lock()
+				ad.deployed[hostname] = time.Now()
+				ad.mu.Unlock()
+				deployed++
+			} else if installed {
+				log.Printf("[autodeploy] Agent installed on %s but NOT running — marking as failed", hostname)
+				failed++
+			} else {
+				log.Printf("[autodeploy] Post-deploy verification failed for %s — agent not found", hostname)
+				failed++
+			}
 		}
 	}
 
@@ -527,6 +539,39 @@ try {
 	}
 
 	return status.Installed, status.Running
+}
+
+// verifyAgentPostDeploy confirms the agent is actually installed and running
+// after a deploy attempt. Uses direct WinRM first, falls back to DC proxy.
+func (ad *autoDeployer) verifyAgentPostDeploy(ctx context.Context, ws discovery.ADComputer) (installed, running bool) {
+	hostname := ws.Hostname
+
+	// Try direct WinRM first
+	target := ad.buildTarget(ws)
+	if target != nil {
+		probeResult := ad.daemon.winrmExec.Execute(target,
+			fmt.Sprintf(`$svc = Get-Service -Name "%s" -EA SilentlyContinue; if ($svc) { @{installed=$true;running=($svc.Status -eq "Running")} } else { @{installed=$false;running=$false} } | ConvertTo-Json -Compress`, agentServiceName),
+			"AGENT-VERIFY", "autodeploy", 15, 0, 10.0, nil)
+
+		if probeResult.Success {
+			stdout, _ := probeResult.Output["std_out"].(string)
+			var status struct {
+				Installed bool `json:"installed"`
+				Running   bool `json:"running"`
+			}
+			if err := json.Unmarshal([]byte(stdout), &status); err == nil {
+				log.Printf("[autodeploy] [%s] Post-deploy verify (direct): installed=%v running=%v",
+					hostname, status.Installed, status.Running)
+				return status.Installed, status.Running
+			}
+		}
+	}
+
+	// Fall back to DC proxy
+	installed, running = ad.checkAgentStatusViaDC(ctx, hostname)
+	log.Printf("[autodeploy] [%s] Post-deploy verify (DC proxy): installed=%v running=%v",
+		hostname, installed, running)
+	return installed, running
 }
 
 // loadAgentBinary reads and base64-encodes the agent binary (cached).
@@ -900,10 +945,9 @@ $Result | ConvertTo-Json -Compress
 		Running   bool   `json:"Running"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &proxyResult); err != nil {
-		if deployResult.Success {
-			return nil
-		}
-		return fmt.Errorf("DC proxy parse error: %v (raw: %s)", err, stdout)
+		// Empty or unparseable output is NOT a success — the deploy script
+		// must return valid JSON with Success:true to confirm deployment.
+		return fmt.Errorf("DC proxy parse error (deploy unconfirmed): %v (raw: %s)", err, stdout)
 	}
 
 	if !proxyResult.Success {
