@@ -228,3 +228,117 @@ if api_key_file and api_key_file.exists():
 [truncated...]
 
 ---
+
+## 2026-02-06-session-88-sitedetail-header-button-fixes-blockchain-ots.md
+
+# Session 88 - SiteDetail Header Redesign, Button Fixes, Blockchain/OTS Fixes
+
+**Date:** 2026-02-06
+**Started:** 09:34
+**Previous Session:** 87
+
+---
+
+## Goals
+
+- [x] Fix blockchain append-only trigger blocking chain position migration
+- [x] Complete OTS proof upgrade lifecycle
+- [x] Add background OTS upgrade task
+- [x] Audit and redesign SiteDetail header buttons
+- [x] Test all 6 header buttons for functionality
+- [x] Fix broken Devices and Frameworks pages
+- [x] Deploy all fixes to VPS
+
+---
+
+## Progress
+
+### Completed
+
+1. **WORM Trigger Fix** - Modified trigger to protect evidence content (checks, bundle_hash, signature) but allow chain metadata updates (prev_hash, chain_position). Migration 030.
+2. **Chain Migration** - Migrated 179,729 bundles across 2 sites with zero broken links using GENESIS_HASH = "0" * 64 for genesis blocks.
+3. **OTS Commitment Fix** - Fixed `replay_timestamp_operations()` to return `current_hash` at attestation instead of `last_sha256_result`. Expired 78,699 stale proofs (>5 days old, calendar pruned).
+4. **Background OTS Upgrade Task** - Added asyncio background task in FastAPI lifespan that runs every 2 hours to upgrade pending OTS proofs.
+5. **SiteDetail Header Redesign** - Replaced rainbow-colored 6-button row with clean two-row layout:
+   - Row 1: Site name + status badge + ghost-style "Portal Link" button
+   - Row 2: Uniform navigation pills (Devices, Workstations, Go Agents, Frameworks, Cloud Integrations)
+6. **Devices Page Fix** - Fixed `a.hostname` -> `a.host_id` in device_sync.py (4 SQL queries). Also fixed UPDATE to use existing `last_checkin` column instead of non-existent `last_device_sync`/`device_count`/`medical_device_count`.
+7. **Frameworks Page Fix** - Fixed scores extraction: `Array.isArray(scoresData) ? scoresData : (scoresData as any)?.scores || []` to handle API returning `{scores: [...]}` instead of `[...]`.
+8. **Full Deployment** - Built frontend locally, deployed dist via rsync, deployed device_sync.py backend fix, restarted all services.
+9. **Browser Verification** - All 6 buttons tested and confirmed working on dashboard.osiriscare.net.
+
+### Blocked
+
+- OTS calendar servers prune proofs after ~5 days. All 78,699 existing proofs were too old to upgrade. Future proofs will be handled by the background task.
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/evidence_chain.py` | Fixed OTS commitment replay, chain migration genesis hash, verify chain integrity |
+| `mcp-server/central-command/backend/migrations/030_fix_worm_trigger_chain_metadata.sql` | NEW - Modified WORM trigger to allow chain metadata updates |
+| `mcp-server/main.py` | Added background OTS upgrade loop (2hr interval) |
+| `mcp-server/central-command/frontend/src/pages/SiteDetail.tsx` | Redesigned header: two-row layout with uniform nav pills |
+
+[truncated...]
+
+---
+
+## 2026-02-06-session-89-phi-boundary-enforcement.md
+
+# Session: 2026-02-06 - PHI Boundary Enforcement
+
+**Session:** 89
+**Focus Area:** HIPAA PHI transmission security audit and remediation
+
+---
+
+## What Was Done
+
+### Completed
+- [x] Audited all 9 outbound data channels from compliance appliance
+- [x] PHI scrubber enhancement: `exclude_categories` parameter to preserve infrastructure data
+- [x] Outbound PHI scrub gateway in `appliance_client._request()` - single enforcement point
+- [x] L2 LLM PHI guard: scrub `raw_data` + `similar_incidents` before cloud API calls
+- [x] Credential local storage: Fernet-encrypted `CredentialStore` with HKDF key derivation
+- [x] Conditional credential pull: skip credentials in checkin when local cache is fresh
+- [x] Evidence hardening: truncate output to 500 chars, strip stdout for passing checks
+- [x] Partner activity logging: instrumented `partner_auth.py`, `partners.py`, `learning_api.py`
+- [x] 26 new tests added (881 total passing, 7 skipped)
+
+### Not Started (deferred)
+- [ ] Migration `036_credential_versioning.sql` - server-side credential version tracking columns
+- [ ] Deploy changes to VPS
+
+---
+
+## Key Decisions Made
+
+| Decision | Rationale | Impact |
+|----------|-----------|--------|
+| IPs are infrastructure, not PHI | HIPAA Safe Harbor 45 CFR 164.514(b)(2) - IPs don't identify patients | `exclude_categories={'ip_address'}` preserves IPs in scrubbed data |
+| Transport-layer scrub gateway | Single enforcement point prevents new endpoints from leaking PHI | All outbound HTTP payloads scrubbed via `_request()` |
+| Local LLM keeps full data | Data never leaves appliance with local LLM | Only `APILLMPlanner` scrubs, `LocalLLMPlanner` unchanged |
+| Fernet encryption for credential cache | Standard symmetric encryption with HKDF key derivation from API key + machine ID | Credentials encrypted at rest, 24h TTL for refresh |
+| Network posture data flows intentionally | Ports, DNS, reachability checks needed for partner compliance dashboard | Not PHI - regulation-required visibility |
+
+---
+
+## Files Modified
+
+| File | Change |
+|------|--------|
+| `compliance_agent/phi_scrubber.py` | Added `exclude_categories` parameter, `active_patterns` filtering |
+| `compliance_agent/appliance_client.py` | Added `_outbound_scrubber`, `_scrub_outbound()`, scrub in `_request()`, `has_local_credentials` param |
+| `compliance_agent/level2_llm.py` | PHI scrubbing in `APILLMPlanner._build_prompt()` for raw_data and similar_incidents |
+| `compliance_agent/credential_store.py` | **NEW** - Fernet-encrypted local credential storage with HKDF, atomic writes, TTL |
+| `compliance_agent/appliance_agent.py` | CredentialStore integration, conditional credential pull, evidence hardening at 4 locations |
+| `backend/sites.py` | `has_local_credentials` field on `ApplianceCheckin`, conditional credential delivery |
+| `backend/partner_auth.py` | Partner activity logging for auth endpoints |
+| `backend/partners.py` | Partner activity logging + new API endpoints |
+
+[truncated...]
+
+---

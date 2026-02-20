@@ -336,6 +336,32 @@ The Go daemon (`appliance-daemon-go`) is built via `pkgs.buildGoModule` in both 
 
 **Production status:** Go daemon deployed to physical HP T640 (2026-02-18). Memory: 5.6MB (vs Python 112MB, 17x reduction). Checkin cycle: ~50ms. 82 L1 rules loaded (38 builtin + 44 synced). Go 1.22 compatible (NixOS 24.05).
 
+## Auto-Deploy (AD Workstation Agent Distribution)
+
+The Go daemon includes an auto-deploy subsystem that spreads the compliance agent to all Active Directory workstations without manual intervention.
+
+**File:** `appliance/internal/daemon/autodeploy.go` (~900 lines)
+
+### Fallback Chain
+```
+1. Direct WinRM NTLM  → Push agent binary + install via WinRM from appliance
+2. DC Proxy (Kerberos) → Invoke-Command via DC using Kerberos delegation
+3. Retry next cycle    → Skip host, retry on next deploy interval
+```
+
+### Key Components
+- **AD Enumeration:** LDAP query for computer objects, filter to workstations
+- **Binary Distribution:** NETLOGON share (`\\DC\NETLOGON\osiris-agent\`) — universal AD share, no extra infra
+- **Auth Fixup:** SPN registration (`setspn -A HTTP/<dc-hostname>`) + TrustedHosts for WinRM Kerberos
+- **GPO Configuration:** WinRM enabled via Default Domain Policy for all future workstations
+- **Concurrency Guard:** Atomic CAS prevents overlapping deploy cycles (no mutex needed)
+- **Auth Mode:** Negotiate (Kerberos preferred, NTLM fallback) — see `winrm/executor.go` for ClientNTLM
+
+### Integration
+- Started by `daemon.go` as part of the daemon lifecycle
+- Uses `config.go` `GRPCListenAddr()` for agent registration endpoint
+- Deploy cycle runs on a timer; skips if previous cycle still running (atomic flag)
+
 ## Key Files
 - `flake.nix` - Root flake
 - `iso/appliance-image.nix` - ISO builder
