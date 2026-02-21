@@ -334,7 +334,23 @@ Both services use systemd `ConditionPathExists` for mutual exclusion:
 
 The Go daemon (`appliance-daemon-go`) is built via `pkgs.buildGoModule` in both `appliance-image.nix` and `appliance-disk-image.nix`. It includes 3 subpackages: `appliance-daemon`, `checkin-receiver`, `grpc-server`.
 
-**Production status:** Go daemon deployed to physical HP T640 (2026-02-18). Memory: 5.6MB (vs Python 112MB, 17x reduction). Checkin cycle: ~50ms. 82 L1 rules loaded (38 builtin + 44 synced). Go 1.22 compatible (NixOS 24.05).
+**Production status:** Go daemon v0.2.1 deployed to physical HP T640. Evidence submission live (Ed25519 signed, 7 check types). Memory: 5.6MB (vs Python 112MB, 17x reduction). Checkin cycle: ~50ms. 82 L1 rules loaded (38 builtin + 44 synced). Go 1.22 compatible (NixOS 24.05).
+
+### Checkin Auth Flow
+The `checkin-receiver` (Go, runs on VPS port 8001 in Docker) validates auth via:
+1. Static `--auth-token` flag (shared fallback)
+2. Per-site API key from `appliance_provisioning` table
+
+Either match = authenticated. Caddy routes `/api/appliances/checkin` to this container.
+
+### Appliance ID Format
+Canonical format: `{site_id}-{MAC_COLON_SEPARATED}` (e.g., `physical-appliance-pilot-1aea78-84:3A:5B:91:B6:61`). Defined in `checkin/models.go:CanonicalApplianceID()`. All code (Go checkin, Python checkin, Python provisioning) must use this format.
+
+### Rebuild Command for Deployed Appliances
+```bash
+nixos-rebuild switch --flake github:jbouey/msp-flake/main#osiriscare-appliance-disk --refresh
+```
+The `#osiriscare-appliance-disk` target must be specified explicitly — hostname auto-detection won't work because first-boot changes the hostname.
 
 ## Auto-Deploy (AD Workstation Agent Distribution)
 

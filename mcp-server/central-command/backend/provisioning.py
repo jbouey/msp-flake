@@ -18,6 +18,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+
+def normalize_mac(mac: str) -> str:
+    """Normalize MAC address to uppercase colon-separated format (AA:BB:CC:DD:EE:FF)."""
+    clean = mac.upper().replace(':', '').replace('-', '').replace('.', '')
+    return ':'.join(clean[i:i+2] for i in range(0, len(clean), 2))
+
 from .fleet import get_pool
 
 # API endpoint from environment variable
@@ -129,9 +135,9 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
             base = ''.join(c for c in base if c.isalnum() or c == '-')[:40]
             site_id = f"{base}-{secrets.token_hex(3)}"
 
-        # Generate appliance_id
-        mac_clean = claim.mac_address.upper().replace(':', '').replace('-', '')
-        appliance_id = f"{site_id}-{mac_clean}"
+        # Generate appliance_id with colon-separated MAC (matches Go checkin canonical format)
+        mac_normalized = normalize_mac(claim.mac_address)
+        appliance_id = f"{site_id}-{mac_normalized}"
 
         # Create or update site
         existing_site = await conn.fetchrow("""

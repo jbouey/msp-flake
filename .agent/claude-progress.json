@@ -1,24 +1,24 @@
 {
-  "session": 120,
-  "updated": "2026-02-20T18:55:00.000000Z",
+  "session": 121,
+  "updated": "2026-02-21T03:40:00.000000Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "go_daemon_live_drift_scanner_active_rebuild_pending_38176c2",
-    "vm_appliance": "booted_6GB_ram_rebuild_order_pending_static_ip",
+    "physical_appliance": "go_daemon_v0.2.0_evidence_submitting_6of7_compliant_ports_50051_8090_conflict",
+    "vm_appliance": "python_agent_v1.0.55_checkin_working_per_site_auth",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_46_promoted_9_enabled_counter_trigger_live_51_builtin_seeded_pattern_gen_from_L2",
     "incident_resolution": "pipeline_active",
-    "evidence_pipeline": "end_to_end_live_203k_bundles_chain_repaired_advisory_lock",
-    "compliance_packets": "live_endpoint_real_data_deployed_to_vps",
+    "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
+    "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
     "fleet_updates": "proven_end_to_end_overlay_plus_nixos_rebuild"
   },
-  "current_blocker": "VM appliance booted with 6GB RAM, rebuild order pending for static IP (12hr window). WS01 machine trust still stale since Jan 11 (domain accounts fail, local accounts work). Need to run Reset-ComputerMachinePassword from DC once both are stable.",
+  "current_blocker": "Physical appliance running v0.2.0 but old v0.1.0 daemon still holding ports 50051/8090 (needs pkill from iMac). Only 1 of 4 Windows VMs scanned (others may be powered off). WS01 machine trust still stale since Jan 11.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -168,39 +168,40 @@
     }
   ],
   "completed_this_session": [
-    "Diagnosed WinRM auth failure on DC + WS01 — root cause: chaos lab LLM-generated attack (Feb 17 campaign scn_services_stop_winrm) disabled WinRM on DC, cascaded to all machines",
-    "Fixed DC and WS01 WinRM: Enable-PSRemoting + Set-Item AllowUnencrypted/Basic/TrustedHosts",
-    "Patched chaos lab safety: winrm_attack.py now blocks commands targeting WinRM/PSRemoting/WSMan (is_blocked_command filter with 6 regex patterns)",
-    "Patched generate_and_plan.py + generate_and_plan_v2.py prompts: NEVER target WinRM exclusion rule",
-    "Started all 5 VMs (DC, WS01, Linux, SRV01, Appliance) — northvalley-linux and northvalley-srv01 were down",
-    "Rebalanced VM RAM: DC 10→6GB, SRV01 6→4GB, Appliance 2→6GB (total 24→22GB, frees iMac headroom)",
-    "Inserted nixos-rebuild admin order for VM appliance static IP config (12hr window)",
-    "Installed VirtualBox Guest Additions on DC + WS01 (user) — enables VBoxManage guestcontrol as WinRM-independent recovery path"
+    "Implemented end-to-end compliance pipeline: Go daemon evidence submission (signer.go, submitter.go) + backend fixes (compliance_packet.py move, import fix, CATEGORY_CHECKS update)",
+    "First real compliance bundle: CB-2026-02-21, 7 checks, 6/7 pass (firewall_status fail on 192.168.88.250), Ed25519 signed, chain position 128090",
+    "Cross-compiled Go daemon v0.2.0, deployed to physical appliance via SSH pipe through VPS (NixOS read-only filesystem prevented systemd override)",
+    "Fixed VM appliance 401 auth: Go checkin-receiver used single static token, added per-site API key validation from appliance_provisioning table",
+    "Fixed appliance_id format mismatch: provisioning.py used no-colon MACs, Go+Python checkin used colons — normalized provisioning.py to use colons",
+    "Migrated 35 admin_orders rows from hyphen-separated MAC to colon-separated (canonical format)",
+    "Updated Nix daemon version 0.1.0 → 0.2.1 in both appliance-image.nix and appliance-disk-image.nix",
+    "Compliance packet endpoint live: 56.4% compliance, 15 HIPAA controls, real pass/fail data with evidence chain IDs",
+    "Documented NixOS rebuild path for deployed appliances (#osiriscare-appliance-disk)"
   ],
   "recent_commits": [
     {
-      "hash": "a50d103",
-      "message": "feat: NixOS packaging for Go daemon \u2014 buildGoModule + feature-flagged service"
+      "hash": "8e904c4",
+      "message": "feat: per-site API key auth in checkin-receiver — fixes VM appliance 401"
     },
     {
-      "hash": "c23b924",
-      "message": "feat: Go appliance daemon \u2014 10 packages, 141 tests, L1\u2192L2\u2192L3 pipeline"
+      "hash": "9951dc9",
+      "message": "fix: use absolute path for nixos-rebuild in order processor"
     },
     {
-      "hash": "03693aa",
-      "message": "fix: msp-first-boot hard dependency on auto-provision service"
+      "hash": "060dc7f",
+      "message": "feat: end-to-end compliance pipeline — Go daemon evidence submission + backend fixes"
     },
     {
-      "hash": "7207c52",
-      "message": "docs: audit and correct all technical skill docs against codebase"
+      "hash": "38176c2",
+      "message": "feat: autodeploy error handling — failure tracking, WMI fallback, GPO startup script"
     },
     {
-      "hash": "5629e34",
-      "message": "fix: resolve NixOS trace warnings (health-check ordering + root password conflict)"
+      "hash": "364866f",
+      "message": "feat: drift scanner + deploy verification — chaos test hardening"
     },
     {
-      "hash": "daf82a8",
-      "message": "fix: local-portal port 8083\u21928084 (conflict with scanner) + getty --no-block"
+      "hash": "d365525",
+      "message": "feat: optional static IP from config.yaml — fixes VM DHCP drift"
     }
   ],
   "key_findings": {
@@ -250,7 +251,7 @@
     "run_diagnostic": "INSERT INTO admin_orders (order_id, appliance_id, site_id, order_type, parameters, status, expires_at) VALUES ('diag-ID', 'APPLIANCE_ID', 'SITE_ID', 'diagnostic', '{\"command\": \"agent_status\"}', 'pending', now() + interval '1 hour')",
     "appliance_ids": {
       "physical": "physical-appliance-pilot-1aea78-84:3A:5B:91:B6:61 (site: physical-appliance-pilot-1aea78)",
-      "vm": "test-appliance-lab-b3c40c-08-00-27-98-FD-84 (site: test-appliance-lab-b3c40c)"
+      "vm": "test-appliance-lab-b3c40c-08:00:27:98:FD:84 (site: test-appliance-lab-b3c40c)"
     }
   },
   "quick_commands": {

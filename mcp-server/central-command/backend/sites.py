@@ -316,8 +316,9 @@ async def get_pending_orders(site_id: str, appliance_id: str):
     """Get pending orders for an appliance (both admin and healing orders)."""
     pool = await get_pool()
 
-    # Normalize MAC format - try both colon and hyphen variants
-    # appliance_id format: site_id-MAC (e.g., test-site-08:00:27:98:FD:84)
+    # Legacy compat: try both colon and hyphen MAC variants in appliance_id.
+    # Canonical format is colon-separated (site-AA:BB:CC:DD:EE:FF) but old
+    # provisioning code wrote hyphen-separated. Keep both until old orders age out.
     parts = appliance_id.rsplit('-', 6)  # Split off MAC (last 6 parts if hyphen-separated)
     if len(parts) >= 7:
         # MAC is hyphen-separated: site-name-08-00-27-98-FD-84

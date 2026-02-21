@@ -54,7 +54,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate auth: accept static token OR per-site API key
+	// Auth flow:
+	// 1. Static --auth-token (shared fallback, set on checkin-receiver container)
+	// 2. Per-site key from appliance_provisioning table (set during provision)
+	// Either match = authenticated
 	auth := r.Header.Get("Authorization")
 	bearerToken := strings.TrimPrefix(auth, "Bearer ")
 	if !strings.HasPrefix(auth, "Bearer ") {

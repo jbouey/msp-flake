@@ -166,7 +166,9 @@
       };
 
       # OsirisCare Appliance Disk Image (for permanent installation)
-      # This is the "golden configuration" that gets installed
+      # This is the "golden configuration" that gets installed.
+      # Deployed appliances rebuild with:
+      #   nixos-rebuild switch --flake github:jbouey/msp-flake/main#osiriscare-appliance-disk --refresh
       nixosConfigurations.osiriscare-appliance-disk = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
