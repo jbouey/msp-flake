@@ -255,7 +255,7 @@ func (p *Processor) handleNixOSRebuild(ctx context.Context, params map[string]in
 	cmd := exec.CommandContext(ctx, "systemd-run",
 		"--unit=msp-rebuild", "--wait", "--pipe", "--collect",
 		"--property=TimeoutStartSec=600",
-		"nixos-rebuild", "test", "--flake", flakeRef, "--refresh")
+		"/run/current-system/sw/bin/nixos-rebuild", "test", "--flake", flakeRef, "--refresh")
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
