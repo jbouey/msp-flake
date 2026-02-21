@@ -592,10 +592,22 @@ func TestLinuxRulesMatch(t *testing.T) {
 		checkType  string
 		expectedID string
 	}{
-		{"ssh_config", "L1-SSH-001"},
-		{"kernel", "L1-KERN-001"},
-		{"cron", "L1-CRON-001"},
-		{"audit", "L1-LIN-AUDIT-001"},
+		{"linux_ssh_config", "L1-SSH-001"},
+		{"linux_kernel_params", "L1-KERN-001"},
+		{"linux_cron_review", "L1-CRON-001"},
+		{"linux_audit_logging", "L1-LIN-AUDIT-001"},
+		{"linux_firewall", "L1-LIN-FW-001"},
+		{"linux_failed_services", "L1-LIN-SVC-001"},
+		{"linux_log_forwarding", "L1-LIN-LOG-001"},
+		{"linux_suid_binaries", "L1-SUID-001"},
+		{"linux_file_permissions", "L1-LIN-PERM-001"},
+		{"linux_disk_space", "L1-LIN-DISK-001"},
+		{"linux_ntp_sync", "L1-LIN-NTP-001"},
+		{"linux_open_ports", "L1-LIN-PORTS-001"},
+		{"linux_user_accounts", "L1-LIN-USERS-001"},
+		{"linux_unattended_upgrades", "L1-LIN-UPGRADES-001"},
+		{"linux_cert_expiry", "L1-LIN-CERT-001"},
+		// Non-scanner rules (NixOS-specific)
 		{"crypto", "L1-LIN-CRYPTO-001"},
 		{"incident_response", "L1-LIN-IR-001"},
 		{"banner", "L1-LIN-BANNER-001"},
@@ -628,17 +640,31 @@ func TestWindowsRulesMatch(t *testing.T) {
 	}{
 		{"service_dns", "L1-WIN-SVC-DNS"},
 		{"smb_signing", "L1-WIN-SEC-SMB"},
-		{"service_wuauserv", "L1-WIN-SVC-WUAUSERV"},
+		{"windows_update", "L1-WIN-SVC-WUAUSERV"},
+		{"audit_logging", "L1-AUDIT-002"},
 		{"network_profile", "L1-WIN-NET-PROFILE"},
 		{"screen_lock_policy", "L1-WIN-SEC-SCREENLOCK"},
 		{"bitlocker_status", "L1-WIN-SEC-BITLOCKER"},
 		{"service_netlogon", "L1-WIN-SVC-NETLOGON"},
 		{"dns_config", "L1-WIN-DNS-HIJACK"},
 		{"defender_exclusions", "L1-WIN-SEC-DEFENDER-EXCL"},
+		{"smb1_protocol", "L1-WIN-SEC-SMB1"},
+		{"windows_defender", "L1-WIN-DEFENDER-001"},
+		{"rogue_admin_users", "L1-WIN-ROGUE-ADMIN-001"},
+		{"rogue_scheduled_tasks", "L1-WIN-ROGUE-TASKS-001"},
+		{"agent_status", "L1-WIN-AGENT-001"},
+		{"password_policy", "L1-WIN-PASSWD-001"},
+		{"rdp_nla", "L1-WIN-RDP-NLA-001"},
+		{"guest_account", "L1-WIN-GUEST-001"},
+		// Persistence scanner rules (separate from drift scanner)
 		{"scheduled_task_persistence", "L1-PERSIST-TASK-001"},
 		{"registry_run_persistence", "L1-PERSIST-REG-001"},
-		{"smb1_protocol", "L1-WIN-SEC-SMB1"},
 		{"wmi_event_persistence", "L1-PERSIST-WMI-001"},
+		// Network check types
+		{"net_unexpected_ports", "L1-NET-PORTS-001"},
+		{"net_expected_service", "L1-NET-SVC-001"},
+		{"net_host_reachability", "L1-NET-REACH-001"},
+		{"net_dns_resolution", "L1-NET-DNS-001"},
 	}
 
 	for _, tt := range tests {

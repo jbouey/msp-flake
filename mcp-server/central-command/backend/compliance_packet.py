@@ -75,6 +75,38 @@ CHECK_TYPE_HIPAA_MAP = {
     "wmi_event_persistence": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
     # Defender exclusions
     "defender_exclusions": {"control": "164.308(a)(5)(ii)(B)", "description": "Malicious Software Protection"},
+    # Go daemon scanner check types (Windows)
+    "windows_defender": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
+    "windows_update": {"control": "164.308(a)(5)(ii)(B)", "description": "Security Updates"},
+    "audit_logging": {"control": "164.312(b)", "description": "Audit Controls"},
+    "rogue_admin_users": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "rogue_scheduled_tasks": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
+    "agent_status": {"control": "164.312(b)", "description": "Audit Controls (agent)"},
+    "rdp_nla": {"control": "164.312(d)", "description": "Person or Entity Authentication"},
+    "guest_account": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "service_dns": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
+    "service_netlogon": {"control": "164.312(d)", "description": "Person or Entity Authentication"},
+    # Go daemon scanner check types (Linux)
+    "linux_firewall": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "linux_ssh_config": {"control": "164.312(d)", "description": "Person or Entity Authentication"},
+    "linux_failed_services": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "linux_disk_space": {"control": "164.310(d)(2)(iv)", "description": "Data Backup and Storage"},
+    "linux_suid_binaries": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "linux_audit_logging": {"control": "164.312(b)", "description": "Audit Controls"},
+    "linux_ntp_sync": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
+    "linux_kernel_params": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "linux_open_ports": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "linux_user_accounts": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "linux_file_permissions": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "linux_unattended_upgrades": {"control": "164.308(a)(5)(ii)(B)", "description": "Security Updates"},
+    "linux_log_forwarding": {"control": "164.312(b)", "description": "Audit Controls"},
+    "linux_cron_review": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "linux_cert_expiry": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    # Go daemon scanner check types (Network)
+    "net_unexpected_ports": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "net_expected_service": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "net_host_reachability": {"control": "164.308(a)(7)(ii)(B)", "description": "Disaster Recovery Plan"},
+    "net_dns_resolution": {"control": "164.312(e)(1)", "description": "Transmission Security"},
 }
 
 

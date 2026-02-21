@@ -9,10 +9,11 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
+from .auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,11 @@ async def _create_update_orders_for_appliances(conn, rollout_id: UUID, stage: in
 
     This is the key function that triggers actual updates by creating orders
     that appliances will fetch during their next check-in cycle.
+
+    Orders are created for every appliance in site_appliances that belongs to
+    a site with an appliance in this rollout stage. The appliance_id used is
+    the canonical format from site_appliances (site-MAC with colons), which
+    matches how appliances identify themselves during checkin.
     """
     import uuid
 
@@ -43,14 +49,15 @@ async def _create_update_orders_for_appliances(conn, rollout_id: UUID, stage: in
         logger.warning(f"No release found for rollout {rollout_id}")
         return 0
 
-    # Get appliances that need orders - join with site_appliances to get full appliance_id (with MAC)
+    # Get the site_ids that have appliances in this rollout stage,
+    # then create orders for every appliance in site_appliances for those sites.
+    # This ensures we use the canonical appliance_id (with MAC) that matches checkin.
     appliances = await conn.fetch(
         """
-        SELECT au.id as update_id, a.site_id, au.appliance_id,
-               sa.appliance_id as full_appliance_id
+        SELECT DISTINCT sa.appliance_id, sa.site_id, au.id as update_id
         FROM appliance_updates au
         JOIN appliances a ON au.appliance_id = a.id
-        LEFT JOIN site_appliances sa ON sa.site_id = a.site_id
+        JOIN site_appliances sa ON sa.site_id = a.site_id
         WHERE au.rollout_id = $1 AND au.stage_assigned = $2 AND au.status = 'notified'
         """,
         rollout_id,
@@ -64,9 +71,6 @@ async def _create_update_orders_for_appliances(conn, rollout_id: UUID, stage: in
     orders_created = 0
     for app in appliances:
         order_id = f"order-{uuid.uuid4().hex[:8]}"
-
-        # Use full appliance_id (with MAC) from site_appliances, fall back to site_id
-        appliance_identifier = app["full_appliance_id"] or app["site_id"]
 
         parameters = {
             "update_id": str(app["update_id"]),
@@ -88,14 +92,14 @@ async def _create_update_orders_for_appliances(conn, rollout_id: UUID, stage: in
                 ON CONFLICT DO NOTHING
                 """,
                 order_id,
-                appliance_identifier,
+                app["appliance_id"],  # canonical format from site_appliances
                 app["site_id"],
                 json.dumps(parameters),
             )
             orders_created += 1
-            logger.info(f"Created update_iso order for {appliance_identifier}: {release['version']}")
+            logger.info(f"Created update_iso order for {app['appliance_id']}: {release['version']}")
         except Exception as e:
-            logger.error(f"Failed to create order for {appliance_identifier}: {e}")
+            logger.error(f"Failed to create order for {app['appliance_id']}: {e}")
 
     return orders_created
 
@@ -967,3 +971,189 @@ async def get_fleet_update_stats():
                 "success_rate": round(100 * appliance_updates["succeeded"] / appliance_updates["total"], 1) if appliance_updates["total"] > 0 else 0,
             },
         }
+
+
+# =============================================================================
+# FLEET-WIDE ORDERS — target the fleet, not individual appliances
+# =============================================================================
+
+class FleetOrderCreate(BaseModel):
+    """Create a fleet-wide order. All appliances pick it up during checkin."""
+    order_type: str  # nixos_rebuild, update_agent, sync_rules, run_command, etc.
+    parameters: Dict[str, Any] = {}
+    expires_hours: int = Field(default=24, ge=1, le=168)
+    skip_version: Optional[str] = None  # Appliances already at this agent_version skip
+
+
+@router.post("/orders")
+async def create_fleet_order(order: FleetOrderCreate, user: dict = Depends(require_admin)):
+    """Create a fleet-wide order.
+
+    This creates a single fleet order row. Every appliance checks for active
+    fleet orders during checkin. Appliances that already match skip_version
+    or have already completed the order are skipped automatically.
+
+    No per-appliance rows are created — the fleet order targets the fleet.
+    """
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=order.expires_hours)
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            INSERT INTO fleet_orders (order_type, parameters, skip_version, status, expires_at, created_by)
+            VALUES ($1, $2::jsonb, $3, 'active', $4, $5)
+            RETURNING id, order_type, skip_version, status, created_at, expires_at
+        """,
+            order.order_type,
+            json.dumps(order.parameters),
+            order.skip_version,
+            expires_at,
+            user.get("username") or user.get("email"),
+        )
+
+        # Count how many appliances will receive vs skip
+        if order.skip_version:
+            total = await conn.fetchval("SELECT COUNT(*) FROM site_appliances")
+            will_skip = await conn.fetchval(
+                "SELECT COUNT(*) FROM site_appliances WHERE agent_version = $1",
+                order.skip_version
+            )
+        else:
+            total = await conn.fetchval("SELECT COUNT(*) FROM site_appliances")
+            will_skip = 0
+
+        logger.info(
+            f"Fleet order created: id={row['id']} type={order.order_type} "
+            f"targets={total - will_skip} skip={will_skip} skip_version={order.skip_version}"
+        )
+
+        return {
+            "id": str(row["id"]),
+            "order_type": row["order_type"],
+            "skip_version": row["skip_version"],
+            "status": row["status"],
+            "created_at": row["created_at"].isoformat(),
+            "expires_at": row["expires_at"].isoformat(),
+            "fleet_size": total,
+            "will_receive": total - will_skip,
+            "will_skip": will_skip,
+        }
+
+
+@router.get("/orders")
+async def list_fleet_orders(
+    status: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """List fleet-wide orders with completion stats."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT fo.*,
+                   (SELECT COUNT(*) FROM fleet_order_completions foc
+                    WHERE foc.fleet_order_id = fo.id AND foc.status = 'completed') as completed_count,
+                   (SELECT COUNT(*) FROM fleet_order_completions foc
+                    WHERE foc.fleet_order_id = fo.id AND foc.status = 'failed') as failed_count,
+                   (SELECT COUNT(*) FROM fleet_order_completions foc
+                    WHERE foc.fleet_order_id = fo.id AND foc.status = 'skipped') as skipped_count
+            FROM fleet_orders fo
+            WHERE ($1::text IS NULL OR fo.status = $1)
+            ORDER BY fo.created_at DESC
+            LIMIT $2
+        """, status, limit)
+
+        total_appliances = await conn.fetchval("SELECT COUNT(*) FROM site_appliances")
+
+        return [{
+            "id": str(r["id"]),
+            "order_type": r["order_type"],
+            "parameters": r["parameters"] if isinstance(r["parameters"], dict) else json.loads(r["parameters"] or "{}"),
+            "skip_version": r["skip_version"],
+            "status": r["status"],
+            "created_at": r["created_at"].isoformat(),
+            "expires_at": r["expires_at"].isoformat(),
+            "created_by": r["created_by"],
+            "fleet_size": total_appliances,
+            "completed": r["completed_count"],
+            "failed": r["failed_count"],
+            "skipped": r["skipped_count"],
+        } for r in rows]
+
+
+@router.post("/orders/{order_id}/cancel")
+async def cancel_fleet_order(order_id: str):
+    """Cancel a fleet-wide order."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE fleet_orders SET status = 'cancelled' WHERE id = $1 AND status = 'active'",
+            UUID(order_id)
+        )
+        if result == "UPDATE 0":
+            raise HTTPException(status_code=404, detail="Fleet order not found or not active")
+    return {"status": "ok", "message": "Fleet order cancelled"}
+
+
+async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version: str = None):
+    """Called during checkin to get fleet orders this appliance should execute.
+
+    Returns orders as dicts matching the pending_orders format.
+    Skips orders where:
+    - Appliance already completed/acknowledged the order
+    - Appliance already matches skip_version
+    """
+    # Get active, non-expired fleet orders
+    fleet_rows = await conn.fetch("""
+        SELECT fo.id, fo.order_type, fo.parameters, fo.skip_version, fo.created_at, fo.expires_at
+        FROM fleet_orders fo
+        WHERE fo.status = 'active'
+        AND fo.expires_at > NOW()
+        AND NOT EXISTS (
+            SELECT 1 FROM fleet_order_completions foc
+            WHERE foc.fleet_order_id = fo.id AND foc.appliance_id = $1
+        )
+        ORDER BY fo.created_at ASC
+    """, appliance_id)
+
+    orders = []
+    for row in fleet_rows:
+        # Skip if appliance already at target version
+        if row["skip_version"] and agent_version and agent_version == row["skip_version"]:
+            # Record as skipped so we don't check again
+            try:
+                await conn.execute("""
+                    INSERT INTO fleet_order_completions (fleet_order_id, appliance_id, status)
+                    VALUES ($1, $2, 'skipped')
+                    ON CONFLICT DO NOTHING
+                """, row["id"], appliance_id)
+            except Exception:
+                pass
+            continue
+
+        params = row["parameters"] if isinstance(row["parameters"], dict) else json.loads(row["parameters"] or "{}")
+        params["fleet_order_id"] = str(row["id"])
+
+        orders.append({
+            "order_id": f"fleet::{row['id']}::{appliance_id}",
+            "order_type": row["order_type"],
+            "parameters": params,
+            "priority": 5,
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+        })
+
+    return orders
+
+
+async def record_fleet_order_completion(conn, fleet_order_id: str, appliance_id: str, status: str = "completed"):
+    """Record that an appliance completed a fleet order."""
+    try:
+        await conn.execute("""
+            INSERT INTO fleet_order_completions (fleet_order_id, appliance_id, status)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (fleet_order_id, appliance_id) DO UPDATE SET
+                status = EXCLUDED.status, completed_at = NOW()
+        """, UUID(fleet_order_id), appliance_id, status)
+    except Exception as e:
+        logger.warning(f"Failed to record fleet order completion: {e}")

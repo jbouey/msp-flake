@@ -16,6 +16,7 @@ from enum import Enum
 from .fleet import get_pool
 from .auth import require_auth, require_operator
 from .websocket_manager import broadcast_event
+from .fleet_updates import get_fleet_orders_for_appliance, record_fleet_order_completion
 
 logger = logging.getLogger(__name__)
 
@@ -871,9 +872,24 @@ async def acknowledge_order(order_id: str):
 
     Called by the appliance agent when it picks up a pending order.
     Updates status from 'pending' to 'acknowledged'.
+    Handles fleet-wide orders (prefixed with 'fleet-') by recording in fleet_order_completions.
     """
     pool = await get_pool()
     now = datetime.now(timezone.utc)
+
+    # Handle fleet-wide orders (format: fleet::{uuid}::{appliance_id})
+    if order_id.startswith("fleet::"):
+        parts = order_id.split("::", 2)
+        if len(parts) == 3:
+            fleet_order_id, appliance_id = parts[1], parts[2]
+            async with pool.acquire() as conn:
+                await record_fleet_order_completion(conn, fleet_order_id, appliance_id, "acknowledged")
+                return {
+                    "status": "acknowledged",
+                    "order_id": order_id,
+                    "order_type": "fleet",
+                    "acknowledged_at": now.isoformat()
+                }
 
     async with pool.acquire() as conn:
         # Update the order status
@@ -939,6 +955,7 @@ async def complete_order(order_id: str, request: OrderCompleteRequest):
 
     Called by the appliance agent after executing an order.
     Updates status to 'completed' or 'failed' based on success flag.
+    Handles fleet-wide orders (prefixed with 'fleet-') by recording in fleet_order_completions.
     """
     pool = await get_pool()
     now = datetime.now(timezone.utc)
@@ -947,6 +964,20 @@ async def complete_order(order_id: str, request: OrderCompleteRequest):
     result_data = request.result or {}
     if request.error_message:
         result_data['error_message'] = request.error_message
+
+    # Handle fleet-wide orders (format: fleet::{uuid}::{appliance_id})
+    if order_id.startswith("fleet::"):
+        parts = order_id.split("::", 2)
+        if len(parts) == 3:
+            fleet_order_id, appliance_id = parts[1], parts[2]
+            async with pool.acquire() as conn:
+                await record_fleet_order_completion(conn, fleet_order_id, appliance_id, new_status)
+                return {
+                    "status": new_status,
+                    "order_id": order_id,
+                    "order_type": "fleet",
+                    "completed_at": now.isoformat()
+                }
 
     async with pool.acquire() as conn:
         # Try admin_orders first
@@ -1690,6 +1721,16 @@ async def appliance_checkin(checkin: ApplianceCheckin):
         except Exception as e:
             import logging
             logging.warning(f"Failed to fetch healing orders: {e}")
+
+        # === STEP 4.5: Get fleet-wide orders ===
+        try:
+            fleet_orders = await get_fleet_orders_for_appliance(
+                conn, canonical_id, checkin.agent_version
+            )
+            pending_orders.extend(fleet_orders)
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to fetch fleet orders: {e}")
 
         # === STEP 5: Get windows targets (conditional credential delivery) ===
         # Only send credentials if appliance doesn't have fresh local copies

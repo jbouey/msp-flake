@@ -112,6 +112,7 @@ class RejectRequest(BaseModel):
 
 # Mapping from check_type to runbook IDs (mirrors learning_loop.py)
 CHECK_TYPE_TO_RUNBOOK = {
+    # Legacy NixOS/Python agent check types
     "firewall": "RB-WIN-FIREWALL-001",
     "antivirus": "RB-WIN-AV-001",
     "av_edr": "RB-WIN-AV-001",
@@ -124,6 +125,37 @@ CHECK_TYPE_TO_RUNBOOK = {
     "audit_policy": "RB-WIN-LOGGING-001",
     "screen_lock": "RB-WIN-SCREENLOCK-001",
     "screenlock": "RB-WIN-SCREENLOCK-001",
+    # Go daemon Windows scanner check types
+    "firewall_status": "RB-WIN-SEC-001",
+    "windows_defender": "RB-WIN-SEC-003",
+    "windows_update": "RB-WIN-SVC-001",
+    "audit_logging": "RB-WIN-SEC-002",
+    "bitlocker_status": "RB-WIN-SEC-005",
+    "smb_signing": "RB-WIN-SEC-007",
+    "smb1_protocol": "RB-WIN-SEC-020",
+    "screen_lock_policy": "RB-WIN-SEC-016",
+    "defender_exclusions": "RB-WIN-SEC-017",
+    "dns_config": "RB-WIN-NET-001",
+    "network_profile": "RB-WIN-NET-003",
+    "service_dns": "RB-WIN-SVC-001",
+    "service_netlogon": "RB-WIN-SVC-001",
+    "password_policy": "RB-WIN-SEC-022",
+    "rdp_nla": "RB-WIN-SEC-023",
+    "guest_account": "RB-WIN-SEC-024",
+    # Go daemon Linux scanner check types
+    "linux_firewall": "LIN-FW-001",
+    "linux_ssh_config": "LIN-SSH-001",
+    "linux_failed_services": "LIN-SVC-001",
+    "linux_audit_logging": "LIN-AUDIT-001",
+    "linux_kernel_params": "LIN-KERN-001",
+    "linux_log_forwarding": "LIN-LOG-001",
+    "linux_file_permissions": "LIN-PERM-001",
+    "linux_suid_binaries": "LIN-SUID-001",
+    "linux_cron_review": "LIN-CRON-001",
+    "linux_disk_space": "LIN-DISK-001",
+    "linux_ntp_sync": "LIN-NTP-001",
+    "linux_unattended_upgrades": "LIN-UPGRADES-001",
+    "linux_cert_expiry": "LIN-CERT-001",
 }
 
 
