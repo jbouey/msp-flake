@@ -45,10 +45,10 @@ Three deployment scripts with comprehensive error handling and port 4444 SSH acc
 ssh -p 4444 root@localhost
 
 # Check agent status
-ssh -p 4444 root@localhost systemctl status compliance-agent
+ssh -p 4444 root@localhost systemctl status appliance-daemon
 
 # View logs
-ssh -p 4444 root@localhost journalctl -u compliance-agent -f
+ssh -p 4444 root@localhost journalctl -u appliance-daemon -f
 ```
 
 ## Error Handling Features
@@ -301,14 +301,14 @@ deploy/
    ssh -p 4444 root@localhost
    ```
 
-3. **Check compliance agent:**
+3. **Check appliance daemon:**
    ```bash
-   ssh -p 4444 root@localhost systemctl status compliance-agent
+   ssh -p 4444 root@localhost systemctl status appliance-daemon
    ```
 
 4. **View agent logs:**
    ```bash
-   ssh -p 4444 root@localhost journalctl -u compliance-agent -f
+   ssh -p 4444 root@localhost journalctl -u appliance-daemon -f
    ```
 
 5. **Run integration tests:**

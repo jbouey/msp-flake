@@ -233,7 +233,7 @@ journalctl -u osiriscare-agent -f          # Watch agent logs
 ```bash
 ssh root@192.168.88.246                    # SSH access
 ssh root@osiriscare-appliance.local        # mDNS access
-journalctl -u compliance-agent -f          # Watch agent logs
+journalctl -u appliance-daemon -f          # Watch agent logs
 cat /var/lib/msp/config.yaml               # View config
 ```
 

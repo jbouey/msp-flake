@@ -588,7 +588,7 @@ in
   systemd.services.msp-health-gate = {
     description = "MSP Boot Health Gate";
     wantedBy = [ "multi-user.target" ];
-    before = [ "compliance-agent.service" ];
+    before = [ "appliance-daemon.service" ];
     after = [ "network-online.target" "local-fs.target" "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
 
@@ -619,35 +619,25 @@ in
   };
 
   # ============================================================================
-  # Full Compliance Agent
+  # Python Compliance Agent (DEPRECATED — kept for L2 sidecar only)
+  # Go appliance-daemon is now the production agent. Python agent disabled by default.
   # ============================================================================
-
-  # Compliance agent systemd service
   systemd.services.compliance-agent = {
-    description = "OsirisCare Compliance Agent";
-    wantedBy = [ "multi-user.target" ];
+    description = "OsirisCare Compliance Agent (DEPRECATED)";
+    # NOT in wantedBy — does not start by default
     after = [ "network-online.target" "msp-auto-provision.service" "msp-health-gate.service" ];
     requires = [ "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
-
-    # Don't start if Go daemon feature flag is set
-    unitConfig.ConditionPathExists = "!/var/lib/msp/.use-go-daemon";
 
     serviceConfig = {
       Type = "simple";
       ExecStart = "${compliance-agent}/bin/compliance-agent-appliance";
       Restart = "always";
       RestartSec = "10s";
-
-      # Working directory for config
       WorkingDirectory = "/var/lib/msp";
-
-      # Logging
       StandardOutput = "journal";
       StandardError = "journal";
       SyslogIdentifier = "compliance-agent";
-
-      # Security hardening
       ProtectSystem = "strict";
       ProtectHome = true;
       PrivateTmp = true;
@@ -655,7 +645,6 @@ in
       NoNewPrivileges = true;
     };
 
-    # Enable active healing (not dry-run) for learning data collection
     environment = {
       HEALING_DRY_RUN = "false";
       STATE_DIR = "/var/lib/msp";
@@ -663,8 +652,10 @@ in
   };
 
   # ============================================================================
-  # Go Appliance Daemon (feature-flagged replacement for Python agent)
-  # Enable: touch /var/lib/msp/.use-go-daemon && systemctl restart appliance-daemon
+  # Go Appliance Daemon — PRIMARY AGENT
+  # Production agent: L1/L2/L3 healing, Windows+Linux scanning, evidence chain,
+  # flap detection, learning flywheel, fleet updates, auto-deploy, AD discovery.
+  # 6.6MB RAM | 102ms startup | 15MB binary
   # ============================================================================
   systemd.services.appliance-daemon = {
     description = "OsirisCare Appliance Daemon (Go)";
@@ -672,9 +663,6 @@ in
     after = [ "network-online.target" "msp-auto-provision.service" "msp-health-gate.service" ];
     requires = [ "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
-
-    # Only start if Go daemon feature flag is set
-    unitConfig.ConditionPathExists = "/var/lib/msp/.use-go-daemon";
 
     serviceConfig = {
       Type = "simple";
@@ -934,7 +922,7 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "local-fs.target" ];
     wants = [ "network-online.target" ];
-    before = [ "compliance-agent.service" ];
+    before = [ "appliance-daemon.service" ];
 
     serviceConfig = {
       Type = "oneshot";
@@ -1096,7 +1084,7 @@ in
       log "  2. Insert USB with config.yaml and reboot"
       log "  3. Pre-register MAC in Central Command dashboard"
       log ""
-      log "After provisioning: systemctl restart compliance-agent"
+      log "After provisioning: systemctl restart appliance-daemon"
 
       # Write instructions to console
       cat > /etc/issue.d/90-msp-provision.issue << 'ISSUE'

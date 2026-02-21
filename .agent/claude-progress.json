@@ -29,6 +29,13 @@
       "flake.nix (nixosConfigurations.appliance)"
     ]
   },
+  "agent_decision": {
+    "active": "Go appliance-daemon (appliance/appliance-daemon/)",
+    "deprecated": "Python compliance-agent (packages/compliance-agent/) — DO NOT USE for new work",
+    "rationale": "Go daemon is production-ready with full L1/L2/L3 healing, Windows+Linux scanning, evidence chain, flap detection, learning flywheel, fleet updates, auto-deploy, AD discovery. 17x less RAM (6.6MB vs 112MB), 6000x faster startup (102ms vs 10min), 73x smaller binary (15MB vs 1.1GB).",
+    "l2_sidecar": "Python L2 LLM planner still needed as separate sidecar via /var/lib/msp/l2.sock — NOT the full compliance-agent",
+    "decided": "2026-02-21"
+  },
   "fleet_update_mechanism": {
     "overlay_flow": [
       "1. Insert update_agent order with tarball URL",
@@ -173,7 +180,8 @@
     "Backend router with ~30 endpoints + templates (SRA questions, policy docs, checklists)",
     "Frontend hub page + 10 module components with tab navigation",
     "Fixed TypeScript build: removed 4 unused vars (user, getReadinessBg, items, templateItems)",
-    "CI/CD deploy verified: both hipaa_modules.py + hipaa_templates.py live on VPS"
+    "CI/CD deploy verified: both hipaa_modules.py + hipaa_templates.py live on VPS",
+    "LinkedIn marketing images: HIPAA compliance (10 modules) + blockchain OTS (evidence anchoring) — 1200x627 @2x PNGs"
   ],
   "recent_commits": [
     {

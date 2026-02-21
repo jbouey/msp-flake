@@ -202,12 +202,12 @@ echo -e "${YELLOW}[5/7] Appliance Checks (${APPLIANCE_IP})${NC}"
 if ssh_check "$APPLIANCE_IP" "echo ok" 5 > /dev/null 2>&1; then
     check_pass "Appliance SSH accessible"
 
-    # Check compliance-agent service
-    AGENT_STATUS=$(ssh_check "$APPLIANCE_IP" "systemctl is-active compliance-agent" 5 || echo "unknown")
+    # Check appliance-daemon service (Go agent)
+    AGENT_STATUS=$(ssh_check "$APPLIANCE_IP" "systemctl is-active appliance-daemon" 5 || echo "unknown")
     if [ "$AGENT_STATUS" = "active" ]; then
-        check_pass "compliance-agent service active"
+        check_pass "appliance-daemon service active"
     else
-        check_fail "compliance-agent service not active ($AGENT_STATUS)"
+        check_fail "appliance-daemon service not active ($AGENT_STATUS)"
     fi
 
     # Check config exists

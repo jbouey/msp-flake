@@ -187,7 +187,7 @@ ${BLUE}VM Management:${NC}
 ${BLUE}Next Steps:${NC}
   1. SSH into the VM: ssh -p 4444 root@localhost
   2. Change root password: passwd
-  3. Check compliance agent: systemctl status compliance-agent
-  4. View logs: journalctl -u compliance-agent -f
+  3. Check appliance daemon: systemctl status appliance-daemon
+  4. View logs: journalctl -u appliance-daemon -f
 
 EOF

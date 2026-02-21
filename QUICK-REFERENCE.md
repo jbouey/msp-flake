@@ -178,10 +178,10 @@ VBoxManage list runningvms | grep test-client-wired
 ssh -p 4444 root@localhost
 
 # 3. Inside VM - check agent
-systemctl status compliance-agent
+systemctl status appliance-daemon
 
 # 4. Watch logs
-journalctl -u compliance-agent -f
+journalctl -u appliance-daemon -f
 
 # 5. Run tests
 nix flake check

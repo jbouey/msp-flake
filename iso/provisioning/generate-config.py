@@ -362,10 +362,10 @@ Next steps:
   3. On appliance, install config:
      cp /mnt/usb/msp/config.yaml /var/lib/msp/
      cp -r /mnt/usb/msp/certs /etc/msp/
-     systemctl restart compliance-agent
+     systemctl restart appliance-daemon
 
   4. Verify phone-home:
-     journalctl -u compliance-agent -f
+     journalctl -u appliance-daemon -f
 """)
 
 

@@ -89,6 +89,14 @@ All 10 modules verified on `dashboard.osiriscare.net/client/compliance`:
 1. **TypeScript build failure** — 4 unused variables prevented CI/CD frontend build (`7b18a62`)
 2. **CSRF 403 on all client portal POSTs** — CSRF middleware was not exempting `/api/client/` routes. Client portal uses separate session cookie auth (`osiris_client_session`), same pattern as `/api/portal/`, `/api/fleet/` which were already exempt. Fixed by broadening `/api/client/auth/` exemption to `/api/client/` (`f41151a`)
 
+## LinkedIn Marketing Assets
+
+Created 2 polished LinkedIn marketing images (1200x627 @2x retina):
+1. **`linkedin-hipaa-compliance.png`** — HIPAA Compliance Center: 10 module cards, stats (10 modules, 40 SRA questions, 8 policy templates)
+2. **`linkedin-blockchain-ots.png`** — Blockchain Evidence Timestamping: 5-step evidence flow, SHA-256 hash example, stats (2,700+ proofs anchored, $0 cost, 24hr anchor time), HIPAA section references
+
+Both saved to `~/Downloads/`. Accompanying post copy drafted for each.
+
 ## Architecture Decisions
 
 - **Single backend file** (`hipaa_modules.py`) — all 10 modules share patterns (org-scoped CRUD, asyncpg pool, same auth). Avoids 10-file fragmentation.

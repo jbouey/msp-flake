@@ -755,7 +755,7 @@ async def submit_evidence(
             status_code=401,
             detail="Evidence submission requires agent_signature. "
                    "Ensure the appliance has a signing key at "
-                   "/var/lib/compliance-agent/keys/signing.key"
+                   "/var/lib/msp/agent-signing-key"
         )
 
     registered_key = site_row.agent_public_key

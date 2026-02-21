@@ -62,7 +62,7 @@ case $choice in
         echo "  ssh -p 4444 root@localhost"
         echo ""
         echo "Check agent status:"
-        echo "  ssh -p 4444 root@localhost systemctl status compliance-agent"
+        echo "  ssh -p 4444 root@localhost systemctl status appliance-daemon"
         echo ""
         echo "Stop VM:"
         echo "  VBoxManage controlvm test-client-wired poweroff"

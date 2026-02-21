@@ -292,7 +292,7 @@ See [Partner API Documentation](./README.md) for complete endpoint reference.
 1. Check appliance power and network at client site
 2. Verify client firewall allows outbound HTTPS (443)
 3. Check DNS resolution at client site
-4. Review appliance logs: `journalctl -u compliance-agent -n 100`
+4. Review appliance logs: `journalctl -u appliance-daemon -n 100`
 
 ### Credential Validation Fails
 

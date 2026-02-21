@@ -269,9 +269,9 @@ nix-build '<nixpkgs/nixos>' \
    # Connect to VM
    ssh -p 4444 root@localhost
 
-   # Check compliance agent
-   systemctl status compliance-agent
-   journalctl -u compliance-agent -f
+   # Check appliance daemon
+   systemctl status appliance-daemon
+   journalctl -u appliance-daemon -f
    ```
 
 ## Related Documentation

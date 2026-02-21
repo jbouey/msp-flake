@@ -255,7 +255,7 @@ EOF
     SSH:        ssh msp@osiriscare.local
     Portal:     http://osiriscare.local:8084
 
-    Agent:      journalctl -u compliance-agent -f
+    Agent:      journalctl -u appliance-daemon -f
     Health:     systemctl status msp-health-check
 
   '';
@@ -266,7 +266,7 @@ EOF
   systemd.services.msp-health-gate = {
     description = "MSP Boot Health Gate";
     wantedBy = [ "multi-user.target" ];
-    before = [ "compliance-agent.service" ];
+    before = [ "appliance-daemon.service" ];
     after = [ "network-online.target" "local-fs.target" "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
 
@@ -292,16 +292,14 @@ EOF
   };
 
   # ============================================================================
-  # Full Compliance Agent (Python — runs unless Go daemon is enabled)
+  # Python Compliance Agent (DEPRECATED — kept for L2 sidecar only)
+  # Go appliance-daemon is now the production agent. Python agent disabled by default.
   # ============================================================================
   systemd.services.compliance-agent = {
-    description = "OsirisCare Compliance Agent";
-    wantedBy = [ "multi-user.target" ];
+    description = "OsirisCare Compliance Agent (DEPRECATED)";
+    # NOT in wantedBy — does not start by default
     after = [ "network-online.target" "msp-auto-provision.service" "msp-health-gate.service" ];
     wants = [ "network-online.target" ];
-
-    # Don't start if Go daemon feature flag is set
-    unitConfig.ConditionPathExists = "!/var/lib/msp/.use-go-daemon";
 
     serviceConfig = {
       Type = "simple";
@@ -326,18 +324,16 @@ EOF
   };
 
   # ============================================================================
-  # Go Appliance Daemon (feature-flagged replacement for Python agent)
-  # Enable: touch /var/lib/msp/.use-go-daemon && systemctl restart appliance-daemon
-  # Disable: rm /var/lib/msp/.use-go-daemon && systemctl stop appliance-daemon && systemctl start compliance-agent
+  # Go Appliance Daemon — PRIMARY AGENT
+  # Production agent: L1/L2/L3 healing, Windows+Linux scanning, evidence chain,
+  # flap detection, learning flywheel, fleet updates, auto-deploy, AD discovery.
+  # 6.6MB RAM | 102ms startup | 15MB binary
   # ============================================================================
   systemd.services.appliance-daemon = {
     description = "OsirisCare Appliance Daemon (Go)";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "msp-auto-provision.service" "msp-health-gate.service" ];
     wants = [ "network-online.target" ];
-
-    # Only start if Go daemon feature flag is set
-    unitConfig.ConditionPathExists = "/var/lib/msp/.use-go-daemon";
 
     serviceConfig = {
       Type = "simple";
@@ -670,7 +666,7 @@ EOF
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "local-fs.target" ];
     wants = [ "network-online.target" ];
-    before = [ "compliance-agent.service" ];
+    before = [ "appliance-daemon.service" ];
 
     serviceConfig = {
       Type = "oneshot";

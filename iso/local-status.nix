@@ -500,7 +500,7 @@ in
   systemd.services.msp-status-api = {
     description = "MSP Status API";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network.target" "compliance-agent.service" ];
+    after = [ "network.target" "appliance-daemon.service" ];
 
     serviceConfig = {
       Type = "simple";

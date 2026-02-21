@@ -53,7 +53,7 @@
         users = [ "msp" ];
         commands = [
           # Only allow specific commands without password for automation
-          { command = "/run/current-system/sw/bin/systemctl restart compliance-agent"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/systemctl restart appliance-daemon"; options = [ "NOPASSWD" ]; }
           { command = "/run/current-system/sw/bin/systemctl status *"; options = [ "NOPASSWD" ]; }
           { command = "/run/current-system/sw/bin/journalctl *"; options = [ "NOPASSWD" ]; }
         ];
@@ -148,11 +148,11 @@
       MEM_FREE=$(free -m | awk 'NR==2 {print $4}')
       echo "Memory: $MEM_FREE MB free"
 
-      # Check compliance agent
-      if systemctl is-active --quiet compliance-agent; then
-        echo "compliance-agent: active"
+      # Check appliance daemon (Go)
+      if systemctl is-active --quiet appliance-daemon; then
+        echo "appliance-daemon: active"
       else
-        echo "ERROR: compliance-agent not running"
+        echo "ERROR: appliance-daemon not running"
       fi
 
       # Check time sync
@@ -228,8 +228,8 @@
         # Roll back by activating the previous system
         if [ -n "$PREV_SYSTEM" ] && [ -e "$PREV_SYSTEM/bin/switch-to-configuration" ]; then
           "$PREV_SYSTEM/bin/switch-to-configuration" test 2>&1 | logger -t "$LOG_TAG"
-          logger -t "$LOG_TAG" "Rolled back successfully. Restarting compliance-agent."
-          systemctl restart compliance-agent || true
+          logger -t "$LOG_TAG" "Rolled back successfully. Restarting appliance-daemon."
+          systemctl restart appliance-daemon || true
         else
           logger -t "$LOG_TAG" "ERROR: Cannot find previous system at $PREV_SYSTEM, manual intervention needed"
         fi
