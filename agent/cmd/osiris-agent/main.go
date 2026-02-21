@@ -164,6 +164,7 @@ func runAgent(ctx context.Context) error {
 	}
 
 	checkRegistry := checks.NewRegistry(enabledChecks)
+	flapDetector := checks.NewFlapDetector()
 
 	// Offline queue
 	offlineQueue, err := transport.NewOfflineQueue(cfg.DataDir)
@@ -204,6 +205,12 @@ func runAgent(ctx context.Context) error {
 		}
 		driftEvent := event.ConvertToDriftEvent(agentID, hostname)
 
+		// Flap detection for real-time events
+		if !flapDetector.ShouldSend(event.CheckType, event.Passed) {
+			log.Printf("[REALTIME] Suppressed flapping event: %s (%s)", event.CheckType, flapDetector.Status(event.CheckType))
+			return
+		}
+
 		if grpcClient != nil && grpcClient.IsConnected() {
 			if err := grpcClient.SendDrift(ctx, driftEvent); err != nil {
 				log.Printf("[REALTIME] Failed to send event, queueing: %v", err)
@@ -230,7 +237,7 @@ func runAgent(ctx context.Context) error {
 
 	log.Printf("Starting compliance check loop (interval: %ds, checks: %v)", checkInterval, enabledChecks)
 
-	runChecks(ctx, checkRegistry, grpcClient, offlineQueue, regResp)
+	runChecks(ctx, checkRegistry, grpcClient, offlineQueue, regResp, flapDetector)
 
 	for {
 		select {
@@ -238,7 +245,7 @@ func runAgent(ctx context.Context) error {
 			log.Println("Shutting down gracefully")
 			return nil
 		case <-ticker.C:
-			runChecks(ctx, checkRegistry, grpcClient, offlineQueue, regResp)
+			runChecks(ctx, checkRegistry, grpcClient, offlineQueue, regResp, flapDetector)
 		}
 	}
 }
@@ -320,6 +327,7 @@ func runChecks(
 	client *transport.GRPCClient,
 	queue *transport.OfflineQueue,
 	reg *pb.RegisterResponse,
+	flap *checks.FlapDetector,
 ) {
 	log.Println("Running compliance checks...")
 	start := time.Now()
@@ -328,6 +336,7 @@ func runChecks(
 
 	passCount := 0
 	failCount := 0
+	suppressedCount := 0
 
 	for _, result := range results {
 		if result.Error != nil {
@@ -335,12 +344,22 @@ func runChecks(
 			continue
 		}
 
+		// Record all results in flap detector (pass and fail)
+		shouldSend := flap.ShouldSend(result.CheckType, result.Passed)
+
 		if result.Passed {
 			log.Printf("  [PASS] %s", result.CheckType)
 			passCount++
 		} else {
-			log.Printf("  [FAIL] %s: expected=%q, actual=%q", result.CheckType, result.Expected, result.Actual)
 			failCount++
+
+			if !shouldSend {
+				log.Printf("  [FAIL] %s: suppressed (flapping: %s)", result.CheckType, flap.Status(result.CheckType))
+				suppressedCount++
+				continue
+			}
+
+			log.Printf("  [FAIL] %s: expected=%q, actual=%q", result.CheckType, result.Expected, result.Actual)
 
 			agentID := ""
 			if reg != nil {
@@ -358,6 +377,13 @@ func runChecks(
 				Timestamp:    checks.GetTimestamp(),
 				Metadata:     result.Metadata,
 			}
+			// Tag flapping events so the backend knows
+			if flap.Status(result.CheckType) != "stable" {
+				if event.Metadata == nil {
+					event.Metadata = make(map[string]string)
+				}
+				event.Metadata["flapping"] = "true"
+			}
 
 			if client != nil && client.IsConnected() {
 				if err := client.SendDrift(ctx, event); err != nil {
@@ -373,7 +399,11 @@ func runChecks(
 	}
 
 	elapsed := time.Since(start)
-	log.Printf("Checks complete in %v: %d passed, %d failed", elapsed, passCount, failCount)
+	if suppressedCount > 0 {
+		log.Printf("Checks complete in %v: %d passed, %d failed (%d suppressed as flapping)", elapsed, passCount, failCount, suppressedCount)
+	} else {
+		log.Printf("Checks complete in %v: %d passed, %d failed", elapsed, passCount, failCount)
+	}
 
 	if client != nil && client.IsConnected() && queue != nil {
 		drainQueue(ctx, client, queue)

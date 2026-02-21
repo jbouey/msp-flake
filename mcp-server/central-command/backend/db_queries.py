@@ -491,7 +491,9 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
         }
     
     # Collect scores by category using pre-computed lookup
+    # Also track per-check-type results for flap detection
     category_scores = {cat: [] for cat in CATEGORY_CHECKS}
+    check_sequences: Dict[str, list] = {}  # check_type -> [bool pass/fail]
 
     for bundle in bundles:
         checks = bundle.checks or []
@@ -502,26 +504,49 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
             # Map status to score
             if status in ("compliant", "pass"):
                 score = 100
+                passed = True
             elif status == "warning":
                 score = 50
+                passed = True
             elif status in ("non_compliant", "fail"):
                 score = 0
+                passed = False
             else:
                 continue  # Skip unknown statuses
+
+            # Track sequence for flap detection
+            if check_type not in check_sequences:
+                check_sequences[check_type] = []
+            check_sequences[check_type].append(passed)
 
             # O(1) category lookup instead of nested loop
             category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
             if category:
                 category_scores[category].append(score)
-    
-    # Calculate average for each category
+
+    # Detect flapping check types and dampen their scores
+    flapping_checks = set()
+    for ct, seq in check_sequences.items():
+        if len(seq) >= 4:
+            pass_pct = (sum(1 for s in seq if s) / len(seq)) * 100
+            # Flapping = neither consistently passing nor failing
+            if 20 < pass_pct < 80:
+                flapping_checks.add(ct)
+
+    # Calculate average for each category with flap dampening
     result_scores = {}
     total_score = 0
     categories_with_data = 0
-    
+
     for category, scores in category_scores.items():
         if scores:
             avg = sum(scores) / len(scores)
+            # If any check in this category is flapping and score < 50,
+            # floor at 50 (warn level) to prevent flap noise from tanking score
+            cat_checks = CATEGORY_CHECKS.get(category, [])
+            has_flapping = any(ct in flapping_checks for ct in cat_checks)
+            if has_flapping and avg < 50:
+                avg = 50.0
             result_scores[category] = round(avg)
             total_score += avg
             categories_with_data += 1
@@ -1178,13 +1203,31 @@ async def get_control_results_for_site(
                 check_results[check_type]["last_checked"] = row.checked_at
                 check_results[check_type]["last_status"] = status
 
-    # Calculate pass rates
+    # Calculate pass rates and detect flapping
     for check_type, data in check_results.items():
         total = data["total"]
         if total > 0:
             data["pass_rate"] = round((data["pass_count"] / total) * 100, 1)
         else:
             data["pass_rate"] = None
+
+        # Detect flapping: count state transitions in chronological order
+        # A check is flapping if it changes state frequently relative to
+        # total checks (>40% of checks are transitions)
+        data["flapping"] = False
+        if total >= 4:
+            transitions = 0
+            fail_pct = (data["fail_count"] / total) * 100
+            pass_pct = (data["pass_count"] / total) * 100
+            # Flapping = both pass and fail are significant (neither dominates)
+            # and pass rate is between 20-80% (not a consistent state)
+            if 20 < pass_pct < 80:
+                data["flapping"] = True
+                # Dampen flapping scores: cap at "warn" level (50) instead of
+                # raw average which can be very low due to interleaved failures
+                if data["pass_rate"] is not None and data["pass_rate"] < 50:
+                    data["pass_rate_raw"] = data["pass_rate"]
+                    data["pass_rate"] = 50.0  # Floor at warn, not fail
 
     return check_results
 
