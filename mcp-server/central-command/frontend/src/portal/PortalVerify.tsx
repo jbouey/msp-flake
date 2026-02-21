@@ -24,6 +24,9 @@ interface BundleInfo {
   bundle_hash: string;
   is_signed: boolean;
   signed_by: string | null;
+  ots_status?: string;
+  bitcoin_block?: number | null;
+  anchored_at?: string | null;
 }
 
 interface BundlesResponse {
@@ -32,6 +35,41 @@ interface BundlesResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+interface BlockchainAnchor {
+  bitcoin_block: number;
+  anchored_at: string | null;
+  bundle_id: string;
+  check_type: string;
+  checked_at: string | null;
+  blockstream_url: string;
+}
+
+interface BlockchainStatus {
+  site_id: string;
+  blockchain: {
+    total_proofs: number;
+    anchored: number;
+    verified: number;
+    pending: number;
+    expired: number;
+    anchor_rate_pct: number;
+    first_bitcoin_block: number | null;
+    latest_bitcoin_block: number | null;
+    last_anchored: string | null;
+    oldest_pending: string | null;
+    blockstream_url: string | null;
+  };
+  evidence_chain: {
+    total_bundles: number;
+    signed_bundles: number;
+    verified_signatures: number;
+    chain_length: number;
+    first_evidence: string | null;
+    last_evidence: string | null;
+  };
+  recent_anchors: BlockchainAnchor[];
 }
 
 const StatusBadge: React.FC<{ status: VerificationResult['status'] }> = ({ status }) => {
@@ -54,12 +92,12 @@ const StatusBadge: React.FC<{ status: VerificationResult['status'] }> = ({ statu
     error: 'Error',
   };
   const icons: Record<string, string> = {
-    valid: '✓',
-    verified: '✓',
-    invalid: '✗',
-    broken: '✗',
-    signature_invalid: '⚠',
-    empty: '○',
+    valid: '\u2713',
+    verified: '\u2713',
+    invalid: '\u2717',
+    broken: '\u2717',
+    signature_invalid: '\u26A0',
+    empty: '\u25CB',
     error: '!',
   };
 
@@ -67,6 +105,37 @@ const StatusBadge: React.FC<{ status: VerificationResult['status'] }> = ({ statu
     <span className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border ${colors[status] || colors.error}`}>
       <span className="text-lg">{icons[status] || '?'}</span>
       {labels[status] || status}
+    </span>
+  );
+};
+
+const OtsBadge: React.FC<{ status: string; block?: number | null }> = ({ status, block }) => {
+  const config: Record<string, { bg: string; label: string }> = {
+    anchored: { bg: 'bg-amber-100 text-amber-800', label: 'Bitcoin Anchored' },
+    verified: { bg: 'bg-green-100 text-green-800', label: 'Bitcoin Verified' },
+    pending: { bg: 'bg-blue-100 text-blue-700', label: 'Pending' },
+    none: { bg: 'bg-slate-100 text-slate-500', label: 'No Proof' },
+  };
+  const c = config[status] || config.none;
+  return (
+    <span className={`text-xs px-2 py-1 rounded inline-flex items-center gap-1 ${c.bg}`}>
+      {(status === 'anchored' || status === 'verified') && (
+        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15l-5-5 1.41-1.41L11 14.17l7.59-7.59L20 8l-9 9z"/>
+        </svg>
+      )}
+      {c.label}
+      {block && (
+        <a
+          href={`https://blockstream.info/block-height/${block}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline ml-1"
+          title="View on Bitcoin blockchain"
+        >
+          #{block.toLocaleString()}
+        </a>
+      )}
     </span>
   );
 };
@@ -104,7 +173,7 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
                 <div>
                   <h4 className="font-semibold text-slate-900">{bundle.bundle_id}</h4>
                   <p className="text-sm text-slate-500">
-                    {new Date(bundle.created_at).toLocaleString()}
+                    {new Date(bundle.created_at || bundle.checked_at).toLocaleString()}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -116,6 +185,7 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
                       Signed
                     </span>
                   )}
+                  <OtsBadge status={bundle.ots_status || 'none'} block={bundle.bitcoin_block} />
                   <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded">
                     {bundle.checks_count} checks
                   </span>
@@ -149,6 +219,172 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
   );
 };
 
+const BlockchainSection: React.FC<{ data: BlockchainStatus }> = ({ data }) => {
+  const bc = data.blockchain;
+  const anchored = bc.anchored + bc.verified;
+
+  return (
+    <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 mb-8">
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">
+            <svg className="w-5 h-5 text-amber-700" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M11.944 17.97L4.58 13.62 11.943 24l7.37-10.38-7.372 4.35h.003zM12.056 0L4.69 12.223l7.365 4.354 7.365-4.35L12.056 0z"/>
+            </svg>
+          </div>
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Bitcoin Blockchain Anchoring</h2>
+            <p className="text-sm text-slate-500">Evidence timestamps independently verified on the Bitcoin network</p>
+          </div>
+        </div>
+        {anchored > 0 && (
+          <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border bg-amber-50 text-amber-800 border-amber-200">
+            <span className="text-lg">{'\u2713'}</span>
+            {bc.anchor_rate_pct}% Anchored
+          </span>
+        )}
+      </div>
+
+      {/* Auditor explanation */}
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+        <p className="text-sm text-amber-900">
+          <strong>For auditors and legal:</strong> Each evidence bundle's SHA-256 hash is submitted to the
+          Bitcoin blockchain via OpenTimestamps. Once anchored in a Bitcoin block, the timestamp becomes
+          independently verifiable by any third party — proving this evidence existed at a specific point in
+          time and has not been altered. This provides non-repudiation that cannot be forged or backdated.
+        </p>
+      </div>
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-slate-50 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-amber-600">{anchored.toLocaleString()}</span>
+          <p className="text-sm text-slate-500 mt-1">Bitcoin Anchored</p>
+        </div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-slate-900">{bc.total_proofs.toLocaleString()}</span>
+          <p className="text-sm text-slate-500 mt-1">Total Proofs</p>
+        </div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center">
+          <span className="text-3xl font-bold text-green-600">{bc.anchor_rate_pct}%</span>
+          <p className="text-sm text-slate-500 mt-1">Anchor Rate</p>
+        </div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center">
+          {bc.latest_bitcoin_block ? (
+            <a
+              href={`https://blockstream.info/block-height/${bc.latest_bitcoin_block}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-2xl font-bold text-blue-600 hover:underline"
+            >
+              #{bc.latest_bitcoin_block.toLocaleString()}
+            </a>
+          ) : (
+            <span className="text-2xl font-bold text-slate-400">--</span>
+          )}
+          <p className="text-sm text-slate-500 mt-1">Latest Block</p>
+        </div>
+      </div>
+
+      {/* Block range */}
+      {bc.first_bitcoin_block && bc.latest_bitcoin_block && (
+        <div className="bg-slate-50 rounded-lg p-4 mb-6">
+          <div className="flex items-center justify-between text-sm">
+            <div>
+              <span className="text-slate-500">First anchor: </span>
+              <a
+                href={`https://blockstream.info/block-height/${bc.first_bitcoin_block}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-blue-600 hover:underline"
+              >
+                Block #{bc.first_bitcoin_block.toLocaleString()}
+              </a>
+            </div>
+            <div className="text-slate-400">
+              {(bc.latest_bitcoin_block - bc.first_bitcoin_block).toLocaleString()} blocks span
+            </div>
+            <div>
+              <span className="text-slate-500">Latest anchor: </span>
+              <a
+                href={`https://blockstream.info/block-height/${bc.latest_bitcoin_block}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-blue-600 hover:underline"
+              >
+                Block #{bc.latest_bitcoin_block.toLocaleString()}
+              </a>
+            </div>
+          </div>
+          {/* Visual bar */}
+          <div className="mt-3 h-2 bg-slate-200 rounded-full overflow-hidden">
+            <div className="h-full bg-amber-400 rounded-full" style={{ width: `${bc.anchor_rate_pct}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* Recent anchors table */}
+      {data.recent_anchors.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-slate-700 mb-3">Recent Bitcoin Anchors</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="text-left py-2 text-slate-500 font-medium">Bitcoin Block</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Anchored</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Evidence Bundle</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Check Type</th>
+                  <th className="text-left py-2 text-slate-500 font-medium">Verify</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.recent_anchors.map((anchor) => (
+                  <tr key={anchor.bundle_id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="py-2">
+                      <a
+                        href={anchor.blockstream_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-blue-600 hover:underline"
+                      >
+                        #{anchor.bitcoin_block.toLocaleString()}
+                      </a>
+                    </td>
+                    <td className="py-2 text-slate-600">
+                      {anchor.anchored_at ? new Date(anchor.anchored_at).toLocaleString() : '--'}
+                    </td>
+                    <td className="py-2">
+                      <code className="text-xs font-mono text-slate-700">{anchor.bundle_id.substring(0, 20)}...</code>
+                    </td>
+                    <td className="py-2 text-slate-600">{anchor.check_type}</td>
+                    <td className="py-2">
+                      <a
+                        href={anchor.blockstream_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        Blockstream
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {bc.pending > 0 && (
+        <div className="mt-4 text-xs text-slate-500">
+          {bc.pending} proof{bc.pending !== 1 ? 's' : ''} awaiting Bitcoin confirmation (typically 1-6 hours)
+        </div>
+      )}
+    </section>
+  );
+};
+
 export const PortalVerify: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -157,6 +393,7 @@ export const PortalVerify: React.FC = () => {
 
   const [verification, setVerification] = useState<VerificationResult | null>(null);
   const [bundles, setBundles] = useState<BundleInfo[]>([]);
+  const [blockchain, setBlockchain] = useState<BlockchainStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -172,7 +409,7 @@ export const PortalVerify: React.FC = () => {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    // Fetch verification status and bundles in parallel
+    // Fetch verification status, bundles, and blockchain data in parallel
     Promise.all([
       fetch(`/api/evidence/sites/${siteId}/verify`, {
         credentials: 'include',
@@ -182,10 +419,15 @@ export const PortalVerify: React.FC = () => {
         credentials: 'include',
         headers
       }).then(r => r.json()),
+      fetch(`/api/evidence/sites/${siteId}/blockchain-status`, {
+        credentials: 'include',
+        headers
+      }).then(r => r.ok ? r.json() : null),
     ])
-      .then(([verifyData, bundlesData]: [VerificationResult, BundlesResponse]) => {
+      .then(([verifyData, bundlesData, blockchainData]: [VerificationResult, BundlesResponse, BlockchainStatus | null]) => {
         setVerification(verifyData);
         setBundles(bundlesData.bundles || []);
+        if (blockchainData) setBlockchain(blockchainData);
       })
       .catch((e) => {
         setError(e.message || 'Failed to load verification data');
@@ -341,6 +583,11 @@ export const PortalVerify: React.FC = () => {
           )}
         </section>
 
+        {/* Blockchain Anchoring Section */}
+        {blockchain && blockchain.blockchain.total_proofs > 0 && (
+          <BlockchainSection data={blockchain} />
+        )}
+
         {/* Bundle Timeline */}
         {bundles.length > 0 && (
           <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8">
@@ -348,6 +595,7 @@ export const PortalVerify: React.FC = () => {
             <p className="text-sm text-slate-500 mb-6">
               Each bundle contains a cryptographic hash linking it to the previous bundle,
               forming an immutable chain. The genesis bundle (G) starts the chain with an all-zeros previous hash.
+              Bundles with a Bitcoin anchor have their timestamp independently verifiable on the blockchain.
             </p>
             <BundleTimeline bundles={bundles} />
           </section>
@@ -356,7 +604,7 @@ export const PortalVerify: React.FC = () => {
         {/* How It Works */}
         <section className="mt-8 bg-blue-50 rounded-2xl border border-blue-200 p-8">
           <h2 className="text-lg font-semibold text-blue-900 mb-4">How Evidence Verification Works</h2>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 text-sm text-blue-800">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-6 text-sm text-blue-800">
             <div>
               <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold mb-3">1</div>
               <h3 className="font-semibold mb-1">Bundle Creation</h3>
@@ -375,14 +623,21 @@ export const PortalVerify: React.FC = () => {
               <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold mb-3">3</div>
               <h3 className="font-semibold mb-1">Ed25519 Signing</h3>
               <p className="text-blue-700">
-                Each bundle hash is signed with the server's Ed25519 private key, proving authenticity and origin.
+                Each bundle is signed with the appliance's Ed25519 private key, proving authenticity and origin.
               </p>
             </div>
             <div>
-              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold mb-3">4</div>
+              <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 font-bold mb-3">4</div>
+              <h3 className="font-semibold mb-1">Bitcoin Anchoring</h3>
+              <p className="text-amber-800">
+                The bundle hash is submitted to the Bitcoin blockchain via OpenTimestamps, creating a tamper-proof timestamp.
+              </p>
+            </div>
+            <div>
+              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold mb-3">5</div>
               <h3 className="font-semibold mb-1">Tamper Detection</h3>
               <p className="text-blue-700">
-                Any modification breaks the chain hash or invalidates the signature, revealing tampering.
+                Any modification breaks the chain hash, invalidates the signature, or mismatches the blockchain anchor.
               </p>
             </div>
           </div>
@@ -392,6 +647,10 @@ export const PortalVerify: React.FC = () => {
         <footer className="mt-12 pt-8 border-t border-slate-200 text-center">
           <p className="text-sm text-slate-500">
             This verification page provides cryptographic proof of evidence integrity for HIPAA auditors.
+            Bitcoin blockchain anchors can be independently verified at{' '}
+            <a href="https://blockstream.info" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+              blockstream.info
+            </a>.
           </p>
           <div className="mt-4 flex items-center justify-center gap-2">
             <span className="text-xs text-slate-300">Powered by</span>

@@ -482,9 +482,9 @@ async def submit_hash_to_ots(bundle_hash: str, bundle_id: str) -> Optional[Dict[
                         logger.warning(f"OTS calendar returned {resp.status}: {calendar_url}")
 
             except aiohttp.ClientError as e:
-                logger.warning(f"OTS client error for {calendar_url}: {e}")
+                logger.warning(f"OTS client error for {calendar_url}: {type(e).__name__}: {e}")
             except Exception as e:
-                logger.error(f"OTS unexpected error for {calendar_url}: {e}")
+                logger.error(f"OTS unexpected error for {calendar_url}: {type(e).__name__}: {e}")
 
         logger.error(f"All OTS calendars failed for bundle {bundle_id}")
         return None
@@ -1599,13 +1599,16 @@ async def list_evidence_bundles(
     offset: int = 0,
     db: AsyncSession = Depends(get_db)
 ):
-    """List evidence bundles for a site."""
+    """List evidence bundles for a site with OTS blockchain status."""
     result = await db.execute(text("""
-        SELECT bundle_id, bundle_hash, check_type, check_result, checked_at,
-               chain_position, ots_status, agent_signature IS NOT NULL as signed
-        FROM compliance_bundles
-        WHERE site_id = :site_id
-        ORDER BY checked_at DESC
+        SELECT cb.bundle_id, cb.bundle_hash, cb.check_type, cb.check_result, cb.checked_at,
+               cb.chain_position, cb.agent_signature IS NOT NULL as signed,
+               COALESCE(op.status, cb.ots_status, 'none') as ots_status,
+               op.bitcoin_block, op.anchored_at, op.calendar_url
+        FROM compliance_bundles cb
+        LEFT JOIN ots_proofs op ON op.bundle_id = cb.bundle_id
+        WHERE cb.site_id = :site_id
+        ORDER BY cb.checked_at DESC
         LIMIT :limit OFFSET :offset
     """), {"site_id": site_id, "limit": limit, "offset": offset})
 
@@ -1621,6 +1624,103 @@ async def list_evidence_bundles(
         "total": total,
         "limit": limit,
         "offset": offset,
+    }
+
+
+@router.get("/sites/{site_id}/blockchain-status")
+async def get_blockchain_status(
+    site_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get blockchain anchoring summary for a site.
+
+    Returns OTS proof statistics, recent Bitcoin anchors, and
+    verification-ready data for auditors and legal.
+    """
+    # Overall OTS stats
+    stats_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total_proofs,
+            COUNT(*) FILTER (WHERE status = 'pending') as pending,
+            COUNT(*) FILTER (WHERE status = 'anchored') as anchored,
+            COUNT(*) FILTER (WHERE status = 'verified') as verified,
+            COUNT(*) FILTER (WHERE status = 'expired') as expired,
+            MIN(submitted_at) FILTER (WHERE status = 'pending') as oldest_pending,
+            MAX(anchored_at) as last_anchored,
+            MIN(bitcoin_block) FILTER (WHERE bitcoin_block IS NOT NULL) as first_block,
+            MAX(bitcoin_block) FILTER (WHERE bitcoin_block IS NOT NULL) as latest_block
+        FROM ots_proofs
+        WHERE site_id = :site_id
+    """), {"site_id": site_id})
+    stats = stats_result.fetchone()
+
+    # Evidence chain stats
+    chain_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total_bundles,
+            COUNT(*) FILTER (WHERE signature_valid = true) as sig_verified,
+            COUNT(*) FILTER (WHERE agent_signature IS NOT NULL) as signed,
+            MAX(chain_position) as chain_length,
+            MIN(checked_at) as first_evidence,
+            MAX(checked_at) as last_evidence
+        FROM compliance_bundles
+        WHERE site_id = :site_id
+    """), {"site_id": site_id})
+    chain = chain_result.fetchone()
+
+    # Recent Bitcoin anchors (last 10 blocks)
+    anchors_result = await db.execute(text("""
+        SELECT op.bitcoin_block, op.anchored_at, op.bundle_id, op.calendar_url,
+               cb.check_type, cb.checked_at
+        FROM ots_proofs op
+        JOIN compliance_bundles cb ON cb.bundle_id = op.bundle_id
+        WHERE op.site_id = :site_id
+          AND op.status = 'anchored'
+          AND op.bitcoin_block IS NOT NULL
+        ORDER BY op.bitcoin_block DESC
+        LIMIT 10
+    """), {"site_id": site_id})
+    recent_anchors = [
+        {
+            "bitcoin_block": r.bitcoin_block,
+            "anchored_at": r.anchored_at.isoformat() if r.anchored_at else None,
+            "bundle_id": r.bundle_id,
+            "check_type": r.check_type,
+            "checked_at": r.checked_at.isoformat() if r.checked_at else None,
+            "blockstream_url": f"https://blockstream.info/block-height/{r.bitcoin_block}",
+        }
+        for r in anchors_result.fetchall()
+    ]
+
+    # Anchor rate calculation
+    total = stats.total_proofs or 0
+    anchored = (stats.anchored or 0) + (stats.verified or 0)
+    anchor_rate = round(anchored * 100.0 / total, 1) if total > 0 else 0.0
+
+    return {
+        "site_id": site_id,
+        "blockchain": {
+            "total_proofs": total,
+            "anchored": stats.anchored or 0,
+            "verified": stats.verified or 0,
+            "pending": stats.pending or 0,
+            "expired": stats.expired or 0,
+            "anchor_rate_pct": anchor_rate,
+            "first_bitcoin_block": stats.first_block,
+            "latest_bitcoin_block": stats.latest_block,
+            "last_anchored": stats.last_anchored.isoformat() if stats.last_anchored else None,
+            "oldest_pending": stats.oldest_pending.isoformat() if stats.oldest_pending else None,
+            "blockstream_url": f"https://blockstream.info/block-height/{stats.latest_block}" if stats.latest_block else None,
+        },
+        "evidence_chain": {
+            "total_bundles": chain.total_bundles or 0,
+            "signed_bundles": chain.signed or 0,
+            "verified_signatures": chain.sig_verified or 0,
+            "chain_length": chain.chain_length or 0,
+            "first_evidence": chain.first_evidence.isoformat() if chain.first_evidence else None,
+            "last_evidence": chain.last_evidence.isoformat() if chain.last_evidence else None,
+        },
+        "recent_anchors": recent_anchors,
     }
 
 
