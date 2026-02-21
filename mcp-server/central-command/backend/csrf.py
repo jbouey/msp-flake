@@ -96,7 +96,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/oauth/",           # OAuth callbacks don't have CSRF
         "/api/agent/",           # Agent sync endpoints use API-key auth
         "/api/partners/auth/",   # Partner login/logout
-        "/api/client/auth/",     # Client portal magic link login
+        "/api/client/",          # Client portal — separate session cookie auth
         "/api/portal/",          # Portal uses magic links, not cookies
         "/api/fleet/",           # Fleet updates - admin auth protected
         "/api/orders/",          # Order acknowledgement from appliances
