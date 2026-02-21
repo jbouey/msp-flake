@@ -2,6 +2,7 @@ package checkin
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -27,20 +28,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate Bearer token if configured
-	if h.authToken != "" {
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != h.authToken {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{
-				"error": "invalid or missing Bearer token",
-			})
-			return
-		}
+	// Read body once so we can parse site_id for per-site auth
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "failed to read body",
+		})
+		return
 	}
 
 	// Parse request
 	var req CheckinRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "invalid JSON: " + err.Error(),
 		})
@@ -53,6 +52,41 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"error": "site_id, hostname, and mac_address are required",
 		})
 		return
+	}
+
+	// Validate auth: accept static token OR per-site API key
+	auth := r.Header.Get("Authorization")
+	bearerToken := strings.TrimPrefix(auth, "Bearer ")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		bearerToken = ""
+	}
+
+	if h.authToken != "" || bearerToken != "" {
+		authorized := false
+
+		// Check 1: static auth token match
+		if h.authToken != "" && bearerToken == h.authToken {
+			authorized = true
+		}
+
+		// Check 2: per-site API key from appliance_provisioning
+		if !authorized && bearerToken != "" && req.SiteID != "" && h.db != nil {
+			valid, err := h.db.ValidateAPIKey(r.Context(), req.SiteID, bearerToken)
+			if err != nil {
+				log.Printf("[checkin] per-site auth check error for %s: %v", req.SiteID, err)
+			}
+			if valid {
+				authorized = true
+			}
+		}
+
+		// If auth token is configured but neither method matched, reject
+		if h.authToken != "" && !authorized {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "invalid or missing Bearer token",
+			})
+			return
+		}
 	}
 
 	start := time.Now()

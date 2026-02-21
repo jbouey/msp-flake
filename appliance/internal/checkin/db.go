@@ -35,6 +35,23 @@ func (db *DB) Close() {
 	db.pool.Close()
 }
 
+// ValidateAPIKey checks if the provided API key matches the provisioned key for a site.
+// Returns true if the key matches, false otherwise.
+func (db *DB) ValidateAPIKey(ctx context.Context, siteID, apiKey string) (bool, error) {
+	var storedKey *string
+	err := db.pool.QueryRow(ctx,
+		`SELECT api_key FROM appliance_provisioning WHERE site_id = $1`,
+		siteID,
+	).Scan(&storedKey)
+	if err != nil {
+		return false, nil // Site not in provisioning table — deny
+	}
+	if storedKey == nil || *storedKey == "" {
+		return false, nil
+	}
+	return *storedKey == apiKey, nil
+}
+
 // existingAppliance is a row from the dedup query.
 type existingAppliance struct {
 	ApplianceID  string
