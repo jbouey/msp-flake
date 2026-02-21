@@ -111,7 +111,7 @@ const statusColors: Record<string, string> = {
 
 export const ClientCompliance: React.FC = () => {
   const navigate = useNavigate();
-  const { user, isAuthenticated, isLoading } = useClient();
+  const { isAuthenticated, isLoading } = useClient();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ModuleTab>('overview');
@@ -145,12 +145,6 @@ export const ClientCompliance: React.FC = () => {
     if (score >= 80) return 'text-green-600';
     if (score >= 50) return 'text-yellow-600';
     return 'text-red-600';
-  };
-
-  const getReadinessBg = (score: number) => {
-    if (score >= 80) return 'bg-green-500';
-    if (score >= 50) return 'bg-yellow-500';
-    return 'bg-red-500';
   };
 
   if (isLoading || loading) {

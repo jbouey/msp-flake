@@ -27,8 +27,6 @@ const STATUS_OPTIONS = [
 ];
 
 export const PhysicalSafeguards: React.FC = () => {
-  const [items, setItems] = useState<SafeguardItem[]>([]);
-  const [templateItems, setTemplateItems] = useState<SafeguardItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [localItems, setLocalItems] = useState<Record<string, SafeguardItem>>({});
 
@@ -38,8 +36,6 @@ export const PhysicalSafeguards: React.FC = () => {
     const res = await fetch('/api/client/compliance/physical', { credentials: 'include' });
     if (res.ok) {
       const d = await res.json();
-      setItems(d.items || []);
-      setTemplateItems(d.template_items || []);
       // Merge existing data with template
       const merged: Record<string, SafeguardItem> = {};
       (d.template_items || []).forEach((t: SafeguardItem) => {
