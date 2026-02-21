@@ -753,17 +753,21 @@ async def get_evidence_bundles_for_site(
 ) -> List[Dict[str, Any]]:
     """Get signed evidence bundles for audit packets.
 
-    Returns signed bundles with hashes from evidence_bundles table.
+    Returns bundles from evidence_bundles table with OTS anchoring info.
     Falls back gracefully when empty.
     """
     query_str = """
         SELECT
             eb.id,
-            eb.bundle_hash,
-            eb.bundle_type,
+            eb.bundle_id,
+            eb.check_type,
+            eb.outcome,
             eb.created_at,
-            eb.signed_at,
             eb.signature,
+            eb.s3_uri,
+            eb.ots_status,
+            eb.ots_bitcoin_block,
+            eb.ots_anchored_at,
             a.site_id
         FROM evidence_bundles eb
         JOIN appliances a ON a.id = eb.appliance_id
@@ -787,11 +791,10 @@ async def get_evidence_bundles_for_site(
     rows = result.fetchall()
 
     return [{
-        "bundle_id": str(row.id),
-        "bundle_hash": row.bundle_hash,
-        "bundle_type": row.bundle_type or "daily",
+        "bundle_id": row.bundle_id or str(row.id),
+        "bundle_type": row.check_type or "compliance",
         "generated_at": row.created_at,
-        "signed_at": row.signed_at,
+        "size_bytes": 0,
         "has_signature": row.signature is not None,
     } for row in rows]
 
