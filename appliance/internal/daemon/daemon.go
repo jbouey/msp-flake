@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/osiriscare/appliance/internal/ca"
+	"github.com/osiriscare/appliance/internal/evidence"
 	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/healing"
 	"github.com/osiriscare/appliance/internal/l2bridge"
@@ -50,6 +51,10 @@ type Daemon struct {
 
 	// Drift scanner: periodic security checks on Windows targets
 	scanner *driftScanner
+
+	// Evidence submitter: packages drift scan results into compliance bundles
+	evidenceSubmitter *evidence.Submitter
+	agentPublicKey    string // hex-encoded Ed25519 public key
 
 	// Drift report cooldown: prevents excessive incident creation
 	cooldownMu sync.Mutex
@@ -92,6 +97,20 @@ func New(cfg *Config) *Daemon {
 
 	// Initialize drift scanner for periodic security checks
 	d.scanner = newDriftScanner(d)
+
+	// Initialize evidence submitter for compliance pipeline
+	if cfg.EnableEvidenceUpload {
+		sigKey, pubHex, err := evidence.LoadOrCreateSigningKey(cfg.SigningKeyPath())
+		if err != nil {
+			log.Printf("[daemon] Evidence signing key failed: %v (evidence upload disabled)", err)
+		} else {
+			d.agentPublicKey = pubHex
+			d.evidenceSubmitter = evidence.NewSubmitter(
+				cfg.SiteID, cfg.APIEndpoint, cfg.APIKey, sigKey, pubHex,
+			)
+			log.Printf("[daemon] Evidence submitter initialized (pubkey=%s...)", pubHex[:12])
+		}
+	}
 
 	return d
 }
@@ -196,7 +215,12 @@ func (d *Daemon) runCycle(ctx context.Context) {
 
 // runCheckin sends a checkin to Central Command and processes the response.
 func (d *Daemon) runCheckin(ctx context.Context) {
-	req := SystemInfo(d.config, Version)
+	var req CheckinRequest
+	if d.agentPublicKey != "" {
+		req = SystemInfoWithKey(d.config, Version, d.agentPublicKey)
+	} else {
+		req = SystemInfo(d.config, Version)
+	}
 
 	resp, err := d.phoneCli.Checkin(ctx, req)
 	if err != nil {

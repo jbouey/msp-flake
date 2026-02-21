@@ -2165,11 +2165,7 @@ async def generate_compliance_packet(
         raise HTTPException(status_code=404, detail=f"Site not found: {site_id}")
 
     try:
-        import sys
-        # Import from same directory (dashboard_api) or parent (mcp-server root)
-        sys.path.insert(0, str(Path(__file__).parent))
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-        from compliance_packet import CompliancePacket
+        from .compliance_packet import CompliancePacket
 
         packet = CompliancePacket(
             site_id=site_id,

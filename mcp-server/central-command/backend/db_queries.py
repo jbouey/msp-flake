@@ -623,12 +623,13 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
 
 # Category mappings for compliance checks
 CATEGORY_CHECKS = {
-    "patching": ["nixos_generation"],
+    "patching": ["nixos_generation", "windows_update"],
     "antivirus": ["windows_defender", "windows_windows_defender"],
     "backup": ["backup_status"],
     "logging": ["audit_logging", "windows_audit_policy"],
-    "firewall": ["firewall", "windows_firewall_status"],
+    "firewall": ["firewall", "windows_firewall_status", "firewall_status"],
     "encryption": ["bitlocker", "windows_bitlocker_status"],
+    "access_control": ["rogue_admin_users"],
 }
 
 # Pre-computed reverse lookup: check_type -> category (O(1) instead of O(categories))

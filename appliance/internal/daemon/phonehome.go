@@ -124,6 +124,13 @@ func SystemInfo(cfg *Config, version string) CheckinRequest {
 	}
 }
 
+// SystemInfoWithKey returns a checkin request that includes the agent public key.
+func SystemInfoWithKey(cfg *Config, version, pubKeyHex string) CheckinRequest {
+	req := SystemInfo(cfg, version)
+	req.AgentPublicKey = pubKeyHex
+	return req
+}
+
 func getHostname() string {
 	h, err := os.Hostname()
 	if err != nil {

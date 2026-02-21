@@ -146,6 +146,11 @@ func (c *Config) RulesDir() string {
 	return filepath.Join(c.StateDir, "rules")
 }
 
+// SigningKeyPath returns the path to the Ed25519 signing key.
+func (c *Config) SigningKeyPath() string {
+	return filepath.Join(c.StateDir, "keys", "signing.key")
+}
+
 // GRPCListenAddr returns the address agents should connect to.
 // Uses the appliance's LAN IP and the configured gRPC port.
 func (c *Config) GRPCListenAddr() string {

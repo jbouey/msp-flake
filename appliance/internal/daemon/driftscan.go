@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/osiriscare/appliance/internal/evidence"
 	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/winrm"
 )
@@ -106,7 +107,9 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		ds.daemon.deployer.mu.Unlock()
 	}
 
-	var found, healed int
+	var allFindings []driftFinding
+	var scannedHosts []string
+
 	for _, t := range targets {
 		select {
 		case <-ctx.Done():
@@ -114,15 +117,35 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		default:
 		}
 
+		scannedHosts = append(scannedHosts, t.hostname)
 		drifts := ds.checkTarget(ctx, t)
+		allFindings = append(allFindings, drifts...)
 		for _, d := range drifts {
-			found++
 			ds.reportDrift(d)
 		}
 	}
 
-	log.Printf("[driftscan] Scan complete: targets=%d, drifts_found=%d, healed=%d",
-		len(targets), found, healed)
+	log.Printf("[driftscan] Scan complete: targets=%d, drifts_found=%d",
+		len(targets), len(allFindings))
+
+	// Submit evidence bundle to Central Command
+	if ds.daemon.evidenceSubmitter != nil && len(scannedHosts) > 0 {
+		// Convert to evidence package types
+		evFindings := make([]evidence.DriftFinding, len(allFindings))
+		for i, f := range allFindings {
+			evFindings[i] = evidence.DriftFinding{
+				Hostname:     f.Hostname,
+				CheckType:    f.CheckType,
+				Expected:     f.Expected,
+				Actual:       f.Actual,
+				HIPAAControl: f.HIPAAControl,
+				Severity:     f.Severity,
+			}
+		}
+		if err := ds.daemon.evidenceSubmitter.BuildAndSubmit(ctx, evFindings, scannedHosts); err != nil {
+			log.Printf("[driftscan] Evidence submission failed: %v", err)
+		}
+	}
 }
 
 type scanTarget struct {
