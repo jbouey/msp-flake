@@ -1581,6 +1581,21 @@ async def verify_chain_integrity(
         f"verified={verified} broken={total_broken}"
     )
 
+    # Get signature stats and timestamps for portal display
+    sig_result = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE signature_valid = true) as sig_valid,
+            COUNT(*) FILTER (WHERE agent_signature IS NOT NULL) as sig_total,
+            MIN(checked_at) as first_ts,
+            MAX(checked_at) as last_ts
+        FROM compliance_bundles
+        WHERE site_id = :site_id
+    """), {"site_id": site_id})
+    sig_row = sig_result.fetchone()
+
+    first_b = bundles[0] if bundles else None
+    last_b = bundles[-1] if bundles else None
+
     return {
         "site_id": site_id,
         "chain_length": len(bundles),
@@ -1589,6 +1604,12 @@ async def verify_chain_integrity(
         "broken_links": broken_links,
         "broken_links_truncated": total_broken > max_broken,
         "status": status,
+        "first_bundle": first_b.bundle_id if first_b else None,
+        "last_bundle": last_b.bundle_id if last_b else None,
+        "first_timestamp": sig_row.first_ts.isoformat() if sig_row and sig_row.first_ts else None,
+        "last_timestamp": sig_row.last_ts.isoformat() if sig_row and sig_row.last_ts else None,
+        "signatures_valid": sig_row.sig_valid if sig_row else 0,
+        "signatures_total": sig_row.sig_total if sig_row else 0,
     }
 
 
@@ -1601,8 +1622,10 @@ async def list_evidence_bundles(
 ):
     """List evidence bundles for a site with OTS blockchain status."""
     result = await db.execute(text("""
-        SELECT cb.bundle_id, cb.bundle_hash, cb.check_type, cb.check_result, cb.checked_at,
-               cb.chain_position, cb.agent_signature IS NOT NULL as signed,
+        SELECT cb.bundle_id, cb.bundle_hash, cb.prev_hash, cb.check_type, cb.check_result,
+               cb.checked_at, cb.chain_position,
+               cb.agent_signature IS NOT NULL as signed,
+               cb.signature_valid,
                COALESCE(op.status, cb.ots_status, 'none') as ots_status,
                op.bitcoin_block, op.anchored_at, op.calendar_url
         FROM compliance_bundles cb

@@ -16,14 +16,14 @@ interface VerificationResult {
 
 interface BundleInfo {
   bundle_id: string;
-  created_at: string;
-  checked_at: string;
-  checks_count: number;
-  summary: Record<string, unknown>;
-  prev_hash: string;
   bundle_hash: string;
-  is_signed: boolean;
-  signed_by: string | null;
+  prev_hash: string;
+  check_type: string;
+  check_result: string;
+  checked_at: string;
+  chain_position: number;
+  signed: boolean;
+  signature_valid: boolean | null;
   ots_status?: string;
   bitcoin_block?: number | null;
   anchored_at?: string | null;
@@ -173,12 +173,13 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
                 <div>
                   <h4 className="font-semibold text-slate-900">{bundle.bundle_id}</h4>
                   <p className="text-sm text-slate-500">
-                    {new Date(bundle.created_at || bundle.checked_at).toLocaleString()}
+                    {new Date(bundle.checked_at).toLocaleString()}
+                    {' — '}<span className="text-slate-400">{bundle.check_type?.replace(/_/g, ' ')}</span>
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {bundle.is_signed && (
-                    <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded flex items-center gap-1" title={`Signed by: ${bundle.signed_by}`}>
+                  {bundle.signed && (
+                    <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded flex items-center gap-1" title="Ed25519 signed">
                       <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                       </svg>
@@ -186,8 +187,8 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
                     </span>
                   )}
                   <OtsBadge status={bundle.ots_status || 'none'} block={bundle.bitcoin_block} />
-                  <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded">
-                    {bundle.checks_count} checks
+                  <span className={`text-xs px-2 py-1 rounded ${bundle.check_result === 'pass' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                    {bundle.check_result}
                   </span>
                 </div>
               </div>
@@ -207,7 +208,7 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
               {/* Chain link visualization */}
               {!isGenesis && (
                 <div className="mt-3 flex items-center gap-2 text-xs text-slate-400">
-                  <span className="font-mono">{bundle.prev_hash.substring(0, 8)}...</span>
+                  <span className="font-mono">{bundle.prev_hash?.substring(0, 8)}...</span>
                   <span>links to previous bundle</span>
                 </div>
               )}
@@ -355,7 +356,7 @@ const BlockchainSection: React.FC<{ data: BlockchainStatus }> = ({ data }) => {
                       {anchor.anchored_at ? new Date(anchor.anchored_at).toLocaleString() : '--'}
                     </td>
                     <td className="py-2">
-                      <code className="text-xs font-mono text-slate-700">{anchor.bundle_id.substring(0, 20)}...</code>
+                      <code className="text-xs font-mono text-slate-700">{anchor.bundle_id?.substring(0, 20)}...</code>
                     </td>
                     <td className="py-2 text-slate-600">{anchor.check_type}</td>
                     <td className="py-2">
@@ -411,7 +412,7 @@ export const PortalVerify: React.FC = () => {
 
     // Fetch verification status, bundles, and blockchain data in parallel
     Promise.all([
-      fetch(`/api/evidence/sites/${siteId}/verify`, {
+      fetch(`/api/evidence/sites/${siteId}/verify-chain`, {
         credentials: 'include',
         headers
       }).then(r => r.json()),
@@ -563,7 +564,7 @@ export const PortalVerify: React.FC = () => {
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
                 <span className="text-sm font-mono text-slate-700">
-                  {verification.first_bundle?.substring(0, 12)}...
+                  {verification.first_bundle ? `${verification.first_bundle.substring(0, 12)}...` : '--'}
                 </span>
                 <p className="text-sm text-slate-500 mt-1">Genesis Bundle</p>
               </div>
