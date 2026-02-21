@@ -873,21 +873,33 @@ async def get_portal_data(
     # Build controls from database check results (8 core controls)
     controls = []
 
-    for rule_id, meta in CONTROL_METADATA.items():
-        # Map rule_id to check types in database
-        check_mapping = {
-            "endpoint_drift": "nixos_generation",
-            "patch_freshness": "nixos_generation",
-            "backup_success": "backup_status",
-            "mfa_coverage": None,  # Not tracked in compliance_bundles
-            "privileged_access": None,
-            "git_protections": None,
-            "secrets_hygiene": None,
-            "storage_posture": None,
-        }
+    # Map rule_id to check types in database (multiple per control)
+    check_mapping = {
+        "endpoint_drift": ["nixos_generation", "linux_kernel", "linux_integrity"],
+        "patch_freshness": ["windows_update", "linux_patching"],
+        "backup_success": ["backup_status", "windows_backup_status"],
+        "mfa_coverage": ["windows_password_policy", "windows_screen_lock_policy"],
+        "privileged_access": ["rogue_admin_users", "linux_accounts", "linux_permissions"],
+        "git_protections": [],
+        "secrets_hygiene": [],
+        "storage_posture": ["windows_bitlocker_status", "linux_crypto", "windows_smb_signing"],
+    }
 
-        check_type = check_mapping.get(rule_id)
-        result = control_results.get(check_type, {}) if check_type else {}
+    for rule_id, meta in CONTROL_METADATA.items():
+        check_types = check_mapping.get(rule_id, [])
+        # Aggregate pass rates across all mapped check types
+        pass_rates = []
+        last_checked = None
+        for ct in check_types:
+            r = control_results.get(ct, {})
+            if r.get("pass_rate") is not None:
+                pass_rates.append(r["pass_rate"])
+            if r.get("last_checked") and (last_checked is None or r["last_checked"] > last_checked):
+                last_checked = r["last_checked"]
+        result = {}
+        if pass_rates:
+            result["pass_rate"] = sum(pass_rates) / len(pass_rates)
+            result["last_checked"] = last_checked
 
         # Calculate status from pass rate
         pass_rate = result.get("pass_rate")
@@ -969,22 +981,34 @@ async def get_controls(
     # Get control results from database (30-day aggregation)
     db_results = await get_control_results_for_site(db, site_id, days=30)
 
-    # Map rule_id to check types in database
+    # Map rule_id to check types in database (multiple per control)
     check_mapping = {
-        "endpoint_drift": "nixos_generation",
-        "patch_freshness": "nixos_generation",
-        "backup_success": "backup_status",
-        "mfa_coverage": None,
-        "privileged_access": None,
-        "git_protections": None,
-        "secrets_hygiene": None,
-        "storage_posture": None,
+        "endpoint_drift": ["nixos_generation", "linux_kernel", "linux_integrity"],
+        "patch_freshness": ["windows_update", "linux_patching"],
+        "backup_success": ["backup_status", "windows_backup_status"],
+        "mfa_coverage": ["windows_password_policy", "windows_screen_lock_policy"],
+        "privileged_access": ["rogue_admin_users", "linux_accounts", "linux_permissions"],
+        "git_protections": [],
+        "secrets_hygiene": [],
+        "storage_posture": ["windows_bitlocker_status", "linux_crypto", "windows_smb_signing"],
     }
 
     controls = []
     for rule_id, meta in CONTROL_METADATA.items():
-        check_type = check_mapping.get(rule_id)
-        result = db_results.get(check_type, {}) if check_type else {}
+        check_types = check_mapping.get(rule_id, [])
+        # Aggregate pass rates across all mapped check types
+        pass_rates = []
+        last_checked = None
+        for ct in check_types:
+            r = db_results.get(ct, {})
+            if r.get("pass_rate") is not None:
+                pass_rates.append(r["pass_rate"])
+            if r.get("last_checked") and (last_checked is None or r["last_checked"] > last_checked):
+                last_checked = r["last_checked"]
+        result = {}
+        if pass_rates:
+            result["pass_rate"] = sum(pass_rates) / len(pass_rates)
+            result["last_checked"] = last_checked
 
         # Calculate status from pass rate
         pass_rate = result.get("pass_rate")
@@ -1006,8 +1030,8 @@ async def get_controls(
             "hipaa_controls": meta["hipaa"],
             "scope": {
                 "summary": f"{int(pass_rate or 100)}% pass rate (30d)",
-                "total_checks": result.get("total", 0),
-                "pass_count": result.get("pass_count", 0),
+                "total_checks": 0,
+                "pass_count": 0,
             },
             "auto_fix_triggered": False,
             "fix_duration_sec": None,
@@ -1142,20 +1166,31 @@ async def get_monthly_report(
     # Build controls list from database
     control_results = await get_control_results_for_site(db, site_id, days=30)
     check_mapping = {
-        "endpoint_drift": "nixos_generation",
-        "patch_freshness": "nixos_generation",
-        "backup_success": "backup_status",
-        "mfa_coverage": None,
-        "privileged_access": None,
-        "git_protections": None,
-        "secrets_hygiene": None,
-        "storage_posture": None,
+        "endpoint_drift": ["nixos_generation", "linux_kernel", "linux_integrity"],
+        "patch_freshness": ["windows_update", "linux_patching"],
+        "backup_success": ["backup_status", "windows_backup_status"],
+        "mfa_coverage": ["windows_password_policy", "windows_screen_lock_policy"],
+        "privileged_access": ["rogue_admin_users", "linux_accounts", "linux_permissions"],
+        "git_protections": [],
+        "secrets_hygiene": [],
+        "storage_posture": ["windows_bitlocker_status", "linux_crypto", "windows_smb_signing"],
     }
 
     controls = []
     for rule_id, meta in CONTROL_METADATA.items():
-        check_type = check_mapping.get(rule_id)
-        result = control_results.get(check_type, {}) if check_type else {}
+        check_types = check_mapping.get(rule_id, [])
+        pass_rates = []
+        last_checked = None
+        for ct in check_types:
+            r = control_results.get(ct, {})
+            if r.get("pass_rate") is not None:
+                pass_rates.append(r["pass_rate"])
+            if r.get("last_checked") and (last_checked is None or r["last_checked"] > last_checked):
+                last_checked = r["last_checked"]
+        result = {}
+        if pass_rates:
+            result["pass_rate"] = sum(pass_rates) / len(pass_rates)
+            result["last_checked"] = last_checked
 
         pass_rate = result.get("pass_rate")
         if pass_rate is None:

@@ -623,13 +623,55 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
 
 # Category mappings for compliance checks
 CATEGORY_CHECKS = {
-    "patching": ["nixos_generation", "windows_update"],
-    "antivirus": ["windows_defender", "windows_windows_defender"],
-    "backup": ["backup_status"],
-    "logging": ["audit_logging", "windows_audit_policy"],
-    "firewall": ["firewall", "windows_firewall_status", "firewall_status"],
-    "encryption": ["bitlocker", "windows_bitlocker_status"],
-    "access_control": ["rogue_admin_users"],
+    "patching": [
+        "nixos_generation", "windows_update", "linux_patching",
+    ],
+    "antivirus": [
+        "windows_defender", "windows_windows_defender",
+        "windows_defender_exclusions",
+    ],
+    "backup": [
+        "backup_status", "windows_backup_status",
+    ],
+    "logging": [
+        "audit_logging", "windows_audit_policy",
+        "linux_audit", "linux_logging",
+    ],
+    "firewall": [
+        "firewall", "windows_firewall_status", "firewall_status",
+        "linux_firewall",
+    ],
+    "encryption": [
+        "bitlocker", "windows_bitlocker_status",
+        "linux_crypto", "windows_smb_signing",
+    ],
+    "access_control": [
+        "rogue_admin_users", "linux_accounts",
+        "windows_password_policy", "linux_permissions",
+        "linux_ssh_config", "windows_screen_lock_policy",
+    ],
+    "services": [
+        "critical_services", "linux_services",
+        "windows_service_dns", "windows_service_netlogon",
+        "windows_service_spooler", "windows_service_w32time",
+        "windows_service_wuauserv", "agent_status",
+    ],
+    "network": [
+        "network", "network_posture_windows",
+        "windows_network_profile", "windows_dns_config",
+        "linux_network", "ntp_sync", "linux_time_sync",
+        "windows_smb1_protocol",
+    ],
+    "system_integrity": [
+        "disk_space", "linux_kernel", "linux_boot",
+        "linux_integrity", "linux_mac",
+        "rogue_scheduled_tasks",
+        "windows_registry_run_persistence",
+        "windows_scheduled_task_persistence",
+        "windows_wmi_event_persistence",
+        "linux_cron", "linux_banner",
+        "linux_incident_response",
+    ],
 }
 
 # Pre-computed reverse lookup: check_type -> category (O(1) instead of O(categories))
