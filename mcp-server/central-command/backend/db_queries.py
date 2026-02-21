@@ -1074,24 +1074,37 @@ async def get_portal_kpis(db: AsyncSession, site_id: str) -> Dict[str, Any]:
 
     inc_row = incident_result.fetchone()
 
-    # Calculate pass rates from compliance history
-    history = await get_compliance_history_for_site(db, site_id, days=30)
+    # Calculate pass/warn/fail counts from 8 portal controls
+    # Uses same multi-check aggregation as portal endpoint
+    control_results = await get_control_results_for_site(db, site_id, days=30)
+    portal_check_mapping = {
+        "endpoint_drift": ["nixos_generation", "linux_kernel", "linux_integrity"],
+        "patch_freshness": ["windows_update", "linux_patching"],
+        "backup_success": ["backup_status", "windows_backup_status"],
+        "mfa_coverage": ["windows_password_policy", "windows_screen_lock_policy"],
+        "privileged_access": ["rogue_admin_users", "linux_accounts", "linux_permissions"],
+        "git_protections": [],
+        "secrets_hygiene": [],
+        "storage_posture": ["windows_bitlocker_status", "linux_crypto", "windows_smb_signing"],
+    }
 
     controls_passing = 0
     controls_warning = 0
     controls_failing = 0
 
-    if history:
-        # Use latest day's data
-        latest = history[-1]["scores"] if history else {}
-        for cat, score in latest.items():
-            if cat == "overall":
-                continue
-            if score is None:
-                continue
-            elif score >= 90:
+    for _rule_id, check_types in portal_check_mapping.items():
+        pass_rates = []
+        for ct in check_types:
+            r = control_results.get(ct, {})
+            if r.get("pass_rate") is not None:
+                pass_rates.append(r["pass_rate"])
+        if not pass_rates:
+            controls_passing += 1  # No data = assume passing
+        else:
+            avg_rate = sum(pass_rates) / len(pass_rates)
+            if avg_rate >= 90:
                 controls_passing += 1
-            elif score >= 50:
+            elif avg_rate >= 50:
                 controls_warning += 1
             else:
                 controls_failing += 1
