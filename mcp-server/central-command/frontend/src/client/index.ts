@@ -8,3 +8,4 @@ export { ClientNotifications } from './ClientNotifications';
 export { ClientSettings } from './ClientSettings';
 export { ClientHelp } from './ClientHelp';
 export { ClientHealingLogs } from './ClientHealingLogs';
+export { ClientCompliance } from './ClientCompliance';

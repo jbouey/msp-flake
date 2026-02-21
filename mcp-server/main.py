@@ -60,6 +60,7 @@ from dashboard_api.exceptions_api import router as exceptions_router
 from dashboard_api.appliance_delegation import router as appliance_delegation_router
 from dashboard_api.learning_api import partner_learning_router
 from dashboard_api.client_portal import public_router as client_auth_router, auth_router as client_portal_router, billing_webhook_router
+from dashboard_api.hipaa_modules import router as hipaa_modules_router
 from dashboard_api.cve_watch import router as cve_watch_router, cve_sync_loop
 from dashboard_api.framework_sync import router as framework_sync_router, framework_sync_loop
 from dashboard_api.websocket_manager import ws_manager
@@ -879,6 +880,7 @@ app.include_router(cve_watch_router)  # CVE Watch — progressive vulnerability 
 app.include_router(framework_sync_router)  # Framework Sync — live compliance library
 app.include_router(client_auth_router, prefix="/api")  # Client portal auth (magic link, login)
 app.include_router(client_portal_router, prefix="/api")  # Client portal endpoints
+app.include_router(hipaa_modules_router, prefix="/api")  # HIPAA compliance modules
 app.include_router(billing_webhook_router, prefix="/api")  # Stripe webhooks
 
 # WebSocket endpoint for real-time event push
