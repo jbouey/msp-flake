@@ -1026,23 +1026,36 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
                 "checks": [],
             }
 
-        # Latest check result per check_type per site
+        # Latest check result per (check_type, hostname) per site.
+        # compliance_bundles stores individual checks in a JSONB array;
+        # unnest them so we can report per-check granularity.
         checks = await conn.fetch("""
-            WITH latest AS (
-                SELECT DISTINCT ON (site_id, check_type)
-                    site_id, check_type, check_result, hipaa_control,
-                    hostname, checked_at, details
-                FROM evidence_bundles
-                WHERE site_id = ANY($1)
-                ORDER BY site_id, check_type, checked_at DESC
+            WITH unnested AS (
+                SELECT
+                    cb.site_id,
+                    cb.checked_at,
+                    c->>'check' AS check_type,
+                    c->>'status' AS check_status,
+                    c->>'hipaa_control' AS hipaa_control,
+                    COALESCE(c->>'hostname', c->>'host', '') AS hostname
+                FROM compliance_bundles cb,
+                     jsonb_array_elements(cb.checks) AS c
+                WHERE cb.site_id = ANY($1)
+            ),
+            latest AS (
+                SELECT DISTINCT ON (site_id, check_type, hostname)
+                    site_id, check_type, check_status, hipaa_control,
+                    hostname, checked_at
+                FROM unnested
+                ORDER BY site_id, check_type, hostname, checked_at DESC
             )
             SELECT * FROM latest ORDER BY site_id, check_type
         """, site_ids)
 
         total = len(checks)
-        passed = sum(1 for c in checks if c["check_result"] == "pass")
-        failed = sum(1 for c in checks if c["check_result"] == "fail")
-        warnings = sum(1 for c in checks if c["check_result"] == "warn")
+        passed = sum(1 for c in checks if c["check_status"] == "pass")
+        failed = sum(1 for c in checks if c["check_status"] == "fail")
+        warnings = sum(1 for c in checks if c["check_status"] in ("warn", "warning"))
         score = round((passed / total) * 100, 1) if total > 0 else 100.0
 
         # Recent healing activity (last 30 days)
@@ -1053,7 +1066,7 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
                 COUNT(*) FILTER (WHERE status = 'pending' OR status = 'escalated') as pending
             FROM execution_telemetry
             WHERE site_id = ANY($1)
-              AND executed_at > NOW() - INTERVAL '30 days'
+              AND started_at > NOW() - INTERVAL '30 days'
         """, site_ids)
 
         # Per-site breakdown
@@ -1061,13 +1074,13 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
         for site in sites:
             site_checks = [c for c in checks if c["site_id"] == site["site_id"]]
             st = len(site_checks)
-            sp = sum(1 for c in site_checks if c["check_result"] == "pass")
+            sp = sum(1 for c in site_checks if c["check_status"] == "pass")
             site_results.append({
                 "site_id": site["site_id"],
                 "clinic_name": site["clinic_name"],
                 "score": round((sp / st) * 100, 1) if st > 0 else 100.0,
                 "passed": sp,
-                "failed": sum(1 for c in site_checks if c["check_result"] == "fail"),
+                "failed": sum(1 for c in site_checks if c["check_status"] == "fail"),
                 "total": st,
             })
 
@@ -1076,7 +1089,7 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
             {
                 "site_id": c["site_id"],
                 "check_type": c["check_type"],
-                "result": c["check_result"],
+                "result": c["check_status"],
                 "hipaa_control": c["hipaa_control"],
                 "hostname": c["hostname"],
                 "checked_at": c["checked_at"].isoformat() if c["checked_at"] else None,
