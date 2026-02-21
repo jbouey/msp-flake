@@ -18,6 +18,7 @@ import (
 	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/healing"
 	"github.com/osiriscare/appliance/internal/l2bridge"
+	"github.com/osiriscare/appliance/internal/l2planner"
 	"github.com/osiriscare/appliance/internal/orders"
 	"github.com/osiriscare/appliance/internal/sshexec"
 	"github.com/osiriscare/appliance/internal/winrm"
@@ -41,7 +42,8 @@ type Daemon struct {
 	registry  *grpcserver.AgentRegistry
 	agentCA   *ca.AgentCA
 	l1Engine  *healing.Engine
-	l2Client  *l2bridge.Client
+	l2Client  *l2bridge.Client  // legacy Unix socket bridge (deprecated)
+	l2Planner *l2planner.Planner // native Go L2 LLM planner
 	orderProc *orders.Processor
 	winrmExec *winrm.Executor
 	sshExec   *sshexec.Executor
@@ -92,8 +94,28 @@ func New(cfg *Config) *Daemon {
 	d.l1Engine = healing.NewEngine(rulesDir, executor)
 	log.Printf("[daemon] L1 engine loaded: %d rules (healing=%v)", d.l1Engine.RuleCount(), !cfg.HealingDryRun)
 
-	// Initialize L2 bridge (connects lazily)
-	if cfg.L2Enabled {
+	// Initialize L2 planner (native Go — no Python sidecar needed)
+	if cfg.L2Enabled && cfg.L2APIKey != "" {
+		d.l2Planner = l2planner.NewPlanner(l2planner.PlannerConfig{
+			APIKey:      cfg.L2APIKey,
+			APIEndpoint: cfg.L2APIEndpoint,
+			APIModel:    cfg.L2APIModel,
+			APITimeout:  time.Duration(cfg.L2APITimeoutSecs) * time.Second,
+			MaxTokens:   cfg.L2MaxTokens,
+			Budget: l2planner.BudgetConfig{
+				DailyBudgetUSD:     cfg.L2DailyBudgetUSD,
+				MaxCallsPerHour:    cfg.L2MaxCallsPerHour,
+				MaxConcurrentCalls: cfg.L2MaxConcurrentCalls,
+			},
+			AllowedActions:    cfg.L2AllowedActions,
+			TelemetryEndpoint: cfg.APIEndpoint,
+			TelemetryAPIKey:   cfg.APIKey,
+			SiteID:            cfg.SiteID,
+		})
+		log.Printf("[daemon] L2 native planner initialized (model=%s, budget=$%.2f/day)",
+			cfg.L2APIModel, cfg.L2DailyBudgetUSD)
+	} else if cfg.L2Enabled {
+		// Fallback to legacy socket bridge (deprecated)
 		socketPath := filepath.Join(cfg.StateDir, "l2.sock")
 		d.l2Client = l2bridge.NewClient(socketPath, 30*time.Second)
 	}
@@ -130,8 +152,14 @@ func New(cfg *Config) *Daemon {
 // Run starts the daemon and blocks until the context is cancelled.
 func (d *Daemon) Run(ctx context.Context) error {
 	log.Printf("[daemon] OsirisCare Appliance Daemon v%s starting", Version)
-	log.Printf("[daemon] site_id=%s, poll_interval=%ds, healing=%v, l2=%v",
-		d.config.SiteID, d.config.PollInterval, d.config.HealingEnabled, d.config.L2Enabled)
+	l2Mode := "disabled"
+	if d.l2Planner != nil {
+		l2Mode = "native"
+	} else if d.l2Client != nil {
+		l2Mode = "bridge"
+	}
+	log.Printf("[daemon] site_id=%s, poll_interval=%ds, healing=%v, l2=%s",
+		d.config.SiteID, d.config.PollInterval, d.config.HealingEnabled, l2Mode)
 
 	// Initialize CA
 	if d.config.CADir != "" {
@@ -144,8 +172,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 	}
 
-	// Connect L2 bridge if enabled
-	if d.l2Client != nil {
+	// Connect L2 planner or legacy bridge
+	if d.l2Planner != nil {
+		if d.l2Planner.IsConnected() {
+			log.Printf("[daemon] L2 native planner ready")
+		} else {
+			log.Printf("[daemon] L2 native planner: no API key configured")
+		}
+	} else if d.l2Client != nil {
 		if err := d.l2Client.Connect(); err != nil {
 			log.Printf("[daemon] L2 bridge connect failed: %v (L2 fallback disabled until reconnect)", err)
 		} else {
@@ -190,6 +224,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			log.Println("[daemon] Shutting down...")
 			d.grpcSrv.GracefulStop()
+			if d.l2Planner != nil {
+				d.l2Planner.Close()
+			}
 			if d.l2Client != nil {
 				d.l2Client.Close()
 			}
@@ -453,9 +490,49 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 		return
 	}
 
-	// L2: LLM planner (if enabled and connected)
+	// L2: Native LLM planner (preferred)
+	if d.l2Planner != nil && d.l2Planner.IsConnected() {
+		log.Printf("[daemon] L1 no match for %s/%s, escalating to L2 (native)", req.Hostname, req.CheckType)
+
+		incident := &l2bridge.Incident{
+			ID:           incidentID,
+			SiteID:       d.config.SiteID,
+			HostID:       req.Hostname,
+			IncidentType: req.CheckType,
+			Severity:     severity,
+			RawData:      data,
+			CreatedAt:    time.Now().UTC().Format(time.RFC3339),
+		}
+
+		decision, err := d.l2Planner.PlanWithRetry(incident, 1)
+		if err != nil {
+			log.Printf("[daemon] L2 plan failed for %s/%s: %v — escalating to L3",
+				req.Hostname, req.CheckType, err)
+			d.escalateToL3(incidentID, req, "L2 plan failed: "+err.Error())
+			return
+		}
+
+		if decision.ShouldExecute() {
+			log.Printf("[daemon] L2 decision: %s (confidence=%.2f) for %s/%s",
+				decision.RecommendedAction, decision.Confidence, req.Hostname, req.CheckType)
+			l2Start := time.Now()
+			d.executeL2Action(ctx, decision, req, incidentID)
+			// Report telemetry for data flywheel (async)
+			go d.l2Planner.ReportExecution(incident, decision, true, "",
+				time.Since(l2Start).Milliseconds())
+			return
+		}
+
+		// L2 says escalate
+		log.Printf("[daemon] L2 escalating %s/%s to L3: %s",
+			req.Hostname, req.CheckType, decision.Reasoning)
+		d.escalateToL3(incidentID, req, decision.Reasoning)
+		return
+	}
+
+	// L2: Legacy Unix socket bridge (deprecated fallback)
 	if d.l2Client != nil && d.l2Client.IsConnected() {
-		log.Printf("[daemon] L1 no match for %s/%s, escalating to L2", req.Hostname, req.CheckType)
+		log.Printf("[daemon] L1 no match for %s/%s, escalating to L2 (legacy bridge)", req.Hostname, req.CheckType)
 
 		incident := &l2bridge.Incident{
 			ID:           incidentID,
