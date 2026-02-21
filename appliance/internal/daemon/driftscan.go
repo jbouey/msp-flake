@@ -23,15 +23,20 @@ const (
 	safeTaskPrefix = `\Microsoft\Windows\`
 )
 
-// driftScanner periodically checks Windows targets for security drift.
-// Detects: firewall disabled, Defender stopped, rogue users, rogue scheduled tasks,
-// critical services stopped.
+// driftScanner periodically checks Windows and Linux targets for security drift.
+// Windows: firewall disabled, Defender stopped, rogue users, rogue scheduled tasks,
+// critical services stopped, BitLocker, SMB signing, etc.
+// Linux: firewall rules, SSH hardening, failed services, disk space, SUID, etc.
 type driftScanner struct {
 	daemon *Daemon
 
 	mu           sync.Mutex
 	lastScanTime time.Time
 	running      int32 // atomic guard
+
+	linuxMu           sync.Mutex
+	lastLinuxScanTime time.Time
+	linuxRunning      int32 // atomic guard
 }
 
 func newDriftScanner(d *Daemon) *driftScanner {
@@ -230,6 +235,107 @@ $result.RogueTasks = $rogueTasks
 $agent = Get-Service OsirisCareAgent -EA SilentlyContinue
 $result.AgentStatus = if ($agent) { $agent.Status.ToString() } else { "NotInstalled" }
 
+# 8. BitLocker status (system drive)
+$result.BitLocker = "NotAvailable"
+try {
+    $bl = Get-BitLockerVolume -MountPoint "C:" -EA Stop
+    $result.BitLocker = $bl.ProtectionStatus.ToString()
+} catch {}
+
+# 9. SMB signing
+$result.SMBSigning = "Unknown"
+try {
+    $smb = Get-SmbServerConfiguration -EA Stop
+    $result.SMBSigning = if ($smb.RequireSecuritySignature) { "Required" } else { "NotRequired" }
+} catch {}
+
+# 10. SMB1 protocol
+$result.SMB1 = "Unknown"
+try {
+    $smb1 = Get-SmbServerConfiguration -EA Stop
+    $result.SMB1 = if ($smb1.EnableSMB1Protocol) { "Enabled" } else { "Disabled" }
+} catch {}
+
+# 11. Screen lock / inactivity timeout (via registry)
+$result.ScreenLock = "Unknown"
+try {
+    $sl = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "InactivityTimeoutSecs" -EA Stop
+    $result.ScreenLock = $sl.InactivityTimeoutSecs.ToString()
+} catch {
+    $result.ScreenLock = "NotConfigured"
+}
+
+# 12. Defender exclusions
+$defExclusions = @()
+try {
+    $prefs = Get-MpPreference -EA Stop
+    if ($prefs.ExclusionPath) { $defExclusions += $prefs.ExclusionPath }
+    if ($prefs.ExclusionProcess) { $defExclusions += $prefs.ExclusionProcess }
+    if ($prefs.ExclusionExtension) { $defExclusions += $prefs.ExclusionExtension }
+} catch {}
+$result.DefenderExclusions = $defExclusions
+
+# 13. DNS configuration (check for hijacking)
+$dnsServers = @()
+try {
+    Get-DnsClientServerAddress -AddressFamily IPv4 -EA Stop | Where-Object { $_.ServerAddresses.Count -gt 0 } | ForEach-Object {
+        $dnsServers += $_.ServerAddresses
+    }
+    $dnsServers = $dnsServers | Select-Object -Unique
+} catch {}
+$result.DNSServers = $dnsServers
+
+# 14. Network profile (domain vs public/private)
+$netProfiles = @{}
+try {
+    Get-NetConnectionProfile -EA Stop | ForEach-Object {
+        $netProfiles[$_.InterfaceAlias] = $_.NetworkCategory.ToString()
+    }
+} catch {}
+$result.NetworkProfiles = $netProfiles
+
+# 15. Password policy (domain)
+$result.PasswordPolicy = @{}
+try {
+    $pp = net accounts 2>$null
+    if ($pp) {
+        $minLen = ($pp | Select-String "Minimum password length" | ForEach-Object { ($_ -split ":\s*")[1] }) -replace '\D'
+        $maxAge = ($pp | Select-String "Maximum password age" | ForEach-Object { ($_ -split ":\s*")[1] }) -replace '\D'
+        $lockout = ($pp | Select-String "Lockout threshold" | ForEach-Object { ($_ -split ":\s*")[1] }) -replace '\D'
+        $result.PasswordPolicy = @{
+            MinLength = if ($minLen) { [int]$minLen } else { 0 }
+            MaxAgeDays = if ($maxAge) { [int]$maxAge } else { 0 }
+            LockoutThreshold = if ($lockout) { [int]$lockout } else { 0 }
+        }
+    }
+} catch {}
+
+# 16. RDP Network Level Authentication
+$result.RDPNLA = "Unknown"
+try {
+    $rdp = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -EA Stop
+    $result.RDPNLA = if ($rdp.UserAuthentication -eq 1) { "Enabled" } else { "Disabled" }
+} catch {
+    $result.RDPNLA = "NotConfigured"
+}
+
+# 17. Guest account
+$result.GuestAccount = "Unknown"
+try {
+    $guest = Get-LocalUser -Name "Guest" -EA Stop
+    $result.GuestAccount = if ($guest.Enabled) { "Enabled" } else { "Disabled" }
+} catch {
+    $result.GuestAccount = "NotFound"
+}
+
+# 18. Critical AD services (DC only)
+$adServices = @{}
+foreach ($svc in @("DNS","Netlogon","NTDS")) {
+    $s = Get-Service $svc -EA SilentlyContinue
+    if ($s) { $adServices[$svc] = $s.Status.ToString() }
+}
+$result.ADServices = $adServices
+
 $result | ConvertTo-Json -Depth 3 -Compress
 `
 
@@ -248,27 +354,50 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		return nil
 	}
 
-	var state struct {
-		Firewall      map[string]string `json:"Firewall"`
-		Defender      string            `json:"Defender"`
-		WindowsUpdate string            `json:"WindowsUpdate"`
-		EventLog      string            `json:"EventLog"`
-		RogueAdmins   []string          `json:"RogueAdmins"`
-		RogueTasks    []struct {
-			Name  string `json:"Name"`
-			Path  string `json:"Path"`
-			State string `json:"State"`
-		} `json:"RogueTasks"`
-		AgentStatus string `json:"AgentStatus"`
-	}
+	var state windowsScanState
 	if err := json.Unmarshal([]byte(stdout), &state); err != nil {
 		log.Printf("[driftscan] Parse error for %s: %v", t.hostname, err)
 		return nil
 	}
 
+	return ds.evaluateWindowsFindings(state, t)
+}
+
+// windowsScanState is the parsed output of the Windows drift scan PowerShell script.
+type windowsScanState struct {
+	Firewall      map[string]string `json:"Firewall"`
+	Defender      string            `json:"Defender"`
+	WindowsUpdate string            `json:"WindowsUpdate"`
+	EventLog      string            `json:"EventLog"`
+	RogueAdmins   []string          `json:"RogueAdmins"`
+	RogueTasks    []struct {
+		Name  string `json:"Name"`
+		Path  string `json:"Path"`
+		State string `json:"State"`
+	} `json:"RogueTasks"`
+	AgentStatus        string            `json:"AgentStatus"`
+	BitLocker          string            `json:"BitLocker"`
+	SMBSigning         string            `json:"SMBSigning"`
+	SMB1               string            `json:"SMB1"`
+	ScreenLock         string            `json:"ScreenLock"`
+	DefenderExclusions []string          `json:"DefenderExclusions"`
+	DNSServers         []string          `json:"DNSServers"`
+	NetworkProfiles    map[string]string `json:"NetworkProfiles"`
+	PasswordPolicy     struct {
+		MinLength        int `json:"MinLength"`
+		MaxAgeDays       int `json:"MaxAgeDays"`
+		LockoutThreshold int `json:"LockoutThreshold"`
+	} `json:"PasswordPolicy"`
+	RDPNLA       string            `json:"RDPNLA"`
+	GuestAccount string            `json:"GuestAccount"`
+	ADServices   map[string]string `json:"ADServices"`
+}
+
+// evaluateWindowsFindings converts a parsed Windows scan state into drift findings.
+func (ds *driftScanner) evaluateWindowsFindings(state windowsScanState, t scanTarget) []driftFinding {
 	var findings []driftFinding
 
-	// Check firewall
+	// 1. Firewall
 	for profile, enabled := range state.Firewall {
 		if strings.ToLower(enabled) == "false" {
 			findings = append(findings, driftFinding{
@@ -283,7 +412,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		}
 	}
 
-	// Check Defender
+	// 2. Windows Defender
 	if state.Defender != "" && state.Defender != "Running" && state.Defender != "NotFound" {
 		findings = append(findings, driftFinding{
 			Hostname:     t.hostname,
@@ -295,7 +424,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		})
 	}
 
-	// Check Windows Update
+	// 3. Windows Update
 	if state.WindowsUpdate == "Stopped" {
 		findings = append(findings, driftFinding{
 			Hostname:     t.hostname,
@@ -307,7 +436,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		})
 	}
 
-	// Check Event Log
+	// 4. Audit logging (Event Log service)
 	if state.EventLog == "Stopped" {
 		findings = append(findings, driftFinding{
 			Hostname:     t.hostname,
@@ -319,7 +448,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		})
 	}
 
-	// Rogue admins
+	// 5. Rogue admins
 	if len(state.RogueAdmins) > 0 {
 		findings = append(findings, driftFinding{
 			Hostname:     t.hostname,
@@ -332,11 +461,11 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		})
 	}
 
-	// Rogue scheduled tasks
+	// 6. Rogue scheduled tasks
 	if len(state.RogueTasks) > 0 {
 		taskNames := make([]string, 0, len(state.RogueTasks))
-		for _, t := range state.RogueTasks {
-			taskNames = append(taskNames, t.Name)
+		for _, rt := range state.RogueTasks {
+			taskNames = append(taskNames, rt.Name)
 		}
 		findings = append(findings, driftFinding{
 			Hostname:     t.hostname,
@@ -349,7 +478,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		})
 	}
 
-	// Agent not running on workstation
+	// 7. Agent not running on workstation
 	if t.label == "WS" && state.AgentStatus != "Running" {
 		findings = append(findings, driftFinding{
 			Hostname:  t.hostname,
@@ -358,6 +487,182 @@ $result | ConvertTo-Json -Depth 3 -Compress
 			Actual:    state.AgentStatus,
 			Severity:  "medium",
 		})
+	}
+
+	// 8. BitLocker — must be "On" for HIPAA encryption at rest
+	if state.BitLocker != "NotAvailable" && state.BitLocker != "On" && state.BitLocker != "1" {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "bitlocker_status",
+			Expected:     "On",
+			Actual:       state.BitLocker,
+			HIPAAControl: "164.312(a)(2)(iv)",
+			Severity:     "critical",
+		})
+	}
+
+	// 9. SMB signing — must be required
+	if state.SMBSigning == "NotRequired" {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "smb_signing",
+			Expected:     "Required",
+			Actual:       "NotRequired",
+			HIPAAControl: "164.312(e)(2)(ii)",
+			Severity:     "high",
+		})
+	}
+
+	// 10. SMB1 — must be disabled (legacy, insecure)
+	if state.SMB1 == "Enabled" {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "smb1_protocol",
+			Expected:     "Disabled",
+			Actual:       "Enabled",
+			HIPAAControl: "164.312(e)(1)",
+			Severity:     "high",
+		})
+	}
+
+	// 11. Screen lock — must be configured (inactivity timeout)
+	if state.ScreenLock == "NotConfigured" {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "screen_lock_policy",
+			Expected:     "Configured",
+			Actual:       "NotConfigured",
+			HIPAAControl: "164.312(a)(2)(iii)",
+			Severity:     "medium",
+		})
+	}
+
+	// 12. Defender exclusions — flag if any exist (review needed)
+	if len(state.DefenderExclusions) > 0 {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "defender_exclusions",
+			Expected:     "none",
+			Actual:       fmt.Sprintf("%d exclusions", len(state.DefenderExclusions)),
+			HIPAAControl: "164.308(a)(5)(ii)(B)",
+			Severity:     "medium",
+			Details:      map[string]string{"exclusions": strings.Join(state.DefenderExclusions, ",")},
+		})
+	}
+
+	// 13. DNS configuration — flag suspicious DNS servers
+	if len(state.DNSServers) > 0 {
+		knownDNS := map[string]bool{
+			"127.0.0.1": true, "8.8.8.8": true, "8.8.4.4": true,
+			"1.1.1.1": true, "1.0.0.1": true, "9.9.9.9": true,
+		}
+		// Also allow the DC IP as DNS
+		cfg := ds.daemon.config
+		if cfg.DomainController != nil {
+			knownDNS[*cfg.DomainController] = true
+		}
+		suspiciousDNS := []string{}
+		for _, dns := range state.DNSServers {
+			if !knownDNS[dns] && !strings.HasPrefix(dns, "192.168.") && !strings.HasPrefix(dns, "10.") && !strings.HasPrefix(dns, "172.") {
+				suspiciousDNS = append(suspiciousDNS, dns)
+			}
+		}
+		if len(suspiciousDNS) > 0 {
+			findings = append(findings, driftFinding{
+				Hostname:     t.hostname,
+				CheckType:    "dns_config",
+				Expected:     "known_dns_only",
+				Actual:       strings.Join(suspiciousDNS, ", "),
+				HIPAAControl: "164.312(e)(1)",
+				Severity:     "critical",
+				Details:      map[string]string{"suspicious": strings.Join(suspiciousDNS, ",")},
+			})
+		}
+	}
+
+	// 14. Network profile — workstations on domain should show "DomainAuthenticated"
+	if t.label == "WS" {
+		for iface, profile := range state.NetworkProfiles {
+			if profile == "Public" {
+				findings = append(findings, driftFinding{
+					Hostname:     t.hostname,
+					CheckType:    "network_profile",
+					Expected:     "DomainAuthenticated",
+					Actual:       "Public",
+					HIPAAControl: "164.312(e)(1)",
+					Severity:     "medium",
+					Details:      map[string]string{"interface": iface},
+				})
+				break // one finding per host is enough
+			}
+		}
+	}
+
+	// 15. Password policy — minimum requirements
+	if state.PasswordPolicy.MinLength > 0 && state.PasswordPolicy.MinLength < 8 {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "password_policy",
+			Expected:     "min_length>=8",
+			Actual:       fmt.Sprintf("min_length=%d", state.PasswordPolicy.MinLength),
+			HIPAAControl: "164.312(d)",
+			Severity:     "high",
+		})
+	}
+	if state.PasswordPolicy.LockoutThreshold == 0 {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "password_policy",
+			Expected:     "lockout_threshold>0",
+			Actual:       "lockout_threshold=0 (no lockout)",
+			HIPAAControl: "164.312(d)",
+			Severity:     "high",
+		})
+	}
+
+	// 16. RDP NLA
+	if state.RDPNLA == "Disabled" {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "rdp_nla",
+			Expected:     "Enabled",
+			Actual:       "Disabled",
+			HIPAAControl: "164.312(d)",
+			Severity:     "high",
+		})
+	}
+
+	// 17. Guest account
+	if state.GuestAccount == "Enabled" {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "guest_account",
+			Expected:     "Disabled",
+			Actual:       "Enabled",
+			HIPAAControl: "164.312(a)(1)",
+			Severity:     "high",
+		})
+	}
+
+	// 18. AD Services (DC only)
+	if t.label == "DC" {
+		for svc, status := range state.ADServices {
+			if status != "Running" {
+				checkType := "service_dns"
+				if svc == "Netlogon" {
+					checkType = "service_netlogon"
+				}
+				findings = append(findings, driftFinding{
+					Hostname:     t.hostname,
+					CheckType:    checkType,
+					Expected:     "Running",
+					Actual:       status,
+					HIPAAControl: "164.312(a)(1)",
+					Severity:     "critical",
+					Details:      map[string]string{"service": svc},
+				})
+			}
+		}
 	}
 
 	if len(findings) > 0 {
@@ -451,82 +756,45 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		return nil
 	}
 
-	// Parse the same as direct scan
-	var state struct {
-		Firewall      map[string]string `json:"Firewall"`
-		Defender      string            `json:"Defender"`
-		WindowsUpdate string            `json:"WindowsUpdate"`
-		AgentStatus   string            `json:"AgentStatus"`
-		RogueAdmins   []string          `json:"RogueAdmins"`
-		RogueTasks    []struct {
-			Name  string `json:"Name"`
-			Path  string `json:"Path"`
-			State string `json:"State"`
-		} `json:"RogueTasks"`
+	// Parse using same struct as direct scan (proxy returns subset of fields)
+	var proxyState struct {
+		windowsScanState
 		Error string `json:"Error"`
 	}
-	if err := json.Unmarshal([]byte(stdout), &state); err != nil {
+	if err := json.Unmarshal([]byte(stdout), &proxyState); err != nil {
 		log.Printf("[driftscan] DC proxy parse error for %s: %v (raw: %.200s)", t.hostname, err, stdout)
 		return nil
 	}
-	if state.Error != "" {
-		log.Printf("[driftscan] DC proxy session error for %s: %s", t.hostname, state.Error)
+	if proxyState.Error != "" {
+		log.Printf("[driftscan] DC proxy session error for %s: %s", t.hostname, proxyState.Error)
 		return nil
 	}
 
-	var findings []driftFinding
+	return ds.evaluateWindowsFindings(proxyState.windowsScanState, t)
+}
 
-	for profile, enabled := range state.Firewall {
-		if strings.ToLower(enabled) == "false" {
-			findings = append(findings, driftFinding{
-				Hostname: t.hostname, CheckType: "firewall_status",
-				Expected: "True", Actual: "False",
-				HIPAAControl: "164.312(a)(1)", Severity: "high",
-				Details: map[string]string{"profile": profile},
-			})
-		}
+// runLinuxScanIfNeeded runs a Linux scan if the interval has elapsed.
+func (ds *driftScanner) runLinuxScanIfNeeded(ctx context.Context) {
+	if !atomic.CompareAndSwapInt32(&ds.linuxRunning, 0, 1) {
+		return
 	}
-	if state.Defender != "" && state.Defender != "Running" && state.Defender != "NotFound" {
-		findings = append(findings, driftFinding{
-			Hostname: t.hostname, CheckType: "windows_defender",
-			Expected: "Running", Actual: state.Defender,
-			HIPAAControl: "164.308(a)(5)(ii)(B)", Severity: "high",
-		})
-	}
-	if state.WindowsUpdate == "Stopped" {
-		findings = append(findings, driftFinding{
-			Hostname: t.hostname, CheckType: "windows_update",
-			Expected: "Running", Actual: "Stopped",
-			HIPAAControl: "164.308(a)(5)(ii)(A)", Severity: "medium",
-		})
-	}
-	if len(state.RogueAdmins) > 0 {
-		findings = append(findings, driftFinding{
-			Hostname: t.hostname, CheckType: "rogue_admin_users",
-			Expected: "none", Actual: strings.Join(state.RogueAdmins, ", "),
-			HIPAAControl: "164.312(a)(1)", Severity: "critical",
-		})
-	}
-	if len(state.RogueTasks) > 0 {
-		names := make([]string, 0, len(state.RogueTasks))
-		for _, rt := range state.RogueTasks {
-			names = append(names, rt.Name)
-		}
-		findings = append(findings, driftFinding{
-			Hostname: t.hostname, CheckType: "rogue_scheduled_tasks",
-			Expected: "none", Actual: strings.Join(names, ", "),
-			HIPAAControl: "164.308(a)(1)(ii)(D)", Severity: "high",
-		})
-	}
-	if state.AgentStatus != "Running" {
-		findings = append(findings, driftFinding{
-			Hostname: t.hostname, CheckType: "agent_status",
-			Expected: "Running", Actual: state.AgentStatus,
-			Severity: "medium",
-		})
+	defer atomic.StoreInt32(&ds.linuxRunning, 0)
+
+	ds.linuxMu.Lock()
+	since := time.Since(ds.lastLinuxScanTime)
+	first := ds.lastLinuxScanTime.IsZero()
+	ds.linuxMu.Unlock()
+
+	if !first && since < driftScanInterval {
+		return
 	}
 
-	return findings
+	log.Printf("[linuxscan] Starting Linux drift scan cycle")
+	ds.linuxMu.Lock()
+	ds.lastLinuxScanTime = time.Now()
+	ds.linuxMu.Unlock()
+
+	ds.scanLinuxTargets(ctx)
 }
 
 // reportDrift sends a drift finding through the L1→L2→L3 healing pipeline.

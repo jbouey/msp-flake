@@ -49,8 +49,11 @@ type Daemon struct {
 	// Auto-deploy: spread agent to discovered workstations
 	deployer *autoDeployer
 
-	// Drift scanner: periodic security checks on Windows targets
+	// Drift scanner: periodic security checks on Windows + Linux targets
 	scanner *driftScanner
+
+	// Network scanner: periodic port/reachability checks
+	netScan *netScanner
 
 	// Evidence submitter: packages drift scan results into compliance bundles
 	evidenceSubmitter *evidence.Submitter
@@ -59,6 +62,10 @@ type Daemon struct {
 	// Drift report cooldown: prevents excessive incident creation
 	cooldownMu sync.Mutex
 	cooldowns  map[string]*driftCooldown // key: "hostname:check_type"
+
+	// Linux targets from checkin response
+	linuxTargetsMu sync.RWMutex
+	linuxTargets   []linuxTarget
 }
 
 // New creates a new daemon with the given configuration.
@@ -99,6 +106,9 @@ func New(cfg *Config) *Daemon {
 
 	// Initialize drift scanner for periodic security checks
 	d.scanner = newDriftScanner(d)
+
+	// Initialize network scanner for port/reachability checks
+	d.netScan = newNetScanner(d)
 
 	// Initialize evidence submitter for compliance pipeline
 	if cfg.EnableEvidenceUpload {
@@ -210,6 +220,17 @@ func (d *Daemon) runCycle(ctx context.Context) {
 		go d.scanner.runDriftScanIfNeeded(ctx)
 	}
 
+	// Linux drift scanning: periodic security checks on Linux targets.
+	// Scans appliance self + any remote linux_targets from checkin response.
+	if d.config.EnableDriftDetection {
+		go d.scanner.runLinuxScanIfNeeded(ctx)
+	}
+
+	// Network scanning: port enumeration + host reachability checks.
+	if d.config.EnableDriftDetection {
+		go d.netScan.runNetScanIfNeeded(ctx)
+	}
+
 	elapsed := time.Since(start)
 	log.Printf("[daemon] Cycle complete in %v (agents=%d)",
 		elapsed, d.registry.ConnectedCount())
@@ -230,9 +251,17 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[daemon] Checkin OK: appliance=%s, orders=%d, triggers=(enum=%v, scan=%v)",
-		resp.ApplianceID, len(resp.PendingOrders),
+	log.Printf("[daemon] Checkin OK: appliance=%s, orders=%d, linux_targets=%d, triggers=(enum=%v, scan=%v)",
+		resp.ApplianceID, len(resp.PendingOrders), len(resp.LinuxTargets),
 		resp.TriggerEnumeration, resp.TriggerImmediateScan)
+
+	// Store Linux targets from checkin response
+	if len(resp.LinuxTargets) > 0 {
+		parsed := parseLinuxTargets(resp.LinuxTargets)
+		d.linuxTargetsMu.Lock()
+		d.linuxTargets = parsed
+		d.linuxTargetsMu.Unlock()
+	}
 
 	// Process pending orders via order processor
 	if len(resp.PendingOrders) > 0 {

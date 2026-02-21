@@ -23,9 +23,8 @@ type DriftFinding struct {
 	Severity     string
 }
 
-// allCheckTypes are the 7 check types the drift scanner produces.
-// These must match CATEGORY_CHECKS in the backend's db_queries.py.
-var allCheckTypes = []string{
+// windowsCheckTypes are the check types the Windows drift scanner produces.
+var windowsCheckTypes = []string{
 	"firewall_status",
 	"windows_defender",
 	"windows_update",
@@ -33,7 +32,55 @@ var allCheckTypes = []string{
 	"rogue_admin_users",
 	"rogue_scheduled_tasks",
 	"agent_status",
+	"bitlocker_status",
+	"smb_signing",
+	"smb1_protocol",
+	"screen_lock_policy",
+	"defender_exclusions",
+	"dns_config",
+	"network_profile",
+	"password_policy",
+	"rdp_nla",
+	"guest_account",
+	"service_dns",
+	"service_netlogon",
 }
+
+// linuxCheckTypes are the check types the Linux drift scanner produces.
+var linuxCheckTypes = []string{
+	"linux_firewall",
+	"linux_ssh_config",
+	"linux_failed_services",
+	"linux_disk_space",
+	"linux_suid_binaries",
+	"linux_audit_logging",
+	"linux_ntp_sync",
+	"linux_kernel_params",
+	"linux_open_ports",
+	"linux_user_accounts",
+	"linux_file_permissions",
+	"linux_unattended_upgrades",
+	"linux_log_forwarding",
+	"linux_cron_review",
+	"linux_cert_expiry",
+}
+
+// networkCheckTypes are the check types the network scanner produces.
+var networkCheckTypes = []string{
+	"net_unexpected_ports",
+	"net_expected_service",
+	"net_host_reachability",
+	"net_dns_resolution",
+}
+
+// allCheckTypes combines all platform check types.
+var allCheckTypes = func() []string {
+	all := make([]string, 0, len(windowsCheckTypes)+len(linuxCheckTypes)+len(networkCheckTypes))
+	all = append(all, windowsCheckTypes...)
+	all = append(all, linuxCheckTypes...)
+	all = append(all, networkCheckTypes...)
+	return all
+}()
 
 // Submitter builds and submits evidence bundles to Central Command.
 type Submitter struct {
@@ -70,33 +117,26 @@ type bundlePayload struct {
 	SignedData     string                 `json:"signed_data"`
 }
 
-// BuildAndSubmit packages drift findings into a compliance evidence bundle
-// and submits it to Central Command.
-//
-// Logic: For each scanned host, we produce one check per check type.
-// If a drift finding exists for that host+check, the check status is "fail".
-// Otherwise, the check status is "pass" (no drift = compliant).
-func (s *Submitter) BuildAndSubmit(ctx context.Context, findings []DriftFinding, scannedHosts []string) error {
+// buildAndSubmitForTypes is the shared implementation for building evidence bundles.
+func (s *Submitter) buildAndSubmitForTypes(ctx context.Context, findings []DriftFinding, scannedHosts []string, checkTypes []string) error {
 	if len(scannedHosts) == 0 {
-		return nil // nothing scanned, nothing to submit
+		return nil
 	}
 
 	now := time.Now().UTC()
 
-	// Build a lookup: "hostname:check_type" -> finding
 	driftMap := make(map[string]*DriftFinding, len(findings))
 	for i := range findings {
 		key := findings[i].Hostname + ":" + findings[i].CheckType
 		driftMap[key] = &findings[i]
 	}
 
-	// Build individual check results
 	var checks []map[string]any
 	compliant := 0
 	nonCompliant := 0
 
 	for _, host := range scannedHosts {
-		for _, ct := range allCheckTypes {
+		for _, ct := range checkTypes {
 			key := host + ":" + ct
 			check := map[string]any{
 				"check":    ct,
@@ -119,6 +159,22 @@ func (s *Submitter) BuildAndSubmit(ctx context.Context, findings []DriftFinding,
 			checks = append(checks, check)
 		}
 	}
+
+	return s.submitBundle(ctx, checks, compliant, nonCompliant, scannedHosts, now)
+}
+
+// BuildAndSubmit packages Windows drift findings into a compliance evidence bundle.
+func (s *Submitter) BuildAndSubmit(ctx context.Context, findings []DriftFinding, scannedHosts []string) error {
+	return s.buildAndSubmitForTypes(ctx, findings, scannedHosts, windowsCheckTypes)
+}
+
+// BuildAndSubmitLinux packages Linux drift findings into a compliance evidence bundle.
+func (s *Submitter) BuildAndSubmitLinux(ctx context.Context, findings []DriftFinding, scannedHosts []string) error {
+	return s.buildAndSubmitForTypes(ctx, findings, scannedHosts, linuxCheckTypes)
+}
+
+// submitBundle signs and submits an evidence bundle to Central Command.
+func (s *Submitter) submitBundle(ctx context.Context, checks []map[string]any, compliant, nonCompliant int, scannedHosts []string, now time.Time) error {
 
 	summary := map[string]any{
 		"total_checks":  compliant + nonCompliant,

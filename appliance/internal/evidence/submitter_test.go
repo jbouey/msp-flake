@@ -43,17 +43,18 @@ func TestBuildAndSubmit_AllPass(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should have 7 check types x 2 hosts = 14 checks, all pass
-	if len(receivedPayload.Checks) != 14 {
-		t.Fatalf("expected 14 checks, got %d", len(receivedPayload.Checks))
+	// Should have len(windowsCheckTypes) x 2 hosts checks, all pass
+	expectedChecks := len(windowsCheckTypes) * 2
+	if len(receivedPayload.Checks) != expectedChecks {
+		t.Fatalf("expected %d checks, got %d", expectedChecks, len(receivedPayload.Checks))
 	}
 
 	summary := receivedPayload.Summary
 	compliant, _ := summary["compliant"].(float64)
 	nonCompliant, _ := summary["non_compliant"].(float64)
 
-	if int(compliant) != 14 {
-		t.Fatalf("expected 14 compliant, got %v", compliant)
+	if int(compliant) != expectedChecks {
+		t.Fatalf("expected %d compliant, got %v", expectedChecks, compliant)
 	}
 	if int(nonCompliant) != 0 {
 		t.Fatalf("expected 0 non_compliant, got %v", nonCompliant)
@@ -100,18 +101,20 @@ func TestBuildAndSubmit_WithDrift(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 7 check types x 1 host = 7 checks total
-	if len(receivedPayload.Checks) != 7 {
-		t.Fatalf("expected 7 checks, got %d", len(receivedPayload.Checks))
+	// len(windowsCheckTypes) x 1 host checks total
+	expectedChecks := len(windowsCheckTypes)
+	if len(receivedPayload.Checks) != expectedChecks {
+		t.Fatalf("expected %d checks, got %d", expectedChecks, len(receivedPayload.Checks))
 	}
 
 	summary := receivedPayload.Summary
 	compliant, _ := summary["compliant"].(float64)
 	nonCompliant, _ := summary["non_compliant"].(float64)
 
-	// 2 drifts found, 5 pass
-	if int(compliant) != 5 {
-		t.Fatalf("expected 5 compliant, got %v", compliant)
+	// 2 drifts found, rest pass
+	expectedCompliant := expectedChecks - 2
+	if int(compliant) != expectedCompliant {
+		t.Fatalf("expected %d compliant, got %v", expectedCompliant, compliant)
 	}
 	if int(nonCompliant) != 2 {
 		t.Fatalf("expected 2 non_compliant, got %v", nonCompliant)
