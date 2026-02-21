@@ -684,9 +684,9 @@ async def get_compliance_history_for_site(
             summary
         FROM compliance_bundles
         WHERE site_id = :site_id
-        AND checked_at > NOW() - INTERVAL :days_interval
+        AND checked_at > NOW() - make_interval(days => :days_param)
         ORDER BY checked_at ASC
-    """), {"site_id": site_id, "days_interval": f"{days} days"})
+    """), {"site_id": site_id, "days_param": days})
 
     rows = result.fetchall()
 
@@ -980,12 +980,12 @@ async def get_resolved_incidents_for_site(
         JOIN appliances a ON a.id = i.appliance_id
         WHERE a.site_id = :site_id
         AND i.status = 'resolved'
-        AND i.reported_at > NOW() - INTERVAL :days_interval
+        AND i.reported_at > NOW() - make_interval(days => :days_param)
         ORDER BY i.resolved_at DESC
         LIMIT :limit
     """), {
         "site_id": site_id,
-        "days_interval": f"{days} days",
+        "days_param": days,
         "limit": limit,
     })
 
@@ -1081,9 +1081,9 @@ async def get_control_results_for_site(
         SELECT checks, checked_at
         FROM compliance_bundles
         WHERE site_id = :site_id
-        AND checked_at > NOW() - INTERVAL :days_interval
+        AND checked_at > NOW() - make_interval(days => :days_param)
         ORDER BY checked_at DESC
-    """), {"site_id": site_id, "days_interval": f"{days} days"})
+    """), {"site_id": site_id, "days_param": days})
 
     rows = result.fetchall()
 
