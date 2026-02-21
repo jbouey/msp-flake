@@ -2239,7 +2239,7 @@ async def agent_l2_plan(request: L2PlanRequest, db: AsyncSession = Depends(get_d
     The appliance PHI-scrubs data before sending. Central Command holds the
     LLM API key — appliances never need it.
     """
-    from backend.l2_planner import analyze_incident, record_l2_decision, is_l2_available
+    from dashboard_api.l2_planner import analyze_incident, record_l2_decision, is_l2_available
 
     if not is_l2_available():
         raise HTTPException(status_code=503, detail="L2 LLM not configured (no API key)")
