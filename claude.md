@@ -77,7 +77,7 @@ from compliance_agent._types import (
 | test | @pytest.mark.asyncio, AsyncMock | `.claude/skills/docs/testing/testing.md` |
 | hipaa | 6 drift checks, EvidenceBundle, L1 | `.claude/skills/docs/hipaa/compliance.md` |
 | backend | L1→L2→L3, FastAPI router, Depends | `.claude/skills/docs/backend/backend.md` |
-| db | asyncpg pool, WAL, 49 migrations | `.claude/skills/docs/database/database.md` |
+| db | asyncpg pool, WAL, 50 migrations | `.claude/skills/docs/database/database.md` |
 | nixos | rebuild watchdog, nftables, overlay | `.claude/skills/docs/nixos/infrastructure.md` |
 | frontend | useQuery, useMutation, 78 hooks | `.claude/skills/docs/frontend/frontend.md` |
 | api | /api REST, gRPC proto, OAuth flow | `.claude/skills/docs/api/api.md` |

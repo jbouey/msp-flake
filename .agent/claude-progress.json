@@ -1,6 +1,6 @@
 {
-  "session": 121,
-  "updated": "2026-02-21T03:40:00.000000Z",
+  "session": 122,
+  "updated": "2026-02-21T07:45:30.137844Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -168,40 +168,41 @@
     }
   ],
   "completed_this_session": [
-    "Implemented end-to-end compliance pipeline: Go daemon evidence submission (signer.go, submitter.go) + backend fixes (compliance_packet.py move, import fix, CATEGORY_CHECKS update)",
-    "First real compliance bundle: CB-2026-02-21, 7 checks, 6/7 pass (firewall_status fail on 192.168.88.250), Ed25519 signed, chain position 128090",
-    "Cross-compiled Go daemon v0.2.0, deployed to physical appliance via SSH pipe through VPS (NixOS read-only filesystem prevented systemd override)",
-    "Fixed VM appliance 401 auth: Go checkin-receiver used single static token, added per-site API key validation from appliance_provisioning table",
-    "Fixed appliance_id format mismatch: provisioning.py used no-colon MACs, Go+Python checkin used colons — normalized provisioning.py to use colons",
-    "Migrated 35 admin_orders rows from hyphen-separated MAC to colon-separated (canonical format)",
-    "Updated Nix daemon version 0.1.0 → 0.2.1 in both appliance-image.nix and appliance-disk-image.nix",
-    "Compliance packet endpoint live: 56.4% compliance, 15 HIPAA controls, real pass/fail data with evidence chain IDs",
-    "Documented NixOS rebuild path for deployed appliances (#osiriscare-appliance-disk)"
+    "HIPAA administrative compliance modules: 10 gap-closing integrations (SRA, policies, training, BAAs, IR+breach, contingency, workforce, physical, officers, gap analysis)",
+    "Migration 048 deployed to VPS: 12 tables + 11 indexes",
+    "Backend router with ~30 endpoints + templates (SRA questions, policy docs, checklists)",
+    "Frontend hub page + 10 module components with tab navigation",
+    "Fixed TypeScript build: removed 4 unused vars (user, getReadinessBg, items, templateItems)",
+    "CI/CD deploy verified: both hipaa_modules.py + hipaa_templates.py live on VPS"
   ],
   "recent_commits": [
     {
-      "hash": "8e904c4",
-      "message": "feat: per-site API key auth in checkin-receiver — fixes VM appliance 401"
+      "hash": "7b18a62",
+      "message": "fix: remove unused variables breaking TypeScript build"
     },
     {
-      "hash": "9951dc9",
-      "message": "fix: use absolute path for nixos-rebuild in order processor"
+      "hash": "e2eaf92",
+      "message": "feat: HIPAA administrative compliance modules \u2014 10 gap-closing integrations"
     },
     {
-      "hash": "060dc7f",
-      "message": "feat: end-to-end compliance pipeline — Go daemon evidence submission + backend fixes"
+      "hash": "1483b65",
+      "message": "feat: flap detection \u2014 agent-side suppression + scoring dampening"
     },
     {
-      "hash": "38176c2",
-      "message": "feat: autodeploy error handling — failure tracking, WMI fallback, GPO startup script"
+      "hash": "fa4f0ae",
+      "message": "fix: align KPI controls_passing/warning/failing with portal 8-control mapping"
     },
     {
-      "hash": "364866f",
-      "message": "feat: drift scanner + deploy verification — chaos test hardening"
+      "hash": "60cb401",
+      "message": "fix: expand CATEGORY_CHECKS to all 53 check types + multi-check control aggregation"
     },
     {
-      "hash": "d365525",
-      "message": "feat: optional static IP from config.yaml — fixes VM DHCP drift"
+      "hash": "5d2673c",
+      "message": "fix: evidence_bundles query \u2014 match actual table schema (bundle_id, check_type, not bundle_hash/bundle_type)"
+    },
+    {
+      "hash": "b34fb16",
+      "message": "fix: use make_interval() for parameterized intervals in db_queries"
     }
   ],
   "key_findings": {
@@ -234,7 +235,7 @@
     "ws_trust_fix_lesson": "Broken trust relationship (error 1789) means machine account password is out of sync with AD. NTLM domain auth still works (doesn't need machine trust), but Kerberos/GPO fails. Fix: Reset-ComputerMachinePassword -Server NVDC01 run from DC side. Verify: Test-ComputerSecureChannel returns True. Test-ComputerSecureChannel -Repair via WinRM on the broken WS returns HTTP 400 \u2014 use DC-side reset instead.",
     "nix_store_pythonpath_lesson": "After nixos-rebuild, nix store hashes change. PYTHONPATH from previous sessions becomes invalid. Build dynamically: for pkg in pywinrm requests-2 ...; do ls -d /nix/store/*${pkg}*/lib/python*/site-packages; done",
     "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles.",
-    "chaos_management_plane_lesson": "LLM-generated chaos campaigns can create attacks that kill the management plane (WinRM/PSRemoting). Feb 17 campaign stopped+disabled WinRM on DC, making all subsequent scenarios unexecutable and requiring manual console recovery. Fix: two-layer protection — (1) prompt-level exclusion in generate_and_plan.py/v2 telling LLM to never target WinRM/PSRemoting, (2) runtime safety filter in winrm_attack.py (is_blocked_command()) that blocks execution even if LLM generates it. Same principle applies to SSH on Linux targets. VBoxManage guestcontrol (with Guest Additions) provides WinRM-independent recovery path.",
+    "chaos_management_plane_lesson": "LLM-generated chaos campaigns can create attacks that kill the management plane (WinRM/PSRemoting). Feb 17 campaign stopped+disabled WinRM on DC, making all subsequent scenarios unexecutable and requiring manual console recovery. Fix: two-layer protection \u2014 (1) prompt-level exclusion in generate_and_plan.py/v2 telling LLM to never target WinRM/PSRemoting, (2) runtime safety filter in winrm_attack.py (is_blocked_command()) that blocks execution even if LLM generates it. Same principle applies to SSH on Linux targets. VBoxManage guestcontrol (with Guest Additions) provides WinRM-independent recovery path.",
     "vm_ram_balancing_lesson": "5 VMs on iMac totaling 24GB caused host to choke. DC had 10GB (overkill for lab AD). Rebalanced: DC 6GB, SRV01 4GB, WS01 4GB, Linux 2GB, Appliance 6GB = 22GB. Appliance needs 6GB for nixos-rebuild (nix store builds are memory-hungry). VMs must be powered off to change RAM via VBoxManage modifyvm --memory."
   },
   "deployment_flow": [
