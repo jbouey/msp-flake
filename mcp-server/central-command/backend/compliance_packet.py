@@ -633,14 +633,19 @@ class CompliancePacket:
         )
         row = result.fetchone()
 
-        # OTS status (ots_proofs uses naive timestamps)
+        # OTS status with block heights (ots_proofs uses naive timestamps)
         naive_start = self._period_start.replace(tzinfo=None)
         naive_end = self._period_end.replace(tzinfo=None)
         ots_result = await self.db.execute(
             text("""
                 SELECT
                     COUNT(*) as total,
-                    COUNT(*) FILTER (WHERE status = 'anchored') as anchored
+                    COUNT(*) FILTER (WHERE status = 'anchored') as anchored,
+                    COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                    MIN(bitcoin_block) FILTER (WHERE bitcoin_block IS NOT NULL) as first_block,
+                    MAX(bitcoin_block) FILTER (WHERE bitcoin_block IS NOT NULL) as latest_block,
+                    MIN(anchored_at) FILTER (WHERE anchored_at IS NOT NULL) as first_anchor_time,
+                    MAX(anchored_at) FILTER (WHERE anchored_at IS NOT NULL) as latest_anchor_time
                 FROM ots_proofs
                 WHERE site_id = :sid
                   AND submitted_at >= :start AND submitted_at < :end
@@ -649,7 +654,10 @@ class CompliancePacket:
         )
         ots_row = ots_result.fetchone()
 
-        return {
+        ots_total = ots_row.total if ots_row else 0
+        ots_anchored = ots_row.anchored if ots_row else 0
+
+        manifest = {
             "total_bundles": row.total_bundles or 0,
             "signed_bundles": row.signed_count or 0,
             "chain_range": f"{row.first_position or 0} - {row.last_position or 0}",
@@ -657,9 +665,43 @@ class CompliancePacket:
             "period_end": row.last_bundle.isoformat() if row.last_bundle else "N/A",
             "latest_chain_hash": row.latest_chain_hash[:16] + "..." if row.latest_chain_hash else "N/A",
             "worm_url": f"s3://evidence-worm/{self.site_id}/{self.year}/{self.month:02d}/",
-            "ots_submitted": ots_row.total if ots_row else 0,
-            "ots_anchored": ots_row.anchored if ots_row else 0,
+            "ots_submitted": ots_total,
+            "ots_anchored": ots_anchored,
+            "ots_pending": ots_row.pending if ots_row else 0,
+            "ots_anchor_rate": round(ots_anchored * 100.0 / ots_total, 1) if ots_total > 0 else 0,
+            "ots_first_block": ots_row.first_block if ots_row else None,
+            "ots_latest_block": ots_row.latest_block if ots_row else None,
+            "ots_first_anchor_time": ots_row.first_anchor_time.strftime("%Y-%m-%d %H:%M UTC") if ots_row and ots_row.first_anchor_time else None,
+            "ots_latest_anchor_time": ots_row.latest_anchor_time.strftime("%Y-%m-%d %H:%M UTC") if ots_row and ots_row.latest_anchor_time else None,
         }
+
+        # Get recent anchor samples for the manifest (up to 5)
+        anchors_result = await self.db.execute(
+            text("""
+                SELECT p.bitcoin_block, p.anchored_at, p.bundle_id,
+                       b.check_type
+                FROM ots_proofs p
+                LEFT JOIN compliance_bundles b ON b.bundle_id = p.bundle_id AND b.site_id = p.site_id
+                WHERE p.site_id = :sid
+                  AND p.submitted_at >= :start AND p.submitted_at < :end
+                  AND p.bitcoin_block IS NOT NULL
+                ORDER BY p.anchored_at DESC
+                LIMIT 5
+            """),
+            {"sid": self.site_id, "start": naive_start, "end": naive_end},
+        )
+        manifest["ots_recent_anchors"] = [
+            {
+                "block": r.bitcoin_block,
+                "time": r.anchored_at.strftime("%Y-%m-%d %H:%M") if r.anchored_at else "N/A",
+                "bundle_id": r.bundle_id[:20] + "..." if r.bundle_id else "N/A",
+                "check_type": (r.check_type or "unknown").replace("_", " ").title(),
+                "blockstream_url": f"https://blockstream.info/block-height/{r.bitcoin_block}",
+            }
+            for r in anchors_result.fetchall()
+        ]
+
+        return manifest
 
     def _render_markdown(self, data: Dict) -> str:
         """Render compliance packet markdown from real data."""
@@ -781,12 +823,51 @@ class CompliancePacket:
 | Period Coverage | {{ evidence_bundles.period_start }} to {{ evidence_bundles.period_end }} |
 | Latest Chain Hash | `{{ evidence_bundles.latest_chain_hash }}` |
 | WORM Storage | `{{ evidence_bundles.worm_url }}` |
-| OTS Proofs Submitted | {{ evidence_bundles.ots_submitted }} |
-| OTS Bitcoin Anchored | {{ evidence_bundles.ots_anchored }} |
+
+**HIPAA Control:** 164.312(b) (Audit Controls), 164.312(c)(1) (Integrity Controls)
+
+---
+
+## Blockchain Verification (OpenTimestamps)
+
+Each evidence bundle's SHA-256 hash is submitted to the Bitcoin blockchain via
+OpenTimestamps (OTS). Once anchored in a Bitcoin block, the timestamp becomes
+independently verifiable by any third party — proving evidence existed at a specific
+point in time and has not been altered. This provides non-repudiation suitable for
+regulatory audit and legal proceedings.
+
+### Anchoring Summary
+
+| Metric | Value |
+|--------|-------|
+| Proofs Submitted | {{ evidence_bundles.ots_submitted }} |
+| Bitcoin Anchored | {{ evidence_bundles.ots_anchored }} |
+| Pending Confirmation | {{ evidence_bundles.ots_pending }} |
+| Anchor Rate | {{ evidence_bundles.ots_anchor_rate }}% |
+{% if evidence_bundles.ots_first_block %}| First Bitcoin Block | [#{{ evidence_bundles.ots_first_block }}](https://blockstream.info/block-height/{{ evidence_bundles.ots_first_block }}) ({{ evidence_bundles.ots_first_anchor_time }}) |
+{% endif %}{% if evidence_bundles.ots_latest_block %}| Latest Bitcoin Block | [#{{ evidence_bundles.ots_latest_block }}](https://blockstream.info/block-height/{{ evidence_bundles.ots_latest_block }}) ({{ evidence_bundles.ots_latest_anchor_time }}) |
+{% endif %}{% if evidence_bundles.ots_first_block and evidence_bundles.ots_latest_block %}| Block Span | {{ evidence_bundles.ots_latest_block - evidence_bundles.ots_first_block }} blocks |
+{% endif %}
+{% if evidence_bundles.ots_recent_anchors %}### Recent Bitcoin Anchors
+
+| Bitcoin Block | Anchored | Evidence Bundle | Check Type | Verify |
+|---------------|----------|-----------------|------------|--------|
+{% for a in evidence_bundles.ots_recent_anchors %}| [#{{ a.block }}]({{ a.blockstream_url }}) | {{ a.time }} | `{{ a.bundle_id }}` | {{ a.check_type }} | [Blockstream]({{ a.blockstream_url }}) |
+{% endfor %}{% endif %}
+
+### Independent Verification
+
+To independently verify any Bitcoin anchor:
+1. Visit [blockstream.info](https://blockstream.info) and search the block number
+2. The block's timestamp proves the evidence hash existed before that block was mined
+3. Any modification to the evidence would produce a different SHA-256 hash, breaking the proof
+
+**HIPAA Control:** 164.312(c)(1) (Integrity Controls — tamper-evident timestamping)
 
 ---
 
 **End of Monthly Compliance Packet**
-**Audit Support:** All evidence bundles retained for 90+ days in WORM storage
+**Audit Support:** All evidence bundles retained for 90+ days in WORM storage.
+Bitcoin blockchain anchors provide independent, tamper-proof verification of evidence timestamps.
 """)
         return template.render(**data)
