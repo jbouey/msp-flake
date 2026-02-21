@@ -1,6 +1,6 @@
 {
   "session": 122,
-  "updated": "2026-02-21T07:45:30.137844Z",
+  "updated": "2026-02-21T13:15:00.000000Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -16,7 +16,7 @@
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "proven_end_to_end_overlay_plus_nixos_rebuild"
+    "fleet_updates": "fleet_wide_orders_live_migration_049_deployed_skip_version_logic"
   },
   "current_blocker": "Physical appliance running v0.2.0 but old v0.1.0 daemon still holding ports 50051/8090 (needs pkill from iMac). Only 1 of 4 Windows VMs scanned (others may be powered off). WS01 machine trust still stale since Jan 11.",
   "architecture_decision": {
@@ -37,24 +37,24 @@
     "decided": "2026-02-21"
   },
   "fleet_update_mechanism": {
-    "overlay_flow": [
-      "1. Insert update_agent order with tarball URL",
-      "2. Agent downloads tarball, extracts to /var/lib/msp/agent-overlay/",
-      "3. Agent restarts via systemctl restart",
-      "4. _apply_overlay() detects overlay, purges modules, re-imports from overlay",
-      "5. Agent runs with overlay code (new handlers, fixes, etc.)",
-      "NOTE: Pre-fix appliances use argparse.py bootstrap shim to activate overlay"
+    "fleet_orders": [
+      "1. POST /api/fleet/orders creates one fleet_orders row (order_type, parameters, skip_version, expires_at)",
+      "2. During checkin, get_fleet_orders_for_appliance() returns active orders the appliance hasn't completed",
+      "3. Appliances at skip_version are automatically excluded",
+      "4. Appliance acknowledges/completes order via fleet::{uuid}::{appliance_id} format",
+      "5. record_fleet_order_completion() tracks per-appliance status",
+      "6. GET /api/fleet/orders shows completion stats (total_appliances, completed, pending)",
+      "7. POST /api/fleet/orders/{id}/cancel to cancel a fleet order"
+    ],
+    "legacy_per_appliance": [
+      "admin_orders table still used for per-appliance orders (healing, diagnostic)",
+      "Fleet-wide updates now use fleet_orders table instead"
     ],
     "rebuild_flow": [
-      "1. Insert nixos_rebuild order with flake_ref",
-      "2. Agent runs nixos-rebuild test via systemd-run (escapes ProtectSystem sandbox)",
-      "3. New system activates, agent restarts with new nix code",
-      "4. _verify_rebuild_if_pending() writes .rebuild-verified",
-      "5. Watchdog timer persists rebuild with nixos-rebuild switch",
-      "6. If agent fails to check in within 10 min, watchdog rolls back"
-    ],
-    "key_insight": "NixOS buildPythonApplication wrappers override PYTHONPATH, making os.execve useless for overlay activation. Fix: purge sys.modules + update __path__ within same process. Pre-fix bootstrap: fake argparse.py intercepts first import in main().",
-    "overlay_structure": "CRITICAL: Tarball must create compliance_agent/ subdirectory. Build: mkdir -p overlay/compliance_agent && cp -R src/compliance_agent/* overlay/compliance_agent/ && cp VERSION overlay/"
+      "1. Create fleet order: order_type=nixos_rebuild, parameters={flake_ref: ...}, skip_version=target",
+      "2. Each appliance picks up during checkin, runs nixos-rebuild test",
+      "3. Watchdog persists with nixos-rebuild switch, rolls back on failure"
+    ]
   },
   "active_tasks": [
     {
@@ -175,15 +175,24 @@
     }
   ],
   "completed_this_session": [
-    "HIPAA administrative compliance modules: 10 gap-closing integrations (SRA, policies, training, BAAs, IR+breach, contingency, workforce, physical, officers, gap analysis)",
-    "Migration 048 deployed to VPS: 12 tables + 11 indexes",
-    "Backend router with ~30 endpoints + templates (SRA questions, policy docs, checklists)",
-    "Frontend hub page + 10 module components with tab navigation",
-    "Fixed TypeScript build: removed 4 unused vars (user, getReadinessBg, items, templateItems)",
-    "CI/CD deploy verified: both hipaa_modules.py + hipaa_templates.py live on VPS",
-    "LinkedIn marketing images: HIPAA compliance (10 modules) + blockchain OTS (evidence anchoring) — 1200x627 @2x PNGs"
+    "Fleet-wide orders: redesigned fleet updates from per-appliance to fleet-wide (migration 049, fleet_orders + fleet_order_completions tables). One row per fleet command, appliances check during checkin, skip if at version or already completed.",
+    "L1 rule check_type alignment: fixed 11 naming mismatches (linux_ssh_config!=ssh_config, audit_logging!=audit_policy, etc.) that prevented rules from firing. Added 17 new rules (55 total) — 100% coverage of all 38 scanner check types.",
+    "Server-side mappings updated: learning_api.py CHECK_TYPE_TO_RUNBOOK, compliance_packet.py CHECK_TYPE_HIPAA_MAP, IncidentRow.tsx labels — all aligned with Go daemon scanner output.",
+    "Migration 049 deployed to VPS: fleet_orders + fleet_order_completions tables live."
   ],
   "recent_commits": [
+    {
+      "hash": "07600ac",
+      "message": "feat: fleet-wide orders + L1 rule check_type alignment for all 38 scanner types"
+    },
+    {
+      "hash": "820bfbd",
+      "message": "feat: close Go daemon scanning gaps — Linux, expanded Windows, network"
+    },
+    {
+      "hash": "a00c53d",
+      "message": "refactor: Go appliance-daemon is now the primary agent"
+    },
     {
       "hash": "b50651d",
       "message": "docs: session 122 log + progress tracking for HIPAA compliance modules"
@@ -193,32 +202,12 @@
       "message": "fix: exempt client portal routes from CSRF middleware"
     },
     {
-      "hash": "7b18a62",
-      "message": "fix: remove unused variables breaking TypeScript build"
-    },
-    {
       "hash": "e2eaf92",
-      "message": "feat: HIPAA administrative compliance modules \u2014 10 gap-closing integrations"
+      "message": "feat: HIPAA administrative compliance modules — 10 gap-closing integrations"
     },
     {
       "hash": "1483b65",
-      "message": "feat: flap detection \u2014 agent-side suppression + scoring dampening"
-    },
-    {
-      "hash": "fa4f0ae",
-      "message": "fix: align KPI controls_passing/warning/failing with portal 8-control mapping"
-    },
-    {
-      "hash": "60cb401",
-      "message": "fix: expand CATEGORY_CHECKS to all 53 check types + multi-check control aggregation"
-    },
-    {
-      "hash": "5d2673c",
-      "message": "fix: evidence_bundles query \u2014 match actual table schema (bundle_id, check_type, not bundle_hash/bundle_type)"
-    },
-    {
-      "hash": "b34fb16",
-      "message": "fix: use make_interval() for parameterized intervals in db_queries"
+      "message": "feat: flap detection — agent-side suppression + scoring dampening"
     }
   ],
   "key_findings": {
@@ -252,7 +241,8 @@
     "nix_store_pythonpath_lesson": "After nixos-rebuild, nix store hashes change. PYTHONPATH from previous sessions becomes invalid. Build dynamically: for pkg in pywinrm requests-2 ...; do ls -d /nix/store/*${pkg}*/lib/python*/site-packages; done",
     "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles.",
     "chaos_management_plane_lesson": "LLM-generated chaos campaigns can create attacks that kill the management plane (WinRM/PSRemoting). Feb 17 campaign stopped+disabled WinRM on DC, making all subsequent scenarios unexecutable and requiring manual console recovery. Fix: two-layer protection \u2014 (1) prompt-level exclusion in generate_and_plan.py/v2 telling LLM to never target WinRM/PSRemoting, (2) runtime safety filter in winrm_attack.py (is_blocked_command()) that blocks execution even if LLM generates it. Same principle applies to SSH on Linux targets. VBoxManage guestcontrol (with Guest Additions) provides WinRM-independent recovery path.",
-    "vm_ram_balancing_lesson": "5 VMs on iMac totaling 24GB caused host to choke. DC had 10GB (overkill for lab AD). Rebalanced: DC 6GB, SRV01 4GB, WS01 4GB, Linux 2GB, Appliance 6GB = 22GB. Appliance needs 6GB for nixos-rebuild (nix store builds are memory-hungry). VMs must be powered off to change RAM via VBoxManage modifyvm --memory."
+    "vm_ram_balancing_lesson": "5 VMs on iMac totaling 24GB caused host to choke. DC had 10GB (overkill for lab AD). Rebalanced: DC 6GB, SRV01 4GB, WS01 4GB, Linux 2GB, Appliance 6GB = 22GB. Appliance needs 6GB for nixos-rebuild (nix store builds are memory-hungry). VMs must be powered off to change RAM via VBoxManage modifyvm --memory.",
+    "l1_rule_check_type_lesson": "Go drift scanners (linuxscan.go, driftscan.go, netscan.go) send prefixed check_types (linux_ssh_config, linux_firewall, etc.) but builtin_rules.go originally matched on short names (ssh_config, firewall). Rules never fired because check_type != condition. Always use exact scanner output strings in L1 rule conditions. 55 builtin rules now cover all 38 scanner check types at 100%. Network checks (4 types) escalate to L3 by default — can't auto-remediate network topology."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",
@@ -263,9 +253,10 @@
     "6. Central Command provisions via MAC address"
   ],
   "fleet_update_commands": {
-    "deploy_overlay": "INSERT INTO admin_orders (order_id, appliance_id, site_id, order_type, parameters, status, expires_at) VALUES ('overlay-ID', 'APPLIANCE_ID', 'SITE_ID', 'update_agent', '{\"package_url\": \"https://api.osiriscare.net/agent-packages/compliance-agent-1.0.56.tar.gz\", \"version\": \"1.0.56-desc\"}', 'pending', now() + interval '2 hours')",
-    "trigger_rebuild": "INSERT INTO admin_orders (order_id, appliance_id, site_id, order_type, parameters, status, expires_at) VALUES ('rebuild-ID', 'APPLIANCE_ID', 'SITE_ID', 'nixos_rebuild', '{\"flake_ref\": \"github:jbouey/msp-flake#osiriscare-appliance-disk\"}', 'pending', now() + interval '4 hours')",
-    "run_diagnostic": "INSERT INTO admin_orders (order_id, appliance_id, site_id, order_type, parameters, status, expires_at) VALUES ('diag-ID', 'APPLIANCE_ID', 'SITE_ID', 'diagnostic', '{\"command\": \"agent_status\"}', 'pending', now() + interval '1 hour')",
+    "create_fleet_order": "curl -X POST https://api.osiriscare.net/api/fleet/orders -H 'Content-Type: application/json' -d '{\"order_type\": \"nixos_rebuild\", \"parameters\": {\"flake_ref\": \"github:jbouey/msp-flake#osiriscare-appliance-disk\"}, \"skip_version\": \"0.2.1\", \"expires_hours\": 24}'",
+    "list_fleet_orders": "curl https://api.osiriscare.net/api/fleet/orders",
+    "cancel_fleet_order": "curl -X POST https://api.osiriscare.net/api/fleet/orders/{id}/cancel",
+    "per_appliance_diagnostic": "INSERT INTO admin_orders (order_id, appliance_id, site_id, order_type, parameters, status, expires_at) VALUES ('diag-ID', 'APPLIANCE_ID', 'SITE_ID', 'diagnostic', '{\"command\": \"agent_status\"}', 'pending', now() + interval '1 hour')",
     "appliance_ids": {
       "physical": "physical-appliance-pilot-1aea78-84:3A:5B:91:B6:61 (site: physical-appliance-pilot-1aea78)",
       "vm": "test-appliance-lab-b3c40c-08:00:27:98:FD:84 (site: test-appliance-lab-b3c40c)"
