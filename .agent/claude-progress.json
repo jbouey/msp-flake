@@ -177,6 +177,14 @@
   ],
   "recent_commits": [
     {
+      "hash": "b50651d",
+      "message": "docs: session 122 log + progress tracking for HIPAA compliance modules"
+    },
+    {
+      "hash": "f41151a",
+      "message": "fix: exempt client portal routes from CSRF middleware"
+    },
+    {
       "hash": "7b18a62",
       "message": "fix: remove unused variables breaking TypeScript build"
     },

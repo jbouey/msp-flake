@@ -63,6 +63,31 @@ Implemented complete HIPAA administrative compliance documentation system for th
 
 - `e2eaf92` — feat: HIPAA administrative compliance modules — 10 gap-closing integrations (20 files, +4395 lines)
 - `7b18a62` — fix: remove unused variables breaking TypeScript build
+- `f41151a` — fix: exempt client portal routes from CSRF middleware
+- `b50651d` — docs: session 122 log + progress tracking
+
+## Smoke Test Results (Live Production)
+
+All 10 modules verified on `dashboard.osiriscare.net/client/compliance`:
+
+| Module | Render | CRUD | Notes |
+|--------|--------|------|-------|
+| Overview/Hub | Pass | Pass | Readiness score ring, 10 module cards, overview API aggregates all modules |
+| Risk Assessment | Pass | Pass | SRA wizard 5-step progress, 40 questions with HIPAA refs + response buttons |
+| Policy Library | Pass | Pass | 8 templates, create from template auto-fills `{{ORG_NAME}}` = "North Valley Family Practice" |
+| Training | Pass | — | Empty state renders correctly |
+| BAA Tracker | Pass | — | Empty state renders correctly |
+| Incident Response | Pass | — | Empty state renders correctly |
+| Contingency Plans | Pass | — | Empty state renders correctly |
+| Workforce Access | Pass | — | Empty state renders correctly |
+| Physical Safeguards | Pass | Pass | 19 checklist items with HIPAA refs, status dropdowns, progress bar |
+| Officer Designation | Pass | Pass | Privacy + Security officer forms, upsert confirmed in DB |
+| Gap Analysis | Pass | Pass | 26 questions across 4 sections, CMM maturity scale, View Report button |
+
+### Bugs Found & Fixed During Smoke Test
+
+1. **TypeScript build failure** — 4 unused variables prevented CI/CD frontend build (`7b18a62`)
+2. **CSRF 403 on all client portal POSTs** — CSRF middleware was not exempting `/api/client/` routes. Client portal uses separate session cookie auth (`osiris_client_session`), same pattern as `/api/portal/`, `/api/fleet/` which were already exempt. Fixed by broadening `/api/client/auth/` exemption to `/api/client/` (`f41151a`)
 
 ## Architecture Decisions
 
