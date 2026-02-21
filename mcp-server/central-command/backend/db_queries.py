@@ -458,7 +458,7 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
     
     Maps check types to compliance categories:
     - patching: nixos_generation
-    - antivirus: windows_defender, windows_windows_defender
+    - antivirus: windows_defender
     - backup: backup_status
     - logging: audit_logging, windows_audit_policy
     - firewall: firewall, windows_firewall_status
@@ -652,7 +652,7 @@ CATEGORY_CHECKS = {
         "nixos_generation", "windows_update", "linux_patching",
     ],
     "antivirus": [
-        "windows_defender", "windows_windows_defender",
+        "windows_defender",
         "windows_defender_exclusions",
     ],
     "backup": [

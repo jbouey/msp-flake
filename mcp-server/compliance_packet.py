@@ -30,7 +30,7 @@ CHECK_TYPE_HIPAA_MAP = {
     "ntp_sync": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
     "windows_backup_status": {"control": "164.308(a)(7)(ii)(A)", "description": "Data Backup Plan"},
     "windows_firewall_status": {"control": "164.312(e)(1)", "description": "Transmission Security"},
-    "windows_windows_defender": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
+    "windows_defender": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
     "windows_audit_policy": {"control": "164.312(b)", "description": "Audit Controls"},
     "windows_password_policy": {"control": "164.312(a)(1)", "description": "Access Control"},
     "windows_bitlocker_status": {"control": "164.312(a)(2)(iv)", "description": "Encryption and Decryption"},

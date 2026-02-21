@@ -40,7 +40,6 @@ CHECK_TYPE_HIPAA_MAP = {
     "firewall_status": {"control": "164.312(e)(1)", "description": "Transmission Security"},
     "network": {"control": "164.312(e)(1)", "description": "Transmission Security"},
     # AV/Defender
-    "windows_windows_defender": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
     "defender_status": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
     # Audit policy
     "windows_audit_policy": {"control": "164.312(b)", "description": "Audit Controls"},

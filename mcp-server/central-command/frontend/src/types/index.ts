@@ -704,3 +704,73 @@ export interface FrameworkCategory {
   category: string;
   count: number;
 }
+
+// =============================================================================
+// CHECK TYPE LABELS (centralized — used by EventFeed, IncidentRow, etc.)
+// =============================================================================
+
+export const CHECK_TYPE_LABELS: Record<string, string> = {
+  // Core compliance checks
+  patching: 'Patch',
+  antivirus: 'AV',
+  backup: 'Backup',
+  logging: 'Logging',
+  firewall: 'Firewall',
+  encryption: 'Encryption',
+  network: 'Network',
+  // Extended monitoring checks
+  ntp_sync: 'NTP',
+  disk_space: 'Disk',
+  service_health: 'Services',
+  windows_defender: 'Defender',
+  memory_pressure: 'Memory',
+  certificate_expiry: 'Cert',
+  database_corruption: 'Database',
+  prohibited_port: 'Port',
+  // Windows checks (Go daemon scanner)
+  firewall_status: 'Firewall',
+  windows_update: 'Updates',
+  audit_logging: 'Audit Log',
+  rogue_admin_users: 'Rogue Admins',
+  rogue_scheduled_tasks: 'Rogue Tasks',
+  agent_status: 'Agent',
+  bitlocker_status: 'BitLocker',
+  smb_signing: 'SMB Sign',
+  smb1_protocol: 'SMBv1',
+  screen_lock_policy: 'Screen Lock',
+  defender_exclusions: 'AV Exclusions',
+  dns_config: 'DNS Config',
+  network_profile: 'Net Profile',
+  password_policy: 'Password',
+  rdp_nla: 'RDP NLA',
+  guest_account: 'Guest Acct',
+  service_dns: 'DNS Svc',
+  service_netlogon: 'Netlogon',
+  // Linux checks (Go daemon scanner)
+  linux_firewall: 'Linux FW',
+  linux_ssh_config: 'SSH Config',
+  linux_failed_services: 'Failed Svcs',
+  linux_disk_space: 'Linux Disk',
+  linux_suid_binaries: 'SUID Bins',
+  linux_audit_logging: 'Linux Audit',
+  linux_ntp_sync: 'Linux NTP',
+  linux_kernel_params: 'Kernel Params',
+  linux_open_ports: 'Open Ports',
+  linux_user_accounts: 'Linux Users',
+  linux_file_permissions: 'File Perms',
+  linux_unattended_upgrades: 'Auto Updates',
+  linux_log_forwarding: 'Log Forward',
+  linux_cron_review: 'Cron Review',
+  linux_cert_expiry: 'Cert Expiry',
+  // Network checks (Go daemon scanner)
+  net_unexpected_ports: 'Rogue Ports',
+  net_expected_service: 'Expected Svc',
+  net_host_reachability: 'Host Reach',
+  net_dns_resolution: 'DNS Resolve',
+  // Legacy check types (old Python agent)
+  windows_audit_policy: 'Audit Policy',
+  audit_policy: 'Audit Policy',
+  service_wuauserv: 'Win Update',
+  critical_services: 'Services',
+  nixos_generation: 'NixOS Gen',
+};

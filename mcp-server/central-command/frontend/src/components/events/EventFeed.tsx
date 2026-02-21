@@ -1,5 +1,6 @@
 import React from 'react';
 import { GlassCard, SkeletonText } from '../shared';
+import { CHECK_TYPE_LABELS } from '../../types';
 import type { ComplianceEvent } from '../../types';
 
 interface EventFeedProps {
@@ -110,7 +111,7 @@ export const EventFeed: React.FC<EventFeedProps> = ({
                 </span>
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-label-primary truncate">
-                    {event.check_name || event.check_type}
+                    {event.check_name || CHECK_TYPE_LABELS[event.check_type] || event.check_type}
                   </p>
                   <p className="text-xs text-label-tertiary truncate">
                     {event.site_id}
