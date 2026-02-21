@@ -184,6 +184,17 @@ export const PortalDashboard: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                const url = token
+                  ? `/portal/site/${siteId}/scorecard?token=${token}`
+                  : `/portal/site/${siteId}/scorecard`;
+                navigate(url);
+              }}
+              className="px-3 py-1.5 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition font-medium"
+            >
+              Compliance Scorecard
+            </button>
             <span
               className={`px-3 py-1.5 rounded-full text-sm font-medium ${
                 data.site.status === 'online'

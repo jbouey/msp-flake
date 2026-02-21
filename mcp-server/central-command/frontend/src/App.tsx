@@ -54,6 +54,7 @@ const isLandingSite = typeof window !== 'undefined' &&
 const PortalDashboard = lazy(() => import('./portal/PortalDashboard').then(m => ({ default: m.PortalDashboard })));
 const PortalLogin = lazy(() => import('./portal/PortalLogin').then(m => ({ default: m.PortalLogin })));
 const PortalVerify = lazy(() => import('./portal/PortalVerify').then(m => ({ default: m.PortalVerify })));
+const PortalScorecard = lazy(() => import('./portal/PortalScorecard').then(m => ({ default: m.PortalScorecard })));
 
 // Partner module - lazy loaded with provider
 const PartnerRoutes = lazy(() => import('./partner').then(m => ({
@@ -341,6 +342,7 @@ const App: React.FC = () => {
                 <Route path="/portal/site/:siteId" element={<PortalLogin />} />
                 <Route path="/portal/site/:siteId/dashboard" element={<PortalDashboard />} />
                 <Route path="/portal/site/:siteId/verify" element={<PortalVerify />} />
+                <Route path="/portal/site/:siteId/scorecard" element={<PortalScorecard />} />
                 <Route path="/portal/site/:siteId/login" element={<PortalLogin />} />
 
                 {/* Partner routes - API key auth (lazy loaded module) */}
