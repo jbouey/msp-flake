@@ -883,8 +883,8 @@ async def get_monthly_compliance_report(
     incident_result = await db.execute(text("""
         SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'resolved') as resolved,
-            COUNT(*) FILTER (WHERE resolution_tier = 'L1') as l1_resolved
+            COUNT(*) FILTER (WHERE i.status = 'resolved') as resolved,
+            COUNT(*) FILTER (WHERE i.resolution_tier = 'L1') as l1_resolved
         FROM incidents i
         JOIN appliances a ON a.id = i.appliance_id
         WHERE a.site_id = :site_id
@@ -1016,11 +1016,11 @@ async def get_portal_kpis(db: AsyncSession, site_id: str) -> Dict[str, Any]:
     incident_result = await db.execute(text("""
         SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'resolved') as resolved,
-            COUNT(*) FILTER (WHERE resolution_tier = 'L1') as l1,
-            COUNT(*) FILTER (WHERE resolution_tier = 'L2') as l2,
-            AVG(EXTRACT(EPOCH FROM (resolved_at - reported_at)))
-                FILTER (WHERE status = 'resolved' AND check_type = 'patching') as patch_mttr_sec
+            COUNT(*) FILTER (WHERE i.status = 'resolved') as resolved,
+            COUNT(*) FILTER (WHERE i.resolution_tier = 'L1') as l1,
+            COUNT(*) FILTER (WHERE i.resolution_tier = 'L2') as l2,
+            AVG(EXTRACT(EPOCH FROM (i.resolved_at - i.reported_at)))
+                FILTER (WHERE i.status = 'resolved' AND i.check_type = 'patching') as patch_mttr_sec
         FROM incidents i
         JOIN appliances a ON a.id = i.appliance_id
         WHERE a.site_id = :site_id
