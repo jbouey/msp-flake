@@ -51,8 +51,8 @@ func TestNewDaemonWithL2(t *testing.T) {
 	cfg.L2Enabled = true
 	d := New(cfg)
 
-	if d.l2Client == nil {
-		t.Fatal("expected L2 client when L2 enabled")
+	if d.l2Planner == nil {
+		t.Fatal("expected L2 planner when L2 enabled")
 	}
 }
 

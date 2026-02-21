@@ -14,38 +14,34 @@ import (
 
 // PlannerConfig holds configuration for the L2 planner.
 type PlannerConfig struct {
-	// API
-	APIKey      string
-	APIEndpoint string // Default: "https://api.anthropic.com"
-	APIModel    string // Default: "claude-haiku-4-5-20251001"
+	// Central Command connection (the appliance's existing API endpoint + key)
+	APIEndpoint string // Central Command base URL (e.g. "https://api.osiriscare.net")
+	APIKey      string // Site API key for auth (same key used for checkins)
+	SiteID      string
 	APITimeout  time.Duration
-	MaxTokens   int
 
-	// Budget
+	// Budget (local rate limiting on the appliance)
 	Budget BudgetConfig
 
-	// Guardrails
+	// Guardrails (local safety checks on the appliance)
 	AllowedActions []string // nil = use defaults
-
-	// Telemetry
-	TelemetryEndpoint string // Central Command API base URL
-	TelemetryAPIKey   string
-	SiteID            string
 }
 
 // DefaultPlannerConfig returns a config with sane defaults.
 func DefaultPlannerConfig() PlannerConfig {
 	return PlannerConfig{
-		APIEndpoint: "https://api.anthropic.com",
-		APIModel:    "claude-haiku-4-5-20251001",
+		APIEndpoint: "https://api.osiriscare.net",
 		APITimeout:  30 * time.Second,
-		MaxTokens:   1024,
 		Budget:      DefaultBudgetConfig(),
 	}
 }
 
 // Planner is the native Go L2 LLM planner.
-// It has the same method signatures as l2bridge.Client for easy daemon swap.
+// It calls Central Command's /api/agent/l2/plan endpoint, which holds the
+// Anthropic API key and calls the LLM. The appliance never needs the LLM key.
+//
+// PHI scrubbing runs locally BEFORE data leaves the device (defense in depth).
+// Guardrails run locally AFTER receiving the decision.
 type Planner struct {
 	config    PlannerConfig
 	client    *http.Client
@@ -58,16 +54,10 @@ type Planner struct {
 // NewPlanner creates a new L2 planner.
 func NewPlanner(cfg PlannerConfig) *Planner {
 	if cfg.APIEndpoint == "" {
-		cfg.APIEndpoint = "https://api.anthropic.com"
-	}
-	if cfg.APIModel == "" {
-		cfg.APIModel = "claude-haiku-4-5-20251001"
+		cfg.APIEndpoint = "https://api.osiriscare.net"
 	}
 	if cfg.APITimeout == 0 {
 		cfg.APITimeout = 30 * time.Second
-	}
-	if cfg.MaxTokens == 0 {
-		cfg.MaxTokens = 1024
 	}
 
 	p := &Planner{
@@ -80,23 +70,49 @@ func NewPlanner(cfg PlannerConfig) *Planner {
 		budget:    NewBudgetTracker(cfg.Budget),
 	}
 
-	if cfg.TelemetryEndpoint != "" && cfg.TelemetryAPIKey != "" {
-		p.telemetry = NewTelemetryReporter(cfg.TelemetryEndpoint, cfg.TelemetryAPIKey, cfg.SiteID)
+	// Telemetry uses the same Central Command endpoint + key
+	if cfg.APIEndpoint != "" && cfg.APIKey != "" {
+		p.telemetry = NewTelemetryReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
 	}
 
 	return p
 }
 
-// IsConnected returns true if the planner has an API key configured.
-// (Unlike the l2bridge.Client which checks socket connection, we just check config.)
+// IsConnected returns true if the planner has Central Command credentials.
 func (p *Planner) IsConnected() bool {
-	return p.config.APIKey != ""
+	return p.config.APIKey != "" && p.config.APIEndpoint != ""
 }
 
-// Plan sends an incident to the Anthropic API and returns the LLM decision.
-// Flow: budget check → PHI scrub → build prompt → API call → parse → guardrails → return
+// l2PlanRequest is the JSON body sent to Central Command's /api/agent/l2/plan.
+type l2PlanRequest struct {
+	IncidentID       string                 `json:"incident_id"`
+	SiteID           string                 `json:"site_id"`
+	HostID           string                 `json:"host_id"`
+	IncidentType     string                 `json:"incident_type"`
+	Severity         string                 `json:"severity"`
+	RawData          map[string]interface{} `json:"raw_data"`
+	PatternSignature string                 `json:"pattern_signature"`
+	CreatedAt        string                 `json:"created_at"`
+}
+
+// l2PlanResponse is the JSON body returned by Central Command's /api/agent/l2/plan.
+// Maps directly to l2bridge.LLMDecision.
+type l2PlanResponse struct {
+	IncidentID        string                 `json:"incident_id"`
+	RecommendedAction string                 `json:"recommended_action"`
+	ActionParams      map[string]interface{} `json:"action_params"`
+	Confidence        float64                `json:"confidence"`
+	Reasoning         string                 `json:"reasoning"`
+	RunbookID         string                 `json:"runbook_id"`
+	RequiresApproval  bool                   `json:"requires_approval"`
+	EscalateToL3      bool                   `json:"escalate_to_l3"`
+	ContextUsed       map[string]interface{} `json:"context_used"`
+}
+
+// Plan sends a PHI-scrubbed incident to Central Command and returns the LLM decision.
+// Flow: budget check → PHI scrub → POST to Central Command → guardrails → return
 func (p *Planner) Plan(incident *l2bridge.Incident) (*l2bridge.LLMDecision, error) {
-	// 1. Budget check
+	// 1. Budget check (local rate limiting)
 	if err := p.budget.CheckBudget(); err != nil {
 		return nil, fmt.Errorf("L2 budget: %w", err)
 	}
@@ -108,14 +124,10 @@ func (p *Planner) Plan(incident *l2bridge.Incident) (*l2bridge.LLMDecision, erro
 	}
 	defer release()
 
-	// 3. PHI scrub the raw data
-	scrubbedIncident := *incident // shallow copy
+	// 3. PHI scrub the raw data BEFORE it leaves the device
+	scrubbedData := incident.RawData
 	if incident.RawData != nil {
-		scrubbedIncident.RawData = p.scrubber.ScrubMap(incident.RawData)
-	}
-
-	// Log PHI categories found
-	if incident.RawData != nil {
+		// Log what's being scrubbed
 		for k, v := range incident.RawData {
 			if str, ok := v.(string); ok {
 				if cats := p.scrubber.ScrubReport(str); len(cats) > 0 {
@@ -123,35 +135,50 @@ func (p *Planner) Plan(incident *l2bridge.Incident) (*l2bridge.LLMDecision, erro
 				}
 			}
 		}
+		scrubbedData = p.scrubber.ScrubMap(incident.RawData)
 	}
 
-	// 4. Build API request
-	apiReq := BuildRequest(p.config.APIModel, p.config.MaxTokens, &scrubbedIncident)
+	// 4. Build request for Central Command
+	planReq := l2PlanRequest{
+		IncidentID:       incident.ID,
+		SiteID:           p.config.SiteID,
+		HostID:           incident.HostID,
+		IncidentType:     incident.IncidentType,
+		Severity:         incident.Severity,
+		RawData:          scrubbedData,
+		PatternSignature: incident.PatternSignature,
+		CreatedAt:        incident.CreatedAt,
+	}
 
-	// 5. Call Anthropic API
+	// 5. Call Central Command /api/agent/l2/plan
 	start := time.Now()
-	apiResp, err := p.callAPI(apiReq)
+	planResp, err := p.callCentralCommand(planReq)
 	elapsed := time.Since(start)
 
 	if err != nil {
-		return nil, fmt.Errorf("L2 API call (%v): %w", elapsed.Round(time.Millisecond), err)
+		return nil, fmt.Errorf("L2 plan (%v): %w", elapsed.Round(time.Millisecond), err)
 	}
 
-	log.Printf("[l2planner] API response in %v (input=%d, output=%d tokens)",
-		elapsed.Round(time.Millisecond), apiResp.Usage.InputTokens, apiResp.Usage.OutputTokens)
+	log.Printf("[l2planner] Central Command response in %v: action=%s confidence=%.2f",
+		elapsed.Round(time.Millisecond), planResp.RecommendedAction, planResp.Confidence)
 
-	// 6. Record cost
-	cost := p.budget.RecordCost(apiResp.Usage.InputTokens, apiResp.Usage.OutputTokens)
-	log.Printf("[l2planner] Cost: $%.6f (budget remaining: $%.4f)",
-		cost, p.budget.Stats().DailyRemaining)
+	// 6. Record the call in budget tracker
+	p.budget.RecordCost(0, 0) // Cost is tracked server-side; this just increments the hourly counter
 
-	// 7. Parse response into LLMDecision
-	decision, err := ParseResponse(apiResp, incident.ID)
-	if err != nil {
-		return nil, fmt.Errorf("L2 parse response: %w", err)
+	// 7. Convert response to LLMDecision
+	decision := &l2bridge.LLMDecision{
+		IncidentID:        planResp.IncidentID,
+		RecommendedAction: planResp.RecommendedAction,
+		ActionParams:      planResp.ActionParams,
+		Confidence:        planResp.Confidence,
+		Reasoning:         planResp.Reasoning,
+		RunbookID:         planResp.RunbookID,
+		RequiresApproval:  planResp.RequiresApproval,
+		EscalateToL3:      planResp.EscalateToL3,
+		ContextUsed:       planResp.ContextUsed,
 	}
 
-	// 8. Apply guardrails
+	// 8. Apply local guardrails (defense in depth)
 	script, _ := decision.ActionParams["script"].(string)
 	check := p.guardrail.Check(decision.RecommendedAction, script, decision.Confidence)
 	if !check.Allowed {
@@ -160,14 +187,11 @@ func (p *Planner) Plan(incident *l2bridge.Incident) (*l2bridge.LLMDecision, erro
 		decision.Reasoning = fmt.Sprintf("Guardrails: %s. Original: %s", check.Reason, decision.Reasoning)
 	}
 
-	// Store token counts for telemetry
-	decision.ContextUsed = map[string]interface{}{
-		"input_tokens":  apiResp.Usage.InputTokens,
-		"output_tokens": apiResp.Usage.OutputTokens,
-		"cost_usd":      cost,
-		"latency_ms":    elapsed.Milliseconds(),
-		"model":         p.config.APIModel,
+	// Add latency to context
+	if decision.ContextUsed == nil {
+		decision.ContextUsed = make(map[string]interface{})
 	}
+	decision.ContextUsed["appliance_latency_ms"] = elapsed.Milliseconds()
 
 	return decision, nil
 }
@@ -218,14 +242,14 @@ func (p *Planner) Close() {
 	// No-op: HTTP client doesn't need cleanup
 }
 
-// callAPI sends a request to the Anthropic Messages API.
-func (p *Planner) callAPI(req AnthropicRequest) (*AnthropicResponse, error) {
+// callCentralCommand sends a plan request to Central Command's L2 endpoint.
+func (p *Planner) callCentralCommand(req l2PlanRequest) (*l2PlanResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := p.config.APIEndpoint + "/v1/messages"
+	url := p.config.APIEndpoint + "/api/agent/l2/plan"
 
 	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -233,12 +257,11 @@ func (p *Planner) callAPI(req AnthropicRequest) (*AnthropicResponse, error) {
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", p.config.APIKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("Authorization", "Bearer "+p.config.APIKey)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("API request: %w", err)
+		return nil, fmt.Errorf("Central Command request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -248,13 +271,13 @@ func (p *Planner) callAPI(req AnthropicRequest) (*AnthropicResponse, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, truncate(string(respBody), 300))
+		return nil, fmt.Errorf("Central Command returned %d: %s", resp.StatusCode, truncate(string(respBody), 300))
 	}
 
-	var apiResp AnthropicResponse
-	if err := json.Unmarshal(respBody, &apiResp); err != nil {
-		return nil, fmt.Errorf("parse API response: %w", err)
+	var planResp l2PlanResponse
+	if err := json.Unmarshal(respBody, &planResp); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
-	return &apiResp, nil
+	return &planResp, nil
 }

@@ -94,30 +94,22 @@ func New(cfg *Config) *Daemon {
 	d.l1Engine = healing.NewEngine(rulesDir, executor)
 	log.Printf("[daemon] L1 engine loaded: %d rules (healing=%v)", d.l1Engine.RuleCount(), !cfg.HealingDryRun)
 
-	// Initialize L2 planner (native Go — no Python sidecar needed)
-	if cfg.L2Enabled && cfg.L2APIKey != "" {
+	// Initialize L2 planner (calls Central Command → Anthropic, no LLM key on device)
+	if cfg.L2Enabled {
 		d.l2Planner = l2planner.NewPlanner(l2planner.PlannerConfig{
-			APIKey:      cfg.L2APIKey,
-			APIEndpoint: cfg.L2APIEndpoint,
-			APIModel:    cfg.L2APIModel,
+			APIEndpoint: cfg.APIEndpoint, // Same Central Command endpoint as checkins
+			APIKey:      cfg.APIKey,      // Same site API key as checkins
+			SiteID:      cfg.SiteID,
 			APITimeout:  time.Duration(cfg.L2APITimeoutSecs) * time.Second,
-			MaxTokens:   cfg.L2MaxTokens,
 			Budget: l2planner.BudgetConfig{
 				DailyBudgetUSD:     cfg.L2DailyBudgetUSD,
 				MaxCallsPerHour:    cfg.L2MaxCallsPerHour,
 				MaxConcurrentCalls: cfg.L2MaxConcurrentCalls,
 			},
-			AllowedActions:    cfg.L2AllowedActions,
-			TelemetryEndpoint: cfg.APIEndpoint,
-			TelemetryAPIKey:   cfg.APIKey,
-			SiteID:            cfg.SiteID,
+			AllowedActions: cfg.L2AllowedActions,
 		})
-		log.Printf("[daemon] L2 native planner initialized (model=%s, budget=$%.2f/day)",
-			cfg.L2APIModel, cfg.L2DailyBudgetUSD)
-	} else if cfg.L2Enabled {
-		// Fallback to legacy socket bridge (deprecated)
-		socketPath := filepath.Join(cfg.StateDir, "l2.sock")
-		d.l2Client = l2bridge.NewClient(socketPath, 30*time.Second)
+		log.Printf("[daemon] L2 planner initialized (via Central Command, budget=$%.2f/day)",
+			cfg.L2DailyBudgetUSD)
 	}
 
 	// Initialize order processor with completion callback
@@ -172,18 +164,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 	}
 
-	// Connect L2 planner or legacy bridge
+	// L2 planner readiness check
 	if d.l2Planner != nil {
 		if d.l2Planner.IsConnected() {
-			log.Printf("[daemon] L2 native planner ready")
+			log.Printf("[daemon] L2 planner ready (via Central Command)")
 		} else {
-			log.Printf("[daemon] L2 native planner: no API key configured")
-		}
-	} else if d.l2Client != nil {
-		if err := d.l2Client.Connect(); err != nil {
-			log.Printf("[daemon] L2 bridge connect failed: %v (L2 fallback disabled until reconnect)", err)
-		} else {
-			log.Printf("[daemon] L2 bridge connected")
+			log.Printf("[daemon] L2 planner: missing API credentials")
 		}
 	}
 

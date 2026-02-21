@@ -32,14 +32,9 @@ type Config struct {
 	HealingEnabled bool `yaml:"healing_enabled"`
 	HealingDryRun  bool `yaml:"healing_dry_run"`
 
-	// L2 LLM Planner
+	// L2 LLM Planner (calls Central Command, which holds the LLM API key)
 	L2Enabled            bool     `yaml:"l2_enabled"`
-	L2APIProvider        string   `yaml:"l2_api_provider"`
-	L2APIKey             string   `yaml:"l2_api_key"`
-	L2APIModel           string   `yaml:"l2_api_model"`
-	L2APIEndpoint        string   `yaml:"l2_api_endpoint"`
 	L2APITimeoutSecs     int      `yaml:"l2_api_timeout"`
-	L2MaxTokens          int      `yaml:"l2_max_tokens"`
 	L2DailyBudgetUSD     float64  `yaml:"l2_daily_budget_usd"`
 	L2MaxCallsPerHour    int      `yaml:"l2_max_calls_per_hour"`
 	L2MaxConcurrentCalls int      `yaml:"l2_max_concurrent_calls"`
@@ -82,11 +77,7 @@ func DefaultConfig() Config {
 		HealingEnabled:       true,
 		HealingDryRun:        false,
 		L2Enabled:            false,
-		L2APIProvider:        "anthropic",
-		L2APIModel:           "claude-haiku-4-5-20251001",
-		L2APIEndpoint:        "https://api.anthropic.com",
 		L2APITimeoutSecs:     30,
-		L2MaxTokens:          1024,
 		L2DailyBudgetUSD:     10.00,
 		L2MaxCallsPerHour:    60,
 		L2MaxConcurrentCalls: 3,
@@ -125,10 +116,6 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.LogLevel = strings.ToUpper(v)
-	}
-	if v := os.Getenv("L2_API_KEY"); v != "" {
-		cfg.L2APIKey = v
-		cfg.L2Enabled = true // auto-enable when key is set
 	}
 	if v := os.Getenv("L2_ENABLED"); v != "" {
 		cfg.L2Enabled = !isFalsy(v)

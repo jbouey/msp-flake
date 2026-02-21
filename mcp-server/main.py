@@ -2212,6 +2212,107 @@ async def report_execution_telemetry(request: ExecutionTelemetryInput, db: Async
 
 
 # ============================================================================
+# L2 Agent Plan Endpoint — Appliance → Central Command → Anthropic
+# ============================================================================
+
+class L2PlanRequest(BaseModel):
+    """L2 plan request from appliance daemon."""
+    incident_id: str
+    site_id: str
+    host_id: str
+    incident_type: str
+    severity: str = "medium"
+    raw_data: dict = {}
+    pattern_signature: str = ""
+    created_at: str = ""
+
+
+@app.post("/api/agent/l2/plan")
+async def agent_l2_plan(request: L2PlanRequest, db: AsyncSession = Depends(get_db)):
+    """
+    L2 LLM planner endpoint for appliance daemons.
+
+    When L1 deterministic rules don't match an incident, the appliance
+    calls this endpoint. Central Command calls the LLM (Anthropic/OpenAI)
+    with the API key stored here, returns a decision to the appliance.
+
+    The appliance PHI-scrubs data before sending. Central Command holds the
+    LLM API key — appliances never need it.
+    """
+    from backend.l2_planner import analyze_incident, record_l2_decision, is_l2_available
+
+    if not is_l2_available():
+        raise HTTPException(status_code=503, detail="L2 LLM not configured (no API key)")
+
+    logger.info(f"L2 plan request: site={request.site_id} host={request.host_id} type={request.incident_type}")
+
+    # Extract HIPAA controls from raw_data if present
+    hipaa_controls = None
+    hipaa_ctrl = request.raw_data.get("hipaa_control")
+    if hipaa_ctrl:
+        hipaa_controls = [hipaa_ctrl] if isinstance(hipaa_ctrl, str) else hipaa_ctrl
+
+    # Call the existing L2 planner
+    decision = await analyze_incident(
+        incident_type=request.incident_type,
+        severity=request.severity,
+        check_type=request.raw_data.get("check_type", request.incident_type),
+        details=request.raw_data,
+        pre_state=request.raw_data.get("pre_state", {}),
+        hipaa_controls=hipaa_controls,
+    )
+
+    # Record decision for data flywheel
+    try:
+        await record_l2_decision(db, request.incident_id, decision)
+        await db.commit()
+    except Exception as e:
+        logger.error(f"Failed to record L2 decision: {e}")
+        # Don't fail the request — decision is still valid
+
+    # Map L2Decision to the format the Go daemon expects (l2bridge.LLMDecision)
+    # The Go planner parses this into an LLMDecision struct
+    action = "escalate"
+    action_params = {}
+    escalate = True
+
+    if decision.runbook_id and decision.confidence >= 0.6:
+        # Map runbook to action type
+        runbook_action_map = {
+            "RB-SERVICE-001": "restart_service",
+            "RB-FIREWALL-001": "configure_firewall",
+            "RB-AV-001": "enable_defender",
+            "RB-LOGGING-001": "fix_audit_policy",
+            "RB-ENCRYPTION-001": "enable_bitlocker",
+            "RB-DRIFT-001": "fix_permissions",
+            "RB-PATCH-001": "restart_service",
+            "RB-BACKUP-001": "restart_service",
+            "RB-CERT-001": "escalate",
+            "RB-DISK-001": "escalate",
+        }
+        action = runbook_action_map.get(decision.runbook_id, "escalate")
+        escalate = action == "escalate" or decision.requires_human_review
+        action_params = {"runbook_id": decision.runbook_id}
+
+    return {
+        "incident_id": request.incident_id,
+        "recommended_action": action,
+        "action_params": action_params,
+        "confidence": decision.confidence,
+        "reasoning": decision.reasoning,
+        "runbook_id": decision.runbook_id or "",
+        "requires_approval": decision.requires_human_review,
+        "escalate_to_l3": escalate,
+        "context_used": {
+            "llm_model": decision.llm_model,
+            "llm_latency_ms": decision.llm_latency_ms,
+            "pattern_signature": decision.pattern_signature,
+            "alternative_runbooks": decision.alternative_runbooks,
+        },
+    }
+
+
+# ============================================================================
 # WORM Evidence Upload Endpoint (Proxy Mode)
 # ============================================================================
 

@@ -10,83 +10,67 @@ import (
 	"github.com/osiriscare/appliance/internal/l2bridge"
 )
 
-// mockAnthropicServer creates a test server that mimics the Anthropic Messages API.
-func mockAnthropicServer(t *testing.T, response LLMResponsePayload) *httptest.Server {
+// mockCentralCommand creates a test server that mimics Central Command's /api/agent/l2/plan.
+func mockCentralCommand(t *testing.T, response l2PlanResponse) *httptest.Server {
 	t.Helper()
-
-	respJSON, _ := json.Marshal(response)
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request format
-		if r.URL.Path != "/v1/messages" {
+		if r.URL.Path != "/api/agent/l2/plan" {
 			t.Errorf("Wrong path: %s", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {
 			t.Errorf("Wrong method: %s", r.Method)
 		}
-		if r.Header.Get("x-api-key") == "" {
-			t.Error("Missing x-api-key header")
-		}
-		if r.Header.Get("anthropic-version") != "2023-06-01" {
-			t.Errorf("Wrong anthropic-version: %s", r.Header.Get("anthropic-version"))
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			t.Error("Missing Bearer auth header")
 		}
 
-		// Verify request body is valid
-		var apiReq AnthropicRequest
-		if err := json.NewDecoder(r.Body).Decode(&apiReq); err != nil {
+		// Verify request body is valid and PHI was scrubbed
+		var planReq l2PlanRequest
+		if err := json.NewDecoder(r.Body).Decode(&planReq); err != nil {
 			t.Errorf("Invalid request body: %v", err)
 		}
 
-		// Verify PHI was scrubbed from the request
-		userMsg := apiReq.Messages[0].Content
-		if strings.Contains(userMsg, "123-45-6789") {
-			t.Error("SSN leaked through to API request!")
+		// Verify PHI was scrubbed before reaching Central Command
+		for _, v := range planReq.RawData {
+			if str, ok := v.(string); ok {
+				if strings.Contains(str, "123-45-6789") {
+					t.Error("SSN leaked to Central Command!")
+				}
+				if strings.Contains(str, "patient@hospital.com") {
+					t.Error("Email leaked to Central Command!")
+				}
+			}
 		}
-		if strings.Contains(userMsg, "patient@hospital.com") {
-			t.Error("Email leaked through to API request!")
-		}
-
-		// Return mock response
-		apiResp := AnthropicResponse{
-			ID:   "msg_test_123",
-			Type: "message",
-			Role: "assistant",
-			Content: []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}{
-				{Type: "text", Text: string(respJSON)},
-			},
-			Model:      "claude-haiku-4-5-20251001",
-			StopReason: "end_turn",
-		}
-		apiResp.Usage.InputTokens = 500
-		apiResp.Usage.OutputTokens = 200
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResp)
+		json.NewEncoder(w).Encode(response)
 	}))
 }
 
 func TestPlannerEndToEnd(t *testing.T) {
-	server := mockAnthropicServer(t, LLMResponsePayload{
+	server := mockCentralCommand(t, l2PlanResponse{
+		IncidentID:        "drift-DC01-firewall-123",
 		RecommendedAction: "configure_firewall",
-		ActionParams:      map[string]interface{}{"script": "Set-NetFirewallProfile -Profile Domain -Enabled True"},
+		ActionParams:      map[string]interface{}{"runbook_id": "RB-FIREWALL-001"},
 		Confidence:        0.9,
-		Reasoning:         "Firewall is disabled, needs re-enabling",
+		Reasoning:         "Firewall is disabled, selecting firewall compliance runbook",
+		RunbookID:         "RB-FIREWALL-001",
 		RequiresApproval:  false,
 		EscalateToL3:      false,
-		RunbookID:         "L2-AUTO-firewall_status",
+		ContextUsed: map[string]interface{}{
+			"llm_model":      "claude-sonnet-4-20250514",
+			"llm_latency_ms": float64(1500),
+		},
 	})
 	defer server.Close()
 
 	planner := NewPlanner(PlannerConfig{
-		APIKey:      "test-key",
+		APIKey:      "test-site-api-key",
 		APIEndpoint: server.URL,
-		APIModel:    "claude-haiku-4-5-20251001",
-		MaxTokens:   1024,
-		Budget:      DefaultBudgetConfig(),
 		SiteID:      "test-site",
+		Budget:      DefaultBudgetConfig(),
 	})
 
 	incident := &l2bridge.Incident{
@@ -125,21 +109,13 @@ func TestPlannerEndToEnd(t *testing.T) {
 
 	// Verify budget was tracked
 	stats := planner.Stats()
-	if stats.DailySpendUSD <= 0 {
-		t.Error("Budget should have recorded spend")
-	}
 	if stats.HourlyCalls != 1 {
 		t.Errorf("Expected 1 hourly call, got %d", stats.HourlyCalls)
-	}
-
-	// Verify context metadata
-	if decision.ContextUsed == nil {
-		t.Error("Missing context_used metadata")
 	}
 }
 
 func TestPlannerGuardrailBlocks(t *testing.T) {
-	server := mockAnthropicServer(t, LLMResponsePayload{
+	server := mockCentralCommand(t, l2PlanResponse{
 		RecommendedAction: "format_disk", // NOT in allowlist
 		ActionParams:      map[string]interface{}{"script": "mkfs.ext4 /dev/sda"},
 		Confidence:        0.95,
@@ -151,6 +127,7 @@ func TestPlannerGuardrailBlocks(t *testing.T) {
 	planner := NewPlanner(PlannerConfig{
 		APIKey:      "test-key",
 		APIEndpoint: server.URL,
+		SiteID:      "test-site",
 		Budget:      DefaultBudgetConfig(),
 	})
 
@@ -181,6 +158,7 @@ func TestPlannerBudgetExhausted(t *testing.T) {
 	planner := NewPlanner(PlannerConfig{
 		APIKey:      "test-key",
 		APIEndpoint: "http://unused",
+		SiteID:      "test-site",
 		Budget: BudgetConfig{
 			DailyBudgetUSD:     0.0001, // tiny budget
 			MaxCallsPerHour:    1000,
@@ -206,16 +184,17 @@ func TestPlannerBudgetExhausted(t *testing.T) {
 	}
 }
 
-func TestPlannerAPIError(t *testing.T) {
+func TestPlannerCentralCommandError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error": {"type": "rate_limit_error", "message": "Too many requests"}}`))
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"detail": "L2 LLM not configured (no API key)"}`))
 	}))
 	defer server.Close()
 
 	planner := NewPlanner(PlannerConfig{
 		APIKey:      "test-key",
 		APIEndpoint: server.URL,
+		SiteID:      "test-site",
 		Budget:      DefaultBudgetConfig(),
 	})
 
@@ -227,20 +206,20 @@ func TestPlannerAPIError(t *testing.T) {
 
 	_, err := planner.Plan(incident)
 	if err == nil {
-		t.Error("Should fail on API error")
+		t.Error("Should fail on Central Command error")
 	}
-	if !strings.Contains(err.Error(), "429") {
+	if !strings.Contains(err.Error(), "503") {
 		t.Errorf("Error should mention status code: %v", err)
 	}
 }
 
 func TestPlannerIsConnected(t *testing.T) {
-	p1 := NewPlanner(PlannerConfig{APIKey: "has-key"})
+	p1 := NewPlanner(PlannerConfig{APIKey: "has-key", APIEndpoint: "https://api.example.com"})
 	if !p1.IsConnected() {
-		t.Error("Should be connected with API key")
+		t.Error("Should be connected with API key + endpoint")
 	}
 
-	p2 := NewPlanner(PlannerConfig{APIKey: ""})
+	p2 := NewPlanner(PlannerConfig{APIKey: "", APIEndpoint: "https://api.example.com"})
 	if p2.IsConnected() {
 		t.Error("Should not be connected without API key")
 	}
@@ -252,36 +231,24 @@ func TestPlanWithRetry(t *testing.T) {
 		attempts++
 		if attempts < 2 {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(`{"error": "temporary"}`))
+			w.Write([]byte(`{"detail": "temporary error"}`))
 			return
 		}
 
-		resp := LLMResponsePayload{
+		json.NewEncoder(w).Encode(l2PlanResponse{
 			RecommendedAction: "restart_service",
-			ActionParams:      map[string]interface{}{"script": "systemctl restart sshd"},
+			ActionParams:      map[string]interface{}{},
 			Confidence:        0.8,
 			Reasoning:         "SSH needs restart",
-		}
-		respJSON, _ := json.Marshal(resp)
-
-		apiResp := AnthropicResponse{
-			Content: []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}{
-				{Type: "text", Text: string(respJSON)},
-			},
-		}
-		apiResp.Usage.InputTokens = 100
-		apiResp.Usage.OutputTokens = 50
-
-		json.NewEncoder(w).Encode(apiResp)
+			RunbookID:         "RB-SERVICE-001",
+		})
 	}))
 	defer server.Close()
 
 	planner := NewPlanner(PlannerConfig{
 		APIKey:      "test-key",
 		APIEndpoint: server.URL,
+		SiteID:      "test-site",
 		Budget:      DefaultBudgetConfig(),
 	})
 
@@ -304,38 +271,25 @@ func TestPlanWithRetry(t *testing.T) {
 }
 
 func TestPlannerPHIScrubbing(t *testing.T) {
-	var receivedBody AnthropicRequest
+	var receivedReq l2PlanRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&receivedBody)
+		json.NewDecoder(r.Body).Decode(&receivedReq)
 
-		resp := LLMResponsePayload{
+		json.NewEncoder(w).Encode(l2PlanResponse{
 			RecommendedAction: "escalate",
 			Confidence:        0.3,
 			Reasoning:         "Unknown issue",
 			EscalateToL3:      true,
 			ActionParams:      map[string]interface{}{},
-		}
-		respJSON, _ := json.Marshal(resp)
-
-		apiResp := AnthropicResponse{
-			Content: []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}{
-				{Type: "text", Text: string(respJSON)},
-			},
-		}
-		apiResp.Usage.InputTokens = 100
-		apiResp.Usage.OutputTokens = 50
-
-		json.NewEncoder(w).Encode(apiResp)
+		})
 	}))
 	defer server.Close()
 
 	planner := NewPlanner(PlannerConfig{
 		APIKey:      "test-key",
 		APIEndpoint: server.URL,
+		SiteID:      "test-site",
 		Budget:      DefaultBudgetConfig(),
 	})
 
@@ -355,36 +309,33 @@ func TestPlannerPHIScrubbing(t *testing.T) {
 
 	planner.Plan(incident)
 
-	// Check what was sent to the API
-	userMsg := receivedBody.Messages[0].Content
-
-	// PHI should be scrubbed
-	if strings.Contains(userMsg, "999-88-7777") {
-		t.Error("SSN leaked to API")
-	}
-	if strings.Contains(userMsg, "admin@hospital.com") {
-		t.Error("Email leaked to API")
-	}
-	if strings.Contains(userMsg, "(555) 123-4567") {
-		t.Error("Phone leaked to API")
+	// PHI should be scrubbed in what reached Central Command
+	for k, v := range receivedReq.RawData {
+		str, ok := v.(string)
+		if !ok {
+			continue
+		}
+		if strings.Contains(str, "999-88-7777") {
+			t.Errorf("SSN leaked to Central Command in %s", k)
+		}
+		if strings.Contains(str, "admin@hospital.com") {
+			t.Errorf("Email leaked to Central Command in %s", k)
+		}
+		if strings.Contains(str, "(555) 123-4567") {
+			t.Errorf("Phone leaked to Central Command in %s", k)
+		}
 	}
 
 	// IPs should be preserved
-	if !strings.Contains(userMsg, "192.168.88.100") {
+	ipField, _ := receivedReq.RawData["ip_field"].(string)
+	if !strings.Contains(ipField, "192.168.88.100") {
 		t.Error("IP address was incorrectly scrubbed")
 	}
 
 	// Infra data should be preserved
-	if !strings.Contains(userMsg, "firewall_status drift") {
+	normalField, _ := receivedReq.RawData["normal_field"].(string)
+	if normalField != "firewall_status drift" {
 		t.Error("Infra data was incorrectly scrubbed")
-	}
-
-	// Redaction tags should be present
-	if !strings.Contains(userMsg, "[SSN-REDACTED-") {
-		t.Error("Missing SSN redaction tag")
-	}
-	if !strings.Contains(userMsg, "[EMAIL-REDACTED-") {
-		t.Error("Missing email redaction tag")
 	}
 }
 
