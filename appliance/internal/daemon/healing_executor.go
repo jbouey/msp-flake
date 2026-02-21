@@ -1,0 +1,170 @@
+package daemon
+
+// healing_executor.go — Wires L1 healing rules to WinRM/SSH executors.
+//
+// The L1 engine matches drift events to rules and produces an action+params.
+// This file provides the ActionExecutor callback that dispatches those actions
+// to the appropriate executor (WinRM for Windows, SSH for Linux).
+//
+// Runbook scripts are loaded from runbooks.json (embedded at compile time via
+// go:embed in runbooks_embed.go). This file contains 92 runbooks exported from
+// the Python agent's runbook library.
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/osiriscare/appliance/internal/healing"
+	"github.com/osiriscare/appliance/internal/sshexec"
+	"github.com/osiriscare/appliance/internal/winrm"
+)
+
+// runbookEntry is a single runbook loaded from the embedded JSON.
+type runbookEntry struct {
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Platform         string   `json:"platform"`
+	DetectScript     string   `json:"detect_script"`
+	RemediateScript  string   `json:"remediate_script"`
+	VerifyScript     string   `json:"verify_script"`
+	HIPAAControls    []string `json:"hipaa_controls"`
+	Severity         string   `json:"severity"`
+	TimeoutSeconds   int      `json:"timeout_seconds"`
+}
+
+// makeActionExecutor returns a healing.ActionExecutor that dispatches actions
+// to the daemon's WinRM and SSH executors. The returned function closes over
+// the daemon's executor instances and config.
+func (d *Daemon) makeActionExecutor() healing.ActionExecutor {
+	return func(action string, params map[string]interface{}, siteID, hostID string) (map[string]interface{}, error) {
+		switch action {
+		case "run_windows_runbook":
+			return d.executeRunbook(params, hostID, "windows")
+		case "run_linux_runbook":
+			return d.executeRunbook(params, hostID, "linux")
+		case "escalate":
+			reason, _ := params["reason"].(string)
+			if reason == "" {
+				reason = "Rule action is escalate"
+			}
+			log.Printf("[l1-exec] Escalating to L3: host=%s reason=%s", hostID, reason)
+			return map[string]interface{}{"escalated": true, "reason": reason}, nil
+		case "restore_firewall_baseline":
+			return d.executeRunbook(map[string]interface{}{
+				"runbook_id": "RB-WIN-SEC-001",
+				"phases":     []interface{}{"remediate", "verify"},
+			}, hostID, "windows")
+		case "restart_av_service":
+			return d.executeRunbook(map[string]interface{}{
+				"runbook_id": "RB-WIN-SEC-006",
+				"phases":     []interface{}{"remediate", "verify"},
+			}, hostID, "windows")
+		default:
+			return nil, fmt.Errorf("unknown action: %s", action)
+		}
+	}
+}
+
+// executeRunbook runs a remediation runbook via WinRM (windows) or SSH (linux).
+func (d *Daemon) executeRunbook(params map[string]interface{}, hostID, platform string) (map[string]interface{}, error) {
+	runbookID, _ := params["runbook_id"].(string)
+	if runbookID == "" {
+		return nil, fmt.Errorf("runbook_id required")
+	}
+
+	phases, _ := params["phases"].([]interface{})
+	if len(phases) == 0 {
+		phases = []interface{}{"remediate", "verify"}
+	}
+
+	// Look up the runbook from the embedded registry
+	rb, ok := runbookRegistry[runbookID]
+	if !ok {
+		return nil, fmt.Errorf("unknown runbook: %s (registry has %d entries)", runbookID, len(runbookRegistry))
+	}
+
+	// Get the script for each phase
+	phaseScripts := map[string]string{
+		"detect":    rb.DetectScript,
+		"remediate": rb.RemediateScript,
+		"verify":    rb.VerifyScript,
+	}
+
+	timeout := rb.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = 120
+	}
+
+	results := map[string]interface{}{}
+
+	for _, phase := range phases {
+		phaseStr, _ := phase.(string)
+		script := phaseScripts[phaseStr]
+		if script == "" {
+			continue
+		}
+
+		log.Printf("[l1-exec] %s %s phase=%s on %s", platform, runbookID, phaseStr, hostID)
+
+		switch platform {
+		case "windows":
+			target := d.buildHealingWinRMTarget(hostID)
+			if target == nil {
+				return nil, fmt.Errorf("no WinRM credentials for host %s", hostID)
+			}
+			result := d.winrmExec.Execute(target, script, runbookID, phaseStr, timeout, 1, 15.0, rb.HIPAAControls)
+			if !result.Success {
+				return map[string]interface{}{
+					"success": false, "phase": phaseStr, "error": result.Error,
+				}, fmt.Errorf("%s phase %s failed: %s", runbookID, phaseStr, result.Error)
+			}
+			results[phaseStr] = result.Output
+
+		case "linux":
+			target := d.buildHealingSSHTarget(hostID)
+			if target == nil {
+				return nil, fmt.Errorf("no SSH credentials for host %s", hostID)
+			}
+			result := d.sshExec.Execute(context.Background(), target, script, runbookID, phaseStr, timeout, 1, 5.0, true, rb.HIPAAControls)
+			if !result.Success {
+				return map[string]interface{}{
+					"success": false, "phase": phaseStr, "error": result.Error,
+				}, fmt.Errorf("%s phase %s failed: %s", runbookID, phaseStr, result.Error)
+			}
+			results[phaseStr] = result.Output
+
+		default:
+			return nil, fmt.Errorf("unknown platform: %s", platform)
+		}
+	}
+
+	results["success"] = true
+	return results, nil
+}
+
+// buildHealingWinRMTarget creates a WinRM target using the daemon's DC credentials.
+// For L1 healing, we use the domain admin credentials since all drift targets
+// are Windows domain members scanned via the same DC creds.
+func (d *Daemon) buildHealingWinRMTarget(hostID string) *winrm.Target {
+	if d.config.DCUsername == nil || d.config.DCPassword == nil {
+		return nil
+	}
+	return &winrm.Target{
+		Hostname: hostID,
+		Port:     5985,
+		Username: *d.config.DCUsername,
+		Password: *d.config.DCPassword,
+		UseSSL:   false,
+	}
+}
+
+// buildHealingSSHTarget creates an SSH target for Linux healing.
+// Uses the daemon's SSH key for NixOS appliance self-healing.
+func (d *Daemon) buildHealingSSHTarget(hostID string) *sshexec.Target {
+	return &sshexec.Target{
+		Hostname: hostID,
+		Port:     22,
+		Username: "root",
+	}
+}

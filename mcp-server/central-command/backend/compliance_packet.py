@@ -25,23 +25,56 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-# Map check_types to HIPAA controls
+# Map check_types to HIPAA controls.
+# When multiple check_types map to the same control, they're consolidated
+# in _get_control_posture() so each HIPAA control appears once in the report.
 CHECK_TYPE_HIPAA_MAP = {
+    # Time sync
     "ntp_sync": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
+    "windows_service_w32time": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
+    # Backup
     "windows_backup_status": {"control": "164.308(a)(7)(ii)(A)", "description": "Data Backup Plan"},
+    # Firewall / Transmission Security — consolidated under one control
     "windows_firewall_status": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "firewall": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "firewall_status": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "network": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    # AV/Defender
     "windows_windows_defender": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
+    "defender_status": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
+    # Audit policy
     "windows_audit_policy": {"control": "164.312(b)", "description": "Audit Controls"},
+    "audit_policy": {"control": "164.312(b)", "description": "Audit Controls"},
+    # Access control
     "windows_password_policy": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "password_policy": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "screen_lock_policy": {"control": "164.312(a)(2)(iii)", "description": "Workstation Security"},
+    # Encryption
     "windows_bitlocker_status": {"control": "164.312(a)(2)(iv)", "description": "Encryption and Decryption"},
+    "bitlocker_status": {"control": "164.312(a)(2)(iv)", "description": "Encryption and Decryption"},
+    # Services
     "windows_service_dns": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
     "windows_service_spooler": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
-    "windows_service_w32time": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
-    "firewall": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "windows_service_netlogon": {"control": "164.312(d)", "description": "Person or Entity Authentication"},
+    "service_wuauserv": {"control": "164.308(a)(5)(ii)(B)", "description": "Security Updates"},
+    # Storage / Disk
     "disk_space": {"control": "164.310(d)(2)(iv)", "description": "Data Backup and Storage"},
+    # System monitoring
     "critical_services": {"control": "164.308(a)(1)(ii)(D)", "description": "Information System Activity Review"},
     "nixos_generation": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
-    "network": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    # SMB / Protocol security
+    "smb_signing": {"control": "164.312(e)(1)", "description": "Transmission Security (SMB)"},
+    "smb1_protocol": {"control": "164.312(e)(1)", "description": "Transmission Security (SMBv1)"},
+    # DNS
+    "dns_config": {"control": "164.312(e)(1)", "description": "Transmission Security (DNS)"},
+    # Network profile
+    "network_profile": {"control": "164.312(e)(1)", "description": "Transmission Security (Profile)"},
+    # Persistence checks
+    "scheduled_task_persistence": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
+    "registry_run_persistence": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
+    "wmi_event_persistence": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
+    # Defender exclusions
+    "defender_exclusions": {"control": "164.308(a)(5)(ii)(B)", "description": "Malicious Software Protection"},
 }
 
 
@@ -153,31 +186,63 @@ class CompliancePacket:
         return row.clinic_name if row and row.clinic_name else self.site_id
 
     async def _calculate_compliance_score(self) -> float:
-        """Compliance % = pass bundles / total bundles in period."""
+        """Compliance % = average of per-HIPAA-control pass rates.
+
+        Each check_type gets its own pass rate, then check_types that map
+        to the same HIPAA control are averaged together. The final score
+        is the average across all distinct controls. This prevents a single
+        high-frequency failing check from dominating the score.
+        """
         result = await self.db.execute(
             text("""
-                SELECT
-                    COUNT(*) as total,
-                    COUNT(*) FILTER (WHERE check_result = 'pass') as pass_count
+                SELECT check_type,
+                       COUNT(*) as total,
+                       COUNT(*) FILTER (WHERE check_result = 'pass') as pass_count
                 FROM compliance_bundles
                 WHERE site_id = :sid
                   AND checked_at >= :start AND checked_at < :end
+                GROUP BY check_type
             """),
             {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
         )
-        row = result.fetchone()
-        if not row or row.total == 0:
+        rows = result.fetchall()
+        if not rows:
             return 0.0
-        return round(row.pass_count * 100.0 / row.total, 1)
+
+        # Group pass rates by HIPAA control
+        control_rates: Dict[str, List[float]] = {}
+        for row in rows:
+            hipaa = CHECK_TYPE_HIPAA_MAP.get(row.check_type, {
+                "control": "164.308(a)(1)",
+            })
+            control = hipaa["control"]
+            rate = row.pass_count * 100.0 / row.total if row.total > 0 else 0.0
+            control_rates.setdefault(control, []).append(rate)
+
+        # Average rates within each control, then average across controls
+        control_scores = [
+            sum(rates) / len(rates) for rates in control_rates.values()
+        ]
+        return round(sum(control_scores) / len(control_scores), 1)
 
     async def _count_critical_issues(self) -> int:
-        """Count fail results in period."""
+        """Count check_types whose latest result is 'fail'.
+
+        Uses only the most recent result per check_type to avoid
+        counting every repeat of the same ongoing failure.
+        """
         result = await self.db.execute(
             text("""
-                SELECT COUNT(*) FROM compliance_bundles
-                WHERE site_id = :sid
-                  AND checked_at >= :start AND checked_at < :end
-                  AND check_result = 'fail'
+                WITH latest_per_check AS (
+                    SELECT DISTINCT ON (check_type)
+                           check_type, check_result
+                    FROM compliance_bundles
+                    WHERE site_id = :sid
+                      AND checked_at >= :start AND checked_at < :end
+                    ORDER BY check_type, checked_at DESC
+                )
+                SELECT COUNT(*) FROM latest_per_check
+                WHERE check_result = 'fail'
             """),
             {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
         )
@@ -258,7 +323,12 @@ class CompliancePacket:
         return round(row.pass_count * 100.0 / row.total, 1)
 
     async def _get_control_posture(self) -> List[Dict]:
-        """Build control posture from real check_type results."""
+        """Build control posture from real check_type results.
+
+        Multiple check_types may map to the same HIPAA control (e.g.
+        firewall_status, firewall, smb_signing all → 164.312(e)(1)).
+        This method consolidates them so each control appears once.
+        """
         result = await self.db.execute(
             text("""
                 WITH stats AS (
@@ -288,14 +358,39 @@ class CompliancePacket:
             {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
         )
 
-        controls = []
+        # Consolidate by HIPAA control code
+        control_agg: Dict[str, Dict] = {}
         for row in result.fetchall():
             hipaa = CHECK_TYPE_HIPAA_MAP.get(row.check_type, {
                 "control": "164.308(a)(1)",
                 "description": row.check_type.replace("_", " ").title(),
             })
+            key = hipaa["control"]
 
-            pass_rate = row.pass_count * 100.0 / row.total if row.total > 0 else 0
+            if key not in control_agg:
+                control_agg[key] = {
+                    "control": key,
+                    "description": hipaa["description"],
+                    "total": 0,
+                    "pass_count": 0,
+                    "last_checked": None,
+                    "evidence_id": None,
+                    "check_types": [],
+                }
+
+            entry = control_agg[key]
+            entry["total"] += row.total
+            entry["pass_count"] += row.pass_count
+            entry["check_types"].append(row.check_type)
+
+            # Keep the most recent timestamp and its bundle_id
+            if row.last_checked and (entry["last_checked"] is None or row.last_checked > entry["last_checked"]):
+                entry["last_checked"] = row.last_checked
+                entry["evidence_id"] = row.latest_bundle_id
+
+        controls = []
+        for entry in control_agg.values():
+            pass_rate = entry["pass_count"] * 100.0 / entry["total"] if entry["total"] > 0 else 0
             if pass_rate >= 90:
                 status = "Pass"
             elif pass_rate >= 50:
@@ -304,15 +399,17 @@ class CompliancePacket:
                 status = "Fail"
 
             controls.append({
-                "control": hipaa["control"],
-                "description": hipaa["description"],
+                "control": entry["control"],
+                "description": entry["description"],
                 "status": status,
                 "pass_rate": f"{pass_rate:.0f}%",
-                "evidence_id": row.latest_bundle_id or "N/A",
-                "last_checked": row.last_checked.strftime("%Y-%m-%d %H:%M") if row.last_checked else "N/A",
-                "check_count": row.total,
+                "evidence_id": entry["evidence_id"] or "N/A",
+                "last_checked": entry["last_checked"].strftime("%Y-%m-%d %H:%M") if entry["last_checked"] else "N/A",
+                "check_count": entry["total"],
             })
 
+        # Sort by control code for consistent ordering
+        controls.sort(key=lambda c: c["control"])
         return controls
 
     async def _get_backup_summary(self) -> Dict:
@@ -584,7 +681,7 @@ class CompliancePacket:
 | Metric | Value |
 |--------|-------|
 | Overall Compliance | {{ compliance_pct }}% |
-| Failed Checks | {{ critical_issue_count }} |
+| Failing Check Types | {{ critical_issue_count }} |
 | Check Types Auto-Recovered | {{ auto_fixed_count }} |
 | Mean Time to Recovery | {{ mttr_hours }}h |
 | Backup Success Rate | {{ backup_success_rate }}% |

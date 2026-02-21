@@ -70,24 +70,26 @@ func New(cfg *Config) *Daemon {
 		cooldowns: make(map[string]*driftCooldown),
 	}
 
+	// Initialize WinRM and SSH executors (must be before L1 engine)
+	d.winrmExec = winrm.NewExecutor()
+	d.sshExec = sshexec.NewExecutor()
+
 	// Initialize L1 healing engine
 	rulesDir := cfg.RulesDir()
 	var executor healing.ActionExecutor
 	if cfg.HealingDryRun {
 		executor = nil // nil executor → dry-run mode
+	} else {
+		executor = d.makeActionExecutor()
 	}
 	d.l1Engine = healing.NewEngine(rulesDir, executor)
-	log.Printf("[daemon] L1 engine loaded: %d rules (dry_run=%v)", d.l1Engine.RuleCount(), cfg.HealingDryRun)
+	log.Printf("[daemon] L1 engine loaded: %d rules (healing=%v)", d.l1Engine.RuleCount(), !cfg.HealingDryRun)
 
 	// Initialize L2 bridge (connects lazily)
 	if cfg.L2Enabled {
 		socketPath := filepath.Join(cfg.StateDir, "l2.sock")
 		d.l2Client = l2bridge.NewClient(socketPath, 30*time.Second)
 	}
-
-	// Initialize WinRM and SSH executors
-	d.winrmExec = winrm.NewExecutor()
-	d.sshExec = sshexec.NewExecutor()
 
 	// Initialize order processor with completion callback
 	d.orderProc = orders.NewProcessor(cfg.StateDir, d.completeOrder)
