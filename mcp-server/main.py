@@ -2159,6 +2159,19 @@ async def report_execution_telemetry(request: ExecutionTelemetryInput, db: Async
             return None
 
     try:
+        # Normalize field names: old Go daemon uses different names
+        # level -> resolution_level, duration_ms -> duration_seconds, error -> error_message
+        if "level" in exec_data and "resolution_level" not in exec_data:
+            exec_data["resolution_level"] = exec_data["level"]
+        if "duration_ms" in exec_data and "duration_seconds" not in exec_data:
+            exec_data["duration_seconds"] = exec_data["duration_ms"] / 1000.0
+        if "error" in exec_data and "error_message" not in exec_data:
+            exec_data["error_message"] = exec_data["error"]
+        if not exec_data.get("execution_id"):
+            exec_data["execution_id"] = f"l2-{exec_data.get('incident_id', 'unknown')}-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+        if not exec_data.get("status"):
+            exec_data["status"] = "success" if exec_data.get("success") else "failure"
+
         # Build pattern_signature from incident_type + hostname
         incident_type = exec_data.get("incident_type")
         hostname = exec_data.get("hostname", "unknown")

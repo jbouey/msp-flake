@@ -147,3 +147,71 @@ func (r *TelemetryReporter) ReportExecution(
 	log.Printf("[l2planner] Telemetry reported: incident=%s action=%s success=%v cost=$%.4f tokens=%d+%d",
 		incident.ID, decision.RecommendedAction, success, costUSD, inputTokens, outputTokens)
 }
+
+// ReportL1Execution sends an L1 execution outcome to Central Command.
+// L1 executions have no LLM cost/tokens but track success, duration, and pattern for the flywheel.
+func (r *TelemetryReporter) ReportL1Execution(
+	incidentID, hostname, incidentType, ruleID string,
+	success bool,
+	execErr string,
+	durationMs int64,
+) {
+	now := time.Now().UTC()
+	execID := fmt.Sprintf("l1-%s-%d", incidentID, now.UnixMilli())
+	patternSig := fmt.Sprintf("%s:%s:%s", incidentType, incidentType, hostname)
+
+	status := "success"
+	if !success {
+		status = "failure"
+	}
+
+	payload := telemetryPayload{
+		SiteID: r.siteID,
+		Execution: executionData{
+			ExecutionID:      execID,
+			IncidentID:       incidentID,
+			ApplianceID:      r.applianceID,
+			RunbookID:        ruleID,
+			Hostname:         hostname,
+			IncidentType:     incidentType,
+			DurationSeconds:  float64(durationMs) / 1000.0,
+			Success:          success,
+			Status:           status,
+			Confidence:       1.0, // L1 deterministic = 100% confidence
+			ResolutionLevel:  "L1",
+			ErrorMessage:     execErr,
+			PatternSignature: patternSig,
+		},
+		ReportedAt: now.Format(time.RFC3339),
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[telemetry] L1 marshal error: %v", err)
+		return
+	}
+
+	url := fmt.Sprintf("%s/api/agent/executions", r.endpoint)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("[telemetry] L1 request error: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+r.apiKey)
+
+	resp, err := r.client.Do(req)
+	if err != nil {
+		log.Printf("[telemetry] L1 POST failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		log.Printf("[telemetry] L1 POST returned %d", resp.StatusCode)
+		return
+	}
+
+	log.Printf("[telemetry] L1 reported: incident=%s rule=%s success=%v duration=%dms",
+		incidentID, ruleID, success, durationMs)
+}

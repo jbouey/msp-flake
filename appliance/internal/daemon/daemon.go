@@ -61,6 +61,9 @@ type Daemon struct {
 	evidenceSubmitter *evidence.Submitter
 	agentPublicKey    string // hex-encoded Ed25519 public key
 
+	// Telemetry reporter: sends L1/L2 execution outcomes to Central Command
+	telemetry *l2planner.TelemetryReporter
+
 	// Drift report cooldown: prevents excessive incident creation
 	cooldownMu sync.Mutex
 	cooldowns  map[string]*driftCooldown // key: "hostname:check_type"
@@ -110,6 +113,12 @@ func New(cfg *Config) *Daemon {
 		})
 		log.Printf("[daemon] L2 planner initialized (via Central Command, budget=$%.2f/day)",
 			cfg.L2DailyBudgetUSD)
+	}
+
+	// Initialize telemetry reporter for L1/L2 execution data flywheel
+	if cfg.APIEndpoint != "" && cfg.APIKey != "" {
+		d.telemetry = l2planner.NewTelemetryReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
+		log.Printf("[daemon] Telemetry reporter initialized (endpoint=%s)", cfg.APIEndpoint)
 	}
 
 	// Initialize order processor with completion callback
@@ -277,6 +286,11 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	log.Printf("[daemon] Checkin OK: appliance=%s, orders=%d, linux_targets=%d, triggers=(enum=%v, scan=%v)",
 		resp.ApplianceID, len(resp.PendingOrders), len(resp.LinuxTargets),
 		resp.TriggerEnumeration, resp.TriggerImmediateScan)
+
+	// Set appliance ID on telemetry reporter (received from Central Command)
+	if d.telemetry != nil && resp.ApplianceID != "" {
+		d.telemetry.SetApplianceID(resp.ApplianceID)
+	}
 
 	// Store Linux targets from checkin response
 	if len(resp.LinuxTargets) > 0 {
@@ -463,6 +477,11 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 			log.Printf("[daemon] L1 healed %s/%s via %s in %dms",
 				req.Hostname, req.CheckType, match.Rule.ID, result.DurationMs)
 
+			// Report L1 telemetry for data flywheel (async, fire-and-forget)
+			if d.telemetry != nil {
+				go d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, match.Rule.ID, true, "", result.DurationMs)
+			}
+
 			// GPO firewall fix: when firewall drift is healed, also fix the
 			// domain GPO to prevent GPO from turning firewall back off.
 			// Zero-friction: runs automatically without operator intervention.
@@ -472,6 +491,11 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 		} else {
 			log.Printf("[daemon] L1 execution failed for %s/%s: %s",
 				req.Hostname, req.CheckType, result.Error)
+
+			// Report L1 failure telemetry too — helps identify broken rules
+			if d.telemetry != nil {
+				go d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, match.Rule.ID, false, result.Error, result.DurationMs)
+			}
 		}
 		return
 	}
