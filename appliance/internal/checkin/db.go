@@ -250,6 +250,66 @@ func (db *DB) FetchHealingOrders(ctx context.Context, tx pgx.Tx, siteID string) 
 	return orders, rows.Err()
 }
 
+// FetchFleetOrders returns active fleet-wide orders that this appliance hasn't completed.
+// Skips orders where the appliance already matches skip_version.
+func (db *DB) FetchFleetOrders(ctx context.Context, tx pgx.Tx, canonicalID, agentVersion string) ([]PendingOrder, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT fo.id, fo.order_type, fo.parameters, fo.skip_version, fo.created_at, fo.expires_at
+		FROM fleet_orders fo
+		WHERE fo.status = 'active'
+		AND fo.expires_at > NOW()
+		AND NOT EXISTS (
+			SELECT 1 FROM fleet_order_completions foc
+			WHERE foc.fleet_order_id = fo.id AND foc.appliance_id = $1
+		)
+		ORDER BY fo.created_at ASC
+	`, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []PendingOrder
+	for rows.Next() {
+		var fleetID string
+		var orderType string
+		var params []byte
+		var skipVersion *string
+		var createdAt, expiresAt *time.Time
+
+		if err := rows.Scan(&fleetID, &orderType, &params, &skipVersion, &createdAt, &expiresAt); err != nil {
+			return nil, err
+		}
+
+		// Skip if appliance already at target version
+		if skipVersion != nil && agentVersion == *skipVersion {
+			// Record as skipped
+			tx.Exec(ctx, `
+				INSERT INTO fleet_order_completions (fleet_order_id, appliance_id, status)
+				VALUES ($1, $2, 'skipped')
+				ON CONFLICT DO NOTHING
+			`, fleetID, canonicalID)
+			continue
+		}
+
+		var o PendingOrder
+		o.OrderID = fmt.Sprintf("fleet::%s::%s", fleetID, canonicalID)
+		o.OrderType = orderType
+		o.Priority = 5
+		if params != nil {
+			json.Unmarshal(params, &o.Parameters)
+		}
+		if o.Parameters == nil {
+			o.Parameters = make(map[string]interface{})
+		}
+		o.Parameters["fleet_order_id"] = fleetID
+		o.CreatedAt = isoTimePtr(createdAt)
+		o.ExpiresAt = isoTimePtr(expiresAt)
+		orders = append(orders, o)
+	}
+	return orders, rows.Err()
+}
+
 // credentialData represents the encrypted_data JSON in site_credentials.
 type credentialData struct {
 	Host       string  `json:"host"`
@@ -514,6 +574,18 @@ func (db *DB) ProcessCheckin(ctx context.Context, req CheckinRequest) (*CheckinR
 		log.Printf("[checkin] healing orders query failed: %v", err)
 	} else {
 		pendingOrders = append(pendingOrders, healingOrders...)
+	}
+
+	// Step 4.5: Fetch fleet-wide orders
+	agentVer := ""
+	if req.AgentVersion != nil {
+		agentVer = *req.AgentVersion
+	}
+	fleetOrders, err := db.FetchFleetOrders(ctx, tx, canonicalID, agentVer)
+	if err != nil {
+		log.Printf("[checkin] fleet orders query failed: %v", err)
+	} else {
+		pendingOrders = append(pendingOrders, fleetOrders...)
 	}
 
 	// Step 5: Fetch credentials (conditional)
