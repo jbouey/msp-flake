@@ -10,7 +10,7 @@ import (
 )
 
 func TestTelemetryReport(t *testing.T) {
-	var receivedReport ExecutionReport
+	var receivedPayload telemetryPayload
 	var receivedAuth string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +23,7 @@ func TestTelemetryReport(t *testing.T) {
 
 		receivedAuth = r.Header.Get("Authorization")
 
-		err := json.NewDecoder(r.Body).Decode(&receivedReport)
+		err := json.NewDecoder(r.Body).Decode(&receivedPayload)
 		if err != nil {
 			t.Errorf("Decode error: %v", err)
 		}
@@ -33,6 +33,7 @@ func TestTelemetryReport(t *testing.T) {
 	defer server.Close()
 
 	reporter := NewTelemetryReporter(server.URL, "test-api-key", "test-site")
+	reporter.SetApplianceID("test-appliance-001")
 
 	incident := &l2bridge.Incident{
 		ID:           "drift-DC01-firewall-123",
@@ -53,30 +54,50 @@ func TestTelemetryReport(t *testing.T) {
 
 	reporter.ReportExecution(incident, decision, true, "", 1500, 2000, 500)
 
-	// Verify the report
-	if receivedReport.SiteID != "test-site" {
-		t.Errorf("Wrong site_id: %s", receivedReport.SiteID)
+	// Verify wrapper structure
+	if receivedPayload.SiteID != "test-site" {
+		t.Errorf("Wrong site_id: %s", receivedPayload.SiteID)
 	}
-	if receivedReport.IncidentID != "drift-DC01-firewall-123" {
-		t.Errorf("Wrong incident_id: %s", receivedReport.IncidentID)
+	if receivedPayload.ReportedAt == "" {
+		t.Error("reported_at should not be empty")
 	}
-	if receivedReport.Action != "configure_firewall" {
-		t.Errorf("Wrong action: %s", receivedReport.Action)
+
+	exec := receivedPayload.Execution
+	if exec.IncidentID != "drift-DC01-firewall-123" {
+		t.Errorf("Wrong incident_id: %s", exec.IncidentID)
 	}
-	if !receivedReport.Success {
+	if exec.ApplianceID != "test-appliance-001" {
+		t.Errorf("Wrong appliance_id: %s", exec.ApplianceID)
+	}
+	if !exec.Success {
 		t.Error("Should be success")
 	}
-	if receivedReport.Level != "L2" {
-		t.Errorf("Wrong level: %s", receivedReport.Level)
+	if exec.ResolutionLevel != "L2" {
+		t.Errorf("Wrong resolution_level: %s", exec.ResolutionLevel)
 	}
-	if receivedReport.DurationMs != 1500 {
-		t.Errorf("Wrong duration: %d", receivedReport.DurationMs)
+	if exec.DurationSeconds != 1.5 {
+		t.Errorf("Wrong duration: %f", exec.DurationSeconds)
 	}
-	if receivedReport.InputTokens != 2000 {
-		t.Errorf("Wrong input tokens: %d", receivedReport.InputTokens)
+	if exec.InputTokens != 2000 {
+		t.Errorf("Wrong input tokens: %d", exec.InputTokens)
 	}
-	if receivedReport.CostUSD <= 0 {
+	if exec.OutputTokens != 500 {
+		t.Errorf("Wrong output tokens: %d", exec.OutputTokens)
+	}
+	if exec.CostUSD <= 0 {
 		t.Error("Cost should be > 0")
+	}
+	if exec.Confidence != 0.9 {
+		t.Errorf("Wrong confidence: %f", exec.Confidence)
+	}
+	if exec.Reasoning != "Firewall disabled, re-enabling" {
+		t.Errorf("Wrong reasoning: %s", exec.Reasoning)
+	}
+	if exec.PatternSignature != "firewall_status:firewall_status:DC01" {
+		t.Errorf("Wrong pattern_signature: %s", exec.PatternSignature)
+	}
+	if exec.ExecutionID == "" {
+		t.Error("execution_id should not be empty")
 	}
 	if receivedAuth != "Bearer test-api-key" {
 		t.Errorf("Wrong auth header: %s", receivedAuth)
@@ -84,10 +105,10 @@ func TestTelemetryReport(t *testing.T) {
 }
 
 func TestTelemetryReportFailure(t *testing.T) {
-	var receivedReport ExecutionReport
+	var receivedPayload telemetryPayload
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&receivedReport)
+		json.NewDecoder(r.Body).Decode(&receivedPayload)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -109,11 +130,49 @@ func TestTelemetryReportFailure(t *testing.T) {
 
 	reporter.ReportExecution(incident, decision, false, "SSH connection refused", 500, 1000, 300)
 
-	if receivedReport.Success {
+	exec := receivedPayload.Execution
+	if exec.Success {
 		t.Error("Should report failure")
 	}
-	if receivedReport.Error != "SSH connection refused" {
-		t.Errorf("Wrong error: %s", receivedReport.Error)
+	if exec.Status != "failure" {
+		t.Errorf("Wrong status: %s", exec.Status)
+	}
+	if exec.ErrorMessage != "SSH connection refused" {
+		t.Errorf("Wrong error: %s", exec.ErrorMessage)
+	}
+	if exec.PatternSignature != "linux_ssh_config:linux_ssh_config:linux-1" {
+		t.Errorf("Wrong pattern_signature: %s", exec.PatternSignature)
+	}
+}
+
+func TestTelemetryReportWithPatternSignature(t *testing.T) {
+	var receivedPayload telemetryPayload
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedPayload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	reporter := NewTelemetryReporter(server.URL, "key", "site")
+
+	incident := &l2bridge.Incident{
+		ID:               "test-1",
+		IncidentType:     "firewall",
+		HostID:           "host-1",
+		PatternSignature: "custom-pattern-sig",
+	}
+
+	decision := &l2bridge.LLMDecision{
+		ActionParams: map[string]interface{}{},
+		Confidence:   0.8,
+	}
+
+	reporter.ReportExecution(incident, decision, true, "", 100, 0, 0)
+
+	// Should use incident's pattern signature when available
+	if receivedPayload.Execution.PatternSignature != "custom-pattern-sig" {
+		t.Errorf("Should use incident pattern_signature, got: %s", receivedPayload.Execution.PatternSignature)
 	}
 }
 
@@ -121,7 +180,7 @@ func TestTelemetryServerDown(t *testing.T) {
 	// Should not panic when server is unreachable
 	reporter := NewTelemetryReporter("http://localhost:1", "key", "site")
 
-	incident := &l2bridge.Incident{ID: "test-1", IncidentType: "test"}
+	incident := &l2bridge.Incident{ID: "test-1", IncidentType: "test", HostID: "host"}
 	decision := &l2bridge.LLMDecision{ActionParams: map[string]interface{}{}}
 
 	// This should log an error but not panic

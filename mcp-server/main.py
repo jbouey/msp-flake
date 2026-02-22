@@ -2120,10 +2120,12 @@ async def get_promoted_rules(
 
 
 class ExecutionTelemetryInput(BaseModel):
-    """Execution telemetry from agent."""
+    """Execution telemetry from agent. Accepts both wrapped and flat formats."""
     site_id: str
-    execution: dict
-    reported_at: str
+    execution: Optional[dict] = None
+    reported_at: Optional[str] = None
+    # Allow extra fields for flat format (Go daemon legacy)
+    model_config = {"extra": "allow"}
 
 
 @app.post("/api/agent/executions")
@@ -2133,8 +2135,17 @@ async def report_execution_telemetry(request: ExecutionTelemetryInput, db: Async
 
     This data feeds the learning system to analyze runbook effectiveness,
     identify patterns for improvement, and track healing outcomes.
+
+    Accepts two formats:
+    - Wrapped: {site_id, execution: {...}, reported_at} (preferred)
+    - Flat: {site_id, incident_id, ...} (legacy Go daemon compat)
     """
-    exec_data = request.execution
+    if request.execution:
+        exec_data = request.execution
+    else:
+        # Flat format: all fields at top level (legacy compat)
+        exec_data = request.model_dump(exclude={"site_id", "execution", "reported_at"})
+        exec_data["site_id"] = request.site_id
 
     # Parse ISO timestamps to datetime objects for PostgreSQL
     def parse_iso_timestamp(ts):
@@ -2148,6 +2159,13 @@ async def report_execution_telemetry(request: ExecutionTelemetryInput, db: Async
             return None
 
     try:
+        # Build pattern_signature from incident_type + hostname
+        incident_type = exec_data.get("incident_type")
+        hostname = exec_data.get("hostname", "unknown")
+        pattern_sig = exec_data.get("pattern_signature")
+        if not pattern_sig and incident_type and hostname:
+            pattern_sig = f"{incident_type}:{incident_type}:{hostname}"
+
         await db.execute(text("""
             INSERT INTO execution_telemetry (
                 execution_id, incident_id, site_id, appliance_id, runbook_id, hostname, platform, incident_type,
@@ -2155,30 +2173,39 @@ async def report_execution_telemetry(request: ExecutionTelemetryInput, db: Async
                 success, status, verification_passed, confidence, resolution_level,
                 state_before, state_after, state_diff, executed_steps,
                 error_message, error_step, failure_type, retry_count,
-                evidence_bundle_id, created_at
+                evidence_bundle_id,
+                cost_usd, input_tokens, output_tokens, pattern_signature, reasoning, chaos_campaign_id,
+                created_at
             ) VALUES (
                 :exec_id, :incident_id, :site_id, :appliance_id, :runbook_id, :hostname, :platform, :incident_type,
                 :started_at, :completed_at, :duration,
                 :success, :status, :verification, :confidence, :resolution_level,
                 CAST(:state_before AS jsonb), CAST(:state_after AS jsonb), CAST(:state_diff AS jsonb), CAST(:executed_steps AS jsonb),
                 :error_msg, :error_step, :failure_type, :retry_count,
-                :evidence_id, NOW()
+                :evidence_id,
+                :cost_usd, :input_tokens, :output_tokens, :pattern_signature, :reasoning, :chaos_campaign_id,
+                NOW()
             )
             ON CONFLICT (execution_id) DO UPDATE SET
                 success = EXCLUDED.success,
                 state_after = EXCLUDED.state_after,
                 state_diff = EXCLUDED.state_diff,
                 error_message = EXCLUDED.error_message,
-                failure_type = EXCLUDED.failure_type
+                failure_type = EXCLUDED.failure_type,
+                cost_usd = EXCLUDED.cost_usd,
+                input_tokens = EXCLUDED.input_tokens,
+                output_tokens = EXCLUDED.output_tokens,
+                pattern_signature = EXCLUDED.pattern_signature,
+                reasoning = EXCLUDED.reasoning
         """), {
             "exec_id": exec_data.get("execution_id"),
             "incident_id": exec_data.get("incident_id"),
             "site_id": request.site_id,
             "appliance_id": exec_data.get("appliance_id", "unknown"),
             "runbook_id": exec_data.get("runbook_id"),
-            "hostname": exec_data.get("hostname", "unknown"),
+            "hostname": hostname,
             "platform": exec_data.get("platform"),
-            "incident_type": exec_data.get("incident_type"),
+            "incident_type": incident_type,
             "started_at": parse_iso_timestamp(exec_data.get("started_at")),
             "completed_at": parse_iso_timestamp(exec_data.get("completed_at")),
             "duration": exec_data.get("duration_seconds"),
@@ -2196,6 +2223,12 @@ async def report_execution_telemetry(request: ExecutionTelemetryInput, db: Async
             "failure_type": exec_data.get("failure_type"),
             "retry_count": exec_data.get("retry_count", 0),
             "evidence_id": exec_data.get("evidence_bundle_id"),
+            "cost_usd": exec_data.get("cost_usd", 0),
+            "input_tokens": exec_data.get("input_tokens", 0),
+            "output_tokens": exec_data.get("output_tokens", 0),
+            "pattern_signature": pattern_sig,
+            "reasoning": exec_data.get("reasoning"),
+            "chaos_campaign_id": exec_data.get("chaos_campaign_id"),
         })
 
         await db.commit()

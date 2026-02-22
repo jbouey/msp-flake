@@ -15,10 +15,11 @@ import (
 // This feeds the data flywheel: L2 decisions are recorded, patterns accumulate,
 // and successful patterns get promoted to L1 rules.
 type TelemetryReporter struct {
-	endpoint string // Base API endpoint (e.g. "https://api.osiriscare.net")
-	apiKey   string
-	siteID   string
-	client   *http.Client
+	endpoint    string // Base API endpoint (e.g. "https://api.osiriscare.net")
+	apiKey      string
+	siteID      string
+	applianceID string
+	client      *http.Client
 }
 
 // NewTelemetryReporter creates a new telemetry reporter.
@@ -33,24 +34,38 @@ func NewTelemetryReporter(endpoint, apiKey, siteID string) *TelemetryReporter {
 	}
 }
 
-// ExecutionReport is the payload sent to /api/agent/executions.
-type ExecutionReport struct {
-	SiteID       string  `json:"site_id"`
-	IncidentID   string  `json:"incident_id"`
-	IncidentType string  `json:"incident_type"`
-	Hostname     string  `json:"hostname"`
-	RunbookID    string  `json:"runbook_id"`
-	Action       string  `json:"action"`
-	Script       string  `json:"script"`
-	Confidence   float64 `json:"confidence"`
-	Reasoning    string  `json:"reasoning"`
-	Success      bool    `json:"success"`
-	Error        string  `json:"error,omitempty"`
-	DurationMs   int64   `json:"duration_ms"`
-	Level        string  `json:"level"` // always "L2"
-	InputTokens  int     `json:"input_tokens,omitempty"`
-	OutputTokens int     `json:"output_tokens,omitempty"`
-	CostUSD      float64 `json:"cost_usd,omitempty"`
+// SetApplianceID sets the appliance ID for telemetry reports.
+func (r *TelemetryReporter) SetApplianceID(id string) {
+	r.applianceID = id
+}
+
+// executionData is the inner execution payload matching what the backend extracts.
+type executionData struct {
+	ExecutionID     string  `json:"execution_id"`
+	IncidentID      string  `json:"incident_id"`
+	ApplianceID     string  `json:"appliance_id,omitempty"`
+	RunbookID       string  `json:"runbook_id"`
+	Hostname     string `json:"hostname"`
+	IncidentType string `json:"incident_type"`
+	DurationSeconds float64 `json:"duration_seconds"`
+	Success         bool    `json:"success"`
+	Status          string  `json:"status"`
+	Confidence      float64 `json:"confidence"`
+	ResolutionLevel string  `json:"resolution_level"`
+	ErrorMessage    string  `json:"error_message,omitempty"`
+	// Flywheel fields — cost, tokens, reasoning, pattern_signature
+	CostUSD          float64 `json:"cost_usd,omitempty"`
+	InputTokens      int     `json:"input_tokens,omitempty"`
+	OutputTokens     int     `json:"output_tokens,omitempty"`
+	Reasoning        string  `json:"reasoning,omitempty"`
+	PatternSignature string  `json:"pattern_signature,omitempty"`
+}
+
+// telemetryPayload matches the backend's ExecutionTelemetryInput model.
+type telemetryPayload struct {
+	SiteID     string        `json:"site_id"`
+	Execution  executionData `json:"execution"`
+	ReportedAt string        `json:"reported_at"`
 }
 
 // ReportExecution sends an execution outcome to Central Command.
@@ -63,28 +78,46 @@ func (r *TelemetryReporter) ReportExecution(
 	durationMs int64,
 	inputTokens, outputTokens int,
 ) {
-	script, _ := decision.ActionParams["script"].(string)
+	now := time.Now().UTC()
+	execID := fmt.Sprintf("l2-%s-%d", incident.ID, now.UnixMilli())
+	costUSD := CalculateCost(inputTokens, outputTokens)
 
-	report := ExecutionReport{
-		SiteID:       r.siteID,
-		IncidentID:   incident.ID,
-		IncidentType: incident.IncidentType,
-		Hostname:     incident.HostID,
-		RunbookID:    decision.RunbookID,
-		Action:       decision.RecommendedAction,
-		Script:       script,
-		Confidence:   decision.Confidence,
-		Reasoning:    decision.Reasoning,
-		Success:      success,
-		Error:        execErr,
-		DurationMs:   durationMs,
-		Level:        "L2",
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		CostUSD:      CalculateCost(inputTokens, outputTokens),
+	// Use incident's pattern signature if available, otherwise build from type+host
+	patternSig := incident.PatternSignature
+	if patternSig == "" {
+		patternSig = fmt.Sprintf("%s:%s:%s", incident.IncidentType, incident.IncidentType, incident.HostID)
 	}
 
-	body, err := json.Marshal(report)
+	status := "success"
+	if !success {
+		status = "failure"
+	}
+
+	payload := telemetryPayload{
+		SiteID: r.siteID,
+		Execution: executionData{
+			ExecutionID:      execID,
+			IncidentID:       incident.ID,
+			ApplianceID:      r.applianceID,
+			RunbookID:        decision.RunbookID,
+			Hostname:         incident.HostID,
+			IncidentType:     incident.IncidentType,
+			DurationSeconds:  float64(durationMs) / 1000.0,
+			Success:          success,
+			Status:           status,
+			Confidence:       decision.Confidence,
+			ResolutionLevel:  "L2",
+			ErrorMessage:     execErr,
+			CostUSD:          costUSD,
+			InputTokens:      inputTokens,
+			OutputTokens:     outputTokens,
+			Reasoning:        decision.Reasoning,
+			PatternSignature: patternSig,
+		},
+		ReportedAt: now.Format(time.RFC3339),
+	}
+
+	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[l2planner] Telemetry marshal error: %v", err)
 		return
@@ -111,6 +144,6 @@ func (r *TelemetryReporter) ReportExecution(
 		return
 	}
 
-	log.Printf("[l2planner] Telemetry reported: incident=%s action=%s success=%v",
-		incident.ID, decision.RecommendedAction, success)
+	log.Printf("[l2planner] Telemetry reported: incident=%s action=%s success=%v cost=$%.4f tokens=%d+%d",
+		incident.ID, decision.RecommendedAction, success, costUSD, inputTokens, outputTokens)
 }

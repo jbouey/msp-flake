@@ -504,6 +504,33 @@ async def approve_candidate(
                 request.notes
             )
 
+            # Auto-create runbook entry for the promoted pattern
+            # This ensures the Runbook Library stays in sync with L1 rules
+            check_type = candidate.get('check_type') or rule['action_params'].get('runbook_id', 'general')
+            promoted_name = request.custom_name or f"Auto-Promoted: {candidate.get('recommended_action', check_type)}"
+            promoted_desc = f"L2→L1 promoted pattern ({candidate.get('success_rate', 0) * 100:.0f}% success over {candidate.get('total_occurrences', 0)} occurrences)"
+            await conn.execute("""
+                INSERT INTO runbooks (runbook_id, name, description, category, check_type, severity, is_disruptive, hipaa_controls, steps)
+                VALUES ($1, $2, $3, $4, $5, 'medium', false, ARRAY[]::text[], '[]'::jsonb)
+                ON CONFLICT (runbook_id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    updated_at = NOW()
+            """,
+                rule['id'],
+                promoted_name,
+                promoted_desc,
+                rule.get('action_params', {}).get('runbook_id', 'general'),
+                check_type
+            )
+
+            # Map promoted rule_id to canonical runbook for telemetry correlation
+            await conn.execute("""
+                INSERT INTO runbook_id_mapping (l1_rule_id, runbook_id)
+                VALUES ($1, $2)
+                ON CONFLICT (l1_rule_id) DO NOTHING
+            """, rule['id'], rule['id'])
+
             # Update candidate status
             await conn.execute("""
                 INSERT INTO learning_promotion_candidates (

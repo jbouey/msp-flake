@@ -129,12 +129,60 @@ async def update_settings(
 
 @router.post("/purge-telemetry")
 async def purge_old_telemetry(db: AsyncSession = Depends(get_db), admin: Dict[str, Any] = Depends(require_admin)):
-    """Purge telemetry data older than retention period (admin only)."""
+    """Purge telemetry data older than retention period (admin only).
+
+    Archives aggregated stats to telemetry_archive before deleting raw data.
+    """
     # Get current retention setting
     settings = await get_settings(db)
     retention_days = settings.telemetry_retention_days
 
-    # SECURITY: Use parameterized query to prevent SQL injection
+    # Archive aggregated stats before purging
+    await db.execute(text("""
+        INSERT INTO telemetry_archive (
+            pattern_signature, site_id, runbook_id, incident_type, resolution_level,
+            period_start, period_end,
+            total_executions, successful_executions, failed_executions,
+            total_cost_usd, total_input_tokens, total_output_tokens,
+            avg_duration_seconds, min_duration_seconds, max_duration_seconds,
+            chaos_validated, chaos_executions
+        )
+        SELECT
+            COALESCE(pattern_signature, incident_type || ':' || incident_type || ':' || hostname),
+            site_id,
+            runbook_id,
+            incident_type,
+            resolution_level,
+            DATE(MIN(created_at)),
+            DATE(MAX(created_at)),
+            COUNT(*),
+            COUNT(*) FILTER (WHERE success = true),
+            COUNT(*) FILTER (WHERE success = false),
+            COALESCE(SUM(cost_usd), 0),
+            COALESCE(SUM(input_tokens), 0),
+            COALESCE(SUM(output_tokens), 0),
+            COALESCE(AVG(duration_seconds), 0),
+            COALESCE(MIN(duration_seconds), 0),
+            COALESCE(MAX(duration_seconds), 0),
+            bool_or(chaos_campaign_id IS NOT NULL),
+            COUNT(*) FILTER (WHERE chaos_campaign_id IS NOT NULL)
+        FROM execution_telemetry
+        WHERE created_at < NOW() - INTERVAL '1 day' * :days
+          AND incident_type IS NOT NULL
+        GROUP BY
+            COALESCE(pattern_signature, incident_type || ':' || incident_type || ':' || hostname),
+            site_id, runbook_id, incident_type, resolution_level, hostname
+        ON CONFLICT (pattern_signature, site_id, period_start, period_end) DO UPDATE SET
+            total_executions = telemetry_archive.total_executions + EXCLUDED.total_executions,
+            successful_executions = telemetry_archive.successful_executions + EXCLUDED.successful_executions,
+            failed_executions = telemetry_archive.failed_executions + EXCLUDED.failed_executions,
+            total_cost_usd = telemetry_archive.total_cost_usd + EXCLUDED.total_cost_usd,
+            total_input_tokens = telemetry_archive.total_input_tokens + EXCLUDED.total_input_tokens,
+            total_output_tokens = telemetry_archive.total_output_tokens + EXCLUDED.total_output_tokens,
+            archived_at = NOW()
+    """), {"days": retention_days})
+
+    # Now delete the raw telemetry
     result = await db.execute(
         text("DELETE FROM execution_telemetry WHERE created_at < NOW() - INTERVAL '1 day' * :days RETURNING id"),
         {"days": retention_days}
@@ -142,7 +190,7 @@ async def purge_old_telemetry(db: AsyncSession = Depends(get_db), admin: Dict[st
     deleted = len(result.fetchall())
     await db.commit()
 
-    return {"deleted": deleted, "retention_days": retention_days}
+    return {"deleted": deleted, "retention_days": retention_days, "archived": True}
 
 
 @router.post("/reset-learning")
