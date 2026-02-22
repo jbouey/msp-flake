@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { GlassCard, Spinner, Badge } from '../components/shared';
+import { AddDeviceModal } from '../components/shared/AddDeviceModal';
 import { useSiteDevices, useSiteDeviceSummary } from '../hooks';
 import type { DiscoveredDevice, SiteDeviceSummary as DeviceSummaryType } from '../utils/api';
 
@@ -381,6 +382,7 @@ export const SiteDevices: React.FC = () => {
   const [filter, setFilter] = useState<{ type?: string; status?: string; includeMedical: boolean }>({
     includeMedical: false,
   });
+  const [showAddDevice, setShowAddDevice] = useState(false);
 
   const { data: devicesData, isLoading: devicesLoading, error: devicesError } = useSiteDevices(
     siteId || null,
@@ -439,10 +441,34 @@ export const SiteDevices: React.FC = () => {
             Network-discovered devices from the appliance scanner
           </p>
         </div>
-        <Badge variant="info" className="px-3 py-1">
-          {devices.length} Devices
-        </Badge>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowAddDevice(true)}
+            className="px-4 py-2 text-sm font-medium rounded-lg bg-accent-primary text-white hover:bg-accent-primary/90 transition flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Join Device
+          </button>
+          <Badge variant="info" className="px-3 py-1">
+            {devices.length} Devices
+          </Badge>
+        </div>
       </div>
+
+      {/* Add Device Modal */}
+      {showAddDevice && siteId && (
+        <AddDeviceModal
+          siteId={siteId}
+          apiEndpoint={`/api/sites/${siteId}/devices/manual`}
+          onSuccess={() => {
+            setShowAddDevice(false);
+            window.location.reload();
+          }}
+          onClose={() => setShowAddDevice(false)}
+        />
+      )}
 
       {/* Info banner */}
       <GlassCard className="p-4 bg-accent-primary/5 border-accent-primary/20">

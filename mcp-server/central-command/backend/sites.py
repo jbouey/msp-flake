@@ -634,13 +634,16 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
 # =============================================================================
 
 class CredentialCreate(BaseModel):
-    credential_type: str  # domain_admin, local_admin, winrm, service_account
+    credential_type: str  # domain_admin, local_admin, winrm, service_account, ssh_password, ssh_key
     credential_name: str  # Human-readable name like "North Valley DC"
     host: str             # Target hostname/IP
     username: str
-    password: str
+    password: str = ""
     domain: Optional[str] = None
     use_ssl: Optional[bool] = False
+    port: Optional[int] = 22
+    private_key: Optional[str] = None  # For ssh_key credential type
+    distro: Optional[str] = None       # ubuntu, centos, macos, etc.
 
 
 @router.post("/{site_id}/credentials")
@@ -649,13 +652,19 @@ async def add_credential(site_id: str, cred: CredentialCreate, user: dict = Depe
     pool = await get_pool()
 
     # Build credential data as JSON
-    cred_data = json.dumps({
+    cred_data_dict = {
         'host': cred.host,
         'username': cred.username,
         'password': cred.password,
         'domain': cred.domain or '',
         'use_ssl': cred.use_ssl or False,
-    })
+        'port': cred.port or 22,
+    }
+    if cred.private_key:
+        cred_data_dict['private_key'] = cred.private_key
+    if cred.distro:
+        cred_data_dict['distro'] = cred.distro
+    cred_data = json.dumps(cred_data_dict)
 
     async with pool.acquire() as conn:
         try:
@@ -695,6 +704,93 @@ async def delete_credential(site_id: str, credential_id: str, user: dict = Depen
             raise HTTPException(status_code=404, detail="Credential not found")
 
         return {'message': 'Credential deleted. Appliances will stop receiving it on next check-in.'}
+
+
+# =============================================================================
+# MANUAL DEVICE JOIN (Non-AD devices)
+# =============================================================================
+
+class ManualDeviceAdd(BaseModel):
+    hostname: str           # Hostname or IP to connect to
+    ip_address: str         # IP address for device inventory
+    device_type: str = "workstation"  # workstation, server
+    os_type: str = "linux"  # linux, macos
+    ssh_username: str = "root"
+    ssh_password: Optional[str] = None
+    ssh_key: Optional[str] = None
+    port: int = 22
+    distro: Optional[str] = None  # ubuntu, centos, macos, etc.
+
+
+async def _add_manual_device(pool, site_id: str, device: ManualDeviceAdd) -> dict:
+    """Shared logic for adding a non-AD device via SSH credentials.
+    Used by both admin and portal endpoints."""
+    if not device.ssh_password and not device.ssh_key:
+        raise HTTPException(status_code=400, detail="Either ssh_password or ssh_key is required.")
+
+    cred_type = "ssh_key" if device.ssh_key else "ssh_password"
+    cred_name = f"{device.hostname} ({device.os_type})"
+
+    cred_data_dict = {
+        'host': device.hostname,
+        'target_host': device.ip_address,
+        'username': device.ssh_username,
+        'password': device.ssh_password or '',
+        'port': device.port,
+    }
+    if device.ssh_key:
+        cred_data_dict['private_key'] = device.ssh_key
+    if device.distro:
+        cred_data_dict['distro'] = device.distro
+
+    cred_data = json.dumps(cred_data_dict)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Create SSH credential
+            row = await conn.fetchrow("""
+                INSERT INTO site_credentials (site_id, credential_type, credential_name, encrypted_data)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, created_at
+            """, site_id, cred_type, cred_name, cred_data.encode())
+
+            credential_id = str(row['id'])
+
+            # Upsert into discovered_devices for inventory visibility
+            await conn.execute("""
+                INSERT INTO discovered_devices (
+                    appliance_id, site_id, local_device_id, hostname, ip_address,
+                    device_type, os_name, discovery_source, compliance_status,
+                    first_seen_at, last_seen_at
+                )
+                SELECT
+                    sa.appliance_id, $1, $2, $3, $4,
+                    $5, $6, 'manual', 'unknown',
+                    NOW(), NOW()
+                FROM site_appliances sa
+                WHERE sa.site_id = $1
+                LIMIT 1
+                ON CONFLICT (appliance_id, local_device_id) DO UPDATE
+                SET hostname = EXCLUDED.hostname, ip_address = EXCLUDED.ip_address,
+                    last_seen_at = NOW()
+            """, site_id, f"manual-{device.ip_address}", device.hostname,
+                device.ip_address, device.device_type, device.os_type)
+
+    return {
+        'credential_id': credential_id,
+        'credential_type': cred_type,
+        'hostname': device.hostname,
+        'ip_address': device.ip_address,
+        'created_at': row['created_at'].isoformat(),
+        'message': f'Device {device.hostname} added. Appliance will begin monitoring on next check-in.',
+    }
+
+
+@router.post("/{site_id}/devices/manual")
+async def add_manual_device(site_id: str, device: ManualDeviceAdd, user: dict = Depends(require_operator)):
+    """Register a non-AD device for SSH-based compliance monitoring."""
+    pool = await get_pool()
+    return await _add_manual_device(pool, site_id, device)
 
 
 @router.get("/{site_id}/appliances")

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import { KPICard, ControlGrid, IncidentList, EvidenceDownloads } from './components';
+import { AddDeviceModal } from '../components/shared/AddDeviceModal';
 
 interface PortalSite {
   site_id: string;
@@ -63,6 +64,7 @@ interface PortalData {
   controls: PortalControl[];
   incidents: PortalIncident[];
   evidence_bundles: PortalBundle[];
+  device_count: number;
   generated_at: string;
 }
 
@@ -113,6 +115,7 @@ export const PortalDashboard: React.FC = () => {
   const [data, setData] = useState<PortalData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showAddDevice, setShowAddDevice] = useState(false);
 
   useEffect(() => {
     if (!siteId) {
@@ -281,6 +284,43 @@ export const PortalDashboard: React.FC = () => {
           <h2 className="text-xl font-semibold text-slate-900 mb-4">Control Status</h2>
           <ControlGrid controls={data.controls} />
         </section>
+
+        {/* Managed Devices Section */}
+        <section className="mb-8">
+          <div className="bg-white rounded-xl border border-slate-200 p-6">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-xl font-semibold text-slate-900">Managed Devices</h2>
+              <button
+                onClick={() => setShowAddDevice(true)}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Join Device
+              </button>
+            </div>
+            <p className="text-sm text-slate-500">
+              {(data.device_count || 0) > 0
+                ? `${data.device_count} device${data.device_count !== 1 ? 's' : ''} registered for SSH-based compliance monitoring.`
+                : 'No standalone devices registered yet. Use "Join Device" to add a Mac or Linux device for monitoring.'}
+            </p>
+          </div>
+        </section>
+
+        {/* Add Device Modal */}
+        {showAddDevice && siteId && (
+          <AddDeviceModal
+            siteId={siteId}
+            apiEndpoint={`/api/portal/site/${siteId}/devices`}
+            onSuccess={() => {
+              setShowAddDevice(false);
+              window.location.reload();
+            }}
+            onClose={() => setShowAddDevice(false)}
+            portalMode
+          />
+        )}
 
         {/* Two-column layout */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

@@ -23,6 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from io import BytesIO
 import sys
 
+from .fleet import get_pool
+from .sites import ManualDeviceAdd, _add_manual_device
 from .db_queries import (
     get_site_info,
     get_compliance_scores_for_site,
@@ -233,6 +235,7 @@ class PortalData(BaseModel):
     controls: List[PortalControl]
     incidents: List[PortalIncident]
     evidence_bundles: List[PortalEvidenceBundle]
+    device_count: int = 0
     generated_at: datetime
 
 
@@ -900,6 +903,13 @@ async def get_portal_data(
     resolved_incidents = await get_resolved_incidents_for_site(db, site_id, days=30)
     evidence_bundles_data = await get_evidence_bundles_for_site(db, site_id)
 
+    # Count SSH-monitored devices
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        device_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM site_credentials WHERE site_id = $1 AND credential_type IN ('ssh_password', 'ssh_key')",
+            site_id)
+
     # Build site from database info
     if site_info:
         site = PortalSite(
@@ -1020,8 +1030,26 @@ async def get_portal_data(
         controls=controls,
         incidents=incidents,
         evidence_bundles=bundles,
+        device_count=device_count or 0,
         generated_at=datetime.now(timezone.utc)
     )
+
+
+# =============================================================================
+# DEVICE MANAGEMENT (Non-AD)
+# =============================================================================
+
+@router.post("/site/{site_id}/devices")
+async def add_portal_device(
+    site_id: str,
+    device: ManualDeviceAdd,
+    token: str = Query(None),
+    portal_session: Optional[str] = Cookie(None),
+):
+    """Register a non-AD device from the client portal."""
+    await validate_session(site_id, portal_session, token)
+    pool = await get_pool()
+    return await _add_manual_device(pool, site_id, device)
 
 
 # =============================================================================
