@@ -10,7 +10,7 @@ import smtplib
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -51,14 +51,18 @@ def _build_details_section(details: dict) -> str:
         rows.append(f'<tr><td style="padding:6px 12px;color:#6b7280;">Actual</td>'
                      f'<td style="padding:6px 12px;font-family:monospace;color:#dc2626;">{_escape_html(details["actual"])}</td></tr>')
 
-    # Show other detail fields (skip large/nested values)
+    # Show other detail fields (format nested values as JSON)
     for key, val in details.items():
         if key in ("expected", "actual"):
             continue
         if isinstance(val, (dict, list)):
-            continue
-        rows.append(f'<tr><td style="padding:6px 12px;color:#6b7280;">{_escape_html(key)}</td>'
-                     f'<td style="padding:6px 12px;">{_escape_html(val)}</td></tr>')
+            import json
+            formatted = json.dumps(val, indent=2, default=str)
+            rows.append(f'<tr><td style="padding:6px 12px;color:#6b7280;vertical-align:top;">{_escape_html(key)}</td>'
+                         f'<td style="padding:6px 12px;"><pre style="margin:0;font-size:12px;white-space:pre-wrap;">{_escape_html(formatted)}</pre></td></tr>')
+        else:
+            rows.append(f'<tr><td style="padding:6px 12px;color:#6b7280;">{_escape_html(key)}</td>'
+                         f'<td style="padding:6px 12px;">{_escape_html(val)}</td></tr>')
 
     if not rows:
         return ""
@@ -188,7 +192,7 @@ def send_critical_alert(
             text_parts.append(f"Host: {host_id}")
         if check_type:
             text_parts.append(f"Check: {check_type}")
-        text_parts.append(f"Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        text_parts.append(f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
         text_parts.append("")
 
         if details:
@@ -297,7 +301,7 @@ def send_critical_alert(
             </div>{host_row}{check_row}
             <div class="field">
                 <div class="field-label">Time</div>
-                <div class="field-value">{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}</div>
+                <div class="field-value">{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</div>
             </div>
             <div class="message-box">
                 <div class="field-label">Message</div>

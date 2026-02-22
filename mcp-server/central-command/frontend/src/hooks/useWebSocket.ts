@@ -24,7 +24,9 @@ function getKeysToInvalidate(event: WSEvent): string[][] {
         ['fleet'],
         ['stats'],
         // Scope to specific site if provided, otherwise invalidate all
-        ...(siteId ? [['sites'], ['site', siteId]] : [['sites'], ['site']]),
+        ...(siteId
+          ? [['sites'], ['site', siteId], ['workstations', siteId], ['goAgents', siteId]]
+          : [['sites'], ['site'], ['workstations'], ['goAgents']]),
       ];
     case 'incident_created':
       return [['incidents'], ['stats'], ['notifications']];
@@ -35,7 +37,10 @@ function getKeysToInvalidate(event: WSEvent): string[][] {
     case 'pattern_promoted':
       return [['learning', 'candidates'], ['learning', 'history'], ['learning', 'status']];
     case 'compliance_drift':
-      return [['fleet'], ['events'], ['stats']];
+      return [
+        ['fleet'], ['events'], ['stats'],
+        ...(siteId ? [['workstations', siteId], ['site', siteId]] : [['workstations'], ['site']]),
+      ];
     case 'order_status_changed':
       return [
         ...(siteId ? [['orders', siteId], ['site', siteId]] : [['orders'], ['site']]),

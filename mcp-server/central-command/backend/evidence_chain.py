@@ -990,6 +990,19 @@ async def submit_evidence(
 
     logger.info(f"Evidence submitted: site={site_id} bundle={bundle.bundle_id[:8]} chain={chain_position}")
 
+    # Broadcast compliance event for real-time dashboard updates
+    try:
+        from .websocket_manager import broadcast_event
+        await broadcast_event("compliance_drift", {
+            "site_id": site_id,
+            "check_type": bundle.check_type,
+            "check_result": bundle.check_result,
+            "bundle_id": bundle.bundle_id,
+            "chain_position": chain_position,
+        })
+    except Exception:
+        pass  # Don't fail evidence submission if broadcast fails
+
     return EvidenceSubmitResponse(
         bundle_id=bundle.bundle_id,
         chain_position=chain_position,

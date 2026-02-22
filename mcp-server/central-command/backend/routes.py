@@ -79,6 +79,36 @@ from .email_alerts import send_critical_alert
 from . import auth as auth_module
 
 
+# ---- Safe enum converters (prevent crashes on unknown DB values) ----
+
+def _safe_check_type(ct: str) -> CheckType:
+    """Safely convert check type, defaulting to BACKUP for unknown types."""
+    try:
+        return CheckType(ct)
+    except (ValueError, KeyError):
+        return CheckType.BACKUP
+
+
+def _safe_severity(sev) -> Severity:
+    """Safely convert severity, defaulting to MEDIUM for unknown/null values."""
+    if not sev:
+        return Severity.MEDIUM
+    try:
+        return Severity(sev)
+    except (ValueError, KeyError):
+        return Severity.MEDIUM
+
+
+def _safe_resolution_level(rl) -> Optional[ResolutionLevel]:
+    """Safely convert resolution level, returning None for unknown values."""
+    if not rl:
+        return None
+    try:
+        return ResolutionLevel(rl)
+    except (ValueError, KeyError):
+        return None
+
+
 # Dashboard router - requires authentication for all routes
 router = APIRouter(
     prefix="/api/dashboard",
@@ -463,21 +493,14 @@ async def get_incidents(
     """
     incidents = await get_incidents_from_db(db, site_id=site_id, limit=limit, offset=offset, resolved=resolved)
 
-    def safe_check_type(ct: str) -> CheckType:
-        """Safely convert check type, defaulting to BACKUP for unknown types."""
-        try:
-            return CheckType(ct)
-        except ValueError:
-            return CheckType.BACKUP
-
     return [
         Incident(
             id=str(i["id"]),
             site_id=i["site_id"],
             hostname=i.get("hostname", ""),
-            check_type=safe_check_type(i["check_type"]) if i.get("check_type") else CheckType.BACKUP,
-            severity=Severity(i["severity"]),
-            resolution_level=ResolutionLevel(i["resolution_level"]) if i.get("resolution_level") else None,
+            check_type=_safe_check_type(i["check_type"]) if i.get("check_type") else CheckType.BACKUP,
+            severity=_safe_severity(i["severity"]),
+            resolution_level=_safe_resolution_level(i.get("resolution_level")),
             resolved=i["resolved"],
             resolved_at=i.get("resolved_at"),
             hipaa_controls=i.get("hipaa_controls", []),
@@ -509,10 +532,10 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
         site_id=row.site_id,
         appliance_id=str(row.appliance_id),
         hostname=row.hostname or "",
-        check_type=CheckType(row.check_type) if row.check_type else CheckType.BACKUP,
-        severity=Severity(row.severity),
+        check_type=_safe_check_type(row.check_type) if row.check_type else CheckType.BACKUP,
+        severity=_safe_severity(row.severity),
         drift_data=row.details or {},
-        resolution_level=ResolutionLevel(row.resolution_tier) if row.resolution_tier else None,
+        resolution_level=_safe_resolution_level(row.resolution_tier),
         resolved=row.status == "resolved",
         resolved_at=row.resolved_at,
         hipaa_controls=row.hipaa_controls or [],

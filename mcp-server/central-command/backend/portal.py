@@ -90,6 +90,14 @@ SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
 FROM_EMAIL = os.environ.get("FROM_EMAIL", "noreply@osiriscare.net")
 PORTAL_BASE_URL = os.environ.get("PORTAL_BASE_URL", "https://portal.osiriscare.net")
 
+# Log email configuration status at import time
+if SENDGRID_AVAILABLE and SENDGRID_API_KEY:
+    logger.info("Portal email: SendGrid configured")
+elif os.environ.get("SMTP_USER") and os.environ.get("SMTP_PASSWORD"):
+    logger.info("Portal email: SMTP fallback available (SendGrid not configured)")
+else:
+    logger.warning("Portal email: NO email backend configured - magic links will not be delivered")
+
 
 async def send_magic_link_email(to_email: str, site_name: str, magic_link: str) -> bool:
     """Send magic link email to client.
@@ -602,6 +610,58 @@ async def request_magic_link(site_id: str, request: MagicLinkRequest):
     # Send email
     email_sent = await send_magic_link_email(request.email, site_name, magic_link)
 
+    if not email_sent:
+        # Fall back to SMTP if SendGrid unavailable
+        try:
+            from .email_alerts import is_email_configured, send_critical_alert
+            if is_email_configured():
+                import smtplib
+                import ssl
+                from email.mime.text import MIMEText
+                from email.mime.multipart import MIMEMultipart
+
+                smtp_host = os.getenv("SMTP_HOST", "mail.privateemail.com")
+                smtp_port = int(os.getenv("SMTP_PORT", "587"))
+                smtp_user = os.getenv("SMTP_USER", "")
+                smtp_password = os.getenv("SMTP_PASSWORD", "")
+                smtp_from = os.getenv("SMTP_FROM", "alerts@osiriscare.net")
+
+                msg = MIMEMultipart("alternative")
+                msg["Subject"] = f"Your {site_name} Compliance Dashboard Access"
+                msg["From"] = smtp_from
+                msg["To"] = request.email
+
+                html_content = f"""
+                <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+                    <div style="text-align: center; margin-bottom: 40px;">
+                        <h1 style="color: #1a365d; font-size: 24px; margin: 0;">OsirisCare</h1>
+                        <p style="color: #718096; margin-top: 8px;">HIPAA Compliance Platform</p>
+                    </div>
+                    <p style="color: #2d3748; font-size: 16px; line-height: 1.6;">
+                        Click the button below to access your compliance dashboard for <strong>{site_name}</strong>.
+                    </p>
+                    <div style="text-align: center; margin: 40px 0;">
+                        <a href="{magic_link}" style="background: #3182ce; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">
+                            Access Dashboard
+                        </a>
+                    </div>
+                    <p style="color: #718096; font-size: 14px; line-height: 1.5;">
+                        This link expires in 60 minutes. If you didn't request this, you can safely ignore this email.
+                    </p>
+                </div>
+                """
+                msg.attach(MIMEText(html_content, "html"))
+
+                context = ssl.create_default_context()
+                with smtplib.SMTP(smtp_host, smtp_port) as server:
+                    server.starttls(context=context)
+                    server.login(smtp_user, smtp_password)
+                    server.sendmail(smtp_from, request.email, msg.as_string())
+                email_sent = True
+                logger.info(f"Magic link sent via SMTP fallback to {redact_email(request.email)}")
+        except Exception as e:
+            logger.error(f"SMTP fallback failed for magic link: {e}")
+
     return MagicLinkResponse(
         message="If this email is registered, you will receive a link shortly.",
         email_sent=email_sent
@@ -904,7 +964,7 @@ async def get_portal_data(
         # Calculate status from pass rate
         pass_rate = result.get("pass_rate")
         if pass_rate is None:
-            status = "pass"  # No data = assume passing
+            status = "pass"  # No data = not yet monitored
         elif pass_rate >= 90:
             status = "pass"
         elif pass_rate >= 50:
@@ -919,7 +979,7 @@ async def get_portal_data(
             severity=meta["severity"],
             checked_at=result.get("last_checked"),
             hipaa_controls=meta["hipaa"],
-            scope_summary=f"{int(pass_rate or 100)}% pass rate (30d)" if pass_rate else "All checks passing",
+            scope_summary=f"{int(pass_rate)}% pass rate (30d)" if pass_rate is not None else "No data yet",
             auto_fix_triggered=False,
             fix_duration_sec=None,
             exception_applied=False,
@@ -1029,7 +1089,7 @@ async def get_controls(
             "checked_at": result.get("last_checked"),
             "hipaa_controls": meta["hipaa"],
             "scope": {
-                "summary": f"{int(pass_rate or 100)}% pass rate (30d)",
+                "summary": f"{int(pass_rate)}% pass rate (30d)" if pass_rate is not None else "No data yet",
                 "total_checks": 0,
                 "pass_count": 0,
             },

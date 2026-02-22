@@ -1124,7 +1124,7 @@ async def get_portal_kpis(db: AsyncSession, site_id: str) -> Dict[str, Any]:
             if r.get("pass_rate") is not None:
                 pass_rates.append(r["pass_rate"])
         if not pass_rates:
-            controls_passing += 1  # No data = assume passing
+            continue  # No data = skip (don't count as passing or failing)
         else:
             avg_rate = sum(pass_rates) / len(pass_rates)
             if avg_rate >= 90:
@@ -1166,6 +1166,7 @@ async def get_control_results_for_site(
         WHERE site_id = :site_id
         AND checked_at > NOW() - make_interval(days => :days_param)
         ORDER BY checked_at DESC
+        LIMIT 500
     """), {"site_id": site_id, "days_param": days})
 
     rows = result.fetchall()
