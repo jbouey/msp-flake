@@ -17,6 +17,7 @@ from .fleet import get_pool
 from .auth import require_auth, require_operator
 from .websocket_manager import broadcast_event
 from .fleet_updates import get_fleet_orders_for_appliance, record_fleet_order_completion
+from .order_signing import sign_admin_order
 
 logger = logging.getLogger(__name__)
 
@@ -281,12 +282,19 @@ async def create_appliance_order(
                 detail=f"Appliance {appliance_id} not found in site {site_id}"
             )
 
+        # Sign the order for appliance-side verification (host-scoped)
+        nonce, signature, signed_payload = sign_admin_order(
+            order_id, order.order_type.value, order.parameters, now, expires_at,
+            target_appliance_id=appliance_id,
+        )
+
         # Insert order - cast json string to jsonb
         await conn.execute("""
             INSERT INTO admin_orders (
                 order_id, appliance_id, site_id, order_type,
-                parameters, priority, status, created_at, expires_at
-            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)
+                parameters, priority, status, created_at, expires_at,
+                nonce, signature, signed_payload
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12)
         """,
             order_id,
             appliance_id,
@@ -296,7 +304,10 @@ async def create_appliance_order(
             order.priority,
             'pending',
             now,
-            expires_at
+            expires_at,
+            nonce,
+            signature,
+            signed_payload,
         )
 
     return {
@@ -925,11 +936,16 @@ async def broadcast_order(site_id: str, order: BroadcastOrderCreate, user: dict 
 
         for row in appliances:
             order_id = generate_order_id()
+            nonce, signature, signed_payload = sign_admin_order(
+                order_id, order.order_type.value, order.parameters, now, expires_at,
+                target_appliance_id=row['appliance_id'],
+            )
             await conn.execute("""
                 INSERT INTO admin_orders (
                     order_id, appliance_id, site_id, order_type,
-                    parameters, priority, status, created_at, expires_at
-                ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)
+                    parameters, priority, status, created_at, expires_at,
+                    nonce, signature, signed_payload
+                ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12)
             """,
                 order_id,
                 row['appliance_id'],
@@ -939,7 +955,10 @@ async def broadcast_order(site_id: str, order: BroadcastOrderCreate, user: dict 
                 0,
                 'pending',
                 now,
-                expires_at
+                expires_at,
+                nonce,
+                signature,
+                signed_payload,
             )
             created_orders.append({
                 "order_id": order_id,
@@ -2384,22 +2403,32 @@ async def trigger_workstation_scan(site_id: str, user: dict = Depends(require_op
         order_id = generate_order_id()
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(hours=1)
+        scan_params = {'command': 'workstation_scan', 'force': True}
+
+        nonce, signature, signed_payload = sign_admin_order(
+            order_id, 'run_command', scan_params, now, expires_at,
+            target_appliance_id=appliance['appliance_id'],
+        )
 
         await conn.execute("""
             INSERT INTO admin_orders (
                 order_id, appliance_id, site_id, order_type,
-                parameters, priority, status, created_at, expires_at
-            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)
+                parameters, priority, status, created_at, expires_at,
+                nonce, signature, signed_payload
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12)
         """,
             order_id,
             appliance['appliance_id'],
             site_id,
             'run_command',
-            json.dumps({'command': 'workstation_scan', 'force': True}),
+            json.dumps(scan_params),
             10,  # High priority
             'pending',
             now,
-            expires_at
+            expires_at,
+            nonce,
+            signature,
+            signed_payload,
         )
 
         return {

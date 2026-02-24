@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -14,7 +15,8 @@ import (
 
 // DB wraps a pgx connection pool for checkin queries.
 type DB struct {
-	pool *pgxpool.Pool
+	pool            *pgxpool.Pool
+	serverPublicKey string // Ed25519 public key hex (from SIGNING_PUBLIC_KEY env)
 }
 
 // NewDB creates a new DB from a connection string.
@@ -27,7 +29,11 @@ func NewDB(ctx context.Context, connString string) (*DB, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	return &DB{pool: pool}, nil
+	pubKey := os.Getenv("SIGNING_PUBLIC_KEY")
+	if pubKey != "" {
+		log.Printf("[checkin] Server signing public key loaded (%d chars)", len(pubKey))
+	}
+	return &DB{pool: pool, serverPublicKey: pubKey}, nil
 }
 
 // Close closes the connection pool.
@@ -173,7 +179,8 @@ func (db *DB) UpdateAgentPublicKey(ctx context.Context, tx pgx.Tx, siteID, pubKe
 // FetchAdminOrders returns pending admin orders for the appliance.
 func (db *DB) FetchAdminOrders(ctx context.Context, tx pgx.Tx, canonicalID string) ([]PendingOrder, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT order_id, order_type, parameters, priority, created_at, expires_at
+		SELECT order_id, order_type, parameters, priority, created_at, expires_at,
+		       nonce, signature, signed_payload
 		FROM admin_orders
 		WHERE appliance_id = $1
 		AND status = 'pending'
@@ -190,8 +197,10 @@ func (db *DB) FetchAdminOrders(ctx context.Context, tx pgx.Tx, canonicalID strin
 		var o PendingOrder
 		var params []byte
 		var createdAt, expiresAt *time.Time
+		var nonce, signature, signedPayload *string
 
-		if err := rows.Scan(&o.OrderID, &o.OrderType, &params, &o.Priority, &createdAt, &expiresAt); err != nil {
+		if err := rows.Scan(&o.OrderID, &o.OrderType, &params, &o.Priority, &createdAt, &expiresAt,
+			&nonce, &signature, &signedPayload); err != nil {
 			return nil, err
 		}
 		if params != nil {
@@ -199,6 +208,15 @@ func (db *DB) FetchAdminOrders(ctx context.Context, tx pgx.Tx, canonicalID strin
 		}
 		o.CreatedAt = isoTimePtr(createdAt)
 		o.ExpiresAt = isoTimePtr(expiresAt)
+		if nonce != nil {
+			o.Nonce = *nonce
+		}
+		if signature != nil {
+			o.Signature = *signature
+		}
+		if signedPayload != nil {
+			o.SignedPayload = *signedPayload
+		}
 		orders = append(orders, o)
 	}
 	return orders, rows.Err()
@@ -208,7 +226,7 @@ func (db *DB) FetchAdminOrders(ctx context.Context, tx pgx.Tx, canonicalID strin
 func (db *DB) FetchHealingOrders(ctx context.Context, tx pgx.Tx, siteID string) ([]PendingOrder, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT o.order_id, o.runbook_id, o.parameters, o.issued_at, o.expires_at,
-		       i.id as incident_id
+		       i.id as incident_id, o.nonce, o.signature, o.signed_payload
 		FROM orders o
 		JOIN appliances a ON o.appliance_id = a.id
 		LEFT JOIN incidents i ON i.order_id = o.id
@@ -228,8 +246,10 @@ func (db *DB) FetchHealingOrders(ctx context.Context, tx pgx.Tx, siteID string) 
 		var params []byte
 		var issuedAt, expiresAt *time.Time
 		var incidentID *int
+		var nonce, signature, signedPayload *string
 
-		if err := rows.Scan(&o.OrderID, &o.RunbookID, &params, &issuedAt, &expiresAt, &incidentID); err != nil {
+		if err := rows.Scan(&o.OrderID, &o.RunbookID, &params, &issuedAt, &expiresAt, &incidentID,
+			&nonce, &signature, &signedPayload); err != nil {
 			return nil, err
 		}
 		o.OrderType = "healing"
@@ -245,6 +265,15 @@ func (db *DB) FetchHealingOrders(ctx context.Context, tx pgx.Tx, siteID string) 
 		}
 		o.CreatedAt = isoTimePtr(issuedAt)
 		o.ExpiresAt = isoTimePtr(expiresAt)
+		if nonce != nil {
+			o.Nonce = *nonce
+		}
+		if signature != nil {
+			o.Signature = *signature
+		}
+		if signedPayload != nil {
+			o.SignedPayload = *signedPayload
+		}
 		orders = append(orders, o)
 	}
 	return orders, rows.Err()
@@ -254,7 +283,8 @@ func (db *DB) FetchHealingOrders(ctx context.Context, tx pgx.Tx, siteID string) 
 // Skips orders where the appliance already matches skip_version.
 func (db *DB) FetchFleetOrders(ctx context.Context, tx pgx.Tx, canonicalID, agentVersion string) ([]PendingOrder, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT fo.id, fo.order_type, fo.parameters, fo.skip_version, fo.created_at, fo.expires_at
+		SELECT fo.id, fo.order_type, fo.parameters, fo.skip_version, fo.created_at, fo.expires_at,
+		       fo.nonce, fo.signature, fo.signed_payload
 		FROM fleet_orders fo
 		WHERE fo.status = 'active'
 		AND fo.expires_at > NOW()
@@ -276,8 +306,10 @@ func (db *DB) FetchFleetOrders(ctx context.Context, tx pgx.Tx, canonicalID, agen
 		var params []byte
 		var skipVersion *string
 		var createdAt, expiresAt *time.Time
+		var nonce, signature, signedPayload *string
 
-		if err := rows.Scan(&fleetID, &orderType, &params, &skipVersion, &createdAt, &expiresAt); err != nil {
+		if err := rows.Scan(&fleetID, &orderType, &params, &skipVersion, &createdAt, &expiresAt,
+			&nonce, &signature, &signedPayload); err != nil {
 			return nil, err
 		}
 
@@ -305,6 +337,15 @@ func (db *DB) FetchFleetOrders(ctx context.Context, tx pgx.Tx, canonicalID, agen
 		o.Parameters["fleet_order_id"] = fleetID
 		o.CreatedAt = isoTimePtr(createdAt)
 		o.ExpiresAt = isoTimePtr(expiresAt)
+		if nonce != nil {
+			o.Nonce = *nonce
+		}
+		if signature != nil {
+			o.Signature = *signature
+		}
+		if signedPayload != nil {
+			o.SignedPayload = *signedPayload
+		}
 		orders = append(orders, o)
 	}
 	return orders, rows.Err()
@@ -640,6 +681,7 @@ func (db *DB) ProcessCheckin(ctx context.Context, req CheckinRequest) (*CheckinR
 		Status:               "ok",
 		ApplianceID:          canonicalID,
 		ServerTime:           isoTime(now),
+		ServerPublicKey:      db.serverPublicKey,
 		MergedDuplicates:     len(mergeFromIDs),
 		PendingOrders:        pendingOrders,
 		WindowsTargets:       windowsTargets,

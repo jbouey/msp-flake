@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from .fleet import get_pool
 from .auth import require_admin
+from .order_signing import sign_admin_order, sign_fleet_order
 
 logger = logging.getLogger(__name__)
 
@@ -83,18 +84,30 @@ async def _create_update_orders_for_appliances(conn, rollout_id: UUID, stage: in
         }
 
         try:
+            now = datetime.now(timezone.utc)
+            exp = now + timedelta(days=7)
+            nonce, signature, signed_payload = sign_admin_order(
+                order_id, 'update_iso', parameters, now, exp,
+                target_appliance_id=app["appliance_id"],
+            )
             await conn.execute(
                 """
                 INSERT INTO admin_orders (
                     order_id, appliance_id, site_id, order_type,
-                    parameters, priority, status, created_at, expires_at
-                ) VALUES ($1, $2, $3, 'update_iso', $4::jsonb, 1, 'pending', NOW(), NOW() + interval '7 days')
+                    parameters, priority, status, created_at, expires_at,
+                    nonce, signature, signed_payload
+                ) VALUES ($1, $2, $3, 'update_iso', $4::jsonb, 1, 'pending', $5, $6, $7, $8, $9)
                 ON CONFLICT DO NOTHING
                 """,
                 order_id,
                 app["appliance_id"],  # canonical format from site_appliances
                 app["site_id"],
                 json.dumps(parameters),
+                now,
+                exp,
+                nonce,
+                signature,
+                signed_payload,
             )
             orders_created += 1
             logger.info(f"Created update_iso order for {app['appliance_id']}: {release['version']}")
@@ -1001,8 +1014,9 @@ async def create_fleet_order(order: FleetOrderCreate, user: dict = Depends(requi
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
-            INSERT INTO fleet_orders (order_type, parameters, skip_version, status, expires_at, created_by)
-            VALUES ($1, $2::jsonb, $3, 'active', $4, $5)
+            INSERT INTO fleet_orders (order_type, parameters, skip_version, status, expires_at, created_by,
+                                      nonce, signature, signed_payload)
+            VALUES ($1, $2::jsonb, $3, 'active', $4, $5, $6, $7, $8)
             RETURNING id, order_type, skip_version, status, created_at, expires_at
         """,
             order.order_type,
@@ -1010,6 +1024,7 @@ async def create_fleet_order(order: FleetOrderCreate, user: dict = Depends(requi
             order.skip_version,
             expires_at,
             user.get("username") or user.get("email"),
+            *sign_fleet_order(0, order.order_type, order.parameters, now, expires_at),
         )
 
         # Count how many appliances will receive vs skip

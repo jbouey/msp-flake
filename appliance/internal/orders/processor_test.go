@@ -2,8 +2,12 @@ package orders
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -112,6 +116,20 @@ func TestProcessSyncRules(t *testing.T) {
 	}
 }
 
+// validPromotedRuleYAML is a well-formed L1 rule for testing.
+const validPromotedRuleYAML = `id: L1-PROMOTED-ABC123
+name: Test Rule
+description: A test promoted rule
+action: escalate
+conditions:
+  - field: incident_type
+    operator: eq
+    value: test_drift
+severity_filter:
+  - critical
+cooldown_seconds: 300
+`
+
 func TestProcessSyncPromotedRule(t *testing.T) {
 	dir := t.TempDir()
 	p := NewProcessor(dir, nil)
@@ -121,7 +139,7 @@ func TestProcessSyncPromotedRule(t *testing.T) {
 		OrderType: "sync_promoted_rule",
 		Parameters: map[string]interface{}{
 			"rule_id":   "L1-PROMOTED-ABC123",
-			"rule_yaml": "id: L1-PROMOTED-ABC123\nname: Test\n",
+			"rule_yaml": validPromotedRuleYAML,
 		},
 	})
 
@@ -143,9 +161,18 @@ func TestProcessSyncPromotedRuleDuplicate(t *testing.T) {
 	dir := t.TempDir()
 	p := NewProcessor(dir, nil)
 
+	dupYAML := `id: L1-PROMOTED-DUP
+name: Duplicate Rule
+action: escalate
+conditions:
+  - field: incident_type
+    operator: eq
+    value: test
+`
+
 	params := map[string]interface{}{
 		"rule_id":   "L1-PROMOTED-DUP",
-		"rule_yaml": "id: L1-PROMOTED-DUP\nname: Test\n",
+		"rule_yaml": dupYAML,
 	}
 
 	// First deploy
@@ -409,5 +436,365 @@ func TestProcessSensorStatus(t *testing.T) {
 
 	if !result.Success {
 		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+}
+
+// --- Host scoping tests ---
+
+// signPayload is a test helper that signs a JSON payload with the given private key.
+func signPayload(t *testing.T, payload map[string]interface{}, privKey ed25519.PrivateKey) (string, string) {
+	t.Helper()
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	sig := ed25519.Sign(privKey, payloadJSON)
+	return string(payloadJSON), hex.EncodeToString(sig)
+}
+
+func TestHostScopeMatchingAppliance(t *testing.T) {
+	_, privKey, _ := ed25519.GenerateKey(nil)
+	pubKeyHex := hex.EncodeToString(privKey.Public().(ed25519.PublicKey))
+
+	p := NewProcessor("/tmp/test", nil)
+	p.SetServerPublicKey(pubKeyHex)
+	p.SetApplianceID("site-AA:BB:CC:DD:EE:FF")
+
+	payload := map[string]interface{}{
+		"order_id":             "host-001",
+		"order_type":           "force_checkin",
+		"parameters":           map[string]interface{}{},
+		"nonce":                "abc123",
+		"created_at":           "2026-02-24T00:00:00+00:00",
+		"expires_at":           "2026-02-24T01:00:00+00:00",
+		"target_appliance_id":  "site-AA:BB:CC:DD:EE:FF",
+	}
+	signedPayload, signature := signPayload(t, payload, privKey)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:       "host-001",
+		OrderType:     "force_checkin",
+		SignedPayload: signedPayload,
+		Signature:     signature,
+	})
+
+	if !result.Success {
+		t.Fatalf("expected success for matching appliance, got: %s", result.Error)
+	}
+}
+
+func TestHostScopeMismatchedAppliance(t *testing.T) {
+	_, privKey, _ := ed25519.GenerateKey(nil)
+	pubKeyHex := hex.EncodeToString(privKey.Public().(ed25519.PublicKey))
+
+	p := NewProcessor("/tmp/test", nil)
+	p.SetServerPublicKey(pubKeyHex)
+	p.SetApplianceID("site-AA:BB:CC:DD:EE:FF")
+
+	// Order is signed for a DIFFERENT appliance
+	payload := map[string]interface{}{
+		"order_id":             "host-002",
+		"order_type":           "nixos_rebuild",
+		"parameters":           map[string]interface{}{},
+		"nonce":                "def456",
+		"created_at":           "2026-02-24T00:00:00+00:00",
+		"expires_at":           "2026-02-24T01:00:00+00:00",
+		"target_appliance_id":  "site-11:22:33:44:55:66",
+	}
+	signedPayload, signature := signPayload(t, payload, privKey)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:       "host-002",
+		OrderType:     "nixos_rebuild",
+		SignedPayload: signedPayload,
+		Signature:     signature,
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for mismatched appliance ID")
+	}
+	if result.Error == "" {
+		t.Fatal("expected error message")
+	}
+}
+
+func TestHostScopeFleetOrder(t *testing.T) {
+	_, privKey, _ := ed25519.GenerateKey(nil)
+	pubKeyHex := hex.EncodeToString(privKey.Public().(ed25519.PublicKey))
+
+	p := NewProcessor("/tmp/test", nil)
+	p.SetServerPublicKey(pubKeyHex)
+	p.SetApplianceID("site-AA:BB:CC:DD:EE:FF")
+
+	// Fleet order — no target_appliance_id, should be allowed
+	payload := map[string]interface{}{
+		"order_id":   "fleet-001",
+		"order_type": "force_checkin",
+		"parameters": map[string]interface{}{},
+		"nonce":      "ghi789",
+		"created_at": "2026-02-24T00:00:00+00:00",
+		"expires_at": "2026-02-24T01:00:00+00:00",
+	}
+	signedPayload, signature := signPayload(t, payload, privKey)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:       "fleet-001",
+		OrderType:     "force_checkin",
+		SignedPayload: signedPayload,
+		Signature:     signature,
+	})
+
+	if !result.Success {
+		t.Fatalf("expected success for fleet-wide order, got: %s", result.Error)
+	}
+}
+
+// --- Parameter allowlist tests ---
+
+func TestValidateFlakeRef(t *testing.T) {
+	tests := []struct {
+		name    string
+		ref     string
+		wantErr bool
+	}{
+		{"empty_uses_default", "", false},
+		{"valid_official", "github:jbouey/msp-flake#osiriscare-appliance-disk", false},
+		{"valid_different_output", "github:jbouey/msp-flake#some-other-output", false},
+		{"malicious_repo", "github:attacker/evil-flake#exploit", true},
+		{"path_injection", "github:jbouey/msp-flake/../evil#output", true},
+		{"non_github", "git+https://evil.com/repo#output", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateFlakeRef(tt.ref)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateFlakeRef(%q) error=%v, wantErr=%v", tt.ref, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateDownloadURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{"valid_github", "https://github.com/jbouey/msp-flake/releases/download/v1.0/agent.tar.gz", false},
+		{"valid_vps", "https://178.156.162.116/packages/agent-v2.tar.gz", false},
+		{"valid_gh_objects", "https://objects.githubusercontent.com/release/agent.tar.gz", false},
+		{"http_not_https", "http://github.com/jbouey/msp-flake/releases/download/v1.0/agent.tar.gz", true},
+		{"evil_domain", "https://evil.com/agent.tar.gz", true},
+		{"empty_url", "", true},
+		{"relative_path", "/tmp/exploit.sh", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDownloadURL(tt.url, "test_url")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateDownloadURL(%q) error=%v, wantErr=%v", tt.url, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNixOSRebuildRejectsEvilFlake(t *testing.T) {
+	p := NewProcessor(t.TempDir(), nil)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:   "evil-rebuild",
+		OrderType: "nixos_rebuild",
+		Parameters: map[string]interface{}{
+			"flake_ref": "github:attacker/rootkit#pwn",
+		},
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for malicious flake_ref")
+	}
+	if !strings.Contains(result.Error, "SECURITY") {
+		t.Fatalf("expected SECURITY in error, got: %s", result.Error)
+	}
+}
+
+func TestUpdateAgentRejectsEvilURL(t *testing.T) {
+	p := NewProcessor(t.TempDir(), nil)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:   "evil-update",
+		OrderType: "update_agent",
+		Parameters: map[string]interface{}{
+			"package_url": "https://evil.com/backdoor.tar.gz",
+			"version":     "0.0.1",
+		},
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for evil package_url")
+	}
+	if !strings.Contains(result.Error, "SECURITY") {
+		t.Fatalf("expected SECURITY in error, got: %s", result.Error)
+	}
+}
+
+func TestSyncPromotedRuleRejectsInvalidAction(t *testing.T) {
+	p := NewProcessor(t.TempDir(), nil)
+
+	badYAML := `id: L1-BAD-ACTION
+name: Evil Rule
+action: exec_arbitrary_command
+conditions:
+  - field: incident_type
+    operator: eq
+    value: test
+`
+	result := p.Process(context.Background(), &Order{
+		OrderID:   "evil-rule-1",
+		OrderType: "sync_promoted_rule",
+		Parameters: map[string]interface{}{
+			"rule_id":   "L1-BAD-ACTION",
+			"rule_yaml": badYAML,
+		},
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for invalid action")
+	}
+	if !strings.Contains(result.Error, "SECURITY") {
+		t.Fatalf("expected SECURITY in error, got: %s", result.Error)
+	}
+}
+
+func TestSyncPromotedRuleRejectsIDMismatch(t *testing.T) {
+	p := NewProcessor(t.TempDir(), nil)
+
+	badYAML := `id: DIFFERENT-ID
+name: Mismatched Rule
+action: escalate
+conditions:
+  - field: incident_type
+    operator: eq
+    value: test
+`
+	result := p.Process(context.Background(), &Order{
+		OrderID:   "evil-rule-2",
+		OrderType: "sync_promoted_rule",
+		Parameters: map[string]interface{}{
+			"rule_id":   "L1-EXPECTED-ID",
+			"rule_yaml": badYAML,
+		},
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for ID mismatch")
+	}
+}
+
+func TestSyncPromotedRuleRejectsNoConditions(t *testing.T) {
+	p := NewProcessor(t.TempDir(), nil)
+
+	badYAML := `id: L1-NO-COND
+name: No conditions rule
+action: escalate
+`
+	result := p.Process(context.Background(), &Order{
+		OrderID:   "evil-rule-3",
+		OrderType: "sync_promoted_rule",
+		Parameters: map[string]interface{}{
+			"rule_id":   "L1-NO-COND",
+			"rule_yaml": badYAML,
+		},
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for missing conditions")
+	}
+}
+
+func TestSyncPromotedRuleRejectsInvalidYAML(t *testing.T) {
+	p := NewProcessor(t.TempDir(), nil)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:   "evil-rule-4",
+		OrderType: "sync_promoted_rule",
+		Parameters: map[string]interface{}{
+			"rule_id":   "L1-BAD-YAML",
+			"rule_yaml": "{{{{not valid yaml!@#$",
+		},
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for invalid YAML")
+	}
+}
+
+func TestSyncPromotedRuleRejectsOversized(t *testing.T) {
+	p := NewProcessor(t.TempDir(), nil)
+
+	// Create a YAML string > 8KB
+	bigYAML := "id: L1-BIG-RULE\nname: Big\naction: escalate\nconditions:\n  - field: x\n    operator: eq\n    value: " + strings.Repeat("x", 9000) + "\n"
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:   "evil-rule-5",
+		OrderType: "sync_promoted_rule",
+		Parameters: map[string]interface{}{
+			"rule_id":   "L1-BIG-RULE",
+			"rule_yaml": bigYAML,
+		},
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for oversized rule YAML")
+	}
+}
+
+func TestUpdateISORejectsHTTP(t *testing.T) {
+	p := NewProcessor(t.TempDir(), nil)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:   "evil-iso",
+		OrderType: "update_iso",
+		Parameters: map[string]interface{}{
+			"iso_url": "http://github.com/jbouey/msp-flake/iso.img",
+			"version": "1.0",
+		},
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for HTTP (non-HTTPS) iso_url")
+	}
+}
+
+func TestHostScopeNoApplianceIDYet(t *testing.T) {
+	_, privKey, _ := ed25519.GenerateKey(nil)
+	pubKeyHex := hex.EncodeToString(privKey.Public().(ed25519.PublicKey))
+
+	p := NewProcessor("/tmp/test", nil)
+	p.SetServerPublicKey(pubKeyHex)
+	// Do NOT set appliance ID — simulates pre-first-checkin
+
+	payload := map[string]interface{}{
+		"order_id":             "host-003",
+		"order_type":           "force_checkin",
+		"parameters":           map[string]interface{}{},
+		"nonce":                "jkl012",
+		"created_at":           "2026-02-24T00:00:00+00:00",
+		"expires_at":           "2026-02-24T01:00:00+00:00",
+		"target_appliance_id":  "site-11:22:33:44:55:66",
+	}
+	signedPayload, signature := signPayload(t, payload, privKey)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:       "host-003",
+		OrderType:     "force_checkin",
+		SignedPayload: signedPayload,
+		Signature:     signature,
+	})
+
+	// Should allow — we don't know our ID yet, can't enforce scoping
+	if !result.Success {
+		t.Fatalf("expected success when appliance ID not yet known, got: %s", result.Error)
 	}
 }

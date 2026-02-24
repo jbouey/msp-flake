@@ -55,6 +55,7 @@ type CheckinResponse struct {
 	Status               string                   `json:"status"`
 	ApplianceID          string                   `json:"appliance_id"`
 	ServerTime           string                   `json:"server_time"`
+	ServerPublicKey      string                   `json:"server_public_key"`
 	MergedDuplicates     int                      `json:"merged_duplicates"`
 	PendingOrders        []map[string]interface{}  `json:"pending_orders"`
 	WindowsTargets       []map[string]interface{}  `json:"windows_targets"`

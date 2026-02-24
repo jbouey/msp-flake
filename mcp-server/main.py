@@ -1076,8 +1076,8 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
     # Get pending orders for this appliance
     result = await db.execute(
         text("""
-            SELECT order_id, runbook_id, parameters, nonce, signature, ttl_seconds, 
-                   issued_at, expires_at
+            SELECT order_id, runbook_id, parameters, nonce, signature, ttl_seconds,
+                   issued_at, expires_at, signed_payload
             FROM orders o
             JOIN appliances a ON o.appliance_id = a.id
             WHERE a.site_id = :site_id
@@ -1087,18 +1087,20 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
         """),
         {"site_id": req.site_id}
     )
-    
+
     orders = []
     for row in result.fetchall():
         orders.append({
             "order_id": row[0],
+            "order_type": "healing",
             "runbook_id": row[1],
             "parameters": row[2],
             "nonce": row[3],
             "signature": row[4],
             "ttl_seconds": row[5],
             "issued_at": row[6].isoformat() if row[6] else None,
-            "expires_at": row[7].isoformat() if row[7] else None
+            "expires_at": row[7].isoformat() if row[7] else None,
+            "signed_payload": row[8],
         })
     
     logger.info("Appliance checked in", 
@@ -1331,25 +1333,26 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
         nonce = secrets.token_hex(16)
         expires_at = now + timedelta(seconds=ORDER_TTL_SECONDS)
         
-        # Create order payload and sign it
+        # Create order payload and sign it (host-scoped to target appliance)
         order_payload = json.dumps({
             "order_id": order_id,
             "runbook_id": runbook_id,
             "parameters": {},
             "nonce": nonce,
             "issued_at": now.isoformat(),
-            "expires_at": expires_at.isoformat()
+            "expires_at": expires_at.isoformat(),
+            "target_appliance_id": appliance_id,
         }, sort_keys=True)
         
         signature = sign_data(order_payload)
         
-        # Store order
+        # Store order (with signed_payload for appliance-side verification)
         await db.execute(
             text("""
                 INSERT INTO orders (order_id, appliance_id, runbook_id, parameters, nonce,
-                    signature, ttl_seconds, issued_at, expires_at)
+                    signature, signed_payload, ttl_seconds, issued_at, expires_at)
                 VALUES (:order_id, :appliance_id, :runbook_id, :parameters, :nonce,
-                    :signature, :ttl_seconds, :issued_at, :expires_at)
+                    :signature, :signed_payload, :ttl_seconds, :issued_at, :expires_at)
             """),
             {
                 "order_id": order_id,
@@ -1358,6 +1361,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                 "parameters": json.dumps({}),
                 "nonce": nonce,
                 "signature": signature,
+                "signed_payload": order_payload,
                 "ttl_seconds": ORDER_TTL_SECONDS,
                 "issued_at": now,
                 "expires_at": expires_at
@@ -3273,11 +3277,17 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
 
     all_rules = builtin_rules + db_rules
 
+    # Sign the rules bundle for appliance-side integrity verification
+    rules_json = json.dumps(all_rules, sort_keys=True)
+    rules_signature = sign_data(rules_json)
+
     return {
         "rules": all_rules,
         "healing_tier": healing_tier,
         "version": "1.0.0",
-        "count": len(all_rules)
+        "count": len(all_rules),
+        "signature": rules_signature,
+        "server_public_key": get_public_key_hex(),
     }
 
 

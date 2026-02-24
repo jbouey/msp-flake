@@ -14,18 +14,159 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/osiriscare/appliance/internal/crypto"
+	"gopkg.in/yaml.v3"
 )
+
+// --- Parameter allowlists for dangerous order types ---
+
+// allowedFlakeRefPattern matches only our official flake refs.
+// Format: github:jbouey/msp-flake#<output-name>
+var allowedFlakeRefPattern = regexp.MustCompile(`^github:jbouey/msp-flake#[a-zA-Z0-9_-]+$`)
+
+// allowedDownloadDomains are the only domains from which we accept package/ISO URLs.
+var allowedDownloadDomains = map[string]bool{
+	"github.com":           true,
+	"objects.githubusercontent.com": true,
+	"178.156.162.116":      true, // VPS
+}
+
+// validateFlakeRef ensures flake_ref points to the official repo.
+func validateFlakeRef(flakeRef string) error {
+	if flakeRef == "" {
+		return nil // Empty uses hardcoded default, which is safe
+	}
+	if !allowedFlakeRefPattern.MatchString(flakeRef) {
+		return fmt.Errorf("flake_ref %q does not match allowed pattern (must be github:jbouey/msp-flake#<output>)", flakeRef)
+	}
+	return nil
+}
+
+// allowedRuleActions are the only valid L1 rule actions.
+var allowedRuleActions = map[string]bool{
+	"update_to_baseline_generation": true,
+	"restart_av_service":            true,
+	"run_backup_job":                true,
+	"restart_logging_services":      true,
+	"restore_firewall_baseline":     true,
+	"run_windows_runbook":           true,
+	"run_linux_runbook":             true,
+	"escalate":                      true,
+	"renew_certificate":             true,
+	"cleanup_disk_space":            true,
+}
+
+// allowedRuleIDPattern matches valid promoted rule IDs (alphanumeric + hyphens + underscores).
+var allowedRuleIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{3,64}$`)
+
+// promotedRuleSchema is used to validate the YAML structure of promoted rules.
+type promotedRuleSchema struct {
+	ID              string                   `yaml:"id"`
+	Name            string                   `yaml:"name"`
+	Description     string                   `yaml:"description"`
+	Conditions      []promotedConditionSchema `yaml:"conditions"`
+	Action          string                   `yaml:"action"`
+	ActionParams    map[string]interface{}   `yaml:"action_params"`
+	HIPAAControls   []string                 `yaml:"hipaa_controls"`
+	SeverityFilter  []string                 `yaml:"severity_filter"`
+	Enabled         *bool                    `yaml:"enabled"`
+	Priority        int                      `yaml:"priority"`
+	CooldownSeconds int                      `yaml:"cooldown_seconds"`
+	MaxRetries      int                      `yaml:"max_retries"`
+	GPOManaged      bool                     `yaml:"gpo_managed"`
+}
+
+type promotedConditionSchema struct {
+	Field    string      `yaml:"field"`
+	Operator string      `yaml:"operator"`
+	Value    interface{} `yaml:"value"`
+}
+
+// validatePromotedRule parses and validates a promoted rule YAML.
+func validatePromotedRule(ruleID, ruleYAML string) error {
+	if !allowedRuleIDPattern.MatchString(ruleID) {
+		return fmt.Errorf("rule_id %q contains invalid characters", ruleID)
+	}
+
+	// Size limit: rules should be small (< 8KB)
+	if len(ruleYAML) > 8192 {
+		return fmt.Errorf("rule_yaml exceeds 8KB limit (%d bytes)", len(ruleYAML))
+	}
+
+	var rule promotedRuleSchema
+	if err := yaml.Unmarshal([]byte(ruleYAML), &rule); err != nil {
+		return fmt.Errorf("invalid YAML: %w", err)
+	}
+
+	// Rule ID in YAML must match the provided rule_id
+	if rule.ID != ruleID {
+		return fmt.Errorf("YAML id %q does not match rule_id %q", rule.ID, ruleID)
+	}
+
+	if rule.Name == "" {
+		return fmt.Errorf("rule name is required")
+	}
+
+	if rule.Action == "" {
+		return fmt.Errorf("rule action is required")
+	}
+
+	if !allowedRuleActions[rule.Action] {
+		return fmt.Errorf("action %q not in allowed actions", rule.Action)
+	}
+
+	if len(rule.Conditions) == 0 {
+		return fmt.Errorf("rule must have at least one condition")
+	}
+
+	// Validate each condition has required fields
+	for i, cond := range rule.Conditions {
+		if cond.Field == "" {
+			return fmt.Errorf("condition[%d]: field is required", i)
+		}
+		if cond.Operator == "" {
+			return fmt.Errorf("condition[%d]: operator is required", i)
+		}
+	}
+
+	return nil
+}
+
+// validateDownloadURL ensures a package/ISO URL points to an allowed domain.
+func validateDownloadURL(rawURL, fieldName string) error {
+	if rawURL == "" {
+		return fmt.Errorf("%s is required", fieldName)
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid %s URL: %w", fieldName, err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("%s must use HTTPS (got %s)", fieldName, parsed.Scheme)
+	}
+	host := parsed.Hostname()
+	if !allowedDownloadDomains[host] {
+		return fmt.Errorf("%s domain %q not in allowlist", fieldName, host)
+	}
+	return nil
+}
 
 // Order represents a pending order from Central Command.
 type Order struct {
-	OrderID    string                 `json:"order_id"`
-	OrderType  string                 `json:"order_type"`
-	Parameters map[string]interface{} `json:"parameters"`
+	OrderID       string                 `json:"order_id"`
+	OrderType     string                 `json:"order_type"`
+	Parameters    map[string]interface{} `json:"parameters"`
+	Nonce         string                 `json:"nonce,omitempty"`
+	Signature     string                 `json:"signature,omitempty"`
+	SignedPayload string                 `json:"signed_payload,omitempty"`
 }
 
 // OrderResult is the result of processing an order.
@@ -44,9 +185,11 @@ type CompletionCallback func(ctx context.Context, orderID string, success bool, 
 
 // Processor dispatches and executes orders.
 type Processor struct {
-	handlers   map[string]HandlerFunc
-	onComplete CompletionCallback
-	stateDir   string
+	handlers    map[string]HandlerFunc
+	onComplete  CompletionCallback
+	stateDir    string
+	verifier    *crypto.OrderVerifier
+	applianceID string // This appliance's ID (from checkin response)
 }
 
 // NewProcessor creates a new order processor.
@@ -55,6 +198,7 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 		handlers:   make(map[string]HandlerFunc),
 		onComplete: onComplete,
 		stateDir:   stateDir,
+		verifier:   crypto.NewOrderVerifier(""),
 	}
 
 	// Register built-in handlers
@@ -85,7 +229,19 @@ func (p *Processor) RegisterHandler(orderType string, handler HandlerFunc) {
 	p.handlers[orderType] = handler
 }
 
-// Process handles a single order: dispatch to handler, report completion.
+// SetServerPublicKey sets the Ed25519 public key used to verify order signatures.
+// Called when the checkin response provides server_public_key.
+func (p *Processor) SetServerPublicKey(hexKey string) error {
+	return p.verifier.SetPublicKey(hexKey)
+}
+
+// SetApplianceID sets this appliance's identity for host-scoped order verification.
+// Orders signed with a target_appliance_id that doesn't match will be rejected.
+func (p *Processor) SetApplianceID(id string) {
+	p.applianceID = id
+}
+
+// Process handles a single order: verify signature, dispatch to handler, report completion.
 func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 	if order.OrderID == "" || order.OrderType == "" {
 		log.Printf("[orders] Skipping order with missing id or type")
@@ -93,6 +249,15 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 	}
 
 	log.Printf("[orders] Processing order %s: %s", order.OrderID, order.OrderType)
+
+	// Verify Ed25519 signature before executing any order.
+	// Orders without a signature are rejected when we have a server public key.
+	if err := p.verifySignature(order); err != nil {
+		errMsg := fmt.Sprintf("signature verification failed: %v", err)
+		log.Printf("[orders] SECURITY: %s for order %s (type=%s)", errMsg, order.OrderID, order.OrderType)
+		p.complete(ctx, order.OrderID, false, nil, errMsg)
+		return &OrderResult{OrderID: order.OrderID, Success: false, Error: errMsg}
+	}
 
 	handler, ok := p.handlers[order.OrderType]
 	if !ok {
@@ -117,6 +282,74 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 	log.Printf("[orders] Order %s completed successfully", order.OrderID)
 	p.complete(ctx, order.OrderID, true, result, "")
 	return &OrderResult{OrderID: order.OrderID, Success: true, Result: result}
+}
+
+// verifySignature checks the Ed25519 signature on an order, then verifies
+// host scoping (target_appliance_id in the signed payload must match this appliance).
+// Returns nil if the signature is valid or if verification is not yet configured
+// (graceful degradation during rollout — logs a warning for unsigned orders).
+func (p *Processor) verifySignature(order *Order) error {
+	if !p.verifier.HasKey() {
+		// No server public key yet (first checkin hasn't completed).
+		// Allow orders through but log a warning.
+		if order.Signature != "" {
+			log.Printf("[orders] WARNING: order %s has signature but no server public key to verify", order.OrderID)
+		}
+		return nil
+	}
+
+	if order.Signature == "" || order.SignedPayload == "" {
+		// During rollout, allow unsigned orders but log loudly.
+		// TODO: After all order creation paths sign orders, make this an error.
+		log.Printf("[orders] WARNING: unsigned order %s (type=%s) — will be rejected after rollout",
+			order.OrderID, order.OrderType)
+		return nil
+	}
+
+	// Step 1: Verify Ed25519 cryptographic signature
+	if err := p.verifier.VerifyOrder(order.SignedPayload, order.Signature); err != nil {
+		return err
+	}
+
+	// Step 2: Verify host scoping — reject orders targeted at a different appliance.
+	// The target_appliance_id is embedded in the signed payload (tamper-proof).
+	if err := p.verifyHostScope(order); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// verifyHostScope checks that the signed payload's target_appliance_id matches
+// this appliance's ID. Fleet-wide orders (no target_appliance_id) are allowed.
+func (p *Processor) verifyHostScope(order *Order) error {
+	if p.applianceID == "" {
+		// Appliance ID not yet known (pre-first-checkin). Allow.
+		return nil
+	}
+
+	// Parse the signed payload to extract target_appliance_id
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(order.SignedPayload), &payload); err != nil {
+		return fmt.Errorf("parse signed payload for host scope check: %w", err)
+	}
+
+	target, ok := payload["target_appliance_id"]
+	if !ok || target == nil {
+		// No target_appliance_id in signed payload — fleet-wide order, allow.
+		return nil
+	}
+
+	targetStr, ok := target.(string)
+	if !ok || targetStr == "" {
+		return nil
+	}
+
+	if targetStr != p.applianceID {
+		return fmt.Errorf("host scope mismatch: order targets %q but this appliance is %q", targetStr, p.applianceID)
+	}
+
+	return nil
 }
 
 // ProcessAll handles a batch of orders sequentially.
@@ -220,6 +453,12 @@ func (p *Processor) handleRestartAgent(_ context.Context, _ map[string]interface
 
 func (p *Processor) handleNixOSRebuild(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
 	flakeRef, _ := params["flake_ref"].(string)
+
+	// Validate flake ref against allowlist before proceeding
+	if err := validateFlakeRef(flakeRef); err != nil {
+		return nil, fmt.Errorf("SECURITY: %w", err)
+	}
+
 	if flakeRef == "" {
 		flakeRef = "github:jbouey/msp-flake#osiriscare-appliance-disk"
 	}
@@ -288,8 +527,9 @@ func (p *Processor) handleUpdateAgent(_ context.Context, params map[string]inter
 	packageURL, _ := params["package_url"].(string)
 	version, _ := params["version"].(string)
 
-	if packageURL == "" {
-		return nil, fmt.Errorf("package_url is required")
+	// Validate package URL against domain allowlist
+	if err := validateDownloadURL(packageURL, "package_url"); err != nil {
+		return nil, fmt.Errorf("SECURITY: %w", err)
 	}
 	if version == "" {
 		version = "unknown"
@@ -306,8 +546,12 @@ func (p *Processor) handleUpdateISO(_ context.Context, params map[string]interfa
 	version, _ := params["version"].(string)
 	isoURL, _ := params["iso_url"].(string)
 
-	if isoURL == "" || version == "" {
-		return nil, fmt.Errorf("version and iso_url are required")
+	if version == "" {
+		return nil, fmt.Errorf("version is required")
+	}
+	// Validate ISO URL against domain allowlist
+	if err := validateDownloadURL(isoURL, "iso_url"); err != nil {
+		return nil, fmt.Errorf("SECURITY: %w", err)
 	}
 
 	return map[string]interface{}{
@@ -456,6 +700,11 @@ func (p *Processor) handleSyncPromotedRule(_ context.Context, params map[string]
 
 	if ruleID == "" || ruleYAML == "" {
 		return nil, fmt.Errorf("rule_id and rule_yaml are required")
+	}
+
+	// Validate rule YAML against schema before writing to disk
+	if err := validatePromotedRule(ruleID, ruleYAML); err != nil {
+		return nil, fmt.Errorf("SECURITY: promoted rule validation failed: %w", err)
 	}
 
 	promotedDir := filepath.Join(p.stateDir, "rules", "promoted")

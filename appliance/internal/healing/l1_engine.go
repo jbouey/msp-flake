@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/osiriscare/appliance/internal/crypto"
 	"gopkg.in/yaml.v3"
 )
 
@@ -180,6 +181,7 @@ type Engine struct {
 	cooldowns      map[string]time.Time // "rule_id:host_id" -> last execution
 	mu             sync.RWMutex
 	actionExecutor ActionExecutor
+	verifier       *crypto.OrderVerifier // Verifies signed rules from Central Command
 }
 
 // NewEngine creates a new L1 deterministic engine.
@@ -188,9 +190,15 @@ func NewEngine(rulesDir string, executor ActionExecutor) *Engine {
 		rulesDir:       rulesDir,
 		cooldowns:      make(map[string]time.Time),
 		actionExecutor: executor,
+		verifier:       crypto.NewOrderVerifier(""),
 	}
 	e.LoadRules()
 	return e
+}
+
+// SetServerPublicKey sets the Ed25519 public key for verifying signed rules.
+func (e *Engine) SetServerPublicKey(hexKey string) error {
+	return e.verifier.SetPublicKey(hexKey)
 }
 
 // LoadRules loads all rules from builtins and disk.
@@ -471,9 +479,36 @@ func (e *Engine) loadSyncedJSONRules(dir string) {
 			continue
 		}
 
-		// Try wrapped format with "rules" key
+		// Try wrapped format with "rules" key (includes optional signature)
 		var wrapped map[string]interface{}
 		if err := json.Unmarshal(data, &wrapped); err == nil {
+			// Verify signature if present
+			sigHex, _ := wrapped["signature"].(string)
+			if sigHex != "" && e.verifier.HasKey() {
+				// Reconstruct the canonical rules JSON for verification
+				rulesBytes, _ := json.Marshal(wrapped["rules"])
+				// Python uses json.dumps(all_rules, sort_keys=True)
+				// Re-parse and re-serialize with sort_keys for determinism
+				var rulesForVerify interface{}
+				json.Unmarshal(rulesBytes, &rulesForVerify)
+				canonicalRules, _ := jsonMarshalSorted(rulesForVerify)
+				if err := e.verifier.VerifyRulesBundle(string(canonicalRules), sigHex); err != nil {
+					log.Printf("[l1] SECURITY: Rules signature verification failed for %s: %v — skipping",
+						entry.Name(), err)
+					continue
+				}
+				log.Printf("[l1] Rules signature verified for %s", entry.Name())
+			} else if sigHex == "" && e.verifier.HasKey() {
+				log.Printf("[l1] WARNING: unsigned rules file %s — will be rejected after rollout", entry.Name())
+			}
+
+			// Update server public key if provided in the rules bundle
+			if pubKey, ok := wrapped["server_public_key"].(string); ok && pubKey != "" {
+				if err := e.verifier.SetPublicKey(pubKey); err != nil {
+					log.Printf("[l1] Failed to set server public key from rules: %v", err)
+				}
+			}
+
 			if rulesRaw, ok := wrapped["rules"]; ok {
 				if arr, ok := rulesRaw.([]interface{}); ok {
 					for _, rr := range arr {
@@ -638,6 +673,56 @@ func ruleFromSyncedJSON(m map[string]interface{}) *Rule {
 	}
 
 	return r
+}
+
+// --- JSON helpers ---
+
+// jsonMarshalSorted produces JSON with sorted keys, matching Python's json.dumps(obj, sort_keys=True).
+// This is needed for deterministic signature verification.
+func jsonMarshalSorted(v interface{}) ([]byte, error) {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		buf := []byte("{")
+		for i, k := range keys {
+			if i > 0 {
+				buf = append(buf, ',', ' ')
+			}
+			kJSON, _ := json.Marshal(k)
+			buf = append(buf, kJSON...)
+			buf = append(buf, ':', ' ')
+			vJSON, err := jsonMarshalSorted(val[k])
+			if err != nil {
+				return nil, err
+			}
+			buf = append(buf, vJSON...)
+		}
+		buf = append(buf, '}')
+		return buf, nil
+
+	case []interface{}:
+		buf := []byte("[")
+		for i, item := range val {
+			if i > 0 {
+				buf = append(buf, ',', ' ')
+			}
+			itemJSON, err := jsonMarshalSorted(item)
+			if err != nil {
+				return nil, err
+			}
+			buf = append(buf, itemJSON...)
+		}
+		buf = append(buf, ']')
+		return buf, nil
+
+	default:
+		return json.Marshal(v)
+	}
 }
 
 // --- Map access helpers ---

@@ -1591,26 +1591,37 @@ async def trigger_discovery(request: Request, site_id: str, partner=Depends(requ
         if appliance:
             import secrets
             from datetime import timedelta
+            from .order_signing import sign_admin_order
             order_id = f"ORD-{secrets.token_hex(8).upper()}"
             now = datetime.now(timezone.utc)
             expires_at = now + timedelta(hours=24)  # Discovery can take time
+            discovery_params = {
+                'scan_id': str(scan['id']),
+                'scan_type': 'full',
+                'triggered_by': partner.get('email', 'partner')
+            }
+
+            nonce, signature, signed_payload = sign_admin_order(
+                order_id, 'run_discovery', discovery_params, now, expires_at,
+                target_appliance_id=appliance['appliance_id'],
+            )
 
             await conn.execute("""
                 INSERT INTO admin_orders (
                     order_id, appliance_id, site_id, order_type,
-                    parameters, priority, status, created_at, expires_at
-                ) VALUES ($1, $2, $3, 'run_discovery', $4::jsonb, 1, 'pending', $5, $6)
+                    parameters, priority, status, created_at, expires_at,
+                    nonce, signature, signed_payload
+                ) VALUES ($1, $2, $3, 'run_discovery', $4::jsonb, 1, 'pending', $5, $6, $7, $8, $9)
             """,
                 order_id,
                 appliance['appliance_id'],
                 site_id,
-                json.dumps({
-                    'scan_id': str(scan['id']),
-                    'scan_type': 'full',
-                    'triggered_by': partner.get('email', 'partner')
-                }),
+                json.dumps(discovery_params),
                 now,
-                expires_at
+                expires_at,
+                nonce,
+                signature,
+                signed_payload,
             )
 
             await log_partner_activity(

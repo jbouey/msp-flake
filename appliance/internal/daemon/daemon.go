@@ -287,9 +287,24 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		resp.ApplianceID, len(resp.PendingOrders), len(resp.LinuxTargets),
 		resp.TriggerEnumeration, resp.TriggerImmediateScan)
 
-	// Set appliance ID on telemetry reporter (received from Central Command)
-	if d.telemetry != nil && resp.ApplianceID != "" {
-		d.telemetry.SetApplianceID(resp.ApplianceID)
+	// Set appliance ID on telemetry reporter and order processor (received from Central Command)
+	if resp.ApplianceID != "" {
+		if d.telemetry != nil {
+			d.telemetry.SetApplianceID(resp.ApplianceID)
+		}
+		d.orderProc.SetApplianceID(resp.ApplianceID)
+	}
+
+	// Store server public key for order + rules signature verification
+	if resp.ServerPublicKey != "" {
+		if err := d.orderProc.SetServerPublicKey(resp.ServerPublicKey); err != nil {
+			log.Printf("[daemon] Failed to set server public key on order processor: %v", err)
+		}
+		if d.l1Engine != nil {
+			if err := d.l1Engine.SetServerPublicKey(resp.ServerPublicKey); err != nil {
+				log.Printf("[daemon] Failed to set server public key on L1 engine: %v", err)
+			}
+		}
 	}
 
 	// Store Linux targets from checkin response
@@ -320,10 +335,18 @@ func (d *Daemon) processOrders(ctx context.Context, rawOrders []map[string]inter
 		// Inject order_id into params so handlers like nixos_rebuild can persist it
 		params["_order_id"] = orderID
 
+		// Extract signature fields for verification
+		nonce, _ := raw["nonce"].(string)
+		signature, _ := raw["signature"].(string)
+		signedPayload, _ := raw["signed_payload"].(string)
+
 		orderList = append(orderList, orders.Order{
-			OrderID:    orderID,
-			OrderType:  orderType,
-			Parameters: params,
+			OrderID:       orderID,
+			OrderType:     orderType,
+			Parameters:    params,
+			Nonce:         nonce,
+			Signature:     signature,
+			SignedPayload: signedPayload,
 		})
 	}
 

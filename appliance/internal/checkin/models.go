@@ -28,6 +28,7 @@ type CheckinResponse struct {
 	Status               string          `json:"status"`
 	ApplianceID          string          `json:"appliance_id"`
 	ServerTime           string          `json:"server_time"`
+	ServerPublicKey      string          `json:"server_public_key,omitempty"`
 	MergedDuplicates     int             `json:"merged_duplicates"`
 	PendingOrders        []PendingOrder  `json:"pending_orders"`
 	WindowsTargets       []WindowsTarget `json:"windows_targets"`
@@ -39,13 +40,16 @@ type CheckinResponse struct {
 
 // PendingOrder represents an admin order or healing order.
 type PendingOrder struct {
-	OrderID    string                 `json:"order_id"`
-	OrderType  string                 `json:"order_type"`
-	Parameters map[string]interface{} `json:"parameters"`
-	Priority   int                    `json:"priority"`
-	CreatedAt  *string                `json:"created_at"`
-	ExpiresAt  *string                `json:"expires_at"`
-	RunbookID  string                 `json:"runbook_id,omitempty"`
+	OrderID       string                 `json:"order_id"`
+	OrderType     string                 `json:"order_type"`
+	Parameters    map[string]interface{} `json:"parameters"`
+	Priority      int                    `json:"priority"`
+	CreatedAt     *string                `json:"created_at"`
+	ExpiresAt     *string                `json:"expires_at"`
+	RunbookID     string                 `json:"runbook_id,omitempty"`
+	Nonce         string                 `json:"nonce,omitempty"`
+	Signature     string                 `json:"signature,omitempty"`
+	SignedPayload string                 `json:"signed_payload,omitempty"`
 }
 
 // WindowsTarget is a WinRM credential set for a Windows machine.
