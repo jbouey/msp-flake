@@ -41,6 +41,7 @@ except ImportError:
     STRIPE_AVAILABLE = False
 
 from .fleet import get_pool
+from .hipaa_modules import _uid
 
 logger = logging.getLogger(__name__)
 
@@ -1183,7 +1184,7 @@ async def mark_notification_read(notification_id: str, user: dict = Depends(requ
             UPDATE client_notifications
             SET is_read = true, read_at = NOW(), read_by_user_id = $1
             WHERE id = $2 AND client_org_id = $3 AND NOT is_read
-        """, user["user_id"], notification_id, org_id)
+        """, user["user_id"], _uid(notification_id), org_id)
 
         if result == "UPDATE 0":
             raise HTTPException(status_code=404, detail="Notification not found or already read")
@@ -1321,7 +1322,7 @@ async def remove_user(target_user_id: str, user: dict = Depends(require_client_a
         # Check target user
         target = await conn.fetchrow("""
             SELECT role FROM client_users WHERE id = $1 AND client_org_id = $2
-        """, target_user_id, org_id)
+        """, _uid(target_user_id), org_id)
 
         if not target:
             raise HTTPException(status_code=404, detail="User not found")
@@ -1338,12 +1339,12 @@ async def remove_user(target_user_id: str, user: dict = Depends(require_client_a
         await conn.execute("""
             UPDATE client_users SET is_active = false, updated_at = NOW()
             WHERE id = $1
-        """, target_user_id)
+        """, _uid(target_user_id))
 
         # Delete sessions
         await conn.execute("""
             DELETE FROM client_sessions WHERE user_id = $1
-        """, target_user_id)
+        """, _uid(target_user_id))
 
     return {"status": "removed"}
 
@@ -1366,7 +1367,7 @@ async def update_user_role(
         result = await conn.execute("""
             UPDATE client_users SET role = $1, updated_at = NOW()
             WHERE id = $2 AND client_org_id = $3 AND role != 'owner'
-        """, body.role, target_user_id, org_id)
+        """, body.role, _uid(target_user_id), org_id)
 
         if result == "UPDATE 0":
             raise HTTPException(status_code=404, detail="User not found or is owner")

@@ -38,6 +38,7 @@ from typing import Dict
 
 from .fleet import get_pool
 from .auth import require_admin
+from .hipaa_modules import _uid
 from .oauth_login import encrypt_secret, decrypt_secret
 from .partner_activity_logger import log_partner_activity, log_partner_login, PartnerEventType
 
@@ -856,7 +857,7 @@ async def approve_partner(partner_id: str, request: Request, user: Dict = Depend
         partner = await conn.fetchrow("""
             SELECT id, name, slug, oauth_email, pending_approval
             FROM partners WHERE id = $1
-        """, partner_id)
+        """, _uid(partner_id))
 
         if not partner:
             raise HTTPException(status_code=404, detail="Partner not found")
@@ -871,7 +872,7 @@ async def approve_partner(partner_id: str, request: Request, user: Dict = Depend
                 approved_by = $1,
                 approved_at = NOW()
             WHERE id = $2
-        """, admin_user_id, partner_id)
+        """, admin_user_id, _uid(partner_id))
 
     logger.info(f"Partner approved: {partner['slug']} by admin {admin_user_id}")
 
@@ -919,7 +920,7 @@ async def reject_partner(partner_id: str, request: Request, user: Dict = Depends
         partner = await conn.fetchrow("""
             SELECT id, name, slug, oauth_email, pending_approval
             FROM partners WHERE id = $1
-        """, partner_id)
+        """, _uid(partner_id))
 
         if not partner:
             raise HTTPException(status_code=404, detail="Partner not found")
@@ -928,7 +929,7 @@ async def reject_partner(partner_id: str, request: Request, user: Dict = Depends
             raise HTTPException(status_code=400, detail="Partner is not pending approval")
 
         # Delete the partner
-        await conn.execute("DELETE FROM partners WHERE id = $1", partner_id)
+        await conn.execute("DELETE FROM partners WHERE id = $1", _uid(partner_id))
 
     logger.info(f"Partner rejected and deleted: {partner['slug']}")
 

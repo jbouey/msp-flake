@@ -21,8 +21,11 @@ from fastapi import APIRouter, HTTPException, Header, Depends, Response, Cookie,
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+import uuid as _uuid
+
 from .fleet import get_pool
 from .auth import require_admin
+from .hipaa_modules import _uid
 from .partner_activity_logger import (
     log_partner_activity,
     log_partner_site_action,
@@ -93,7 +96,7 @@ class PartnerUserCreate(BaseModel):
 
 class ProvisionCreate(BaseModel):
     """Model for creating a provision code."""
-    client_name: Optional[str] = None
+    target_client_name: Optional[str] = None
     target_site_id: Optional[str] = None
     expires_days: int = 30
 
@@ -220,7 +223,7 @@ async def claim_provision_code(claim: ProvisionClaim):
     async with pool.acquire() as conn:
         # Find and validate provision code
         provision = await conn.fetchrow("""
-            SELECT id, partner_id, target_site_id, client_name, status, expires_at
+            SELECT id, partner_id, target_site_id, target_client_name, status, expires_at
             FROM appliance_provisions
             WHERE provision_code = $1
         """, claim.provision_code.upper())
@@ -248,7 +251,7 @@ async def claim_provision_code(claim: ProvisionClaim):
         site_id = provision['target_site_id']
         if not site_id:
             # Generate from client name or MAC
-            base = provision['client_name'] or claim.hostname or claim.mac_address
+            base = provision['target_client_name'] or claim.hostname or claim.mac_address
             site_id = base.lower().replace(' ', '-').replace(':', '-')[:50]
             site_id = f"{site_id}-{secrets.token_hex(3)}"
 
@@ -260,7 +263,7 @@ async def claim_provision_code(claim: ProvisionClaim):
             INSERT INTO sites (site_id, clinic_name, partner_id, status, onboarding_stage)
             VALUES ($1, $2, $3, 'pending', 'provisioning')
             ON CONFLICT (site_id) DO NOTHING
-        """, site_id, provision['client_name'] or site_id.replace('-', ' ').title(), provision['partner_id'])
+        """, site_id, provision['target_client_name'] or site_id.replace('-', ' ').title(), provision['partner_id'])
 
         # Mark provision as claimed
         await conn.execute("""
@@ -415,14 +418,14 @@ async def create_provision_code(
         row = await conn.fetchrow("""
             INSERT INTO appliance_provisions (
                 partner_id, provision_code, target_site_id,
-                client_name, expires_at
+                target_client_name, expires_at
             ) VALUES ($1, $2, $3, $4, $5)
             RETURNING id, provision_code, created_at
         """,
             partner['id'],
             code,
             provision.target_site_id,
-            provision.client_name,
+            provision.target_client_name,
             expires_at
         )
 
@@ -431,7 +434,7 @@ async def create_provision_code(
         event_type=PartnerEventType.PROVISION_CREATED,
         target_type="provision",
         target_id=str(row['id']),
-        event_data={"client_name": provision.client_name, "provision_code": row['provision_code']},
+        event_data={"client_name": provision.target_client_name, "provision_code": row['provision_code']},
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent", "")[:500],
         request_path=str(request.url.path),
@@ -442,7 +445,7 @@ async def create_provision_code(
         "id": str(row['id']),
         "provision_code": row['provision_code'],
         "qr_content": f"osiris://{code}",  # For QR code generation
-        "client_name": provision.client_name,
+        "target_client_name": provision.target_client_name,
         "target_site_id": provision.target_site_id,
         "expires_at": expires_at.isoformat(),
         "created_at": row['created_at'].isoformat(),
@@ -460,7 +463,7 @@ async def list_provision_codes(
     async with pool.acquire() as conn:
         if status:
             rows = await conn.fetch("""
-                SELECT id, provision_code, target_site_id, client_name,
+                SELECT id, provision_code, target_site_id, target_client_name,
                        status, claimed_at, claimed_by_mac, expires_at, created_at
                 FROM appliance_provisions
                 WHERE partner_id = $1 AND status = $2
@@ -468,7 +471,7 @@ async def list_provision_codes(
             """, partner['id'], status)
         else:
             rows = await conn.fetch("""
-                SELECT id, provision_code, target_site_id, client_name,
+                SELECT id, provision_code, target_site_id, target_client_name,
                        status, claimed_at, claimed_by_mac, expires_at, created_at
                 FROM appliance_provisions
                 WHERE partner_id = $1
@@ -482,7 +485,7 @@ async def list_provision_codes(
                 'provision_code': row['provision_code'],
                 'qr_content': f"osiris://{row['provision_code']}",
                 'target_site_id': row['target_site_id'],
-                'client_name': row['client_name'],
+                'target_client_name': row['target_client_name'],
                 'status': row['status'],
                 'claimed_at': row['claimed_at'].isoformat() if row['claimed_at'] else None,
                 'claimed_by_mac': row['claimed_by_mac'],
@@ -508,7 +511,7 @@ async def revoke_provision_code(
             SET status = 'revoked'
             WHERE id = $1 AND partner_id = $2 AND status = 'pending'
             RETURNING provision_code
-        """, provision_id, partner['id'])
+        """, _uid(provision_id), partner['id'])
 
         if not result:
             raise HTTPException(
@@ -565,7 +568,7 @@ async def get_provision_qr_code(
             SELECT provision_code, status
             FROM appliance_provisions
             WHERE id = $1 AND partner_id = $2
-        """, provision_id, partner['id'])
+        """, _uid(provision_id), partner['id'])
 
         if not provision:
             raise HTTPException(status_code=404, detail="Provision not found")
@@ -1330,7 +1333,7 @@ async def validate_credential(
             FROM site_credentials sc
             JOIN sites s ON s.id = sc.site_id
             WHERE sc.id = $1 AND s.partner_id = $2
-        """, credential_id, partner['id'])
+        """, _uid(credential_id), partner['id'])
 
         if not cred:
             raise HTTPException(status_code=404, detail="Credential not found")
@@ -1356,7 +1359,7 @@ async def validate_credential(
                 last_validated_at = NOW(),
                 validation_details = $1
             WHERE id = $2
-        """, json.dumps(validation_result), credential_id)
+        """, json.dumps(validation_result), _uid(credential_id))
 
     await log_partner_activity(
         partner_id=str(partner['id']),
@@ -1395,7 +1398,7 @@ async def delete_credential(
             WHERE sc.id = $1
             AND sc.site_id = s.id
             AND s.partner_id = $2
-        """, credential_id, partner['id'])
+        """, _uid(credential_id), partner['id'])
 
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Credential not found")
@@ -1490,7 +1493,7 @@ async def update_asset(
             SELECT da.id FROM discovered_assets da
             JOIN sites s ON s.id = da.site_id
             WHERE da.id = $1 AND s.partner_id = $2
-        """, asset_id, partner['id'])
+        """, _uid(asset_id), partner['id'])
 
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
@@ -1518,7 +1521,7 @@ async def update_asset(
         values.append(datetime.now(timezone.utc))
         param_num += 1
 
-        values.append(asset_id)
+        values.append(_uid(asset_id))
 
         query = f"""
             UPDATE discovered_assets
