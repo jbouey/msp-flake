@@ -38,7 +38,7 @@ from typing import Dict
 
 from .fleet import get_pool
 from .auth import require_admin
-from .hipaa_modules import _uid
+from .db_utils import _uid
 from .oauth_login import encrypt_secret, decrypt_secret
 from .partner_activity_logger import log_partner_activity, log_partner_login, PartnerEventType
 

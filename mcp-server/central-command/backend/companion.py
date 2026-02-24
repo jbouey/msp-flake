@@ -24,8 +24,8 @@ from .hipaa_modules import (
     TrainingRecord, BAARecord, IRPlanCreate, BreachRecord,
     ContingencyCreate, WorkforceRecord, PhysicalSafeguardBatch,
     OfficerUpsert, GapResponseBatch,
-    _row_dict, _rows_list, _uid,
 )
+from .db_utils import _uid, _row_dict, _rows_list
 from .hipaa_templates import (
     SRA_QUESTIONS, POLICY_TEMPLATES, IR_PLAN_TEMPLATE,
     PHYSICAL_SAFEGUARD_ITEMS, GAP_ANALYSIS_QUESTIONS,

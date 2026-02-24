@@ -41,7 +41,7 @@ except ImportError:
     STRIPE_AVAILABLE = False
 
 from .fleet import get_pool
-from .hipaa_modules import _uid
+from .db_utils import _uid
 
 logger = logging.getLogger(__name__)
 

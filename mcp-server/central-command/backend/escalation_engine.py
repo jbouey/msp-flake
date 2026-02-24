@@ -492,7 +492,7 @@ class EscalationEngine:
                        p.company_name as partner_name
                 FROM sites s
                 LEFT JOIN partners p ON s.partner_id = p.id
-                WHERE s.id = $1
+                WHERE s.site_id = $1
             """, site_id)
 
             if not site:

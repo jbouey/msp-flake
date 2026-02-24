@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from .fleet import get_pool
 from .partners import require_partner
+from .db_utils import _uid
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,7 @@ async def get_or_create_stripe_customer(partner_id: str, email: str, name: str) 
         # Check if partner already has a Stripe customer ID
         row = await conn.fetchrow("""
             SELECT stripe_customer_id FROM partners WHERE id = $1
-        """, partner_id)
+        """, _uid(partner_id))
 
         if row and row['stripe_customer_id']:
             return row['stripe_customer_id']
@@ -158,7 +159,7 @@ async def get_or_create_stripe_customer(partner_id: str, email: str, name: str) 
             email=email,
             name=name,
             metadata={
-                "partner_id": partner_id,
+                "partner_id": str(partner_id),
                 "platform": "osiriscare"
             }
         )
@@ -166,7 +167,7 @@ async def get_or_create_stripe_customer(partner_id: str, email: str, name: str) 
         # Store customer ID
         await conn.execute("""
             UPDATE partners SET stripe_customer_id = $1 WHERE id = $2
-        """, customer.id, partner_id)
+        """, customer.id, _uid(partner_id))
 
         return customer.id
 
@@ -179,7 +180,7 @@ async def get_or_create_stripe_customer(partner_id: str, email: str, name: str) 
 async def list_subscription_plans():
     """List available subscription plans."""
     return {
-        "plans": SUBSCRIPTION_PLANS,
+        "plans": APPLIANCE_TIERS,
         "currency": "usd",
     }
 
@@ -553,7 +554,7 @@ async def stripe_webhook(request: Request):
                     data.subscription,
                     subscription.status,
                     datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc),
-                    partner_id
+                    _uid(partner_id)
                 )
             logger.info(f"Partner {partner_id} subscribed: {data.subscription}")
 
@@ -570,7 +571,7 @@ async def stripe_webhook(request: Request):
                 """,
                     data.status,
                     datetime.fromtimestamp(data.current_period_end, tz=timezone.utc),
-                    partner_id
+                    _uid(partner_id)
                 )
             logger.info(f"Partner {partner_id} subscription updated: {data.status}")
 
@@ -584,7 +585,7 @@ async def stripe_webhook(request: Request):
                         subscription_status = 'canceled',
                         stripe_subscription_id = NULL
                     WHERE id = $1
-                """, partner_id)
+                """, _uid(partner_id))
             logger.info(f"Partner {partner_id} subscription canceled")
 
     elif event_type == "invoice.paid":

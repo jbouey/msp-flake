@@ -25,7 +25,7 @@ import uuid as _uuid
 
 from .fleet import get_pool
 from .auth import require_admin
-from .hipaa_modules import _uid
+from .db_utils import _uid
 from .partner_activity_logger import (
     log_partner_activity,
     log_partner_site_action,
