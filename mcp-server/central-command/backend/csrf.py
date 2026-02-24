@@ -87,6 +87,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/incidents",                # Incident reporting from appliances
         "/checkin",                  # Appliance checkin (if at root)
         "/agent/patterns",           # Pattern sync from appliances (machine-to-machine)
+        "/api/users/invite/accept",  # Public invite acceptance (no session yet)
+        "/api/users/invite/validate",  # Public invite validation (GET but token in body)
     }
 
     # Exempt path prefixes (for API-key authenticated, OAuth, agent endpoints)
