@@ -207,13 +207,13 @@ async def authenticate_user(
     Returns:
         (success, session_token, user_data) or (False, None, error_message)
     """
-    # Get user
+    # Get user by username or email
     result = await db.execute(
         text("""
             SELECT id, username, password_hash, display_name, role, status,
                    failed_login_attempts, locked_until
             FROM admin_users
-            WHERE username = :username
+            WHERE username = :username OR email = :username
         """),
         {"username": username}
     )

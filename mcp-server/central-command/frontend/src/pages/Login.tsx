@@ -171,7 +171,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
 
             <div>
               <label htmlFor="username" className="block text-sm font-medium text-label-primary mb-1.5">
-                Username
+                Username or Email
               </label>
               <input
                 id="username"
@@ -181,7 +181,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
                 required
                 autoComplete="username"
                 className="w-full px-3.5 py-2.5 bg-fill-quaternary rounded-ios-md border border-separator-light text-label-primary placeholder-label-tertiary outline-none transition-all focus:border-accent-primary focus:ring-2 focus:ring-accent-primary/20 text-[15px]"
-                placeholder="Enter username"
+                placeholder="Enter username or email"
               />
             </div>
 
