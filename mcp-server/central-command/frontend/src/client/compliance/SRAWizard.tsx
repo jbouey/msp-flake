@@ -50,7 +50,11 @@ const CATEGORY_LABELS: Record<string, string> = {
   technical: 'Technical Safeguards',
 };
 
-export const SRAWizard: React.FC = () => {
+interface SRAWizardProps {
+  apiBase?: string;
+}
+
+export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [activeAssessment, setActiveAssessment] = useState<Assessment | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -62,7 +66,7 @@ export const SRAWizard: React.FC = () => {
   useEffect(() => { fetchAssessments(); }, []);
 
   const fetchAssessments = async () => {
-    const res = await fetch('/api/client/compliance/sra', { credentials: 'include' });
+    const res = await fetch(`${apiBase}/sra`, { credentials: 'include' });
     if (res.ok) {
       const data = await res.json();
       setAssessments(data.assessments || []);
@@ -70,7 +74,7 @@ export const SRAWizard: React.FC = () => {
   };
 
   const loadAssessment = async (id: string) => {
-    const res = await fetch(`/api/client/compliance/sra/${id}`, { credentials: 'include' });
+    const res = await fetch(`${apiBase}/sra/${id}`, { credentials: 'include' });
     if (res.ok) {
       const data = await res.json();
       setActiveAssessment(data.assessment);
@@ -85,7 +89,7 @@ export const SRAWizard: React.FC = () => {
   };
 
   const startNew = async () => {
-    const res = await fetch('/api/client/compliance/sra', {
+    const res = await fetch(`${apiBase}/sra`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -128,7 +132,7 @@ export const SRAWizard: React.FC = () => {
       remediation_due: r.remediation_due,
       notes: r.notes,
     }));
-    await fetch(`/api/client/compliance/sra/${activeAssessment.id}/responses`, {
+    await fetch(`${apiBase}/sra/${activeAssessment.id}/responses`, {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -140,7 +144,7 @@ export const SRAWizard: React.FC = () => {
   const completeAssessment = async () => {
     if (!activeAssessment) return;
     await saveProgress();
-    const res = await fetch(`/api/client/compliance/sra/${activeAssessment.id}/complete`, {
+    const res = await fetch(`${apiBase}/sra/${activeAssessment.id}/complete`, {
       method: 'POST',
       credentials: 'include',
     });

@@ -29,7 +29,11 @@ const STATUS_BADGE: Record<string, string> = {
   suspended: 'bg-yellow-100 text-yellow-700',
 };
 
-export const WorkforceAccess: React.FC = () => {
+interface WorkforceAccessProps {
+  apiBase?: string;
+}
+
+export const WorkforceAccess: React.FC<WorkforceAccessProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [members, setMembers] = useState<Member[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<Member>(EMPTY);
@@ -38,13 +42,13 @@ export const WorkforceAccess: React.FC = () => {
   useEffect(() => { fetchMembers(); }, []);
 
   const fetchMembers = async () => {
-    const res = await fetch('/api/client/compliance/workforce', { credentials: 'include' });
+    const res = await fetch(`${apiBase}/workforce`, { credentials: 'include' });
     if (res.ok) { const d = await res.json(); setMembers(d.workforce || []); }
   };
 
   const save = async () => {
     const method = editId ? 'PUT' : 'POST';
-    const url = editId ? `/api/client/compliance/workforce/${editId}` : '/api/client/compliance/workforce';
+    const url = editId ? `${apiBase}/workforce/${editId}` : `${apiBase}/workforce`;
     await fetch(url, {
       method, credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

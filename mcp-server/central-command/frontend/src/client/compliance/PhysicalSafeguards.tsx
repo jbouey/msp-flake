@@ -26,14 +26,18 @@ const STATUS_OPTIONS = [
   { value: 'not_applicable', label: 'N/A', color: 'bg-slate-50 text-slate-400' },
 ];
 
-export const PhysicalSafeguards: React.FC = () => {
+interface PhysicalSafeguardsProps {
+  apiBase?: string;
+}
+
+export const PhysicalSafeguards: React.FC<PhysicalSafeguardsProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [saving, setSaving] = useState(false);
   const [localItems, setLocalItems] = useState<Record<string, SafeguardItem>>({});
 
   useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
-    const res = await fetch('/api/client/compliance/physical', { credentials: 'include' });
+    const res = await fetch(`${apiBase}/physical`, { credentials: 'include' });
     if (res.ok) {
       const d = await res.json();
       // Merge existing data with template
@@ -64,7 +68,7 @@ export const PhysicalSafeguards: React.FC = () => {
       hipaa_reference: i.hipaa_reference,
       notes: i.notes,
     }));
-    await fetch('/api/client/compliance/physical', {
+    await fetch(`${apiBase}/physical`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: batch }),

@@ -21,7 +21,11 @@ const STATUS_BADGE: Record<string, string> = {
   archived: 'bg-slate-100 text-slate-600',
 };
 
-export const PolicyLibrary: React.FC = () => {
+interface PolicyLibraryProps {
+  apiBase?: string;
+}
+
+export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [templates, setTemplates] = useState<string[]>([]);
   const [selected, setSelected] = useState<Policy | null>(null);
@@ -32,7 +36,7 @@ export const PolicyLibrary: React.FC = () => {
   useEffect(() => { fetchPolicies(); }, []);
 
   const fetchPolicies = async () => {
-    const res = await fetch('/api/client/compliance/policies', { credentials: 'include' });
+    const res = await fetch(`${apiBase}/policies`, { credentials: 'include' });
     if (res.ok) {
       const data = await res.json();
       setPolicies(data.policies || []);
@@ -42,7 +46,7 @@ export const PolicyLibrary: React.FC = () => {
   };
 
   const createFromTemplate = async (key: string) => {
-    const res = await fetch('/api/client/compliance/policies', {
+    const res = await fetch(`${apiBase}/policies`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -55,7 +59,7 @@ export const PolicyLibrary: React.FC = () => {
 
   const savePolicy = async () => {
     if (!selected) return;
-    await fetch(`/api/client/compliance/policies/${selected.id}`, {
+    await fetch(`${apiBase}/policies/${selected.id}`, {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -66,7 +70,7 @@ export const PolicyLibrary: React.FC = () => {
   };
 
   const approvePolicy = async (id: string) => {
-    await fetch(`/api/client/compliance/policies/${id}/approve`, {
+    await fetch(`${apiBase}/policies/${id}/approve`, {
       method: 'POST',
       credentials: 'include',
     });

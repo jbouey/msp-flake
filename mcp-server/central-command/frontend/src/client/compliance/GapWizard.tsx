@@ -41,7 +41,11 @@ const MATURITY_LEVELS = [
   { value: 5, label: 'Optimized' },
 ];
 
-export const GapWizard: React.FC = () => {
+interface GapWizardProps {
+  apiBase?: string;
+}
+
+export const GapWizard: React.FC<GapWizardProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [responses, setResponses] = useState<Record<string, GapResponse>>({});
   const [activeSection, setActiveSection] = useState<string>('administrative');
@@ -51,7 +55,7 @@ export const GapWizard: React.FC = () => {
   useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
-    const res = await fetch('/api/client/compliance/gap-analysis', { credentials: 'include' });
+    const res = await fetch(`${apiBase}/gap-analysis`, { credentials: 'include' });
     if (res.ok) {
       const d = await res.json();
       setQuestions(d.questions || []);
@@ -78,7 +82,7 @@ export const GapWizard: React.FC = () => {
   const save = async () => {
     setSaving(true);
     const batch = Object.values(responses).filter(r => r.response !== null);
-    await fetch('/api/client/compliance/gap-analysis', {
+    await fetch(`${apiBase}/gap-analysis`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ responses: batch }),

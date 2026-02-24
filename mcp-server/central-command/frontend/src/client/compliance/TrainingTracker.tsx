@@ -28,7 +28,11 @@ const STATUS_BADGE: Record<string, string> = {
   overdue: 'bg-red-100 text-red-700',
 };
 
-export const TrainingTracker: React.FC = () => {
+interface TrainingTrackerProps {
+  apiBase?: string;
+}
+
+export const TrainingTracker: React.FC<TrainingTrackerProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [records, setRecords] = useState<TrainingRecord[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<TrainingRecord>(EMPTY);
@@ -37,13 +41,13 @@ export const TrainingTracker: React.FC = () => {
   useEffect(() => { fetchRecords(); }, []);
 
   const fetchRecords = async () => {
-    const res = await fetch('/api/client/compliance/training', { credentials: 'include' });
+    const res = await fetch(`${apiBase}/training`, { credentials: 'include' });
     if (res.ok) { const d = await res.json(); setRecords(d.records || []); }
   };
 
   const save = async () => {
     const method = editId ? 'PUT' : 'POST';
-    const url = editId ? `/api/client/compliance/training/${editId}` : '/api/client/compliance/training';
+    const url = editId ? `${apiBase}/training/${editId}` : `${apiBase}/training`;
     await fetch(url, {
       method, credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -54,7 +58,7 @@ export const TrainingTracker: React.FC = () => {
   };
 
   const remove = async (id: string) => {
-    await fetch(`/api/client/compliance/training/${id}`, { method: 'DELETE', credentials: 'include' });
+    await fetch(`${apiBase}/training/${id}`, { method: 'DELETE', credentials: 'include' });
     await fetchRecords();
   };
 

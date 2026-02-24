@@ -38,7 +38,11 @@ const TYPE_OPTIONS = [
   { value: 'other', label: 'Other' },
 ];
 
-export const BAATracker: React.FC = () => {
+interface BAATrackerProps {
+  apiBase?: string;
+}
+
+export const BAATracker: React.FC<BAATrackerProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [baas, setBaas] = useState<BAA[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<BAA>(EMPTY);
@@ -47,13 +51,13 @@ export const BAATracker: React.FC = () => {
   useEffect(() => { fetchBaas(); }, []);
 
   const fetchBaas = async () => {
-    const res = await fetch('/api/client/compliance/baas', { credentials: 'include' });
+    const res = await fetch(`${apiBase}/baas`, { credentials: 'include' });
     if (res.ok) { const d = await res.json(); setBaas(d.baas || []); }
   };
 
   const save = async () => {
     const method = editId ? 'PUT' : 'POST';
-    const url = editId ? `/api/client/compliance/baas/${editId}` : '/api/client/compliance/baas';
+    const url = editId ? `${apiBase}/baas/${editId}` : `${apiBase}/baas`;
     await fetch(url, {
       method, credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -64,7 +68,7 @@ export const BAATracker: React.FC = () => {
   };
 
   const remove = async (id: string) => {
-    await fetch(`/api/client/compliance/baas/${id}`, { method: 'DELETE', credentials: 'include' });
+    await fetch(`${apiBase}/baas/${id}`, { method: 'DELETE', credentials: 'include' });
     await fetchBaas();
   };
 

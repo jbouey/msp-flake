@@ -6,7 +6,7 @@ import { OsirisCareLeaf } from '../shared';
 
 interface User {
   username: string;
-  role: 'admin' | 'operator' | 'readonly';
+  role: 'admin' | 'operator' | 'readonly' | 'companion';
   displayName: string;
 }
 

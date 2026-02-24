@@ -25,7 +25,11 @@ const EMPTY: Partial<Plan> = {
   rto_hours: null, rpo_hours: null, status: 'draft',
 };
 
-export const ContingencyPlan: React.FC = () => {
+interface ContingencyPlanProps {
+  apiBase?: string;
+}
+
+export const ContingencyPlan: React.FC<ContingencyPlanProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<Partial<Plan>>(EMPTY);
@@ -35,13 +39,13 @@ export const ContingencyPlan: React.FC = () => {
   useEffect(() => { fetchPlans(); }, []);
 
   const fetchPlans = async () => {
-    const res = await fetch('/api/client/compliance/contingency', { credentials: 'include' });
+    const res = await fetch(`${apiBase}/contingency`, { credentials: 'include' });
     if (res.ok) { const d = await res.json(); setPlans(d.plans || []); }
   };
 
   const save = async () => {
     const method = editId ? 'PUT' : 'POST';
-    const url = editId ? `/api/client/compliance/contingency/${editId}` : '/api/client/compliance/contingency';
+    const url = editId ? `${apiBase}/contingency/${editId}` : `${apiBase}/contingency`;
     await fetch(url, {
       method, credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

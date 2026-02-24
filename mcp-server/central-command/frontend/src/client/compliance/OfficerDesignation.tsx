@@ -15,7 +15,11 @@ const ROLES = [
   { key: 'security_officer', label: 'Security Officer', description: 'Responsible for developing and implementing HIPAA security policies (required by 164.308(a)(2))' },
 ];
 
-export const OfficerDesignation: React.FC = () => {
+interface OfficerDesignationProps {
+  apiBase?: string;
+}
+
+export const OfficerDesignation: React.FC<OfficerDesignationProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [officers, setOfficers] = useState<Record<string, Officer>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -23,7 +27,7 @@ export const OfficerDesignation: React.FC = () => {
   useEffect(() => { fetchOfficers(); }, []);
 
   const fetchOfficers = async () => {
-    const res = await fetch('/api/client/compliance/officers', { credentials: 'include' });
+    const res = await fetch(`${apiBase}/officers`, { credentials: 'include' });
     if (res.ok) {
       const d = await res.json();
       const map: Record<string, Officer> = {};
@@ -59,7 +63,7 @@ export const OfficerDesignation: React.FC = () => {
   const save = async () => {
     setSaving(true);
     const batch = Object.values(officers).filter(o => o.name.trim() !== '');
-    await fetch('/api/client/compliance/officers', {
+    await fetch(`${apiBase}/officers`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ officers: batch }),

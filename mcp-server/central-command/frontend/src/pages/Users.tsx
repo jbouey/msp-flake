@@ -26,6 +26,7 @@ const RoleBadge: React.FC<{ role: string }> = ({ role }) => {
     admin: 'error',
     operator: 'warning',
     readonly: 'default',
+    companion: 'success',
   };
   return <Badge variant={variants[role] || 'default'}>{role}</Badge>;
 };
@@ -172,7 +173,7 @@ const InviteUserModal: React.FC<{
   error: string | null;
 }> = ({ isOpen, onClose, onSubmit, isLoading, error }) => {
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<'admin' | 'operator' | 'readonly'>('operator');
+  const [role, setRole] = useState<'admin' | 'operator' | 'readonly' | 'companion'>('operator');
   const [displayName, setDisplayName] = useState('');
 
   if (!isOpen) return null;
@@ -224,12 +225,13 @@ const InviteUserModal: React.FC<{
             </label>
             <select
               value={role}
-              onChange={(e) => setRole(e.target.value as 'admin' | 'operator' | 'readonly')}
+              onChange={(e) => setRole(e.target.value as 'admin' | 'operator' | 'readonly' | 'companion')}
               className="w-full px-3 py-2 bg-fill-secondary border border-separator-default rounded-lg text-label-primary focus:outline-none focus:border-accent-primary"
             >
               <option value="admin">Admin - Full access including user management</option>
               <option value="operator">Operator - View and execute actions</option>
               <option value="readonly">Readonly - View only access</option>
+              <option value="companion">Companion - HIPAA compliance guidance across clients</option>
             </select>
           </div>
 

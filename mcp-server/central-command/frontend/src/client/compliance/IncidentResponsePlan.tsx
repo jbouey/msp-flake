@@ -43,7 +43,11 @@ const STATUS_BADGE: Record<string, string> = {
   closed: 'bg-slate-100 text-slate-600',
 };
 
-export const IncidentResponsePlan: React.FC = () => {
+interface IncidentResponsePlanProps {
+  apiBase?: string;
+}
+
+export const IncidentResponsePlan: React.FC<IncidentResponsePlanProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [plan, setPlan] = useState<IRPlan | null>(null);
   const [breaches, setBreaches] = useState<Breach[]>([]);
   const [template, setTemplate] = useState('');
@@ -56,7 +60,7 @@ export const IncidentResponsePlan: React.FC = () => {
   useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
-    const res = await fetch('/api/client/compliance/ir-plan', { credentials: 'include' });
+    const res = await fetch(`${apiBase}/ir-plan`, { credentials: 'include' });
     if (res.ok) {
       const d = await res.json();
       setPlan(d.plan);
@@ -66,7 +70,7 @@ export const IncidentResponsePlan: React.FC = () => {
   };
 
   const savePlan = async () => {
-    await fetch('/api/client/compliance/ir-plan', {
+    await fetch(`${apiBase}/ir-plan`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: 'Incident Response Plan', content: editContent }),
@@ -77,7 +81,7 @@ export const IncidentResponsePlan: React.FC = () => {
 
   const saveBreach = async () => {
     const method = editBreachId ? 'PUT' : 'POST';
-    const url = editBreachId ? `/api/client/compliance/breaches/${editBreachId}` : '/api/client/compliance/breaches';
+    const url = editBreachId ? `${apiBase}/breaches/${editBreachId}` : `${apiBase}/breaches`;
     await fetch(url, {
       method, credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

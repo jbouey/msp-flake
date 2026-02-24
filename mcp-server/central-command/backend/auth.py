@@ -539,6 +539,23 @@ async def require_operator(user: Dict[str, Any] = Depends(require_auth)) -> Dict
     return user
 
 
+async def require_companion(user: Dict[str, Any] = Depends(require_auth)) -> Dict[str, Any]:
+    """Dependency that requires companion or admin role.
+
+    Companion users can access all HIPAA compliance modules across orgs.
+    Admins inherit companion access for oversight.
+
+    Raises:
+        HTTPException: 403 if user is not companion or admin
+    """
+    if user.get("role") not in ("admin", "companion"):
+        raise HTTPException(
+            status_code=403,
+            detail="Companion access required",
+        )
+    return user
+
+
 def require_role(*allowed_roles: str):
     """Factory for creating role-based dependencies.
 

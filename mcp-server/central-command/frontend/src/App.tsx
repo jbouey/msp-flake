@@ -1,5 +1,5 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { Sidebar } from './components/layout/Sidebar';
@@ -49,6 +49,24 @@ const LandingPage = lazy(() => import('./pages/LandingPage'));
 // Detect if serving from marketing domain (www.osiriscare.net or osiriscare.net)
 const isLandingSite = typeof window !== 'undefined' &&
   (window.location.hostname === 'www.osiriscare.net' || window.location.hostname === 'osiriscare.net');
+
+// Companion module - lazy loaded with layout
+const CompanionRoutes = lazy(() => import('./companion').then(m => ({
+  default: () => {
+    const { CompanionLayout, CompanionClientList, CompanionClientDetail, CompanionModuleWork, CompanionStats, CompanionActivityLog } = m;
+    return (
+      <Routes>
+        <Route element={<CompanionLayout />}>
+          <Route index element={<CompanionClientList />} />
+          <Route path="clients/:orgId" element={<CompanionClientDetail />} />
+          <Route path="clients/:orgId/:moduleKey" element={<CompanionModuleWork />} />
+          <Route path="stats" element={<CompanionStats />} />
+          <Route path="activity" element={<CompanionActivityLog />} />
+        </Route>
+      </Routes>
+    );
+  }
+})));
 
 // Lazy-loaded portal/partner/client modules
 const PortalDashboard = lazy(() => import('./portal/PortalDashboard').then(m => ({ default: m.PortalDashboard })));
@@ -301,7 +319,7 @@ const ComingSoon: React.FC<{ title: string }> = ({ title }) => (
 );
 
 const AuthenticatedApp: React.FC = () => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
 
   // Show loading state while checking session
   if (isLoading) {
@@ -322,6 +340,11 @@ const AuthenticatedApp: React.FC = () => {
 
   if (!isAuthenticated) {
     return <Login onSuccess={() => {}} />;
+  }
+
+  // Companion users get their own portal — never see the admin dashboard
+  if (user?.role === 'companion') {
+    return <Navigate to="/companion" replace />;
   }
 
   return <AppLayout />;
@@ -351,6 +374,9 @@ const App: React.FC = () => {
 
                 {/* Client routes - magic link / cookie auth (lazy loaded module) */}
                 <Route path="/client/*" element={<ClientRoutes />} />
+
+                {/* Companion routes - session auth, companion role (lazy loaded module) */}
+                <Route path="/companion/*" element={<CompanionRoutes />} />
 
                 {/* www.osiriscare.net → landing page; dashboard.osiriscare.net → admin */}
                 <Route path="/*" element={isLandingSite ? <LandingPage /> : <AuthenticatedApp />} />

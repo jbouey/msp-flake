@@ -52,7 +52,7 @@ class UserResponse(BaseModel):
 
 class UserInviteRequest(BaseModel):
     email: EmailStr
-    role: Literal["admin", "operator", "readonly"]
+    role: Literal["admin", "operator", "readonly", "companion"]
     display_name: Optional[str] = None
 
 
@@ -83,7 +83,7 @@ class InviteAcceptRequest(BaseModel):
 
 
 class UserUpdateRequest(BaseModel):
-    role: Optional[Literal["admin", "operator", "readonly"]] = None
+    role: Optional[Literal["admin", "operator", "readonly", "companion"]] = None
     status: Optional[Literal["active", "disabled"]] = None
     display_name: Optional[str] = None
 
