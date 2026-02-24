@@ -125,6 +125,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     AUTH_PATHS = {
         "/api/auth/login",
         "/api/partners/auth/magic",
+        "/api/users/invite/accept",
     }
 
     def __init__(self, app, rate_limiter: RateLimiter = None):

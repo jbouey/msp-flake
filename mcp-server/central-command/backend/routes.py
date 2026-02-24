@@ -1707,7 +1707,6 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     success: bool
-    token: Optional[str] = None
     user: Optional[dict] = None
     error: Optional[str] = None
 
@@ -1753,7 +1752,7 @@ async def login(
             max_age=86400,  # 24 hours
             path="/",
         )
-        return LoginResponse(success=True, token=token, user=result)
+        return LoginResponse(success=True, user=result)
     else:
         return LoginResponse(success=False, error=result.get("error", "Authentication failed"))
 
@@ -1819,10 +1818,10 @@ async def get_current_user(
 @auth_router.get("/audit-logs")
 async def get_audit_logs(
     limit: int = Query(100, le=500),
+    _user: dict = Depends(auth_module.require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get admin audit logs (requires admin role)."""
-    # Note: In production, add role check middleware
     logs = await auth_module.get_audit_logs(db, limit=limit)
     return {"logs": logs}
 

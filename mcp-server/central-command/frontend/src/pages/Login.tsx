@@ -80,13 +80,13 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
     setError('');
     setIsLoading(true);
 
-    const success = await login(username, password);
+    const result = await login(username, password);
     setIsLoading(false);
 
-    if (success) {
+    if (result.success) {
       onSuccess();
     } else {
-      setError('Invalid username or password');
+      setError(result.error || 'Invalid username or password');
     }
   };
 

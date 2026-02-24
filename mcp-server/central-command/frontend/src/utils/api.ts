@@ -754,6 +754,9 @@ export const usersApi = {
   // Validate invite token (public - no auth)
   validateInvite: async (token: string): Promise<InviteValidation> => {
     const response = await fetch(`/api/users/invite/validate/${token}`);
+    if (!response.ok) {
+      return { valid: false, error: 'Failed to validate invite' };
+    }
     return response.json();
   },
 

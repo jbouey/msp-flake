@@ -47,8 +47,8 @@ export default function SetPassword() {
       return;
     }
 
-    if (password.length < 12) {
-      setError('Password must be at least 12 characters');
+    if (!passwordValid) {
+      setError('Password does not meet complexity requirements');
       return;
     }
 
@@ -74,7 +74,12 @@ export default function SetPassword() {
   };
 
   const passwordsMatch = password === confirmPassword;
-  const passwordValid = password.length >= 12;
+  const hasMinLength = password.length >= 12;
+  const hasUpper = /[A-Z]/.test(password);
+  const hasLower = /[a-z]/.test(password);
+  const hasDigit = /\d/.test(password);
+  const hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password);
+  const passwordValid = hasMinLength && hasUpper && hasLower && hasDigit && hasSpecial;
 
   // Loading state
   if (validating) {
@@ -174,7 +179,13 @@ export default function SetPassword() {
               required
             />
             {password && !passwordValid && (
-              <p className="text-xs text-red-400 mt-1">Password must be at least 12 characters</p>
+              <ul className="text-xs mt-2 space-y-0.5">
+                <li className={hasMinLength ? 'text-green-400' : 'text-red-400'}>{hasMinLength ? '\u2713' : '\u2717'} At least 12 characters</li>
+                <li className={hasUpper ? 'text-green-400' : 'text-red-400'}>{hasUpper ? '\u2713' : '\u2717'} One uppercase letter</li>
+                <li className={hasLower ? 'text-green-400' : 'text-red-400'}>{hasLower ? '\u2713' : '\u2717'} One lowercase letter</li>
+                <li className={hasDigit ? 'text-green-400' : 'text-red-400'}>{hasDigit ? '\u2713' : '\u2717'} One digit</li>
+                <li className={hasSpecial ? 'text-green-400' : 'text-red-400'}>{hasSpecial ? '\u2713' : '\u2717'} One special character (!@#$% etc.)</li>
+              </ul>
             )}
           </div>
 
