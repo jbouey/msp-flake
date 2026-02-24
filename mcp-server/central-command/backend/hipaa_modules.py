@@ -17,6 +17,7 @@ All endpoints are org-scoped via client session auth.
 """
 
 import logging
+import uuid as _uuid
 from datetime import datetime, timezone, date
 from typing import Optional, List
 from decimal import Decimal
@@ -96,6 +97,10 @@ class BreachRecord(BaseModel):
     individuals_affected: int = 0
     breach_type: Optional[str] = None
     notification_required: bool = False
+    hhs_notified: bool = False
+    hhs_notified_date: Optional[str] = None
+    individuals_notified: bool = False
+    individuals_notified_date: Optional[str] = None
     root_cause: Optional[str] = None
     corrective_actions: Optional[str] = None
     status: str = "investigating"
@@ -134,13 +139,25 @@ class GapResponseBatch(BaseModel):
 # HELPER
 # =============================================================================
 
+def _uid(s) -> _uuid.UUID:
+    """Convert string path param to UUID for asyncpg. Passes UUID objects through."""
+    if isinstance(s, _uuid.UUID):
+        return s
+    try:
+        return _uuid.UUID(str(s))
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid ID format")
+
+
 def _row_dict(row):
     """Convert asyncpg Record to dict with JSON-safe values."""
     if row is None:
         return None
     d = dict(row)
     for k, v in d.items():
-        if isinstance(v, datetime):
+        if isinstance(v, _uuid.UUID):
+            d[k] = str(v)
+        elif isinstance(v, datetime):
             d[k] = v.isoformat()
         elif isinstance(v, date):
             d[k] = v.isoformat()
@@ -344,14 +361,14 @@ async def get_sra_assessment(assessment_id: str, user: dict = Depends(require_cl
         assessment = await conn.fetchrow("""
             SELECT * FROM hipaa_sra_assessments
             WHERE id = $1 AND org_id = $2
-        """, assessment_id, user["org_id"])
+        """, _uid(assessment_id), user["org_id"])
         if not assessment:
             raise HTTPException(status_code=404, detail="Assessment not found")
 
         responses = await conn.fetch("""
             SELECT * FROM hipaa_sra_responses
             WHERE assessment_id = $1 ORDER BY question_key
-        """, assessment_id)
+        """, _uid(assessment_id))
 
     return {
         "assessment": _row_dict(assessment),
@@ -367,7 +384,7 @@ async def save_sra_responses(assessment_id: str, body: SRAResponseBatch, user: d
         # Verify ownership
         owner = await conn.fetchval("""
             SELECT org_id FROM hipaa_sra_assessments WHERE id = $1
-        """, assessment_id)
+        """, _uid(assessment_id))
         if str(owner) != str(user["org_id"]):
             raise HTTPException(status_code=403, detail="Access denied")
 
@@ -389,7 +406,7 @@ async def save_sra_responses(assessment_id: str, body: SRAResponseBatch, user: d
                     remediation_due = EXCLUDED.remediation_due,
                     notes = EXCLUDED.notes,
                     updated_at = NOW()
-            """, assessment_id, resp["question_key"], q["category"], q["hipaa_reference"],
+            """, _uid(assessment_id),resp["question_key"], q["category"], q["hipaa_reference"],
                 resp.get("response"), resp.get("risk_level", "not_assessed"),
                 resp.get("remediation_plan"), resp.get("remediation_due"), resp.get("notes"))
             if resp.get("response"):
@@ -403,7 +420,7 @@ async def save_sra_responses(assessment_id: str, body: SRAResponseBatch, user: d
             SET answered_questions = (SELECT COUNT(*) FROM hipaa_sra_responses WHERE assessment_id = $1 AND response IS NOT NULL),
                 findings_count = (SELECT COUNT(*) FROM hipaa_sra_responses WHERE assessment_id = $1 AND risk_level IN ('high', 'critical'))
             WHERE id = $1
-        """, assessment_id)
+        """, _uid(assessment_id))
 
     return {"status": "saved"}
 
@@ -414,14 +431,14 @@ async def complete_sra_assessment(assessment_id: str, user: dict = Depends(requi
     async with pool.acquire() as conn:
         owner = await conn.fetchval("""
             SELECT org_id FROM hipaa_sra_assessments WHERE id = $1
-        """, assessment_id)
+        """, _uid(assessment_id))
         if str(owner) != str(user["org_id"]):
             raise HTTPException(status_code=403, detail="Access denied")
 
         # Calculate risk score
         responses = await conn.fetch("""
             SELECT risk_level FROM hipaa_sra_responses WHERE assessment_id = $1
-        """, assessment_id)
+        """, _uid(assessment_id))
 
         total = len(SRA_QUESTIONS)
         critical = sum(1 for r in responses if r["risk_level"] == "critical")
@@ -440,7 +457,7 @@ async def complete_sra_assessment(assessment_id: str, user: dict = Depends(requi
                 findings_count = $4
             WHERE id = $1
             RETURNING *
-        """, assessment_id, now, risk_score, critical + high)
+        """, _uid(assessment_id),now, risk_score, critical + high)
 
     return _row_dict(row)
 
@@ -510,7 +527,7 @@ async def update_policy(policy_id: str, body: PolicyUpdate, user: dict = Depends
             SET content = $3, title = COALESCE($4, title), updated_at = NOW()
             WHERE id = $1 AND org_id = $2
             RETURNING *
-        """, policy_id, user["org_id"], body.content, body.title)
+        """, _uid(policy_id),user["org_id"], body.content, body.title)
         if not row:
             raise HTTPException(status_code=404, detail="Policy not found")
     return _row_dict(row)
@@ -531,7 +548,7 @@ async def approve_policy(policy_id: str, user: dict = Depends(require_client_use
                 updated_at = NOW()
             WHERE id = $1 AND org_id = $2
             RETURNING *
-        """, policy_id, user["org_id"], user.get("name") or user.get("email"), now)
+        """, _uid(policy_id),user["org_id"], user.get("name") or user.get("email"), now)
         if not row:
             raise HTTPException(status_code=404, detail="Policy not found")
     return _row_dict(row)
@@ -581,7 +598,7 @@ async def update_training(record_id: str, body: TrainingRecord, user: dict = Dep
                 due_date = $9, status = $10, certificate_ref = $11, trainer = $12, notes = $13
             WHERE id = $1 AND org_id = $2
             RETURNING *
-        """, record_id, user["org_id"], body.employee_name, body.employee_email,
+        """, _uid(record_id),user["org_id"], body.employee_name, body.employee_email,
             body.employee_role, body.training_type, body.training_topic,
             date.fromisoformat(body.completed_date) if body.completed_date else None,
             date.fromisoformat(body.due_date),
@@ -597,7 +614,7 @@ async def delete_training(record_id: str, user: dict = Depends(require_client_us
     async with pool.acquire() as conn:
         result = await conn.execute("""
             DELETE FROM hipaa_training_records WHERE id = $1 AND org_id = $2
-        """, record_id, user["org_id"])
+        """, _uid(record_id),user["org_id"])
     return {"deleted": "DELETE 1" in result}
 
 
@@ -648,7 +665,7 @@ async def update_baa(baa_id: str, body: BAARecord, user: dict = Depends(require_
                 services_description = $12, notes = $13, updated_at = NOW()
             WHERE id = $1 AND org_id = $2
             RETURNING *
-        """, baa_id, user["org_id"], body.associate_name, body.associate_type,
+        """, _uid(baa_id),user["org_id"], body.associate_name, body.associate_type,
             body.contact_name, body.contact_email,
             date.fromisoformat(body.signed_date) if body.signed_date else None,
             date.fromisoformat(body.expiry_date) if body.expiry_date else None,
@@ -665,7 +682,7 @@ async def delete_baa(baa_id: str, user: dict = Depends(require_client_user)):
     async with pool.acquire() as conn:
         result = await conn.execute("""
             DELETE FROM hipaa_baas WHERE id = $1 AND org_id = $2
-        """, baa_id, user["org_id"])
+        """, _uid(baa_id),user["org_id"])
     return {"deleted": "DELETE 1" in result}
 
 
@@ -715,14 +732,19 @@ async def create_breach(body: BreachRecord, user: dict = Depends(require_client_
             INSERT INTO hipaa_breach_log
                 (org_id, incident_date, discovered_date, description, phi_involved,
                  individuals_affected, breach_type, notification_required,
+                 hhs_notified, hhs_notified_date, individuals_notified, individuals_notified_date,
                  root_cause, corrective_actions, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING *
         """, user["org_id"],
             date.fromisoformat(body.incident_date),
             date.fromisoformat(body.discovered_date),
             body.description, body.phi_involved, body.individuals_affected,
             body.breach_type, body.notification_required,
+            body.hhs_notified,
+            date.fromisoformat(body.hhs_notified_date) if body.hhs_notified_date else None,
+            body.individuals_notified,
+            date.fromisoformat(body.individuals_notified_date) if body.individuals_notified_date else None,
             body.root_cause, body.corrective_actions, body.status)
     return _row_dict(row)
 
@@ -735,15 +757,20 @@ async def update_breach(breach_id: str, body: BreachRecord, user: dict = Depends
             UPDATE hipaa_breach_log
             SET incident_date = $3, discovered_date = $4, description = $5,
                 phi_involved = $6, individuals_affected = $7, breach_type = $8,
-                notification_required = $9, root_cause = $10,
-                corrective_actions = $11, status = $12, updated_at = NOW()
+                notification_required = $9, hhs_notified = $10, hhs_notified_date = $11,
+                individuals_notified = $12, individuals_notified_date = $13,
+                root_cause = $14, corrective_actions = $15, status = $16, updated_at = NOW()
             WHERE id = $1 AND org_id = $2
             RETURNING *
-        """, breach_id, user["org_id"],
+        """, _uid(breach_id), user["org_id"],
             date.fromisoformat(body.incident_date),
             date.fromisoformat(body.discovered_date),
             body.description, body.phi_involved, body.individuals_affected,
             body.breach_type, body.notification_required,
+            body.hhs_notified,
+            date.fromisoformat(body.hhs_notified_date) if body.hhs_notified_date else None,
+            body.individuals_notified,
+            date.fromisoformat(body.individuals_notified_date) if body.individuals_notified_date else None,
             body.root_cause, body.corrective_actions, body.status)
         if not row:
             raise HTTPException(status_code=404, detail="Breach record not found")
@@ -789,7 +816,7 @@ async def update_contingency(plan_id: str, body: ContingencyCreate, user: dict =
                 rto_hours = $6, rpo_hours = $7, updated_at = NOW()
             WHERE id = $1 AND org_id = $2
             RETURNING *
-        """, plan_id, user["org_id"], body.plan_type, body.title, body.content,
+        """, _uid(plan_id),user["org_id"], body.plan_type, body.title, body.content,
             body.rto_hours, body.rpo_hours)
         if not row:
             raise HTTPException(status_code=404, detail="Plan not found")
@@ -843,7 +870,7 @@ async def update_workforce(member_id: str, body: WorkforceRecord, user: dict = D
                 status = $11, supervisor = $12, notes = $13, updated_at = NOW()
             WHERE id = $1 AND org_id = $2
             RETURNING *
-        """, member_id, user["org_id"], body.employee_name, body.employee_role,
+        """, _uid(member_id),user["org_id"], body.employee_name, body.employee_role,
             body.department, body.access_level, body.systems or [],
             date.fromisoformat(body.start_date),
             date.fromisoformat(body.termination_date) if body.termination_date else None,
