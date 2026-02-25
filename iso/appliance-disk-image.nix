@@ -392,6 +392,7 @@ EOF
       # local-portal uses 8084
       API_PORT = "8081";
       DAILY_SCAN_HOUR = "2";
+      NETWORK_RANGES = "auto";
       # Medical devices are excluded by default in config
     };
   };

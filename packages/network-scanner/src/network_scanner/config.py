@@ -21,6 +21,71 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+def _detect_local_subnets() -> list[str]:
+    """Auto-detect scannable subnets from local network interfaces.
+
+    Returns CIDR ranges for all non-loopback IPv4 interfaces.
+    Works on Linux (NixOS appliance) via netifaces or ip command fallback.
+    """
+    subnets = []
+
+    # Try netifaces first (available on appliance)
+    try:
+        import netifaces
+        for iface in netifaces.interfaces():
+            if iface == "lo":
+                continue
+            addrs = netifaces.ifaddresses(iface).get(netifaces.AF_INET, [])
+            for addr in addrs:
+                ip = addr.get("addr", "")
+                netmask = addr.get("netmask", "")
+                if ip and netmask and not ip.startswith("127."):
+                    import ipaddress
+                    try:
+                        network = ipaddress.IPv4Network(f"{ip}/{netmask}", strict=False)
+                        subnets.append(str(network))
+                    except ValueError:
+                        pass
+        if subnets:
+            logger.info(f"Auto-detected network ranges: {subnets}")
+            return subnets
+    except ImportError:
+        pass
+
+    # Fallback: parse `ip -4 addr` output (Linux)
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["ip", "-4", "-o", "addr", "show"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            import ipaddress
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                # Format: "2: eth0 inet 192.168.88.241/24 ..."
+                iface = parts[1] if len(parts) > 1 else ""
+                if iface == "lo":
+                    continue
+                for part in parts:
+                    if "/" in part:
+                        try:
+                            network = ipaddress.IPv4Network(part, strict=False)
+                            if not network.is_loopback:
+                                subnets.append(str(network))
+                            break
+                        except ValueError:
+                            continue
+            if subnets:
+                logger.info(f"Auto-detected network ranges (ip cmd): {subnets}")
+                return subnets
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    logger.warning("Could not auto-detect network ranges")
+    return []
+
+
 @dataclass
 class ScannerConfig:
     """
@@ -87,9 +152,11 @@ class ScannerConfig:
         """Load configuration from environment variables."""
         config = cls()
 
-        # Network ranges (comma-separated)
+        # Network ranges (comma-separated, or "auto" for auto-detection)
         ranges = os.getenv("NETWORK_RANGES", "")
-        if ranges:
+        if ranges.strip().lower() == "auto":
+            config.network_ranges = _detect_local_subnets()
+        elif ranges:
             config.network_ranges = [r.strip() for r in ranges.split(",")]
 
         # Discovery methods

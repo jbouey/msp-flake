@@ -1014,6 +1014,249 @@ checks:
           category: "Organizational Controls"
           required: true
 
+  # ---------------------------------------------------------------------------
+  # NETWORK COMPLIANCE - PROHIBITED PORTS
+  # ---------------------------------------------------------------------------
+  prohibited_ports:
+    name: "Prohibited Cleartext Protocols"
+    description: "Detects FTP, Telnet, TFTP, rsh/rlogin — cleartext protocols that must not be exposed"
+    check_type: "network"
+    evidence_type: "port_scan_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(a)(1)"
+          control_name: "Access Control"
+          category: "Technical Safeguards"
+          required: true
+      soc2:
+        - control_id: "CC6.1"
+          control_name: "Logical and Physical Access Controls"
+          category: "Security"
+          required: true
+      pci_dss:
+        - control_id: "2.2.7"
+          control_name: "Encrypt non-console administrative access"
+          category: "Apply Secure Configurations"
+          required: true
+      nist_csf:
+        - control_id: "PR.AC-5"
+          control_name: "Network integrity is protected"
+          category: "Protect"
+          required: true
+      cis:
+        - control_id: "CIS.9.2"
+          control_name: "Ensure Only Approved Ports, Protocols, and Services Are Running"
+          category: "Network Monitoring and Defense"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # NETWORK COMPLIANCE - ENCRYPTED SERVICES
+  # ---------------------------------------------------------------------------
+  encrypted_services:
+    name: "Web Service Encryption"
+    description: "Verifies HTTP services have HTTPS encryption for transmission security"
+    check_type: "network"
+    evidence_type: "port_scan_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(e)(1)"
+          control_name: "Transmission Security"
+          category: "Technical Safeguards"
+          required: true
+      soc2:
+        - control_id: "CC6.7"
+          control_name: "Restrict the Transmission of Data"
+          category: "Security"
+          required: true
+      pci_dss:
+        - control_id: "4.2.1"
+          control_name: "Strong cryptography for transmission of cardholder data"
+          category: "Encrypt Transmission"
+          required: true
+      nist_csf:
+        - control_id: "PR.DS-2"
+          control_name: "Data-in-transit is protected"
+          category: "Protect"
+          required: true
+      cis:
+        - control_id: "CIS.3.10"
+          control_name: "Encrypt Sensitive Data in Transit"
+          category: "Data Protection"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # NETWORK COMPLIANCE - TLS WEB SERVICES
+  # ---------------------------------------------------------------------------
+  tls_web_services:
+    name: "Application Server TLS"
+    description: "Verifies alternative web ports (8080) have TLS counterparts (8443)"
+    check_type: "network"
+    evidence_type: "port_scan_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(a)(2)(iv)"
+          control_name: "Encryption and Decryption"
+          category: "Technical Safeguards"
+          required: true
+      soc2:
+        - control_id: "CC6.7"
+          control_name: "Restrict the Transmission of Data"
+          category: "Security"
+          required: true
+      pci_dss:
+        - control_id: "4.2.1"
+          control_name: "Strong cryptography for transmission of cardholder data"
+          category: "Encrypt Transmission"
+          required: true
+      nist_csf:
+        - control_id: "PR.DS-2"
+          control_name: "Data-in-transit is protected"
+          category: "Protect"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # NETWORK COMPLIANCE - DATABASE EXPOSURE
+  # ---------------------------------------------------------------------------
+  database_exposure:
+    name: "Database Service Exposure"
+    description: "Detects database services on non-server devices indicating misconfiguration"
+    check_type: "network"
+    evidence_type: "port_scan_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(a)(1)"
+          control_name: "Access Control"
+          category: "Technical Safeguards"
+          required: true
+      soc2:
+        - control_id: "CC6.1"
+          control_name: "Logical and Physical Access Controls"
+          category: "Security"
+          required: true
+      pci_dss:
+        - control_id: "1.3.1"
+          control_name: "Restrict inbound traffic to the cardholder data environment"
+          category: "Network Security Controls"
+          required: true
+      nist_csf:
+        - control_id: "PR.AC-5"
+          control_name: "Network integrity is protected"
+          category: "Protect"
+          required: true
+      cis:
+        - control_id: "CIS.9.2"
+          control_name: "Ensure Only Approved Ports, Protocols, and Services Are Running"
+          category: "Network Monitoring and Defense"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # NETWORK COMPLIANCE - SNMP SECURITY
+  # ---------------------------------------------------------------------------
+  snmp_security:
+    name: "SNMP Protocol Security"
+    description: "Detects SNMP v1/v2 with cleartext community strings"
+    check_type: "network"
+    evidence_type: "port_scan_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(a)(2)(i)"
+          control_name: "Unique User Identification"
+          category: "Technical Safeguards"
+          required: true
+      soc2:
+        - control_id: "CC6.1"
+          control_name: "Logical and Physical Access Controls"
+          category: "Security"
+          required: true
+      pci_dss:
+        - control_id: "2.2.7"
+          control_name: "Encrypt non-console administrative access"
+          category: "Apply Secure Configurations"
+          required: true
+      nist_csf:
+        - control_id: "PR.AC-1"
+          control_name: "Identities and credentials are issued"
+          category: "Protect"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # NETWORK COMPLIANCE - RDP EXPOSURE
+  # ---------------------------------------------------------------------------
+  rdp_exposure:
+    name: "RDP Protocol Exposure"
+    description: "Detects RDP on non-workstation devices where it poses lateral movement risk"
+    check_type: "network"
+    evidence_type: "port_scan_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.312(a)(1)"
+          control_name: "Access Control"
+          category: "Technical Safeguards"
+          required: true
+      soc2:
+        - control_id: "CC6.1"
+          control_name: "Logical and Physical Access Controls"
+          category: "Security"
+          required: true
+      pci_dss:
+        - control_id: "1.3.1"
+          control_name: "Restrict inbound traffic to the cardholder data environment"
+          category: "Network Security Controls"
+          required: true
+      nist_csf:
+        - control_id: "PR.AC-5"
+          control_name: "Network integrity is protected"
+          category: "Protect"
+          required: true
+      cis:
+        - control_id: "CIS.9.2"
+          control_name: "Ensure Only Approved Ports, Protocols, and Services Are Running"
+          category: "Network Monitoring and Defense"
+          required: true
+
+  # ---------------------------------------------------------------------------
+  # NETWORK COMPLIANCE - DEVICE INVENTORY
+  # ---------------------------------------------------------------------------
+  device_inventory:
+    name: "Device Inventory Completeness"
+    description: "Verifies devices have been port-scanned for complete asset inventory"
+    check_type: "network"
+    evidence_type: "asset_inventory_verification"
+
+    framework_mappings:
+      hipaa:
+        - control_id: "164.308(a)(1)(ii)(B)"
+          control_name: "Risk Assessment"
+          category: "Administrative Safeguards"
+          subcategory: "Security Management Process"
+          required: true
+      soc2:
+        - control_id: "CC3.2"
+          control_name: "Risk Identification"
+          category: "Risk Assessment"
+          required: true
+      pci_dss:
+        - control_id: "2.4"
+          control_name: "Maintain an inventory of system components"
+          category: "Apply Secure Configurations"
+          required: true
+      nist_csf:
+        - control_id: "ID.AM-1"
+          control_name: "Physical devices and systems are inventoried"
+          category: "Identify"
+          required: true
+      cis:
+        - control_id: "CIS.1.1"
+          control_name: "Establish and Maintain Detailed Enterprise Asset Inventory"
+          category: "Inventory and Control of Enterprise Assets"
+          required: true
+
 
 # =============================================================================
 # FRAMEWORK METADATA

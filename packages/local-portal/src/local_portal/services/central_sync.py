@@ -51,6 +51,19 @@ class CentralSyncService:
             ports_raw = self.db.get_device_ports(device["id"])
             open_ports = [p["port"] for p in ports_raw]
 
+            # Get compliance check details for this device
+            compliance_checks = self.db.get_device_compliance_checks(device["id"])
+            compliance_details = [
+                {
+                    "check_type": c["check_type"],
+                    "hipaa_control": c.get("hipaa_control"),
+                    "status": c["status"],
+                    "details": c.get("details"),
+                    "checked_at": c["checked_at"],
+                }
+                for c in compliance_checks
+            ]
+
             device_entries.append({
                 "device_id": device["id"],
                 "hostname": device["hostname"],
@@ -64,6 +77,7 @@ class CentralSyncService:
                 "manually_opted_in": bool(device.get("manually_opted_in")),
                 "compliance_status": device.get("compliance_status", "unknown"),
                 "open_ports": open_ports,
+                "compliance_details": compliance_details,
                 "discovery_source": device.get("discovery_source", "nmap"),
                 "first_seen_at": device["first_seen_at"],
                 "last_seen_at": device["last_seen_at"],

@@ -4,6 +4,7 @@ Receives device inventory reports from appliance local-portals and stores
 them in Central Command for fleet-wide visibility.
 """
 
+import json
 from datetime import datetime, timezone
 from typing import Optional, List
 from pydantic import BaseModel, Field
@@ -16,6 +17,15 @@ from .fleet import get_pool
 # =============================================================================
 # REQUEST/RESPONSE MODELS
 # =============================================================================
+
+
+class ComplianceCheckDetail(BaseModel):
+    """A single compliance check result from the appliance."""
+    check_type: str
+    hipaa_control: Optional[str] = None
+    status: str  # pass, warn, fail
+    details: Optional[str] = None  # JSON string or None
+    checked_at: datetime
 
 
 class DeviceSyncEntry(BaseModel):
@@ -36,6 +46,7 @@ class DeviceSyncEntry(BaseModel):
     # Compliance
     compliance_status: str = "unknown"  # compliant, drifted, unknown, excluded
     open_ports: List[int] = Field(default_factory=list)
+    compliance_details: List[ComplianceCheckDetail] = Field(default_factory=list)
 
     # Discovery metadata
     discovery_source: str = "nmap"
@@ -119,6 +130,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                 )
 
                 if existing:
+                    device_db_id = existing["id"]
                     # Update existing device
                     await conn.execute(
                         """
@@ -160,7 +172,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                     devices_updated += 1
                 else:
                     # Insert new device
-                    await conn.execute(
+                    device_db_id = await conn.fetchval(
                         """
                         INSERT INTO discovered_devices (
                             appliance_id, local_device_id, hostname, ip_address,
@@ -173,6 +185,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
                             $12, $13, $14, $15, $16, $17, NOW(), NOW()
                         )
+                        RETURNING id
                         """,
                         appliance_db_id,
                         device.device_id,
@@ -193,6 +206,36 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                         device.last_scan_at,
                     )
                     devices_created += 1
+
+                # Upsert compliance check details
+                for check in device.compliance_details:
+                    details_json = check.details
+                    # Parse JSON string to dict if needed for JSONB
+                    if isinstance(details_json, str):
+                        try:
+                            details_json = json.loads(details_json)
+                        except (json.JSONDecodeError, TypeError):
+                            details_json = None
+
+                    await conn.execute(
+                        """
+                        INSERT INTO device_compliance_details
+                            (discovered_device_id, check_type, hipaa_control, status, details, checked_at)
+                        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+                        ON CONFLICT (discovered_device_id, check_type) DO UPDATE SET
+                            hipaa_control = EXCLUDED.hipaa_control,
+                            status = EXCLUDED.status,
+                            details = EXCLUDED.details,
+                            checked_at = EXCLUDED.checked_at,
+                            synced_at = NOW()
+                        """,
+                        device_db_id,
+                        check.check_type,
+                        check.hipaa_control,
+                        check.status,
+                        json.dumps(details_json) if details_json else None,
+                        check.checked_at,
+                    )
 
             except Exception as e:
                 errors.append(f"Device {device.device_id}: {str(e)}")

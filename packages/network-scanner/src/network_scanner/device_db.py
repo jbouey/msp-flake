@@ -369,6 +369,15 @@ class DeviceDatabase:
             )
             conn.commit()
 
+    def update_device_status(self, device_id: str, status: DeviceStatus) -> None:
+        """Update device lifecycle status."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE devices SET status = ?, synced_to_central = FALSE WHERE id = ?",
+                (status.value, device_id),
+            )
+            conn.commit()
+
     def update_device_policy(
         self,
         device_id: str,

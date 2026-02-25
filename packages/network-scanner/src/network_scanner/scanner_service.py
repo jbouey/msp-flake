@@ -267,7 +267,7 @@ class NetworkScannerService:
 
                     # Store ports if available
                     if discovered.open_ports:
-                        from ._types import DevicePort
+                        from ._types import DevicePort, DeviceStatus
                         ports = [
                             DevicePort(
                                 device_id=device.id,
@@ -277,6 +277,10 @@ class NetworkScannerService:
                             for p in discovered.open_ports
                         ]
                         self.db.upsert_device_ports(device.id, ports)
+
+                        # Promote to monitored so compliance checks apply
+                        if device.can_be_scanned and device.status == DeviceStatus.DISCOVERED:
+                            self.db.update_device_status(device.id, DeviceStatus.MONITORED)
 
                 except Exception as e:
                     logger.error(f"Error processing device {discovered.ip_address}: {e}")
@@ -292,6 +296,14 @@ class NetworkScannerService:
                 network_ranges=self.config.network_ranges,
             )
 
+            # Run compliance checks on devices with port data
+            compliance_summary = {}
+            try:
+                from .compliance.runner import run_compliance_checks
+                compliance_summary = await run_compliance_checks(self.db)
+            except Exception as e:
+                logger.error(f"Compliance checks failed: {e}")
+
             result = {
                 "scan_id": scan_id,
                 "status": "completed",
@@ -300,6 +312,7 @@ class NetworkScannerService:
                 "changed_devices": changed_count,
                 "medical_devices_excluded": medical_count,
                 "methods_used": methods_used,
+                "compliance": compliance_summary,
             }
 
             logger.info(
@@ -307,6 +320,13 @@ class NetworkScannerService:
                 f"{new_count} new, {changed_count} changed, "
                 f"{medical_count} medical excluded"
             )
+            if compliance_summary.get("devices_checked"):
+                logger.info(
+                    f"Compliance: {compliance_summary['devices_checked']} checked — "
+                    f"{compliance_summary.get('passed', 0)} compliant, "
+                    f"{compliance_summary.get('warned', 0)} warned, "
+                    f"{compliance_summary.get('failed', 0)} failed"
+                )
 
             return result
 
