@@ -180,6 +180,7 @@ try:
     from dashboard_api.client_portal import public_router as client_auth_router, auth_router as client_portal_router
     from dashboard_api.hipaa_modules import router as hipaa_modules_router
     from dashboard_api.compliance_frameworks import router as compliance_frameworks_router, partner_router as partner_compliance_router
+    from dashboard_api.companion import router as companion_router
     app.include_router(dashboard_router)
     app.include_router(auth_router)  # Admin authentication endpoints
     app.include_router(users_router)  # User management (RBAC)
@@ -206,7 +207,8 @@ try:
     app.include_router(hipaa_modules_router, prefix="/api")  # HIPAA compliance modules
     app.include_router(compliance_frameworks_router)  # Multi-framework compliance management
     app.include_router(partner_compliance_router)  # Partner compliance settings
-    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users, frameworks, integrations, evidence_chain, fleet_updates, client_portal, compliance_frameworks)")
+    app.include_router(companion_router, prefix="/api")  # Compliance Companion portal
+    print("✓ Included central-command routers (dashboard, portal, sites, orders, appliances, alerts, partners, discovery, provisioning, runbook_config, sensors, notifications, escalations, users, frameworks, integrations, evidence_chain, fleet_updates, client_portal, compliance_frameworks, companion)")
 except ImportError as e:
     print(f"⚠ Could not import central-command routers: {e}")
 
