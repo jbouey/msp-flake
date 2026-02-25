@@ -140,7 +140,7 @@ class GapResponseBatch(BaseModel):
 # =============================================================================
 
 # Re-export from db_utils for backwards compatibility
-from .db_utils import _uid, _row_dict, _rows_list
+from .db_utils import _uid, _row_dict, _rows_list, _parse_date
 
 
 # =============================================================================
@@ -554,8 +554,8 @@ async def create_training(body: TrainingRecord, user: dict = Depends(require_cli
             RETURNING *
         """, user["org_id"], body.employee_name, body.employee_email, body.employee_role,
             body.training_type, body.training_topic,
-            date.fromisoformat(body.completed_date) if body.completed_date else None,
-            date.fromisoformat(body.due_date),
+            _parse_date(body.completed_date) if body.completed_date else None,
+            _parse_date(body.due_date),
             body.status, body.certificate_ref, body.trainer, body.notes)
     return _row_dict(row)
 
@@ -573,8 +573,8 @@ async def update_training(record_id: str, body: TrainingRecord, user: dict = Dep
             RETURNING *
         """, _uid(record_id),user["org_id"], body.employee_name, body.employee_email,
             body.employee_role, body.training_type, body.training_topic,
-            date.fromisoformat(body.completed_date) if body.completed_date else None,
-            date.fromisoformat(body.due_date),
+            _parse_date(body.completed_date) if body.completed_date else None,
+            _parse_date(body.due_date),
             body.status, body.certificate_ref, body.trainer, body.notes)
         if not row:
             raise HTTPException(status_code=404, detail="Training record not found")
@@ -619,8 +619,8 @@ async def create_baa(body: BAARecord, user: dict = Depends(require_client_user))
             RETURNING *
         """, user["org_id"], body.associate_name, body.associate_type,
             body.contact_name, body.contact_email,
-            date.fromisoformat(body.signed_date) if body.signed_date else None,
-            date.fromisoformat(body.expiry_date) if body.expiry_date else None,
+            _parse_date(body.signed_date) if body.signed_date else None,
+            _parse_date(body.expiry_date) if body.expiry_date else None,
             body.auto_renew, body.status, body.phi_types or [],
             body.services_description, body.notes)
     return _row_dict(row)
@@ -640,8 +640,8 @@ async def update_baa(baa_id: str, body: BAARecord, user: dict = Depends(require_
             RETURNING *
         """, _uid(baa_id),user["org_id"], body.associate_name, body.associate_type,
             body.contact_name, body.contact_email,
-            date.fromisoformat(body.signed_date) if body.signed_date else None,
-            date.fromisoformat(body.expiry_date) if body.expiry_date else None,
+            _parse_date(body.signed_date) if body.signed_date else None,
+            _parse_date(body.expiry_date) if body.expiry_date else None,
             body.auto_renew, body.status, body.phi_types or [],
             body.services_description, body.notes)
         if not row:
@@ -710,14 +710,14 @@ async def create_breach(body: BreachRecord, user: dict = Depends(require_client_
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING *
         """, user["org_id"],
-            date.fromisoformat(body.incident_date),
-            date.fromisoformat(body.discovered_date),
+            _parse_date(body.incident_date),
+            _parse_date(body.discovered_date),
             body.description, body.phi_involved, body.individuals_affected,
             body.breach_type, body.notification_required,
             body.hhs_notified,
-            date.fromisoformat(body.hhs_notified_date) if body.hhs_notified_date else None,
+            _parse_date(body.hhs_notified_date) if body.hhs_notified_date else None,
             body.individuals_notified,
-            date.fromisoformat(body.individuals_notified_date) if body.individuals_notified_date else None,
+            _parse_date(body.individuals_notified_date) if body.individuals_notified_date else None,
             body.root_cause, body.corrective_actions, body.status)
     return _row_dict(row)
 
@@ -736,14 +736,14 @@ async def update_breach(breach_id: str, body: BreachRecord, user: dict = Depends
             WHERE id = $1 AND org_id = $2
             RETURNING *
         """, _uid(breach_id), user["org_id"],
-            date.fromisoformat(body.incident_date),
-            date.fromisoformat(body.discovered_date),
+            _parse_date(body.incident_date),
+            _parse_date(body.discovered_date),
             body.description, body.phi_involved, body.individuals_affected,
             body.breach_type, body.notification_required,
             body.hhs_notified,
-            date.fromisoformat(body.hhs_notified_date) if body.hhs_notified_date else None,
+            _parse_date(body.hhs_notified_date) if body.hhs_notified_date else None,
             body.individuals_notified,
-            date.fromisoformat(body.individuals_notified_date) if body.individuals_notified_date else None,
+            _parse_date(body.individuals_notified_date) if body.individuals_notified_date else None,
             body.root_cause, body.corrective_actions, body.status)
         if not row:
             raise HTTPException(status_code=404, detail="Breach record not found")
@@ -824,9 +824,9 @@ async def create_workforce(body: WorkforceRecord, user: dict = Depends(require_c
             RETURNING *
         """, user["org_id"], body.employee_name, body.employee_role, body.department,
             body.access_level, body.systems or [],
-            date.fromisoformat(body.start_date),
-            date.fromisoformat(body.termination_date) if body.termination_date else None,
-            date.fromisoformat(body.access_revoked_date) if body.access_revoked_date else None,
+            _parse_date(body.start_date),
+            _parse_date(body.termination_date) if body.termination_date else None,
+            _parse_date(body.access_revoked_date) if body.access_revoked_date else None,
             body.status, body.supervisor, body.notes)
     return _row_dict(row)
 
@@ -845,9 +845,9 @@ async def update_workforce(member_id: str, body: WorkforceRecord, user: dict = D
             RETURNING *
         """, _uid(member_id),user["org_id"], body.employee_name, body.employee_role,
             body.department, body.access_level, body.systems or [],
-            date.fromisoformat(body.start_date),
-            date.fromisoformat(body.termination_date) if body.termination_date else None,
-            date.fromisoformat(body.access_revoked_date) if body.access_revoked_date else None,
+            _parse_date(body.start_date),
+            _parse_date(body.termination_date) if body.termination_date else None,
+            _parse_date(body.access_revoked_date) if body.access_revoked_date else None,
             body.status, body.supervisor, body.notes)
         if not row:
             raise HTTPException(status_code=404, detail="Workforce member not found")
@@ -930,7 +930,7 @@ async def upsert_officers(body: OfficerUpsert, user: dict = Depends(require_clie
                     updated_at = NOW()
             """, user["org_id"], officer["role_type"], officer["name"],
                 officer.get("title"), officer.get("email"), officer.get("phone"),
-                date.fromisoformat(officer["appointed_date"]),
+                _parse_date(officer["appointed_date"]),
                 officer.get("notes"))
     return {"status": "saved"}
 
@@ -960,17 +960,17 @@ async def save_gap_analysis(body: GapResponseBatch, user: dict = Depends(require
         for resp in body.responses:
             await conn.execute("""
                 INSERT INTO hipaa_gap_responses
-                    (org_id, question_key, section, hipaa_reference, response,
-                     maturity_level, notes, evidence_ref, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                    (org_id, questionnaire_version, question_key, section, hipaa_reference,
+                     response, maturity_level, notes, evidence_ref, updated_at)
+                VALUES ($1, 'v1', $2, $3, $4, $5, $6, $7, $8, NOW())
                 ON CONFLICT (org_id, questionnaire_version, question_key) DO UPDATE SET
                     response = EXCLUDED.response,
                     maturity_level = EXCLUDED.maturity_level,
                     notes = EXCLUDED.notes,
                     evidence_ref = EXCLUDED.evidence_ref,
                     updated_at = NOW()
-            """, user["org_id"], resp["question_key"], resp["section"],
-                resp["hipaa_reference"], resp.get("response"),
+            """, user["org_id"], resp["question_key"], resp.get("section"),
+                resp.get("hipaa_reference"), resp.get("response"),
                 resp.get("maturity_level", 0), resp.get("notes"),
                 resp.get("evidence_ref"))
     return {"status": "saved"}

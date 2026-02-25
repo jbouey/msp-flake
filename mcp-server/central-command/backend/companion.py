@@ -25,7 +25,7 @@ from .hipaa_modules import (
     ContingencyCreate, WorkforceRecord, PhysicalSafeguardBatch,
     OfficerUpsert, GapResponseBatch,
 )
-from .db_utils import _uid, _row_dict, _rows_list
+from .db_utils import _uid, _row_dict, _rows_list, _parse_date
 from .hipaa_templates import (
     SRA_QUESTIONS, POLICY_TEMPLATES, IR_PLAN_TEMPLATE,
     PHYSICAL_SAFEGUARD_ITEMS, GAP_ANALYSIS_QUESTIONS,
@@ -539,8 +539,8 @@ async def create_training(org_id: str, body: TrainingRecord, request: Request, u
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *
         """, _uid(org_id),body.employee_name, body.employee_email, body.employee_role,
             body.training_type, body.training_topic,
-            date.fromisoformat(body.completed_date) if body.completed_date else None,
-            date.fromisoformat(body.due_date), body.status, body.certificate_ref, body.trainer, body.notes)
+            _parse_date(body.completed_date) if body.completed_date else None,
+            _parse_date(body.due_date), body.status, body.certificate_ref, body.trainer, body.notes)
     await _log_activity(pool, user["id"], _uid(org_id),"created_training", "training", ip=request.client.host if request.client else None)
     return _row_dict(row)
 
@@ -557,8 +557,8 @@ async def update_training(org_id: str, record_id: str, body: TrainingRecord, req
             WHERE id = $1 AND org_id = $2 RETURNING *
         """, _uid(record_id), _uid(org_id),body.employee_name, body.employee_email, body.employee_role,
             body.training_type, body.training_topic,
-            date.fromisoformat(body.completed_date) if body.completed_date else None,
-            date.fromisoformat(body.due_date), body.status, body.certificate_ref, body.trainer, body.notes)
+            _parse_date(body.completed_date) if body.completed_date else None,
+            _parse_date(body.due_date), body.status, body.certificate_ref, body.trainer, body.notes)
         if not row:
             raise HTTPException(status_code=404, detail="Training record not found")
     await _log_activity(pool, user["id"], _uid(org_id),"edited_training", "training", ip=request.client.host if request.client else None)
@@ -600,8 +600,8 @@ async def create_baa(org_id: str, body: BAARecord, request: Request, user: dict 
                  signed_date, expiry_date, auto_renew, status, phi_types, services_description, notes)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *
         """, _uid(org_id),body.associate_name, body.associate_type, body.contact_name, body.contact_email,
-            date.fromisoformat(body.signed_date) if body.signed_date else None,
-            date.fromisoformat(body.expiry_date) if body.expiry_date else None,
+            _parse_date(body.signed_date) if body.signed_date else None,
+            _parse_date(body.expiry_date) if body.expiry_date else None,
             body.auto_renew, body.status, body.phi_types or [], body.services_description, body.notes)
     await _log_activity(pool, user["id"], _uid(org_id),"created_baa", "baas", ip=request.client.host if request.client else None)
     return _row_dict(row)
@@ -619,8 +619,8 @@ async def update_baa(org_id: str, baa_id: str, body: BAARecord, request: Request
                 phi_types=$11, services_description=$12, notes=$13, updated_at=NOW()
             WHERE id = $1 AND org_id = $2 RETURNING *
         """, _uid(baa_id), _uid(org_id),body.associate_name, body.associate_type, body.contact_name, body.contact_email,
-            date.fromisoformat(body.signed_date) if body.signed_date else None,
-            date.fromisoformat(body.expiry_date) if body.expiry_date else None,
+            _parse_date(body.signed_date) if body.signed_date else None,
+            _parse_date(body.expiry_date) if body.expiry_date else None,
             body.auto_renew, body.status, body.phi_types or [], body.services_description, body.notes)
         if not row:
             raise HTTPException(status_code=404, detail="BAA not found")
@@ -676,7 +676,7 @@ async def create_breach(org_id: str, body: BreachRecord, request: Request, user:
                 (org_id, incident_date, discovered_date, description, phi_involved,
                  individuals_affected, breach_type, notification_required, root_cause, corrective_actions, status)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *
-        """, _uid(org_id),date.fromisoformat(body.incident_date), date.fromisoformat(body.discovered_date),
+        """, _uid(org_id),_parse_date(body.incident_date), _parse_date(body.discovered_date),
             body.description, body.phi_involved, body.individuals_affected,
             body.breach_type, body.notification_required, body.root_cause, body.corrective_actions, body.status)
     await _log_activity(pool, user["id"], _uid(org_id),"created_breach", "ir-plan", ip=request.client.host if request.client else None)
@@ -694,7 +694,7 @@ async def update_breach(org_id: str, breach_id: str, body: BreachRecord, request
                 individuals_affected=$7, breach_type=$8, notification_required=$9,
                 root_cause=$10, corrective_actions=$11, status=$12, updated_at=NOW()
             WHERE id = $1 AND org_id = $2 RETURNING *
-        """, _uid(breach_id), _uid(org_id),date.fromisoformat(body.incident_date), date.fromisoformat(body.discovered_date),
+        """, _uid(breach_id), _uid(org_id),_parse_date(body.incident_date), _parse_date(body.discovered_date),
             body.description, body.phi_involved, body.individuals_affected,
             body.breach_type, body.notification_required, body.root_cause, body.corrective_actions, body.status)
         if not row:
@@ -771,9 +771,9 @@ async def create_workforce(org_id: str, body: WorkforceRecord, request: Request,
                  start_date, termination_date, access_revoked_date, status, supervisor, notes)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *
         """, _uid(org_id),body.employee_name, body.employee_role, body.department, body.access_level,
-            body.systems or [], date.fromisoformat(body.start_date),
-            date.fromisoformat(body.termination_date) if body.termination_date else None,
-            date.fromisoformat(body.access_revoked_date) if body.access_revoked_date else None,
+            body.systems or [], _parse_date(body.start_date),
+            _parse_date(body.termination_date) if body.termination_date else None,
+            _parse_date(body.access_revoked_date) if body.access_revoked_date else None,
             body.status, body.supervisor, body.notes)
     await _log_activity(pool, user["id"], _uid(org_id),"created_workforce", "workforce", ip=request.client.host if request.client else None)
     return _row_dict(row)
@@ -790,9 +790,9 @@ async def update_workforce(org_id: str, member_id: str, body: WorkforceRecord, r
                 start_date=$8, termination_date=$9, access_revoked_date=$10, status=$11, supervisor=$12, notes=$13, updated_at=NOW()
             WHERE id = $1 AND org_id = $2 RETURNING *
         """, _uid(member_id), _uid(org_id),body.employee_name, body.employee_role, body.department,
-            body.access_level, body.systems or [], date.fromisoformat(body.start_date),
-            date.fromisoformat(body.termination_date) if body.termination_date else None,
-            date.fromisoformat(body.access_revoked_date) if body.access_revoked_date else None,
+            body.access_level, body.systems or [], _parse_date(body.start_date),
+            _parse_date(body.termination_date) if body.termination_date else None,
+            _parse_date(body.access_revoked_date) if body.access_revoked_date else None,
             body.status, body.supervisor, body.notes)
         if not row:
             raise HTTPException(status_code=404, detail="Workforce member not found")
@@ -862,7 +862,7 @@ async def upsert_officers(org_id: str, body: OfficerUpsert, request: Request, us
                     phone=EXCLUDED.phone, appointed_date=EXCLUDED.appointed_date, notes=EXCLUDED.notes, updated_at=NOW()
             """, _uid(org_id),officer["role_type"], officer["name"],
                 officer.get("title"), officer.get("email"), officer.get("phone"),
-                date.fromisoformat(officer["appointed_date"]), officer.get("notes"))
+                _parse_date(officer["appointed_date"]), officer.get("notes"))
     await _log_activity(pool, user["id"], _uid(org_id),"edited_officers", "officers", ip=request.client.host if request.client else None)
     return {"status": "saved"}
 
@@ -889,12 +889,13 @@ async def save_gap_analysis(org_id: str, body: GapResponseBatch, request: Reques
         for resp in body.responses:
             await conn.execute("""
                 INSERT INTO hipaa_gap_responses
-                    (org_id, question_key, section, hipaa_reference, response, maturity_level, notes, evidence_ref, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                    (org_id, questionnaire_version, question_key, section, hipaa_reference,
+                     response, maturity_level, notes, evidence_ref, updated_at)
+                VALUES ($1, 'v1', $2, $3, $4, $5, $6, $7, $8, NOW())
                 ON CONFLICT (org_id, questionnaire_version, question_key) DO UPDATE SET
                     response=EXCLUDED.response, maturity_level=EXCLUDED.maturity_level,
                     notes=EXCLUDED.notes, evidence_ref=EXCLUDED.evidence_ref, updated_at=NOW()
-            """, _uid(org_id),resp["question_key"], resp.get("section"), resp.get("hipaa_reference"),
+            """, _uid(org_id), resp["question_key"], resp.get("section"), resp.get("hipaa_reference"),
                 resp.get("response"), resp.get("maturity_level", 0), resp.get("notes"), resp.get("evidence_ref"))
     await _log_activity(pool, user["id"], _uid(org_id),"edited_gap_analysis", "gap-analysis", ip=request.client.host if request.client else None)
     return {"status": "saved"}
