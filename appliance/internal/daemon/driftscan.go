@@ -69,6 +69,46 @@ func newDriftScanner(d *Daemon) *driftScanner {
 	return &driftScanner{daemon: d}
 }
 
+// ForceScan runs both Windows and Linux drift scans immediately,
+// bypassing the interval check. Called from run_drift fleet order handler.
+func (ds *driftScanner) ForceScan(ctx context.Context) map[string]interface{} {
+	log.Printf("[driftscan] Force scan triggered by fleet order")
+
+	windowsDone := false
+	linuxDone := false
+
+	// Run Windows scan if configured
+	cfg := ds.daemon.config
+	if cfg.WorkstationEnabled && cfg.DomainController != nil && *cfg.DomainController != "" {
+		if atomic.CompareAndSwapInt32(&ds.running, 0, 1) {
+			ds.mu.Lock()
+			ds.lastScanTime = time.Now()
+			ds.mu.Unlock()
+			ds.scanWindowsTargets(ctx)
+			atomic.StoreInt32(&ds.running, 0)
+			windowsDone = true
+		}
+	}
+
+	// Run Linux scan
+	if cfg.EnableDriftDetection {
+		if atomic.CompareAndSwapInt32(&ds.linuxRunning, 0, 1) {
+			ds.linuxMu.Lock()
+			ds.lastLinuxScanTime = time.Now()
+			ds.linuxMu.Unlock()
+			ds.scanLinuxTargets(ctx)
+			atomic.StoreInt32(&ds.linuxRunning, 0)
+			linuxDone = true
+		}
+	}
+
+	return map[string]interface{}{
+		"status":       "scan_completed",
+		"windows_scan": windowsDone,
+		"linux_scan":   linuxDone,
+	}
+}
+
 // runDriftScanIfNeeded runs a full scan if the interval has elapsed.
 // Called from the main daemon loop (runCycle).
 func (ds *driftScanner) runDriftScanIfNeeded(ctx context.Context) {

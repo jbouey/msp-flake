@@ -51,14 +51,14 @@ let
   # Feature-flagged: enabled by /var/lib/msp/.use-go-daemon or config.yaml use_go_daemon: true
   appliance-daemon-go = pkgs.buildGoModule {
     pname = "appliance-daemon";
-    version = "0.2.4";
+    version = "0.2.5";
     src = ../appliance;
 
     vendorHash = "sha256-UUQ3KKz2l1U77lJ16L/K7Zzo/gkSuwVLrzO/I/f4FUM=";
 
     ldflags = [
       "-s" "-w"
-      "-X github.com/osiriscare/appliance/internal/daemon.Version=0.2.4"
+      "-X github.com/osiriscare/appliance/internal/daemon.Version=0.2.5"
     ];
 
     subPackages = [
