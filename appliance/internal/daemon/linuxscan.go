@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -13,6 +14,30 @@ import (
 	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/sshexec"
 )
+
+// bashCandidates lists paths to search for bash, in priority order.
+// NixOS puts bash in /run/current-system/sw/bin/ which is often missing
+// from the restricted PATH set by systemd services.
+var bashCandidates = []string{
+	"/run/current-system/sw/bin/bash", // NixOS system profile
+	"/usr/bin/bash",                   // most distros
+	"/bin/bash",                       // traditional path
+}
+
+// findBash returns the full path to a working bash binary.
+// It first tries exec.LookPath (honours $PATH), then falls back to
+// well-known absolute paths. Returns an error if no bash is found.
+func findBash() (string, error) {
+	if p, err := exec.LookPath("bash"); err == nil {
+		return p, nil
+	}
+	for _, p := range bashCandidates {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("bash not found in $PATH or at %v", bashCandidates)
+}
 
 // linuxScanScript is a comprehensive bash script that checks all Linux security
 // controls in a single SSH call. Outputs JSON to minimize round-trips.
@@ -350,7 +375,13 @@ func (ds *driftScanner) scanLinuxSelf(ctx context.Context) []driftFinding {
 		hostname = h + "-appliance"
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", linuxScanScript)
+	bashPath, err := findBash()
+	if err != nil {
+		log.Printf("[linuxscan] Self-scan failed: %v", err)
+		return nil
+	}
+
+	cmd := exec.CommandContext(ctx, bashPath, "-c", linuxScanScript)
 	out, err := cmd.Output()
 	if err != nil {
 		log.Printf("[linuxscan] Self-scan failed: %v", err)

@@ -15,6 +15,32 @@ import (
 	"github.com/osiriscare/appliance/internal/winrm"
 )
 
+// flexStringSlice handles PowerShell JSON that serializes single-element arrays
+// as bare strings. Accepts both "value" and ["value"] in JSON.
+type flexStringSlice []string
+
+func (f *flexStringSlice) UnmarshalJSON(data []byte) error {
+	// Try as array first (common case)
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*f = arr
+		return nil
+	}
+	// Fall back to bare string
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		if s != "" {
+			*f = []string{s}
+		} else {
+			*f = nil
+		}
+		return nil
+	}
+	// Accept null gracefully
+	*f = nil
+	return nil
+}
+
 const (
 	driftScanInterval = 15 * time.Minute // How often to scan all targets
 
@@ -209,7 +235,7 @@ try {
         }
     }
 } catch {}
-$result.RogueAdmins = $rogueAdmins
+$result.RogueAdmins = @($rogueAdmins)
 
 # 6. Rogue scheduled tasks (not in Microsoft\Windows\ path)
 $rogueTasks = @()
@@ -273,7 +299,7 @@ try {
     if ($prefs.ExclusionProcess) { $defExclusions += $prefs.ExclusionProcess }
     if ($prefs.ExclusionExtension) { $defExclusions += $prefs.ExclusionExtension }
 } catch {}
-$result.DefenderExclusions = $defExclusions
+$result.DefenderExclusions = @($defExclusions)
 
 # 13. DNS configuration (check for hijacking)
 $dnsServers = @()
@@ -281,9 +307,9 @@ try {
     Get-DnsClientServerAddress -AddressFamily IPv4 -EA Stop | Where-Object { $_.ServerAddresses.Count -gt 0 } | ForEach-Object {
         $dnsServers += $_.ServerAddresses
     }
-    $dnsServers = $dnsServers | Select-Object -Unique
+    $dnsServers = @($dnsServers | Select-Object -Unique)
 } catch {}
-$result.DNSServers = $dnsServers
+$result.DNSServers = @($dnsServers)
 
 # 14. Network profile (domain vs public/private)
 $netProfiles = @{}
@@ -369,7 +395,7 @@ type windowsScanState struct {
 	Defender      string            `json:"Defender"`
 	WindowsUpdate string            `json:"WindowsUpdate"`
 	EventLog      string            `json:"EventLog"`
-	RogueAdmins   []string          `json:"RogueAdmins"`
+	RogueAdmins   flexStringSlice   `json:"RogueAdmins"`
 	RogueTasks    []struct {
 		Name  string `json:"Name"`
 		Path  string `json:"Path"`
@@ -380,8 +406,8 @@ type windowsScanState struct {
 	SMBSigning         string            `json:"SMBSigning"`
 	SMB1               string            `json:"SMB1"`
 	ScreenLock         string            `json:"ScreenLock"`
-	DefenderExclusions []string          `json:"DefenderExclusions"`
-	DNSServers         []string          `json:"DNSServers"`
+	DefenderExclusions flexStringSlice   `json:"DefenderExclusions"`
+	DNSServers         flexStringSlice   `json:"DNSServers"`
 	NetworkProfiles    map[string]string `json:"NetworkProfiles"`
 	PasswordPolicy     struct {
 		MinLength        int `json:"MinLength"`
@@ -726,7 +752,7 @@ $result = Invoke-Command -Session $session -ScriptBlock {
             }
         }
     } catch {}
-    $r.RogueAdmins = $rogueAdmins
+    $r.RogueAdmins = @($rogueAdmins)
     $r.RogueTasks = @()
     try {
         Get-ScheduledTask -EA Stop | Where-Object {

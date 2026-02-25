@@ -25,7 +25,7 @@ import (
 )
 
 // Version is set at build time.
-var Version = "0.1.0"
+var Version = "0.2.3"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {
