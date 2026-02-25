@@ -375,6 +375,7 @@ export interface SiteAppliance {
   first_checkin: string | null;
   last_checkin: string | null;
   uptime_seconds: number | null;
+  l2_mode: 'auto' | 'manual' | 'disabled';
 }
 
 export interface SiteCredential {
@@ -548,6 +549,13 @@ export const ordersApi = {
       method: 'POST',
       body: JSON.stringify({ stale_hours: staleHours }),
     }),
+
+  // Update L2 healing mode for an appliance
+  updateL2Mode: (siteId: string, applianceId: string, l2Mode: string) =>
+    fetchSitesApi<{ status: string; appliance_id: string; l2_mode: string }>(
+      `/sites/${siteId}/appliances/${applianceId}/l2-mode`,
+      { method: 'PATCH', body: JSON.stringify({ l2_mode: l2Mode }) }
+    ),
 };
 
 // =============================================================================

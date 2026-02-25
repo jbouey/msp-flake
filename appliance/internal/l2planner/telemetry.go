@@ -82,10 +82,10 @@ func (r *TelemetryReporter) ReportExecution(
 	execID := fmt.Sprintf("l2-%s-%d", incident.ID, now.UnixMilli())
 	costUSD := CalculateCost(inputTokens, outputTokens)
 
-	// Use incident's pattern signature if available, otherwise build from type+host
+	// Use incident's pattern signature if available, otherwise build from type+runbook+host
 	patternSig := incident.PatternSignature
 	if patternSig == "" {
-		patternSig = fmt.Sprintf("%s:%s:%s", incident.IncidentType, incident.IncidentType, incident.HostID)
+		patternSig = fmt.Sprintf("%s:%s:%s", incident.IncidentType, decision.RunbookID, incident.HostID)
 	}
 
 	status := "success"
@@ -158,7 +158,7 @@ func (r *TelemetryReporter) ReportL1Execution(
 ) {
 	now := time.Now().UTC()
 	execID := fmt.Sprintf("l1-%s-%d", incidentID, now.UnixMilli())
-	patternSig := fmt.Sprintf("%s:%s:%s", incidentType, incidentType, hostname)
+	patternSig := fmt.Sprintf("%s:%s:%s", incidentType, ruleID, hostname)
 
 	status := "success"
 	if !success {

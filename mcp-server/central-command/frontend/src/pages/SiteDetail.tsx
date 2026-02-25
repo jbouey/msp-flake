@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge, ActionDropdown } from '../components/shared';
 import type { ActionItem } from '../components/shared';
 import { DeploymentProgress } from '../components/deployment';
-import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier } from '../hooks';
+import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier, useUpdateL2Mode } from '../hooks';
 import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
 import { fleetUpdatesApi, type FleetStats } from '../utils/api';
 
@@ -49,13 +49,45 @@ function formatUptime(seconds: number | null): string {
  */
 const AGENT_PACKAGE_BASE_URL = 'https://api.osiriscare.net/agent-packages';
 
+const L2ModeToggle: React.FC<{
+  mode: string;
+  onChange: (mode: string) => void;
+  disabled?: boolean;
+}> = ({ mode, onChange, disabled }) => {
+  const modes = [
+    { value: 'auto', label: 'Auto', color: 'bg-health-healthy text-white' },
+    { value: 'manual', label: 'Manual', color: 'bg-health-warning text-white' },
+    { value: 'disabled', label: 'Off', color: 'bg-health-critical text-white' },
+  ];
+
+  return (
+    <div className="inline-flex rounded-lg bg-fill-secondary p-0.5">
+      {modes.map((m) => (
+        <button
+          key={m.value}
+          onClick={() => onChange(m.value)}
+          disabled={disabled}
+          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+            mode === m.value
+              ? m.color + ' shadow-sm'
+              : 'text-label-tertiary hover:text-label-secondary'
+          } disabled:opacity-50`}
+        >
+          {m.label}
+        </button>
+      ))}
+    </div>
+  );
+};
+
 const ApplianceCard: React.FC<{
   appliance: SiteAppliance;
   latestVersion: string | null;
   onCreateOrder: (applianceId: string, orderType: OrderType, parameters?: Record<string, unknown>) => void;
   onDelete: (applianceId: string) => void;
+  onUpdateL2Mode: (applianceId: string, mode: string) => void;
   isLoading?: boolean;
-}> = ({ appliance, latestVersion, onCreateOrder, onDelete, isLoading }) => {
+}> = ({ appliance, latestVersion, onCreateOrder, onDelete, onUpdateL2Mode, isLoading }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
 
@@ -134,6 +166,18 @@ const ApplianceCard: React.FC<{
           <p className="text-label-tertiary">Uptime</p>
           <p className="text-label-secondary">{formatUptime(appliance.uptime_seconds)}</p>
         </div>
+      </div>
+
+      {/* L2 Healing Mode */}
+      <div className="mt-3 pt-3 border-t border-separator-light flex items-center justify-between">
+        <div>
+          <p className="text-xs text-label-tertiary">L2 Healing (LLM)</p>
+        </div>
+        <L2ModeToggle
+          mode={appliance.l2_mode || 'auto'}
+          onChange={(mode) => onUpdateL2Mode(appliance.appliance_id, mode)}
+          disabled={isLoading}
+        />
       </div>
 
       {/* Action Buttons */}
@@ -586,6 +630,7 @@ export const SiteDetail: React.FC = () => {
   const deleteAppliance = useDeleteAppliance();
   const clearStale = useClearStaleAppliances();
   const updateHealingTier = useUpdateHealingTier();
+  const updateL2Mode = useUpdateL2Mode();
 
   const isOrderLoading = createOrder.isPending || broadcastOrder.isPending || deleteAppliance.isPending || clearStale.isPending;
 
@@ -658,6 +703,18 @@ export const SiteDetail: React.FC = () => {
       showToast(`Cleared ${result.deleted_count} stale appliances`, 'success');
     } catch (error) {
       showToast(`Failed to clear stale appliances: ${error}`, 'error');
+    }
+  };
+
+  // Handle updating L2 mode for an appliance
+  const handleUpdateL2Mode = async (applianceId: string, l2Mode: string) => {
+    if (!siteId) return;
+    try {
+      await updateL2Mode.mutateAsync({ siteId, applianceId, l2Mode });
+      const labels: Record<string, string> = { auto: 'Auto', manual: 'Manual', disabled: 'Disabled' };
+      showToast(`L2 healing set to ${labels[l2Mode] || l2Mode}`, 'success');
+    } catch (error) {
+      showToast(`Failed to update L2 mode: ${error}`, 'error');
     }
   };
 
@@ -868,6 +925,7 @@ export const SiteDetail: React.FC = () => {
                     latestVersion={latestVersion}
                     onCreateOrder={handleCreateOrder}
                     onDelete={handleDeleteAppliance}
+                    onUpdateL2Mode={handleUpdateL2Mode}
                     isLoading={isOrderLoading}
                   />
                 ))}

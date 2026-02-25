@@ -808,13 +808,14 @@ async def add_manual_device(site_id: str, device: ManualDeviceAdd, user: dict = 
 async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
     """Get all appliances for a site. Requires authentication."""
     pool = await get_pool()
-    
+
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT 
+            SELECT
                 appliance_id, hostname, mac_address, ip_addresses,
                 agent_version, nixos_version, status, first_checkin,
-                last_checkin, uptime_seconds
+                last_checkin, uptime_seconds,
+                COALESCE(l2_mode, 'auto') as l2_mode
             FROM site_appliances
             WHERE site_id = $1
             ORDER BY hostname
@@ -837,6 +838,7 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
                 'first_checkin': row['first_checkin'].isoformat() if row['first_checkin'] else None,
                 'last_checkin': last_checkin.isoformat() if last_checkin else None,
                 'uptime_seconds': row['uptime_seconds'],
+                'l2_mode': row['l2_mode'],
             })
         
         return {
@@ -868,6 +870,43 @@ async def delete_appliance(site_id: str, appliance_id: str, user: dict = Depends
             'appliance_id': appliance_id,
             'site_id': site_id
         }
+
+
+class L2ModeUpdate(BaseModel):
+    """Request to update L2 healing mode for an appliance."""
+    l2_mode: str  # 'auto', 'manual', 'disabled'
+
+
+@router.patch("/{site_id}/appliances/{appliance_id}/l2-mode")
+async def update_appliance_l2_mode(
+    site_id: str,
+    appliance_id: str,
+    body: L2ModeUpdate,
+    user: dict = Depends(require_operator),
+):
+    """Update L2 healing mode for an appliance. Requires operator access.
+
+    Modes:
+    - auto: L2 LLM plans execute automatically
+    - manual: L2 generates plans but escalates for human approval
+    - disabled: L2 is skipped entirely, only L1 deterministic rules run
+    """
+    if body.l2_mode not in ("auto", "manual", "disabled"):
+        raise HTTPException(400, "l2_mode must be 'auto', 'manual', or 'disabled'")
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute("""
+            UPDATE site_appliances
+            SET l2_mode = $1
+            WHERE appliance_id = $2 AND site_id = $3
+        """, body.l2_mode, appliance_id, site_id)
+
+        if result == "UPDATE 0":
+            raise HTTPException(404, f"Appliance {appliance_id} not found in site {site_id}")
+
+    logger.info("L2 mode updated: appliance=%s mode=%s by=%s", appliance_id, body.l2_mode, user.get("email", "unknown"))
+    return {"status": "updated", "appliance_id": appliance_id, "l2_mode": body.l2_mode}
 
 
 class ClearStaleRequest(BaseModel):

@@ -30,6 +30,7 @@ interface PromotionCandidate {
   last_seen: string | null;
   approval_status: string;
   client_endorsed: boolean;
+  healing_tier: string;
 }
 
 type TabKey = 'logs' | 'candidates';
@@ -84,6 +85,15 @@ export const ClientHealingLogs: React.FC = () => {
   const [forwardNotes, setForwardNotes] = useState('');
   const [forwarding, setForwarding] = useState(false);
   const [forwardSuccess, setForwardSuccess] = useState<string | null>(null);
+
+  // Approve/reject state (full_coverage only)
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approveNotes, setApproveNotes] = useState('');
+  const [approving, setApproving] = useState(false);
+  const [approveSuccess, setApproveSuccess] = useState<string | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejecting, setRejecting] = useState(false);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -162,6 +172,70 @@ export const ClientHealingLogs: React.FC = () => {
       console.error('Failed to forward candidate:', e);
     } finally {
       setForwarding(false);
+    }
+  };
+
+  const handleApprove = async (candidateId: string) => {
+    setApproving(true);
+    try {
+      const res = await fetch(
+        `/api/client/promotion-candidates/${candidateId}/approve`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ notes: approveNotes || null }),
+        }
+      );
+      if (res.ok) {
+        setCandidates((prev) =>
+          prev.map((c) =>
+            c.id === candidateId ? { ...c, approval_status: 'approved' } : c
+          )
+        );
+        setApproveSuccess(candidateId);
+        setApprovingId(null);
+        setApproveNotes('');
+        setTimeout(() => setApproveSuccess(null), 3000);
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Approval failed' }));
+        alert(err.detail || 'Failed to approve');
+      }
+    } catch (e) {
+      console.error('Failed to approve candidate:', e);
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const handleReject = async (candidateId: string) => {
+    setRejecting(true);
+    try {
+      const res = await fetch(
+        `/api/client/promotion-candidates/${candidateId}/reject`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ reason: rejectReason || 'No reason provided' }),
+        }
+      );
+      if (res.ok) {
+        setCandidates((prev) =>
+          prev.map((c) =>
+            c.id === candidateId ? { ...c, approval_status: 'rejected' } : c
+          )
+        );
+        setRejectingId(null);
+        setRejectReason('');
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Rejection failed' }));
+        alert(err.detail || 'Failed to reject');
+      }
+    } catch (e) {
+      console.error('Failed to reject candidate:', e);
+    } finally {
+      setRejecting(false);
     }
   };
 
@@ -469,17 +543,59 @@ export const ClientHealingLogs: React.FC = () => {
                           </p>
                         )}
 
-                        {/* Forward button or forwarded state */}
-                        {!c.client_endorsed && c.approval_status === 'not_submitted' && !isForwarding && (
-                          <button
-                            onClick={() => {
-                              setForwardingId(c.id);
-                              setForwardNotes('');
-                            }}
-                            className="w-full py-2 px-4 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors"
-                          >
-                            Forward to Partner
-                          </button>
+                        {/* Action buttons — depends on healing tier */}
+                        {c.approval_status === 'not_submitted' && !isForwarding && approvingId !== c.id && rejectingId !== c.id && (
+                          c.healing_tier === 'full_coverage' ? (
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  setApprovingId(c.id);
+                                  setApproveNotes('');
+                                  setRejectingId(null);
+                                }}
+                                className="flex-1 py-2 px-4 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+                              >
+                                Approve & Deploy
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setRejectingId(c.id);
+                                  setRejectReason('');
+                                  setApprovingId(null);
+                                }}
+                                className="py-2 px-4 text-sm font-medium rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors"
+                              >
+                                Reject
+                              </button>
+                              {!c.client_endorsed && (
+                                <button
+                                  onClick={() => {
+                                    setForwardingId(c.id);
+                                    setForwardNotes('');
+                                  }}
+                                  className="py-2 px-4 text-sm font-medium rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors"
+                                >
+                                  Forward
+                                </button>
+                              )}
+                            </div>
+                          ) : !c.client_endorsed ? (
+                            <button
+                              onClick={() => {
+                                setForwardingId(c.id);
+                                setForwardNotes('');
+                              }}
+                              className="w-full py-2 px-4 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors"
+                            >
+                              Forward to Partner
+                            </button>
+                          ) : null
+                        )}
+
+                        {approveSuccess === c.id && (
+                          <div className="text-center py-2 text-sm text-green-600 font-medium">
+                            Approved — rule will deploy on next sync
+                          </div>
                         )}
 
                         {justForwarded && (
@@ -514,6 +630,77 @@ export const ClientHealingLogs: React.FC = () => {
                               onClick={() => {
                                 setForwardingId(null);
                                 setForwardNotes('');
+                              }}
+                              className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 rounded-lg border border-slate-200 hover:bg-slate-100"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Inline approve form (full_coverage) */}
+                      {approvingId === c.id && (
+                        <div className="border-t border-green-100 bg-green-50/50 p-4">
+                          <p className="text-xs font-medium text-green-800 mb-2">
+                            This will create an L1 rule for your site. The pattern will be auto-healed on future occurrences.
+                          </p>
+                          <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                            Notes (optional)
+                          </label>
+                          <textarea
+                            value={approveNotes}
+                            onChange={(e) => setApproveNotes(e.target.value)}
+                            placeholder="Reason for approval..."
+                            rows={2}
+                            className="w-full px-3 py-2 text-sm border border-green-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-400"
+                          />
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              onClick={() => handleApprove(c.id)}
+                              disabled={approving}
+                              className="flex-1 py-2 px-4 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+                            >
+                              {approving ? 'Approving...' : 'Confirm Approval'}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setApprovingId(null);
+                                setApproveNotes('');
+                              }}
+                              className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 rounded-lg border border-slate-200 hover:bg-slate-100"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Inline reject form (full_coverage) */}
+                      {rejectingId === c.id && (
+                        <div className="border-t border-red-100 bg-red-50/50 p-4">
+                          <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                            Reason for rejection
+                          </label>
+                          <textarea
+                            value={rejectReason}
+                            onChange={(e) => setRejectReason(e.target.value)}
+                            placeholder="Why is this pattern not suitable for auto-healing?"
+                            rows={2}
+                            className="w-full px-3 py-2 text-sm border border-red-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-400"
+                          />
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              onClick={() => handleReject(c.id)}
+                              disabled={rejecting || !rejectReason.trim()}
+                              className="flex-1 py-2 px-4 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                            >
+                              {rejecting ? 'Rejecting...' : 'Confirm Rejection'}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setRejectingId(null);
+                                setRejectReason('');
                               }}
                               className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 rounded-lg border border-slate-200 hover:bg-slate-100"
                             >

@@ -71,6 +71,10 @@ type Daemon struct {
 	// Linux targets from checkin response
 	linuxTargetsMu sync.RWMutex
 	linuxTargets   []linuxTarget
+
+	// L2 mode: "auto" (execute immediately), "manual" (queue for approval), "disabled" (L1 only)
+	l2ModeMu sync.RWMutex
+	l2Mode   string
 }
 
 // New creates a new daemon with the given configuration.
@@ -315,6 +319,16 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		d.linuxTargetsMu.Unlock()
 	}
 
+	// Store L2 healing mode from checkin response
+	if resp.L2Mode != "" {
+		d.l2ModeMu.Lock()
+		if d.l2Mode != resp.L2Mode {
+			log.Printf("[daemon] L2 mode changed: %s → %s", d.l2Mode, resp.L2Mode)
+		}
+		d.l2Mode = resp.L2Mode
+		d.l2ModeMu.Unlock()
+	}
+
 	// Process pending orders via order processor
 	if len(resp.PendingOrders) > 0 {
 		d.processOrders(ctx, resp.PendingOrders)
@@ -523,6 +537,21 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 		return
 	}
 
+	// Check L2 mode: "disabled" skips L2, "manual" generates plan but escalates for approval
+	d.l2ModeMu.RLock()
+	l2Mode := d.l2Mode
+	d.l2ModeMu.RUnlock()
+	if l2Mode == "" {
+		l2Mode = "auto" // Default if not yet received from checkin
+	}
+
+	if l2Mode == "disabled" {
+		log.Printf("[daemon] L2 disabled for this appliance — escalating %s/%s to L3",
+			req.Hostname, req.CheckType)
+		d.escalateToL3(incidentID, req, "No L1 rule match, L2 disabled by policy")
+		return
+	}
+
 	// L2: Native LLM planner (preferred)
 	if d.l2Planner != nil && d.l2Planner.IsConnected() {
 		log.Printf("[daemon] L1 no match for %s/%s, escalating to L2 (native)", req.Hostname, req.CheckType)
@@ -546,6 +575,16 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 		}
 
 		if decision.ShouldExecute() {
+			// Manual mode: L2 generates plan but requires human approval
+			if l2Mode == "manual" {
+				log.Printf("[daemon] L2 plan ready but mode=manual — escalating %s/%s for approval: %s",
+					req.Hostname, req.CheckType, decision.RecommendedAction)
+				d.escalateToL3(incidentID, req, fmt.Sprintf(
+					"L2 plan available (manual approval required): action=%s confidence=%.2f — %s",
+					decision.RecommendedAction, decision.Confidence, decision.Reasoning))
+				return
+			}
+
 			log.Printf("[daemon] L2 decision: %s (confidence=%.2f) for %s/%s",
 				decision.RecommendedAction, decision.Confidence, req.Hostname, req.CheckType)
 			l2Start := time.Now()

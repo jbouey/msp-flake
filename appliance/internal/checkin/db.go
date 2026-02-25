@@ -544,6 +544,18 @@ func (db *DB) FetchAndClearTriggers(ctx context.Context, tx pgx.Tx, canonicalID 
 	return flags
 }
 
+// FetchL2Mode returns the L2 healing mode for the appliance ('auto', 'manual', 'disabled').
+func (db *DB) FetchL2Mode(ctx context.Context, tx pgx.Tx, canonicalID string) string {
+	var mode *string
+	err := tx.QueryRow(ctx, `
+		SELECT l2_mode FROM site_appliances WHERE appliance_id = $1
+	`, canonicalID).Scan(&mode)
+	if err != nil || mode == nil {
+		return "auto" // Default
+	}
+	return *mode
+}
+
 // BeginTx starts a transaction.
 func (db *DB) BeginTx(ctx context.Context) (pgx.Tx, error) {
 	return db.pool.Begin(ctx)
@@ -658,6 +670,9 @@ func (db *DB) ProcessCheckin(ctx context.Context, req CheckinRequest) (*CheckinR
 	// Step 7: Fetch and clear triggers
 	flags := db.FetchAndClearTriggers(ctx, tx, canonicalID)
 
+	// Step 8: Fetch L2 healing mode
+	l2Mode := db.FetchL2Mode(ctx, tx, canonicalID)
+
 	// Commit transaction
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -689,5 +704,6 @@ func (db *DB) ProcessCheckin(ctx context.Context, req CheckinRequest) (*CheckinR
 		EnabledRunbooks:      enabledRunbooks,
 		TriggerEnumeration:   flags.Enumeration,
 		TriggerImmediateScan: flags.ImmediateScan,
+		L2Mode:               l2Mode,
 	}, nil
 }

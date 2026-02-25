@@ -582,7 +582,7 @@ async def _flywheel_promotion_loop():
                         )
                         SELECT
                             LEFT(md5(et.incident_type || ':' || et.runbook_id || ':' || et.hostname), 16) as pattern_id,
-                            et.incident_type || ':' || et.incident_type || ':' || et.hostname as pattern_signature,
+                            et.incident_type || ':' || et.runbook_id || ':' || et.hostname as pattern_signature,
                             et.incident_type,
                             et.runbook_id,
                             COUNT(*) as occurrences,
@@ -595,45 +595,18 @@ async def _flywheel_promotion_loop():
                           AND et.runbook_id IS NOT NULL
                         GROUP BY et.incident_type, et.runbook_id, et.hostname
                         HAVING COUNT(*) >= 5
-                        ON CONFLICT (pattern_signature) DO NOTHING
+                        ON CONFLICT (pattern_signature) DO UPDATE SET
+                            occurrences = EXCLUDED.occurrences,
+                            success_count = EXCLUDED.success_count,
+                            failure_count = EXCLUDED.failure_count
                     """))
                     await db.commit()
                 except Exception as e:
                     logger.debug(f"Flywheel pattern generation: {e}")
                     await db.rollback()
 
-                # Path 1: Auto-promote qualifying patterns from patterns table
-                result = await db.execute(text("""
-                    SELECT pattern_id, pattern_signature, incident_type, runbook_id,
-                           occurrences, success_count, failure_count
-                    FROM patterns
-                    WHERE status = 'pending'
-                      AND occurrences >= 5
-                      AND success_count > 0
-                      AND CAST(success_count AS FLOAT) / occurrences >= 0.90
-                      AND runbook_id NOT LIKE 'AUTO-%'
-                    ORDER BY occurrences DESC
-                    LIMIT 10
-                """))
-                candidates = result.fetchall()
-
-                promoted_count = 0
-                for candidate in candidates:
-                    try:
-                        from dashboard_api.db_queries import promote_pattern_in_db
-                        rule_id = await promote_pattern_in_db(db, candidate.pattern_id)
-                        if rule_id:
-                            promoted_count += 1
-                            logger.info(
-                                "Flywheel auto-promoted pattern",
-                                pattern_id=candidate.pattern_id[:8],
-                                incident_type=candidate.incident_type,
-                                rule_id=rule_id,
-                                occurrences=candidate.occurrences,
-                                success_rate=f"{candidate.success_count / candidate.occurrences:.1%}",
-                            )
-                    except Exception as e:
-                        logger.warning(f"Failed to promote pattern {candidate.pattern_id[:8]}: {e}")
+                # Path 1 (removed): Auto-promotion disabled — all promotions
+                # require manual partner approval via the Learning dashboard.
 
                 # Path 2: Update promotion_eligible on aggregated_pattern_stats
                 eligible_result = await db.execute(text("""
@@ -648,12 +621,136 @@ async def _flywheel_promotion_loop():
                 newly_eligible = eligible_result.fetchall()
                 await db.commit()
 
-                if promoted_count > 0 or newly_eligible:
+                if newly_eligible:
                     logger.info(
                         "Flywheel promotion scan complete",
-                        auto_promoted=promoted_count,
                         newly_eligible=len(newly_eligible),
                     )
+
+                # Step 3: Cross-client platform pattern aggregation
+                # Aggregates L2 patterns across ALL sites/orgs (ignoring hostname)
+                try:
+                    await db.execute(text("""
+                        INSERT INTO platform_pattern_stats (
+                            pattern_key, incident_type, runbook_id,
+                            distinct_sites, distinct_orgs, total_occurrences,
+                            success_count, success_rate, first_seen, last_seen
+                        )
+                        SELECT
+                            et.incident_type || ':' || et.runbook_id,
+                            et.incident_type,
+                            et.runbook_id,
+                            COUNT(DISTINCT et.site_id),
+                            COUNT(DISTINCT s.client_org_id),
+                            COUNT(*),
+                            SUM(CASE WHEN et.success THEN 1 ELSE 0 END),
+                            CASE WHEN COUNT(*) > 0
+                                THEN SUM(CASE WHEN et.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*)
+                                ELSE 0 END,
+                            MIN(et.created_at),
+                            MAX(et.created_at)
+                        FROM execution_telemetry et
+                        JOIN sites s ON s.site_id = et.site_id
+                        WHERE et.resolution_level = 'L2'
+                          AND et.incident_type IS NOT NULL
+                          AND et.runbook_id IS NOT NULL
+                        GROUP BY et.incident_type, et.runbook_id
+                        HAVING COUNT(*) >= 10
+                        ON CONFLICT (pattern_key) DO UPDATE SET
+                            distinct_sites = EXCLUDED.distinct_sites,
+                            distinct_orgs = EXCLUDED.distinct_orgs,
+                            total_occurrences = EXCLUDED.total_occurrences,
+                            success_count = EXCLUDED.success_count,
+                            success_rate = EXCLUDED.success_rate,
+                            last_seen = EXCLUDED.last_seen
+                    """))
+                    await db.commit()
+                except Exception as e:
+                    logger.debug(f"Platform pattern aggregation: {e}")
+                    await db.rollback()
+
+                # Step 4: Auto-promote platform rules
+                # Patterns proven across 5+ client orgs with 90%+ success
+                # become platform L1 rules — no human approval needed
+                try:
+                    platform_result = await db.execute(text("""
+                        SELECT pattern_key, incident_type, runbook_id,
+                               distinct_orgs, total_occurrences, success_rate
+                        FROM platform_pattern_stats
+                        WHERE promoted_at IS NULL
+                          AND distinct_orgs >= 5
+                          AND success_rate >= 0.90
+                          AND total_occurrences >= 20
+                        ORDER BY distinct_orgs DESC, total_occurrences DESC
+                        LIMIT 5
+                    """))
+                    platform_candidates = platform_result.fetchall()
+
+                    platform_promoted = 0
+                    for pc in platform_candidates:
+                        rule_id = f"L1-PLATFORM-{pc.incident_type.upper()}-{pc.runbook_id[:12].upper().replace('-', '')}"
+                        try:
+                            # Check if already exists
+                            existing = await db.execute(text(
+                                "SELECT rule_id FROM l1_rules WHERE rule_id = :rid"
+                            ), {"rid": rule_id})
+                            if existing.fetchone():
+                                # Mark as promoted even if rule exists
+                                await db.execute(text("""
+                                    UPDATE platform_pattern_stats
+                                    SET promoted_at = NOW(), promoted_rule_id = :rid
+                                    WHERE pattern_key = :pk
+                                """), {"rid": rule_id, "pk": pc.pattern_key})
+                                await db.commit()
+                                continue
+
+                            # Create the platform L1 rule
+                            incident_pattern = {"incident_type": pc.incident_type}
+                            if pc.incident_type:
+                                incident_pattern["check_type"] = pc.incident_type
+
+                            await db.execute(text("""
+                                INSERT INTO l1_rules (
+                                    rule_id, incident_pattern, runbook_id,
+                                    confidence, promoted_from_l2, enabled, source
+                                ) VALUES (
+                                    :rule_id, CAST(:pattern AS jsonb), :runbook_id,
+                                    :confidence, true, true, 'platform'
+                                )
+                            """), {
+                                "rule_id": rule_id,
+                                "pattern": json.dumps(incident_pattern),
+                                "runbook_id": pc.runbook_id,
+                                "confidence": float(pc.success_rate),
+                            })
+
+                            # Mark platform pattern as promoted
+                            await db.execute(text("""
+                                UPDATE platform_pattern_stats
+                                SET promoted_at = NOW(), promoted_rule_id = :rid
+                                WHERE pattern_key = :pk
+                            """), {"rid": rule_id, "pk": pc.pattern_key})
+
+                            await db.commit()
+                            platform_promoted += 1
+                            logger.info(
+                                "Platform rule auto-promoted",
+                                rule_id=rule_id,
+                                incident_type=pc.incident_type,
+                                distinct_orgs=pc.distinct_orgs,
+                                success_rate=f"{pc.success_rate:.1%}",
+                                total_occurrences=pc.total_occurrences,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to promote platform rule {rule_id}: {e}")
+                            await db.rollback()
+
+                    if platform_promoted > 0:
+                        logger.info(f"Platform promotion: {platform_promoted} new rules auto-promoted")
+
+                except Exception as e:
+                    logger.debug(f"Platform auto-promotion: {e}")
+                    await db.rollback()
 
         except asyncio.CancelledError:
             break
@@ -2178,12 +2275,13 @@ async def report_execution_telemetry(request: ExecutionTelemetryInput, db: Async
         if not exec_data.get("status"):
             exec_data["status"] = "success" if exec_data.get("success") else "failure"
 
-        # Build pattern_signature from incident_type + hostname
+        # Build pattern_signature from incident_type + runbook_id + hostname
         incident_type = exec_data.get("incident_type")
         hostname = exec_data.get("hostname", "unknown")
+        runbook_id = exec_data.get("runbook_id", "unknown")
         pattern_sig = exec_data.get("pattern_signature")
         if not pattern_sig and incident_type and hostname:
-            pattern_sig = f"{incident_type}:{incident_type}:{hostname}"
+            pattern_sig = f"{incident_type}:{runbook_id}:{hostname}"
 
         await db.execute(text("""
             INSERT INTO execution_telemetry (

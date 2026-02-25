@@ -493,6 +493,22 @@ export function useClearStaleAppliances() {
   });
 }
 
+/**
+ * Hook for updating L2 healing mode on an appliance
+ */
+export function useUpdateL2Mode() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ siteId, applianceId, l2Mode }: { siteId: string; applianceId: string; l2Mode: string }) =>
+      ordersApi.updateL2Mode(siteId, applianceId, l2Mode),
+    onSuccess: (_, { siteId }) => {
+      queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+    },
+    onError: (error) => logMutationError('updateL2Mode', error),
+  });
+}
+
 // =============================================================================
 // NOTIFICATION HOOKS
 // =============================================================================

@@ -106,6 +106,17 @@ class RejectRequest(BaseModel):
     reason: str
 
 
+class BulkApproveRequest(BaseModel):
+    pattern_ids: List[str]
+    deploy_immediately: bool = True
+    notes: Optional[str] = None
+
+
+class BulkRejectRequest(BaseModel):
+    pattern_ids: List[str]
+    reason: str
+
+
 # ============================================================================
 # Rule Generation
 # ============================================================================
@@ -303,30 +314,37 @@ async def get_promotion_candidates(
 
         query = """
             SELECT
-                id::text,
-                pattern_signature,
-                site_id,
-                site_name,
-                total_occurrences,
-                l1_resolutions,
-                l2_resolutions,
-                l3_resolutions,
-                success_rate,
-                avg_resolution_time_ms,
-                recommended_action,
-                first_seen::text,
-                last_seen::text,
-                approval_status
-            FROM v_partner_promotion_candidates
-            WHERE partner_id = $1
+                vpc.id::text,
+                vpc.pattern_signature,
+                vpc.site_id,
+                vpc.site_name,
+                vpc.total_occurrences,
+                vpc.l1_resolutions,
+                vpc.l2_resolutions,
+                vpc.l3_resolutions,
+                vpc.success_rate,
+                vpc.avg_resolution_time_ms,
+                vpc.recommended_action,
+                vpc.first_seen::text,
+                vpc.last_seen::text,
+                vpc.approval_status,
+                COALESCE(s.healing_tier, 'standard') as healing_tier,
+                lpc.client_endorsed_at IS NOT NULL as client_endorsed,
+                lpc.client_endorsed_at::text as client_endorsed_at
+            FROM v_partner_promotion_candidates vpc
+            JOIN sites s ON s.site_id = vpc.site_id
+            LEFT JOIN learning_promotion_candidates lpc
+                ON lpc.pattern_signature = vpc.pattern_signature
+                AND lpc.site_id = vpc.site_id
+            WHERE vpc.partner_id = $1
         """
-        params = [partner_id]
+        params: list = [partner_id]
 
         if status:
-            query += " AND approval_status = $2"
+            query += " AND vpc.approval_status = $2"
             params.append(status)
 
-        query += " ORDER BY success_rate DESC, total_occurrences DESC"
+        query += " ORDER BY vpc.success_rate DESC, vpc.total_occurrences DESC"
 
         rows = await conn.fetch(query, *params)
 
@@ -346,7 +364,10 @@ async def get_promotion_candidates(
                 "recommended_action": row['recommended_action'],
                 "first_seen": row['first_seen'],
                 "last_seen": row['last_seen'],
-                "approval_status": row['approval_status'] or 'not_submitted'
+                "approval_status": row['approval_status'] or 'not_submitted',
+                "healing_tier": row['healing_tier'],
+                "client_endorsed": bool(row['client_endorsed']),
+                "client_endorsed_at": row['client_endorsed_at'],
             })
 
         return {"candidates": candidates, "total": len(candidates)}
@@ -878,3 +899,248 @@ async def get_execution_history(
             "executions": [dict(row) for row in rows],
             "total": len(rows)
         }
+
+
+@partner_learning_router.post("/candidates/bulk-approve")
+async def bulk_approve_candidates(
+    request: BulkApproveRequest,
+    http_request: Request,
+    partner=Depends(require_partner)
+):
+    """Bulk approve multiple promotion candidates."""
+    if not request.pattern_ids:
+        raise HTTPException(status_code=400, detail="No pattern IDs provided")
+    if len(request.pattern_ids) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 patterns per bulk operation")
+
+    try:
+        pool = await get_pool()
+    except Exception as e:
+        logger.error(f"Database pool unavailable: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable")
+
+    approved = 0
+    failed = 0
+    errors: List[str] = []
+
+    async with pool.acquire() as conn:
+        partner_id = partner['id']
+
+        for pattern_id in request.pattern_ids:
+            transaction = conn.transaction()
+            await transaction.start()
+
+            try:
+                # Verify ownership
+                candidate = await conn.fetchrow("""
+                    SELECT id, pattern_signature, site_id, site_name,
+                           check_type, total_occurrences, success_rate,
+                           recommended_action
+                    FROM v_partner_promotion_candidates
+                    WHERE partner_id = $1 AND id::text = $2
+                """, partner_id, pattern_id)
+
+                if not candidate:
+                    await transaction.rollback()
+                    errors.append(f"{pattern_id}: not found")
+                    failed += 1
+                    continue
+
+                # Lock the row
+                locked = await conn.fetchrow("""
+                    SELECT id FROM aggregated_pattern_stats
+                    WHERE site_id = $1 AND pattern_signature = $2
+                    FOR UPDATE NOWAIT
+                """, candidate['site_id'], candidate['pattern_signature'])
+
+                if not locked:
+                    await transaction.rollback()
+                    errors.append(f"{pattern_id}: unavailable")
+                    failed += 1
+                    continue
+
+                # Check if already promoted
+                existing = await conn.fetchrow("""
+                    SELECT rule_id, status FROM promoted_rules
+                    WHERE pattern_signature = $1 AND site_id = $2
+                """, candidate['pattern_signature'], candidate['site_id'])
+
+                if existing and existing['status'] == 'active':
+                    await transaction.rollback()
+                    errors.append(f"{pattern_id}: already promoted as {existing['rule_id']}")
+                    failed += 1
+                    continue
+
+                # Generate and insert rule
+                rule = generate_rule_from_pattern(dict(candidate))
+                rule_yaml = rule_to_yaml(rule)
+
+                await conn.execute("""
+                    INSERT INTO promoted_rules (
+                        rule_id, pattern_signature, site_id, partner_id,
+                        rule_yaml, rule_json, notes, promoted_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                    ON CONFLICT (rule_id) DO UPDATE SET
+                        status = 'active', notes = EXCLUDED.notes, promoted_at = NOW()
+                """,
+                    rule['id'], candidate['pattern_signature'],
+                    candidate['site_id'], partner_id,
+                    rule_yaml, json.dumps(rule), request.notes
+                )
+
+                # Create runbook entry
+                check_type = candidate.get('check_type') or rule['action_params'].get('runbook_id', 'general')
+                promoted_name = f"Auto-Promoted: {candidate.get('recommended_action', check_type)}"
+                promoted_desc = f"L2→L1 promoted pattern ({(candidate.get('success_rate', 0) or 0) * 100:.0f}% success over {candidate.get('total_occurrences', 0)} occurrences)"
+                await conn.execute("""
+                    INSERT INTO runbooks (runbook_id, name, description, category, check_type, severity, is_disruptive, hipaa_controls, steps)
+                    VALUES ($1, $2, $3, $4, $5, 'medium', false, ARRAY[]::text[], '[]'::jsonb)
+                    ON CONFLICT (runbook_id) DO UPDATE SET
+                        name = EXCLUDED.name, description = EXCLUDED.description, updated_at = NOW()
+                """, rule['id'], promoted_name, promoted_desc,
+                    rule.get('action_params', {}).get('runbook_id', 'general'), check_type
+                )
+
+                # Map rule ID
+                await conn.execute("""
+                    INSERT INTO runbook_id_mapping (l1_rule_id, runbook_id)
+                    VALUES ($1, $2) ON CONFLICT (l1_rule_id) DO NOTHING
+                """, rule['id'], rule['id'])
+
+                # Update candidate status
+                await conn.execute("""
+                    INSERT INTO learning_promotion_candidates (
+                        id, site_id, pattern_signature, approval_status,
+                        approved_at, approval_notes
+                    ) VALUES ($1, $2, $3, 'approved', NOW(), $4)
+                    ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                        approval_status = 'approved', approved_at = NOW(),
+                        approval_notes = EXCLUDED.approval_notes
+                """,
+                    str(uuid.uuid4()), candidate['site_id'],
+                    candidate['pattern_signature'], request.notes
+                )
+
+                # Deploy commands
+                if request.deploy_immediately:
+                    appliances = await conn.fetch("""
+                        SELECT appliance_id FROM site_appliances WHERE site_id = $1
+                    """, candidate['site_id'])
+                    command_params = json.dumps({
+                        "rule_id": rule['id'],
+                        "rule_yaml": rule_yaml,
+                        "promoted_at": datetime.now(timezone.utc).isoformat()
+                    })
+                    for appliance in appliances:
+                        await conn.execute("""
+                            INSERT INTO appliance_commands (
+                                appliance_id, command_type, params, created_at
+                            ) VALUES ($1, 'sync_promoted_rule', $2, NOW())
+                            ON CONFLICT (appliance_id, command_type, params) DO NOTHING
+                        """, appliance['appliance_id'], command_params)
+
+                await transaction.commit()
+                approved += 1
+
+            except LockNotAvailableError:
+                await transaction.rollback()
+                errors.append(f"{pattern_id}: locked by another request")
+                failed += 1
+            except PostgresError as e:
+                await transaction.rollback()
+                errors.append(f"{pattern_id}: database error")
+                failed += 1
+                logger.error(f"Bulk approve DB error for {pattern_id}: {e}")
+            except Exception as e:
+                await transaction.rollback()
+                errors.append(f"{pattern_id}: unexpected error")
+                failed += 1
+                logger.error(f"Bulk approve error for {pattern_id}: {e}")
+
+    logger.info(
+        f"Bulk approve by partner {redact_partner_id(str(partner['id']))}: "
+        f"{approved} approved, {failed} failed"
+    )
+
+    return {
+        "approved": approved,
+        "failed": failed,
+        "errors": errors
+    }
+
+
+@partner_learning_router.post("/candidates/bulk-reject")
+async def bulk_reject_candidates(
+    request: BulkRejectRequest,
+    http_request: Request,
+    partner=Depends(require_partner)
+):
+    """Bulk reject multiple promotion candidates."""
+    if not request.pattern_ids:
+        raise HTTPException(status_code=400, detail="No pattern IDs provided")
+    if len(request.pattern_ids) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 patterns per bulk operation")
+    if not request.reason.strip():
+        raise HTTPException(status_code=400, detail="Rejection reason is required")
+
+    try:
+        pool = await get_pool()
+    except Exception as e:
+        logger.error(f"Database pool unavailable: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable")
+
+    rejected = 0
+    failed = 0
+    errors: List[str] = []
+
+    async with pool.acquire() as conn:
+        partner_id = partner['id']
+
+        for pattern_id in request.pattern_ids:
+            try:
+                candidate = await conn.fetchrow("""
+                    SELECT id, pattern_signature, site_id
+                    FROM v_partner_promotion_candidates
+                    WHERE partner_id = $1 AND id::text = $2
+                """, partner_id, pattern_id)
+
+                if not candidate:
+                    errors.append(f"{pattern_id}: not found")
+                    failed += 1
+                    continue
+
+                await conn.execute("""
+                    INSERT INTO learning_promotion_candidates (
+                        id, site_id, pattern_signature, approval_status,
+                        rejection_reason, approved_at
+                    ) VALUES ($1, $2, $3, 'rejected', $4, NOW())
+                    ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                        approval_status = 'rejected',
+                        rejection_reason = EXCLUDED.rejection_reason,
+                        approved_at = NOW()
+                """,
+                    str(uuid.uuid4()), candidate['site_id'],
+                    candidate['pattern_signature'], request.reason
+                )
+
+                rejected += 1
+
+            except PostgresError as e:
+                errors.append(f"{pattern_id}: database error")
+                failed += 1
+                logger.error(f"Bulk reject DB error for {pattern_id}: {e}")
+            except Exception as e:
+                errors.append(f"{pattern_id}: unexpected error")
+                failed += 1
+                logger.error(f"Bulk reject error for {pattern_id}: {e}")
+
+    logger.info(
+        f"Bulk reject by partner {redact_partner_id(str(partner['id']))}: "
+        f"{rejected} rejected, {failed} failed"
+    )
+
+    return {
+        "rejected": rejected,
+        "failed": failed,
+        "errors": errors
+    }

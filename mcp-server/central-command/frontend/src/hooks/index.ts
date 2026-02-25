@@ -30,6 +30,7 @@ export {
   useBroadcastOrder,
   useDeleteAppliance,
   useClearStaleAppliances,
+  useUpdateL2Mode,
   // Notification hooks
   useNotifications,
   useNotificationSummary,

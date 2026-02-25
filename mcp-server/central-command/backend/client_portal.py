@@ -1604,6 +1604,7 @@ async def list_promotion_candidates(user: dict = Depends(require_client_user)):
                 aps.pattern_signature,
                 aps.site_id,
                 s.clinic_name,
+                COALESCE(s.healing_tier, 'standard') as healing_tier,
                 aps.check_type,
                 aps.total_occurrences,
                 aps.success_rate,
@@ -1629,6 +1630,7 @@ async def list_promotion_candidates(user: dict = Depends(require_client_user)):
                     "pattern_signature": r["pattern_signature"],
                     "site_id": r["site_id"],
                     "clinic_name": r["clinic_name"],
+                    "healing_tier": r["healing_tier"],
                     "check_type": r["check_type"],
                     "total_occurrences": r["total_occurrences"],
                     "success_rate": float(r["success_rate"]) if r["success_rate"] else 0,
@@ -1716,6 +1718,189 @@ async def forward_promotion_candidate(
             "site_id": candidate["site_id"],
             "message": "Pattern forwarded to your partner manager for review.",
         }
+
+
+class ClientApproveRequest(BaseModel):
+    notes: Optional[str] = None
+    custom_name: Optional[str] = None
+
+
+class ClientRejectRequest(BaseModel):
+    reason: str
+
+
+@auth_router.post("/promotion-candidates/{pattern_id}/approve")
+async def approve_promotion_candidate(
+    pattern_id: str,
+    body: ClientApproveRequest,
+    user: dict = Depends(require_client_user)
+):
+    """Approve a promotion candidate for L1 deployment. Full coverage tier only.
+
+    Creates a promoted rule scoped to the client's site. The rule syncs to
+    the site's appliances on their next promoted-rules fetch.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        # Verify candidate belongs to this client org AND site is full_coverage
+        candidate = await conn.fetchrow("""
+            SELECT aps.id, aps.pattern_signature, aps.site_id, aps.check_type,
+                   aps.total_occurrences, aps.success_rate, aps.recommended_action,
+                   s.clinic_name, s.partner_id, s.healing_tier
+            FROM aggregated_pattern_stats aps
+            JOIN sites s ON s.site_id = aps.site_id
+            WHERE aps.id = $1
+              AND s.client_org_id = $2
+              AND aps.promotion_eligible = TRUE
+        """, int(pattern_id), org_id)
+
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        if (candidate["healing_tier"] or "standard") != "full_coverage":
+            raise HTTPException(
+                status_code=403,
+                detail="Only full coverage tier sites can approve promotions directly. "
+                       "Use 'Forward to Partner' instead."
+            )
+
+        # Check if already promoted
+        existing = await conn.fetchrow("""
+            SELECT rule_id, status FROM promoted_rules
+            WHERE pattern_signature = $1 AND site_id = $2
+        """, candidate["pattern_signature"], candidate["site_id"])
+
+        if existing and existing["status"] == "active":
+            raise HTTPException(status_code=409, detail=f"Already promoted as {existing['rule_id']}")
+
+        # Generate the L1 rule (reuse learning_api logic)
+        from .learning_api import generate_rule_from_pattern, rule_to_yaml
+        rule = generate_rule_from_pattern(dict(candidate), body.custom_name)
+        rule_yaml = rule_to_yaml(rule)
+
+        # Start transaction for atomic promotion
+        transaction = conn.transaction()
+        await transaction.start()
+
+        try:
+            # Insert promoted rule
+            import uuid as uuid_mod
+            partner_id = candidate["partner_id"]
+            await conn.execute("""
+                INSERT INTO promoted_rules (
+                    rule_id, pattern_signature, site_id, partner_id,
+                    rule_yaml, rule_json, notes, promoted_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                ON CONFLICT (rule_id) DO UPDATE SET
+                    status = 'active', notes = EXCLUDED.notes, promoted_at = NOW()
+            """,
+                rule["id"], candidate["pattern_signature"],
+                candidate["site_id"], partner_id,
+                rule_yaml, json.dumps(rule), body.notes
+            )
+
+            # Create runbook entry
+            check_type = candidate.get("check_type") or "general"
+            promoted_name = body.custom_name or f"Client-Approved: {candidate.get('recommended_action', check_type)}"
+            promoted_desc = (
+                f"Client-approved L2→L1 pattern "
+                f"({(candidate.get('success_rate') or 0) * 100:.0f}% success over "
+                f"{candidate.get('total_occurrences', 0)} occurrences)"
+            )
+            await conn.execute("""
+                INSERT INTO runbooks (runbook_id, name, description, category, check_type,
+                                      severity, is_disruptive, hipaa_controls, steps)
+                VALUES ($1, $2, $3, $4, $5, 'medium', false, ARRAY[]::text[], '[]'::jsonb)
+                ON CONFLICT (runbook_id) DO UPDATE SET
+                    name = EXCLUDED.name, description = EXCLUDED.description, updated_at = NOW()
+            """,
+                rule["id"], promoted_name, promoted_desc,
+                rule.get("action_params", {}).get("runbook_id", "general"), check_type
+            )
+
+            # Map rule_id → runbook for telemetry correlation
+            await conn.execute("""
+                INSERT INTO runbook_id_mapping (l1_rule_id, runbook_id)
+                VALUES ($1, $2) ON CONFLICT (l1_rule_id) DO NOTHING
+            """, rule["id"], rule["id"])
+
+            # Update candidate approval status
+            await conn.execute("""
+                INSERT INTO learning_promotion_candidates (
+                    id, site_id, pattern_signature, approval_status,
+                    approved_at, custom_rule_name, approval_notes
+                ) VALUES ($1, $2, $3, 'approved', NOW(), $4, $5)
+                ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                    approval_status = 'approved', approved_at = NOW(),
+                    custom_rule_name = EXCLUDED.custom_rule_name,
+                    approval_notes = EXCLUDED.approval_notes
+            """,
+                str(uuid_mod.uuid4()), candidate["site_id"],
+                candidate["pattern_signature"], body.custom_name, body.notes
+            )
+
+            await transaction.commit()
+
+        except Exception as e:
+            await transaction.rollback()
+            logger.error(f"Client promotion failed: {e}")
+            raise HTTPException(status_code=500, detail="Promotion failed")
+
+        logger.info(
+            f"Client {user['email']} approved pattern {candidate['pattern_signature'][:8]} "
+            f"as {rule['id']} for site {candidate['site_id']}"
+        )
+
+        return {
+            "status": "approved",
+            "rule_id": rule["id"],
+            "site_id": candidate["site_id"],
+            "message": f"Rule {rule['id']} deployed to {candidate['clinic_name']}.",
+        }
+
+
+@auth_router.post("/promotion-candidates/{pattern_id}/reject")
+async def reject_promotion_candidate(
+    pattern_id: str,
+    body: ClientRejectRequest,
+    user: dict = Depends(require_client_user)
+):
+    """Reject a promotion candidate. Full coverage tier only."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        candidate = await conn.fetchrow("""
+            SELECT aps.id, aps.pattern_signature, aps.site_id, s.healing_tier
+            FROM aggregated_pattern_stats aps
+            JOIN sites s ON s.site_id = aps.site_id
+            WHERE aps.id = $1 AND s.client_org_id = $2
+              AND aps.promotion_eligible = TRUE
+        """, int(pattern_id), org_id)
+
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        if (candidate["healing_tier"] or "standard") != "full_coverage":
+            raise HTTPException(status_code=403, detail="Only full coverage tier can reject directly")
+
+        import uuid as uuid_mod
+        await conn.execute("""
+            INSERT INTO learning_promotion_candidates (
+                id, site_id, pattern_signature, approval_status, approval_notes
+            ) VALUES ($1, $2, $3, 'rejected', $4)
+            ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                approval_status = 'rejected', approval_notes = EXCLUDED.approval_notes
+        """,
+            str(uuid_mod.uuid4()), candidate["site_id"],
+            candidate["pattern_signature"], body.reason
+        )
+
+        logger.info(f"Client {user['email']} rejected pattern {candidate['pattern_signature'][:8]} for site {candidate['site_id']}")
+
+        return {"status": "rejected", "pattern_id": pattern_id, "site_id": candidate["site_id"]}
 
 
 # =============================================================================
