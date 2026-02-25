@@ -81,11 +81,11 @@ export const OfficerDesignation: React.FC<OfficerDesignationProps> = ({ apiBase 
           {saving ? 'Saving...' : saved ? 'Saved' : 'Save Officers'}
         </button>
       </div>
-      <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+      <div className="mb-6 px-6 py-5 bg-teal-50/60 rounded-2xl border border-teal-100">
         <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
-        <p className="text-sm text-teal-800">HIPAA requires every covered entity to formally designate a Privacy Officer and a Security Officer. These individuals are responsible for developing, implementing, and enforcing your HIPAA policies. In small practices, the same person often fills both roles — that's perfectly acceptable.</p>
+        <p className="text-sm text-teal-800 leading-relaxed">HIPAA requires every covered entity to formally designate a Privacy Officer and a Security Officer. These individuals are responsible for developing, implementing, and enforcing your HIPAA policies. In small practices, the same person often fills both roles — that's perfectly acceptable.</p>
         <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
-        <p className="text-sm text-teal-800">Enter the name and contact information for each officer, then click "Save Officers." Next, download the formal designation letter template below, print it, have it signed by the practice owner or authorized representative, and upload the signed copy in Supporting Documents. Auditors will ask for proof of formal designation.</p>
+        <p className="text-sm text-teal-800 leading-relaxed">Enter the name and contact information for each officer, then click "Save Officers." Next, download the formal designation letter template below, print it, have it signed by the practice owner or authorized representative, and upload the signed copy in Supporting Documents. Auditors will ask for proof of formal designation.</p>
       </div>
 
       <div className="space-y-6">

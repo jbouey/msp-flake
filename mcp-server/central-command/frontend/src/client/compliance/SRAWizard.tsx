@@ -173,11 +173,11 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
             Start New Assessment
           </button>
         </div>
-        <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+        <div className="mb-6 px-6 py-5 bg-teal-50/60 rounded-2xl border border-teal-100">
           <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
-          <p className="text-sm text-teal-800">A Security Risk Assessment (SRA) identifies where your practice may be vulnerable to a breach of patient data. HIPAA requires one annually.</p>
+          <p className="text-sm text-teal-800 leading-relaxed">A Security Risk Assessment (SRA) identifies where your practice may be vulnerable to a breach of patient data. HIPAA requires one annually.</p>
           <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
-          <p className="text-sm text-teal-800">Click "Start New Assessment" and answer each question honestly. For each item, select whether it's fully implemented, partially implemented, or not yet in place. The system will calculate your overall risk score and flag areas that need attention. Plan to set aside 30-60 minutes.</p>
+          <p className="text-sm text-teal-800 leading-relaxed">Click "Start New Assessment" and answer each question honestly. For each item, select whether it's fully implemented, partially implemented, or not yet in place. The system will calculate your overall risk score and flag areas that need attention. Plan to set aside 30-60 minutes.</p>
         </div>
         {assessments.length === 0 ? (
           <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center">

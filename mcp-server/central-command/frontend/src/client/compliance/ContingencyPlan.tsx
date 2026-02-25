@@ -86,11 +86,11 @@ export const ContingencyPlan: React.FC<ContingencyPlanProps> = ({ apiBase = '/ap
           Create Plan
         </button>
       </div>
-      <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+      <div className="mb-6 px-6 py-5 bg-teal-50/60 rounded-2xl border border-teal-100">
         <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
-        <p className="text-sm text-teal-800">Contingency plans document how your practice will keep running and protect patient data during emergencies — a server failure, ransomware attack, natural disaster, or power outage. HIPAA requires three plans: a Data Backup Plan, a Disaster Recovery Plan, and an Emergency Mode Operations Plan.</p>
+        <p className="text-sm text-teal-800 leading-relaxed">Contingency plans document how your practice will keep running and protect patient data during emergencies — a server failure, ransomware attack, natural disaster, or power outage. HIPAA requires three plans: a Data Backup Plan, a Disaster Recovery Plan, and an Emergency Mode Operations Plan.</p>
         <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
-        <p className="text-sm text-teal-800">Click "Create Plan" and select the plan type. For each plan, describe what happens, who is responsible, and how quickly systems need to be restored (RTO = Recovery Time Objective, RPO = Recovery Point Objective — how much data loss is acceptable). For example, if you back up nightly, your RPO is 24 hours. If you already have these plans documented, upload them in Supporting Documents below.</p>
+        <p className="text-sm text-teal-800 leading-relaxed">Click "Create Plan" and select the plan type. For each plan, describe what happens, who is responsible, and how quickly systems need to be restored (RTO = Recovery Time Objective, RPO = Recovery Point Objective — how much data loss is acceptable). For example, if you back up nightly, your RPO is 24 hours. If you already have these plans documented, upload them in Supporting Documents below.</p>
       </div>
 
       {showForm && (

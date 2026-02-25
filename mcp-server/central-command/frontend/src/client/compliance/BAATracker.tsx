@@ -94,11 +94,11 @@ export const BAATracker: React.FC<BAATrackerProps> = ({ apiBase = '/api/client/c
           Add BAA
         </button>
       </div>
-      <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+      <div className="mb-6 px-6 py-5 bg-teal-50/60 rounded-2xl border border-teal-100">
         <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
-        <p className="text-sm text-teal-800">A Business Associate Agreement (BAA) is a written contract required any time a third-party vendor can access, store, or transmit patient data on your behalf. Common examples: your IT company, EHR vendor, cloud backup provider, billing service, and shredding company.</p>
+        <p className="text-sm text-teal-800 leading-relaxed">A Business Associate Agreement (BAA) is a written contract required any time a third-party vendor can access, store, or transmit patient data on your behalf. Common examples: your IT company, EHR vendor, cloud backup provider, billing service, and shredding company.</p>
         <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
-        <p className="text-sm text-teal-800">Click "Add BAA" for each vendor that touches patient data. Enter the vendor name, type, signed date, and which types of data they can access. Upload the signed BAA PDF in Supporting Documents below. Review expiration dates — most should be renewed annually or match your contract terms.</p>
+        <p className="text-sm text-teal-800 leading-relaxed">Click "Add BAA" for each vendor that touches patient data. Enter the vendor name, type, signed date, and which types of data they can access. Upload the signed BAA PDF in Supporting Documents below. Review expiration dates — most should be renewed annually or match your contract terms.</p>
       </div>
 
       {showForm && (

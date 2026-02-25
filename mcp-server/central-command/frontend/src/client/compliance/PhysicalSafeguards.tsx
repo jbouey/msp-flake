@@ -94,11 +94,11 @@ export const PhysicalSafeguards: React.FC<PhysicalSafeguardsProps> = ({ apiBase 
           {saving ? 'Saving...' : 'Save Assessment'}
         </button>
       </div>
-      <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+      <div className="mb-6 px-6 py-5 bg-teal-50/60 rounded-2xl border border-teal-100">
         <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
-        <p className="text-sm text-teal-800">Physical safeguards are the locks, doors, screens, and procedures that prevent unauthorized people from physically accessing patient data. Think: locked server rooms, screen privacy filters, visitor sign-in logs, and secure disposal of old hard drives.</p>
+        <p className="text-sm text-teal-800 leading-relaxed">Physical safeguards are the locks, doors, screens, and procedures that prevent unauthorized people from physically accessing patient data. Think: locked server rooms, screen privacy filters, visitor sign-in logs, and secure disposal of old hard drives.</p>
         <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
-        <p className="text-sm text-teal-800">Walk through your office with this checklist. For each item, select whether you're compliant, partially compliant, or non-compliant. Be honest — the goal is to identify gaps, not to score perfectly. Items marked "Partial" or "Non-Compliant" will appear in your gap analysis. Take photos of locks, signs, and security measures and upload them in Supporting Documents below as evidence.</p>
+        <p className="text-sm text-teal-800 leading-relaxed">Walk through your office with this checklist. For each item, select whether you're compliant, partially compliant, or non-compliant. Be honest — the goal is to identify gaps, not to score perfectly. Items marked "Partial" or "Non-Compliant" will appear in your gap analysis. Take photos of locks, signs, and security measures and upload them in Supporting Documents below as evidence.</p>
       </div>
 
       {/* Progress */}
