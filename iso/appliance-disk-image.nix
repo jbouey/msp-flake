@@ -51,14 +51,14 @@ let
   # Feature-flagged: enabled by /var/lib/msp/.use-go-daemon or config.yaml use_go_daemon: true
   appliance-daemon-go = pkgs.buildGoModule {
     pname = "appliance-daemon";
-    version = "0.2.3";
+    version = "0.2.4";
     src = ../appliance;
 
     vendorHash = "sha256-UUQ3KKz2l1U77lJ16L/K7Zzo/gkSuwVLrzO/I/f4FUM=";
 
     ldflags = [
       "-s" "-w"
-      "-X github.com/osiriscare/appliance/internal/daemon.Version=0.2.3"
+      "-X github.com/osiriscare/appliance/internal/daemon.Version=0.2.4"
     ];
 
     subPackages = [
@@ -335,6 +335,9 @@ EOF
     after = [ "network-online.target" "msp-auto-provision.service" "msp-health-gate.service" ];
     wants = [ "network-online.target" ];
 
+    # Include bash, python3, and tools needed for Linux self-scan scripts
+    path = with pkgs; [ bash python3 coreutils gnugrep iproute2 systemd ];
+
     serviceConfig = {
       Type = "simple";
       ExecStart = "${appliance-daemon-go}/bin/appliance-daemon --config /var/lib/msp/config.yaml";
@@ -361,6 +364,9 @@ EOF
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
+
+    # Include nmap, arp-scan, and standard tools in PATH
+    path = with pkgs; [ nmap arp-scan iproute2 iputils coreutils bash ];
 
     serviceConfig = {
       Type = "simple";

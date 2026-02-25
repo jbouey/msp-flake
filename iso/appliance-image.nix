@@ -56,14 +56,14 @@ let
   # Build the Go appliance daemon (replaces Python compliance-agent)
   appliance-daemon-go = pkgs.buildGoModule {
     pname = "appliance-daemon";
-    version = "0.2.3";
+    version = "0.2.4";
     src = ../appliance;
 
     vendorHash = "sha256-UUQ3KKz2l1U77lJ16L/K7Zzo/gkSuwVLrzO/I/f4FUM=";
 
     ldflags = [
       "-s" "-w"
-      "-X github.com/osiriscare/appliance/internal/daemon.Version=0.2.3"
+      "-X github.com/osiriscare/appliance/internal/daemon.Version=0.2.4"
     ];
 
     subPackages = [
@@ -664,6 +664,9 @@ in
     requires = [ "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
 
+    # Include bash, python3, and tools needed for Linux self-scan scripts
+    path = with pkgs; [ bash python3 coreutils gnugrep iproute2 systemd ];
+
     serviceConfig = {
       Type = "simple";
       ExecStart = "${appliance-daemon-go}/bin/appliance-daemon --config /var/lib/msp/config.yaml";
@@ -691,6 +694,9 @@ in
     after = [ "network-online.target" "msp-auto-provision.service" ];
     requires = [ "msp-auto-provision.service" ];
     wants = [ "network-online.target" ];
+
+    # Include nmap, arp-scan, and standard tools in PATH
+    path = with pkgs; [ nmap arp-scan iproute2 iputils coreutils bash ];
 
     serviceConfig = {
       Type = "simple";
