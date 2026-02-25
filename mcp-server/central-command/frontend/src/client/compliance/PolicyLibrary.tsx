@@ -16,6 +16,13 @@ interface Policy {
   created_at: string;
 }
 
+interface TemplateInfo {
+  key: string;
+  title: string;
+  hipaa_references: string[];
+  preview: string;
+}
+
 const STATUS_BADGE: Record<string, string> = {
   draft: 'bg-yellow-100 text-yellow-700',
   active: 'bg-green-100 text-green-700',
@@ -29,12 +36,14 @@ interface PolicyLibraryProps {
 export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [templates, setTemplates] = useState<string[]>([]);
+  const [templateInfo, setTemplateInfo] = useState<TemplateInfo[]>([]);
   const [selected, setSelected] = useState<Policy | null>(null);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [loading, setLoading] = useState(true);
+  const [previewContent, setPreviewContent] = useState<{ title: string; content: string; refs: string[] } | null>(null);
 
-  useEffect(() => { fetchPolicies(); }, []);
+  useEffect(() => { fetchPolicies(); fetchTemplates(); }, []);
 
   const fetchPolicies = async () => {
     const res = await fetch(`${apiBase}/policies`, { credentials: 'include' });
@@ -44,6 +53,36 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
       setTemplates(data.available_templates || []);
     }
     setLoading(false);
+  };
+
+  const fetchTemplates = async () => {
+    const res = await fetch(`${apiBase}/policies/templates`, { credentials: 'include' });
+    if (res.ok) {
+      const data = await res.json();
+      setTemplateInfo(data.templates || []);
+    }
+  };
+
+  const previewTemplate = async (key: string) => {
+    const res = await fetch(`${apiBase}/policies/templates/${key}`, { credentials: 'include' });
+    if (res.ok) {
+      const data = await res.json();
+      setPreviewContent({ title: data.title, content: data.content, refs: data.hipaa_references });
+    }
+  };
+
+  const downloadTemplate = async (key: string) => {
+    const res = await fetch(`${apiBase}/policies/templates/${key}`, { credentials: 'include' });
+    if (res.ok) {
+      const data = await res.json();
+      const blob = new Blob([data.content], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${data.title.replace(/\s+/g, '_')}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
   const createFromTemplate = async (key: string) => {
@@ -181,18 +220,46 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
       {/* Available templates */}
       {availableTemplates.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">Create from Template</h3>
+          <h3 className="text-sm font-semibold text-slate-700 mb-3">Available Templates</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {availableTemplates.map(key => (
-              <button
-                key={key}
-                onClick={() => createFromTemplate(key)}
-                className="bg-white rounded-xl border border-dashed border-slate-300 p-4 text-left hover:border-teal-400 hover:bg-teal-50/30 transition-all"
-              >
-                <p className="text-sm font-medium text-slate-700">{key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</p>
-                <p className="text-xs text-slate-400 mt-1">Click to generate policy from template</p>
-              </button>
-            ))}
+            {availableTemplates.map(key => {
+              const info = templateInfo.find(t => t.key === key);
+              return (
+                <div
+                  key={key}
+                  className="bg-white rounded-xl border border-dashed border-slate-300 p-4 hover:border-teal-400 transition-all"
+                >
+                  <p className="text-sm font-medium text-slate-900">{info?.title || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</p>
+                  {info?.hipaa_references && (
+                    <div className="flex gap-1 mt-1">
+                      {info.hipaa_references.map(r => (
+                        <span key={r} className="px-1.5 py-0.5 text-xs rounded bg-blue-50 text-blue-600">{r}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => previewTemplate(key)}
+                      className="px-3 py-1 text-xs border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50"
+                    >
+                      Preview
+                    </button>
+                    <button
+                      onClick={() => downloadTemplate(key)}
+                      className="px-3 py-1 text-xs border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50"
+                    >
+                      Download
+                    </button>
+                    <button
+                      onClick={() => createFromTemplate(key)}
+                      className="px-3 py-1 text-xs bg-teal-600 text-white rounded-lg hover:bg-teal-700"
+                    >
+                      Adopt
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -200,6 +267,33 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
       {policies.length === 0 && availableTemplates.length === 0 && (
         <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center">
           <p className="text-slate-500">No policies available.</p>
+        </div>
+      )}
+
+      {/* Template Preview Modal */}
+      {previewContent && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setPreviewContent(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">{previewContent.title}</h3>
+                <div className="flex gap-1 mt-1">
+                  {previewContent.refs.map(r => (
+                    <span key={r} className="px-1.5 py-0.5 text-xs rounded bg-blue-50 text-blue-600">{r}</span>
+                  ))}
+                </div>
+              </div>
+              <button onClick={() => setPreviewContent(null)} className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <pre className="whitespace-pre-wrap text-sm text-slate-700 font-mono leading-relaxed">{previewContent.content}</pre>
+            </div>
+            <div className="p-4 border-t border-slate-100 flex justify-end">
+              <button onClick={() => setPreviewContent(null)} className="px-4 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded-lg">Close</button>
+            </div>
+          </div>
         </div>
       )}
 

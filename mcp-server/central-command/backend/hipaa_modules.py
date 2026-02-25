@@ -536,6 +536,47 @@ async def update_policy(policy_id: str, body: PolicyUpdate, user: dict = Depends
     return _row_dict(row)
 
 
+@router.get("/policies/templates")
+async def list_policy_templates(user: dict = Depends(require_client_user)):
+    """Return all 8 policy template metadata (title, hipaa_references, first 200 chars)."""
+    result = []
+    for key, tmpl in POLICY_TEMPLATES.items():
+        result.append({
+            "key": key,
+            "title": tmpl["title"],
+            "hipaa_references": tmpl["hipaa_references"],
+            "preview": tmpl["content"][:200].replace("{{ORG_NAME}}", "").replace("{{EFFECTIVE_DATE}}", "").replace("{{SECURITY_OFFICER}}", "").replace("{{PRIVACY_OFFICER}}", "").strip() + "...",
+        })
+    return {"templates": result}
+
+
+@router.get("/policies/templates/{template_key}")
+async def get_policy_template(template_key: str, user: dict = Depends(require_client_user)):
+    """Return a single template with org name + officers filled in. For preview/download."""
+    template = POLICY_TEMPLATES.get(template_key)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        org = await conn.fetchrow("SELECT name FROM client_orgs WHERE id = $1", user["org_id"])
+        officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", user["org_id"])
+    officer_map = {r["role_type"]: r["name"] for r in officers}
+
+    content = template["content"]
+    content = content.replace("{{ORG_NAME}}", org["name"] if org else "[Your Organization]")
+    content = content.replace("{{EFFECTIVE_DATE}}", date.today().isoformat())
+    content = content.replace("{{SECURITY_OFFICER}}", officer_map.get("security_officer", "[Not Designated]"))
+    content = content.replace("{{PRIVACY_OFFICER}}", officer_map.get("privacy_officer", "[Not Designated]"))
+
+    return {
+        "key": template_key,
+        "title": template["title"],
+        "hipaa_references": template["hipaa_references"],
+        "content": content,
+    }
+
+
 @router.post("/policies/{policy_id}/approve")
 async def approve_policy(policy_id: str, user: dict = Depends(require_client_user)):
     pool = await get_pool()
