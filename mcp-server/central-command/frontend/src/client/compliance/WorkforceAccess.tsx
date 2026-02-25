@@ -68,11 +68,17 @@ export const WorkforceAccess: React.FC<WorkforceAccessProps> = ({ apiBase = '/ap
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold text-slate-900">Workforce Access Management</h2>
         <button onClick={() => { setShowForm(true); setForm(EMPTY); setEditId(null); }} className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 text-sm">
           Add Member
         </button>
+      </div>
+      <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+        <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
+        <p className="text-sm text-teal-800">HIPAA's "minimum necessary" rule means each person in your practice should only have access to the patient data they need for their job. This section tracks who has access to which systems and at what level. It also documents when someone leaves and that their access was revoked — a common audit finding.</p>
+        <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
+        <p className="text-sm text-teal-800">Click "Add Member" for each employee, contractor, or volunteer. Select the systems they can access (EHR, billing, email, etc.) and their access level. When someone leaves, change their status to "Terminated" and fill in the access revoked date — auditors specifically look for timely access termination. Upload onboarding or termination checklists in Supporting Documents below.</p>
       </div>
 
       {showForm && (

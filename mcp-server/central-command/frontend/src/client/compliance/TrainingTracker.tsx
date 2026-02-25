@@ -75,11 +75,17 @@ export const TrainingTracker: React.FC<TrainingTrackerProps> = ({ apiBase = '/ap
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold text-slate-900">Training Records</h2>
         <button onClick={() => { setShowForm(true); setForm(EMPTY); setEditId(null); }} className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 text-sm">
           Add Record
         </button>
+      </div>
+      <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+        <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
+        <p className="text-sm text-teal-800">HIPAA requires every workforce member who handles patient information to complete security awareness training. New hires need initial training, and everyone needs an annual refresher. This section tracks who has been trained and when they're due for renewal.</p>
+        <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
+        <p className="text-sm text-teal-800">Click "Add Record" for each employee. Enter their name, the training topic (e.g., HIPAA Privacy & Security Basics), the type (initial for new hires, annual for renewals), and the due date. Mark it completed once they finish. Upload completion certificates or sign-in sheets in Supporting Documents below.</p>
       </div>
 
       {showForm && (

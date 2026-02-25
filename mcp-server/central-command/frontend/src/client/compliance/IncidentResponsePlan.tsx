@@ -94,7 +94,13 @@ export const IncidentResponsePlan: React.FC<IncidentResponsePlanProps> = ({ apiB
 
   return (
     <div>
-      <h2 className="text-xl font-bold text-slate-900 mb-6">Incident Response Plan</h2>
+      <h2 className="text-xl font-bold text-slate-900 mb-4">Incident Response Plan</h2>
+      <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+        <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
+        <p className="text-sm text-teal-800">Your Incident Response Plan documents what your practice will do if patient data is lost, stolen, or accessed by an unauthorized person. HIPAA requires you to have a written plan before a breach happens — not after. The Breach Log below tracks any incidents if they occur.</p>
+        <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
+        <p className="text-sm text-teal-800">Click "Create from Template" to start with a pre-built plan that covers HIPAA's required steps: detection, containment, notification, and remediation. Edit the plan to reflect your practice's actual contacts and procedures (e.g., who to call first, where your backup systems are). If you already have an IR plan, upload it in Supporting Documents below.</p>
+      </div>
 
       {/* Plan section */}
       <div className="bg-white rounded-2xl border border-slate-100 p-6 mb-6">

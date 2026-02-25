@@ -80,11 +80,17 @@ export const ContingencyPlan: React.FC<ContingencyPlanProps> = ({ apiBase = '/ap
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold text-slate-900">Contingency Plans</h2>
         <button onClick={() => { setShowForm(true); setForm(EMPTY); setEditId(null); }} className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 text-sm">
           Create Plan
         </button>
+      </div>
+      <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+        <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
+        <p className="text-sm text-teal-800">Contingency plans document how your practice will keep running and protect patient data during emergencies — a server failure, ransomware attack, natural disaster, or power outage. HIPAA requires three plans: a Data Backup Plan, a Disaster Recovery Plan, and an Emergency Mode Operations Plan.</p>
+        <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
+        <p className="text-sm text-teal-800">Click "Create Plan" and select the plan type. For each plan, describe what happens, who is responsible, and how quickly systems need to be restored (RTO = Recovery Time Objective, RPO = Recovery Point Objective — how much data loss is acceptable). For example, if you back up nightly, your RPO is 24 hours. If you already have these plans documented, upload them in Supporting Documents below.</p>
       </div>
 
       {showForm && (

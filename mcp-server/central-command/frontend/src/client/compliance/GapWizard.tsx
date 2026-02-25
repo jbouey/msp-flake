@@ -183,7 +183,7 @@ export const GapWizard: React.FC<GapWizardProps> = ({ apiBase = '/api/client/com
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-xl font-bold text-slate-900">HIPAA Gap Analysis</h2>
           <p className="text-sm text-slate-500 mt-1">{totalAnswered}/{totalQuestions} answered ({completion}%)</p>
@@ -196,6 +196,13 @@ export const GapWizard: React.FC<GapWizardProps> = ({ apiBase = '/api/client/com
             {saving ? 'Saving...' : 'Save Progress'}
           </button>
         </div>
+      </div>
+
+      <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+        <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
+        <p className="text-sm text-teal-800">A gap analysis is a self-assessment that compares your current practices against HIPAA requirements. It shows where you're in good shape and where you have gaps to close. This is different from the SRA — the SRA focuses on risk levels, while the gap analysis checks whether specific safeguards exist at all.</p>
+        <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
+        <p className="text-sm text-teal-800">Work through each section (Administrative, Physical, Technical, Organizational). For each question, select Yes, Partial, or No. Then rate your maturity level — this helps track improvement over time. Click "View Report" when finished to see your scores and identified gaps. Save your progress at any time — you don't have to finish in one sitting.</p>
       </div>
 
       {/* Progress */}

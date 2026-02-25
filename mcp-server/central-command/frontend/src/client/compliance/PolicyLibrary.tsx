@@ -199,8 +199,14 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
   // List view
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold text-slate-900">Policy Library</h2>
+      </div>
+      <div className="mb-6 p-4 bg-teal-50/60 rounded-xl border border-teal-100">
+        <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
+        <p className="text-sm text-teal-800">Your written HIPAA policies document how your practice protects patient information. Auditors will ask to see these. They cover topics like who can access records, how data is encrypted, and what happens when someone leaves the organization.</p>
+        <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
+        <p className="text-sm text-teal-800">Use the templates below as a starting point — they're pre-filled with your organization's name and officers. Click "View" to read the full text, "Adopt" to bring it into your library, then edit any language to match your actual procedures. Once it accurately reflects your practice, click "Approve & Activate." If you already have written policies, upload them in the Supporting Documents section at the bottom.</p>
       </div>
 
       {/* Existing policies */}
