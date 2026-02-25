@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
@@ -67,17 +68,7 @@ class NmapDiscovery(DiscoveryMethod):
         if not NMAP_AVAILABLE:
             logger.warning("python-nmap library not installed")
             return False
-
-        try:
-            result = await asyncio.create_subprocess_exec(
-                "which", "nmap",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await result.wait()
-            return result.returncode == 0
-        except Exception:
-            return False
+        return shutil.which("nmap") is not None
 
     async def discover(self) -> list[DiscoveredDevice]:
         """
@@ -248,16 +239,7 @@ class NmapPingSweep(DiscoveryMethod):
         """Check if nmap is available."""
         if not NMAP_AVAILABLE:
             return False
-        try:
-            result = await asyncio.create_subprocess_exec(
-                "which", "nmap",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await result.wait()
-            return result.returncode == 0
-        except Exception:
-            return False
+        return shutil.which("nmap") is not None
 
     async def discover(self) -> list[DiscoveredDevice]:
         """

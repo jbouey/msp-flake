@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
 import subprocess
 from typing import Optional
 
@@ -41,17 +42,8 @@ class ARPDiscovery(DiscoveryMethod):
         return "arp"
 
     async def is_available(self) -> bool:
-        """Check if ARP command is available."""
-        try:
-            result = await asyncio.create_subprocess_exec(
-                "which", "arp",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await result.wait()
-            return result.returncode == 0
-        except Exception:
-            return False
+        """Check if ARP command is available (arp or ip neigh)."""
+        return shutil.which("ip") is not None or shutil.which("arp") is not None
 
     async def discover(self) -> list[DiscoveredDevice]:
         """
@@ -62,10 +54,13 @@ class ARPDiscovery(DiscoveryMethod):
         devices = []
 
         try:
-            # Build command
-            cmd = ["arp", "-an"]
-            if self.interface:
-                cmd.extend(["-i", self.interface])
+            # Prefer 'ip neigh' (iproute2, always on NixOS) over 'arp' (net-tools)
+            if shutil.which("ip"):
+                cmd = ["ip", "neigh", "show"]
+            else:
+                cmd = ["arp", "-an"]
+                if self.interface:
+                    cmd.extend(["-i", self.interface])
 
             # Run arp command
             result = await asyncio.create_subprocess_exec(
@@ -80,20 +75,24 @@ class ARPDiscovery(DiscoveryMethod):
                 return devices
 
             # Parse output
-            # Linux format: ? (192.168.1.1) at aa:bb:cc:dd:ee:ff [ether] on eth0
-            # macOS format: ? (192.168.1.1) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]
+            # arp format: ? (192.168.1.1) at aa:bb:cc:dd:ee:ff [ether] on eth0
+            # ip neigh format: 192.168.1.1 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE
             output = stdout.decode()
+            use_ip_neigh = cmd[0] == "ip"
 
             for line in output.strip().split("\n"):
                 if not line:
                     continue
 
                 try:
-                    device = self._parse_arp_line(line)
+                    if use_ip_neigh:
+                        device = self._parse_ip_neigh_line(line)
+                    else:
+                        device = self._parse_arp_line(line)
                     if device:
                         devices.append(device)
                 except Exception as e:
-                    logger.debug(f"Failed to parse ARP line '{line}': {e}")
+                    logger.debug(f"Failed to parse line '{line}': {e}")
                     continue
 
             logger.info(f"ARP discovery found {len(devices)} hosts")
@@ -127,6 +126,36 @@ class ARPDiscovery(DiscoveryMethod):
         return DiscoveredDevice(
             ip_address=ip_address,
             hostname=hostname,
+            mac_address=mac_address,
+            manufacturer=manufacturer,
+            discovery_source=DiscoverySource.ARP,
+        )
+
+    def _parse_ip_neigh_line(self, line: str) -> Optional[DiscoveredDevice]:
+        """Parse a single 'ip neigh' output line.
+
+        Format: 192.168.88.1 dev enp1s0f0 lladdr d4:01:c3:66:f1:d8 REACHABLE
+        """
+        # Skip FAILED entries (no MAC)
+        if "FAILED" in line:
+            return None
+
+        pattern = r"(\d+\.\d+\.\d+\.\d+)\s+dev\s+\S+\s+lladdr\s+([0-9a-fA-F:]+)"
+        match = re.search(pattern, line)
+        if not match:
+            return None
+
+        ip_address = match.group(1)
+        mac_address = match.group(2).lower()
+
+        if mac_address in ("ff:ff:ff:ff:ff:ff",):
+            return None
+
+        manufacturer = self._lookup_oui(mac_address)
+
+        return DiscoveredDevice(
+            ip_address=ip_address,
+            hostname=None,
             mac_address=mac_address,
             manufacturer=manufacturer,
             discovery_source=DiscoverySource.ARP,
@@ -193,16 +222,7 @@ class ARPScanDiscovery(DiscoveryMethod):
 
     async def is_available(self) -> bool:
         """Check if arp-scan is available."""
-        try:
-            result = await asyncio.create_subprocess_exec(
-                "which", "arp-scan",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await result.wait()
-            return result.returncode == 0
-        except Exception:
-            return False
+        return shutil.which("arp-scan") is not None
 
     async def discover(self) -> list[DiscoveredDevice]:
         """
