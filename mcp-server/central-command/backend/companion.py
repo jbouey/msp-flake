@@ -98,7 +98,7 @@ async def _compute_overview(conn, org_id):
         WHERE org_id = $1 ORDER BY created_at DESC LIMIT 1
     """, _uid(org_id))
     breach_count = await conn.fetchval(
-        "SELECT COUNT(*) FROM hipaa_breach_log WHERE org_id = $1", org_id
+        "SELECT COUNT(*) FROM hipaa_breach_log WHERE org_id = $1", _uid(org_id)
     )
 
     contingency_row = await conn.fetchrow("""
@@ -120,7 +120,7 @@ async def _compute_overview(conn, org_id):
     """, _uid(org_id))
 
     officers = await conn.fetch(
-        "SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", org_id
+        "SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", _uid(org_id)
     )
     officer_map = {r["role_type"]: r["name"] for r in officers}
 
