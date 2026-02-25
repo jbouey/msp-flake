@@ -41,7 +41,8 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [loading, setLoading] = useState(true);
-  const [previewContent, setPreviewContent] = useState<{ title: string; content: string; refs: string[] } | null>(null);
+  const [expandedTemplates, setExpandedTemplates] = useState<Set<string>>(new Set());
+  const [templateContents, setTemplateContents] = useState<Record<string, string>>({});
 
   useEffect(() => { fetchPolicies(); fetchTemplates(); }, []);
 
@@ -63,12 +64,21 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
     }
   };
 
-  const previewTemplate = async (key: string) => {
-    const res = await fetch(`${apiBase}/policies/templates/${key}`, { credentials: 'include' });
-    if (res.ok) {
-      const data = await res.json();
-      setPreviewContent({ title: data.title, content: data.content, refs: data.hipaa_references });
+  const toggleExpand = async (key: string) => {
+    const next = new Set(expandedTemplates);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+      if (!templateContents[key]) {
+        const res = await fetch(`${apiBase}/policies/templates/${key}`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setTemplateContents(prev => ({ ...prev, [key]: data.content }));
+        }
+      }
     }
+    setExpandedTemplates(next);
   };
 
   const downloadTemplate = async (key: string) => {
@@ -221,42 +231,66 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
       {availableTemplates.length > 0 && (
         <div>
           <h3 className="text-sm font-semibold text-slate-700 mb-3">Available Templates</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <p className="text-xs text-slate-400 mb-4">HIPAA-compliant policy templates pre-filled with your organization details. Preview the full text, download as a file, or adopt directly into your policy library.</p>
+          <div className="space-y-3">
             {availableTemplates.map(key => {
               const info = templateInfo.find(t => t.key === key);
+              const expanded = expandedTemplates.has(key);
+              const fullContent = templateContents[key];
               return (
                 <div
                   key={key}
-                  className="bg-white rounded-xl border border-dashed border-slate-300 p-4 hover:border-teal-400 transition-all"
+                  className="bg-white rounded-2xl border border-slate-100 p-5"
                 >
-                  <p className="text-sm font-medium text-slate-900">{info?.title || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</p>
-                  {info?.hipaa_references && (
-                    <div className="flex gap-1 mt-1">
-                      {info.hipaa_references.map(r => (
-                        <span key={r} className="px-1.5 py-0.5 text-xs rounded bg-blue-50 text-blue-600">{r}</span>
-                      ))}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
+                          <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{info?.title || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</p>
+                          {info?.hipaa_references && (
+                            <div className="flex gap-1 mt-0.5">
+                              {info.hipaa_references.map(r => (
+                                <span key={r} className="px-1.5 py-0.5 text-xs rounded bg-blue-50 text-blue-600">{r}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {info?.preview && !expanded && (
+                        <p className="text-xs text-slate-500 mt-2 line-clamp-2">{info.preview}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => toggleExpand(key)}
+                        className="px-3 py-1.5 text-xs border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50"
+                      >
+                        {expanded ? 'Collapse' : 'View'}
+                      </button>
+                      <button
+                        onClick={() => downloadTemplate(key)}
+                        className="px-3 py-1.5 text-xs border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50"
+                      >
+                        Download
+                      </button>
+                      <button
+                        onClick={() => createFromTemplate(key)}
+                        className="px-3 py-1.5 text-xs bg-teal-600 text-white rounded-lg hover:bg-teal-700"
+                      >
+                        Adopt
+                      </button>
+                    </div>
+                  </div>
+                  {expanded && fullContent && (
+                    <div className="mt-4 border-t border-slate-100 pt-4">
+                      <pre className="whitespace-pre-wrap text-xs text-slate-600 font-mono leading-relaxed bg-slate-50 p-4 rounded-xl max-h-96 overflow-y-auto">{fullContent}</pre>
                     </div>
                   )}
-                  <div className="flex gap-2 mt-3">
-                    <button
-                      onClick={() => previewTemplate(key)}
-                      className="px-3 py-1 text-xs border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50"
-                    >
-                      Preview
-                    </button>
-                    <button
-                      onClick={() => downloadTemplate(key)}
-                      className="px-3 py-1 text-xs border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50"
-                    >
-                      Download
-                    </button>
-                    <button
-                      onClick={() => createFromTemplate(key)}
-                      className="px-3 py-1 text-xs bg-teal-600 text-white rounded-lg hover:bg-teal-700"
-                    >
-                      Adopt
-                    </button>
-                  </div>
                 </div>
               );
             })}
@@ -267,33 +301,6 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
       {policies.length === 0 && availableTemplates.length === 0 && (
         <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center">
           <p className="text-slate-500">No policies available.</p>
-        </div>
-      )}
-
-      {/* Template Preview Modal */}
-      {previewContent && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setPreviewContent(null)}>
-          <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">{previewContent.title}</h3>
-                <div className="flex gap-1 mt-1">
-                  {previewContent.refs.map(r => (
-                    <span key={r} className="px-1.5 py-0.5 text-xs rounded bg-blue-50 text-blue-600">{r}</span>
-                  ))}
-                </div>
-              </div>
-              <button onClick={() => setPreviewContent(null)} className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              <pre className="whitespace-pre-wrap text-sm text-slate-700 font-mono leading-relaxed">{previewContent.content}</pre>
-            </div>
-            <div className="p-4 border-t border-slate-100 flex justify-end">
-              <button onClick={() => setPreviewContent(null)} className="px-4 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded-lg">Close</button>
-            </div>
-          </div>
         </div>
       )}
 
