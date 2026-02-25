@@ -329,26 +329,25 @@ async def check_rate_limit(site_id: str, action: str = "default") -> tuple[bool,
     """
     Check if request is rate limited.
     Returns (allowed, remaining_seconds).
+    Uses atomic INCR + conditional EXPIRE to prevent TTL loss from race conditions.
     """
     key = f"rate:{site_id}:{action}"
-    
-    # Get current count
-    count = await redis_client.get(key)
-    
-    if count is None:
-        # First request in window
-        await redis_client.setex(key, RATE_LIMIT_WINDOW, 1)
-        return True, 0
-    
-    count = int(count)
-    
-    if count >= RATE_LIMIT_REQUESTS:
+
+    # Atomic increment — creates key with value 1 if it doesn't exist
+    count = await redis_client.incr(key)
+
+    if count == 1:
+        # First request in window — set TTL
+        await redis_client.expire(key, RATE_LIMIT_WINDOW)
+    elif count > RATE_LIMIT_REQUESTS:
         # Rate limited
         ttl = await redis_client.ttl(key)
+        # Safety: if TTL was lost somehow, reset it
+        if ttl < 0:
+            await redis_client.expire(key, RATE_LIMIT_WINDOW)
+            ttl = RATE_LIMIT_WINDOW
         return False, max(0, ttl)
-    
-    # Increment counter
-    await redis_client.incr(key)
+
     return True, 0
 
 # ============================================================================
