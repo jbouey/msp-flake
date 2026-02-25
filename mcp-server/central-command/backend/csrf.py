@@ -106,6 +106,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/incidents/",           # Incident resolve from appliances (machine-to-machine)
         "/api/cve-watch/",       # CVE Watch — admin data ingest + sync triggers
         "/api/framework-sync/",  # Framework Sync — admin sync triggers
+        "/api/devices/sync",     # Device inventory sync from appliances (API-key auth)
     )
 
     # Safe methods that don't require CSRF validation

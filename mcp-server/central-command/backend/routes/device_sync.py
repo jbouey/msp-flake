@@ -128,7 +128,7 @@ async def list_medical_devices(
             """
             SELECT
                 d.*,
-                a.hostname as appliance_hostname
+                a.host_id as appliance_hostname
             FROM discovered_devices d
             JOIN appliances a ON d.appliance_id = a.id
             WHERE a.site_id = $1 AND d.medical_device = true

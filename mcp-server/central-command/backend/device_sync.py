@@ -88,26 +88,19 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
     errors = []
 
     async with pool.acquire() as conn:
-        # Ensure the appliance exists and get its DB ID
+        # Look up appliance by site_id (unique constraint)
         appliance_row = await conn.fetchrow(
-            """
-            SELECT id FROM appliances
-            WHERE site_id = $1 AND host_id = $2
-            """,
+            "SELECT id FROM appliances WHERE site_id = $1",
             report.site_id,
-            report.appliance_id,
         )
 
         if not appliance_row:
-            # Create a placeholder appliance record
-            appliance_row = await conn.fetchrow(
-                """
-                INSERT INTO appliances (site_id, host_id, created_at)
-                VALUES ($1, $2, NOW())
-                RETURNING id
-                """,
-                report.site_id,
-                report.appliance_id,
+            return DeviceSyncResponse(
+                status="error",
+                devices_received=len(report.devices),
+                devices_updated=0,
+                devices_created=0,
+                message=f"Unknown site_id: {report.site_id}. Appliance must checkin first.",
             )
 
         appliance_db_id = appliance_row["id"]
