@@ -93,6 +93,12 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # Rate limiting
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "60"))
 RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "300"))  # 5 minutes
+# Per-action overrides: appliance endpoints burst during scan cycles
+RATE_LIMIT_OVERRIDES = {
+    "incidents": 200,   # 12+ incidents per scan, scans every 15 min
+    "drift": 200,       # Drift telemetry bursts alongside incidents
+    "evidence": 200,    # Evidence bundles per scan cycle
+}
 
 # Order TTL
 ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "900"))  # 15 minutes
@@ -339,7 +345,7 @@ async def check_rate_limit(site_id: str, action: str = "default") -> tuple[bool,
     if count == 1:
         # First request in window — set TTL
         await redis_client.expire(key, RATE_LIMIT_WINDOW)
-    elif count > RATE_LIMIT_REQUESTS:
+    elif count > RATE_LIMIT_OVERRIDES.get(action, RATE_LIMIT_REQUESTS):
         # Rate limited
         ttl = await redis_client.ttl(key)
         # Safety: if TTL was lost somehow, reset it

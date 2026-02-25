@@ -644,12 +644,29 @@ func ruleFromSyncedJSON(m map[string]interface{}) *Rule {
 		action = strOrDefault(m, "action", "alert:unknown")
 	}
 
+	// Parse "action:runbook_id" format from synced rules.
+	// Backend stores e.g. "run_windows_runbook:RB-WIN-SEC-007" but the executor
+	// expects Action="run_windows_runbook" with runbook_id in ActionParams.
+	actionParams := mapOrEmpty(m, "action_params")
+	if parts := strings.SplitN(action, ":", 2); len(parts) == 2 {
+		baseAction := parts[0]
+		if baseAction == "run_windows_runbook" || baseAction == "run_linux_runbook" {
+			action = baseAction
+			if actionParams["runbook_id"] == nil {
+				actionParams["runbook_id"] = parts[1]
+			}
+			if actionParams["phases"] == nil {
+				actionParams["phases"] = []interface{}{"remediate", "verify"}
+			}
+		}
+	}
+
 	r := &Rule{
 		ID:              id,
 		Name:            strOrDefault(m, "name", id),
 		Description:     strOrDefault(m, "description", ""),
 		Action:          action,
-		ActionParams:    mapOrEmpty(m, "action_params"),
+		ActionParams:    actionParams,
 		HIPAAControls:   strSlice(m, "hipaa_controls"),
 		SeverityFilter:  strSlice(m, "severity_filter"),
 		Enabled:         boolOrDefault(m, "enabled", true),

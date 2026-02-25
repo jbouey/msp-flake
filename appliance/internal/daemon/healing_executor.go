@@ -14,6 +14,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os/exec"
+	"time"
 
 	"github.com/osiriscare/appliance/internal/healing"
 	"github.com/osiriscare/appliance/internal/sshexec"
@@ -122,17 +124,28 @@ func (d *Daemon) executeRunbook(params map[string]interface{}, hostID, platform 
 			results[phaseStr] = result.Output
 
 		case "linux":
-			target := d.buildHealingSSHTarget(hostID)
-			if target == nil {
-				return nil, fmt.Errorf("no SSH credentials for host %s", hostID)
+			// For self-healing on this appliance, execute locally instead of SSH
+			if d.isSelfHost(hostID) {
+				result := d.executeLocal(script, runbookID, phaseStr, timeout)
+				if !result.Success {
+					return map[string]interface{}{
+						"success": false, "phase": phaseStr, "error": result.Error,
+					}, fmt.Errorf("%s phase %s failed: %s", runbookID, phaseStr, result.Error)
+				}
+				results[phaseStr] = result.Output
+			} else {
+				target := d.buildHealingSSHTarget(hostID)
+				if target == nil {
+					return nil, fmt.Errorf("no SSH credentials for host %s", hostID)
+				}
+				result := d.sshExec.Execute(context.Background(), target, script, runbookID, phaseStr, timeout, 1, 5.0, true, rb.HIPAAControls)
+				if !result.Success {
+					return map[string]interface{}{
+						"success": false, "phase": phaseStr, "error": result.Error,
+					}, fmt.Errorf("%s phase %s failed: %s", runbookID, phaseStr, result.Error)
+				}
+				results[phaseStr] = result.Output
 			}
-			result := d.sshExec.Execute(context.Background(), target, script, runbookID, phaseStr, timeout, 1, 5.0, true, rb.HIPAAControls)
-			if !result.Success {
-				return map[string]interface{}{
-					"success": false, "phase": phaseStr, "error": result.Error,
-				}, fmt.Errorf("%s phase %s failed: %s", runbookID, phaseStr, result.Error)
-			}
-			results[phaseStr] = result.Output
 
 		default:
 			return nil, fmt.Errorf("unknown platform: %s", platform)
@@ -160,11 +173,45 @@ func (d *Daemon) buildHealingWinRMTarget(hostID string) *winrm.Target {
 }
 
 // buildHealingSSHTarget creates an SSH target for Linux healing.
-// Uses the daemon's SSH key for NixOS appliance self-healing.
 func (d *Daemon) buildHealingSSHTarget(hostID string) *sshexec.Target {
 	return &sshexec.Target{
 		Hostname: hostID,
 		Port:     22,
 		Username: "root",
 	}
+}
+
+// isSelfHost returns true if the hostID refers to this appliance.
+func (d *Daemon) isSelfHost(hostID string) bool {
+	applianceHostname := d.config.SiteID + "-appliance"
+	return hostID == applianceHostname || hostID == "localhost" || hostID == "127.0.0.1"
+}
+
+// localExecResult mirrors the SSH executor result for local execution.
+type localExecResult struct {
+	Success bool
+	Output  string
+	Error   string
+}
+
+// executeLocal runs a remediation script locally via bash instead of SSH.
+// Used for self-healing on the appliance itself.
+func (d *Daemon) executeLocal(script, runbookID, phase string, timeout int) localExecResult {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "bash", "-c", script)
+	output, err := cmd.CombinedOutput()
+	outStr := string(output)
+	if len(outStr) > 2000 {
+		outStr = outStr[len(outStr)-2000:]
+	}
+
+	if err != nil {
+		log.Printf("[l1-exec] Local %s phase=%s failed: %v", runbookID, phase, err)
+		return localExecResult{Success: false, Output: outStr, Error: fmt.Sprintf("%v: %s", err, outStr)}
+	}
+
+	log.Printf("[l1-exec] Local %s phase=%s succeeded", runbookID, phase)
+	return localExecResult{Success: true, Output: outStr}
 }
