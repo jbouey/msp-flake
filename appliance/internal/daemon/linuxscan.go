@@ -30,13 +30,22 @@ print(json.dumps(d))
 # Helper: safe JSON via python3 (available on NixOS)
 to_json() { python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))" 2>/dev/null; }
 
-# 1. Firewall — check nftables/iptables rules exist
+# 1. Firewall — check nftables/iptables/ufw rules exist
 fw_rules=0
-if command -v nft >/dev/null 2>&1; then
-    fw_rules=$(nft list ruleset 2>/dev/null | grep -c "rule" || echo 0)
-elif command -v iptables >/dev/null 2>&1; then
-    fw_rules=$(iptables -L -n 2>/dev/null | grep -c -v "^Chain\|^target\|^$" || echo 0)
+if command -v ufw >/dev/null 2>&1; then
+    ufw_out=$(ufw status 2>/dev/null)
+    if echo "$ufw_out" | grep -q "Status: active"; then
+        fw_rules=$(echo "$ufw_out" | grep -c "ALLOW\|DENY\|REJECT\|LIMIT" || true)
+    fi
 fi
+if [ "$fw_rules" -eq 0 ] 2>/dev/null && command -v nft >/dev/null 2>&1; then
+    fw_rules=$(nft list ruleset 2>/dev/null | grep -c "rule" || true)
+fi
+if [ "$fw_rules" -eq 0 ] 2>/dev/null && command -v iptables >/dev/null 2>&1; then
+    fw_rules=$(iptables -L -n 2>/dev/null | grep -c -v "^Chain\|^target\|^$" || true)
+fi
+fw_rules=$(echo "$fw_rules" | head -1 | tr -dc '0-9')
+[ -z "$fw_rules" ] && fw_rules=0
 fw_status="active"
 [ "$fw_rules" -eq 0 ] && fw_status="no_rules"
 
@@ -56,6 +65,8 @@ fi
 # 3. Failed systemd services
 failed_svcs=$(systemctl --failed --no-legend --no-pager 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
 failed_count=$(echo "$failed_svcs" | tr ',' '\n' | grep -c . 2>/dev/null || echo 0)
+failed_count=$(echo "$failed_count" | head -1 | tr -dc '0-9')
+[ -z "$failed_count" ] && failed_count=0
 [ -z "$failed_svcs" ] && { failed_svcs="none"; failed_count=0; }
 
 # 4. Disk space — check if any mount is >90% full
@@ -188,6 +199,11 @@ done
 cert_issues=${cert_issues%,}
 [ -z "$cert_issues" ] && cert_issues="ok"
 
+# Sanitize all numeric vars to prevent Python syntax errors
+fw_rules=$(echo "$fw_rules" | head -1 | tr -dc '0-9'); [ -z "$fw_rules" ] && fw_rules=0
+failed_count=$(echo "$failed_count" | head -1 | tr -dc '0-9'); [ -z "$failed_count" ] && failed_count=0
+disk_pct=$(echo "$disk_pct" | head -1 | tr -dc '0-9'); [ -z "$disk_pct" ] && disk_pct=0
+
 # Build final JSON output
 python3 -c "
 import json
@@ -290,6 +306,9 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 		if lt.PrivateKey != "" {
 			target.PrivateKey = &lt.PrivateKey
 		}
+		if lt.SudoPassword != "" {
+			target.SudoPassword = &lt.SudoPassword
+		}
 
 		findings := ds.scanLinuxRemote(ctx, target, lt.Label)
 		allFindings = append(allFindings, findings...)
@@ -350,8 +369,9 @@ func (ds *driftScanner) scanLinuxRemote(ctx context.Context, target *sshexec.Tar
 	)
 
 	if !result.Success {
-		log.Printf("[linuxscan] Remote scan failed for %s (%s): %s",
-			target.Hostname, label, result.Error)
+		stderr, _ := result.Output["stderr"].(string)
+		log.Printf("[linuxscan] Remote scan failed for %s (%s): error=%q exit=%d stderr=%q",
+			target.Hostname, label, result.Error, result.ExitCode, stderr)
 		return nil
 	}
 
@@ -628,12 +648,13 @@ func (ds *driftScanner) reportLinuxDrift(f driftFinding) {
 
 // linuxTarget represents a remote Linux machine to scan.
 type linuxTarget struct {
-	Hostname   string `json:"hostname"`
-	Port       int    `json:"port"`
-	Username   string `json:"username"`
-	Password   string `json:"password,omitempty"`
-	PrivateKey string `json:"private_key,omitempty"`
-	Label      string `json:"label"`
+	Hostname     string `json:"hostname"`
+	Port         int    `json:"port"`
+	Username     string `json:"username"`
+	Password     string `json:"password,omitempty"`
+	SudoPassword string `json:"sudo_password,omitempty"`
+	PrivateKey   string `json:"private_key,omitempty"`
+	Label        string `json:"label"`
 }
 
 // parseLinuxTargets extracts Linux targets from the checkin response.
@@ -653,6 +674,10 @@ func parseLinuxTargets(raw []map[string]interface{}) []linuxTarget {
 			username = "root"
 		}
 		password, _ := m["password"].(string)
+		sudoPassword, _ := m["sudo_password"].(string)
+		if sudoPassword == "" && password != "" {
+			sudoPassword = password // fallback: use password as sudo password
+		}
 		key, _ := m["private_key"].(string)
 		label, _ := m["label"].(string)
 		if label == "" {
@@ -660,12 +685,13 @@ func parseLinuxTargets(raw []map[string]interface{}) []linuxTarget {
 		}
 
 		targets = append(targets, linuxTarget{
-			Hostname:   hostname,
-			Port:       port,
-			Username:   username,
-			Password:   password,
-			PrivateKey: key,
-			Label:      label,
+			Hostname:     hostname,
+			Port:         port,
+			Username:     username,
+			Password:     password,
+			SudoPassword: sudoPassword,
+			PrivateKey:   key,
+			Label:        label,
 		})
 	}
 	return targets
