@@ -689,7 +689,7 @@ async def get_promotion_candidates(db: AsyncSession = Depends(get_db)):
         PromotionCandidate(
             id=c["id"],
             pattern_signature=c["pattern_signature"],
-            description=c.get("description", ""),
+            description=c.get("description") or "",
             occurrences=c["occurrences"],
             success_rate=c["success_rate"],
             avg_resolution_time_ms=c.get("avg_resolution_time_ms", 0),

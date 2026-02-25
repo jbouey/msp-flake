@@ -258,7 +258,7 @@ class PromotionCandidate(BaseModel):
     """Pattern that is a candidate for L1 promotion."""
     id: str
     pattern_signature: str
-    description: str
+    description: Optional[str] = None
     occurrences: int
     success_rate: float
     avg_resolution_time_ms: int
