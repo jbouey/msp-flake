@@ -6,6 +6,16 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 const BASE = '/api/companion';
 
+function getCsrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const token = getCsrfToken();
+  return token ? { 'X-CSRF-Token': token } : {};
+}
+
 async function fetchJson(url: string, opts?: RequestInit) {
   const res = await fetch(url, { credentials: 'same-origin', ...opts });
   if (!res.ok) {
@@ -18,7 +28,7 @@ async function fetchJson(url: string, opts?: RequestInit) {
 async function postJson(url: string, body: unknown) {
   return fetchJson(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
     body: JSON.stringify(body),
   });
 }
@@ -26,13 +36,13 @@ async function postJson(url: string, body: unknown) {
 async function putJson(url: string, body: unknown) {
   return fetchJson(url, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
     body: JSON.stringify(body),
   });
 }
 
 async function deleteReq(url: string) {
-  return fetchJson(url, { method: 'DELETE' });
+  return fetchJson(url, { method: 'DELETE', headers: { ...csrfHeaders() } });
 }
 
 // =============================================================================
