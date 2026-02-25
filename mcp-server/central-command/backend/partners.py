@@ -829,7 +829,7 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
                    revenue_share_percent, status, created_at, updated_at
             FROM partners
             WHERE id = $1
-        """, partner_id)
+        """, _uid(partner_id))
 
         if not row:
             raise HTTPException(status_code=404, detail="Partner not found")
@@ -840,7 +840,7 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
             FROM sites
             WHERE partner_id = $1
             ORDER BY clinic_name
-        """, partner_id)
+        """, _uid(partner_id))
 
         # Get users for this partner
         users = await conn.fetch("""
@@ -848,7 +848,7 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
             FROM partner_users
             WHERE partner_id = $1
             ORDER BY email
-        """, partner_id)
+        """, _uid(partner_id))
 
         return {
             'id': str(row['id']),
@@ -942,7 +942,7 @@ async def update_partner(request: Request, partner_id: str, update: PartnerUpdat
     values.append(datetime.now(timezone.utc))
     param_num += 1
 
-    values.append(partner_id)
+    values.append(_uid(partner_id))
 
     query = f"""
         UPDATE partners
@@ -989,7 +989,7 @@ async def regenerate_api_key(request: Request, partner_id: str, admin: dict = De
             SET api_key_hash = $1, updated_at = NOW()
             WHERE id = $2
             RETURNING name
-        """, api_key_hash, partner_id)
+        """, api_key_hash, _uid(partner_id))
 
         if not result:
             raise HTTPException(status_code=404, detail="Partner not found")
@@ -1039,7 +1039,7 @@ async def create_partner_user(partner_id: str, user: PartnerUserCreate, admin: d
 
     async with pool.acquire() as conn:
         # Verify partner exists
-        partner = await conn.fetchval("SELECT 1 FROM partners WHERE id = $1", partner_id)
+        partner = await conn.fetchval("SELECT 1 FROM partners WHERE id = $1", _uid(partner_id))
         if not partner:
             raise HTTPException(status_code=404, detail="Partner not found")
 
@@ -1047,7 +1047,7 @@ async def create_partner_user(partner_id: str, user: PartnerUserCreate, admin: d
         existing = await conn.fetchval("""
             SELECT 1 FROM partner_users
             WHERE partner_id = $1 AND email = $2
-        """, partner_id, user.email.lower())
+        """, _uid(partner_id), user.email.lower())
         if existing:
             raise HTTPException(status_code=400, detail="Email already exists for this partner")
 
@@ -1061,7 +1061,7 @@ async def create_partner_user(partner_id: str, user: PartnerUserCreate, admin: d
             ) VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id, email, name, role
         """,
-            partner_id,
+            _uid(partner_id),
             user.email.lower(),
             user.name,
             user.role,
@@ -1093,7 +1093,7 @@ async def generate_user_magic_link(partner_id: str, user_id: str, admin: dict = 
             SET magic_token = $1, magic_token_expires = $2
             WHERE id = $3 AND partner_id = $4
             RETURNING email
-        """, magic_token, magic_expires, user_id, partner_id)
+        """, magic_token, magic_expires, _uid(user_id), _uid(partner_id))
 
         if not result:
             raise HTTPException(status_code=404, detail="User not found")
