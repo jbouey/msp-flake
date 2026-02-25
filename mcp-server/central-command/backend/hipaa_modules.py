@@ -233,6 +233,15 @@ async def get_compliance_overview(user: dict = Depends(require_client_user)):
             FROM hipaa_gap_responses WHERE org_id = $1
         """, org_id)
 
+        # Document uploads per module
+        doc_rows = await conn.fetch("""
+            SELECT module_key, COUNT(*) as doc_count
+            FROM hipaa_documents
+            WHERE org_id = $1 AND deleted_at IS NULL
+            GROUP BY module_key
+        """, org_id)
+        doc_counts = {r["module_key"]: r["doc_count"] for r in doc_rows}
+
     # Calculate overall readiness (weighted composite)
     scores = []
     if sra_row and sra_row["status"] == "completed":
@@ -249,6 +258,22 @@ async def get_compliance_overview(user: dict = Depends(require_client_user)):
         scores.append(50)
     if gap_row and gap_row["total"] > 0:
         scores.append(float(gap_row["answered"]) / max(float(gap_row["total"]), 1) * 100)
+
+    # Documents-only modules: if no structured data but docs uploaded, count as evidence
+    DOC_MODULES = ["policies", "baas", "training", "ir_plan", "contingency", "workforce", "physical", "officers"]
+    structured_has_data = {
+        "policies": policy_counts and policy_counts["total"] > 0,
+        "baas": baa_counts and baa_counts["total"] > 0,
+        "training": training_counts and training_counts["total"] > 0,
+        "ir_plan": ir_row is not None,
+        "contingency": contingency_row and contingency_row["plans"] > 0,
+        "workforce": workforce_row and workforce_row["active"] > 0,
+        "physical": physical_row and physical_row["assessed"] > 0,
+        "officers": bool(officer_map.get("privacy_officer") or officer_map.get("security_officer")),
+    }
+    for mk in DOC_MODULES:
+        if not structured_has_data.get(mk) and doc_counts.get(mk, 0) > 0:
+            scores.append(100)  # document upload = evidence provided
 
     overall = round(sum(scores) / max(len(scores), 1), 1) if scores else 0
 
@@ -300,6 +325,7 @@ async def get_compliance_overview(user: dict = Depends(require_client_user)):
             "completion": round(float(gap_row["answered"]) / max(float(gap_row["total"]), 1) * 100, 1) if gap_row and gap_row["total"] > 0 else 0,
             "maturity_avg": round(float(gap_row["maturity_avg"]), 1) if gap_row else 0,
         },
+        "documents": doc_counts,
         "overall_readiness": overall,
     }
 

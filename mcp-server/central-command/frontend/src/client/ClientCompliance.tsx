@@ -24,6 +24,7 @@ interface Overview {
   physical: { assessed: number; compliant: number; gaps: number };
   officers: { privacy_officer: string | null; security_officer: string | null };
   gap_analysis: { completion: number; maturity_avg: number };
+  documents: Record<string, number>;
   overall_readiness: number;
 }
 
@@ -55,7 +56,16 @@ const colorMap: Record<string, { bg: string; text: string; badge: string }> = {
   pink: { bg: 'bg-pink-100', text: 'text-pink-600', badge: 'bg-pink-500' },
 };
 
+const DOC_KEY_MAP: Partial<Record<ModuleTab, string>> = {
+  policies: 'policies', baas: 'baas', training: 'training',
+  'ir-plan': 'ir_plan', contingency: 'contingency', workforce: 'workforce',
+  physical: 'physical', officers: 'officers',
+};
+
 function getModuleStatus(overview: Overview, key: ModuleTab): { label: string; color: string } {
+  const docKey = DOC_KEY_MAP[key];
+  const docs = docKey ? (overview.documents?.[docKey] || 0) : 0;
+
   switch (key) {
     case 'sra':
       if (overview.sra.status === 'completed') return { label: 'Completed', color: 'green' };
@@ -64,34 +74,42 @@ function getModuleStatus(overview: Overview, key: ModuleTab): { label: string; c
     case 'policies':
       if (overview.policies.review_due > 0) return { label: `${overview.policies.review_due} Due`, color: 'yellow' };
       if (overview.policies.active > 0) return { label: `${overview.policies.active} Active`, color: 'green' };
+      if (docs > 0) return { label: `${docs} Doc${docs > 1 ? 's' : ''}`, color: 'green' };
       return { label: 'Not Started', color: 'slate' };
     case 'training':
       if (overview.training.overdue > 0) return { label: `${overview.training.overdue} Overdue`, color: 'red' };
       if (overview.training.compliant > 0) return { label: 'Current', color: 'green' };
+      if (docs > 0) return { label: `${docs} Doc${docs > 1 ? 's' : ''}`, color: 'green' };
       return { label: 'Not Started', color: 'slate' };
     case 'baas':
       if (overview.baas.expiring_soon > 0) return { label: `${overview.baas.expiring_soon} Expiring`, color: 'yellow' };
       if (overview.baas.active > 0) return { label: `${overview.baas.active} Active`, color: 'green' };
+      if (docs > 0) return { label: `${docs} Doc${docs > 1 ? 's' : ''}`, color: 'green' };
       return { label: 'Not Started', color: 'slate' };
     case 'ir-plan':
       if (overview.ir_plan.status === 'active') return { label: 'Active', color: 'green' };
       if (overview.ir_plan.status === 'draft') return { label: 'Draft', color: 'yellow' };
+      if (docs > 0) return { label: `${docs} Doc${docs > 1 ? 's' : ''}`, color: 'green' };
       return { label: 'Not Started', color: 'slate' };
     case 'contingency':
       if (overview.contingency.plans > 0 && overview.contingency.all_tested) return { label: 'Tested', color: 'green' };
       if (overview.contingency.plans > 0) return { label: `${overview.contingency.plans} Plans`, color: 'yellow' };
+      if (docs > 0) return { label: `${docs} Doc${docs > 1 ? 's' : ''}`, color: 'green' };
       return { label: 'Not Started', color: 'slate' };
     case 'workforce':
       if (overview.workforce.pending_termination > 0) return { label: 'Action Needed', color: 'red' };
       if (overview.workforce.active > 0) return { label: `${overview.workforce.active} Active`, color: 'green' };
+      if (docs > 0) return { label: `${docs} Doc${docs > 1 ? 's' : ''}`, color: 'green' };
       return { label: 'Not Started', color: 'slate' };
     case 'physical':
       if (overview.physical.gaps > 0) return { label: `${overview.physical.gaps} Gaps`, color: 'yellow' };
       if (overview.physical.assessed > 0) return { label: 'Assessed', color: 'green' };
+      if (docs > 0) return { label: `${docs} Doc${docs > 1 ? 's' : ''}`, color: 'green' };
       return { label: 'Not Started', color: 'slate' };
     case 'officers':
       if (overview.officers.privacy_officer && overview.officers.security_officer) return { label: 'Designated', color: 'green' };
       if (overview.officers.privacy_officer || overview.officers.security_officer) return { label: 'Partial', color: 'yellow' };
+      if (docs > 0) return { label: `${docs} Doc${docs > 1 ? 's' : ''}`, color: 'green' };
       return { label: 'Not Started', color: 'slate' };
     case 'gap-analysis':
       if (overview.gap_analysis.completion >= 100) return { label: 'Complete', color: 'green' };
