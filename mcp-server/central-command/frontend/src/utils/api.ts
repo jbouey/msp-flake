@@ -1049,6 +1049,10 @@ export interface FleetStats {
     active: number;
     latest_version: string | null;
   };
+  fleet: {
+    deployed_version: string | null;
+    active_appliances: number;
+  };
   rollouts: {
     total: number;
     in_progress: number;

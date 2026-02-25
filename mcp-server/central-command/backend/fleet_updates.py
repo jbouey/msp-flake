@@ -941,6 +941,18 @@ async def get_fleet_update_stats():
             "SELECT version FROM update_releases WHERE is_latest = true"
         )
 
+        # Auto-detect deployed version from appliance checkins
+        deployed = await conn.fetchrow(
+            """SELECT agent_version, COUNT(*) as cnt
+               FROM appliances
+               WHERE last_checkin > NOW() - INTERVAL '7 days'
+               GROUP BY agent_version ORDER BY cnt DESC LIMIT 1"""
+        )
+        deployed_version = deployed["agent_version"] if deployed else None
+        total_appliances = await conn.fetchval(
+            "SELECT COUNT(*) FROM appliances WHERE last_checkin > NOW() - INTERVAL '7 days'"
+        )
+
         rollouts = await conn.fetchrow(
             """
             SELECT
@@ -968,7 +980,11 @@ async def get_fleet_update_stats():
             "releases": {
                 "total": releases["total"],
                 "active": releases["active"],
-                "latest_version": latest["version"] if latest else None,
+                "latest_version": latest["version"] if latest else deployed_version,
+            },
+            "fleet": {
+                "deployed_version": deployed_version,
+                "active_appliances": total_appliances,
             },
             "rollouts": {
                 "total": rollouts["total"],

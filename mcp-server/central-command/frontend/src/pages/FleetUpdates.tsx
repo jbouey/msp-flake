@@ -154,11 +154,20 @@ export const FleetUpdates: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <GlassCard className="p-4">
-          <div className="text-sm text-label-tertiary">Latest Version</div>
+          <div className="text-sm text-label-tertiary">Latest Release</div>
           <div className="text-2xl font-bold text-accent-primary mt-1">
             {stats?.releases.latest_version || 'None'}
+          </div>
+        </GlassCard>
+        <GlassCard className="p-4">
+          <div className="text-sm text-label-tertiary">Deployed Version</div>
+          <div className="text-2xl font-bold text-health-healthy mt-1">
+            {stats?.fleet?.deployed_version || '—'}
+          </div>
+          <div className="text-xs text-label-tertiary mt-0.5">
+            {stats?.fleet?.active_appliances || 0} appliance{(stats?.fleet?.active_appliances || 0) !== 1 ? 's' : ''}
           </div>
         </GlassCard>
         <GlassCard className="p-4">
