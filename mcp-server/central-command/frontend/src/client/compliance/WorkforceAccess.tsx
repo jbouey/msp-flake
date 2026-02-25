@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DocumentUpload } from './DocumentUpload';
 
 interface Member {
   id: string;
@@ -187,6 +188,8 @@ export const WorkforceAccess: React.FC<WorkforceAccessProps> = ({ apiBase = '/ap
           </table>
         </div>
       )}
+
+      <DocumentUpload moduleKey="workforce" apiBase={apiBase} />
     </div>
   );
 };

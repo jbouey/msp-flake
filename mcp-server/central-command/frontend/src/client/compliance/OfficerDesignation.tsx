@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DocumentUpload } from './DocumentUpload';
 
 interface Officer {
   role_type: string;
@@ -132,6 +133,30 @@ export const OfficerDesignation: React.FC<OfficerDesignationProps> = ({ apiBase 
           HIPAA requires designation of both a Privacy Officer and Security Officer. The same person may serve in both roles for small organizations.
         </p>
       </div>
+
+      {/* Designation letter template */}
+      <div className="mt-6 bg-white rounded-2xl border border-slate-100 p-5">
+        <h3 className="text-base font-semibold text-slate-900 mb-2">Designation Letter Template</h3>
+        <p className="text-sm text-slate-500 mb-4">
+          Download a formal designation letter, print and sign it, then upload the signed copy below as proof of officer appointment.
+        </p>
+        <div className="flex gap-3">
+          <button
+            onClick={() => window.open(`${apiBase}/officers/template?role_type=security_officer`, '_blank')}
+            className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors"
+          >
+            Security Officer Template
+          </button>
+          <button
+            onClick={() => window.open(`${apiBase}/officers/template?role_type=privacy_officer`, '_blank')}
+            className="px-4 py-2 border border-teal-200 text-teal-700 text-sm font-medium rounded-lg hover:bg-teal-50 transition-colors"
+          >
+            Privacy Officer Template
+          </button>
+        </div>
+      </div>
+
+      <DocumentUpload moduleKey="officers" apiBase={apiBase} />
     </div>
   );
 };

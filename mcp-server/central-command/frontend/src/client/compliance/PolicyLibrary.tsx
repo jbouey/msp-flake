@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DocumentUpload } from './DocumentUpload';
 
 interface Policy {
   id: string;
@@ -201,6 +202,8 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
           <p className="text-slate-500">No policies available.</p>
         </div>
       )}
+
+      <DocumentUpload moduleKey="policies" apiBase={apiBase} />
     </div>
   );
 };

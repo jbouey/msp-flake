@@ -739,3 +739,83 @@ GAP_ANALYSIS_QUESTIONS = [
     {"section": "organizational", "question_key": "gap_breach_notification", "hipaa_reference": "164.404",
      "text": "Are breach notification procedures documented and ready to execute?"},
 ]
+
+
+# =============================================================================
+# Officer Designation Letter Template
+# =============================================================================
+# HTML template that clients can print, sign, and upload as proof of officer
+# designation.  Placeholders: {{ORG_NAME}}, {{ROLE_LABEL}}, {{OFFICER_NAME}},
+# {{OFFICER_TITLE}}, {{EFFECTIVE_DATE}}.
+
+OFFICER_DESIGNATION_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>HIPAA Officer Designation Letter</title>
+<style>
+  @media print { body { margin: 1in; } }
+  body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.6; max-width: 7in; margin: 0.75in auto; color: #1a1a1a; }
+  h1 { text-align: center; font-size: 16pt; margin-bottom: 0.5em; }
+  .date-line { text-align: right; margin-bottom: 2em; }
+  .signature-block { margin-top: 3em; }
+  .sig-line { border-top: 1px solid #333; width: 300px; margin-top: 3em; padding-top: 4px; }
+  .field-blank { border-bottom: 1px solid #666; display: inline-block; min-width: 200px; padding: 0 4px; }
+  .notice { margin-top: 2em; padding: 12px; background: #f5f5f5; border-left: 3px solid #0d7377; font-size: 10pt; }
+</style>
+</head>
+<body>
+
+<h1>HIPAA {{ROLE_LABEL}} Designation</h1>
+
+<p class="date-line">Effective Date: <span class="field-blank">{{EFFECTIVE_DATE}}</span></p>
+
+<p>To Whom It May Concern:</p>
+
+<p>
+This letter serves as formal documentation that <strong>{{ORG_NAME}}</strong>
+hereby designates the following individual as the organization's
+<strong>{{ROLE_LABEL}}</strong> pursuant to the Health Insurance Portability
+and Accountability Act of 1996 (HIPAA) and its implementing regulations.
+</p>
+
+<p>
+<strong>Designated Individual:</strong><br>
+Name: <span class="field-blank">{{OFFICER_NAME}}</span><br>
+Title: <span class="field-blank">{{OFFICER_TITLE}}</span>
+</p>
+
+<p>
+The designated {{ROLE_LABEL}} shall be responsible for the development and
+implementation of the organization's HIPAA policies and procedures, ensuring
+compliance with all applicable federal and state regulations regarding the
+protection of health information.
+</p>
+
+<p>
+This designation is made in accordance with 45 CFR &sect;164.308(a)(2)
+(Security Officer) and 45 CFR &sect;164.530(a)(1) (Privacy Officer).
+</p>
+
+<div class="signature-block">
+<p><strong>Authorized By:</strong></p>
+
+<div class="sig-line">
+  Signature of Authorized Official
+</div>
+
+<p style="margin-top: 1em;">
+  Printed Name: <span class="field-blank">&nbsp;</span><br>
+  Title: <span class="field-blank">&nbsp;</span><br>
+  Date: <span class="field-blank">&nbsp;</span>
+</p>
+</div>
+
+<div class="notice">
+  <strong>Instructions:</strong> Print this document, complete the signature
+  section, and upload the signed copy to your OsirisCare compliance portal
+  under Officer Designation &rarr; Supporting Documents.
+</div>
+
+</body>
+</html>"""

@@ -16,13 +16,16 @@ Provides API endpoints for 10 HIPAA gap-closing modules:
 All endpoints are org-scoped via client session auth.
 """
 
+import io
 import logging
+import os
 import uuid as _uuid
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from typing import Optional, List
 from decimal import Decimal
 
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, HTTPException, Depends, UploadFile, File, Form, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .fleet import get_pool
@@ -33,6 +36,7 @@ from .hipaa_templates import (
     IR_PLAN_TEMPLATE,
     PHYSICAL_SAFEGUARD_ITEMS,
     GAP_ANALYSIS_QUESTIONS,
+    OFFICER_DESIGNATION_TEMPLATE,
 )
 
 logger = logging.getLogger(__name__)
@@ -935,6 +939,37 @@ async def upsert_officers(body: OfficerUpsert, user: dict = Depends(require_clie
     return {"status": "saved"}
 
 
+@router.get("/officers/template")
+async def get_officer_template(
+    role_type: str = Query("security_officer"),
+    user: dict = Depends(require_client_user),
+):
+    """Return a printable HTML designation letter template with org name pre-filled."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    # Get org name
+    async with pool.acquire() as conn:
+        org = await conn.fetchrow(
+            "SELECT org_name FROM client_portal_orgs WHERE id = $1", org_id
+        )
+
+    org_name = org["org_name"] if org else "Your Organization"
+    role_label = "Privacy Officer" if role_type == "privacy_officer" else "Security Officer"
+
+    html = (
+        OFFICER_DESIGNATION_TEMPLATE
+        .replace("{{ORG_NAME}}", org_name)
+        .replace("{{ROLE_LABEL}}", role_label)
+        .replace("{{OFFICER_NAME}}", "")
+        .replace("{{OFFICER_TITLE}}", "")
+        .replace("{{EFFECTIVE_DATE}}", "")
+    )
+
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=html)
+
+
 # =============================================================================
 # 10. GAP ANALYSIS
 # =============================================================================
@@ -974,3 +1009,193 @@ async def save_gap_analysis(body: GapResponseBatch, user: dict = Depends(require
                 resp.get("maturity_level", 0), resp.get("notes"),
                 resp.get("evidence_ref"))
     return {"status": "saved"}
+
+
+# =============================================================================
+# DOCUMENT UPLOAD / DOWNLOAD / LIST / DELETE
+# =============================================================================
+
+ALLOWED_MODULE_KEYS = {"policies", "baas", "training", "ir_plan", "contingency", "physical", "workforce", "officers"}
+
+ALLOWED_MIME_TYPES = {
+    "application/pdf",
+    "image/png", "image/jpeg", "image/jpg",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/csv", "text/plain",
+}
+
+MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
+
+DOCUMENTS_BUCKET = "hipaa-documents"
+
+
+def _get_minio_client():
+    from minio import Minio
+    return Minio(
+        os.getenv("MINIO_ENDPOINT", "localhost:9000"),
+        access_key=os.getenv("MINIO_ACCESS_KEY", "minio"),
+        secret_key=os.getenv("MINIO_SECRET_KEY", "minio123"),
+        secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
+    )
+
+
+def _ensure_bucket(client):
+    if not client.bucket_exists(DOCUMENTS_BUCKET):
+        client.make_bucket(DOCUMENTS_BUCKET)
+
+
+@router.post("/documents/upload")
+async def upload_document(
+    request: Request,
+    file: UploadFile = File(...),
+    module_key: str = Form(...),
+    description: str = Form(None),
+    user: dict = Depends(require_client_user),
+):
+    """Upload a compliance document (PDF, image, office doc)."""
+    if module_key not in ALLOWED_MODULE_KEYS:
+        raise HTTPException(status_code=400, detail=f"Invalid module_key. Must be one of: {', '.join(sorted(ALLOWED_MODULE_KEYS))}")
+
+    # Validate mime type
+    content_type = file.content_type or "application/octet-stream"
+    if content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"File type '{content_type}' not allowed. Accepted: PDF, PNG, JPG, DOC, DOCX, XLS, XLSX, CSV, TXT")
+
+    # Read file and validate size
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024*1024)} MB")
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    org_id = user["org_id"]
+    doc_id = str(_uuid.uuid4())
+    safe_name = (file.filename or "document").replace("/", "_").replace("\\", "_")
+    minio_key = f"{org_id}/{module_key}/{doc_id}_{safe_name}"
+
+    # Upload to MinIO
+    try:
+        mc = _get_minio_client()
+        _ensure_bucket(mc)
+        mc.put_object(
+            DOCUMENTS_BUCKET,
+            minio_key,
+            io.BytesIO(file_bytes),
+            length=len(file_bytes),
+            content_type=content_type,
+        )
+    except Exception as e:
+        logger.error(f"MinIO upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to store file")
+
+    # Insert metadata
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO hipaa_documents
+                (id, org_id, module_key, file_name, mime_type, size_bytes, minio_key, description, uploaded_by, uploaded_by_email)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        """, doc_id, str(org_id), module_key, safe_name, content_type,
+            len(file_bytes), minio_key, description,
+            str(user.get("id", "")), user.get("email", ""))
+
+    return {
+        "id": doc_id,
+        "file_name": safe_name,
+        "mime_type": content_type,
+        "size_bytes": len(file_bytes),
+        "module_key": module_key,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/documents")
+async def list_documents(
+    module_key: Optional[str] = Query(None),
+    user: dict = Depends(require_client_user),
+):
+    """List uploaded documents for the client's org, optionally filtered by module."""
+    pool = await get_pool()
+    org_id = str(user["org_id"])
+
+    async with pool.acquire() as conn:
+        if module_key:
+            rows = await conn.fetch("""
+                SELECT id::text, module_key, file_name, mime_type, size_bytes,
+                       description, uploaded_by_email, created_at::text
+                FROM hipaa_documents
+                WHERE org_id = $1 AND module_key = $2 AND deleted_at IS NULL
+                ORDER BY created_at DESC
+            """, org_id, module_key)
+        else:
+            rows = await conn.fetch("""
+                SELECT id::text, module_key, file_name, mime_type, size_bytes,
+                       description, uploaded_by_email, created_at::text
+                FROM hipaa_documents
+                WHERE org_id = $1 AND deleted_at IS NULL
+                ORDER BY created_at DESC
+            """, org_id)
+
+    documents = [dict(r) for r in rows]
+    return {"documents": documents, "total": len(documents)}
+
+
+@router.get("/documents/{doc_id}/download")
+async def download_document(
+    doc_id: str,
+    user: dict = Depends(require_client_user),
+):
+    """Generate a presigned download URL for a document."""
+    pool = await get_pool()
+    org_id = str(user["org_id"])
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT minio_key, file_name
+            FROM hipaa_documents
+            WHERE id = $1::uuid AND org_id = $2 AND deleted_at IS NULL
+        """, doc_id, org_id)
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        mc = _get_minio_client()
+        url = mc.presigned_get_object(
+            DOCUMENTS_BUCKET,
+            row["minio_key"],
+            expires=timedelta(minutes=15),
+        )
+        return {
+            "download_url": url,
+            "expires_in": 900,
+            "file_name": row["file_name"],
+        }
+    except Exception as e:
+        logger.error(f"Presigned URL generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate download URL")
+
+
+@router.delete("/documents/{doc_id}")
+async def delete_document(
+    doc_id: str,
+    user: dict = Depends(require_client_user),
+):
+    """Soft-delete a document (file retained in MinIO for compliance)."""
+    pool = await get_pool()
+    org_id = str(user["org_id"])
+
+    async with pool.acquire() as conn:
+        result = await conn.execute("""
+            UPDATE hipaa_documents
+            SET deleted_at = NOW()
+            WHERE id = $1::uuid AND org_id = $2 AND deleted_at IS NULL
+        """, doc_id, org_id)
+
+    if result == "UPDATE 0":
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return {"status": "deleted", "id": doc_id}

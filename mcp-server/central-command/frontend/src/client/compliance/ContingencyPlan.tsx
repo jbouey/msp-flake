@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DocumentUpload } from './DocumentUpload';
 
 interface Plan {
   id: string;
@@ -145,6 +146,8 @@ export const ContingencyPlan: React.FC<ContingencyPlanProps> = ({ apiBase = '/ap
           ))}
         </div>
       )}
+
+      <DocumentUpload moduleKey="contingency" apiBase={apiBase} />
     </div>
   );
 };

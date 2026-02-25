@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DocumentUpload } from './DocumentUpload';
 
 interface IRPlan {
   id: string;
@@ -234,6 +235,8 @@ export const IncidentResponsePlan: React.FC<IncidentResponsePlanProps> = ({ apiB
           ))}
         </div>
       )}
+
+      <DocumentUpload moduleKey="ir_plan" apiBase={apiBase} />
     </div>
   );
 };

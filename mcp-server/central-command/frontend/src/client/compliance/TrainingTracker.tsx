@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DocumentUpload } from './DocumentUpload';
 
 interface TrainingRecord {
   id: string;
@@ -179,6 +180,8 @@ export const TrainingTracker: React.FC<TrainingTrackerProps> = ({ apiBase = '/ap
           </table>
         </div>
       )}
+
+      <DocumentUpload moduleKey="training" apiBase={apiBase} />
     </div>
   );
 };

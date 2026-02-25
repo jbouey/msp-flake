@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DocumentUpload } from './DocumentUpload';
 
 interface SafeguardItem {
   category: string;
@@ -134,6 +135,8 @@ export const PhysicalSafeguards: React.FC<PhysicalSafeguardsProps> = ({ apiBase 
           </div>
         );
       })}
+
+      <DocumentUpload moduleKey="physical" apiBase={apiBase} />
     </div>
   );
 };

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DocumentUpload } from './DocumentUpload';
 
 interface BAA {
   id: string;
@@ -180,6 +181,8 @@ export const BAATracker: React.FC<BAATrackerProps> = ({ apiBase = '/api/client/c
           ))}
         </div>
       )}
+
+      <DocumentUpload moduleKey="baas" apiBase={apiBase} />
     </div>
   );
 };
