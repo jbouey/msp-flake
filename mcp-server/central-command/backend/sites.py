@@ -1949,6 +1949,11 @@ async def appliance_checkin(checkin: ApplianceCheckin):
                             }
                             if cred_data.get('password'):
                                 target_entry["password"] = cred_data['password']
+                                # Use password as sudo_password if not explicitly set
+                                if not cred_data.get('sudo_password'):
+                                    target_entry["sudo_password"] = cred_data['password']
+                            if cred_data.get('sudo_password'):
+                                target_entry["sudo_password"] = cred_data['sudo_password']
                             if cred_data.get('private_key'):
                                 target_entry["private_key"] = cred_data['private_key']
                             if cred_data.get('distro'):
