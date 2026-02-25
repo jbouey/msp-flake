@@ -1617,6 +1617,68 @@ async def resolve_incident(incident_id: str, request: Request, db: AsyncSession 
     return {"status": "resolved", "incident_id": incident_id}
 
 
+@app.post("/incidents/resolve")
+async def resolve_incident_by_type(request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Resolve the latest open incident matching site_id + host_id + check_type.
+    Used by the Go daemon which reports incidents fire-and-forget and doesn't
+    track backend incident UUIDs.
+    """
+    body = await request.json()
+    site_id = body.get("site_id")
+    host_id = body.get("host_id")
+    check_type = body.get("check_type")
+    resolution_tier = body.get("resolution_tier", "L1")
+    runbook_id = body.get("runbook_id", "")
+
+    if not site_id or not host_id or not check_type:
+        raise HTTPException(status_code=400, detail="site_id, host_id, and check_type are required")
+
+    # Find the appliance
+    app_result = await db.execute(
+        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        {"site_id": site_id}
+    )
+    appliance = app_result.fetchone()
+    if not appliance:
+        raise HTTPException(status_code=404, detail=f"Appliance not found: {site_id}")
+
+    appliance_id = str(appliance[0])
+
+    # Resolve the latest open/resolving incident for this type
+    result = await db.execute(
+        text("""
+            UPDATE incidents SET
+                resolved_at = NOW(),
+                status = 'resolved',
+                resolution_tier = :resolution_tier
+            WHERE id = (
+                SELECT id FROM incidents
+                WHERE appliance_id = :appliance_id
+                AND incident_type = :check_type
+                AND status IN ('open', 'resolving', 'escalated')
+                ORDER BY created_at DESC
+                LIMIT 1
+            )
+            RETURNING id
+        """),
+        {
+            "appliance_id": appliance_id,
+            "check_type": check_type,
+            "resolution_tier": resolution_tier,
+        }
+    )
+
+    row = result.fetchone()
+    if not row:
+        return {"status": "no_match", "message": "No open incident found to resolve"}
+
+    await db.commit()
+    logger.info("Incident resolved by type", site_id=site_id, host_id=host_id,
+                check_type=check_type, tier=resolution_tier, incident_id=str(row[0]))
+    return {"status": "resolved", "incident_id": str(row[0])}
+
+
 @app.post("/drift")
 async def report_drift(drift: DriftReport, db: AsyncSession = Depends(get_db)):
     """Report drift detection results."""

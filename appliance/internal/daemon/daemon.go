@@ -64,6 +64,9 @@ type Daemon struct {
 	// Telemetry reporter: sends L1/L2 execution outcomes to Central Command
 	telemetry *l2planner.TelemetryReporter
 
+	// Incident reporter: sends drift findings to POST /incidents for dashboard display
+	incidents *incidentReporter
+
 	// Drift report cooldown: prevents excessive incident creation
 	cooldownMu sync.Mutex
 	cooldowns  map[string]*driftCooldown // key: "hostname:check_type"
@@ -122,7 +125,8 @@ func New(cfg *Config) *Daemon {
 	// Initialize telemetry reporter for L1/L2 execution data flywheel
 	if cfg.APIEndpoint != "" && cfg.APIKey != "" {
 		d.telemetry = l2planner.NewTelemetryReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
-		log.Printf("[daemon] Telemetry reporter initialized (endpoint=%s)", cfg.APIEndpoint)
+		d.incidents = newIncidentReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
+		log.Printf("[daemon] Telemetry + incident reporters initialized (endpoint=%s)", cfg.APIEndpoint)
 	}
 
 	// Initialize order processor with completion callback
@@ -503,6 +507,15 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 		severity = "medium"
 	}
 
+	// Report incident to Central Command dashboard (async, fire-and-forget)
+	platform, _ := data["platform"].(string)
+	if platform == "" {
+		platform = "windows"
+	}
+	if d.incidents != nil {
+		go d.incidents.ReportDriftIncident(req.Hostname, req.CheckType, req.Expected, req.Actual, req.HIPAAControl, severity, platform)
+	}
+
 	// L1: Deterministic matching
 	match := d.l1Engine.Match(incidentID, req.CheckType, severity, data)
 	if match != nil {
@@ -517,6 +530,11 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 			// Report L1 telemetry for data flywheel (async, fire-and-forget)
 			if d.telemetry != nil {
 				go d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, match.Rule.ID, true, "", result.DurationMs)
+			}
+
+			// Report healing to dashboard incidents table
+			if d.incidents != nil {
+				go d.incidents.ReportHealed(req.Hostname, req.CheckType, "L1", match.Rule.ID)
 			}
 
 			// GPO firewall fix: when firewall drift is healed, also fix the
