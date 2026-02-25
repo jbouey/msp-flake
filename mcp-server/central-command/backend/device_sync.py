@@ -5,6 +5,7 @@ them in Central Command for fleet-wide visibility.
 """
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Optional, List
 from pydantic import BaseModel, Field
@@ -12,6 +13,8 @@ import asyncpg
 from fastapi import APIRouter, HTTPException, Query
 
 from .fleet import get_pool
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -545,4 +548,52 @@ async def list_medical_devices(
         "medical_devices": devices,
         "total": total,
         "note": "Medical devices are excluded from compliance scanning by default for patient safety",
+    }
+
+
+@device_sync_router.get("/sites/{site_id}/device/{device_id}/compliance")
+async def get_device_compliance_details(site_id: str, device_id: int) -> dict:
+    """
+    Get compliance check details for a specific device.
+
+    Returns individual check results with HIPAA control mappings.
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Verify device belongs to site
+        device = await conn.fetchrow(
+            """
+            SELECT d.id, d.hostname, d.ip_address, d.compliance_status
+            FROM discovered_devices d
+            JOIN appliances a ON d.appliance_id = a.id
+            WHERE d.id = $1 AND a.site_id = $2
+            """,
+            device_id,
+            site_id,
+        )
+
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+
+        checks = await conn.fetch(
+            """
+            SELECT check_type, hipaa_control, status, details, checked_at, synced_at
+            FROM device_compliance_details
+            WHERE discovered_device_id = $1
+            ORDER BY checked_at DESC
+            """,
+            device_id,
+        )
+
+    return {
+        "device_id": device_id,
+        "hostname": device["hostname"],
+        "ip_address": device["ip_address"],
+        "compliance_status": device["compliance_status"],
+        "checks": [dict(row) for row in checks],
+        "total_checks": len(checks),
+        "passed": sum(1 for c in checks if c["status"] == "pass"),
+        "warned": sum(1 for c in checks if c["status"] == "warn"),
+        "failed": sum(1 for c in checks if c["status"] == "fail"),
     }

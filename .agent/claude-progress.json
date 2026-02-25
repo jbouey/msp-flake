@@ -1,14 +1,14 @@
 {
-  "session": 122,
-  "updated": "2026-02-21T13:15:00.000000Z",
+  "session": 132,
+  "updated": "2026-02-25T15:35:28.188111Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "go_daemon_v0.2.0_evidence_submitting_6of7_compliant_ports_50051_8090_conflict",
-    "vm_appliance": "python_agent_v1.0.55_checkin_working_per_site_auth",
+    "physical_appliance": "go_daemon_v0.2.3_linux_scan_working_nmap_network_scan_7_devices_compliance_checks_live",
+    "vm_appliance": "go_daemon_v0.2.3_deployed_via_bind_mount",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_46_promoted_9_enabled_counter_trigger_live_51_builtin_seeded_pattern_gen_from_L2",
@@ -16,9 +16,9 @@
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "fleet_wide_orders_live_migration_049_deployed_skip_version_logic"
+    "fleet_updates": "fleet_wide_orders_live_auto_detect_deployed_version_v0.2.3"
   },
-  "current_blocker": "Physical appliance running v0.2.0 but old v0.1.0 daemon still holding ports 50051/8090 (needs pkill from iMac). Only 1 of 4 Windows VMs scanned (others may be powered off). WS01 machine trust still stale since Jan 11.",
+  "current_blocker": "None. Network compliance checks live. Device inventory showing 7 devices with compliance status. WinRM 401 on DC (192.168.88.250) needs investigation.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -31,9 +31,9 @@
   },
   "agent_decision": {
     "active": "Go appliance-daemon (appliance/appliance-daemon/)",
-    "deprecated": "Python compliance-agent (packages/compliance-agent/) — DO NOT USE for new work",
+    "deprecated": "Python compliance-agent (packages/compliance-agent/) \u2014 DO NOT USE for new work",
     "rationale": "Go daemon is production-ready with full L1/L2/L3 healing, Windows+Linux scanning, evidence chain, flap detection, learning flywheel, fleet updates, auto-deploy, AD discovery. 17x less RAM (6.6MB vs 112MB), 6000x faster startup (102ms vs 10min), 73x smaller binary (15MB vs 1.1GB).",
-    "l2_sidecar": "Python L2 LLM planner still needed as separate sidecar via /var/lib/msp/l2.sock — NOT the full compliance-agent",
+    "l2_native": "Native Go L2 planner in appliance/internal/l2planner/ \u2014 PHI scrubbing + guardrails on-device, calls Central Command /api/agent/l2/plan which holds the Anthropic API key. No Python sidecar needed.",
     "decided": "2026-02-21"
   },
   "fleet_update_mechanism": {
@@ -175,39 +175,39 @@
     }
   ],
   "completed_this_session": [
-    "Fleet-wide orders: redesigned fleet updates from per-appliance to fleet-wide (migration 049, fleet_orders + fleet_order_completions tables). One row per fleet command, appliances check during checkin, skip if at version or already completed.",
-    "L1 rule check_type alignment: fixed 11 naming mismatches (linux_ssh_config!=ssh_config, audit_logging!=audit_policy, etc.) that prevented rules from firing. Added 17 new rules (55 total) — 100% coverage of all 38 scanner check types.",
-    "Server-side mappings updated: learning_api.py CHECK_TYPE_TO_RUNBOOK, compliance_packet.py CHECK_TYPE_HIPAA_MAP, IncidentRow.tsx labels — all aligned with Go daemon scanner output.",
-    "Migration 049 deployed to VPS: fleet_orders + fleet_order_completions tables live."
+    "7 HIPAA network compliance checks (ProhibitedPorts, EncryptedServices, TLSWebServices, DatabaseExposure, SNMPSecurity, RDPExposure, DeviceInventory)",
+    "Compliance runner wired into scan cycle \u2014 auto-runs after each nmap scan",
+    "Auto-detect network ranges from appliance interfaces (NETWORK_RANGES=auto)",
+    "Device promotion to monitored status when ports discovered",
+    "Compliance detail sync to Central Command (migration 060, backend upsert, local-portal payload)",
+    "Multi-framework control mappings for all 7 checks (HIPAA + SOC2 + PCI-DSS + NIST CSF + CIS)",
+    "41 unit tests for all 7 checks \u2014 pass/fail/warn scenarios, medical exclusion",
+    "Frontend Device Inventory page verified \u2014 7 devices, 1 drifted, summary+table consistent"
   ],
   "recent_commits": [
     {
-      "hash": "07600ac",
-      "message": "feat: fleet-wide orders + L1 rule check_type alignment for all 38 scanner types"
+      "hash": "8279a7e",
+      "message": "feat: 7 HIPAA network compliance checks with auto-sync to Central Command"
     },
     {
-      "hash": "820bfbd",
-      "message": "feat: close Go daemon scanning gaps — Linux, expanded Windows, network"
+      "hash": "0656088",
+      "message": "security: Ed25519 order signing, host scoping, parameter allowlists"
     },
     {
-      "hash": "a00c53d",
-      "message": "refactor: Go appliance-daemon is now the primary agent"
+      "hash": "b2ab799",
+      "message": "feat: Compliance Companion portal \u2014 new role, backend, and separate GUI"
     },
     {
-      "hash": "b50651d",
-      "message": "docs: session 122 log + progress tracking for HIPAA compliance modules"
+      "hash": "ee954fa",
+      "message": "feat: non-AD device join \u2014 portal + dashboard UI for standalone Mac/Linux"
     },
     {
-      "hash": "f41151a",
-      "message": "fix: exempt client portal routes from CSRF middleware"
+      "hash": "b04e82b",
+      "message": "feat: fleet order delivery in Go checkin-receiver"
     },
     {
-      "hash": "e2eaf92",
-      "message": "feat: HIPAA administrative compliance modules — 10 gap-closing integrations"
-    },
-    {
-      "hash": "1483b65",
-      "message": "feat: flap detection — agent-side suppression + scoring dampening"
+      "hash": "efbe532",
+      "message": "chore: bump Go daemon to v0.2.2 \u2014 L1 telemetry + flywheel fixes"
     }
   ],
   "key_findings": {
@@ -242,7 +242,13 @@
     "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles.",
     "chaos_management_plane_lesson": "LLM-generated chaos campaigns can create attacks that kill the management plane (WinRM/PSRemoting). Feb 17 campaign stopped+disabled WinRM on DC, making all subsequent scenarios unexecutable and requiring manual console recovery. Fix: two-layer protection \u2014 (1) prompt-level exclusion in generate_and_plan.py/v2 telling LLM to never target WinRM/PSRemoting, (2) runtime safety filter in winrm_attack.py (is_blocked_command()) that blocks execution even if LLM generates it. Same principle applies to SSH on Linux targets. VBoxManage guestcontrol (with Guest Additions) provides WinRM-independent recovery path.",
     "vm_ram_balancing_lesson": "5 VMs on iMac totaling 24GB caused host to choke. DC had 10GB (overkill for lab AD). Rebalanced: DC 6GB, SRV01 4GB, WS01 4GB, Linux 2GB, Appliance 6GB = 22GB. Appliance needs 6GB for nixos-rebuild (nix store builds are memory-hungry). VMs must be powered off to change RAM via VBoxManage modifyvm --memory.",
-    "l1_rule_check_type_lesson": "Go drift scanners (linuxscan.go, driftscan.go, netscan.go) send prefixed check_types (linux_ssh_config, linux_firewall, etc.) but builtin_rules.go originally matched on short names (ssh_config, firewall). Rules never fired because check_type != condition. Always use exact scanner output strings in L1 rule conditions. 55 builtin rules now cover all 38 scanner check types at 100%. Network checks (4 types) escalate to L3 by default — can't auto-remediate network topology."
+    "l1_rule_check_type_lesson": "Go drift scanners (linuxscan.go, driftscan.go, netscan.go) send prefixed check_types (linux_ssh_config, linux_firewall, etc.) but builtin_rules.go originally matched on short names (ssh_config, firewall). Rules never fired because check_type != condition. Always use exact scanner output strings in L1 rule conditions. 55 builtin rules now cover all 38 scanner check types at 100%. Network checks (4 types) escalate to L3 by default \u2014 can't auto-remediate network topology.",
+    "l2_centralized_key_lesson": "LLM API keys (Anthropic) must live on Central Command (VPS), never on appliance devices. Appliances call POST /api/agent/l2/plan with PHI-scrubbed incident data. Central Command holds the key and calls the LLM. This prevents key sprawl across customer sites and centralizes spend control. The Go planner in appliance/internal/l2planner/ handles: PHI scrubbing (12 regex categories, IPs excluded per HIPAA Safe Harbor), guardrails (dangerous pattern detection + allowlist), budget tracking ($10/day, 60/hr rate limit, 3 concurrent), and telemetry reporting. The Central Command endpoint wraps existing l2_planner.py analyze_incident() + record_l2_decision().",
+    "docker_import_path_lesson": "CI/CD deploys mcp-server/central-command/backend/ to /opt/mcp-server/dashboard_api_mount/ on VPS. The Docker container resolves this as dashboard_api.* module path. Always use 'from dashboard_api.X import Y' in main.py, never 'from backend.X'. The local dev symlink (mcp-server/dashboard_api -> central-command/backend) makes both work locally, but only dashboard_api.* works in production.",
+    "nix_bind_mount_deploy_lesson": "NixOS /nix/store and /etc/systemd/system are read-only. To hot-deploy a Go binary without nixos-rebuild: (1) scp to /var/lib/msp/bin/, (2) systemctl stop, (3) mount --bind new_binary over nix_store_binary, (4) systemctl start. Bind mount survives service restarts but not reboots. For permanent deploy, nixos-rebuild is needed.",
+    "linux_scan_numeric_lesson": "Linux scan script embeds shell variables into Python JSON: 'rules': $fw_rules. If grep -c produces multiline output (e.g., '0\\n0'), Python gets invalid syntax. Fix: sanitize ALL numeric vars with 'head -1 | tr -dc 0-9' before the Python block. Also: Ubuntu uses ufw (not nft/iptables directly) \u2014 check ufw status first.",
+    "network_compliance_pipeline": "7 HIPAA port-based compliance checks run after each nmap scan via compliance/runner.py. Checks: ProhibitedPorts(21/23/69/512-514), EncryptedServices(HTTP w/o HTTPS), TLSWebServices(8080 w/o 8443), DatabaseExposure(3306/5432/etc on non-servers), SNMPSecurity(161/162), RDPExposure(3389 on non-workstations), DeviceInventory(no-ports=warn). Medical devices excluded from all checks. Results stored in device_compliance SQLite table, synced to Central Command device_compliance_details PostgreSQL table (migration 060). NETWORK_RANGES=auto detects subnets from netifaces or `ip -4 addr` fallback.",
+    "device_sync_router_duplication": "device_sync.py defines both DB functions AND a device_sync_router (FastAPI APIRouter) with endpoints. routes/device_sync.py ALSO defines a router importing from device_sync.py. main.py imports from device_sync.py directly. The routes/__init__.py exports are NOT used by main.py. New endpoints (like compliance detail) added to routes/device_sync.py are unreachable \u2014 must add to device_sync.py or fix the import in main.py."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",

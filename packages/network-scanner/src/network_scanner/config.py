@@ -115,7 +115,7 @@ class ScannerConfig:
 
     # Scanning behavior
     nmap_scan_type: str = "syn"  # syn, connect
-    nmap_arguments: str = "-sS -sV --top-ports 1000"
+    nmap_arguments: str = "-sS -sV -O -Pn --top-ports 1000"
     max_concurrent_scans: int = 10
     scan_timeout_seconds: int = 300
     host_timeout_seconds: int = 60

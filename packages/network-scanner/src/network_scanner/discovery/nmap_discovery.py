@@ -40,7 +40,7 @@ class NmapDiscovery(DiscoveryMethod):
     def __init__(
         self,
         network_ranges: list[str],
-        scan_arguments: str = "-sS -sV --top-ports 1000",
+        scan_arguments: str = "-sS -sV -O -Pn --top-ports 1000",
         host_timeout: int = 60,
         max_concurrent: int = 10,
     ):
