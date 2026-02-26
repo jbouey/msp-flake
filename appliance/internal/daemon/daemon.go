@@ -328,8 +328,8 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[daemon] Checkin OK: appliance=%s, orders=%d, linux_targets=%d, triggers=(enum=%v, scan=%v)",
-		resp.ApplianceID, len(resp.PendingOrders), len(resp.LinuxTargets),
+	log.Printf("[daemon] Checkin OK: appliance=%s, orders=%d, win_targets=%d, linux_targets=%d, triggers=(enum=%v, scan=%v)",
+		resp.ApplianceID, len(resp.PendingOrders), len(resp.WindowsTargets), len(resp.LinuxTargets),
 		resp.TriggerEnumeration, resp.TriggerImmediateScan)
 
 	// Set appliance ID on telemetry reporter and order processor (received from Central Command)
@@ -360,6 +360,11 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		d.linuxTargetsMu.Unlock()
 	}
 
+	// Store Windows targets (DC credentials) from checkin response
+	if len(resp.WindowsTargets) > 0 {
+		d.loadWindowsTargets(resp.WindowsTargets)
+	}
+
 	// Store L2 healing mode from checkin response
 	if resp.L2Mode != "" {
 		d.l2ModeMu.Lock()
@@ -387,6 +392,33 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 
 	// Persist state to disk for survival across restarts
 	d.saveState()
+}
+
+// loadWindowsTargets extracts DC/workstation credentials from the checkin response
+// and populates the daemon config so drift scanning and auto-deploy can use WinRM.
+func (d *Daemon) loadWindowsTargets(targets []map[string]interface{}) {
+	for _, t := range targets {
+		hostname, _ := t["hostname"].(string)
+		username, _ := t["username"].(string)
+		password, _ := t["password"].(string)
+		if hostname == "" || username == "" {
+			continue
+		}
+
+		// First valid target becomes the domain controller
+		prev := ""
+		if d.config.DomainController != nil {
+			prev = *d.config.DomainController
+		}
+		d.config.DomainController = &hostname
+		d.config.DCUsername = &username
+		d.config.DCPassword = &password
+
+		if prev != hostname {
+			log.Printf("[daemon] Windows credentials loaded: dc=%s user=%s", hostname, username)
+		}
+		return // Use first valid target as DC
+	}
 }
 
 // processOrders converts raw checkin order maps to Order structs and dispatches them.
