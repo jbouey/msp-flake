@@ -102,8 +102,13 @@ class RateLimiter:
         return True, None
 
 
-# Global rate limiter instance
-_rate_limiter = RateLimiter()
+# Global rate limiter instances
+_rate_limiter = RateLimiter()  # Dashboard/portal: 60/min, 1000/hr
+_agent_rate_limiter = RateLimiter(
+    requests_per_minute=600,
+    requests_per_hour=20000,
+    burst_limit=30,
+)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -121,6 +126,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/redoc",
     }
 
+    # Path prefixes for appliance agent traffic (authenticated M2M, not user traffic).
+    # These get a separate, higher rate limit bucket instead of sharing the dashboard limit.
+    AGENT_PATH_PREFIXES = (
+        "/api/appliances/",
+        "/api/agent/",
+        "/api/evidence/",
+        "/api/devices/",
+        "/incidents",
+        "/checkin",
+    )
+
     # Endpoints with stricter limits
     AUTH_PATHS = {
         "/api/auth/login",
@@ -128,9 +144,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/users/invite/accept",
     }
 
-    def __init__(self, app, rate_limiter: RateLimiter = None):
+    def __init__(self, app, rate_limiter: RateLimiter = None, agent_rate_limiter: RateLimiter = None):
         super().__init__(app)
         self.rate_limiter = rate_limiter or _rate_limiter
+        self.agent_rate_limiter = agent_rate_limiter or _agent_rate_limiter
 
     def _get_client_key(self, request: Request) -> str:
         """Get unique client identifier."""
@@ -175,8 +192,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     },
                     headers={"Retry-After": str(retry_after)},
                 )
+        elif path.startswith(self.AGENT_PATH_PREFIXES):
+            # Agent traffic uses a separate limiter (600/min, 20000/hr, burst 30)
+            # to prevent scan-cycle telemetry from starving checkins
+            allowed, retry_after = self.agent_rate_limiter.check_rate_limit(client_key)
+            if not allowed:
+                logger.warning(f"Agent rate limit exceeded for {client_key}")
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "detail": "Agent rate limit exceeded.",
+                        "retry_after": retry_after,
+                    },
+                    headers={"Retry-After": str(retry_after)},
+                )
         else:
-            # Standard rate limiting
+            # Standard rate limiting for dashboard/portal traffic
             allowed, retry_after = self.rate_limiter.check_rate_limit(client_key)
             if not allowed:
                 logger.warning(f"Rate limit exceeded for {client_key}")
