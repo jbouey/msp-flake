@@ -1446,33 +1446,56 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
         }
     )
     
-    # Try to find matching runbook (L1 - deterministic)
+    # Try to find matching runbook via L1 rules (DB-backed, includes flywheel promotions)
     runbook_id = None
     resolution_tier = None
-    
-    # Simple rule-based matching
-    type_lower = incident.incident_type.lower()
-    check_type = incident.check_type or ""
-    
-    runbook_map = {
-        "backup": "RB-BACKUP-001",
-        "certificate": "RB-CERT-001",
-        "cert": "RB-CERT-001",
-        "disk": "RB-DISK-001",
-        "storage": "RB-DISK-001",
-        "service": "RB-SERVICE-001",
-        "drift": "RB-DRIFT-001",
-        "configuration": "RB-DRIFT-001",
-        "firewall": "RB-FIREWALL-001",
-        "patching": "RB-PATCH-001",
-        "update": "RB-PATCH-001"
-    }
-    
-    for keyword, rb_id in runbook_map.items():
-        if keyword in type_lower or keyword in check_type.lower():
-            if rb_id in ALLOWED_RUNBOOKS or rb_id in ["RB-BACKUP-001", "RB-CERT-001", "RB-DISK-001", 
-                                                        "RB-SERVICE-001", "RB-DRIFT-001", "RB-FIREWALL-001", 
-                                                        "RB-PATCH-001"]:
+
+    # Step 1: Query l1_rules table for exact incident_type match
+    l1_match = await db.execute(
+        text("""
+            SELECT runbook_id FROM l1_rules
+            WHERE enabled = true
+            AND incident_pattern->>'incident_type' = :incident_type
+            ORDER BY confidence DESC
+            LIMIT 1
+        """),
+        {"incident_type": incident.incident_type}
+    )
+    l1_row = l1_match.fetchone()
+
+    if l1_row:
+        matched_runbook = l1_row[0]
+        # Check if this is an escalation-only runbook (ESC- prefix = straight to L3)
+        if matched_runbook.startswith("ESC-") or matched_runbook == "ESCALATE":
+            resolution_tier = "L3"
+            logger.info("L1 rule matched escalation runbook",
+                        site_id=incident.site_id,
+                        incident_type=incident.incident_type,
+                        runbook_id=matched_runbook)
+        else:
+            runbook_id = matched_runbook
+            resolution_tier = "L1"
+    else:
+        # Step 2: Fallback keyword matching for types not yet in l1_rules
+        type_lower = incident.incident_type.lower()
+        check_type = incident.check_type or ""
+
+        runbook_map = {
+            "backup": "RB-BACKUP-001",
+            "certificate": "RB-CERT-001",
+            "cert": "RB-CERT-001",
+            "disk": "RB-DISK-001",
+            "storage": "RB-DISK-001",
+            "service": "RB-SERVICE-001",
+            "drift": "RB-DRIFT-001",
+            "configuration": "RB-DRIFT-001",
+            "firewall": "RB-FIREWALL-001",
+            "patching": "RB-PATCH-001",
+            "update": "RB-PATCH-001"
+        }
+
+        for keyword, rb_id in runbook_map.items():
+            if keyword in type_lower or keyword in check_type.lower():
                 runbook_id = rb_id
                 resolution_tier = "L1"
                 break
@@ -1545,22 +1568,139 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                     order_id=order_id,
                     runbook_id=runbook_id,
                     tier=resolution_tier)
-    else:
-        # No matching runbook - would escalate to L2/L3
-        resolution_tier = "L3"
+    elif resolution_tier == "L3":
+        # L1 rule matched an escalation-only runbook (ESC-*) — skip L2, go straight to L3
         await db.execute(
             text("""
                 UPDATE incidents SET
-                    resolution_tier = :resolution_tier,
+                    resolution_tier = 'L3',
                     status = 'escalated'
                 WHERE id = :incident_id
             """),
-            {"resolution_tier": resolution_tier, "incident_id": incident_id}
+            {"incident_id": incident_id}
         )
-        
-        logger.warning("No matching runbook - escalated",
-                       site_id=incident.site_id,
-                       incident_type=incident.incident_type)
+        logger.info("L1 escalation rule → L3",
+                     site_id=incident.site_id,
+                     incident_type=incident.incident_type)
+    else:
+        # No L1 match — try L2 LLM planner before escalating to L3
+        from dashboard_api.l2_planner import analyze_incident, record_l2_decision, is_l2_available
+
+        l2_succeeded = False
+        if is_l2_available():
+            try:
+                logger.info("No L1 match, trying L2 planner",
+                            site_id=incident.site_id,
+                            incident_type=incident.incident_type)
+
+                decision = await analyze_incident(
+                    incident_type=incident.incident_type,
+                    severity=incident.severity,
+                    check_type=incident.check_type or incident.incident_type,
+                    details=incident.details,
+                    pre_state=incident.pre_state,
+                    hipaa_controls=incident.hipaa_controls,
+                )
+
+                # Record L2 decision for data flywheel
+                try:
+                    await record_l2_decision(db, incident_id, decision)
+                except Exception as e:
+                    logger.error(f"Failed to record L2 decision: {e}")
+
+                # If L2 found a runbook with sufficient confidence, create an order
+                if decision.runbook_id and decision.confidence >= 0.6 and not decision.requires_human_review:
+                    runbook_id = decision.runbook_id
+                    resolution_tier = "L2"
+                    l2_succeeded = True
+
+                    order_id = hashlib.sha256(
+                        f"{incident.site_id}{incident_id}{now.isoformat()}".encode()
+                    ).hexdigest()[:16]
+
+                    nonce = secrets.token_hex(16)
+                    expires_at = now + timedelta(seconds=ORDER_TTL_SECONDS)
+
+                    order_payload = json.dumps({
+                        "order_id": order_id,
+                        "runbook_id": runbook_id,
+                        "parameters": {},
+                        "nonce": nonce,
+                        "issued_at": now.isoformat(),
+                        "expires_at": expires_at.isoformat(),
+                        "target_appliance_id": appliance_id,
+                    }, sort_keys=True)
+
+                    signature = sign_data(order_payload)
+
+                    await db.execute(
+                        text("""
+                            INSERT INTO orders (order_id, appliance_id, runbook_id, parameters, nonce,
+                                signature, signed_payload, ttl_seconds, issued_at, expires_at)
+                            VALUES (:order_id, :appliance_id, :runbook_id, :parameters, :nonce,
+                                :signature, :signed_payload, :ttl_seconds, :issued_at, :expires_at)
+                        """),
+                        {
+                            "order_id": order_id,
+                            "appliance_id": appliance_id,
+                            "runbook_id": runbook_id,
+                            "parameters": json.dumps({}),
+                            "nonce": nonce,
+                            "signature": signature,
+                            "signed_payload": order_payload,
+                            "ttl_seconds": ORDER_TTL_SECONDS,
+                            "issued_at": now,
+                            "expires_at": expires_at
+                        }
+                    )
+
+                    await db.execute(
+                        text("""
+                            UPDATE incidents SET
+                                resolution_tier = 'L2',
+                                order_id = (SELECT id FROM orders WHERE order_id = :order_id),
+                                status = 'resolving'
+                            WHERE id = :incident_id
+                        """),
+                        {"order_id": order_id, "incident_id": incident_id}
+                    )
+
+                    logger.info("L2 planner matched runbook",
+                                site_id=incident.site_id,
+                                incident_type=incident.incident_type,
+                                runbook_id=runbook_id,
+                                confidence=decision.confidence)
+                else:
+                    logger.info("L2 planner could not resolve — escalating to L3",
+                                site_id=incident.site_id,
+                                incident_type=incident.incident_type,
+                                runbook_id=decision.runbook_id if decision else None,
+                                confidence=decision.confidence if decision else None,
+                                requires_review=decision.requires_human_review if decision else None)
+            except Exception as e:
+                logger.error(f"L2 planner failed: {e}",
+                             site_id=incident.site_id,
+                             incident_type=incident.incident_type)
+        else:
+            logger.warning("L2 not available (no API key configured)",
+                           site_id=incident.site_id,
+                           incident_type=incident.incident_type)
+
+        if not l2_succeeded:
+            # L2 failed or unavailable — escalate to L3
+            resolution_tier = "L3"
+            await db.execute(
+                text("""
+                    UPDATE incidents SET
+                        resolution_tier = 'L3',
+                        status = 'escalated'
+                    WHERE id = :incident_id
+                """),
+                {"incident_id": incident_id}
+            )
+            logger.warning("Escalated to L3",
+                           site_id=incident.site_id,
+                           incident_type=incident.incident_type)
 
     await db.commit()
 
@@ -1574,9 +1714,9 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
 
     if should_notify:
         try:
-            # Deduplication: 1 hour for critical/high, 24 hours for L3 escalations
-            # Check same category to avoid L3 escalations being blocked by older incident notifications
-            dedup_hours = 24 if resolution_tier == "L3" else 1
+            # Deduplication: 4 hours for L1/L2 resolved incidents, 24 hours for L3 escalations
+            # Prevents notification spam from recurring drift checks (e.g. linux_firewall every scan cycle)
+            dedup_hours = 24 if resolution_tier == "L3" else 4
             notification_category = "escalation" if resolution_tier == "L3" else "incident"
 
             dedup_check = await db.execute(
