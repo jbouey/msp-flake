@@ -453,10 +453,10 @@ async def record_l2_decision(
         await db.execute(text("""
             INSERT INTO patterns (
                 pattern_id, pattern_signature, incident_type, runbook_id,
-                occurrences, success_rate, status, first_seen, last_seen
+                occurrences, status, first_seen, last_seen
             ) VALUES (
                 :pattern_id, :pattern_signature, :incident_type, :runbook_id,
-                1, 0, 'pending', :now, :now
+                1, 'pending', :now, :now
             )
             ON CONFLICT (pattern_signature) DO UPDATE SET
                 occurrences = patterns.occurrences + 1,
