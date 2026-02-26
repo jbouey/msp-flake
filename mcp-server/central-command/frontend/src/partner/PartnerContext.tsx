@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { useIdleTimeout } from '../hooks/useIdleTimeout';
+import { IdleTimeoutWarning } from '../components/shared/IdleTimeoutWarning';
 
 interface Partner {
   id: string;
@@ -149,6 +151,15 @@ export const PartnerProvider: React.FC<{ children: ReactNode }> = ({ children })
     return checkSessionAuth();
   };
 
+  const handleIdleTimeout = useCallback(async () => {
+    await logout();
+  }, []);
+
+  const { showWarning, remainingSeconds, dismissWarning } = useIdleTimeout({
+    onTimeout: handleIdleTimeout,
+    enabled: partner !== null,
+  });
+
   return (
     <PartnerContext.Provider
       value={{
@@ -162,6 +173,9 @@ export const PartnerProvider: React.FC<{ children: ReactNode }> = ({ children })
         checkSession,
       }}
     >
+      {showWarning && (
+        <IdleTimeoutWarning remainingSeconds={remainingSeconds} onDismiss={dismissWarning} />
+      )}
       {children}
     </PartnerContext.Provider>
   );

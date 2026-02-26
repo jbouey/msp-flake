@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 SESSION_DURATION_HOURS = 24
+SESSION_IDLE_TIMEOUT_MINUTES = 15  # HIPAA §164.312(a)(2)(iii) automatic logoff
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 15
 
@@ -302,26 +303,48 @@ async def validate_session(
     db: AsyncSession,
     token: str,
 ) -> Optional[Dict[str, Any]]:
-    """Validate a session token and return user data if valid."""
+    """Validate a session token and return user data if valid.
+
+    Enforces HIPAA §164.312(a)(2)(iii) idle timeout — sessions inactive
+    for more than SESSION_IDLE_TIMEOUT_MINUTES are rejected.
+    """
     token_hash = hash_token(token)
+    now = datetime.now(timezone.utc)
+    idle_cutoff = now - timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)
 
     result = await db.execute(
         text("""
-            SELECT u.id, u.username, u.display_name, u.role, s.expires_at
+            SELECT u.id, u.username, u.display_name, u.role, s.expires_at, s.last_activity_at
             FROM admin_sessions s
             JOIN admin_users u ON u.id = s.user_id
             WHERE s.token_hash = :token_hash
               AND s.expires_at > :now
               AND u.status = 'active'
         """),
-        {"token_hash": token_hash, "now": datetime.now(timezone.utc)}
+        {"token_hash": token_hash, "now": now}
     )
     row = result.fetchone()
 
     if not row:
         return None
 
-    user_id, username, display_name, role, _ = row
+    user_id, username, display_name, role, _, last_activity = row
+
+    # HIPAA idle timeout: reject sessions inactive beyond threshold
+    if last_activity and last_activity < idle_cutoff:
+        await db.execute(
+            text("DELETE FROM admin_sessions WHERE token_hash = :token_hash"),
+            {"token_hash": token_hash}
+        )
+        await db.commit()
+        return None
+
+    # Update last_activity_at on every successful validation
+    await db.execute(
+        text("UPDATE admin_sessions SET last_activity_at = :now WHERE token_hash = :token_hash"),
+        {"token_hash": token_hash, "now": now}
+    )
+    await db.commit()
 
     return {
         "id": str(user_id),

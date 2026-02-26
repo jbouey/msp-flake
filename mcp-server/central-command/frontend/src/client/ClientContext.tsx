@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { useIdleTimeout } from '../hooks/useIdleTimeout';
+import { IdleTimeoutWarning } from '../components/shared/IdleTimeoutWarning';
 
 interface ClientOrg {
   id: string;
@@ -81,6 +83,15 @@ export const ClientProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     setError(null);
   };
 
+  const handleIdleTimeout = useCallback(async () => {
+    await logout();
+  }, []);
+
+  const { showWarning, remainingSeconds, dismissWarning } = useIdleTimeout({
+    onTimeout: handleIdleTimeout,
+    enabled: user !== null,
+  });
+
   return (
     <ClientContext.Provider
       value={{
@@ -92,6 +103,9 @@ export const ClientProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         checkSession,
       }}
     >
+      {showWarning && (
+        <IdleTimeoutWarning remainingSeconds={remainingSeconds} onDismiss={dismissWarning} />
+      )}
       {children}
     </ClientContext.Provider>
   );

@@ -5,8 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
-import { ErrorBoundary, Spinner, OsirisCareLeaf } from './components/shared';
-import { useFleet, useRefreshFleet, useCommandPalette, useWebSocket, WebSocketContext } from './hooks';
+import { ErrorBoundary, Spinner, OsirisCareLeaf, IdleTimeoutWarning } from './components/shared';
+import { useFleet, useRefreshFleet, useCommandPalette, useWebSocket, WebSocketContext, useIdleTimeout } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 // Critical pages - loaded immediately
@@ -231,6 +231,12 @@ const AppLayout: React.FC = () => {
     navigate('/');
   };
 
+  // HIPAA §164.312(a)(2)(iii) — automatic logoff after 15 min inactivity
+  const { showWarning, remainingSeconds, dismissWarning } = useIdleTimeout({
+    onTimeout: handleLogout,
+    enabled: !!user,
+  });
+
   // Get current page title
   const getTitle = (): string => {
     if (location.pathname.startsWith('/client/')) {
@@ -243,6 +249,9 @@ const AppLayout: React.FC = () => {
   return (
     <WebSocketContext.Provider value={wsState}>
     <div className="min-h-screen bg-background-primary">
+      {showWarning && (
+        <IdleTimeoutWarning remainingSeconds={remainingSeconds} onDismiss={dismissWarning} />
+      )}
       {/* Sidebar */}
       <Sidebar
         clients={clients}

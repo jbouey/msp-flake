@@ -63,6 +63,7 @@ BASE_URL = os.getenv("BASE_URL", "https://dashboard.osiriscare.net")
 SESSION_COOKIE_NAME = "osiris_partner_session"
 SESSION_DURATION_DAYS = 7
 SESSION_COOKIE_MAX_AGE = SESSION_DURATION_DAYS * 24 * 60 * 60
+SESSION_IDLE_TIMEOUT_MINUTES = 15  # HIPAA §164.312(a)(2)(iii) automatic logoff
 
 # PKCE configuration
 PKCE_VERIFIER_LENGTH = 64
@@ -176,13 +177,31 @@ async def create_partner_session(partner_id: str, request: Request, pool) -> str
 
 
 async def get_partner_from_session(session_token: str, pool):
-    """Get partner from session token."""
+    """Get partner from session token.
+
+    Enforces HIPAA §164.312(a)(2)(iii) idle timeout.
+    """
     if not session_token:
         return None
 
     token_hash = hash_session_token(session_token)
 
     async with pool.acquire() as conn:
+        # Check idle timeout before updating last_used_at
+        idle_check = await conn.fetchrow("""
+            SELECT last_used_at FROM partner_sessions
+            WHERE session_token_hash = $1 AND expires_at > NOW()
+        """, token_hash)
+
+        if idle_check and idle_check['last_used_at']:
+            from datetime import datetime, timezone, timedelta
+            idle_cutoff = datetime.now(timezone.utc) - timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)
+            if idle_check['last_used_at'] < idle_cutoff:
+                await conn.execute(
+                    "DELETE FROM partner_sessions WHERE session_token_hash = $1", token_hash
+                )
+                return None
+
         # Update last_used_at and get partner
         row = await conn.fetchrow("""
             UPDATE partner_sessions ps
