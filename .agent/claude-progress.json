@@ -1,24 +1,24 @@
 {
-  "session": 132,
-  "updated": "2026-02-25T15:35:28.188111Z",
+  "session": 135,
+  "updated": "2026-02-26T07:35:55.878708Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "go_daemon_v0.2.3_linux_scan_working_nmap_network_scan_7_devices_compliance_checks_live",
-    "vm_appliance": "go_daemon_v0.2.3_deployed_via_bind_mount",
+    "physical_appliance": "go_daemon_v0.2.5_l2_enabled_fleet_rebuild_pending",
+    "vm_appliance": "go_daemon_v0.2.5_l2_enabled_fleet_rebuild_pending",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
-    "learning_flywheel": "active_46_promoted_9_enabled_counter_trigger_live_51_builtin_seeded_pattern_gen_from_L2",
+    "learning_flywheel": "active_37_eligible_2_l2_patterns_promoted_flywheel_aggregation_bridge_deployed",
     "incident_resolution": "pipeline_active",
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
     "fleet_updates": "fleet_wide_orders_live_auto_detect_deployed_version_v0.2.3"
   },
-  "current_blocker": "None. Network compliance checks live. Device inventory showing 7 devices with compliance status. WinRM 401 on DC (192.168.88.250) needs investigation.",
+  "current_blocker": "Fleet rebuild pending \u2014 order 3bf579c6 (resilience hardening: sd_notify, state persistence, subscription gating, crash-loop protection). WinRM 401 on DC still open. HIPAA compliance at 56%.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -175,39 +175,37 @@
     }
   ],
   "completed_this_session": [
-    "7 HIPAA network compliance checks (ProhibitedPorts, EncryptedServices, TLSWebServices, DatabaseExposure, SNMPSecurity, RDPExposure, DeviceInventory)",
-    "Compliance runner wired into scan cycle \u2014 auto-runs after each nmap scan",
-    "Auto-detect network ranges from appliance interfaces (NETWORK_RANGES=auto)",
-    "Device promotion to monitored status when ports discovered",
-    "Compliance detail sync to Central Command (migration 060, backend upsert, local-portal payload)",
-    "Multi-framework control mappings for all 7 checks (HIPAA + SOC2 + PCI-DSS + NIST CSF + CIS)",
-    "41 unit tests for all 7 checks \u2014 pass/fail/warn scenarios, medical exclusion",
-    "Frontend Device Inventory page verified \u2014 7 devices, 1 drifted, summary+table consistent"
+    "Systemd crash-loop protection (StartLimitBurst=5/300s) on 3 services",
+    "sd_notify watchdog integration (WatchdogSec=120s, Type=notify for daemon)",
+    "State persistence (daemon_state.json with atomic write)",
+    "Subscription enforcement (healing gated on active/trialing)",
+    "Connectivity error classification (dns/server_down/timeout/tls)",
+    "CheckinResponse includes subscription_status from partner JOIN"
   ],
   "recent_commits": [
     {
-      "hash": "8279a7e",
-      "message": "feat: 7 HIPAA network compliance checks with auto-sync to Central Command"
+      "hash": "19a0177",
+      "message": "feat: resilience hardening \u2014 sd_notify, state persistence, subscription gating, crash-loop protection"
     },
     {
-      "hash": "0656088",
-      "message": "security: Ed25519 order signing, host scoping, parameter allowlists"
+      "hash": "2dcf716",
+      "message": "fix: remove success_rate from patterns INSERT \u2014 it's a generated column"
     },
     {
-      "hash": "b2ab799",
-      "message": "feat: Compliance Companion portal \u2014 new role, backend, and separate GUI"
+      "hash": "4568cab",
+      "message": "fix: add l2_decisions table \u2014 unblocks L2 decision recording for flywheel"
     },
     {
-      "hash": "ee954fa",
-      "message": "feat: non-AD device join \u2014 portal + dashboard UI for standalone Mac/Linux"
+      "hash": "f9cd525",
+      "message": "fix: bridge flywheel gap \u2014 populate aggregated_pattern_stats from telemetry"
     },
     {
-      "hash": "b04e82b",
-      "message": "feat: fleet order delivery in Go checkin-receiver"
+      "hash": "8771d36",
+      "message": "fix: enable L2 planner \u2014 default on, fix escalation logic, auto-mode bypass"
     },
     {
-      "hash": "efbe532",
-      "message": "chore: bump Go daemon to v0.2.2 \u2014 L1 telemetry + flywheel fixes"
+      "hash": "eda956e",
+      "message": "fix: consolidate device_sync router + enable OS detection in nmap scans"
     }
   ],
   "key_findings": {
@@ -248,7 +246,11 @@
     "nix_bind_mount_deploy_lesson": "NixOS /nix/store and /etc/systemd/system are read-only. To hot-deploy a Go binary without nixos-rebuild: (1) scp to /var/lib/msp/bin/, (2) systemctl stop, (3) mount --bind new_binary over nix_store_binary, (4) systemctl start. Bind mount survives service restarts but not reboots. For permanent deploy, nixos-rebuild is needed.",
     "linux_scan_numeric_lesson": "Linux scan script embeds shell variables into Python JSON: 'rules': $fw_rules. If grep -c produces multiline output (e.g., '0\\n0'), Python gets invalid syntax. Fix: sanitize ALL numeric vars with 'head -1 | tr -dc 0-9' before the Python block. Also: Ubuntu uses ufw (not nft/iptables directly) \u2014 check ufw status first.",
     "network_compliance_pipeline": "7 HIPAA port-based compliance checks run after each nmap scan via compliance/runner.py. Checks: ProhibitedPorts(21/23/69/512-514), EncryptedServices(HTTP w/o HTTPS), TLSWebServices(8080 w/o 8443), DatabaseExposure(3306/5432/etc on non-servers), SNMPSecurity(161/162), RDPExposure(3389 on non-workstations), DeviceInventory(no-ports=warn). Medical devices excluded from all checks. Results stored in device_compliance SQLite table, synced to Central Command device_compliance_details PostgreSQL table (migration 060). NETWORK_RANGES=auto detects subnets from netifaces or `ip -4 addr` fallback.",
-    "device_sync_router_duplication": "device_sync.py defines both DB functions AND a device_sync_router (FastAPI APIRouter) with endpoints. routes/device_sync.py ALSO defines a router importing from device_sync.py. main.py imports from device_sync.py directly. The routes/__init__.py exports are NOT used by main.py. New endpoints (like compliance detail) added to routes/device_sync.py are unreachable \u2014 must add to device_sync.py or fix the import in main.py."
+    "device_sync_router_duplication": "device_sync.py defines both DB functions AND a device_sync_router (FastAPI APIRouter) with endpoints. routes/device_sync.py ALSO defines a router importing from device_sync.py. main.py imports from device_sync.py directly. The routes/__init__.py exports are NOT used by main.py. New endpoints (like compliance detail) added to routes/device_sync.py are unreachable \u2014 must add to device_sync.py or fix the import in main.py.",
+    "l2_planner_lesson": "L2 was dead because: (1) L2Enabled defaulted to false in config.go \u2014 daemon never initialized l2Planner, logged l2=disabled at startup. (2) Backend response mapping set escalate_to_l3=true whenever requires_human_review=true \u2014 even with valid runbook at 0.75 confidence. (3) Go daemon ShouldExecute() required both !EscalateToL3 AND !RequiresApproval \u2014 too conservative for auto mode. Fix: default L2Enabled=true, decouple escalate_to_l3 from requires_human_review in main.py, use confidence >= 0.6 + !EscalateToL3 for auto mode execution.",
+    "flywheel_aggregation_lesson": "Go daemon reports L2 telemetry to execution_telemetry table but NEVER calls /api/agent/sync/pattern-stats. This left aggregated_pattern_stats empty, breaking the promotion pipeline. Fix: added Step 1 to _flywheel_promotion_loop() that aggregates execution_telemetry directly into aggregated_pattern_stats (grouped by site_id + incident_type + runbook_id). Also: duration column is duration_seconds not duration_ms.",
+    "resilience_hardening_lesson": "Appliance resilience: (1) StartLimitBurst=5/IntervalSec=300 prevents infinite crash loops. (2) WatchdogSec=120s with sd_notify catches frozen services \u2014 Type=notify for daemon requires READY=1 at startup, simple services still get watchdog monitoring. (3) sdnotify package: zero-cgo, writes to NOTIFY_SOCKET Unix datagram. (4) State persistence via atomic JSON write (tmp+rename) to /var/lib/msp/daemon_state.json \u2014 survives restarts. (5) Subscription gating: healing suppressed when status != active/trialing, drift detection+evidence continue. (6) Connectivity classification: errors.As for *net.DNSError/*net.OpError, string matching for timeout/tls/5xx.",
+    "vps_db_credentials_lesson": "VPS PostgreSQL: container=mcp-postgres, user=mcp, db=mcp, password in docker inspect env vars. Fleet orders require expires_at (NOT NULL constraint)."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",

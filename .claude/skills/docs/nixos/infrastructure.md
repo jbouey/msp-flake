@@ -222,8 +222,26 @@ serviceConfig = {
   LockPersonality = true;
   PrivateDevices = true;
   PrivateUsers = true;
+
+  # Crash-loop protection (all 3 long-running services)
+  StartLimitIntervalSec = 300;      # 5-minute window
+  StartLimitBurst = 5;              # max 5 restarts before giving up
+
+  # Watchdog — systemd kills+restarts frozen services
+  WatchdogSec = "120s";             # must notify within 120s
 };
 ```
+
+### sd_notify Integration (appliance-daemon only)
+- `Type = "notify"` requires `READY=1` at startup
+- `appliance/internal/sdnotify/sdnotify.go` — zero-cgo, writes to `$NOTIFY_SOCKET`
+- `Ready()` after init, `Watchdog()` each tick, `Stopping()` on shutdown
+- network-scanner and local-portal remain `Type = "simple"` (watchdog still monitors)
+
+### State Persistence
+- `/var/lib/msp/daemon_state.json` — atomic write (tmp + rename)
+- Saves: linux_targets, l2_mode, subscription_status
+- Loaded on startup in `New()`, saved after each checkin
 
 ## Appliance Port Layout
 
