@@ -2508,7 +2508,7 @@ async def agent_l2_plan(request: L2PlanRequest, db: AsyncSession = Depends(get_d
             "RB-DISK-001": "escalate",
         }
         action = runbook_action_map.get(decision.runbook_id, "escalate")
-        escalate = action == "escalate" or decision.requires_human_review
+        escalate = action == "escalate"  # Only escalate when no valid runbook; requires_approval is separate
         action_params = {"runbook_id": decision.runbook_id}
 
     return {

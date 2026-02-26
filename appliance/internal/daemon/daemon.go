@@ -597,7 +597,10 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 			return
 		}
 
-		if decision.ShouldExecute() {
+		// In auto mode: execute if L2 found a viable plan (confidence >= 0.6, not escalated)
+		// RequiresApproval is only enforced in manual mode — auto mode auto-executes
+		canExecute := !decision.EscalateToL3 && decision.Confidence >= 0.6
+		if canExecute {
 			// Manual mode: L2 generates plan but requires human approval
 			if l2Mode == "manual" {
 				log.Printf("[daemon] L2 plan ready but mode=manual — escalating %s/%s for approval: %s",
@@ -608,8 +611,8 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 				return
 			}
 
-			log.Printf("[daemon] L2 decision: %s (confidence=%.2f) for %s/%s",
-				decision.RecommendedAction, decision.Confidence, req.Hostname, req.CheckType)
+			log.Printf("[daemon] L2 decision: %s (confidence=%.2f, approval=%v) for %s/%s",
+				decision.RecommendedAction, decision.Confidence, decision.RequiresApproval, req.Hostname, req.CheckType)
 			l2Start := time.Now()
 			d.executeL2Action(ctx, decision, req, incidentID)
 			// Report telemetry for data flywheel (async)

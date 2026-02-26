@@ -76,7 +76,7 @@ func DefaultConfig() Config {
 		EnableL1Sync:         true,
 		HealingEnabled:       true,
 		HealingDryRun:        false,
-		L2Enabled:            false,
+		L2Enabled:            true,
 		L2APITimeoutSecs:     30,
 		L2DailyBudgetUSD:     10.00,
 		L2MaxCallsPerHour:    60,
