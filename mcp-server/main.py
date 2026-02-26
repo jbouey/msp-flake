@@ -610,10 +610,63 @@ async def _flywheel_promotion_loop():
                     logger.debug(f"Flywheel pattern generation: {e}")
                     await db.rollback()
 
-                # Path 1 (removed): Auto-promotion disabled — all promotions
-                # require manual partner approval via the Learning dashboard.
+                # Step 1: Populate aggregated_pattern_stats from execution_telemetry
+                # The Go daemon reports telemetry but doesn't call /api/agent/sync/pattern-stats,
+                # so we bridge the gap server-side by aggregating directly.
+                try:
+                    await db.execute(text("""
+                        INSERT INTO aggregated_pattern_stats (
+                            site_id, pattern_signature, total_occurrences,
+                            l1_resolutions, l2_resolutions, l3_resolutions,
+                            success_count, total_resolution_time_ms,
+                            success_rate, avg_resolution_time_ms,
+                            recommended_action, promotion_eligible,
+                            first_seen, last_seen, last_synced_at
+                        )
+                        SELECT
+                            et.site_id,
+                            et.incident_type || ':' || et.runbook_id as pattern_signature,
+                            COUNT(*) as total_occurrences,
+                            SUM(CASE WHEN et.resolution_level = 'L1' THEN 1 ELSE 0 END),
+                            SUM(CASE WHEN et.resolution_level = 'L2' THEN 1 ELSE 0 END),
+                            SUM(CASE WHEN et.resolution_level = 'L3' THEN 1 ELSE 0 END),
+                            SUM(CASE WHEN et.success THEN 1 ELSE 0 END),
+                            COALESCE(SUM(et.duration_seconds * 1000), 0),
+                            CASE WHEN COUNT(*) > 0
+                                THEN SUM(CASE WHEN et.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*)
+                                ELSE 0 END,
+                            CASE WHEN COUNT(*) > 0
+                                THEN COALESCE(SUM(et.duration_seconds * 1000), 0) / COUNT(*)
+                                ELSE 0 END,
+                            MAX(et.runbook_id),
+                            false,
+                            MIN(et.created_at),
+                            MAX(et.created_at),
+                            NOW()
+                        FROM execution_telemetry et
+                        WHERE et.resolution_level IN ('L1', 'L2')
+                          AND et.incident_type IS NOT NULL
+                          AND et.runbook_id IS NOT NULL
+                        GROUP BY et.site_id, et.incident_type, et.runbook_id
+                        HAVING COUNT(*) >= 3
+                        ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                            total_occurrences = EXCLUDED.total_occurrences,
+                            l1_resolutions = EXCLUDED.l1_resolutions,
+                            l2_resolutions = EXCLUDED.l2_resolutions,
+                            l3_resolutions = EXCLUDED.l3_resolutions,
+                            success_count = EXCLUDED.success_count,
+                            total_resolution_time_ms = EXCLUDED.total_resolution_time_ms,
+                            success_rate = EXCLUDED.success_rate,
+                            avg_resolution_time_ms = EXCLUDED.avg_resolution_time_ms,
+                            last_seen = EXCLUDED.last_seen,
+                            last_synced_at = NOW()
+                    """))
+                    await db.commit()
+                except Exception as e:
+                    logger.debug(f"Flywheel aggregated stats: {e}")
+                    await db.rollback()
 
-                # Path 2: Update promotion_eligible on aggregated_pattern_stats
+                # Step 2: Update promotion_eligible on aggregated_pattern_stats
                 eligible_result = await db.execute(text("""
                     UPDATE aggregated_pattern_stats
                     SET promotion_eligible = true
