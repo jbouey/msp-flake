@@ -37,6 +37,7 @@ type CheckinResponse struct {
 	TriggerEnumeration   bool            `json:"trigger_enumeration"`
 	TriggerImmediateScan bool            `json:"trigger_immediate_scan"`
 	L2Mode               string          `json:"l2_mode"`
+	SubscriptionStatus   string          `json:"subscription_status"`
 }
 
 // PendingOrder represents an admin order or healing order.

@@ -556,6 +556,21 @@ func (db *DB) FetchL2Mode(ctx context.Context, tx pgx.Tx, canonicalID string) st
 	return *mode
 }
 
+// FetchSubscriptionStatus returns the partner's subscription status for the given site.
+func (db *DB) FetchSubscriptionStatus(ctx context.Context, tx pgx.Tx, siteID string) string {
+	var status *string
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(p.subscription_status, 'none')
+		FROM sites s
+		LEFT JOIN partners p ON s.partner_id = p.id
+		WHERE s.site_id = $1
+	`, siteID).Scan(&status)
+	if err != nil || status == nil {
+		return "active" // Default to active if no partner link (standalone install)
+	}
+	return *status
+}
+
 // BeginTx starts a transaction.
 func (db *DB) BeginTx(ctx context.Context) (pgx.Tx, error) {
 	return db.pool.Begin(ctx)
@@ -673,6 +688,9 @@ func (db *DB) ProcessCheckin(ctx context.Context, req CheckinRequest) (*CheckinR
 	// Step 8: Fetch L2 healing mode
 	l2Mode := db.FetchL2Mode(ctx, tx, canonicalID)
 
+	// Step 9: Fetch subscription status for healing gating
+	subStatus := db.FetchSubscriptionStatus(ctx, tx, req.SiteID)
+
 	// Commit transaction
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -705,5 +723,6 @@ func (db *DB) ProcessCheckin(ctx context.Context, req CheckinRequest) (*CheckinR
 		TriggerEnumeration:   flags.Enumeration,
 		TriggerImmediateScan: flags.ImmediateScan,
 		L2Mode:               l2Mode,
+		SubscriptionStatus:   subStatus,
 	}, nil
 }

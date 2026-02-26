@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -64,6 +65,7 @@ type CheckinResponse struct {
 	TriggerEnumeration   bool                     `json:"trigger_enumeration"`
 	TriggerImmediateScan bool                     `json:"trigger_immediate_scan"`
 	L2Mode               string                   `json:"l2_mode"`
+	SubscriptionStatus   string                   `json:"subscription_status"`
 }
 
 // Checkin sends a phone-home checkin to Central Command.
@@ -105,6 +107,53 @@ func (c *PhoneHomeClient) Checkin(ctx context.Context, req CheckinRequest) (*Che
 	}
 
 	return &result, nil
+}
+
+// classifyConnectivityError returns a human-readable classification of why a checkin failed.
+func classifyConnectivityError(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	msg := err.Error()
+
+	// DNS resolution failure → likely no network or DNS misconfigured
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		if dnsErr.IsNotFound {
+			return "dns_not_found"
+		}
+		return "dns_error"
+	}
+
+	// Connection refused → server down but network is up
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if opErr.Op == "dial" {
+			if strings.Contains(msg, "connection refused") {
+				return "server_down"
+			}
+			if strings.Contains(msg, "no route to host") || strings.Contains(msg, "network is unreachable") {
+				return "network_down"
+			}
+		}
+	}
+
+	// Timeout
+	if os.IsTimeout(err) || strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "context deadline") {
+		return "timeout"
+	}
+
+	// TLS errors
+	if strings.Contains(msg, "tls:") || strings.Contains(msg, "certificate") {
+		return "tls_error"
+	}
+
+	// HTTP status codes (embedded in error message)
+	if strings.Contains(msg, "returned 5") {
+		return "server_error"
+	}
+
+	return "unknown"
 }
 
 // SystemInfo gathers system information for the checkin request.

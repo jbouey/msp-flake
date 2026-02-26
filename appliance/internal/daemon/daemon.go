@@ -20,6 +20,7 @@ import (
 	"github.com/osiriscare/appliance/internal/l2bridge"
 	"github.com/osiriscare/appliance/internal/l2planner"
 	"github.com/osiriscare/appliance/internal/orders"
+	"github.com/osiriscare/appliance/internal/sdnotify"
 	"github.com/osiriscare/appliance/internal/sshexec"
 	"github.com/osiriscare/appliance/internal/winrm"
 )
@@ -78,6 +79,18 @@ type Daemon struct {
 	// L2 mode: "auto" (execute immediately), "manual" (queue for approval), "disabled" (L1 only)
 	l2ModeMu sync.RWMutex
 	l2Mode   string
+
+	// Subscription status: gates healing operations
+	subscriptionMu     sync.RWMutex
+	subscriptionStatus string // "active", "trialing", "past_due", "canceled", "none"
+}
+
+// isSubscriptionActive returns true if healing should be allowed.
+// Active and trialing subscriptions allow healing; all other states suppress it.
+func (d *Daemon) isSubscriptionActive() bool {
+	d.subscriptionMu.RLock()
+	defer d.subscriptionMu.RUnlock()
+	return d.subscriptionStatus == "" || d.subscriptionStatus == "active" || d.subscriptionStatus == "trialing"
 }
 
 // New creates a new daemon with the given configuration.
@@ -160,6 +173,17 @@ func New(cfg *Config) *Daemon {
 		}
 	}
 
+	// Restore persisted state from prior session (linux targets, L2 mode)
+	if saved, err := loadState(cfg.StateDir); err != nil {
+		log.Printf("[daemon] Failed to load persisted state: %v", err)
+	} else if saved != nil {
+		d.linuxTargets = saved.LinuxTargets
+		d.l2Mode = saved.L2Mode
+		d.subscriptionStatus = saved.SubscriptionStatus
+		log.Printf("[daemon] Restored state from disk: %d linux_targets, l2=%s, sub=%s (saved %s ago)",
+			len(saved.LinuxTargets), saved.L2Mode, saved.SubscriptionStatus, time.Since(saved.SavedAt).Round(time.Second))
+	}
+
 	return d
 }
 
@@ -227,10 +251,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	log.Printf("[daemon] Main loop started (interval: %ds)", d.config.PollInterval)
 
+	// Signal systemd that daemon is fully initialized
+	if err := sdnotify.Ready(); err != nil {
+		log.Printf("[daemon] sd_notify READY failed: %v", err)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("[daemon] Shutting down...")
+			_ = sdnotify.Stopping()
 			d.grpcSrv.GracefulStop()
 			if d.l2Planner != nil {
 				d.l2Planner.Close()
@@ -241,6 +271,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.sshExec.CloseAll()
 			return nil
 		case <-ticker.C:
+			_ = sdnotify.Watchdog()
 			d.runCycle(ctx)
 		}
 	}
@@ -255,7 +286,8 @@ func (d *Daemon) runCycle(ctx context.Context) {
 
 	// Auto-deploy agents to discovered workstations (zero-friction).
 	// Runs async so slow DC responses don't block the main loop.
-	if d.config.WorkstationEnabled {
+	// Only deploy when subscription is active — expired sites get drift detection but not healing.
+	if d.config.WorkstationEnabled && d.isSubscriptionActive() {
 		go d.deployer.runAutoDeployIfNeeded(ctx)
 	}
 
@@ -292,7 +324,7 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 
 	resp, err := d.phoneCli.Checkin(ctx, req)
 	if err != nil {
-		log.Printf("[daemon] Checkin failed: %v", err)
+		log.Printf("[daemon] Checkin failed (%s): %v", classifyConnectivityError(err), err)
 		return
 	}
 
@@ -338,10 +370,23 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		d.l2ModeMu.Unlock()
 	}
 
+	// Store subscription status for healing gating
+	if resp.SubscriptionStatus != "" {
+		d.subscriptionMu.Lock()
+		if d.subscriptionStatus != resp.SubscriptionStatus {
+			log.Printf("[daemon] Subscription status changed: %s → %s", d.subscriptionStatus, resp.SubscriptionStatus)
+		}
+		d.subscriptionStatus = resp.SubscriptionStatus
+		d.subscriptionMu.Unlock()
+	}
+
 	// Process pending orders via order processor
 	if len(resp.PendingOrders) > 0 {
 		d.processOrders(ctx, resp.PendingOrders)
 	}
+
+	// Persist state to disk for survival across restarts
+	d.saveState()
 }
 
 // processOrders converts raw checkin order maps to Order structs and dispatches them.
@@ -468,6 +513,11 @@ func (d *Daemon) processHealRequests(ctx context.Context) {
 
 			if !d.config.HealingEnabled {
 				log.Printf("[daemon] Healing disabled, skipping %s/%s", req.Hostname, req.CheckType)
+				continue
+			}
+
+			if !d.isSubscriptionActive() {
+				log.Printf("[daemon] Subscription expired — healing suppressed: %s/%s", req.Hostname, req.CheckType)
 				continue
 			}
 

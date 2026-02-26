@@ -339,10 +339,13 @@ EOF
     path = with pkgs; [ bash python3 coreutils gnugrep iproute2 systemd ];
 
     serviceConfig = {
-      Type = "simple";
+      Type = "notify";
       ExecStart = "${appliance-daemon-go}/bin/appliance-daemon --config /var/lib/msp/config.yaml";
       Restart = "always";
       RestartSec = "10s";
+      WatchdogSec = "120s";
+      StartLimitIntervalSec = 300;
+      StartLimitBurst = 5;
       WorkingDirectory = "/var/lib/msp";
       StandardOutput = "journal";
       StandardError = "journal";
@@ -373,6 +376,9 @@ EOF
       ExecStart = "${network-scanner}/bin/network-scanner";
       Restart = "always";
       RestartSec = "30s";
+      WatchdogSec = "120s";
+      StartLimitIntervalSec = 300;
+      StartLimitBurst = 5;
       WorkingDirectory = "/var/lib/msp";
       StandardOutput = "journal";
       StandardError = "journal";
@@ -412,6 +418,9 @@ EOF
       ExecStart = "${local-portal}/bin/local-portal --port 8084 --host 127.0.0.1";
       Restart = "always";
       RestartSec = "10s";
+      WatchdogSec = "120s";
+      StartLimitIntervalSec = 300;
+      StartLimitBurst = 5;
       WorkingDirectory = "/var/lib/msp";
       StandardOutput = "journal";
       StandardError = "journal";
