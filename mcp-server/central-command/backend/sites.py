@@ -53,17 +53,22 @@ async def require_appliance_auth(request: Request) -> str:
     pool = await get_pool()
     async with pool.acquire() as conn:
         # Primary: verify against api_keys table
-        if await verify_site_api_key(conn, site_id, api_key):
-            return site_id
+        try:
+            if await verify_site_api_key(conn, site_id, api_key):
+                return site_id
 
-        # Fallback: check if site exists with any appliance (graceful migration
-        # for appliances that were provisioned before API keys were issued)
-        has_api_keys = await conn.fetchval(
-            "SELECT EXISTS(SELECT 1 FROM api_keys WHERE site_id = $1 AND active = true)",
-            site_id
-        )
+            # Check if api_keys table has any entries for this site
+            has_api_keys = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM api_keys WHERE site_id = $1 AND active = true)",
+                site_id
+            )
+        except Exception:
+            # api_keys table doesn't exist yet — treat as no keys configured
+            has_api_keys = False
+
         if not has_api_keys:
             # No API keys configured for this site yet — allow if site exists
+            # (graceful migration for appliances provisioned before API keys)
             site_exists = await conn.fetchval(
                 "SELECT EXISTS(SELECT 1 FROM sites WHERE site_id = $1)",
                 site_id
