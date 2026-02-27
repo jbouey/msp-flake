@@ -18,19 +18,26 @@ Incident → L1 Deterministic (70-80%, <100ms, $0)
 ```
 
 ### L1 Deterministic Rules
-```yaml
-# /var/lib/msp/rules/l1_rules.json (synced from Central Command)
-- id: L1-FIREWALL-001
-  conditions:
-    - field: check_type
-      operator: eq
-      value: firewall_status
-    - field: platform
-      operator: ne
-      value: nixos
-  action: execute_runbook
-  runbook_id: RB-WIN-FIREWALL-001
+Two layers:
+1. **Appliance-side:** `/var/lib/msp/rules/l1_rules.json` (synced hourly, Go daemon executes locally)
+2. **Server-side:** `l1_rules` DB table (queried by incident router in `main.py`)
+
+```python
+# Server-side incident routing (main.py ~line 1453)
+# Step 1: Query l1_rules table for exact incident_type match
+l1_match = await db.execute(text("""
+    SELECT runbook_id FROM l1_rules
+    WHERE enabled = true
+    AND incident_pattern->>'incident_type' = :incident_type
+    ORDER BY confidence DESC LIMIT 1
+"""), {"incident_type": incident.incident_type})
+
+# ESC-* runbooks → straight to L3 (security-sensitive, human required)
+# Regular runbooks → create signed fleet order
+# No match → fall through to L2 LLM
 ```
+
+Key tables: `l1_rules` (62 active rules), `runbooks` (41 with steps), `orders` (signed fleet orders)
 
 ### L2 LLM Planner (Centralized Architecture)
 ```
@@ -293,7 +300,7 @@ Central Command (Python)                  Appliance (Go)
                                          └────────────────────────┘
 ```
 - All orders (admin, fleet, healing) signed with Ed25519 private key on Central Command
-- Go daemon verifies signatures before executing any order
+- Go daemon verifies signatures before executing any order; unsigned orders are REJECTED when public key is loaded
 - `target_appliance_id` in signed payload prevents cross-appliance replay attacks
 - Fleet-wide orders (no target) are allowed on any appliance
 - Parameter allowlists: `nixos_rebuild` (flake_ref pattern), `update_agent`/`update_iso` (HTTPS domain allowlist), `sync_promoted_rule` (YAML schema validation + action allowlist)
@@ -304,6 +311,8 @@ Central Command (Python)                  Appliance (Go)
 - `backend/order_signing.py` — Shared signing helper (sign_admin_order, sign_fleet_order)
 - `appliance/internal/crypto/verify.go` — Go Ed25519 verification package
 - `appliance/internal/orders/processor.go` — Order dispatch with signature + host scope + param validation
+- `appliance/internal/sshexec/executor.go` — SSH executor with TOFU host key verification (`/var/lib/msp/ssh_known_hosts`), LRU cache (max 50), distro TTL (24h)
+- `appliance/internal/winrm/executor.go` — WinRM executor with UTF-16LE via `unicode/utf16` (not byte iteration), full SHA256 temp file names
 
 ## Network Scanner & Device Compliance
 

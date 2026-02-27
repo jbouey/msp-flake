@@ -10,7 +10,7 @@
 
 ## PostgreSQL Schema
 
-### Core Tables (50 migrations)
+### Core Tables (60 migrations)
 
 ```sql
 -- Sites and appliances

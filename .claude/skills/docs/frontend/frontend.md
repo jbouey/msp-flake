@@ -30,7 +30,20 @@ src/
     ├── ClientReports.tsx    # Monthly/annual reports
     ├── ClientNotifications.tsx
     ├── ClientSettings.tsx   # Password, transfer provider
+    ├── ClientCompliance.tsx  # 10-module HIPAA compliance hub
     └── ClientHelp.tsx       # Help documentation with visuals
+    compliance/              # HIPAA module components
+    ├── DocumentUpload.tsx   # Reusable drag-and-drop upload (moduleKey prop)
+    ├── SRAWizard.tsx        # Security Risk Assessment wizard
+    ├── PolicyLibrary.tsx    # Policy templates + inline view + adopt
+    ├── BAATracker.tsx       # Business Associate Agreements
+    ├── TrainingTracker.tsx  # Workforce training records
+    ├── IncidentResponsePlan.tsx
+    ├── ContingencyPlan.tsx
+    ├── WorkforceAccess.tsx
+    ├── PhysicalSafeguards.tsx
+    ├── OfficerDesignation.tsx  # Officer forms + designation letter template
+    └── GapWizard.tsx        # Gap analysis questionnaire + report
 ```
 
 ## React Query Patterns

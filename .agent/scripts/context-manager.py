@@ -78,9 +78,12 @@ def status():
     # Current blocker
     blocker = progress.get("current_blocker")
     if blocker:
-        print(f"\nBLOCKER: {blocker.get('id', 'unknown')}")
-        print(f"  {blocker.get('description', '')}")
-        print(f"  Solution: {blocker.get('solution', 'unknown')}")
+        if isinstance(blocker, str):
+            print(f"\nBLOCKER: {blocker}")
+        else:
+            print(f"\nBLOCKER: {blocker.get('id', 'unknown')}")
+            print(f"  {blocker.get('description', '')}")
+            print(f"  Solution: {blocker.get('solution', 'unknown')}")
 
     # Active tasks
     print("\nACTIVE TASKS:")
