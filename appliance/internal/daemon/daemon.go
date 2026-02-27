@@ -83,6 +83,13 @@ type Daemon struct {
 	// Subscription status: gates healing operations
 	subscriptionMu     sync.RWMutex
 	subscriptionStatus string // "active", "trialing", "past_due", "canceled", "none"
+
+	// WaitGroup for graceful goroutine drain on shutdown
+	wg sync.WaitGroup
+
+	// gpoFixDone tracks whether the GPO firewall fix has been applied per DC.
+	// key = DC hostname, value = true
+	gpoFixDone sync.Map
 }
 
 // isSubscriptionActive returns true if healing should be allowed.
@@ -230,7 +237,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Start HTTP file server for agent binary distribution.
 	// Domain controllers download the agent binary via Invoke-WebRequest
 	// instead of slow WinRM chunk uploads.
-	go d.serveAgentFiles(ctx)
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.serveAgentFiles(ctx)
+	}()
 
 	// Start gRPC server
 	d.grpcSrv = grpcserver.NewServer(grpcserver.Config{
@@ -238,14 +249,20 @@ func (d *Daemon) Run(ctx context.Context) error {
 		SiteID: d.config.SiteID,
 	}, d.registry, d.agentCA)
 
+	d.wg.Add(1)
 	go func() {
+		defer d.wg.Done()
 		if err := d.grpcSrv.Serve(); err != nil {
 			log.Printf("[daemon] gRPC server error: %v", err)
 		}
 	}()
 
 	// Drain heal channel (process incidents from gRPC drift events)
-	go d.processHealRequests(ctx)
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.processHealRequests(ctx)
+	}()
 
 	// Initial checkin
 	d.runCheckin(ctx)
@@ -274,6 +291,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.l2Client.Close()
 			}
 			d.sshExec.CloseAll()
+
+			// Wait for in-flight goroutines with 30s timeout
+			done := make(chan struct{})
+			go func() {
+				d.wg.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+				log.Println("[daemon] All goroutines drained")
+			case <-time.After(30 * time.Second):
+				log.Println("[daemon] Goroutine drain timed out after 30s")
+			}
 			return nil
 		case <-ticker.C:
 			_ = sdnotify.Watchdog()
@@ -521,7 +551,10 @@ func (d *Daemon) completeOrder(ctx context.Context, orderID string, success bool
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read completion response for order %s: %w", orderID, err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("[daemon] Order %s completion returned %d: %s", orderID, resp.StatusCode, string(respBody))
 		return fmt.Errorf("completion returned %d", resp.StatusCode)
@@ -920,9 +953,7 @@ func (d *Daemon) escalateToL3(incidentID string, req grpcserver.HealRequest, rea
 	// and potentially send notifications (email, Slack, etc.)
 }
 
-// gpoFixDone tracks whether the GPO firewall fix has already been applied.
-// sync.Map: key = DC hostname, value = true
-var gpoFixDone sync.Map
+// gpoFixDone is now a field on the Daemon struct (below), not a package global.
 
 // fixFirewallGPO runs a PowerShell script on the domain controller to ensure
 // the Default Domain Policy GPO has firewall enabled (not disabled).
@@ -943,7 +974,7 @@ func (d *Daemon) fixFirewallGPO(triggerHost string) {
 	dc := *d.config.DomainController
 
 	// Only fix once per DC
-	if _, done := gpoFixDone.LoadOrStore(dc, true); done {
+	if _, done := d.gpoFixDone.LoadOrStore(dc, true); done {
 		return
 	}
 
@@ -1030,7 +1061,7 @@ $Result | ConvertTo-Json -Depth 3
 	} else {
 		log.Printf("[daemon] GPO firewall fix failed on %s: %s", dc, result.Error)
 		// Allow retry on next occurrence
-		gpoFixDone.Delete(dc)
+		d.gpoFixDone.Delete(dc)
 	}
 }
 

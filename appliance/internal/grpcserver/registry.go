@@ -3,6 +3,7 @@ package grpcserver
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pb "github.com/osiriscare/appliance/proto"
@@ -16,7 +17,7 @@ type AgentState struct {
 	Tier          pb.CapabilityTier
 	ConnectedAt   time.Time
 	LastHeartbeat time.Time
-	DriftCount    int64
+	DriftCount    atomic.Int64
 	RMMAgents     []*pb.RMMAgent
 	pendingCmds   []*pb.HealCommand
 }

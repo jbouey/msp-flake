@@ -93,7 +93,12 @@ func (d *Daemon) makeActionExecutor() healing.ActionExecutor {
 }
 
 // executeRunbook runs a remediation runbook via WinRM (windows) or SSH (linux).
+// ctx controls cancellation for SSH sessions; pass context.Background() if no parent context.
 func (d *Daemon) executeRunbook(params map[string]interface{}, hostID, platform string) (map[string]interface{}, error) {
+	return d.executeRunbookCtx(context.Background(), params, hostID, platform)
+}
+
+func (d *Daemon) executeRunbookCtx(ctx context.Context, params map[string]interface{}, hostID, platform string) (map[string]interface{}, error) {
 	runbookID, _ := params["runbook_id"].(string)
 	if runbookID == "" {
 		return nil, fmt.Errorf("runbook_id required")
@@ -150,7 +155,7 @@ func (d *Daemon) executeRunbook(params map[string]interface{}, hostID, platform 
 		case "linux":
 			// For self-healing on this appliance, execute locally instead of SSH
 			if d.isSelfHost(hostID) {
-				result := d.executeLocal(script, runbookID, phaseStr, timeout)
+				result := d.executeLocalCtx(ctx, script, runbookID, phaseStr, timeout)
 				if !result.Success {
 					return map[string]interface{}{
 						"success": false, "phase": phaseStr, "error": result.Error,
@@ -162,7 +167,7 @@ func (d *Daemon) executeRunbook(params map[string]interface{}, hostID, platform 
 				if target == nil {
 					return nil, fmt.Errorf("no SSH credentials for host %s", hostID)
 				}
-				result := d.sshExec.Execute(context.Background(), target, script, runbookID, phaseStr, timeout, 1, 5.0, true, rb.HIPAAControls)
+				result := d.sshExec.Execute(ctx, target, script, runbookID, phaseStr, timeout, 1, 5.0, true, rb.HIPAAControls)
 				if !result.Success {
 					return map[string]interface{}{
 						"success": false, "phase": phaseStr, "error": result.Error,
@@ -221,7 +226,11 @@ type localExecResult struct {
 // executeLocal runs a remediation script locally via bash instead of SSH.
 // Used for self-healing on the appliance itself.
 func (d *Daemon) executeLocal(script, runbookID, phase string, timeout int) localExecResult {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	return d.executeLocalCtx(context.Background(), script, runbookID, phase, timeout)
+}
+
+func (d *Daemon) executeLocalCtx(parent context.Context, script, runbookID, phase string, timeout int) localExecResult {
+	ctx, cancel := context.WithTimeout(parent, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", script)
@@ -243,6 +252,10 @@ func (d *Daemon) executeLocal(script, runbookID, phase string, timeout int) loca
 // executeInlineScript runs a script directly (not from runbook registry) via WinRM or SSH.
 // Used for L1 actions that don't map to a specific runbook.
 func (d *Daemon) executeInlineScript(script, hostID, platform string, params map[string]interface{}) (map[string]interface{}, error) {
+	return d.executeInlineScriptCtx(context.Background(), script, hostID, platform, params)
+}
+
+func (d *Daemon) executeInlineScriptCtx(ctx context.Context, script, hostID, platform string, params map[string]interface{}) (map[string]interface{}, error) {
 	actionName := "inline"
 	if a, ok := params["_action"].(string); ok {
 		actionName = a
@@ -262,7 +275,7 @@ func (d *Daemon) executeInlineScript(script, hostID, platform string, params map
 
 	case "linux":
 		if d.isSelfHost(hostID) {
-			result := d.executeLocal(script, actionName, "remediate", 120)
+			result := d.executeLocalCtx(ctx, script, actionName, "remediate", 120)
 			if !result.Success {
 				return map[string]interface{}{"success": false, "error": result.Error}, fmt.Errorf("%s failed: %s", actionName, result.Error)
 			}
@@ -272,7 +285,7 @@ func (d *Daemon) executeInlineScript(script, hostID, platform string, params map
 		if target == nil {
 			return nil, fmt.Errorf("no SSH credentials for host %s", hostID)
 		}
-		result := d.sshExec.Execute(context.Background(), target, script, actionName, "remediate", 120, 1, 5.0, true, nil)
+		result := d.sshExec.Execute(ctx, target, script, actionName, "remediate", 120, 1, 5.0, true, nil)
 		if !result.Success {
 			return map[string]interface{}{"success": false, "error": result.Error}, fmt.Errorf("%s failed: %s", actionName, result.Error)
 		}
@@ -287,7 +300,7 @@ func (d *Daemon) executeInlineScript(script, hostID, platform string, params map
 // Unlike drift-triggered healing (which goes through the L1 engine), healing
 // orders arrive pre-matched with a runbook_id. We look up the runbook,
 // determine the platform, and dispatch to the appropriate executor.
-func (d *Daemon) executeHealingOrder(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+func (d *Daemon) executeHealingOrder(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
 	runbookID, _ := params["runbook_id"].(string)
 	if runbookID == "" {
 		return nil, fmt.Errorf("runbook_id is required")
@@ -336,7 +349,7 @@ func (d *Daemon) executeHealingOrder(_ context.Context, params map[string]interf
 		"phases":     []interface{}{"remediate", "verify"},
 	}
 
-	result, err := d.executeRunbook(rbParams, hostname, platform)
+	result, err := d.executeRunbookCtx(ctx, rbParams, hostname, platform)
 	if err != nil {
 		log.Printf("[healing-order] %s on %s FAILED: %v", runbookID, hostname, err)
 		return map[string]interface{}{

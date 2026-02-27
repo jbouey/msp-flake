@@ -1,9 +1,10 @@
 // Package sshexec implements an SSH executor for running bash scripts
 // on Linux targets. Handles key/password auth, sudo, session caching,
-// distro detection, and retry with exponential backoff.
+// distro detection, TOFU host key verification, and retry with exponential backoff.
 package sshexec
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -11,6 +12,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -55,24 +58,40 @@ type cachedConn struct {
 	createdAt time.Time
 }
 
+// distroCacheEntry holds a cached distro detection result with TTL.
+type distroCacheEntry struct {
+	distro   string
+	cachedAt time.Time
+}
+
 const (
-	connMaxAge     = 300 * time.Second
-	defaultTimeout = 60 // seconds
+	connMaxAge      = 300 * time.Second
+	defaultTimeout  = 60 // seconds
+	maxCachedConns  = 50 // LRU eviction threshold
+	distroTTL       = 24 * time.Hour
 )
+
+// knownHostsPath is where TOFU-persisted host keys are stored.
+const knownHostsPath = "/var/lib/msp/ssh_known_hosts"
 
 // Executor manages SSH connections and script execution.
 type Executor struct {
-	conns      map[string]*cachedConn
-	distroCache map[string]string
-	mu         sync.Mutex
+	conns       map[string]*cachedConn
+	connOrder   []string                      // LRU order: oldest first
+	distroCache map[string]*distroCacheEntry
+	hostKeys    map[string]ssh.PublicKey       // in-memory TOFU cache
+	mu          sync.Mutex
 }
 
-// NewExecutor creates a new SSH executor.
+// NewExecutor creates a new SSH executor. Loads persisted host keys from disk.
 func NewExecutor() *Executor {
-	return &Executor{
+	e := &Executor{
 		conns:       make(map[string]*cachedConn),
-		distroCache: make(map[string]string),
+		distroCache: make(map[string]*distroCacheEntry),
+		hostKeys:    make(map[string]ssh.PublicKey),
 	}
+	e.loadKnownHosts()
+	return e
 }
 
 // Execute runs a bash script on a Linux target with retry support.
@@ -212,9 +231,9 @@ func (e *Executor) executeOnce(ctx context.Context, target *Target, script strin
 // DetectDistro detects the Linux distribution on a target.
 func (e *Executor) DetectDistro(ctx context.Context, target *Target) (string, error) {
 	e.mu.Lock()
-	if cached, ok := e.distroCache[target.Hostname]; ok {
+	if entry, ok := e.distroCache[target.Hostname]; ok && time.Since(entry.cachedAt) < distroTTL {
 		e.mu.Unlock()
-		return cached, nil
+		return entry.distro, nil
 	}
 	e.mu.Unlock()
 
@@ -231,7 +250,7 @@ func (e *Executor) DetectDistro(ctx context.Context, target *Target) (string, er
 	}
 
 	e.mu.Lock()
-	e.distroCache[target.Hostname] = distro
+	e.distroCache[target.Hostname] = &distroCacheEntry{distro: distro, cachedAt: time.Now()}
 	e.mu.Unlock()
 
 	return distro, nil
@@ -247,15 +266,17 @@ func (e *Executor) getConnection(target *Target) (*ssh.Client, error) {
 			// Quick check: try to open a session to verify connection
 			_, err := cached.client.NewSession()
 			if err == nil {
+				e.lruTouch(target.Hostname) // Move to back of LRU
 				return cached.client, nil
 			}
 			log.Printf("[ssh] Stale connection to %s, reconnecting", target.Hostname)
 		}
 		cached.client.Close()
 		delete(e.conns, target.Hostname)
+		e.lruRemove(target.Hostname)
 	}
 
-	config, err := buildSSHConfig(target)
+	config, err := e.buildSSHConfig(target)
 	if err != nil {
 		return nil, err
 	}
@@ -284,13 +305,44 @@ func (e *Executor) getConnection(target *Target) (*ssh.Client, error) {
 
 	client := ssh.NewClient(sshConn, chans, reqs)
 
+	// LRU eviction: if at capacity, close oldest connection
+	if len(e.conns) >= maxCachedConns && len(e.connOrder) > 0 {
+		evictHost := e.connOrder[0]
+		e.connOrder = e.connOrder[1:]
+		if old, ok := e.conns[evictHost]; ok {
+			old.client.Close()
+			delete(e.conns, evictHost)
+			log.Printf("[ssh] LRU evicted connection for %s (cache full at %d)", evictHost, maxCachedConns)
+		}
+	}
+
 	e.conns[target.Hostname] = &cachedConn{
 		client:    client,
 		createdAt: time.Now(),
 	}
+	// Add to LRU order (remove first if already exists, then append)
+	e.lruTouch(target.Hostname)
 
 	log.Printf("[ssh] New connection to %s:%d as %s", target.Hostname, port, target.Username)
 	return client, nil
+}
+
+// lruTouch moves a hostname to the back of the LRU order (most recently used).
+// Must be called with e.mu held.
+func (e *Executor) lruTouch(hostname string) {
+	e.lruRemove(hostname)
+	e.connOrder = append(e.connOrder, hostname)
+}
+
+// lruRemove removes a hostname from the LRU order.
+// Must be called with e.mu held.
+func (e *Executor) lruRemove(hostname string) {
+	for i, h := range e.connOrder {
+		if h == hostname {
+			e.connOrder = append(e.connOrder[:i], e.connOrder[i+1:]...)
+			return
+		}
+	}
 }
 
 // InvalidateConnection removes a cached connection for a host.
@@ -301,6 +353,7 @@ func (e *Executor) InvalidateConnection(hostname string) {
 	if cached, ok := e.conns[hostname]; ok {
 		cached.client.Close()
 		delete(e.conns, hostname)
+		e.lruRemove(hostname)
 	}
 	log.Printf("[ssh] Invalidated connection for %s", hostname)
 }
@@ -321,11 +374,12 @@ func (e *Executor) CloseAll() {
 		cached.client.Close()
 		delete(e.conns, host)
 	}
+	e.connOrder = nil
 }
 
 // --- Helpers ---
 
-func buildSSHConfig(target *Target) (*ssh.ClientConfig, error) {
+func (e *Executor) buildSSHConfig(target *Target) (*ssh.ClientConfig, error) {
 	username := target.Username
 	if username == "" {
 		username = "root"
@@ -333,7 +387,7 @@ func buildSSHConfig(target *Target) (*ssh.ClientConfig, error) {
 
 	config := &ssh.ClientConfig{
 		User:            username,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: e.tofuHostKeyCallback,
 		Timeout:         30 * time.Second,
 	}
 
@@ -351,6 +405,97 @@ func buildSSHConfig(target *Target) (*ssh.ClientConfig, error) {
 	}
 
 	return config, nil
+}
+
+// tofuHostKeyCallback implements Trust On First Use: accept and persist new
+// host keys, reject changed keys (potential MITM).
+func (e *Executor) tofuHostKeyCallback(hostname string, remote net.Addr, key ssh.PublicKey) error {
+	// Normalize hostname (strip port if present)
+	host, _, err := net.SplitHostPort(hostname)
+	if err != nil {
+		host = hostname
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	existing, known := e.hostKeys[host]
+	if !known {
+		// First contact — trust and persist
+		e.hostKeys[host] = key
+		log.Printf("[ssh] TOFU: accepted new host key for %s (%s)", host, key.Type())
+		e.saveKnownHosts()
+		return nil
+	}
+
+	// Key is known — verify it matches
+	if string(existing.Marshal()) == string(key.Marshal()) {
+		return nil
+	}
+
+	log.Printf("[ssh] SECURITY: host key CHANGED for %s (was %s, now %s) — possible MITM attack",
+		host, existing.Type(), key.Type())
+	return fmt.Errorf("host key mismatch for %s: expected %s, got %s (remove from %s to accept new key)",
+		host, ssh.FingerprintSHA256(existing), ssh.FingerprintSHA256(key), knownHostsPath)
+}
+
+// loadKnownHosts reads persisted host keys from disk.
+// Format: one line per host: "hostname key-type base64-key"
+func (e *Executor) loadKnownHosts() {
+	f, err := os.Open(knownHostsPath)
+	if err != nil {
+		return // File doesn't exist yet — normal on first run
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	loaded := 0
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		host := parts[0]
+		keyBytes, err := base64.StdEncoding.DecodeString(parts[2])
+		if err != nil {
+			log.Printf("[ssh] TOFU: bad base64 for %s in known_hosts, skipping", host)
+			continue
+		}
+		pubKey, err := ssh.ParsePublicKey(keyBytes)
+		if err != nil {
+			log.Printf("[ssh] TOFU: bad key for %s in known_hosts, skipping", host)
+			continue
+		}
+		e.hostKeys[host] = pubKey
+		loaded++
+	}
+	if loaded > 0 {
+		log.Printf("[ssh] TOFU: loaded %d known host keys from %s", loaded, knownHostsPath)
+	}
+}
+
+// saveKnownHosts persists all known host keys to disk.
+func (e *Executor) saveKnownHosts() {
+	dir := filepath.Dir(knownHostsPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("[ssh] TOFU: cannot create dir %s: %v", dir, err)
+		return
+	}
+
+	var buf strings.Builder
+	buf.WriteString("# SSH known hosts (TOFU — managed by appliance daemon)\n")
+	for host, key := range e.hostKeys {
+		keyBytes := key.Marshal()
+		buf.WriteString(fmt.Sprintf("%s %s %s\n", host, key.Type(), base64.StdEncoding.EncodeToString(keyBytes)))
+	}
+
+	if err := os.WriteFile(knownHostsPath, []byte(buf.String()), 0o600); err != nil {
+		log.Printf("[ssh] TOFU: failed to save known_hosts: %v", err)
+	}
 }
 
 func isAuthError(err error) bool {

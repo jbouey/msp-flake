@@ -299,11 +299,9 @@ func (p *Processor) verifySignature(order *Order) error {
 	}
 
 	if order.Signature == "" || order.SignedPayload == "" {
-		// During rollout, allow unsigned orders but log loudly.
-		// TODO: After all order creation paths sign orders, make this an error.
-		log.Printf("[orders] WARNING: unsigned order %s (type=%s) — will be rejected after rollout",
+		log.Printf("[orders] SECURITY: rejected unsigned order %s (type=%s) — server must sign all orders",
 			order.OrderID, order.OrderType)
-		return nil
+		return fmt.Errorf("unsigned order rejected: order %s has no signature", order.OrderID)
 	}
 
 	// Step 1: Verify Ed25519 cryptographic signature
@@ -720,7 +718,7 @@ func (p *Processor) handleSyncPromotedRule(_ context.Context, params map[string]
 		}, nil
 	}
 
-	if err := os.WriteFile(rulePath, []byte(ruleYAML), 0o644); err != nil {
+	if err := os.WriteFile(rulePath, []byte(ruleYAML), 0o600); err != nil {
 		return nil, fmt.Errorf("write promoted rule: %w", err)
 	}
 

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	gowinrm "github.com/masterzen/winrm"
 )
@@ -201,7 +202,7 @@ func (e *Executor) executeInline(client *gowinrm.Client, script string, timeout 
 // the script to a temp file via chunked base64 echo commands.
 func (e *Executor) executeViaTempFile(client *gowinrm.Client, script string, timeout int) (string, string, int, error) {
 	// Generate unique temp file names
-	scriptHash := fmt.Sprintf("%x", sha256.Sum256([]byte(script)))[:8]
+	scriptHash := fmt.Sprintf("%x", sha256.Sum256([]byte(script)))
 	tempB64 := fmt.Sprintf(`C:\Windows\Temp\msp_%s.b64`, scriptHash)
 	tempPS1 := fmt.Sprintf(`C:\Windows\Temp\msp_%s.ps1`, scriptHash)
 
@@ -326,12 +327,14 @@ func (e *Executor) SessionCount() int {
 // encodePowerShell encodes a script for PowerShell's -EncodedCommand parameter.
 // PowerShell expects UTF-16LE base64.
 func encodePowerShell(script string) string {
-	utf16 := make([]byte, len(script)*2)
-	for i, c := range []byte(script) {
-		utf16[i*2] = c
-		utf16[i*2+1] = 0
+	runes := []rune(script)
+	u16 := utf16.Encode(runes)
+	buf := make([]byte, len(u16)*2)
+	for i, v := range u16 {
+		buf[i*2] = byte(v)
+		buf[i*2+1] = byte(v >> 8)
 	}
-	return base64.StdEncoding.EncodeToString(utf16)
+	return base64.StdEncoding.EncodeToString(buf)
 }
 
 func splitString(s string, size int) []string {

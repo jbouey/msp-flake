@@ -32,7 +32,7 @@ AAAEAuJ7pAsbywtyQ+v7e4TlzUy8ojcPdo8dzibkW6uODXOdby/9C7k6Qk9TQ8Oxe6baWF
 		PrivateKey: &key,
 	}
 
-	config, err := buildSSHConfig(target)
+	config, err := NewExecutor().buildSSHConfig(target)
 	if err != nil {
 		t.Fatalf("buildSSHConfig with key: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestBuildSSHConfigPassword(t *testing.T) {
 		Password: &pass,
 	}
 
-	config, err := buildSSHConfig(target)
+	config, err := NewExecutor().buildSSHConfig(target)
 	if err != nil {
 		t.Fatalf("buildSSHConfig with password: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestBuildSSHConfigNoAuth(t *testing.T) {
 		Username: "root",
 	}
 
-	_, err := buildSSHConfig(target)
+	_, err := NewExecutor().buildSSHConfig(target)
 	if err == nil {
 		t.Fatal("expected error for missing auth")
 	}
@@ -80,7 +80,7 @@ func TestBuildSSHConfigDefaultUser(t *testing.T) {
 		Password: &pass,
 	}
 
-	config, err := buildSSHConfig(target)
+	config, err := NewExecutor().buildSSHConfig(target)
 	if err != nil {
 		t.Fatalf("buildSSHConfig: %v", err)
 	}

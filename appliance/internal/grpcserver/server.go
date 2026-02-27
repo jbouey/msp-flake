@@ -247,7 +247,7 @@ func (s *servicer) ReportDrift(stream pb.ComplianceAgent_ReportDriftServer) erro
 
 		// Update agent stats
 		if agent := s.registry.GetAgent(event.AgentId); agent != nil {
-			agent.DriftCount++
+			agent.DriftCount.Add(1)
 			agent.LastHeartbeat = time.Now().UTC()
 		}
 
