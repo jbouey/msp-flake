@@ -26,7 +26,7 @@ import (
 )
 
 // Version is set at build time.
-var Version = "0.3.3"
+var Version = "0.3.4"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {
@@ -154,6 +154,11 @@ func New(cfg *Config) *Daemon {
 	// Override run_drift order stub with real handler that triggers scanner
 	d.orderProc.RegisterHandler("run_drift", func(ctx context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
 		return d.scanner.ForceScan(ctx), nil
+	})
+
+	// Override healing order stub with real handler that executes runbooks
+	d.orderProc.RegisterHandler("healing", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+		return d.executeHealingOrder(ctx, params)
 	})
 
 	// Initialize network scanner for port/reachability checks

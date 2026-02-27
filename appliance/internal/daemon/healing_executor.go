@@ -215,3 +215,74 @@ func (d *Daemon) executeLocal(script, runbookID, phase string, timeout int) loca
 	log.Printf("[l1-exec] Local %s phase=%s succeeded", runbookID, phase)
 	return localExecResult{Success: true, Output: outStr}
 }
+
+// executeHealingOrder processes a healing order from Central Command.
+// Unlike drift-triggered healing (which goes through the L1 engine), healing
+// orders arrive pre-matched with a runbook_id. We look up the runbook,
+// determine the platform, and dispatch to the appropriate executor.
+func (d *Daemon) executeHealingOrder(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	runbookID, _ := params["runbook_id"].(string)
+	if runbookID == "" {
+		return nil, fmt.Errorf("runbook_id is required")
+	}
+
+	hostname, _ := params["hostname"].(string)
+	checkType, _ := params["check_type"].(string)
+
+	// Look up runbook to determine platform
+	rb, ok := runbookRegistry[runbookID]
+	if !ok {
+		return nil, fmt.Errorf("unknown runbook %s (registry has %d entries)", runbookID, len(runbookRegistry))
+	}
+
+	platform := rb.Platform
+	if platform == "" {
+		// Infer from runbook ID prefix
+		switch {
+		case len(runbookID) > 4 && (runbookID[:4] == "RB-W" || runbookID[:4] == "WIN-"):
+			platform = "windows"
+		case len(runbookID) > 4 && (runbookID[:4] == "RB-L" || runbookID[:4] == "LIN-"):
+			platform = "linux"
+		default:
+			platform = "windows" // default for HIPAA compliance targets
+		}
+	}
+
+	// Determine target hostname — fall back to DC for Windows, self for Linux
+	if hostname == "" {
+		switch platform {
+		case "windows":
+			if d.config.DomainController != nil {
+				hostname = *d.config.DomainController
+			} else {
+				return nil, fmt.Errorf("no hostname in order and no DC configured")
+			}
+		case "linux":
+			hostname = "localhost"
+		}
+	}
+
+	log.Printf("[healing-order] Executing %s on %s (platform=%s check_type=%s)", runbookID, hostname, platform, checkType)
+
+	rbParams := map[string]interface{}{
+		"runbook_id": runbookID,
+		"phases":     []interface{}{"remediate", "verify"},
+	}
+
+	result, err := d.executeRunbook(rbParams, hostname, platform)
+	if err != nil {
+		log.Printf("[healing-order] %s on %s FAILED: %v", runbookID, hostname, err)
+		return map[string]interface{}{
+			"status":     "failed",
+			"runbook_id": runbookID,
+			"hostname":   hostname,
+			"error":      err.Error(),
+		}, err
+	}
+
+	log.Printf("[healing-order] %s on %s SUCCEEDED", runbookID, hostname)
+	result["status"] = "healed"
+	result["runbook_id"] = runbookID
+	result["hostname"] = hostname
+	return result, nil
+}
