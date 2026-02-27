@@ -1536,7 +1536,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                 "order_id": order_id,
                 "appliance_id": appliance_id,
                 "runbook_id": runbook_id,
-                "parameters": json.dumps({}),
+                "parameters": json.dumps({"runbook_id": runbook_id}),
                 "nonce": nonce,
                 "signature": signature,
                 "signed_payload": order_payload,

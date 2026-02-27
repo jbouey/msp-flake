@@ -26,7 +26,7 @@ import (
 )
 
 // Version is set at build time.
-var Version = "0.3.2"
+var Version = "0.3.3"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {
@@ -450,6 +450,11 @@ func (d *Daemon) processOrders(ctx context.Context, rawOrders []map[string]inter
 		}
 		// Inject order_id into params so handlers like nixos_rebuild can persist it
 		params["_order_id"] = orderID
+
+		// Inject runbook_id from top-level field into params (healing orders)
+		if rbID, ok := raw["runbook_id"].(string); ok && rbID != "" {
+			params["runbook_id"] = rbID
+		}
 
 		// Extract signature fields for verification
 		nonce, _ := raw["nonce"].(string)
