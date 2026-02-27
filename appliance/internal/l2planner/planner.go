@@ -162,8 +162,18 @@ func (p *Planner) Plan(incident *l2bridge.Incident) (*l2bridge.LLMDecision, erro
 	log.Printf("[l2planner] Central Command response in %v: action=%s confidence=%.2f",
 		elapsed.Round(time.Millisecond), planResp.RecommendedAction, planResp.Confidence)
 
-	// 6. Record the call in budget tracker
-	p.budget.RecordCost(0, 0) // Cost is tracked server-side; this just increments the hourly counter
+	// 6. Record the call in budget tracker with actual token counts from response
+	respInputTokens := 0
+	respOutputTokens := 0
+	if planResp.ContextUsed != nil {
+		if it, ok := planResp.ContextUsed["input_tokens"].(float64); ok {
+			respInputTokens = int(it)
+		}
+		if ot, ok := planResp.ContextUsed["output_tokens"].(float64); ok {
+			respOutputTokens = int(ot)
+		}
+	}
+	p.budget.RecordCost(respInputTokens, respOutputTokens)
 
 	// 7. Convert response to LLMDecision
 	decision := &l2bridge.LLMDecision{
@@ -197,12 +207,17 @@ func (p *Planner) Plan(incident *l2bridge.Incident) (*l2bridge.LLMDecision, erro
 }
 
 // PlanWithRetry attempts to plan with retries on transient failures.
+// Uses exponential backoff with jitter: 1s, 2s, 4s... capped at 30s.
 func (p *Planner) PlanWithRetry(incident *l2bridge.Incident, maxRetries int) (*l2bridge.LLMDecision, error) {
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			log.Printf("[l2planner] Retry %d/%d after error: %v", attempt, maxRetries, lastErr)
-			time.Sleep(time.Duration(attempt) * time.Second)
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+			log.Printf("[l2planner] Retry %d/%d after %v (error: %v)", attempt, maxRetries, backoff, lastErr)
+			time.Sleep(backoff)
 		}
 
 		decision, err := p.Plan(incident)

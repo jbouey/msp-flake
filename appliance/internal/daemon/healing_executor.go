@@ -62,6 +62,30 @@ func (d *Daemon) makeActionExecutor() healing.ActionExecutor {
 				"runbook_id": "RB-WIN-SEC-006",
 				"phases":     []interface{}{"remediate", "verify"},
 			}, hostID, "windows")
+		case "update_to_baseline_generation":
+			// Trigger GPO baseline update on the DC via WinRM
+			script := `gpupdate /force; (Get-GPO -All | Where-Object { $_.ModificationTime -gt (Get-Date).AddDays(-1) }).DisplayName`
+			return d.executeInlineScript(script, hostID, "windows", params)
+		case "run_backup_job":
+			// Trigger restic backup on the Linux appliance
+			jobName, _ := params["job_name"].(string)
+			if jobName == "" {
+				jobName = "restic-backup"
+			}
+			script := fmt.Sprintf("systemctl start %s.service && systemctl is-active %s.service", jobName, jobName)
+			return d.executeInlineScript(script, hostID, "linux", params)
+		case "restart_logging_services":
+			// Restart logging services (journald on NixOS, rsyslog on others)
+			script := "systemctl restart systemd-journald && journalctl --verify --quiet 2>&1 | tail -5"
+			return d.executeInlineScript(script, hostID, "linux", params)
+		case "renew_certificate":
+			// Attempt ACME certificate renewal
+			script := "if command -v certbot >/dev/null 2>&1; then certbot renew --non-interactive; elif command -v acme.sh >/dev/null 2>&1; then acme.sh --renew-all; else echo 'No ACME client found'; exit 1; fi"
+			return d.executeInlineScript(script, hostID, "linux", params)
+		case "cleanup_disk_space":
+			// Clean up temp files, old logs, journal vacuum
+			script := "journalctl --vacuum-size=100M 2>/dev/null; find /tmp -type f -atime +7 -delete 2>/dev/null; find /var/log -name '*.gz' -mtime +30 -delete 2>/dev/null; nix-collect-garbage -d 2>/dev/null; df -h / | tail -1"
+			return d.executeInlineScript(script, hostID, "linux", params)
 		default:
 			return nil, fmt.Errorf("unknown action: %s", action)
 		}
@@ -214,6 +238,49 @@ func (d *Daemon) executeLocal(script, runbookID, phase string, timeout int) loca
 
 	log.Printf("[l1-exec] Local %s phase=%s succeeded", runbookID, phase)
 	return localExecResult{Success: true, Output: outStr}
+}
+
+// executeInlineScript runs a script directly (not from runbook registry) via WinRM or SSH.
+// Used for L1 actions that don't map to a specific runbook.
+func (d *Daemon) executeInlineScript(script, hostID, platform string, params map[string]interface{}) (map[string]interface{}, error) {
+	actionName := "inline"
+	if a, ok := params["_action"].(string); ok {
+		actionName = a
+	}
+
+	switch platform {
+	case "windows":
+		target := d.buildHealingWinRMTarget(hostID)
+		if target == nil {
+			return nil, fmt.Errorf("no WinRM credentials for host %s", hostID)
+		}
+		result := d.winrmExec.Execute(target, script, actionName, "remediate", 120, 1, 15.0, nil)
+		if !result.Success {
+			return map[string]interface{}{"success": false, "error": result.Error}, fmt.Errorf("%s failed: %s", actionName, result.Error)
+		}
+		return map[string]interface{}{"success": true, "output": result.Output}, nil
+
+	case "linux":
+		if d.isSelfHost(hostID) {
+			result := d.executeLocal(script, actionName, "remediate", 120)
+			if !result.Success {
+				return map[string]interface{}{"success": false, "error": result.Error}, fmt.Errorf("%s failed: %s", actionName, result.Error)
+			}
+			return map[string]interface{}{"success": true, "output": result.Output}, nil
+		}
+		target := d.buildHealingSSHTarget(hostID)
+		if target == nil {
+			return nil, fmt.Errorf("no SSH credentials for host %s", hostID)
+		}
+		result := d.sshExec.Execute(context.Background(), target, script, actionName, "remediate", 120, 1, 5.0, true, nil)
+		if !result.Success {
+			return map[string]interface{}{"success": false, "error": result.Error}, fmt.Errorf("%s failed: %s", actionName, result.Error)
+		}
+		return map[string]interface{}{"success": true, "output": result.Output}, nil
+
+	default:
+		return nil, fmt.Errorf("unknown platform: %s", platform)
+	}
 }
 
 // executeHealingOrder processes a healing order from Central Command.

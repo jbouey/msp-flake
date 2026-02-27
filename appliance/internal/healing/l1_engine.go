@@ -238,9 +238,11 @@ func (e *Engine) ReloadRules() {
 
 // Match finds the first matching rule for an incident.
 // Returns nil if no rule matches (should escalate to L2).
+// When a match is found, the cooldown is immediately claimed to prevent
+// concurrent goroutines from double-matching the same rule+host.
 func (e *Engine) Match(incidentID, incidentType, severity string, data map[string]interface{}) *RuleMatch {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	for _, rule := range e.rules {
 		if !rule.Matches(incidentType, severity, data) {
@@ -263,10 +265,14 @@ func (e *Engine) Match(incidentID, incidentType, severity string, data map[strin
 			}
 		}
 
+		// Claim cooldown immediately to prevent double-matching
+		now := time.Now().UTC()
+		e.cooldowns[cooldownKey] = now
+
 		return &RuleMatch{
 			Rule:         rule,
 			IncidentID:   incidentID,
-			MatchedAt:    time.Now().UTC().Format(time.RFC3339),
+			MatchedAt:    now.Format(time.RFC3339),
 			Action:       rule.Action,
 			ActionParams: rule.ActionParams,
 		}
@@ -286,11 +292,7 @@ func (e *Engine) Execute(match *RuleMatch, siteID, hostID string) *ExecutionResu
 		Params:     match.ActionParams,
 	}
 
-	// Update cooldown
-	cooldownKey := match.Rule.ID + ":" + hostID
-	e.mu.Lock()
-	e.cooldowns[cooldownKey] = start
-	e.mu.Unlock()
+	// Cooldown already claimed in Match() — no need to update here
 
 	if e.actionExecutor == nil {
 		log.Printf("[l1] No action executor configured, dry run: %s", match.Action)

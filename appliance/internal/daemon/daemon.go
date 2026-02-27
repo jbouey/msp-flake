@@ -636,13 +636,20 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 			match.Rule.ID, match.Action, req.Hostname, req.CheckType)
 
 		result := d.l1Engine.Execute(match, d.config.SiteID, req.Hostname)
+
+		// Extract runbook_id from action params for telemetry (flywheel needs runbook_id, not rule ID)
+		telemetryRunbookID := match.Rule.ID // fallback to rule ID
+		if rbID, ok := match.Rule.ActionParams["runbook_id"].(string); ok && rbID != "" {
+			telemetryRunbookID = rbID
+		}
+
 		if result.Success {
 			log.Printf("[daemon] L1 healed %s/%s via %s in %dms",
 				req.Hostname, req.CheckType, match.Rule.ID, result.DurationMs)
 
 			// Report L1 telemetry for data flywheel (async, fire-and-forget)
 			if d.telemetry != nil {
-				go d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, match.Rule.ID, true, "", result.DurationMs)
+				go d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, true, "", result.DurationMs)
 			}
 
 			// Report healing to dashboard incidents table
@@ -662,7 +669,7 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 
 			// Report L1 failure telemetry too — helps identify broken rules
 			if d.telemetry != nil {
-				go d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, match.Rule.ID, false, result.Error, result.DurationMs)
+				go d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, false, result.Error, result.DurationMs)
 			}
 		}
 		return
@@ -722,9 +729,9 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 			log.Printf("[daemon] L2 decision: %s (confidence=%.2f, approval=%v) for %s/%s",
 				decision.RecommendedAction, decision.Confidence, decision.RequiresApproval, req.Hostname, req.CheckType)
 			l2Start := time.Now()
-			d.executeL2Action(ctx, decision, req, incidentID)
-			// Report telemetry for data flywheel (async)
-			go d.l2Planner.ReportExecution(incident, decision, true, "",
+			l2Success, l2Err := d.executeL2Action(ctx, decision, req, incidentID)
+			// Report telemetry for data flywheel (async) with actual success/failure
+			go d.l2Planner.ReportExecution(incident, decision, l2Success, l2Err,
 				time.Since(l2Start).Milliseconds())
 			return
 		}
@@ -779,7 +786,8 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 }
 
 // executeL2Action dispatches an L2 decision to the appropriate executor (WinRM or SSH).
-func (d *Daemon) executeL2Action(ctx context.Context, decision *l2bridge.LLMDecision, req grpcserver.HealRequest, incidentID string) {
+// Returns (success, errorMessage) for telemetry reporting.
+func (d *Daemon) executeL2Action(ctx context.Context, decision *l2bridge.LLMDecision, req grpcserver.HealRequest, incidentID string) (bool, string) {
 	platform, _ := req.Metadata["platform"]
 	if platform == "" {
 		platform = "windows" // default: gRPC drift events come from Windows agents
@@ -806,38 +814,41 @@ func (d *Daemon) executeL2Action(ctx context.Context, decision *l2bridge.LLMDeci
 		if target == nil {
 			log.Printf("[daemon] L2 no WinRM target for %s — escalating to L3", req.Hostname)
 			d.escalateToL3(incidentID, req, "No WinRM credentials for target")
-			return
+			return false, "No WinRM credentials for target"
 		}
 		result := d.winrmExec.Execute(target, script, runbookID, "l2_auto", 300, 1, 30.0, hipaaControls)
 		if result.Success {
 			log.Printf("[daemon] L2 healed %s/%s via WinRM in %.1fs (hash=%s)",
 				req.Hostname, req.CheckType, result.DurationSecs, result.OutputHash)
-		} else {
-			log.Printf("[daemon] L2 WinRM execution failed for %s/%s: %s — escalating to L3",
-				req.Hostname, req.CheckType, result.Error)
-			d.escalateToL3(incidentID, req, "L2 WinRM execution failed: "+result.Error)
+			return true, ""
 		}
+		log.Printf("[daemon] L2 WinRM execution failed for %s/%s: %s — escalating to L3",
+			req.Hostname, req.CheckType, result.Error)
+		d.escalateToL3(incidentID, req, "L2 WinRM execution failed: "+result.Error)
+		return false, result.Error
 
 	case "linux":
 		target := d.buildSSHTarget(req)
 		if target == nil {
 			log.Printf("[daemon] L2 no SSH target for %s — escalating to L3", req.Hostname)
 			d.escalateToL3(incidentID, req, "No SSH credentials for target")
-			return
+			return false, "No SSH credentials for target"
 		}
 		result := d.sshExec.Execute(ctx, target, script, runbookID, "l2_auto", 60, 1, 5.0, true, hipaaControls)
 		if result.Success {
 			log.Printf("[daemon] L2 healed %s/%s via SSH in %.1fs (hash=%s)",
 				req.Hostname, req.CheckType, result.DurationSecs, result.OutputHash)
-		} else {
-			log.Printf("[daemon] L2 SSH execution failed for %s/%s: %s — escalating to L3",
-				req.Hostname, req.CheckType, result.Error)
-			d.escalateToL3(incidentID, req, "L2 SSH execution failed: "+result.Error)
+			return true, ""
 		}
+		log.Printf("[daemon] L2 SSH execution failed for %s/%s: %s — escalating to L3",
+			req.Hostname, req.CheckType, result.Error)
+		d.escalateToL3(incidentID, req, "L2 SSH execution failed: "+result.Error)
+		return false, result.Error
 
 	default:
 		log.Printf("[daemon] L2 unknown platform %q for %s — escalating to L3", platform, req.Hostname)
 		d.escalateToL3(incidentID, req, fmt.Sprintf("Unknown platform: %s", platform))
+		return false, fmt.Sprintf("Unknown platform: %s", platform)
 	}
 }
 

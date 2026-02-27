@@ -93,7 +93,7 @@ func TestTelemetryReport(t *testing.T) {
 	if exec.Reasoning != "Firewall disabled, re-enabling" {
 		t.Errorf("Wrong reasoning: %s", exec.Reasoning)
 	}
-	if exec.PatternSignature != "firewall_status:firewall_status:DC01" {
+	if exec.PatternSignature != "firewall_status:L2-AUTO-firewall_status:DC01" {
 		t.Errorf("Wrong pattern_signature: %s", exec.PatternSignature)
 	}
 	if exec.ExecutionID == "" {
@@ -140,7 +140,7 @@ func TestTelemetryReportFailure(t *testing.T) {
 	if exec.ErrorMessage != "SSH connection refused" {
 		t.Errorf("Wrong error: %s", exec.ErrorMessage)
 	}
-	if exec.PatternSignature != "linux_ssh_config:linux_ssh_config:linux-1" {
+	if exec.PatternSignature != "linux_ssh_config::linux-1" {
 		t.Errorf("Wrong pattern_signature: %s", exec.PatternSignature)
 	}
 }
@@ -204,7 +204,7 @@ func TestL1TelemetryReport(t *testing.T) {
 	reporter := NewTelemetryReporter(server.URL, "test-key", "test-site")
 	reporter.SetApplianceID("appliance-001")
 
-	reporter.ReportL1Execution("drift-DC01-firewall-123", "DC01", "firewall_status", "L1-FIREWALL-001", true, "", 250)
+	reporter.ReportL1Execution("drift-DC01-firewall-123", "DC01", "firewall_status", "RB-WIN-SEC-001", true, "", 250)
 
 	// Verify wrapper
 	if receivedPayload.SiteID != "test-site" {
@@ -221,7 +221,7 @@ func TestL1TelemetryReport(t *testing.T) {
 	if exec.Hostname != "DC01" {
 		t.Errorf("Wrong hostname: %s", exec.Hostname)
 	}
-	if exec.RunbookID != "L1-FIREWALL-001" {
+	if exec.RunbookID != "RB-WIN-SEC-001" {
 		t.Errorf("Wrong runbook_id: %s", exec.RunbookID)
 	}
 	if !exec.Success {
@@ -239,7 +239,7 @@ func TestL1TelemetryReport(t *testing.T) {
 	if exec.CostUSD != 0 {
 		t.Errorf("L1 should have zero cost, got: %f", exec.CostUSD)
 	}
-	if exec.PatternSignature != "firewall_status:firewall_status:DC01" {
+	if exec.PatternSignature != "firewall_status:RB-WIN-SEC-001:DC01" {
 		t.Errorf("Wrong pattern_signature: %s", exec.PatternSignature)
 	}
 	if exec.ApplianceID != "appliance-001" {
@@ -260,7 +260,7 @@ func TestL1TelemetryReportFailure(t *testing.T) {
 	defer server.Close()
 
 	reporter := NewTelemetryReporter(server.URL, "key", "site")
-	reporter.ReportL1Execution("test-1", "SRV01", "services", "L1-SVC-001", false, "service restart failed", 500)
+	reporter.ReportL1Execution("test-1", "SRV01", "services", "RB-WIN-SVC-001", false, "service restart failed", 500)
 
 	exec := receivedPayload.Execution
 	if exec.Success {

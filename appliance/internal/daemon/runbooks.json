@@ -840,8 +840,8 @@
     "name": "No UID 0 Except Root",
     "platform": "linux",
     "detect_script": "UID0_USERS=$(awk -F: '$3 == 0 && $1 != \"root\" {print $1}' /etc/passwd)\n        if [ -z \"$UID0_USERS\" ]; then\n            echo \"COMPLIANT:only_root_uid0\"\n            exit 0\n        else\n            echo \"DRIFT:other_uid0_users=$UID0_USERS\"\n            exit 1\n        fi",
-    "remediate_script": "",
-    "verify_script": "",
+    "remediate_script": "# UID 0 accounts other than root are dangerous — remediation requires human review\nUID0_USERS=$(awk -F: '$3 == 0 && $1 != \"root\" {print $1}' /etc/passwd)\nif [ -z \"$UID0_USERS\" ]; then\n    echo \"REMEDIATED:no_extra_uid0\"\n    exit 0\nfi\nfor USER in $UID0_USERS; do\n    echo \"ALERT:uid0_account=$USER requires manual review\"\ndone\necho \"REMEDIATED:partial — flagged accounts for L3 review\"",
+    "verify_script": "UID0_USERS=$(awk -F: '$3 == 0 && $1 != \"root\" {print $1}' /etc/passwd)\nif [ -z \"$UID0_USERS\" ]; then\n    echo \"VERIFIED:only_root_uid0\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:extra_uid0=$UID0_USERS\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(a)(1)"
     ],
@@ -853,8 +853,8 @@
     "name": "Password Expiry Policy",
     "platform": "linux",
     "detect_script": "MAX_DAYS=$(grep \"^PASS_MAX_DAYS\" /etc/login.defs | awk '{print $2}')\n        if [ -n \"$MAX_DAYS\" ] && [ \"$MAX_DAYS\" -le 90 ]; then\n            echo \"COMPLIANT:pass_max_days=$MAX_DAYS\"\n            exit 0\n        else\n            echo \"DRIFT:pass_max_days=${MAX_DAYS:-not_set}\"\n            exit 1\n        fi",
-    "remediate_script": "sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS 90/' /etc/login.defs\n        if ! grep -q \"^PASS_MAX_DAYS\" /etc/login.defs; then\n            echo \"PASS_MAX_DAYS 90\" >> /etc/login.defs\n        fi\n        echo \"REMEDIATED\"",
-    "verify_script": "",
+    "remediate_script": "# NixOS: /etc/login.defs is read-only — managed by configuration.nix\nif [ -f /etc/NIXOS ]; then\n    MAX_DAYS=$(grep '^PASS_MAX_DAYS' /etc/login.defs 2>/dev/null | awk '{print $2}')\n    if [ -n \"$MAX_DAYS\" ] && [ \"$MAX_DAYS\" -le 90 ]; then\n        echo \"REMEDIATED:nixos_pass_max_days_ok=$MAX_DAYS\"\n        exit 0\n    fi\n    echo \"SKIP:nixos_requires_configuration_change — set users.users.<name>.passwordPolicy or security.pam in configuration.nix\"\n    exit 0\nfi\n# Standard Linux\nsed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS 90/' /etc/login.defs\nif ! grep -q '^PASS_MAX_DAYS' /etc/login.defs; then\n    echo 'PASS_MAX_DAYS 90' >> /etc/login.defs\nfi\necho \"REMEDIATED\"",
+    "verify_script": "MAX_DAYS=$(grep '^PASS_MAX_DAYS' /etc/login.defs 2>/dev/null | awk '{print $2}')\nif [ -n \"$MAX_DAYS\" ] && [ \"$MAX_DAYS\" -le 90 ]; then\n    echo \"VERIFIED:pass_max_days=$MAX_DAYS\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:pass_max_days=${MAX_DAYS:-not_set}\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(a)(1)",
       "164.308(a)(5)(ii)(D)"
@@ -868,7 +868,7 @@
     "platform": "linux",
     "detect_script": "if auditctl -l 2>/dev/null | grep -q \"/etc/passwd\" &&            auditctl -l 2>/dev/null | grep -q \"/etc/shadow\"; then\n            echo \"COMPLIANT:identity_files_audited\"\n            exit 0\n        else\n            echo \"DRIFT:identity_files_not_audited\"\n            exit 1\n        fi",
     "remediate_script": "# Add audit rules\n        auditctl -w /etc/passwd -p wa -k identity\n        auditctl -w /etc/shadow -p wa -k identity\n        auditctl -w /etc/group -p wa -k identity\n        # Make persistent\n        cat >> /etc/audit/rules.d/identity.rules << 'EOF'\n-w /etc/passwd -p wa -k identity\n-w /etc/shadow -p wa -k identity\n-w /etc/group -p wa -k identity\nEOF\n        echo \"REMEDIATED\"",
-    "verify_script": "",
+    "verify_script": "if auditctl -l 2>/dev/null | grep -q '/etc/passwd' && auditctl -l 2>/dev/null | grep -q '/etc/shadow'; then\n    echo \"VERIFIED:identity_files_audited\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:audit_rules_missing\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(b)",
       "164.308(a)(1)(ii)(D)"
@@ -881,8 +881,8 @@
     "name": "Audit Rules for Auth Logs",
     "platform": "linux",
     "detect_script": "if auditctl -l 2>/dev/null | grep -q \"auth.log\\|secure\"; then\n            echo \"COMPLIANT:auth_logs_audited\"\n            exit 0\n        else\n            echo \"DRIFT:auth_logs_not_audited\"\n            exit 1\n        fi",
-    "remediate_script": "# Ubuntu uses auth.log, RHEL uses secure\n        if [ -f /var/log/auth.log ]; then\n            auditctl -w /var/log/auth.log -p wa -k auth\n            echo \"-w /var/log/auth.log -p wa -k auth\" >> /etc/audit/rules.d/auth.rules\n        fi\n        if [ -f /var/log/secure ]; then\n            auditctl -w /var/log/secure -p wa -k auth\n            echo \"-w /var/log/secure -p wa -k auth\" >> /etc/audit/rules.d/auth.rules\n        fi\n        echo \"REMEDIATED\"",
-    "verify_script": "",
+    "remediate_script": "# Add audit rules at runtime (works on all Linux including NixOS)\nif [ -f /var/log/auth.log ]; then\n    auditctl -w /var/log/auth.log -p wa -k auth 2>/dev/null\nfi\nif [ -f /var/log/secure ]; then\n    auditctl -w /var/log/secure -p wa -k auth 2>/dev/null\nfi\n# Persist rules — NixOS uses /etc/audit which may be read-only\nif [ -f /etc/NIXOS ]; then\n    echo \"REMEDIATED:runtime_audit_rules_added — persist via security.auditd.rules in configuration.nix\"\n    exit 0\nfi\n# Standard Linux: persist to rules.d\nmkdir -p /etc/audit/rules.d\nif [ -f /var/log/auth.log ]; then\n    echo '-w /var/log/auth.log -p wa -k auth' >> /etc/audit/rules.d/auth.rules\nfi\nif [ -f /var/log/secure ]; then\n    echo '-w /var/log/secure -p wa -k auth' >> /etc/audit/rules.d/auth.rules\nfi\necho \"REMEDIATED\"",
+    "verify_script": "if auditctl -l 2>/dev/null | grep -q 'auth.log\\|secure'; then\n    echo \"VERIFIED:auth_logs_audited\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:auth_log_audit_rules_missing\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(b)"
     ],
@@ -894,7 +894,7 @@
     "name": "Login Banner",
     "platform": "linux",
     "detect_script": "COMPLIANT=true\n        DRIFT_ISSUES=\"\"\n\n        # Check /etc/issue for authorized-use warning\n        if [ -f /etc/issue ]; then\n            if ! grep -qi \"authorized\" /etc/issue 2>/dev/null; then\n                DRIFT_ISSUES=\"$DRIFT_ISSUES issue_no_warning\"\n                COMPLIANT=false\n            fi\n        else\n            DRIFT_ISSUES=\"$DRIFT_ISSUES issue_missing\"\n            COMPLIANT=false\n        fi\n\n        # Check /etc/issue.net for authorized-use warning\n        if [ -f /etc/issue.net ]; then\n            if ! grep -qi \"authorized\" /etc/issue.net 2>/dev/null; then\n                DRIFT_ISSUES=\"$DRIFT_ISSUES issue_net_no_warning\"\n                COMPLIANT=false\n            fi\n        else\n            DRIFT_ISSUES=\"$DRIFT_ISSUES issue_net_missing\"\n            COMPLIANT=false\n        fi\n\n        if $COMPLIANT; then\n            echo \"COMPLIANT:banners_configured\"\n            exit 0\n        else\n            echo \"DRIFT:$DRIFT_ISSUES\"\n            exit 1\n        fi",
-    "remediate_script": "BANNER_TEXT=\"WARNING: This system is for authorized use only.\n\nAccess to this system is restricted to authorized users. All activities\non this system are monitored and recorded. Unauthorized access or use\nof this system is prohibited and may result in disciplinary action,\ncivil liability, and/or criminal prosecution.\n\nBy continuing to use this system, you indicate your awareness of and\nconsent to these terms. If you are not an authorized user, disconnect\nimmediately.\n\nThis system processes Protected Health Information (PHI) under HIPAA.\nAll access is logged for compliance auditing.\"\n\n        # Set /etc/issue (local console login)\n        echo \"$BANNER_TEXT\" > /etc/issue\n        chmod 644 /etc/issue\n        chown root:root /etc/issue\n\n        # Set /etc/issue.net (remote/SSH login)\n        echo \"$BANNER_TEXT\" > /etc/issue.net\n        chmod 644 /etc/issue.net\n        chown root:root /etc/issue.net\n\n        # Ensure SSH uses the banner\n        if [ -f /etc/ssh/sshd_config ]; then\n            sed -i 's|^#*Banner.*|Banner /etc/issue.net|' /etc/ssh/sshd_config\n            if ! grep -q \"^Banner\" /etc/ssh/sshd_config; then\n                echo \"Banner /etc/issue.net\" >> /etc/ssh/sshd_config\n            fi\n            systemctl reload sshd 2>/dev/null || true\n        fi\n\n        echo \"REMEDIATED\"",
+    "remediate_script": "# NixOS: /etc/issue and /etc/issue.net are managed by configuration.nix\nif [ -f /etc/NIXOS ]; then\n    if grep -qi 'authorized' /etc/issue 2>/dev/null; then\n        echo \"REMEDIATED:nixos_banner_already_configured\"\n        exit 0\n    fi\n    echo \"SKIP:nixos_requires_configuration_change — set services.openssh.banner and environment.etc.issue in configuration.nix\"\n    exit 0\nfi\n# Standard Linux\nBANNER_TEXT='WARNING: This system is for authorized use only. All activities are monitored and recorded. Unauthorized access is prohibited and may result in disciplinary action and/or criminal prosecution. This system processes PHI under HIPAA.'\necho \"$BANNER_TEXT\" > /etc/issue\nchmod 644 /etc/issue\nchown root:root /etc/issue\necho \"$BANNER_TEXT\" > /etc/issue.net\nchmod 644 /etc/issue.net\nchown root:root /etc/issue.net\nif [ -f /etc/ssh/sshd_config ]; then\n    sed -i 's|^#*Banner.*|Banner /etc/issue.net|' /etc/ssh/sshd_config\n    if ! grep -q '^Banner' /etc/ssh/sshd_config; then\n        echo 'Banner /etc/issue.net' >> /etc/ssh/sshd_config\n    fi\n    systemctl reload sshd 2>/dev/null || true\nfi\necho \"REMEDIATED\"",
     "verify_script": "FAIL=false\n\n        if [ -f /etc/issue ]; then\n            if ! grep -qi \"authorized\" /etc/issue; then\n                FAIL=true\n            fi\n        else\n            FAIL=true\n        fi\n\n        if [ -f /etc/issue.net ]; then\n            if ! grep -qi \"authorized\" /etc/issue.net; then\n                FAIL=true\n            fi\n        else\n            FAIL=true\n        fi\n\n        if $FAIL; then\n            echo \"VERIFY_FAILED\"\n            exit 1\n        else\n            echo \"VERIFIED\"\n            exit 0\n        fi",
     "hipaa_controls": [
       "164.310(b)"
@@ -933,7 +933,7 @@
     "name": "Cryptographic Policy",
     "platform": "linux",
     "detect_script": "SSHD_CONFIG=\"/etc/ssh/sshd_config\"\n        DRIFT_ISSUES=\"\"\n        COMPLIANT=true\n\n        # Weak cipher patterns to reject\n        WEAK_CIPHERS=\"3des|arcfour|blowfish|cast128|rc4\"\n        # Weak MAC patterns to reject\n        WEAK_MACS=\"md5|sha1-96|umac-64\"\n        # Weak KexAlgorithm patterns to reject\n        WEAK_KEX=\"diffie-hellman-group1-sha1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1\"\n\n        # Check configured ciphers\n        CIPHERS_LINE=$(grep -E \"^Ciphers \" \"$SSHD_CONFIG\" 2>/dev/null | awk '{print $2}')\n        if [ -n \"$CIPHERS_LINE\" ]; then\n            if echo \"$CIPHERS_LINE\" | grep -qiE \"$WEAK_CIPHERS\"; then\n                DRIFT_ISSUES=\"$DRIFT_ISSUES weak_ciphers_found\"\n                COMPLIANT=false\n            fi\n        else\n            # No explicit cipher config - check ssh defaults for weak ciphers\n            ACTIVE_CIPHERS=$(sshd -T 2>/dev/null | grep \"^ciphers \" | awk '{print $2}')\n            if echo \"$ACTIVE_CIPHERS\" | grep -qiE \"$WEAK_CIPHERS\"; then\n                DRIFT_ISSUES=\"$DRIFT_ISSUES weak_default_ciphers\"\n                COMPLIANT=false\n            fi\n        fi\n\n        # Check configured MACs\n        MACS_LINE=$(grep -E \"^MACs \" \"$SSHD_CONFIG\" 2>/dev/null | awk '{print $2}')\n        if [ -n \"$MACS_LINE\" ]; then\n            if echo \"$MACS_LINE\" | grep -qiE \"$WEAK_MACS\"; then\n                DRIFT_ISSUES=\"$DRIFT_ISSUES weak_macs_found\"\n                COMPLIANT=false\n            fi\n        else\n            ACTIVE_MACS=$(sshd -T 2>/dev/null | grep \"^macs \" | awk '{print $2}')\n            if echo \"$ACTIVE_MACS\" | grep -qiE \"$WEAK_MACS\"; then\n                DRIFT_ISSUES=\"$DRIFT_ISSUES weak_default_macs\"\n                COMPLIANT=false\n            fi\n        fi\n\n        # Check configured KexAlgorithms\n        KEX_LINE=$(grep -E \"^KexAlgorithms \" \"$SSHD_CONFIG\" 2>/dev/null | awk '{print $2}')\n        if [ -n \"$KEX_LINE\" ]; then\n            if echo \"$KEX_LINE\" | grep -qiE \"$WEAK_KEX\"; then\n                DRIFT_ISSUES=\"$DRIFT_ISSUES weak_kex_found\"\n                COMPLIANT=false\n            fi\n        else\n            ACTIVE_KEX=$(sshd -T 2>/dev/null | grep \"^kexalgorithms \" | awk '{print $2}')\n            if echo \"$ACTIVE_KEX\" | grep -qiE \"$WEAK_KEX\"; then\n                DRIFT_ISSUES=\"$DRIFT_ISSUES weak_default_kex\"\n                COMPLIANT=false\n            fi\n        fi\n\n        if $COMPLIANT; then\n            echo \"COMPLIANT:strong_crypto_only\"\n            exit 0\n        else\n            echo \"DRIFT:$DRIFT_ISSUES\"\n            exit 1\n        fi",
-    "remediate_script": "SSHD_CONFIG=\"/etc/ssh/sshd_config\"\n\n        # Strong ciphers only (FIPS 140-2 compatible)\n        STRONG_CIPHERS=\"aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr,chacha20-poly1305@openssh.com\"\n\n        # Strong MACs only\n        STRONG_MACS=\"hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256\"\n\n        # Strong key exchange only\n        STRONG_KEX=\"curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha256\"\n\n        # Set Ciphers\n        sed -i 's/^#*Ciphers .*/Ciphers '\"$STRONG_CIPHERS\"'/' \"$SSHD_CONFIG\"\n        if ! grep -q \"^Ciphers \" \"$SSHD_CONFIG\"; then\n            echo \"Ciphers $STRONG_CIPHERS\" >> \"$SSHD_CONFIG\"\n        fi\n\n        # Set MACs\n        sed -i 's/^#*MACs .*/MACs '\"$STRONG_MACS\"'/' \"$SSHD_CONFIG\"\n        if ! grep -q \"^MACs \" \"$SSHD_CONFIG\"; then\n            echo \"MACs $STRONG_MACS\" >> \"$SSHD_CONFIG\"\n        fi\n\n        # Set KexAlgorithms\n        sed -i 's/^#*KexAlgorithms .*/KexAlgorithms '\"$STRONG_KEX\"'/' \"$SSHD_CONFIG\"\n        if ! grep -q \"^KexAlgorithms \" \"$SSHD_CONFIG\"; then\n            echo \"KexAlgorithms $STRONG_KEX\" >> \"$SSHD_CONFIG\"\n        fi\n\n        # Validate config before reloading\n        if sshd -t 2>/dev/null; then\n            systemctl reload sshd\n            echo \"REMEDIATED\"\n        else\n            echo \"ERROR:sshd_config_validation_failed\"\n            exit 1\n        fi",
+    "remediate_script": "# NixOS: sshd_config is read-only — managed by services.openssh in configuration.nix\nif [ -f /etc/NIXOS ]; then\n    WEAK_CIPHERS='3des|arcfour|blowfish|cast128|rc4'\n    ACTIVE_CIPHERS=$(sshd -T 2>/dev/null | grep '^ciphers ' | awk '{print $2}')\n    if echo \"$ACTIVE_CIPHERS\" | grep -qiE \"$WEAK_CIPHERS\"; then\n        echo \"SKIP:nixos_requires_configuration_change — set services.openssh.settings.Ciphers/MACs/KexAlgorithms in configuration.nix\"\n        exit 0\n    fi\n    echo \"REMEDIATED:nixos_crypto_already_strong\"\n    exit 0\nfi\n# Standard Linux\nSSHD_CONFIG='/etc/ssh/sshd_config'\nSTRONG_CIPHERS='aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr,chacha20-poly1305@openssh.com'\nSTRONG_MACS='hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256'\nSTRONG_KEX='curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha256'\nsed -i \"s/^#*Ciphers .*/Ciphers $STRONG_CIPHERS/\" \"$SSHD_CONFIG\"\ngrep -q '^Ciphers ' \"$SSHD_CONFIG\" || echo \"Ciphers $STRONG_CIPHERS\" >> \"$SSHD_CONFIG\"\nsed -i \"s/^#*MACs .*/MACs $STRONG_MACS/\" \"$SSHD_CONFIG\"\ngrep -q '^MACs ' \"$SSHD_CONFIG\" || echo \"MACs $STRONG_MACS\" >> \"$SSHD_CONFIG\"\nsed -i \"s/^#*KexAlgorithms .*/KexAlgorithms $STRONG_KEX/\" \"$SSHD_CONFIG\"\ngrep -q '^KexAlgorithms ' \"$SSHD_CONFIG\" || echo \"KexAlgorithms $STRONG_KEX\" >> \"$SSHD_CONFIG\"\nif sshd -t 2>/dev/null; then\n    systemctl reload sshd\n    echo \"REMEDIATED\"\nelse\n    echo \"ERROR:sshd_config_validation_failed\"\n    exit 1\nfi",
     "verify_script": "# Brief pause to ensure sshd has reloaded after remediate\n        sleep 2\n        WEAK_CIPHERS=\"3des|arcfour|blowfish|cast128|rc4\"\n        WEAK_MACS=\"md5|sha1-96|umac-64\"\n        WEAK_KEX=\"diffie-hellman-group1-sha1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1\"\n        FAIL=false\n\n        # Use sshd -T to check ACTIVE config (handles Include directives, defaults)\n        # Fall back to grepping the config file if sshd -T not available\n        ACTIVE_CONFIG=$(sshd -T 2>/dev/null)\n\n        if [ -n \"$ACTIVE_CONFIG\" ]; then\n            CIPHERS=$(echo \"$ACTIVE_CONFIG\" | grep \"^ciphers \" | awk '{print $2}')\n            if echo \"$CIPHERS\" | grep -qiE \"$WEAK_CIPHERS\"; then FAIL=true; fi\n            MACS=$(echo \"$ACTIVE_CONFIG\" | grep \"^macs \" | awk '{print $2}')\n            if echo \"$MACS\" | grep -qiE \"$WEAK_MACS\"; then FAIL=true; fi\n            KEX=$(echo \"$ACTIVE_CONFIG\" | grep \"^kexalgorithms \" | awk '{print $2}')\n            if echo \"$KEX\" | grep -qiE \"$WEAK_KEX\"; then FAIL=true; fi\n        else\n            # Fallback: check the config file directly\n            SSHD_CONFIG=\"/etc/ssh/sshd_config\"\n            CIPHERS=$(grep -E \"^Ciphers \" \"$SSHD_CONFIG\" 2>/dev/null | awk '{print $2}')\n            if [ -n \"$CIPHERS\" ] && echo \"$CIPHERS\" | grep -qiE \"$WEAK_CIPHERS\"; then FAIL=true; fi\n            MACS=$(grep -E \"^MACs \" \"$SSHD_CONFIG\" 2>/dev/null | awk '{print $2}')\n            if [ -n \"$MACS\" ] && echo \"$MACS\" | grep -qiE \"$WEAK_MACS\"; then FAIL=true; fi\n            KEX=$(grep -E \"^KexAlgorithms \" \"$SSHD_CONFIG\" 2>/dev/null | awk '{print $2}')\n            if [ -n \"$KEX\" ] && echo \"$KEX\" | grep -qiE \"$WEAK_KEX\"; then FAIL=true; fi\n        fi\n\n        if $FAIL; then\n            echo \"VERIFY_FAILED\"\n            exit 1\n        else\n            echo \"VERIFIED:strong_crypto_configured\"\n            exit 0\n        fi",
     "hipaa_controls": [
       "164.312(e)(2)(ii)"
@@ -959,7 +959,7 @@
     "name": "File Integrity Monitoring",
     "platform": "linux",
     "detect_script": "# Check for AIDE\n        if command -v aide &>/dev/null; then\n            if [ -f /var/lib/aide/aide.db ]; then\n                # Check if database is recent (within 30 days)\n                DB_AGE=$(find /var/lib/aide/aide.db -mtime -30 2>/dev/null | wc -l)\n                if [ \"$DB_AGE\" -gt 0 ]; then\n                    echo \"COMPLIANT:aide_configured\"\n                    exit 0\n                else\n                    echo \"DRIFT:aide_db_stale\"\n                    exit 1\n                fi\n            else\n                echo \"DRIFT:aide_db_missing\"\n                exit 1\n            fi\n        fi\n\n        # Check for Samhain\n        if command -v samhain &>/dev/null; then\n            if systemctl is-active samhain &>/dev/null; then\n                echo \"COMPLIANT:samhain_active\"\n                exit 0\n            fi\n        fi\n\n        # Check for OSSEC\n        if [ -d /var/ossec ]; then\n            if systemctl is-active ossec-hids &>/dev/null; then\n                echo \"COMPLIANT:ossec_active\"\n                exit 0\n            fi\n        fi\n\n        echo \"DRIFT:no_integrity_monitoring\"\n        exit 1",
-    "remediate_script": "",
+    "remediate_script": "# Initialize or update AIDE database if aide is installed\nif command -v aide >/dev/null 2>&1; then\n    if [ ! -f /var/lib/aide/aide.db ]; then\n        aide --init 2>/dev/null\n        if [ -f /var/lib/aide/aide.db.new ]; then\n            mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db\n            echo \"REMEDIATED:aide_db_initialized\"\n            exit 0\n        fi\n    else\n        aide --update 2>/dev/null\n        if [ -f /var/lib/aide/aide.db.new ]; then\n            mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db\n            echo \"REMEDIATED:aide_db_updated\"\n            exit 0\n        fi\n    fi\nfi\necho \"ALERT:no_fim_tool_installed — install aide or equivalent and initialize database\"\nexit 0",
     "verify_script": "if command -v aide &>/dev/null && [ -f /var/lib/aide/aide.db ]; then\n            echo \"VERIFIED:aide_configured\"\n            exit 0\n        fi\n        echo \"VERIFY_FAILED\"\n        exit 1",
     "hipaa_controls": [
       "164.312(c)(1)",
@@ -974,7 +974,7 @@
     "name": "Incident Response Readiness",
     "platform": "linux",
     "detect_script": "RESULT=\"COMPLIANT\"\n        ISSUES=\"\"\n\n        # Check if critical logs exist and are being written\n        if [ -f /var/log/auth.log ] || [ -f /var/log/secure ]; then\n            LOG_FILE=$(ls /var/log/auth.log /var/log/secure 2>/dev/null | head -1)\n            LOG_AGE=$(find \"$LOG_FILE\" -mmin -60 2>/dev/null | wc -l)\n            if [ \"$LOG_AGE\" -eq 0 ]; then\n                RESULT=\"DRIFT\"\n                ISSUES=\"$ISSUES auth_log_stale\"\n            fi\n        else\n            RESULT=\"DRIFT\"\n            ISSUES=\"$ISSUES auth_log_missing\"\n        fi\n\n        # Check if auditd is running\n        if ! systemctl is-active auditd &>/dev/null; then\n            RESULT=\"DRIFT\"\n            ISSUES=\"$ISSUES auditd_not_running\"\n        fi\n\n        # Check for log rotation\n        if [ ! -f /etc/logrotate.d/rsyslog ] && [ ! -f /etc/logrotate.d/syslog ]; then\n            ISSUES=\"$ISSUES logrotate_not_configured\"\n        fi\n\n        # Check for remote syslog (optional but recommended)\n        if grep -q \"^[^#]*@\" /etc/rsyslog.conf /etc/rsyslog.d/*.conf 2>/dev/null; then\n            echo \"INFO: Remote syslog configured\"\n        fi\n\n        # Check for forensic tools\n        TOOLS_INSTALLED=0\n        for tool in tcpdump strace lsof netstat ss; do\n            if command -v $tool &>/dev/null; then\n                TOOLS_INSTALLED=$((TOOLS_INSTALLED + 1))\n            fi\n        done\n\n        if [ \"$TOOLS_INSTALLED\" -lt 3 ]; then\n            ISSUES=\"$ISSUES forensic_tools_missing\"\n        fi\n\n        if [ \"$RESULT\" = \"COMPLIANT\" ]; then\n            echo \"COMPLIANT:ir_ready\"\n            exit 0\n        else\n            echo \"DRIFT:$ISSUES\"\n            exit 1\n        fi",
-    "remediate_script": "",
+    "remediate_script": "# Ensure auditd and rsyslog are running\nif systemctl list-unit-files auditd.service 2>/dev/null | grep -q auditd; then\n    systemctl restart auditd 2>/dev/null || true\nfi\nif systemctl list-unit-files rsyslog.service 2>/dev/null | grep -q rsyslog; then\n    systemctl restart rsyslog 2>/dev/null || true\nfi\n# On NixOS, journald handles logging — check it\nif [ -f /etc/NIXOS ]; then\n    systemctl restart systemd-journald 2>/dev/null || true\n    echo \"REMEDIATED:nixos_logging_services_restarted\"\n    exit 0\nfi\necho \"REMEDIATED:logging_services_restarted\"",
     "verify_script": "OK=true\n\n        if ! systemctl is-active auditd &>/dev/null; then\n            OK=false\n        fi\n\n        if ! systemctl is-active rsyslog &>/dev/null; then\n            OK=false\n        fi\n\n        if ! command -v tcpdump &>/dev/null; then\n            OK=false\n        fi\n\n        if $OK; then\n            echo \"VERIFIED:ir_ready\"\n            exit 0\n        else\n            echo \"VERIFY_FAILED\"\n            exit 1\n        fi",
     "hipaa_controls": [
       "164.308(a)(6)",
@@ -1027,8 +1027,8 @@
     "name": "SELinux/AppArmor Active",
     "platform": "linux",
     "detect_script": "# Check SELinux (RHEL)\n        if command -v getenforce &>/dev/null; then\n            STATUS=$(getenforce 2>/dev/null)\n            if [ \"$STATUS\" = \"Enforcing\" ]; then\n                echo \"COMPLIANT:selinux_enforcing\"\n                exit 0\n            elif [ \"$STATUS\" = \"Permissive\" ]; then\n                echo \"DRIFT:selinux_permissive\"\n                exit 1\n            fi\n        fi\n        # Check AppArmor (Ubuntu)\n        if command -v aa-status &>/dev/null; then\n            PROFILES=$(aa-status 2>/dev/null | grep \"profiles are loaded\" | awk '{print $1}')\n            if [ -n \"$PROFILES\" ] && [ \"$PROFILES\" -gt 0 ]; then\n                echo \"COMPLIANT:apparmor_active\"\n                exit 0\n            fi\n        fi\n        echo \"DRIFT:no_mac_active\"\n        exit 1",
-    "remediate_script": "",
-    "verify_script": "",
+    "remediate_script": "# Try to enable SELinux or AppArmor\nif command -v getenforce >/dev/null 2>&1; then\n    STATUS=$(getenforce 2>/dev/null)\n    if [ \"$STATUS\" = \"Permissive\" ]; then\n        setenforce 1 2>/dev/null && echo \"REMEDIATED:selinux_set_enforcing\" && exit 0\n    fi\n    echo \"ALERT:selinux_disabled — requires manual configuration and reboot\"\n    exit 0\nfi\nif command -v aa-status >/dev/null 2>&1; then\n    PROFILES=$(aa-status 2>/dev/null | grep 'profiles are loaded' | awk '{print $1}')\n    if [ -n \"$PROFILES\" ] && [ \"$PROFILES\" -gt 0 ]; then\n        echo \"REMEDIATED:apparmor_already_active\"\n        exit 0\n    fi\n    systemctl restart apparmor 2>/dev/null && echo \"REMEDIATED:apparmor_restarted\" && exit 0\nfi\necho \"ALERT:no_mac_framework — install and configure SELinux or AppArmor\"",
+    "verify_script": "# Check SELinux\nif command -v getenforce >/dev/null 2>&1; then\n    STATUS=$(getenforce 2>/dev/null)\n    if [ \"$STATUS\" = \"Enforcing\" ]; then\n        echo \"VERIFIED:selinux_enforcing\"\n        exit 0\n    fi\nfi\n# Check AppArmor\nif command -v aa-status >/dev/null 2>&1; then\n    PROFILES=$(aa-status 2>/dev/null | grep 'profiles are loaded' | awk '{print $1}')\n    if [ -n \"$PROFILES\" ] && [ \"$PROFILES\" -gt 0 ]; then\n        echo \"VERIFIED:apparmor_active\"\n        exit 0\n    fi\nfi\necho \"VERIFY_FAILED:no_mac_active\"\nexit 1",
     "hipaa_controls": [
       "164.312(a)(1)",
       "164.312(c)(1)"
@@ -1054,7 +1054,7 @@
     "name": "NTP Time Synchronization",
     "platform": "linux",
     "detect_script": "# Check for chrony or ntpd\n        SYNC_STATUS=\"NOT_CONFIGURED\"\n        TIME_DRIFT=0\n\n        if command -v chronyc &>/dev/null; then\n            if systemctl is-active chronyd &>/dev/null; then\n                SYNC_STATUS=$(chronyc tracking 2>/dev/null | grep \"Leap status\" | awk '{print $4}')\n                TIME_DRIFT=$(chronyc tracking 2>/dev/null | grep \"System time\" | awk '{print $4}')\n                if [ \"$SYNC_STATUS\" = \"Normal\" ]; then\n                    echo \"COMPLIANT:chrony_synced,drift=${TIME_DRIFT}s\"\n                    exit 0\n                fi\n            fi\n        fi\n\n        if command -v ntpq &>/dev/null; then\n            if systemctl is-active ntpd &>/dev/null || systemctl is-active ntp &>/dev/null; then\n                PEERS=$(ntpq -p 2>/dev/null | grep -c \"^\\*\")\n                if [ \"$PEERS\" -gt 0 ]; then\n                    echo \"COMPLIANT:ntp_synced,peers=$PEERS\"\n                    exit 0\n                fi\n            fi\n        fi\n\n        # Check systemd-timesyncd\n        if systemctl is-active systemd-timesyncd &>/dev/null; then\n            SYNC=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null)\n            if [ \"$SYNC\" = \"yes\" ]; then\n                echo \"COMPLIANT:timesyncd_synced\"\n                exit 0\n            fi\n        fi\n\n        echo \"DRIFT:time_not_synchronized\"\n        exit 1",
-    "remediate_script": "",
+    "remediate_script": "# Try to restart time sync service\nif command -v chronyc >/dev/null 2>&1; then\n    systemctl restart chronyd 2>/dev/null\n    chronyc makestep 2>/dev/null\n    echo \"REMEDIATED:chronyd_restarted\"\n    exit 0\nfi\nif systemctl list-unit-files ntpd.service 2>/dev/null | grep -q ntpd; then\n    systemctl restart ntpd 2>/dev/null\n    echo \"REMEDIATED:ntpd_restarted\"\n    exit 0\nfi\nif systemctl list-unit-files systemd-timesyncd.service 2>/dev/null | grep -q timesyncd; then\n    systemctl restart systemd-timesyncd 2>/dev/null\n    timedatectl set-ntp true 2>/dev/null\n    echo \"REMEDIATED:timesyncd_restarted\"\n    exit 0\nfi\necho \"ALERT:no_ntp_service_found — install chrony or enable systemd-timesyncd\"",
     "verify_script": "if command -v chronyc &>/dev/null && systemctl is-active chronyd &>/dev/null; then\n            SYNC=$(chronyc tracking 2>/dev/null | grep \"Leap status\" | awk '{print $4}')\n            if [ \"$SYNC\" = \"Normal\" ]; then\n                echo \"VERIFIED:chrony_synced\"\n                exit 0\n            fi\n        fi\n        echo \"VERIFY_FAILED\"\n        exit 1",
     "hipaa_controls": [
       "164.312(b)",
@@ -1067,7 +1067,7 @@
     "id": "LIN-PATCH-001",
     "name": "Auto-Update Timer Enabled",
     "platform": "linux",
-    "detect_script": "if command -v apt-get &>/dev/null; then\n            apt-get update -qq 2>/dev/null\n            SECURITY=$(apt-get -s upgrade 2>/dev/null | grep -i security | wc -l)\n            if [ \"$SECURITY\" -eq 0 ]; then\n                echo \"COMPLIANT:no_security_updates\"\n                exit 0\n            else\n                echo \"DRIFT:security_updates_available=$SECURITY\"\n                exit 1\n            fi\n        elif command -v yum &>/dev/null; then\n            SECURITY=$(yum check-update --security 2>/dev/null | grep -v \"^$\" | wc -l)\n            if [ \"$SECURITY\" -le 1 ]; then\n                echo \"COMPLIANT:no_security_updates\"\n                exit 0\n            else\n                echo \"DRIFT:security_updates_available=$SECURITY\"\n                exit 1\n            fi\n        fi\n        echo \"UNKNOWN:no_package_manager\"\n        exit 1",
+    "detect_script": "# NixOS: check if auto-upgrade timer is active\nif [ -f /etc/NIXOS ]; then\n    if systemctl is-active nixos-upgrade.timer >/dev/null 2>&1; then\n        echo \"COMPLIANT:nixos_upgrade_timer_active\"\n        exit 0\n    else\n        echo \"DRIFT:nixos_upgrade_timer_not_active\"\n        exit 1\n    fi\nfi\n# Debian/Ubuntu\nif command -v apt-get >/dev/null 2>&1; then\n    apt-get update -qq 2>/dev/null\n    SECURITY=$(apt-get -s upgrade 2>/dev/null | grep -i security | wc -l)\n    if [ \"$SECURITY\" -eq 0 ]; then\n        echo \"COMPLIANT:no_security_updates\"\n        exit 0\n    else\n        echo \"DRIFT:security_updates_available=$SECURITY\"\n        exit 1\n    fi\nfi\n# RHEL/CentOS\nif command -v yum >/dev/null 2>&1; then\n    SECURITY=$(yum check-update --security 2>/dev/null | grep -v '^$' | wc -l)\n    if [ \"$SECURITY\" -le 1 ]; then\n        echo \"COMPLIANT:no_security_updates\"\n        exit 0\n    else\n        echo \"DRIFT:security_updates_available=$SECURITY\"\n        exit 1\n    fi\nfi\necho \"UNKNOWN:no_package_manager\"\nexit 1",
     "remediate_script": "# Enable auto-update timer based on distro\nif [ -f /etc/NIXOS ]; then\n    # NixOS: enable nixos-upgrade.timer if the unit file exists\n    if systemctl list-unit-files nixos-upgrade.timer 2>/dev/null | grep -q nixos-upgrade; then\n        systemctl enable --now nixos-upgrade.timer 2>/dev/null\n        echo \"REMEDIATED:nixos_upgrade_timer_enabled\"\n    else\n        # Timer unit doesn't exist \u2014 needs system.autoUpgrade in configuration.nix\n        echo \"SKIP:nixos_autoUpgrade_not_configured\"\n        exit 0\n    fi\nelif command -v apt-get &>/dev/null; then\n    DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades 2>/dev/null\n    systemctl enable --now unattended-upgrades.timer 2>/dev/null\n    echo \"REMEDIATED:unattended_upgrades_enabled\"\nelif command -v dnf &>/dev/null; then\n    dnf install -y dnf-automatic 2>/dev/null\n    systemctl enable --now dnf-automatic.timer 2>/dev/null\n    echo \"REMEDIATED:dnf_automatic_enabled\"\nelse\n    echo \"SKIP:unknown_distro\"\n    exit 0\nfi",
     "verify_script": "if systemctl is-active nixos-upgrade.timer &>/dev/null; then\n    echo \"VERIFIED:nixos_upgrade_timer_active\"\n    exit 0\nelif systemctl is-active unattended-upgrades.timer &>/dev/null; then\n    echo \"VERIFIED:unattended_upgrades_active\"\n    exit 0\nelif systemctl is-active dnf-automatic.timer &>/dev/null; then\n    echo \"VERIFIED:dnf_automatic_active\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:no_auto_update_timer\"\n    exit 1\nfi",
     "hipaa_controls": [
@@ -1082,7 +1082,7 @@
     "platform": "linux",
     "detect_script": "PERMS=$(stat -c \"%a\" /etc/shadow 2>/dev/null)\n        if [ \"$PERMS\" = \"640\" ] || [ \"$PERMS\" = \"600\" ] || [ \"$PERMS\" = \"000\" ]; then\n            echo \"COMPLIANT:shadow_perms=$PERMS\"\n            exit 0\n        else\n            echo \"DRIFT:shadow_perms=$PERMS\"\n            exit 1\n        fi",
     "remediate_script": "chmod 640 /etc/shadow\n        chown root:shadow /etc/shadow 2>/dev/null || chown root:root /etc/shadow\n        echo \"REMEDIATED\"",
-    "verify_script": "",
+    "verify_script": "PERMS=$(stat -c '%a' /etc/shadow 2>/dev/null)\nif [ \"$PERMS\" = \"640\" ] || [ \"$PERMS\" = \"600\" ] || [ \"$PERMS\" = \"000\" ]; then\n    echo \"VERIFIED:shadow_perms=$PERMS\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:shadow_perms=$PERMS\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(a)(1)",
       "164.312(c)(1)"
@@ -1096,7 +1096,7 @@
     "platform": "linux",
     "detect_script": "PERMS=$(stat -c \"%a\" /etc/ssh/sshd_config 2>/dev/null)\n        if [ \"$PERMS\" = \"600\" ] || [ \"$PERMS\" = \"644\" ]; then\n            echo \"COMPLIANT:sshd_config_perms=$PERMS\"\n            exit 0\n        else\n            echo \"DRIFT:sshd_config_perms=$PERMS\"\n            exit 1\n        fi",
     "remediate_script": "chmod 600 /etc/ssh/sshd_config\n        chown root:root /etc/ssh/sshd_config\n        echo \"REMEDIATED\"",
-    "verify_script": "",
+    "verify_script": "PERMS=$(stat -c '%a' /etc/ssh/sshd_config 2>/dev/null)\nif [ \"$PERMS\" = \"600\" ] || [ \"$PERMS\" = \"644\" ]; then\n    echo \"VERIFIED:sshd_config_perms=$PERMS\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:sshd_config_perms=$PERMS\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(a)(1)"
     ],
@@ -1109,7 +1109,7 @@
     "platform": "linux",
     "detect_script": "WW_FILES=$(find /etc -type f -perm -0002 2>/dev/null | head -10)\n        if [ -z \"$WW_FILES\" ]; then\n            echo \"COMPLIANT:no_world_writable\"\n            exit 0\n        else\n            echo \"DRIFT:world_writable_found\"\n            echo \"$WW_FILES\"\n            exit 1\n        fi",
     "remediate_script": "find /etc -type f -perm -0002 -exec chmod o-w {} \\;\n        echo \"REMEDIATED\"",
-    "verify_script": "",
+    "verify_script": "WW_FILES=$(find /etc -type f -perm -0002 2>/dev/null | head -1)\nif [ -z \"$WW_FILES\" ]; then\n    echo \"VERIFIED:no_world_writable\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:world_writable_still_found\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(c)(1)"
     ],
@@ -1148,8 +1148,8 @@
     "name": "SSH Password Authentication Disabled",
     "platform": "linux",
     "detect_script": "VALUE=$(grep -E \"^PasswordAuthentication\" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')\n        if [ \"$VALUE\" = \"no\" ]; then\n            echo \"COMPLIANT\"\n            exit 0\n        else\n            echo \"DRIFT:PasswordAuthentication=$VALUE\"\n            exit 1\n        fi",
-    "remediate_script": "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config\n        if ! grep -q \"^PasswordAuthentication\" /etc/ssh/sshd_config; then\n            echo \"PasswordAuthentication no\" >> /etc/ssh/sshd_config\n        fi\n        systemctl reload sshd\n        echo \"REMEDIATED\"",
-    "verify_script": "",
+    "remediate_script": "# NixOS: sshd_config is read-only — managed by services.openssh in configuration.nix\nif [ -f /etc/NIXOS ]; then\n    VALUE=$(grep -E '^PasswordAuthentication' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')\n    if [ \"$VALUE\" = \"no\" ]; then\n        echo \"REMEDIATED:nixos_password_auth_already_disabled\"\n        exit 0\n    fi\n    echo \"SKIP:nixos_requires_configuration_change — set services.openssh.settings.PasswordAuthentication = false\"\n    exit 0\nfi\n# Standard Linux\nsed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config\nif ! grep -q '^PasswordAuthentication' /etc/ssh/sshd_config; then\n    echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config\nfi\nsystemctl reload sshd\necho \"REMEDIATED\"",
+    "verify_script": "VALUE=$(grep -E '^PasswordAuthentication' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')\nif [ \"$VALUE\" = \"no\" ]; then\n    echo \"VERIFIED:password_auth_disabled\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:PasswordAuthentication=$VALUE\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(d)",
       "164.312(a)(1)"
@@ -1162,8 +1162,8 @@
     "name": "SSH Max Auth Tries",
     "platform": "linux",
     "detect_script": "VALUE=$(grep -E \"^MaxAuthTries\" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')\n        if [ -n \"$VALUE\" ] && [ \"$VALUE\" -le 3 ]; then\n            echo \"COMPLIANT:MaxAuthTries=$VALUE\"\n            exit 0\n        else\n            echo \"DRIFT:MaxAuthTries=${VALUE:-not_set}\"\n            exit 1\n        fi",
-    "remediate_script": "sed -i 's/^#*MaxAuthTries.*/MaxAuthTries 3/' /etc/ssh/sshd_config\n        if ! grep -q \"^MaxAuthTries\" /etc/ssh/sshd_config; then\n            echo \"MaxAuthTries 3\" >> /etc/ssh/sshd_config\n        fi\n        systemctl reload sshd\n        echo \"REMEDIATED\"",
-    "verify_script": "",
+    "remediate_script": "# NixOS: sshd_config is read-only — managed by services.openssh in configuration.nix\nif [ -f /etc/NIXOS ]; then\n    VALUE=$(grep -E '^MaxAuthTries' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')\n    if [ -n \"$VALUE\" ] && [ \"$VALUE\" -le 3 ]; then\n        echo \"REMEDIATED:nixos_max_auth_tries_ok=$VALUE\"\n        exit 0\n    fi\n    echo \"SKIP:nixos_requires_configuration_change — set services.openssh.settings.MaxAuthTries = 3\"\n    exit 0\nfi\n# Standard Linux\nsed -i 's/^#*MaxAuthTries.*/MaxAuthTries 3/' /etc/ssh/sshd_config\nif ! grep -q '^MaxAuthTries' /etc/ssh/sshd_config; then\n    echo 'MaxAuthTries 3' >> /etc/ssh/sshd_config\nfi\nsystemctl reload sshd\necho \"REMEDIATED\"",
+    "verify_script": "VALUE=$(grep -E '^MaxAuthTries' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')\nif [ -n \"$VALUE\" ] && [ \"$VALUE\" -le 3 ]; then\n    echo \"VERIFIED:MaxAuthTries=$VALUE\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:MaxAuthTries=${VALUE:-not_set}\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(a)(1)"
     ],
@@ -1175,7 +1175,7 @@
     "name": "SSH Idle Timeout",
     "platform": "linux",
     "detect_script": "INTERVAL=$(grep -E \"^ClientAliveInterval\" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')\n        COUNTMAX=$(grep -E \"^ClientAliveCountMax\" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')\n        if [ -n \"$INTERVAL\" ] && [ \"$INTERVAL\" -le 300 ] && [ -n \"$COUNTMAX\" ] && [ \"$COUNTMAX\" -eq 0 ]; then\n            echo \"COMPLIANT:ClientAliveInterval=$INTERVAL,ClientAliveCountMax=$COUNTMAX\"\n            exit 0\n        else\n            echo \"DRIFT:ClientAliveInterval=${INTERVAL:-not_set},ClientAliveCountMax=${COUNTMAX:-not_set}\"\n            exit 1\n        fi",
-    "remediate_script": "# Set ClientAliveInterval\n        sed -i 's/^#*ClientAliveInterval.*/ClientAliveInterval 300/' /etc/ssh/sshd_config\n        if ! grep -q \"^ClientAliveInterval\" /etc/ssh/sshd_config; then\n            echo \"ClientAliveInterval 300\" >> /etc/ssh/sshd_config\n        fi\n        # Set ClientAliveCountMax\n        sed -i 's/^#*ClientAliveCountMax.*/ClientAliveCountMax 0/' /etc/ssh/sshd_config\n        if ! grep -q \"^ClientAliveCountMax\" /etc/ssh/sshd_config; then\n            echo \"ClientAliveCountMax 0\" >> /etc/ssh/sshd_config\n        fi\n        systemctl reload sshd\n        echo \"REMEDIATED\"",
+    "remediate_script": "# NixOS: sshd_config is read-only — managed by services.openssh in configuration.nix\nif [ -f /etc/NIXOS ]; then\n    INTERVAL=$(grep -E '^ClientAliveInterval' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')\n    COUNTMAX=$(grep -E '^ClientAliveCountMax' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')\n    if [ -n \"$INTERVAL\" ] && [ \"$INTERVAL\" -le 300 ] && [ -n \"$COUNTMAX\" ] && [ \"$COUNTMAX\" -eq 0 ]; then\n        echo \"REMEDIATED:nixos_ssh_idle_timeout_ok\"\n        exit 0\n    fi\n    echo \"SKIP:nixos_requires_configuration_change — set services.openssh.settings.ClientAliveInterval and ClientAliveCountMax\"\n    exit 0\nfi\n# Standard Linux\nsed -i 's/^#*ClientAliveInterval.*/ClientAliveInterval 300/' /etc/ssh/sshd_config\ngrep -q '^ClientAliveInterval' /etc/ssh/sshd_config || echo 'ClientAliveInterval 300' >> /etc/ssh/sshd_config\nsed -i 's/^#*ClientAliveCountMax.*/ClientAliveCountMax 0/' /etc/ssh/sshd_config\ngrep -q '^ClientAliveCountMax' /etc/ssh/sshd_config || echo 'ClientAliveCountMax 0' >> /etc/ssh/sshd_config\nsystemctl reload sshd\necho \"REMEDIATED\"",
     "verify_script": "INTERVAL=$(grep -E \"^ClientAliveInterval\" /etc/ssh/sshd_config | awk '{print $2}')\n        COUNTMAX=$(grep -E \"^ClientAliveCountMax\" /etc/ssh/sshd_config | awk '{print $2}')\n        if [ \"$INTERVAL\" = \"300\" ] && [ \"$COUNTMAX\" = \"0\" ]; then\n            echo \"VERIFIED\"\n            exit 0\n        else\n            echo \"VERIFY_FAILED:ClientAliveInterval=$INTERVAL,ClientAliveCountMax=$COUNTMAX\"\n            exit 1\n        fi",
     "hipaa_controls": [
       "164.312(a)(2)(iii)"
@@ -1215,8 +1215,8 @@
     "name": "Audit Daemon Running",
     "platform": "linux",
     "detect_script": "if systemctl is-active auditd &>/dev/null; then\n            echo \"COMPLIANT:auditd_running\"\n            exit 0\n        else\n            echo \"DRIFT:auditd_not_running\"\n            exit 1\n        fi",
-    "remediate_script": "",
-    "verify_script": "",
+    "remediate_script": "# Restart auditd if it exists\nif systemctl list-unit-files auditd.service 2>/dev/null | grep -q auditd; then\n    systemctl restart auditd 2>/dev/null\n    echo \"REMEDIATED:auditd_restarted\"\n    exit 0\nfi\necho \"ALERT:auditd_not_installed — on NixOS, enable security.auditd in configuration.nix\"",
+    "verify_script": "if systemctl is-active auditd >/dev/null 2>&1; then\n    echo \"VERIFIED:auditd_running\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:auditd_not_running\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(b)"
     ],
@@ -1229,7 +1229,7 @@
     "platform": "linux",
     "detect_script": "if systemctl is-active rsyslog &>/dev/null; then\n            echo \"COMPLIANT:rsyslog_running\"\n            exit 0\n        else\n            echo \"DRIFT:rsyslog_not_running\"\n            exit 1\n        fi",
     "remediate_script": "systemctl enable rsyslog\n        systemctl start rsyslog\n        echo \"REMEDIATED\"",
-    "verify_script": "",
+    "verify_script": "if systemctl is-active rsyslog >/dev/null 2>&1; then\n    echo \"VERIFIED:rsyslog_running\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:rsyslog_not_running\"\n    exit 1\nfi",
     "hipaa_controls": [
       "164.312(b)"
     ],
@@ -1241,12 +1241,80 @@
     "name": "No Telnet Service",
     "platform": "linux",
     "detect_script": "if systemctl is-active telnet &>/dev/null ||            systemctl is-active xinetd &>/dev/null && grep -q \"telnet\" /etc/xinetd.d/* 2>/dev/null; then\n            echo \"DRIFT:telnet_running\"\n            exit 1\n        else\n            echo \"COMPLIANT:no_telnet\"\n            exit 0\n        fi",
-    "remediate_script": "systemctl stop telnet 2>/dev/null || true\n        systemctl disable telnet 2>/dev/null || true\n        apt-get remove -y telnetd 2>/dev/null || yum remove -y telnet-server 2>/dev/null || true\n        echo \"REMEDIATED\"",
-    "verify_script": "",
+    "remediate_script": "# Stop telnet service if running\nsystemctl stop telnet 2>/dev/null || true\nsystemctl disable telnet 2>/dev/null || true\n# NixOS: packages are managed declaratively — just stop the service\nif [ -f /etc/NIXOS ]; then\n    echo \"REMEDIATED:nixos_telnet_stopped — remove from environment.systemPackages in configuration.nix\"\n    exit 0\nfi\n# Standard Linux: remove the package\napt-get remove -y telnetd 2>/dev/null || yum remove -y telnet-server 2>/dev/null || true\necho \"REMEDIATED\"",
+    "verify_script": "if systemctl is-active telnet >/dev/null 2>&1; then\n    echo \"VERIFY_FAILED:telnet_still_running\"\n    exit 1\nelse\n    echo \"VERIFIED:no_telnet\"\n    exit 0\nfi",
     "hipaa_controls": [
       "164.312(e)(1)"
     ],
     "severity": "critical",
     "timeout_seconds": 30
+  },
+  "LIN-DISK-001": {
+    "id": "LIN-DISK-001",
+    "name": "Linux Disk Space Cleanup",
+    "platform": "linux",
+    "detect_script": "USAGE=$(df -h / | awk 'NR==2 {print $5}' | tr -d '%')\nif [ \"$USAGE\" -lt 90 ]; then\n    echo \"COMPLIANT:disk_usage=${USAGE}%\"\n    exit 0\nelse\n    echo \"DRIFT:disk_usage=${USAGE}%\"\n    exit 1\nfi",
+    "remediate_script": "journalctl --vacuum-size=100M 2>/dev/null || true\nfind /tmp -type f -atime +7 -delete 2>/dev/null || true\nnix-collect-garbage -d 2>/dev/null || true\ndf -h /\necho \"REMEDIATED\"",
+    "verify_script": "USAGE=$(df -h / | awk 'NR==2 {gsub(/%/,\"\",$5); if($5<90) print \"OK: \"$5\"%\"; else {print \"STILL HIGH: \"$5\"%\"; exit 1}}')\necho \"$USAGE\"\nif echo \"$USAGE\" | grep -q '^OK'; then\n    echo \"VERIFIED\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED\"\n    exit 1\nfi",
+    "hipaa_controls": [
+      "164.312(a)(1)"
+    ],
+    "severity": "medium",
+    "timeout_seconds": 300
+  },
+  "LIN-CERT-001": {
+    "id": "LIN-CERT-001",
+    "name": "Linux Certificate Renewal",
+    "platform": "linux",
+    "detect_script": "# Check certificate expiry for common cert locations\nCERT_FILES=$(find /etc/ssl/certs /etc/pki/tls/certs /etc/letsencrypt/live -name '*.pem' -o -name '*.crt' 2>/dev/null | head -5)\nEXPIRING=0\nfor CERT in $CERT_FILES; do\n    EXPIRY=$(openssl x509 -enddate -noout -in \"$CERT\" 2>/dev/null | cut -d= -f2)\n    if [ -n \"$EXPIRY\" ]; then\n        EXPIRY_EPOCH=$(date -d \"$EXPIRY\" +%s 2>/dev/null || date -j -f '%b %d %H:%M:%S %Y %Z' \"$EXPIRY\" +%s 2>/dev/null)\n        NOW_EPOCH=$(date +%s)\n        DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))\n        if [ \"$DAYS_LEFT\" -lt 30 ]; then\n            EXPIRING=$((EXPIRING + 1))\n        fi\n    fi\ndone\nif [ \"$EXPIRING\" -eq 0 ]; then\n    echo \"COMPLIANT:no_expiring_certs\"\n    exit 0\nelse\n    echo \"DRIFT:expiring_certs=$EXPIRING\"\n    exit 1\nfi",
+    "remediate_script": "if command -v certbot >/dev/null 2>&1; then\n    certbot renew --non-interactive\nelif command -v acme.sh >/dev/null 2>&1; then\n    acme.sh --renew-all\nelse\n    echo 'No ACME client found'\n    exit 1\nfi\necho \"REMEDIATED\"",
+    "verify_script": "CERT_FILES=$(find /etc/ssl/certs /etc/pki/tls/certs /etc/letsencrypt/live -name '*.pem' -o -name '*.crt' 2>/dev/null | head -5)\nEXPIRING=0\nfor CERT in $CERT_FILES; do\n    EXPIRY=$(openssl x509 -enddate -noout -in \"$CERT\" 2>/dev/null | cut -d= -f2)\n    if [ -n \"$EXPIRY\" ]; then\n        EXPIRY_EPOCH=$(date -d \"$EXPIRY\" +%s 2>/dev/null || date -j -f '%b %d %H:%M:%S %Y %Z' \"$EXPIRY\" +%s 2>/dev/null)\n        NOW_EPOCH=$(date +%s)\n        DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))\n        if [ \"$DAYS_LEFT\" -lt 30 ]; then\n            EXPIRING=$((EXPIRING + 1))\n        fi\n    fi\ndone\nif [ \"$EXPIRING\" -eq 0 ]; then\n    echo \"VERIFIED:all_certs_valid\"\n    exit 0\nelse\n    echo \"VERIFY_FAILED:still_expiring=$EXPIRING\"\n    exit 1\nfi",
+    "hipaa_controls": [
+      "164.312(e)(1)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 120
+  },
+  "RB-WIN-SEC-022": {
+    "id": "RB-WIN-SEC-022",
+    "name": "Password Policy Enforcement",
+    "platform": "windows",
+    "detect_script": "# Check password policy via net accounts\n$NetAccounts = net accounts 2>&1\n$Result = @{\n    Drifted = $false\n    Issues = @()\n}\n\nforeach ($Line in $NetAccounts) {\n    if ($Line -match 'Minimum password length:\\s*(\\d+)') {\n        $MinLen = [int]$Matches[1]\n        $Result.MinPasswordLength = $MinLen\n        if ($MinLen -lt 14) {\n            $Result.Drifted = $true\n            $Result.Issues += \"Min password length $MinLen < 14\"\n        }\n    }\n    if ($Line -match 'Lockout threshold:\\s*(\\d+|Never)') {\n        $Val = $Matches[1]\n        $Result.LockoutThreshold = $Val\n        if ($Val -eq 'Never' -or [int]$Val -eq 0 -or [int]$Val -gt 5) {\n            $Result.Drifted = $true\n            $Result.Issues += \"Lockout threshold not configured properly\"\n        }\n    }\n}\n\n# Check complexity via secedit\n$TempCfg = \"$env:TEMP\\secpol_pwcheck.cfg\"\nsecedit /export /cfg $TempCfg /areas SECURITYPOLICY 2>&1 | Out-Null\nif (Test-Path $TempCfg) {\n    $SecPol = Get-Content $TempCfg\n    $Complexity = ($SecPol | Select-String 'PasswordComplexity\\s*=\\s*1') -ne $null\n    $Result.ComplexityEnabled = $Complexity\n    if (-not $Complexity) {\n        $Result.Drifted = $true\n        $Result.Issues += \"Password complexity not enabled\"\n    }\n    Remove-Item $TempCfg -Force -ErrorAction SilentlyContinue\n}\n\n$Result | ConvertTo-Json -Depth 2",
+    "remediate_script": "# Enforce password policy\nnet accounts /minpwlen:14 /minpwage:1 /maxpwage:90 /lockoutthreshold:5 2>&1 | Out-Null\n\n@{\n    Success = $true\n    Actions = @('Set min password length to 14', 'Set min password age to 1 day', 'Set max password age to 90 days', 'Set lockout threshold to 5')\n} | ConvertTo-Json",
+    "verify_script": "# Verify password policy\n$NetAccounts = net accounts 2>&1\n$MinLen = 0\n$Lockout = 0\nforeach ($Line in $NetAccounts) {\n    if ($Line -match 'Minimum password length:\\s*(\\d+)') { $MinLen = [int]$Matches[1] }\n    if ($Line -match 'Lockout threshold:\\s*(\\d+)') { $Lockout = [int]$Matches[1] }\n}\n@{\n    MinPasswordLength = $MinLen\n    LockoutThreshold = $Lockout\n    Verified = ($MinLen -ge 14 -and $Lockout -ge 1 -and $Lockout -le 5)\n} | ConvertTo-Json",
+    "hipaa_controls": [
+      "164.312(d)",
+      "164.312(a)(1)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 120
+  },
+  "RB-WIN-SEC-023": {
+    "id": "RB-WIN-SEC-023",
+    "name": "RDP NLA Enforcement",
+    "platform": "windows",
+    "detect_script": "# Check if NLA is required for RDP\ntry {\n    $NLA = (Get-WmiObject -Class Win32_TSGeneralSetting -Namespace root\\CIMV2\\TerminalServices).UserAuthenticationRequired\n    $Result = @{\n        NLAEnabled = ($NLA -eq 1)\n        Drifted = ($NLA -ne 1)\n    }\n} catch {\n    $Result = @{\n        Error = $_.Exception.Message\n        Drifted = $true\n    }\n}\n$Result | ConvertTo-Json",
+    "remediate_script": "# Enable Network Level Authentication for RDP\ntry {\n    Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name 'UserAuthentication' -Value 1\n    @{\n        Success = $true\n        Action = 'Enabled NLA for RDP'\n    } | ConvertTo-Json\n} catch {\n    @{\n        Success = $false\n        Error = $_.Exception.Message\n    } | ConvertTo-Json\n}",
+    "verify_script": "try {\n    $NLA = (Get-WmiObject -Class Win32_TSGeneralSetting -Namespace root\\CIMV2\\TerminalServices).UserAuthenticationRequired\n    @{\n        NLAEnabled = ($NLA -eq 1)\n        Verified = ($NLA -eq 1)\n    } | ConvertTo-Json\n} catch {\n    @{ Verified = $false; Error = $_.Exception.Message } | ConvertTo-Json\n}",
+    "hipaa_controls": [
+      "164.312(d)",
+      "164.312(a)(1)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 60
+  },
+  "RB-WIN-SEC-024": {
+    "id": "RB-WIN-SEC-024",
+    "name": "Guest Account Disable",
+    "platform": "windows",
+    "detect_script": "# Check if Guest account is enabled\ntry {\n    $Guest = Get-LocalUser -Name 'Guest'\n    @{\n        GuestEnabled = $Guest.Enabled\n        Drifted = $Guest.Enabled\n    } | ConvertTo-Json\n} catch {\n    @{\n        Error = $_.Exception.Message\n        Drifted = $false\n    } | ConvertTo-Json\n}",
+    "remediate_script": "# Disable the Guest account\ntry {\n    Disable-LocalUser -Name 'Guest'\n    @{\n        Success = $true\n        Action = 'Disabled Guest account'\n    } | ConvertTo-Json\n} catch {\n    @{\n        Success = $false\n        Error = $_.Exception.Message\n    } | ConvertTo-Json\n}",
+    "verify_script": "try {\n    $g = Get-LocalUser -Name 'Guest'\n    if (-not $g.Enabled) {\n        @{ Verified = $true } | ConvertTo-Json\n    } else {\n        @{ Verified = $false } | ConvertTo-Json\n    }\n} catch {\n    @{ Verified = $false; Error = $_.Exception.Message } | ConvertTo-Json\n}",
+    "hipaa_controls": [
+      "164.312(a)(1)",
+      "164.308(a)(3)(ii)(B)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 60
   }
 }

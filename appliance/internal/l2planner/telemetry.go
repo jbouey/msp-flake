@@ -150,15 +150,16 @@ func (r *TelemetryReporter) ReportExecution(
 
 // ReportL1Execution sends an L1 execution outcome to Central Command.
 // L1 executions have no LLM cost/tokens but track success, duration, and pattern for the flywheel.
+// runbookID should be the actual runbook ID (e.g. "RB-WIN-SEC-001"), not the rule ID.
 func (r *TelemetryReporter) ReportL1Execution(
-	incidentID, hostname, incidentType, ruleID string,
+	incidentID, hostname, incidentType, runbookID string,
 	success bool,
 	execErr string,
 	durationMs int64,
 ) {
 	now := time.Now().UTC()
 	execID := fmt.Sprintf("l1-%s-%d", incidentID, now.UnixMilli())
-	patternSig := fmt.Sprintf("%s:%s:%s", incidentType, ruleID, hostname)
+	patternSig := fmt.Sprintf("%s:%s:%s", incidentType, runbookID, hostname)
 
 	status := "success"
 	if !success {
@@ -171,7 +172,7 @@ func (r *TelemetryReporter) ReportL1Execution(
 			ExecutionID:      execID,
 			IncidentID:       incidentID,
 			ApplianceID:      r.applianceID,
-			RunbookID:        ruleID,
+			RunbookID:        runbookID,
 			Hostname:         hostname,
 			IncidentType:     incidentType,
 			DurationSeconds:  float64(durationMs) / 1000.0,
@@ -212,6 +213,6 @@ func (r *TelemetryReporter) ReportL1Execution(
 		return
 	}
 
-	log.Printf("[telemetry] L1 reported: incident=%s rule=%s success=%v duration=%dms",
-		incidentID, ruleID, success, durationMs)
+	log.Printf("[telemetry] L1 reported: incident=%s runbook=%s success=%v duration=%dms",
+		incidentID, runbookID, success, durationMs)
 }
