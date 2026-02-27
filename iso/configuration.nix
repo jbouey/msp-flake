@@ -111,6 +111,15 @@
     "vm.swappiness" = 10;
     # Optimize for low memory
     "vm.vfs_cache_pressure" = 50;
+    # HIPAA 164.312(e)(1) — Network hardening
+    "net.ipv4.ip_forward" = 0;
+    "net.ipv4.tcp_syncookies" = 1;
+    "net.ipv4.conf.all.send_redirects" = 0;
+    "net.ipv4.conf.all.accept_redirects" = 0;
+    "net.ipv4.conf.all.rp_filter" = 1;
+    # HIPAA 164.312(a)(1) — Kernel hardening
+    "kernel.randomize_va_space" = 2;
+    "kernel.suid_dumpable" = 0;
   };
 
   # Enable zram swap for thin client

@@ -112,6 +112,8 @@ disk_warning=${disk_warning%,}
 known_suid="/usr/bin/sudo /usr/bin/passwd /usr/bin/chsh /usr/bin/chfn /usr/bin/newgrp /usr/bin/su /usr/bin/mount /usr/bin/umount /usr/lib/dbus-1.0/dbus-daemon-launch-helper /run/wrappers/bin/sudo /run/wrappers/bin/su /run/wrappers/bin/mount /run/wrappers/bin/umount /run/wrappers/bin/passwd /run/wrappers/bin/sg /run/wrappers/bin/newgrp"
 unknown_suid=""
 while IFS= read -r f; do
+    # NixOS: /nix/store paths are declaratively managed — skip them
+    case "$f" in /nix/store/*) continue ;; esac
     is_known=false
     for k in $known_suid; do
         [ "$f" = "$k" ] && { is_known=true; break; }
