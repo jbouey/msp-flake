@@ -1,24 +1,24 @@
 {
-  "session": 135,
-  "updated": "2026-02-26T07:35:55.878708Z",
+  "session": 138,
+  "updated": "2026-02-27T05:30:00.000000Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "go_daemon_v0.2.5_l2_enabled_fleet_rebuild_pending",
-    "vm_appliance": "go_daemon_v0.2.5_l2_enabled_fleet_rebuild_pending",
+    "physical_appliance": "go_daemon_v0.3.2_l2_enabled_winrm_dc_connected_ad_enumerating_v0.3.3_fleet_pending",
+    "vm_appliance": "go_daemon_v0.3.1_nixos_rebuild_switch_pending_v0.3.3_fleet_pending",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_37_eligible_2_l2_patterns_promoted_flywheel_aggregation_bridge_deployed",
-    "incident_resolution": "pipeline_active",
+    "incident_resolution": "pipeline_active_runbooks_fixed_nixos_aware_v0.3.5_ready",
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "fleet_wide_orders_live_auto_detect_deployed_version_v0.2.3"
+    "fleet_updates": "fleet_wide_orders_live_v0.3.5_pending_runbook_fix_nixos_config"
   },
-  "current_blocker": "Fleet rebuild pending \u2014 order 3bf579c6 (resilience hardening: sd_notify, state persistence, subscription gating, crash-loop protection). WinRM 401 on DC still open. HIPAA compliance at 56%.",
+  "current_blocker": "v0.3.5 ready to deploy — runbook scripts fixed, NixOS config updated. Need git push + fleet order to land on appliances. VM still needs nixos-rebuild switch.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -175,37 +175,44 @@
     }
   ],
   "completed_this_session": [
-    "Systemd crash-loop protection (StartLimitBurst=5/300s) on 3 services",
-    "sd_notify watchdog integration (WatchdogSec=120s, Type=notify for daemon)",
-    "State persistence (daemon_state.json with atomic write)",
-    "Subscription enforcement (healing gated on active/trialing)",
-    "Connectivity error classification (dns/server_down/timeout/tls)",
-    "CheckinResponse includes subscription_status from partner JOIN"
+    "Audited healing pipeline end-to-end — identified root cause: 3 runbook scripts empty/NixOS-incompatible",
+    "Fixed LIN-SVC-001 (failed services): added generic restart-failed-services remediate+verify scripts",
+    "Fixed LIN-PATCH-001 (unattended upgrades): NixOS-aware auto-update timer enablement",
+    "Fixed LIN-LOG-001 (log forwarding): NixOS-aware remediation (detects read-only /etc, skips sed)",
+    "Fixed linuxscan.go log forwarding check: accept journald_persistent as valid on NixOS",
+    "Fixed configuration.nix: MaxRetentionSec 7d→90d (HIPAA), added system.autoUpgrade with flake",
+    "Converted handleHealing stub to error sentinel — warns if real handler not registered",
+    "Updated TestProcessHealing to verify stub→RegisterHandler override chain",
+    "Bumped daemon version 0.3.4→0.3.5"
   ],
   "recent_commits": [
     {
-      "hash": "19a0177",
-      "message": "feat: resilience hardening \u2014 sd_notify, state persistence, subscription gating, crash-loop protection"
+      "hash": "pending",
+      "message": "fix: NixOS-aware runbook remediation — stops 7 recurring incidents (v0.3.5)"
     },
     {
-      "hash": "2dcf716",
-      "message": "fix: remove success_rate from patterns INSERT \u2014 it's a generated column"
+      "hash": "ed76a5a",
+      "message": "fix: healing orders include runbook_id in parameters + Go injects top-level (v0.3.3)"
     },
     {
-      "hash": "4568cab",
-      "message": "fix: add l2_decisions table \u2014 unblocks L2 decision recording for flywheel"
+      "hash": "bdb7738",
+      "message": "fix: use domain_admin credential as DC, not first workstation (v0.3.2)"
     },
     {
-      "hash": "f9cd525",
-      "message": "fix: bridge flywheel gap \u2014 populate aggregated_pattern_stats from telemetry"
+      "hash": "794f2de",
+      "message": "chore: bump appliance daemon to v0.3.1 \u2014 includes WinRM credential loading"
     },
     {
-      "hash": "8771d36",
-      "message": "fix: enable L2 planner \u2014 default on, fix escalation logic, auto-mode bypass"
+      "hash": "a400c4a",
+      "message": "fix: load Windows credentials from checkin response \u2014 unblocks WinRM"
     },
     {
-      "hash": "eda956e",
-      "message": "fix: consolidate device_sync router + enable OS detection in nmap scans"
+      "hash": "64a632e",
+      "message": "chore: bump appliance daemon to v0.3.0"
+    },
+    {
+      "hash": "f19561d",
+      "message": "feat: HIPAA session idle timeout \u2014 15min auto-logoff across all portals"
     }
   ],
   "key_findings": {
@@ -250,7 +257,8 @@
     "l2_planner_lesson": "L2 was dead because: (1) L2Enabled defaulted to false in config.go \u2014 daemon never initialized l2Planner, logged l2=disabled at startup. (2) Backend response mapping set escalate_to_l3=true whenever requires_human_review=true \u2014 even with valid runbook at 0.75 confidence. (3) Go daemon ShouldExecute() required both !EscalateToL3 AND !RequiresApproval \u2014 too conservative for auto mode. Fix: default L2Enabled=true, decouple escalate_to_l3 from requires_human_review in main.py, use confidence >= 0.6 + !EscalateToL3 for auto mode execution.",
     "flywheel_aggregation_lesson": "Go daemon reports L2 telemetry to execution_telemetry table but NEVER calls /api/agent/sync/pattern-stats. This left aggregated_pattern_stats empty, breaking the promotion pipeline. Fix: added Step 1 to _flywheel_promotion_loop() that aggregates execution_telemetry directly into aggregated_pattern_stats (grouped by site_id + incident_type + runbook_id). Also: duration column is duration_seconds not duration_ms.",
     "resilience_hardening_lesson": "Appliance resilience: (1) StartLimitBurst=5/IntervalSec=300 prevents infinite crash loops. (2) WatchdogSec=120s with sd_notify catches frozen services \u2014 Type=notify for daemon requires READY=1 at startup, simple services still get watchdog monitoring. (3) sdnotify package: zero-cgo, writes to NOTIFY_SOCKET Unix datagram. (4) State persistence via atomic JSON write (tmp+rename) to /var/lib/msp/daemon_state.json \u2014 survives restarts. (5) Subscription gating: healing suppressed when status != active/trialing, drift detection+evidence continue. (6) Connectivity classification: errors.As for *net.DNSError/*net.OpError, string matching for timeout/tls/5xx.",
-    "vps_db_credentials_lesson": "VPS PostgreSQL: container=mcp-postgres, user=mcp, db=mcp, password in docker inspect env vars. Fleet orders require expires_at (NOT NULL constraint)."
+    "vps_db_credentials_lesson": "VPS PostgreSQL: container=mcp-postgres, user=mcp, db=mcp, password in docker inspect env vars. Fleet orders require expires_at (NOT NULL constraint).",
+    "nixos_runbook_lesson": "Linux runbook scripts from Python agent were designed for Debian/Ubuntu (sed on /etc, apt-get, logrotate). NixOS appliances self-scan via linuxscan.go and these scripts fail silently because: (1) /etc is read-only symlinks to nix store, (2) no apt/yum, (3) journald configured declaratively. Fix: detect /etc/NIXOS in remediate scripts and use NixOS-appropriate commands (systemctl for timers, skip sed on managed paths). Also: scanner log_forwarding check must accept journald_persistent as valid — not just rsyslog or journal-upload. Configuration.nix must enable system.autoUpgrade and set MaxRetentionSec=90d for HIPAA. The handleHealing stub in processor.go was NOT the blocker — daemon.go:160 already overrides it with executeHealingOrder(). The real issue was empty/broken runbook scripts."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",

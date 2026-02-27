@@ -731,16 +731,12 @@ func (p *Processor) handleSyncPromotedRule(_ context.Context, params map[string]
 }
 
 func (p *Processor) handleHealing(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	// Fallback stub — the daemon overrides this via RegisterHandler("healing", ...)
+	// with executeHealingOrder() which runs runbooks via WinRM/SSH/bash.
+	// If this code runs, the daemon failed to register the real handler.
 	runbookID, _ := params["runbook_id"].(string)
-	if runbookID == "" {
-		return nil, fmt.Errorf("runbook_id is required")
-	}
-
-	// Healing is routed through the L1 engine or WinRM/SSH executors
-	return map[string]interface{}{
-		"status":     "healing_triggered",
-		"runbook_id": runbookID,
-	}, nil
+	log.Printf("[orders] WARNING: healing stub invoked for %s — real handler not registered", runbookID)
+	return nil, fmt.Errorf("healing handler not initialized — daemon must register executeHealingOrder")
 }
 
 func (p *Processor) handleUpdateCredentials(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {

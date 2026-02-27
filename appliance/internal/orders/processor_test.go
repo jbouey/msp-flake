@@ -211,6 +211,8 @@ func TestProcessSyncPromotedRuleMissingFields(t *testing.T) {
 }
 
 func TestProcessHealing(t *testing.T) {
+	// Without daemon registration, the stub returns an error to signal
+	// that the real handler (executeHealingOrder) was not wired up.
 	p := NewProcessor("/tmp/test", nil)
 
 	result := p.Process(context.Background(), &Order{
@@ -221,8 +223,25 @@ func TestProcessHealing(t *testing.T) {
 		},
 	})
 
+	if result.Success {
+		t.Fatal("expected failure from unregistered healing stub")
+	}
+
+	// Verify that RegisterHandler overrides the stub
+	p.RegisterHandler("healing", func(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+		return map[string]interface{}{"status": "healed", "runbook_id": params["runbook_id"]}, nil
+	})
+
+	result = p.Process(context.Background(), &Order{
+		OrderID:   "ord-010b",
+		OrderType: "healing",
+		Parameters: map[string]interface{}{
+			"runbook_id": "RB-WIN-SEC-001",
+		},
+	})
+
 	if !result.Success {
-		t.Fatalf("expected success, got error: %s", result.Error)
+		t.Fatalf("expected success after RegisterHandler, got error: %s", result.Error)
 	}
 	if result.Result["runbook_id"] != "RB-WIN-SEC-001" {
 		t.Fatalf("expected RB-WIN-SEC-001, got %v", result.Result["runbook_id"])

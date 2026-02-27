@@ -192,12 +192,14 @@ elif systemctl is-active dnf-automatic.timer >/dev/null 2>&1; then
     auto_update="dnf_automatic"
 fi
 
-# 13. Log forwarding — check if syslog forwarding or remote journald
+# 13. Log forwarding — check if syslog forwarding, remote journald, or journald persistent
 log_fwd="none"
 if [ -f /etc/rsyslog.conf ] && grep -q '@@\|@' /etc/rsyslog.conf 2>/dev/null; then
     log_fwd="rsyslog"
 elif systemctl is-active systemd-journal-upload.service >/dev/null 2>&1; then
     log_fwd="journal_upload"
+elif grep -qE "^Storage=persistent" /etc/systemd/journald.conf 2>/dev/null; then
+    log_fwd="journald_persistent"
 fi
 
 # 14. Cron review — non-system cron jobs

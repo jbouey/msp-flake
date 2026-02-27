@@ -76,14 +76,24 @@
   };
 
   # ============================================================================
-  # Journal - Persistent but size-limited for thin client
+  # Journal - Persistent, HIPAA 164.312(b) requires 90-day audit log retention
   # ============================================================================
   services.journald.extraConfig = ''
     Storage=persistent
     Compress=yes
-    SystemMaxUse=100M
-    MaxRetentionSec=7day
+    SystemMaxUse=500M
+    MaxRetentionSec=90day
   '';
+
+  # ============================================================================
+  # Auto-upgrade — HIPAA 164.308(a)(5)(ii)(A) patch management
+  # ============================================================================
+  system.autoUpgrade = {
+    enable = true;
+    flake = "github:jbouey/msp-flake#osiriscare-appliance-disk";
+    allowReboot = false;  # Watchdog handles reboots, not auto-upgrade
+    dates = "04:00";      # Run at 4 AM local time
+  };
 
   # ============================================================================
   # Watchdog - Restart if system hangs
