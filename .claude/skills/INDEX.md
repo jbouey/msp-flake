@@ -17,6 +17,7 @@ docs/golang/golang.md          — Concurrency, pgx, slog, testing, security, pr
 docs/frontend/frontend.md      — React Query, hooks, Tailwind, routing
 docs/api/api.md                — REST endpoints, gRPC proto, OAuth flow
 docs/performance/performance.md — Pool sizing, React.memo, virtual scroll, batch upload
+docs/workflow/workflow.md      — Systematic debugging (4-phase), verification-before-completion
 ```
 
 ## Type Imports

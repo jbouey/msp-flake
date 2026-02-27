@@ -135,6 +135,9 @@ api | OAuth flow | docs/api/api.md | auth_url→callback→tokens
 perf | asyncio.gather | docs/performance/performance.md | 6x faster checks
 perf | React.memo | docs/performance/performance.md | 3-5x fewer renders
 perf | virtual scroll | docs/performance/performance.md | @tanstack/react-virtual
+-----|---------|-----|------------------
+workflow | 4-phase debug | docs/workflow/workflow.md | root cause → pattern → hypothesis → fix
+workflow | verify gate | docs/workflow/workflow.md | IDENTIFY→RUN→READ→VERIFY→CLAIM
 ```
 
 All doc paths relative to `.claude/skills/`. Read the full doc when working in that area.
@@ -163,6 +166,8 @@ Primary state: `.agent/claude-progress.json`
 
 ## Rules
 
+- **Debugging: root cause first.** No fixes without investigation. Trace data flow backward. One hypothesis at a time. 3+ failed fixes = question architecture. (Full process: `.claude/skills/docs/workflow/workflow.md`)
+- **Verify before claiming done.** Run the actual command, read the output, show evidence. No "should pass" or "probably works."
 - Use `now_utc()` not `datetime.utcnow()`
 - Run tests before AND after changes
 - Log session work to `.agent/sessions/YYYY-MM-DD-description.md`
