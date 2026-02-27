@@ -1,6 +1,6 @@
 {
-  "session": 138,
-  "updated": "2026-02-27T05:30:00.000000Z",
+  "session": 140,
+  "updated": "2026-02-27T08:58:42.086810Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -12,13 +12,13 @@
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_37_eligible_2_l2_patterns_promoted_flywheel_aggregation_bridge_deployed",
-    "incident_resolution": "pipeline_active_runbooks_fixed_nixos_aware_v0.3.5_ready",
+    "incident_resolution": "pipeline_active_runbooks_nixos_aware_v0.3.6_deployed",
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "fleet_wide_orders_live_v0.3.5_pending_runbook_fix_nixos_config"
+    "fleet_updates": "fleet_wide_orders_live_v0.3.6_deployed_fleet_order_3f148df6"
   },
-  "current_blocker": "v0.3.5 ready to deploy — runbook scripts fixed, NixOS config updated. Need git push + fleet order to land on appliances. VM still needs nixos-rebuild switch.",
+  "current_blocker": "None. v0.3.6 deployed via fleet order 3f148df6. Skill docs + agents.md restructure complete.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -175,44 +175,42 @@
     }
   ],
   "completed_this_session": [
-    "Audited healing pipeline end-to-end — identified root cause: 3 runbook scripts empty/NixOS-incompatible",
-    "Fixed LIN-SVC-001 (failed services): added generic restart-failed-services remediate+verify scripts",
-    "Fixed LIN-PATCH-001 (unattended upgrades): NixOS-aware auto-update timer enablement",
-    "Fixed LIN-LOG-001 (log forwarding): NixOS-aware remediation (detects read-only /etc, skips sed)",
-    "Fixed linuxscan.go log forwarding check: accept journald_persistent as valid on NixOS",
-    "Fixed configuration.nix: MaxRetentionSec 7d→90d (HIPAA), added system.autoUpgrade with flake",
-    "Converted handleHealing stub to error sentinel — warns if real handler not registered",
-    "Updated TestProcessHealing to verify stub→RegisterHandler override chain",
-    "Bumped daemon version 0.3.4→0.3.5"
+    "Created Go expert skill doc (.claude/skills/docs/golang/golang.md) — concurrency, pgx, slog, testing, security, production patterns",
+    "Created NixOS advanced skill doc (.claude/skills/docs/nixos/advanced.md) — modules, sops-nix, impermanence, deploy-rs, disko, systemd hardening",
+    "Restructured knowledge index per Vercel agents.md findings — compressed index with critical snippets now in CLAUDE.md (always in context)",
+    "Added retrieval-led reasoning instruction to CLAUDE.md",
+    "Slimmed INDEX.md to pointer (real index in CLAUDE.md)",
+    "Integrated obra/superpowers systematic-debugging (4-phase root cause) and verification-before-completion into workflow skill doc + CLAUDE.md rules",
+    "Scanned SkillsJars catalog — no Go/NixOS/Python skills available, Java/marketing dominated"
   ],
   "recent_commits": [
     {
-      "hash": "pending",
-      "message": "fix: NixOS-aware runbook remediation — stops 7 recurring incidents (v0.3.5)"
+      "hash": "ab8f996",
+      "message": "feat: add systematic debugging + verification workflow from obra/superpowers"
+    },
+    {
+      "hash": "71c8b98",
+      "message": "feat: add Go + NixOS advanced skill docs, restructure index per Vercel agents.md findings"
+    },
+    {
+      "hash": "11d95f1",
+      "message": "fix: NixOS-aware firewall/SSH/kernel runbooks + SUID scanner + HIPAA sysctl (v0.3.6)"
+    },
+    {
+      "hash": "a8970d9",
+      "message": "fix: NixOS-aware runbook remediation \u2014 stops 7 recurring incidents (v0.3.5)"
+    },
+    {
+      "hash": "d1b4589",
+      "message": "feat: implement real healing order execution \u2014 orders now run runbooks via WinRM/SSH (v0.3.4)"
     },
     {
       "hash": "ed76a5a",
-      "message": "fix: healing orders include runbook_id in parameters + Go injects top-level (v0.3.3)"
+      "message": "fix: pass runbook_id to healing orders \u2014 stops 40 failed orders/day"
     },
     {
       "hash": "bdb7738",
-      "message": "fix: use domain_admin credential as DC, not first workstation (v0.3.2)"
-    },
-    {
-      "hash": "794f2de",
-      "message": "chore: bump appliance daemon to v0.3.1 \u2014 includes WinRM credential loading"
-    },
-    {
-      "hash": "a400c4a",
-      "message": "fix: load Windows credentials from checkin response \u2014 unblocks WinRM"
-    },
-    {
-      "hash": "64a632e",
-      "message": "chore: bump appliance daemon to v0.3.0"
-    },
-    {
-      "hash": "f19561d",
-      "message": "feat: HIPAA session idle timeout \u2014 15min auto-logoff across all portals"
+      "message": "fix: use domain_admin credential as DC, not first workstation"
     }
   ],
   "key_findings": {
@@ -258,7 +256,7 @@
     "flywheel_aggregation_lesson": "Go daemon reports L2 telemetry to execution_telemetry table but NEVER calls /api/agent/sync/pattern-stats. This left aggregated_pattern_stats empty, breaking the promotion pipeline. Fix: added Step 1 to _flywheel_promotion_loop() that aggregates execution_telemetry directly into aggregated_pattern_stats (grouped by site_id + incident_type + runbook_id). Also: duration column is duration_seconds not duration_ms.",
     "resilience_hardening_lesson": "Appliance resilience: (1) StartLimitBurst=5/IntervalSec=300 prevents infinite crash loops. (2) WatchdogSec=120s with sd_notify catches frozen services \u2014 Type=notify for daemon requires READY=1 at startup, simple services still get watchdog monitoring. (3) sdnotify package: zero-cgo, writes to NOTIFY_SOCKET Unix datagram. (4) State persistence via atomic JSON write (tmp+rename) to /var/lib/msp/daemon_state.json \u2014 survives restarts. (5) Subscription gating: healing suppressed when status != active/trialing, drift detection+evidence continue. (6) Connectivity classification: errors.As for *net.DNSError/*net.OpError, string matching for timeout/tls/5xx.",
     "vps_db_credentials_lesson": "VPS PostgreSQL: container=mcp-postgres, user=mcp, db=mcp, password in docker inspect env vars. Fleet orders require expires_at (NOT NULL constraint).",
-    "nixos_runbook_lesson": "Linux runbook scripts from Python agent were designed for Debian/Ubuntu (sed on /etc, apt-get, logrotate). NixOS appliances self-scan via linuxscan.go and these scripts fail silently because: (1) /etc is read-only symlinks to nix store, (2) no apt/yum, (3) journald configured declaratively. Fix: detect /etc/NIXOS in remediate scripts and use NixOS-appropriate commands (systemctl for timers, skip sed on managed paths). Also: scanner log_forwarding check must accept journald_persistent as valid — not just rsyslog or journal-upload. Configuration.nix must enable system.autoUpgrade and set MaxRetentionSec=90d for HIPAA. The handleHealing stub in processor.go was NOT the blocker — daemon.go:160 already overrides it with executeHealingOrder(). The real issue was empty/broken runbook scripts."
+    "nixos_runbook_lesson": "Linux runbook scripts from Python agent were designed for Debian/Ubuntu (sed on /etc, apt-get, logrotate). NixOS appliances self-scan via linuxscan.go and these scripts fail silently because: (1) /etc is read-only symlinks to nix store, (2) no apt/yum, (3) journald configured declaratively. Fix: detect /etc/NIXOS in remediate scripts and use NixOS-appropriate commands (systemctl for timers, skip sed on managed paths). Also: scanner log_forwarding check must accept journald_persistent as valid \u2014 not just rsyslog or journal-upload. Configuration.nix must enable system.autoUpgrade and set MaxRetentionSec=90d for HIPAA. The handleHealing stub in processor.go was NOT the blocker \u2014 daemon.go:160 already overrides it with executeHealingOrder(). The real issue was empty/broken runbook scripts."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",
