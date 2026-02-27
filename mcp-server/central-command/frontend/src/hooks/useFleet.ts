@@ -3,9 +3,9 @@
  */
 
 import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi } from '../utils/api';
 import type { Site, SiteDetail, OrderType, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice } from '../utils/api';
-import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory } from '../types';
+import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory, FleetPostureSite, IncidentTrendsResponse, AttentionRequiredResponse } from '../types';
 import { useWebSocketStatus } from './useWebSocket';
 
 // Polling intervals
@@ -952,5 +952,36 @@ export function useSyncFramework() {
       queryClient.invalidateQueries({ queryKey: ['framework-controls'] });
       queryClient.invalidateQueries({ queryKey: ['framework-coverage'] });
     },
+  });
+}
+
+// =============================================================================
+// COMMAND CENTER HOOKS
+// =============================================================================
+
+export function useFleetPosture() {
+  const defaults = useQueryDefaults();
+  return useQuery<FleetPostureSite[]>({
+    queryKey: ['fleet-posture'],
+    queryFn: commandCenterApi.getFleetPosture,
+    ...defaults,
+  });
+}
+
+export function useIncidentTrends(window: '24h' | '7d' | '30d' = '24h', siteId?: string) {
+  const defaults = useQueryDefaults();
+  return useQuery<IncidentTrendsResponse>({
+    queryKey: ['incident-trends', window, siteId],
+    queryFn: () => commandCenterApi.getIncidentTrends(window, siteId),
+    ...defaults,
+  });
+}
+
+export function useAttentionRequired() {
+  const defaults = useQueryDefaults();
+  return useQuery<AttentionRequiredResponse>({
+    queryKey: ['attention-required'],
+    queryFn: commandCenterApi.getAttentionRequired,
+    ...defaults,
   });
 }

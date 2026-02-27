@@ -69,6 +69,10 @@ export {
   useCoverageAnalysis,
   useTriggerFrameworkSync,
   useSyncFramework,
+  // Command Center hooks
+  useFleetPosture,
+  useIncidentTrends,
+  useAttentionRequired,
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';

@@ -1297,6 +1297,284 @@ async def get_global_stats(db: AsyncSession = Depends(get_db)):
     )
 
 
+# =============================================================================
+# COMMAND CENTER ENDPOINTS
+# =============================================================================
+
+@router.get("/fleet-posture")
+async def get_fleet_posture(db: AsyncSession = Depends(get_db)):
+    """Fleet-wide health matrix: per-site health, incidents, trend, sorted by needs-attention."""
+    try:
+        result = await db.execute(text("""
+            WITH site_health AS (
+                SELECT
+                    s.site_id,
+                    s.clinic_name,
+                    COUNT(DISTINCT sa.id) as appliance_count,
+                    COUNT(DISTINCT sa.id) FILTER (
+                        WHERE sa.last_checkin > NOW() - INTERVAL '5 minutes'
+                    ) as online_count,
+                    MAX(sa.last_checkin) as last_checkin
+                FROM sites s
+                LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+                GROUP BY s.site_id, s.clinic_name
+            ),
+            site_incidents AS (
+                SELECT
+                    i.site_id,
+                    COUNT(*) FILTER (
+                        WHERE i.reported_at > NOW() - INTERVAL '24 hours'
+                    ) as incidents_24h,
+                    COUNT(*) FILTER (
+                        WHERE i.status != 'resolved'
+                    ) as unresolved,
+                    COUNT(*) FILTER (
+                        WHERE i.resolution_tier = 'L3' AND i.status != 'resolved'
+                    ) as l3_unresolved,
+                    COUNT(*) FILTER (
+                        WHERE i.resolution_tier = 'L1' AND i.reported_at > NOW() - INTERVAL '24 hours'
+                    ) as l1_24h,
+                    COUNT(*) FILTER (
+                        WHERE i.resolution_tier = 'L2' AND i.reported_at > NOW() - INTERVAL '24 hours'
+                    ) as l2_24h,
+                    COUNT(*) FILTER (
+                        WHERE i.resolution_tier = 'L3' AND i.reported_at > NOW() - INTERVAL '24 hours'
+                    ) as l3_24h
+                FROM incidents i
+                WHERE i.reported_at > NOW() - INTERVAL '30 days'
+                GROUP BY i.site_id
+            ),
+            site_compliance AS (
+                SELECT
+                    cb.site_id,
+                    ROUND(
+                        COUNT(*) FILTER (WHERE cb.check_result = 'pass')::numeric /
+                        NULLIF(COUNT(*)::numeric, 0) * 100, 1
+                    ) as compliance_score
+                FROM compliance_bundles cb
+                WHERE cb.created_at > NOW() - INTERVAL '24 hours'
+                GROUP BY cb.site_id
+            ),
+            site_compliance_prev AS (
+                SELECT
+                    cb.site_id,
+                    ROUND(
+                        COUNT(*) FILTER (WHERE cb.check_result = 'pass')::numeric /
+                        NULLIF(COUNT(*)::numeric, 0) * 100, 1
+                    ) as prev_score
+                FROM compliance_bundles cb
+                WHERE cb.created_at BETWEEN NOW() - INTERVAL '48 hours' AND NOW() - INTERVAL '24 hours'
+                GROUP BY cb.site_id
+            )
+            SELECT
+                sh.site_id,
+                sh.clinic_name,
+                sh.appliance_count,
+                sh.online_count,
+                sh.last_checkin,
+                COALESCE(si.incidents_24h, 0) as incidents_24h,
+                COALESCE(si.unresolved, 0) as unresolved,
+                COALESCE(si.l3_unresolved, 0) as l3_unresolved,
+                COALESCE(si.l1_24h, 0) as l1_24h,
+                COALESCE(si.l2_24h, 0) as l2_24h,
+                COALESCE(si.l3_24h, 0) as l3_24h,
+                COALESCE(sc.compliance_score, 0) as compliance_score,
+                CASE
+                    WHEN sc.compliance_score > scp.prev_score + 2 THEN 'improving'
+                    WHEN sc.compliance_score < scp.prev_score - 2 THEN 'declining'
+                    ELSE 'stable'
+                END as trend
+            FROM site_health sh
+            LEFT JOIN site_incidents si ON si.site_id = sh.site_id
+            LEFT JOIN site_compliance sc ON sc.site_id = sh.site_id
+            LEFT JOIN site_compliance_prev scp ON scp.site_id = sh.site_id
+            ORDER BY
+                COALESCE(si.l3_unresolved, 0) DESC,
+                COALESCE(si.unresolved, 0) DESC,
+                COALESCE(sc.compliance_score, 100) ASC,
+                sh.clinic_name ASC
+        """))
+        rows = result.fetchall()
+        return [{
+            "site_id": r.site_id,
+            "clinic_name": r.clinic_name,
+            "appliance_count": r.appliance_count,
+            "online_count": r.online_count,
+            "last_checkin": r.last_checkin.isoformat() if r.last_checkin else None,
+            "incidents_24h": r.incidents_24h,
+            "unresolved": r.unresolved,
+            "l3_unresolved": r.l3_unresolved,
+            "l1_24h": r.l1_24h,
+            "l2_24h": r.l2_24h,
+            "l3_24h": r.l3_24h,
+            "compliance_score": float(r.compliance_score),
+            "trend": r.trend or "stable",
+        } for r in rows]
+    except Exception as e:
+        logger.warning(f"Fleet posture query failed: {e}")
+        return []
+
+
+@router.get("/incident-trends")
+async def get_incident_trends(
+    window: str = Query("24h", regex="^(24h|7d|30d)$"),
+    site_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Time-series incident data bucketed by hour or day, grouped by resolution tier."""
+    try:
+        if window == "24h":
+            bucket = "hour"
+            interval = "24 hours"
+            trunc = "date_trunc('hour', i.reported_at)"
+        elif window == "7d":
+            bucket = "day"
+            interval = "7 days"
+            trunc = "date_trunc('day', i.reported_at)"
+        else:
+            bucket = "day"
+            interval = "30 days"
+            trunc = "date_trunc('day', i.reported_at)"
+
+        site_filter = "AND i.site_id = :site_id" if site_id else ""
+        params = {"site_id": site_id} if site_id else {}
+
+        result = await db.execute(text(f"""
+            SELECT
+                {trunc} as bucket,
+                COUNT(*) FILTER (WHERE i.resolution_tier = 'L1') as l1,
+                COUNT(*) FILTER (WHERE i.resolution_tier = 'L2') as l2,
+                COUNT(*) FILTER (WHERE i.resolution_tier = 'L3') as l3,
+                COUNT(*) FILTER (WHERE i.status != 'resolved') as unresolved,
+                COUNT(*) as total
+            FROM incidents i
+            WHERE i.reported_at > NOW() - INTERVAL '{interval}'
+            {site_filter}
+            GROUP BY bucket
+            ORDER BY bucket ASC
+        """), params)
+        rows = result.fetchall()
+
+        return {
+            "window": window,
+            "bucket_type": bucket,
+            "data": [{
+                "time": r.bucket.isoformat() if r.bucket else None,
+                "l1": r.l1,
+                "l2": r.l2,
+                "l3": r.l3,
+                "unresolved": r.unresolved,
+                "total": r.total,
+            } for r in rows]
+        }
+    except Exception as e:
+        logger.warning(f"Incident trends query failed: {e}")
+        return {"window": window, "bucket_type": "hour", "data": []}
+
+
+@router.get("/attention-required")
+async def get_attention_required(db: AsyncSession = Depends(get_db)):
+    """Items that need human attention: L3 escalations, failed healings, offline appliances."""
+    try:
+        # L3 escalations (unresolved)
+        l3_result = await db.execute(text("""
+            SELECT
+                i.id, i.site_id, i.incident_type, i.check_type, i.severity,
+                i.reported_at, s.clinic_name
+            FROM incidents i
+            LEFT JOIN sites s ON s.site_id = i.site_id
+            WHERE i.resolution_tier = 'L3'
+            AND i.status != 'resolved'
+            ORDER BY i.reported_at DESC
+            LIMIT 20
+        """))
+        l3_rows = l3_result.fetchall()
+
+        # Repeat offenders: same check_type, same site, 3+ incidents in 24h (healing not sticking)
+        repeat_result = await db.execute(text("""
+            SELECT
+                i.site_id, i.check_type, COUNT(*) as occurrences,
+                MAX(i.reported_at) as latest,
+                s.clinic_name
+            FROM incidents i
+            LEFT JOIN sites s ON s.site_id = i.site_id
+            WHERE i.reported_at > NOW() - INTERVAL '24 hours'
+            AND i.resolution_tier = 'L1'
+            GROUP BY i.site_id, i.check_type, s.clinic_name
+            HAVING COUNT(*) >= 3
+            ORDER BY COUNT(*) DESC
+            LIMIT 20
+        """))
+        repeat_rows = repeat_result.fetchall()
+
+        # Offline appliances (no checkin > 30 min)
+        offline_result = await db.execute(text("""
+            SELECT
+                sa.site_id, sa.hostname, sa.last_checkin, sa.agent_version,
+                s.clinic_name
+            FROM site_appliances sa
+            LEFT JOIN sites s ON s.site_id = sa.site_id
+            WHERE sa.last_checkin < NOW() - INTERVAL '30 minutes'
+            OR sa.last_checkin IS NULL
+            ORDER BY sa.last_checkin ASC NULLS FIRST
+            LIMIT 20
+        """))
+        offline_rows = offline_result.fetchall()
+
+        items = []
+
+        for r in l3_rows:
+            items.append({
+                "type": "l3_escalation",
+                "severity": "critical",
+                "title": f"L3 Escalation: {r.check_type or r.incident_type}",
+                "site_id": r.site_id,
+                "clinic_name": r.clinic_name,
+                "detail": f"Unresolved since {r.reported_at.strftime('%b %d %H:%M') if r.reported_at else 'unknown'}",
+                "timestamp": r.reported_at.isoformat() if r.reported_at else None,
+                "incident_id": r.id,
+            })
+
+        for r in repeat_rows:
+            items.append({
+                "type": "repeat_failure",
+                "severity": "warning",
+                "title": f"Repeat drift: {r.check_type} ({r.occurrences}x in 24h)",
+                "site_id": r.site_id,
+                "clinic_name": r.clinic_name,
+                "detail": f"Auto-healing not sticking — {r.occurrences} recurrences",
+                "timestamp": r.latest.isoformat() if r.latest else None,
+                "incident_id": None,
+            })
+
+        for r in offline_rows:
+            items.append({
+                "type": "offline_appliance",
+                "severity": "warning",
+                "title": f"Appliance offline: {r.hostname or 'unknown'}",
+                "site_id": r.site_id,
+                "clinic_name": r.clinic_name,
+                "detail": f"Last seen {r.last_checkin.strftime('%b %d %H:%M') if r.last_checkin else 'never'}",
+                "timestamp": r.last_checkin.isoformat() if r.last_checkin else None,
+                "incident_id": None,
+            })
+
+        # Sort: critical first, then by timestamp desc
+        severity_order = {"critical": 0, "warning": 1, "info": 2}
+        items.sort(key=lambda x: (severity_order.get(x["severity"], 9), x.get("timestamp") or "", ))
+
+        return {
+            "count": len(items),
+            "l3_count": len(l3_rows),
+            "repeat_count": len(repeat_rows),
+            "offline_count": len(offline_rows),
+            "items": items,
+        }
+    except Exception as e:
+        logger.warning(f"Attention required query failed: {e}")
+        return {"count": 0, "l3_count": 0, "repeat_count": 0, "offline_count": 0, "items": []}
+
+
 @router.get("/stats/{site_id}", response_model=ClientStats)
 async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db)):
     """Get statistics for a specific client."""

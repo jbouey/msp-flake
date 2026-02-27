@@ -774,3 +774,59 @@ export const CHECK_TYPE_LABELS: Record<string, string> = {
   critical_services: 'Services',
   nixos_generation: 'NixOS Gen',
 };
+
+// =============================================================================
+// COMMAND CENTER MODELS
+// =============================================================================
+
+export interface FleetPostureSite {
+  site_id: string;
+  clinic_name: string;
+  appliance_count: number;
+  online_count: number;
+  last_checkin: string | null;
+  incidents_24h: number;
+  unresolved: number;
+  l3_unresolved: number;
+  l1_24h: number;
+  l2_24h: number;
+  l3_24h: number;
+  compliance_score: number;
+  trend: 'improving' | 'declining' | 'stable';
+}
+
+export interface IncidentTrendBucket {
+  time: string;
+  l1: number;
+  l2: number;
+  l3: number;
+  unresolved: number;
+  total: number;
+}
+
+export interface IncidentTrendsResponse {
+  window: '24h' | '7d' | '30d';
+  bucket_type: 'hour' | 'day';
+  data: IncidentTrendBucket[];
+}
+
+export type AttentionItemType = 'l3_escalation' | 'repeat_failure' | 'offline_appliance';
+
+export interface AttentionItem {
+  type: AttentionItemType;
+  severity: 'critical' | 'warning' | 'info';
+  title: string;
+  site_id: string;
+  clinic_name: string;
+  detail: string;
+  timestamp: string | null;
+  incident_id: number | null;
+}
+
+export interface AttentionRequiredResponse {
+  count: number;
+  l3_count: number;
+  repeat_count: number;
+  offline_count: number;
+  items: AttentionItem[];
+}
