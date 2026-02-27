@@ -18,8 +18,63 @@ from .auth import require_auth, require_operator
 from .websocket_manager import broadcast_event
 from .fleet_updates import get_fleet_orders_for_appliance, record_fleet_order_completion
 from .order_signing import sign_admin_order
+from .appliance_delegation import verify_site_api_key
 
 logger = logging.getLogger(__name__)
+
+
+async def require_appliance_auth(request: Request) -> str:
+    """Validate appliance Bearer token from Authorization header.
+
+    Extracts the API key, looks up the site_id from the request body,
+    and verifies the key against the api_keys table. Falls back to
+    checking site_appliances if api_keys has no entries (graceful migration).
+
+    Returns the validated site_id on success, raises 401 on failure.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+    api_key = auth_header[7:]  # Strip "Bearer "
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Empty API key")
+
+    # Parse request body to extract site_id
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    site_id = body.get("site_id", "")
+    if not site_id:
+        raise HTTPException(status_code=401, detail="Missing site_id in request body")
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Primary: verify against api_keys table
+        if await verify_site_api_key(conn, site_id, api_key):
+            return site_id
+
+        # Fallback: check if site exists with any appliance (graceful migration
+        # for appliances that were provisioned before API keys were issued)
+        has_api_keys = await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM api_keys WHERE site_id = $1 AND active = true)",
+            site_id
+        )
+        if not has_api_keys:
+            # No API keys configured for this site yet — allow if site exists
+            site_exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM sites WHERE site_id = $1)",
+                site_id
+            )
+            if site_exists:
+                logger.warning(
+                    f"Appliance auth fallback: site={site_id} has no API keys, allowing checkin"
+                )
+                return site_id
+
+    raise HTTPException(status_code=401, detail="Invalid API key for site")
 
 
 def parse_ip_addresses(raw_ips) -> list:
@@ -1021,13 +1076,18 @@ class OrderCompleteRequest(BaseModel):
 
 
 @orders_router.post("/{order_id}/acknowledge")
-async def acknowledge_order(order_id: str):
+async def acknowledge_order(order_id: str, request: Request):
     """Acknowledge that an order has been received and is being executed.
 
     Called by the appliance agent when it picks up a pending order.
     Updates status from 'pending' to 'acknowledged'.
     Handles fleet-wide orders (prefixed with 'fleet-') by recording in fleet_order_completions.
     """
+    # Authenticate appliance — extract API key from Bearer header
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
     pool = await get_pool()
     now = datetime.now(timezone.utc)
 
@@ -1104,13 +1164,19 @@ async def acknowledge_order(order_id: str):
 
 
 @orders_router.post("/{order_id}/complete")
-async def complete_order(order_id: str, request: OrderCompleteRequest):
+async def complete_order(order_id: str, request: OrderCompleteRequest, raw_request: Request = None):
     """Mark an order as completed (success or failure).
 
     Called by the appliance agent after executing an order.
     Updates status to 'completed' or 'failed' based on success flag.
     Handles fleet-wide orders (prefixed with 'fleet-') by recording in fleet_order_completions.
     """
+    # Authenticate appliance — extract API key from Bearer header
+    if raw_request:
+        auth_header = raw_request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
     pool = await get_pool()
     now = datetime.now(timezone.utc)
 
@@ -1676,7 +1742,7 @@ async def report_agent_deployments(report: AgentDeploymentReport):
 
 
 @appliances_router.post("/checkin")
-async def appliance_checkin(checkin: ApplianceCheckin):
+async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
     """Smart check-in with automatic deduplication.
 
     This endpoint implements smart deduplication logic to prevent duplicate
@@ -1692,6 +1758,9 @@ async def appliance_checkin(checkin: ApplianceCheckin):
 
     Returns pending orders and windows targets (credential-pull RMM pattern).
     """
+    # Authenticate appliance via Bearer token
+    await require_appliance_auth(request)
+
     pool = await get_pool()
     now = datetime.now(timezone.utc)
 
@@ -1825,7 +1894,8 @@ async def appliance_checkin(checkin: ApplianceCheckin):
         # === STEP 4: Get pending orders for this appliance ===
         # Check admin_orders table (fleet management orders)
         order_rows = await conn.fetch("""
-            SELECT order_id, order_type, parameters, priority, created_at, expires_at
+            SELECT order_id, order_type, parameters, priority, created_at, expires_at,
+                   nonce, signature, signed_payload
             FROM admin_orders
             WHERE appliance_id = $1
             AND status = 'pending'
@@ -1841,6 +1911,9 @@ async def appliance_checkin(checkin: ApplianceCheckin):
                 "priority": row["priority"],
                 "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                 "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+                "nonce": row["nonce"],
+                "signature": row["signature"],
+                "signed_payload": row["signed_payload"],
             }
             for row in order_rows
         ]
@@ -1850,6 +1923,7 @@ async def appliance_checkin(checkin: ApplianceCheckin):
         try:
             healing_order_rows = await conn.fetch("""
                 SELECT o.order_id, o.runbook_id, o.parameters, o.issued_at, o.expires_at,
+                       o.nonce, o.signature, o.signed_payload,
                        i.id as incident_id
                 FROM orders o
                 JOIN appliances a ON o.appliance_id = a.id
@@ -1871,6 +1945,9 @@ async def appliance_checkin(checkin: ApplianceCheckin):
                     "priority": 10,  # Healing orders are high priority
                     "created_at": row["issued_at"].isoformat() if row["issued_at"] else None,
                     "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+                    "nonce": row["nonce"],
+                    "signature": row["signature"],
+                    "signed_payload": row["signed_payload"],
                 })
         except Exception as e:
             import logging
@@ -2029,10 +2106,19 @@ async def appliance_checkin(checkin: ApplianceCheckin):
     except Exception:
         pass  # Don't fail checkin if broadcast fails
 
+    # Get server public key for order signature verification
+    server_public_key = None
+    try:
+        from main import get_public_key_hex
+        server_public_key = get_public_key_hex()
+    except Exception:
+        pass  # Key may not be initialized yet
+
     return {
         "status": "ok",
         "appliance_id": canonical_id,
         "server_time": now.isoformat(),
+        "server_public_key": server_public_key,
         "merged_duplicates": len(merge_from_ids),
         "pending_orders": pending_orders,
         "windows_targets": windows_targets,

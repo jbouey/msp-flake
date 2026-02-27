@@ -193,11 +193,12 @@ func (d *Daemon) buildHealingWinRMTarget(hostID string) *winrm.Target {
 		return nil
 	}
 	return &winrm.Target{
-		Hostname: hostID,
-		Port:     5985,
-		Username: *d.config.DCUsername,
-		Password: *d.config.DCPassword,
-		UseSSL:   false,
+		Hostname:  hostID,
+		Port:      5986,
+		Username:  *d.config.DCUsername,
+		Password:  *d.config.DCPassword,
+		UseSSL:    true,
+		VerifySSL: false, // Tolerate self-signed certs during rollout
 	}
 }
 
@@ -296,6 +297,51 @@ func (d *Daemon) executeInlineScriptCtx(ctx context.Context, script, hostID, pla
 	}
 }
 
+// isKnownTarget validates that a hostname is a recognized target for this appliance.
+// For windows: checks the domain controller and deployed workstations.
+// For linux: checks linux targets from checkin and allows localhost/self.
+func (d *Daemon) isKnownTarget(hostname, platform string) bool {
+	if hostname == "" {
+		return false
+	}
+
+	// Self-referencing is always allowed for linux
+	if d.isSelfHost(hostname) {
+		return true
+	}
+
+	switch platform {
+	case "windows":
+		// Domain controller
+		if d.config.DomainController != nil && *d.config.DomainController == hostname {
+			return true
+		}
+		// Deployed workstations tracked by auto-deployer
+		if d.deployer != nil {
+			d.deployer.mu.Lock()
+			_, deployed := d.deployer.deployed[hostname]
+			d.deployer.mu.Unlock()
+			if deployed {
+				return true
+			}
+		}
+		return false
+
+	case "linux":
+		d.linuxTargetsMu.RLock()
+		defer d.linuxTargetsMu.RUnlock()
+		for _, lt := range d.linuxTargets {
+			if lt.Hostname == hostname {
+				return true
+			}
+		}
+		return false
+
+	default:
+		return false
+	}
+}
+
 // executeHealingOrder processes a healing order from Central Command.
 // Unlike drift-triggered healing (which goes through the L1 engine), healing
 // orders arrive pre-matched with a runbook_id. We look up the runbook,
@@ -340,6 +386,14 @@ func (d *Daemon) executeHealingOrder(ctx context.Context, params map[string]inte
 		case "linux":
 			hostname = "localhost"
 		}
+	}
+
+	// SECURITY: Validate hostname against known targets to prevent
+	// execution against arbitrary hosts via crafted orders
+	if !d.isKnownTarget(hostname, platform) {
+		log.Printf("[healing-order] SECURITY: rejected order %s — hostname %q is not a known %s target",
+			runbookID, hostname, platform)
+		return nil, fmt.Errorf("SECURITY: hostname %q is not a known %s target for this appliance", hostname, platform)
 	}
 
 	log.Printf("[healing-order] Executing %s on %s (platform=%s check_type=%s)", runbookID, hostname, platform, checkType)

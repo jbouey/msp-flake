@@ -903,11 +903,12 @@ func (d *Daemon) buildWinRMTarget(req grpcserver.HealRequest) *winrm.Target {
 	}
 
 	return &winrm.Target{
-		Hostname: hostname,
-		Port:     5985,
-		Username: username,
-		Password: password,
-		UseSSL:   false,
+		Hostname:  hostname,
+		Port:      5986,
+		Username:  username,
+		Password:  password,
+		UseSSL:    true,
+		VerifySSL: false, // Tolerate self-signed certs during rollout
 	}
 }
 
@@ -982,11 +983,12 @@ func (d *Daemon) fixFirewallGPO(triggerHost string) {
 		dc, triggerHost)
 
 	target := &winrm.Target{
-		Hostname: dc,
-		Port:     5985,
-		Username: *d.config.DCUsername,
-		Password: *d.config.DCPassword,
-		UseSSL:   false,
+		Hostname:  dc,
+		Port:      5986,
+		Username:  *d.config.DCUsername,
+		Password:  *d.config.DCPassword,
+		UseSSL:    true,
+		VerifySSL: false, // Tolerate self-signed certs during rollout
 	}
 
 	// PowerShell script that checks and fixes the GPO firewall setting.
@@ -1072,11 +1074,12 @@ func (d *Daemon) findWinRMTarget(hostname string) *winrm.Target {
 		return nil
 	}
 	return &winrm.Target{
-		Hostname: hostname,
-		Port:     5985,
-		Username: *d.config.DCUsername,
-		Password: *d.config.DCPassword,
-		UseSSL:   false,
+		Hostname:  hostname,
+		Port:      5986,
+		Username:  *d.config.DCUsername,
+		Password:  *d.config.DCPassword,
+		UseSSL:    true,
+		VerifySSL: false, // Tolerate self-signed certs during rollout
 	}
 }
 

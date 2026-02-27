@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/osiriscare/appliance/internal/crypto"
@@ -190,6 +191,10 @@ type Processor struct {
 	stateDir    string
 	verifier    *crypto.OrderVerifier
 	applianceID string // This appliance's ID (from checkin response)
+
+	// Nonce replay protection: tracks used nonces to prevent replay attacks
+	nonceMu    sync.Mutex
+	usedNonces map[string]time.Time // nonce → first-seen timestamp
 }
 
 // NewProcessor creates a new order processor.
@@ -199,7 +204,11 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 		onComplete: onComplete,
 		stateDir:   stateDir,
 		verifier:   crypto.NewOrderVerifier(""),
+		usedNonces: make(map[string]time.Time),
 	}
+
+	// Load persisted nonces from previous sessions
+	p.loadNonces()
 
 	// Register built-in handlers
 	p.handlers["force_checkin"] = p.handleForceCheckin
@@ -257,6 +266,16 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 		log.Printf("[orders] SECURITY: %s for order %s (type=%s)", errMsg, order.OrderID, order.OrderType)
 		p.complete(ctx, order.OrderID, false, nil, errMsg)
 		return &OrderResult{OrderID: order.OrderID, Success: false, Error: errMsg}
+	}
+
+	// Nonce replay protection: reject orders with previously-used nonces
+	if order.Nonce != "" {
+		if err := p.checkAndRecordNonce(order.Nonce); err != nil {
+			errMsg := fmt.Sprintf("nonce replay detected: %v", err)
+			log.Printf("[orders] SECURITY: %s for order %s (type=%s)", errMsg, order.OrderID, order.OrderType)
+			p.complete(ctx, order.OrderID, false, nil, errMsg)
+			return &OrderResult{OrderID: order.OrderID, Success: false, Error: errMsg}
+		}
 	}
 
 	handler, ok := p.handlers[order.OrderType]
@@ -740,4 +759,85 @@ func (p *Processor) handleHealing(_ context.Context, params map[string]interface
 func (p *Processor) handleUpdateCredentials(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
 	// Credential refresh is handled by the daemon's phone-home client
 	return map[string]interface{}{"status": "credential_refresh_triggered"}, nil
+}
+
+// --- Nonce replay protection ---
+
+const nonceMaxAge = 24 * time.Hour
+
+// nonceStore is the on-disk format for persisted nonces.
+type nonceStore struct {
+	Nonces map[string]time.Time `json:"nonces"`
+}
+
+// checkAndRecordNonce rejects replayed nonces and records new ones.
+func (p *Processor) checkAndRecordNonce(nonce string) error {
+	p.nonceMu.Lock()
+	defer p.nonceMu.Unlock()
+
+	if _, exists := p.usedNonces[nonce]; exists {
+		return fmt.Errorf("nonce %q already used", nonce)
+	}
+
+	p.usedNonces[nonce] = time.Now()
+
+	// Evict expired nonces periodically (every time we record)
+	p.evictExpiredNoncesLocked()
+
+	// Persist to disk
+	p.persistNoncesLocked()
+
+	return nil
+}
+
+// evictExpiredNoncesLocked removes nonces older than 24h. Must hold nonceMu.
+func (p *Processor) evictExpiredNoncesLocked() {
+	cutoff := time.Now().Add(-nonceMaxAge)
+	for nonce, ts := range p.usedNonces {
+		if ts.Before(cutoff) {
+			delete(p.usedNonces, nonce)
+		}
+	}
+}
+
+// persistNoncesLocked writes the nonce map to disk. Must hold nonceMu.
+func (p *Processor) persistNoncesLocked() {
+	path := filepath.Join(p.stateDir, "used_nonces.json")
+	store := nonceStore{Nonces: p.usedNonces}
+	data, err := json.Marshal(store)
+	if err != nil {
+		log.Printf("[orders] Failed to marshal nonces: %v", err)
+		return
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		log.Printf("[orders] Failed to persist nonces to %s: %v", path, err)
+	}
+}
+
+// loadNonces reads persisted nonces from disk on startup.
+func (p *Processor) loadNonces() {
+	path := filepath.Join(p.stateDir, "used_nonces.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // File doesn't exist yet — first boot
+	}
+
+	var store nonceStore
+	if err := json.Unmarshal(data, &store); err != nil {
+		log.Printf("[orders] Failed to parse nonces from %s: %v", path, err)
+		return
+	}
+
+	// Load and evict stale entries
+	cutoff := time.Now().Add(-nonceMaxAge)
+	loaded := 0
+	for nonce, ts := range store.Nonces {
+		if ts.After(cutoff) {
+			p.usedNonces[nonce] = ts
+			loaded++
+		}
+	}
+	if loaded > 0 {
+		log.Printf("[orders] Loaded %d nonces from disk (evicted %d expired)", loaded, len(store.Nonces)-loaded)
+	}
 }

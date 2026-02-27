@@ -493,11 +493,12 @@ func (ad *autoDeployer) deployWithFallback(ctx context.Context, ws discovery.ADC
 func (ad *autoDeployer) dcTarget() *winrm.Target {
 	cfg := ad.daemon.config
 	return &winrm.Target{
-		Hostname: *cfg.DomainController,
-		Port:     5985,
-		Username: *cfg.DCUsername,
-		Password: *cfg.DCPassword,
-		UseSSL:   false,
+		Hostname:  *cfg.DomainController,
+		Port:      5986,
+		Username:  *cfg.DCUsername,
+		Password:  *cfg.DCPassword,
+		UseSSL:    true,
+		VerifySSL: false,
 	}
 }
 
@@ -518,11 +519,12 @@ func (ad *autoDeployer) buildTarget(ws discovery.ADComputer) *winrm.Target {
 	}
 
 	return &winrm.Target{
-		Hostname: hostname,
-		Port:     5985,
-		Username: *cfg.DCUsername,
-		Password: *cfg.DCPassword,
-		UseSSL:   false,
+		Hostname:  hostname,
+		Port:      5986,
+		Username:  *cfg.DCUsername,
+		Password:  *cfg.DCPassword,
+		UseSSL:    true,
+		VerifySSL: false,
 	}
 }
 
@@ -1252,11 +1254,12 @@ func (e *adScriptExec) RunScript(_ context.Context, hostname, script, username, 
 	}
 
 	target := &winrm.Target{
-		Hostname: hostname,
-		Port:     5985,
-		Username: username,
-		Password: password,
-		UseSSL:   false,
+		Hostname:  hostname,
+		Port:      5986,
+		Username:  username,
+		Password:  password,
+		UseSSL:    true,
+		VerifySSL: false,
 	}
 
 	result := e.winrmExec.Execute(target, script, "AD-ENUM", "discovery", timeout, 1, float64(timeout), nil)

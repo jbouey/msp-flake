@@ -1136,7 +1136,8 @@ async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version:
     """
     # Get active, non-expired fleet orders
     fleet_rows = await conn.fetch("""
-        SELECT fo.id, fo.order_type, fo.parameters, fo.skip_version, fo.created_at, fo.expires_at
+        SELECT fo.id, fo.order_type, fo.parameters, fo.skip_version, fo.created_at, fo.expires_at,
+               fo.nonce, fo.signature, fo.signed_payload
         FROM fleet_orders fo
         WHERE fo.status = 'active'
         AND fo.expires_at > NOW()
@@ -1172,6 +1173,9 @@ async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version:
             "priority": 5,
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
             "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+            "nonce": row["nonce"],
+            "signature": row["signature"],
+            "signed_payload": row["signed_payload"],
         })
 
     return orders

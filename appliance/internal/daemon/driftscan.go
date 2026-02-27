@@ -150,11 +150,12 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 			hostname: *cfg.DomainController,
 			label:    "DC",
 			target: &winrm.Target{
-				Hostname: *cfg.DomainController,
-				Port:     5985,
-				Username: *cfg.DCUsername,
-				Password: *cfg.DCPassword,
-				UseSSL:   false,
+				Hostname:  *cfg.DomainController,
+				Port:      5986,
+				Username:  *cfg.DCUsername,
+				Password:  *cfg.DCPassword,
+				UseSSL:    true,
+				VerifySSL: false,
 			},
 		},
 	}
@@ -167,11 +168,12 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 				hostname: hostname,
 				label:    "WS",
 				target: &winrm.Target{
-					Hostname: hostname,
-					Port:     5985,
-					Username: *cfg.DCUsername,
-					Password: *cfg.DCPassword,
-					UseSSL:   false,
+					Hostname:  hostname,
+					Port:      5986,
+					Username:  *cfg.DCUsername,
+					Password:  *cfg.DCPassword,
+					UseSSL:    true,
+					VerifySSL: false,
 				},
 			})
 		}
@@ -746,11 +748,12 @@ func (ds *driftScanner) checkTargetViaDCProxy(ctx context.Context, t scanTarget)
 	}
 
 	dcTarget := &winrm.Target{
-		Hostname: *cfg.DomainController,
-		Port:     5985,
-		Username: *cfg.DCUsername,
-		Password: *cfg.DCPassword,
-		UseSSL:   false,
+		Hostname:  *cfg.DomainController,
+		Port:      5986,
+		Username:  *cfg.DCUsername,
+		Password:  *cfg.DCPassword,
+		UseSSL:    true,
+		VerifySSL: false,
 	}
 
 	// Run the same scan via Invoke-Command on the DC
