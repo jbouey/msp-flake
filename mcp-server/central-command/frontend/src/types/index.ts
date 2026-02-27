@@ -810,6 +810,39 @@ export interface IncidentTrendsResponse {
   data: IncidentTrendBucket[];
 }
 
+export interface IncidentBreakdownTierCounts {
+  l1: number;
+  l2: number;
+  l3: number;
+  unclassified: number;
+  unresolved: number;
+  total: number;
+}
+
+export interface IncidentBreakdownType {
+  incident_type: string;
+  count: number;
+  l1: number;
+  l2: number;
+  l3: number;
+}
+
+export interface IncidentBreakdownMTTR {
+  avg_minutes: number;
+  resolved_count: number;
+}
+
+export interface IncidentBreakdownResponse {
+  window: '24h' | '7d' | '30d';
+  tier_counts: IncidentBreakdownTierCounts;
+  top_types: IncidentBreakdownType[];
+  mttr: {
+    l1: IncidentBreakdownMTTR;
+    l2: IncidentBreakdownMTTR;
+    l3: IncidentBreakdownMTTR;
+  };
+}
+
 export type AttentionItemType = 'l3_escalation' | 'repeat_failure' | 'offline_appliance';
 
 export interface AttentionItem {

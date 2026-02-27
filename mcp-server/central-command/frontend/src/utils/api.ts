@@ -309,6 +309,7 @@ export const statsApi = {
 import type {
   FleetPostureSite,
   IncidentTrendsResponse,
+  IncidentBreakdownResponse,
   AttentionRequiredResponse,
 } from '../types';
 
@@ -324,6 +325,12 @@ export const commandCenterApi = {
 
   getAttentionRequired: () =>
     fetchApi<AttentionRequiredResponse>('/attention-required'),
+
+  getIncidentBreakdown: (window: '24h' | '7d' | '30d' = '24h', siteId?: string) => {
+    const params = new URLSearchParams({ window });
+    if (siteId) params.set('site_id', siteId);
+    return fetchApi<IncidentBreakdownResponse>(`/incident-breakdown?${params}`);
+  },
 };
 
 // =============================================================================

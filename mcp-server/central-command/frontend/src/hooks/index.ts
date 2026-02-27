@@ -72,6 +72,7 @@ export {
   // Command Center hooks
   useFleetPosture,
   useIncidentTrends,
+  useIncidentBreakdown,
   useAttentionRequired,
 } from './useFleet';
 

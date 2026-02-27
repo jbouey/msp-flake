@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '../components/shared';
 import { HealthGauge } from '../components/fleet';
-import { IncidentTrendChart, FleetHealthMatrix, AttentionPanel } from '../components/command-center';
+import { IncidentTrendChart, FleetHealthMatrix, AttentionPanel, ResolutionBreakdown, TopIncidentTypes } from '../components/command-center';
 import { useGlobalStats, useLearningStatus, useAttentionRequired } from '../hooks';
 
 export const Dashboard: React.FC = () => {
@@ -122,6 +122,12 @@ export const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <AttentionPanel className="lg:col-span-2" />
         <IncidentTrendChart className="lg:col-span-3" />
+      </div>
+
+      {/* Incident analytics row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <ResolutionBreakdown />
+        <TopIncidentTypes />
       </div>
 
       {/* Fleet health matrix */}

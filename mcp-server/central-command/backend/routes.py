@@ -1472,6 +1472,100 @@ async def get_incident_trends(
         return {"window": window, "bucket_type": "hour", "data": []}
 
 
+@router.get("/incident-breakdown")
+async def get_incident_breakdown(
+    window: str = Query("24h", regex="^(24h|7d|30d)$"),
+    site_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Aggregate incident breakdown: tier counts, top types, MTTR by tier."""
+    try:
+        if window == "24h":
+            interval = "24 hours"
+        elif window == "7d":
+            interval = "7 days"
+        else:
+            interval = "30 days"
+
+        site_filter = "AND i.site_id = :site_id" if site_id else ""
+        params = {"site_id": site_id} if site_id else {}
+
+        # Tier counts
+        tier_result = await db.execute(text(f"""
+            SELECT
+                COUNT(*) FILTER (WHERE i.resolution_tier = 'L1') as l1,
+                COUNT(*) FILTER (WHERE i.resolution_tier = 'L2') as l2,
+                COUNT(*) FILTER (WHERE i.resolution_tier = 'L3') as l3,
+                COUNT(*) FILTER (WHERE i.resolution_tier IS NULL) as unclassified,
+                COUNT(*) FILTER (WHERE i.status != 'resolved') as unresolved,
+                COUNT(*) as total
+            FROM incidents i
+            WHERE i.reported_at > NOW() - INTERVAL '{interval}'
+            {site_filter}
+        """), params)
+        tier = tier_result.fetchone()
+
+        # Top incident types with tier breakdown
+        types_result = await db.execute(text(f"""
+            SELECT
+                COALESCE(i.incident_type, i.check_type, 'unknown') as incident_type,
+                COUNT(*) as count,
+                COUNT(*) FILTER (WHERE i.resolution_tier = 'L1') as l1,
+                COUNT(*) FILTER (WHERE i.resolution_tier = 'L2') as l2,
+                COUNT(*) FILTER (WHERE i.resolution_tier = 'L3') as l3
+            FROM incidents i
+            WHERE i.reported_at > NOW() - INTERVAL '{interval}'
+            {site_filter}
+            GROUP BY COALESCE(i.incident_type, i.check_type, 'unknown')
+            ORDER BY count DESC
+            LIMIT 8
+        """), params)
+        types_rows = types_result.fetchall()
+
+        # MTTR by tier (average minutes from reported to resolved)
+        mttr_result = await db.execute(text(f"""
+            SELECT
+                i.resolution_tier,
+                ROUND(AVG(EXTRACT(EPOCH FROM (i.resolved_at - i.reported_at)) / 60)::numeric, 1) as avg_minutes,
+                COUNT(*) as resolved_count
+            FROM incidents i
+            WHERE i.reported_at > NOW() - INTERVAL '{interval}'
+            AND i.status = 'resolved'
+            AND i.resolved_at IS NOT NULL
+            {site_filter}
+            GROUP BY i.resolution_tier
+        """), params)
+        mttr_rows = mttr_result.fetchall()
+        mttr_map = {r.resolution_tier: {"avg_minutes": float(r.avg_minutes) if r.avg_minutes else 0, "resolved_count": r.resolved_count} for r in mttr_rows}
+
+        return {
+            "window": window,
+            "tier_counts": {
+                "l1": tier.l1 if tier else 0,
+                "l2": tier.l2 if tier else 0,
+                "l3": tier.l3 if tier else 0,
+                "unclassified": tier.unclassified if tier else 0,
+                "unresolved": tier.unresolved if tier else 0,
+                "total": tier.total if tier else 0,
+            },
+            "top_types": [{
+                "incident_type": r.incident_type,
+                "count": r.count,
+                "l1": r.l1,
+                "l2": r.l2,
+                "l3": r.l3,
+            } for r in types_rows],
+            "mttr": {
+                "l1": mttr_map.get("L1", {"avg_minutes": 0, "resolved_count": 0}),
+                "l2": mttr_map.get("L2", {"avg_minutes": 0, "resolved_count": 0}),
+                "l3": mttr_map.get("L3", {"avg_minutes": 0, "resolved_count": 0}),
+            },
+        }
+    except Exception as e:
+        logger.warning(f"Incident breakdown query failed: {e}")
+        return {"window": window, "tier_counts": {}, "top_types": [], "mttr": {}}
+
+
 @router.get("/attention-required")
 async def get_attention_required(db: AsyncSession = Depends(get_db)):
     """Items that need human attention: L3 escalations, failed healings, offline appliances."""
