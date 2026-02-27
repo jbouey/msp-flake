@@ -26,7 +26,7 @@ import (
 )
 
 // Version is set at build time.
-var Version = "0.3.1"
+var Version = "0.3.2"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {
@@ -396,28 +396,44 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 
 // loadWindowsTargets extracts DC/workstation credentials from the checkin response
 // and populates the daemon config so drift scanning and auto-deploy can use WinRM.
+// Prefers the domain_admin role target as DC; falls back to first valid target.
 func (d *Daemon) loadWindowsTargets(targets []map[string]interface{}) {
+	var dcHost, dcUser, dcPass string
+
+	// Two passes: first look for domain_admin, then fall back to first valid
 	for _, t := range targets {
 		hostname, _ := t["hostname"].(string)
 		username, _ := t["username"].(string)
 		password, _ := t["password"].(string)
+		role, _ := t["role"].(string)
 		if hostname == "" || username == "" {
 			continue
 		}
 
-		// First valid target becomes the domain controller
-		prev := ""
-		if d.config.DomainController != nil {
-			prev = *d.config.DomainController
+		if role == "domain_admin" {
+			dcHost, dcUser, dcPass = hostname, username, password
+			break
 		}
-		d.config.DomainController = &hostname
-		d.config.DCUsername = &username
-		d.config.DCPassword = &password
+		// Remember first valid as fallback
+		if dcHost == "" {
+			dcHost, dcUser, dcPass = hostname, username, password
+		}
+	}
 
-		if prev != hostname {
-			log.Printf("[daemon] Windows credentials loaded: dc=%s user=%s", hostname, username)
-		}
-		return // Use first valid target as DC
+	if dcHost == "" {
+		return
+	}
+
+	prev := ""
+	if d.config.DomainController != nil {
+		prev = *d.config.DomainController
+	}
+	d.config.DomainController = &dcHost
+	d.config.DCUsername = &dcUser
+	d.config.DCPassword = &dcPass
+
+	if prev != dcHost {
+		log.Printf("[daemon] Windows credentials loaded: dc=%s user=%s", dcHost, dcUser)
 	}
 }
 

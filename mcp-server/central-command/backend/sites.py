@@ -1892,17 +1892,18 @@ async def appliance_checkin(checkin: ApplianceCheckin):
         if not checkin.has_local_credentials:
             try:
                 creds = await conn.fetch("""
-                    SELECT credential_name, encrypted_data
+                    SELECT credential_name, credential_type, encrypted_data
                     FROM site_credentials
                     WHERE site_id = $1
                     AND credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
-                    ORDER BY created_at DESC
+                    ORDER BY CASE WHEN credential_type = 'domain_admin' THEN 0 ELSE 1 END, created_at DESC
                 """, checkin.site_id)
 
                 for cred in creds:
                     if cred['encrypted_data']:
                         try:
                             cred_data = json.loads(cred['encrypted_data'])
+                            cred_type = cred.get('credential_type', 'winrm')
                             # Transform credentials to expected format
                             hostname = cred_data.get('host') or cred_data.get('target_host')
                             username = cred_data.get('username', '')
@@ -1919,6 +1920,7 @@ async def appliance_checkin(checkin: ApplianceCheckin):
                                     "username": full_username,
                                     "password": password,
                                     "use_ssl": use_ssl,
+                                    "role": cred_type,
                                 })
                         except json.JSONDecodeError:
                             pass
