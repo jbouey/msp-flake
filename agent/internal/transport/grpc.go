@@ -25,7 +25,7 @@ import (
 )
 
 // Version is set at build time
-var Version = "0.3.0"
+var Version = "0.3.1"
 
 // HealChanSize is the buffer size for the heal command channel
 const HealChanSize = 128

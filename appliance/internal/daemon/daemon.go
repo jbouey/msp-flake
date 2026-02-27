@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -243,11 +244,25 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.serveAgentFiles(ctx)
 	}()
 
-	// Start gRPC server
-	d.grpcSrv = grpcserver.NewServer(grpcserver.Config{
+	// Start gRPC server — auto-generate TLS certs from CA if available
+	grpcCfg := grpcserver.Config{
 		Port:   d.config.GRPCPort,
 		SiteID: d.config.SiteID,
-	}, d.registry, d.agentCA)
+	}
+	if d.agentCA != nil {
+		lanIP := d.getApplianceLANIP()
+		certPEM, keyPEM, err := d.agentCA.GenerateServerCert(lanIP)
+		if err != nil {
+			log.Printf("[daemon] Failed to generate gRPC server cert: %v", err)
+		} else {
+			grpcCfg.TLSCertFile = filepath.Join(d.config.CADir, "server.crt")
+			grpcCfg.TLSKeyFile = filepath.Join(d.config.CADir, "server.key")
+			grpcCfg.CACertFile = filepath.Join(d.config.CADir, "ca.crt")
+			log.Printf("[daemon] gRPC TLS: cert=%d bytes, key=%d bytes, ip=%s",
+				len(certPEM), len(keyPEM), lanIP)
+		}
+	}
+	d.grpcSrv = grpcserver.NewServer(grpcCfg, d.registry, d.agentCA)
 
 	d.wg.Add(1)
 	go func() {
@@ -562,6 +577,19 @@ func (d *Daemon) completeOrder(ctx context.Context, orderID string, success bool
 
 	log.Printf("[daemon] Order %s completion accepted by Central Command", orderID)
 	return nil
+}
+
+// getApplianceLANIP returns the first non-loopback IPv4 address on the appliance.
+func (d *Daemon) getApplianceLANIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
+				return ipNet.IP.String()
+			}
+		}
+	}
+	return "127.0.0.1"
 }
 
 // serveAgentFiles serves the agent binary directory over HTTP for DC downloads.
