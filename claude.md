@@ -69,19 +69,75 @@ from compliance_agent._types import (
 | Runbooks | `docs/RUNBOOKS.md` |
 | Provenance | `docs/PROVENANCE.md` |
 
-## Knowledge Index (read only when working in that area)
+## Knowledge Index
 
-| Area | Key Patterns | Doc |
-|------|-------------|-----|
-| auth | bcrypt-12, PKCE, session cookie | `.claude/skills/docs/security/security.md` |
-| test | @pytest.mark.asyncio, AsyncMock | `.claude/skills/docs/testing/testing.md` |
-| hipaa | 6 drift checks, EvidenceBundle, L1 | `.claude/skills/docs/hipaa/compliance.md` |
-| backend | L1→L2→L3, FastAPI router, Depends | `.claude/skills/docs/backend/backend.md` |
-| db | asyncpg pool, WAL, 50 migrations | `.claude/skills/docs/database/database.md` |
-| nixos | rebuild watchdog, nftables, overlay | `.claude/skills/docs/nixos/infrastructure.md` |
-| frontend | useQuery, useMutation, 78 hooks | `.claude/skills/docs/frontend/frontend.md` |
-| api | /api REST, gRPC proto, OAuth flow | `.claude/skills/docs/api/api.md` |
-| perf | gather, useMemo, useCallback, batch | `.claude/skills/docs/performance/performance.md` |
+**Prefer retrieval-led reasoning:** When working in any area below, READ the linked doc before relying on training data. These docs contain project-specific patterns that override general knowledge.
+
+```
+AREA | PATTERN | DOC | CRITICAL SNIPPET
+-----|---------|-----|------------------
+auth | bcrypt 12-round | docs/security/security.md | secrets.token_urlsafe(32)
+auth | PKCE flow | docs/security/security.md | hashlib.sha256(verifier).digest()
+auth | session cookie | docs/api/api.md | httponly=True,secure=True,samesite="lax"
+auth | rate limit | docs/security/security.md | 5 fail → 15min lockout
+secrets | SOPS/age | docs/nixos/infrastructure.md | sopsFile + ageKeyFile
+-----|---------|-----|------------------
+test | async decorator | docs/testing/testing.md | @pytest.mark.asyncio
+test | fixture | docs/testing/testing.md | @pytest.fixture + tmp_path
+test | mock cmd | docs/testing/testing.md | AsyncMock(stdout="...")
+-----|---------|-----|------------------
+hipaa | 6 drift checks | docs/hipaa/compliance.md | patching,backup,firewall,logging,av,encryption
+hipaa | evidence bundle | docs/hipaa/compliance.md | EvidenceBundle dataclass
+hipaa | L1 rule | docs/hipaa/compliance.md | conditions→action→runbook_id
+hipaa | PHI scrub | docs/hipaa/compliance.md | 12 patterns, hash_redacted=True
+-----|---------|-----|------------------
+backend | 3-tier healing | docs/backend/backend.md | L1(70%)→L2(20%)→L3(10%)
+backend | FastAPI router | docs/backend/backend.md | APIRouter(prefix="/api/x")
+backend | Depends auth | docs/backend/backend.md | user: Dict = Depends(require_auth)
+backend | asyncpg pool | docs/backend/backend.md | create_pool(min=2,max=10)
+backend | gRPC stream | docs/backend/backend.md | ReportDrift(stream DriftEvent)
+-----|---------|-----|------------------
+db | postgres pool | docs/database/database.md | asyncpg.create_pool()
+db | sqlite WAL | docs/database/database.md | PRAGMA journal_mode=WAL
+db | multi-tenant | docs/database/database.md | WHERE site_id = $1
+db | upsert | docs/database/database.md | ON CONFLICT DO UPDATE
+-----|---------|-----|------------------
+nixos | module pattern | docs/nixos/infrastructure.md | options + config = mkIf
+nixos | systemd harden | docs/nixos/infrastructure.md | ProtectSystem=strict
+nixos | nftables | docs/nixos/infrastructure.md | pull-only firewall
+nixos | ISO build | docs/nixos/infrastructure.md | nix build .#appliance-iso
+nixos | module priority | docs/nixos/advanced.md | mkForce=50, mkDefault=1000
+nixos | sops-nix | docs/nixos/advanced.md | sops.secrets + templates
+nixos | impermanence | docs/nixos/advanced.md | tmpfs root + persist
+nixos | deploy-rs | docs/nixos/advanced.md | magic rollback on disconnect
+nixos | specialisation | docs/nixos/advanced.md | A/B boot configs
+-----|---------|-----|------------------
+golang | errgroup | docs/golang/golang.md | g.SetLimit(10) bounded
+golang | sync.Pool | docs/golang/golang.md | bufPool.Get/Put
+golang | slog | docs/golang/golang.md | slog.New(JSONHandler)
+golang | pgxpool | docs/golang/golang.md | MaxConns,MinConns,HealthCheck
+golang | table tests | docs/golang/golang.md | t.Run(tt.name, func...)
+golang | fuzzing | docs/golang/golang.md | FuzzXxx + go test -fuzz
+golang | sd_notify | docs/golang/golang.md | READY=1, WATCHDOG=1
+golang | func options | docs/golang/golang.md | WithPort(8080)
+golang | circuit breaker | docs/golang/golang.md | gobreaker.Settings
+-----|---------|-----|------------------
+frontend | React Query | docs/frontend/frontend.md | useQuery({queryKey,queryFn})
+frontend | mutation | docs/frontend/frontend.md | useMutation + invalidateQueries
+frontend | api.ts | docs/frontend/frontend.md | fetchApi<T> with Bearer
+frontend | glass card | docs/frontend/frontend.md | bg-white/5 backdrop-blur
+frontend | routing | docs/frontend/frontend.md | /client/* /partner/* /portal/*
+-----|---------|-----|------------------
+api | REST base | docs/api/api.md | /api prefix, Bearer auth
+api | gRPC proto | docs/api/api.md | ComplianceAgent service
+api | OAuth flow | docs/api/api.md | auth_url→callback→tokens
+-----|---------|-----|------------------
+perf | asyncio.gather | docs/performance/performance.md | 6x faster checks
+perf | React.memo | docs/performance/performance.md | 3-5x fewer renders
+perf | virtual scroll | docs/performance/performance.md | @tanstack/react-virtual
+```
+
+All doc paths relative to `.claude/skills/`. Read the full doc when working in that area.
 
 ## Quick Lab Reference
 
