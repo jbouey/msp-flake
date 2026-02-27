@@ -26,66 +26,36 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 # Map check_types to HIPAA controls.
+# Covers both Go daemon submitter names (from JSONB checks array) and
+# legacy Python agent names (from check_type column in older bundles).
 # When multiple check_types map to the same control, they're consolidated
 # in _get_control_posture() so each HIPAA control appears once in the report.
 CHECK_TYPE_HIPAA_MAP = {
-    # Time sync
-    "ntp_sync": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
-    "windows_service_w32time": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
-    # Backup
-    "windows_backup_status": {"control": "164.308(a)(7)(ii)(A)", "description": "Data Backup Plan"},
-    # Firewall / Transmission Security — consolidated under one control
-    "windows_firewall_status": {"control": "164.312(e)(1)", "description": "Transmission Security"},
-    "firewall": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    # =========================================================================
+    # Go daemon: Windows scanner (submitter.go windowsCheckTypes)
+    # =========================================================================
     "firewall_status": {"control": "164.312(e)(1)", "description": "Transmission Security"},
-    "network": {"control": "164.312(e)(1)", "description": "Transmission Security"},
-    # AV/Defender
-    "defender_status": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
-    # Audit policy
-    "windows_audit_policy": {"control": "164.312(b)", "description": "Audit Controls"},
-    "audit_policy": {"control": "164.312(b)", "description": "Audit Controls"},
-    # Access control
-    "windows_password_policy": {"control": "164.312(a)(1)", "description": "Access Control"},
-    "password_policy": {"control": "164.312(a)(1)", "description": "Access Control"},
-    "screen_lock_policy": {"control": "164.312(a)(2)(iii)", "description": "Workstation Security"},
-    # Encryption
-    "windows_bitlocker_status": {"control": "164.312(a)(2)(iv)", "description": "Encryption and Decryption"},
-    "bitlocker_status": {"control": "164.312(a)(2)(iv)", "description": "Encryption and Decryption"},
-    # Services
-    "windows_service_dns": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
-    "windows_service_spooler": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
-    "windows_service_netlogon": {"control": "164.312(d)", "description": "Person or Entity Authentication"},
-    "service_wuauserv": {"control": "164.308(a)(5)(ii)(B)", "description": "Security Updates"},
-    # Storage / Disk
-    "disk_space": {"control": "164.310(d)(2)(iv)", "description": "Data Backup and Storage"},
-    # System monitoring
-    "critical_services": {"control": "164.308(a)(1)(ii)(D)", "description": "Information System Activity Review"},
-    "nixos_generation": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
-    # SMB / Protocol security
-    "smb_signing": {"control": "164.312(e)(1)", "description": "Transmission Security (SMB)"},
-    "smb1_protocol": {"control": "164.312(e)(1)", "description": "Transmission Security (SMBv1)"},
-    # DNS
-    "dns_config": {"control": "164.312(e)(1)", "description": "Transmission Security (DNS)"},
-    # Network profile
-    "network_profile": {"control": "164.312(e)(1)", "description": "Transmission Security (Profile)"},
-    # Persistence checks
-    "scheduled_task_persistence": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
-    "registry_run_persistence": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
-    "wmi_event_persistence": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
-    # Defender exclusions
-    "defender_exclusions": {"control": "164.308(a)(5)(ii)(B)", "description": "Malicious Software Protection"},
-    # Go daemon scanner check types (Windows)
     "windows_defender": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
     "windows_update": {"control": "164.308(a)(5)(ii)(B)", "description": "Security Updates"},
     "audit_logging": {"control": "164.312(b)", "description": "Audit Controls"},
     "rogue_admin_users": {"control": "164.312(a)(1)", "description": "Access Control"},
     "rogue_scheduled_tasks": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
     "agent_status": {"control": "164.312(b)", "description": "Audit Controls (agent)"},
+    "bitlocker_status": {"control": "164.312(a)(2)(iv)", "description": "Encryption and Decryption"},
+    "smb_signing": {"control": "164.312(e)(1)", "description": "Transmission Security (SMB)"},
+    "smb1_protocol": {"control": "164.312(e)(1)", "description": "Transmission Security (SMBv1)"},
+    "screen_lock_policy": {"control": "164.312(a)(2)(iii)", "description": "Workstation Security"},
+    "defender_exclusions": {"control": "164.308(a)(5)(ii)(B)", "description": "Malicious Software Protection"},
+    "dns_config": {"control": "164.312(e)(1)", "description": "Transmission Security (DNS)"},
+    "network_profile": {"control": "164.312(e)(1)", "description": "Transmission Security (Profile)"},
+    "password_policy": {"control": "164.312(a)(1)", "description": "Access Control"},
     "rdp_nla": {"control": "164.312(d)", "description": "Person or Entity Authentication"},
     "guest_account": {"control": "164.312(a)(1)", "description": "Access Control"},
     "service_dns": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
     "service_netlogon": {"control": "164.312(d)", "description": "Person or Entity Authentication"},
-    # Go daemon scanner check types (Linux)
+    # =========================================================================
+    # Go daemon: Linux scanner (submitter.go linuxCheckTypes)
+    # =========================================================================
     "linux_firewall": {"control": "164.312(e)(1)", "description": "Transmission Security"},
     "linux_ssh_config": {"control": "164.312(d)", "description": "Person or Entity Authentication"},
     "linux_failed_services": {"control": "164.312(a)(1)", "description": "Access Control"},
@@ -101,11 +71,61 @@ CHECK_TYPE_HIPAA_MAP = {
     "linux_log_forwarding": {"control": "164.312(b)", "description": "Audit Controls"},
     "linux_cron_review": {"control": "164.312(a)(1)", "description": "Access Control"},
     "linux_cert_expiry": {"control": "164.312(e)(1)", "description": "Transmission Security"},
-    # Go daemon scanner check types (Network)
+    # =========================================================================
+    # Go daemon: Network scanner (submitter.go networkCheckTypes)
+    # =========================================================================
     "net_unexpected_ports": {"control": "164.312(e)(1)", "description": "Transmission Security"},
     "net_expected_service": {"control": "164.312(a)(1)", "description": "Access Control"},
     "net_host_reachability": {"control": "164.308(a)(7)(ii)(B)", "description": "Disaster Recovery Plan"},
     "net_dns_resolution": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    # =========================================================================
+    # Legacy: Python agent / older Go daemon check_type column names
+    # (kept for backward compat with pre-Feb-21 data in compliance_bundles)
+    # =========================================================================
+    "windows_firewall_status": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "windows_bitlocker_status": {"control": "164.312(a)(2)(iv)", "description": "Encryption and Decryption"},
+    "windows_backup_status": {"control": "164.308(a)(7)(ii)(A)", "description": "Data Backup Plan"},
+    "windows_audit_policy": {"control": "164.312(b)", "description": "Audit Controls"},
+    "windows_password_policy": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "windows_service_dns": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
+    "windows_service_spooler": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
+    "windows_service_netlogon": {"control": "164.312(d)", "description": "Person or Entity Authentication"},
+    "windows_service_w32time": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
+    "windows_service_wuauserv": {"control": "164.308(a)(5)(ii)(B)", "description": "Security Updates"},
+    "windows_windows_defender": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software"},
+    "windows_screen_lock_policy": {"control": "164.312(a)(2)(iii)", "description": "Workstation Security"},
+    "windows_dns_config": {"control": "164.312(e)(1)", "description": "Transmission Security (DNS)"},
+    "windows_smb_signing": {"control": "164.312(e)(1)", "description": "Transmission Security (SMB)"},
+    "windows_smb1_protocol": {"control": "164.312(e)(1)", "description": "Transmission Security (SMBv1)"},
+    "windows_network_profile": {"control": "164.312(e)(1)", "description": "Transmission Security (Profile)"},
+    "windows_defender_exclusions": {"control": "164.308(a)(5)(ii)(B)", "description": "Malicious Software Protection"},
+    "windows_registry_run_persistence": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
+    "windows_scheduled_task_persistence": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
+    "windows_wmi_event_persistence": {"control": "164.308(a)(5)(ii)(C)", "description": "Security Awareness"},
+    "ntp_sync": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
+    "disk_space": {"control": "164.310(d)(2)(iv)", "description": "Data Backup and Storage"},
+    "critical_services": {"control": "164.308(a)(1)(ii)(D)", "description": "Information System Activity Review"},
+    "nixos_generation": {"control": "164.310(d)(1)", "description": "Device and Media Controls"},
+    "network": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "firewall": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    # Legacy Linux short names (from older Python agent / Go daemon versions)
+    "linux_accounts": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "linux_kernel": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "linux_permissions": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "linux_patching": {"control": "164.308(a)(5)(ii)(B)", "description": "Security Updates"},
+    "linux_services": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "linux_network": {"control": "164.312(e)(1)", "description": "Transmission Security"},
+    "linux_audit": {"control": "164.312(b)", "description": "Audit Controls"},
+    "linux_logging": {"control": "164.312(b)", "description": "Audit Controls"},
+    "linux_time_sync": {"control": "164.312(b)", "description": "Audit Controls (time sync)"},
+    "linux_cron": {"control": "164.312(a)(1)", "description": "Access Control"},
+    "linux_mac": {"control": "164.312(a)(1)", "description": "Access Control (MAC)"},
+    "linux_banner": {"control": "164.308(a)(5)(ii)(A)", "description": "Security Awareness (login banner)"},
+    "linux_incident_response": {"control": "164.308(a)(6)(ii)", "description": "Response and Reporting"},
+    "linux_crypto": {"control": "164.312(a)(2)(iv)", "description": "Encryption and Decryption"},
+    "linux_boot": {"control": "164.310(d)(1)", "description": "Device and Media Controls (boot)"},
+    "linux_integrity": {"control": "164.312(c)(1)", "description": "Integrity Controls"},
+    "workstation": {"control": "164.312(a)(1)", "description": "Access Control (workstation)"},
 }
 
 
@@ -219,6 +239,11 @@ class CompliancePacket:
     async def _calculate_compliance_score(self) -> float:
         """Compliance % = average of per-HIPAA-control pass rates.
 
+        Expands the JSONB checks array from each bundle so every individual
+        check_type is scored independently. This is critical because the Go
+        daemon sends 19+ checks per bundle but the check_type column only
+        stores the first one.
+
         Each check_type gets its own pass rate, then check_types that map
         to the same HIPAA control are averaged together. The final score
         is the average across all distinct controls. This prevents a single
@@ -226,12 +251,21 @@ class CompliancePacket:
         """
         result = await self.db.execute(
             text("""
+                WITH expanded AS (
+                    SELECT
+                        c->>'check' as check_type,
+                        c->>'status' as check_status
+                    FROM compliance_bundles cb,
+                         jsonb_array_elements(cb.checks) as c
+                    WHERE cb.site_id = :sid
+                      AND cb.checked_at >= :start AND cb.checked_at < :end
+                      AND jsonb_array_length(cb.checks) > 0
+                )
                 SELECT check_type,
                        COUNT(*) as total,
-                       COUNT(*) FILTER (WHERE check_result = 'pass') as pass_count
-                FROM compliance_bundles
-                WHERE site_id = :sid
-                  AND checked_at >= :start AND checked_at < :end
+                       COUNT(*) FILTER (WHERE check_status = 'pass') as pass_count
+                FROM expanded
+                WHERE check_type IS NOT NULL
                 GROUP BY check_type
             """),
             {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
@@ -356,29 +390,40 @@ class CompliancePacket:
     async def _get_control_posture(self) -> List[Dict]:
         """Build control posture from real check_type results.
 
+        Expands JSONB checks array so each individual check is scored.
         Multiple check_types may map to the same HIPAA control (e.g.
-        firewall_status, firewall, smb_signing all → 164.312(e)(1)).
+        firewall_status, smb_signing all → 164.312(e)(1)).
         This method consolidates them so each control appears once.
         """
         result = await self.db.execute(
             text("""
-                WITH stats AS (
+                WITH expanded AS (
+                    SELECT
+                        c->>'check' as check_type,
+                        c->>'status' as check_status,
+                        cb.checked_at,
+                        cb.bundle_id
+                    FROM compliance_bundles cb,
+                         jsonb_array_elements(cb.checks) as c
+                    WHERE cb.site_id = :sid
+                      AND cb.checked_at >= :start AND cb.checked_at < :end
+                      AND jsonb_array_length(cb.checks) > 0
+                ),
+                stats AS (
                     SELECT check_type,
                            COUNT(*) as total,
-                           COUNT(*) FILTER (WHERE check_result = 'pass') as pass_count,
-                           COUNT(*) FILTER (WHERE check_result = 'fail') as fail_count,
+                           COUNT(*) FILTER (WHERE check_status = 'pass') as pass_count,
+                           COUNT(*) FILTER (WHERE check_status = 'fail') as fail_count,
                            MAX(checked_at) as last_checked
-                    FROM compliance_bundles
-                    WHERE site_id = :sid
-                      AND checked_at >= :start AND checked_at < :end
+                    FROM expanded
+                    WHERE check_type IS NOT NULL
                     GROUP BY check_type
                 ),
                 latest AS (
                     SELECT DISTINCT ON (check_type)
                            check_type, bundle_id as latest_bundle_id
-                    FROM compliance_bundles
-                    WHERE site_id = :sid
-                      AND checked_at >= :start AND checked_at < :end
+                    FROM expanded
+                    WHERE check_type IS NOT NULL
                     ORDER BY check_type, checked_at DESC
                 )
                 SELECT s.*, l.latest_bundle_id

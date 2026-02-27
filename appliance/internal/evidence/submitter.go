@@ -173,6 +173,11 @@ func (s *Submitter) BuildAndSubmitLinux(ctx context.Context, findings []DriftFin
 	return s.buildAndSubmitForTypes(ctx, findings, scannedHosts, linuxCheckTypes)
 }
 
+// BuildAndSubmitNetwork packages network drift findings into a compliance evidence bundle.
+func (s *Submitter) BuildAndSubmitNetwork(ctx context.Context, findings []DriftFinding, scannedHosts []string) error {
+	return s.buildAndSubmitForTypes(ctx, findings, scannedHosts, networkCheckTypes)
+}
+
 // submitBundle signs and submits an evidence bundle to Central Command.
 func (s *Submitter) submitBundle(ctx context.Context, checks []map[string]any, compliant, nonCompliant int, scannedHosts []string, now time.Time) error {
 

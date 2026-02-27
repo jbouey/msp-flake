@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/osiriscare/appliance/internal/evidence"
 	"github.com/osiriscare/appliance/internal/grpcserver"
 )
 
@@ -74,6 +75,25 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 	// Report all findings through the healing pipeline
 	for _, f := range findings {
 		ns.reportNetDrift(f)
+	}
+
+	// Submit network evidence bundle for compliance scoring
+	if ns.daemon.evidenceSubmitter != nil {
+		scannedHosts := []string{hostname}
+		evFindings := make([]evidence.DriftFinding, len(findings))
+		for i, f := range findings {
+			evFindings[i] = evidence.DriftFinding{
+				Hostname:     f.Hostname,
+				CheckType:    f.CheckType,
+				Expected:     f.Expected,
+				Actual:       f.Actual,
+				HIPAAControl: f.HIPAAControl,
+				Severity:     f.Severity,
+			}
+		}
+		if err := ns.daemon.evidenceSubmitter.BuildAndSubmitNetwork(ctx, evFindings, scannedHosts); err != nil {
+			log.Printf("[netscan] Evidence submission failed: %v", err)
+		}
 	}
 
 	log.Printf("[netscan] Scan complete: findings=%d", len(findings))
