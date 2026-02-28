@@ -84,11 +84,13 @@ async def get_site_device_summary(site_id: str) -> dict:
 
     total = counts["total"]
     compliant = counts["compliant"]
+    drifted = counts["drifted"]
+    scanned = compliant + drifted  # Only devices that have been checked
 
     return {
         "site_id": site_id,
         "total_devices": total,
-        "compliance_rate": round(compliant / total * 100, 1) if total > 0 else 0.0,
+        "compliance_rate": round(compliant / scanned * 100, 1) if scanned > 0 else 0.0,
         "by_compliance": {
             "compliant": compliant,
             "drifted": counts["drifted"],
