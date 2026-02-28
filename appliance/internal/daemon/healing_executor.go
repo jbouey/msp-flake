@@ -192,12 +192,13 @@ func (d *Daemon) buildHealingWinRMTarget(hostID string) *winrm.Target {
 	if d.config.DCUsername == nil || d.config.DCPassword == nil {
 		return nil
 	}
+	ws := d.probeWinRM(hostID)
 	return &winrm.Target{
 		Hostname:  hostID,
-		Port:      5986,
+		Port:      ws.Port,
 		Username:  *d.config.DCUsername,
 		Password:  *d.config.DCPassword,
-		UseSSL:    true,
+		UseSSL:    ws.UseSSL,
 		VerifySSL: false, // Tolerate self-signed certs during rollout
 	}
 }

@@ -145,16 +145,17 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 	}
 
 	// Build target list: DC + any deployed workstations
+	dcWS := ds.daemon.probeWinRM(*cfg.DomainController)
 	targets := []scanTarget{
 		{
 			hostname: *cfg.DomainController,
 			label:    "DC",
 			target: &winrm.Target{
 				Hostname:  *cfg.DomainController,
-				Port:      5986,
+				Port:      dcWS.Port,
 				Username:  *cfg.DCUsername,
 				Password:  *cfg.DCPassword,
-				UseSSL:    true,
+				UseSSL:    dcWS.UseSSL,
 				VerifySSL: false,
 			},
 		},
@@ -164,15 +165,16 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 	if ds.daemon.deployer != nil {
 		ds.daemon.deployer.mu.Lock()
 		for hostname := range ds.daemon.deployer.deployed {
+			ws := ds.daemon.probeWinRM(hostname)
 			targets = append(targets, scanTarget{
 				hostname: hostname,
 				label:    "WS",
 				target: &winrm.Target{
 					Hostname:  hostname,
-					Port:      5986,
+					Port:      ws.Port,
 					Username:  *cfg.DCUsername,
 					Password:  *cfg.DCPassword,
-					UseSSL:    true,
+					UseSSL:    ws.UseSSL,
 					VerifySSL: false,
 				},
 			})
@@ -747,12 +749,13 @@ func (ds *driftScanner) checkTargetViaDCProxy(ctx context.Context, t scanTarget)
 		return nil
 	}
 
+	dcWS := ds.daemon.probeWinRM(*cfg.DomainController)
 	dcTarget := &winrm.Target{
 		Hostname:  *cfg.DomainController,
-		Port:      5986,
+		Port:      dcWS.Port,
 		Username:  *cfg.DCUsername,
 		Password:  *cfg.DCPassword,
-		UseSSL:    true,
+		UseSSL:    dcWS.UseSSL,
 		VerifySSL: false,
 	}
 

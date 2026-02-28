@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,11 @@ type autoDeployer struct {
 
 	// Track which hosts need DC proxy (avoid retrying direct NTLM every cycle)
 	needsProxy sync.Map // hostname → true
+
+	// DC WinRM SSL probe result (cached once per daemon lifetime)
+	dcSSLProbed bool
+	dcUseSSL    bool
+	dcPort      int
 
 	// Track consecutive deployment failures per host for escalation
 	failures   map[string]int       // hostname → consecutive failure count
@@ -297,6 +303,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 	// Build AD enumerator using the daemon's WinRM executor
 	executor := &adScriptExec{
 		winrmExec: ad.daemon.winrmExec,
+		daemon:    ad.daemon,
 		username:  username,
 		password:  password,
 	}
@@ -492,17 +499,45 @@ func (ad *autoDeployer) deployWithFallback(ctx context.Context, ws discovery.ADC
 // dcTarget returns a WinRM target for the domain controller.
 func (ad *autoDeployer) dcTarget() *winrm.Target {
 	cfg := ad.daemon.config
+
+	// Probe DC WinRM port once: prefer 5986/SSL, fall back to 5985/HTTP
+	if !ad.dcSSLProbed {
+		ad.dcSSLProbed = true
+		dc := *cfg.DomainController
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", dc, 5986), 3*time.Second)
+		if err == nil {
+			conn.Close()
+			ad.dcUseSSL = true
+			ad.dcPort = 5986
+			log.Printf("[autodeploy] DC %s: WinRM HTTPS (5986) available", dc)
+		} else {
+			conn2, err2 := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", dc, 5985), 3*time.Second)
+			if err2 == nil {
+				conn2.Close()
+				ad.dcUseSSL = false
+				ad.dcPort = 5985
+				log.Printf("[autodeploy] DC %s: WinRM HTTPS unavailable, using HTTP (5985)", dc)
+			} else {
+				// Neither port open — default to SSL, will fail with useful error
+				ad.dcUseSSL = true
+				ad.dcPort = 5986
+				log.Printf("[autodeploy] DC %s: neither WinRM port reachable, defaulting to 5986", dc)
+			}
+		}
+	}
+
 	return &winrm.Target{
 		Hostname:  *cfg.DomainController,
-		Port:      5986,
+		Port:      ad.dcPort,
 		Username:  *cfg.DCUsername,
 		Password:  *cfg.DCPassword,
-		UseSSL:    true,
+		UseSSL:    ad.dcUseSSL,
 		VerifySSL: false,
 	}
 }
 
 // buildTarget creates a WinRM target for direct workstation connection.
+// Probes 5986 (HTTPS) first, then falls back to 5985 (HTTP).
 func (ad *autoDeployer) buildTarget(ws discovery.ADComputer) *winrm.Target {
 	cfg := ad.daemon.config
 	if cfg.DCUsername == nil || cfg.DCPassword == nil {
@@ -518,12 +553,27 @@ func (ad *autoDeployer) buildTarget(ws discovery.ADComputer) *winrm.Target {
 		hostname = ws.Hostname
 	}
 
+	// Probe workstation: prefer HTTPS, fall back to HTTP
+	port := 5986
+	useSSL := true
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostname, 5986), 2*time.Second)
+	if err == nil {
+		conn.Close()
+	} else {
+		conn2, err2 := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostname, 5985), 2*time.Second)
+		if err2 == nil {
+			conn2.Close()
+			port = 5985
+			useSSL = false
+		}
+	}
+
 	return &winrm.Target{
 		Hostname:  hostname,
-		Port:      5986,
+		Port:      port,
 		Username:  *cfg.DCUsername,
 		Password:  *cfg.DCPassword,
-		UseSSL:    true,
+		UseSSL:    useSSL,
 		VerifySSL: false,
 	}
 }
@@ -1241,6 +1291,7 @@ if ($svc.Status -ne "Running") {
 // adScriptExec adapts the WinRM executor to the discovery.ScriptExecutor interface.
 type adScriptExec struct {
 	winrmExec *winrm.Executor
+	daemon    *Daemon
 	username  string
 	password  string
 }
@@ -1253,12 +1304,13 @@ func (e *adScriptExec) RunScript(_ context.Context, hostname, script, username, 
 		password = e.password
 	}
 
+	ws := e.daemon.probeWinRM(hostname)
 	target := &winrm.Target{
 		Hostname:  hostname,
-		Port:      5986,
+		Port:      ws.Port,
 		Username:  username,
 		Password:  password,
-		UseSSL:    true,
+		UseSSL:    ws.UseSSL,
 		VerifySSL: false,
 	}
 

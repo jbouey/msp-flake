@@ -27,7 +27,7 @@ import (
 )
 
 // Version is set at build time.
-var Version = "0.3.8"
+var Version = "0.3.9"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {
@@ -91,6 +91,10 @@ type Daemon struct {
 	// gpoFixDone tracks whether the GPO firewall fix has been applied per DC.
 	// key = DC hostname, value = true
 	gpoFixDone sync.Map
+
+	// WinRM port cache: probed once per host, 5986 (SSL) preferred, 5985 (HTTP) fallback
+	winrmMu    sync.Mutex
+	winrmCache map[string]winrmSettings
 }
 
 // isSubscriptionActive returns true if healing should be allowed.
@@ -592,6 +596,44 @@ func (d *Daemon) getApplianceLANIP() string {
 	return "127.0.0.1"
 }
 
+// winrmSettings holds the cached WinRM connection settings for a host.
+type winrmSettings struct {
+	Port   int
+	UseSSL bool
+}
+
+// probeWinRM checks which WinRM port is available on a host.
+// Prefers 5986 (HTTPS), falls back to 5985 (HTTP).
+func (d *Daemon) probeWinRM(hostname string) winrmSettings {
+	d.winrmMu.Lock()
+	if d.winrmCache == nil {
+		d.winrmCache = make(map[string]winrmSettings)
+	}
+	if cached, ok := d.winrmCache[hostname]; ok {
+		d.winrmMu.Unlock()
+		return cached
+	}
+	d.winrmMu.Unlock()
+
+	result := winrmSettings{Port: 5986, UseSSL: true} // default
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostname, 5986), 3*time.Second)
+	if err == nil {
+		conn.Close()
+	} else {
+		conn2, err2 := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostname, 5985), 3*time.Second)
+		if err2 == nil {
+			conn2.Close()
+			result = winrmSettings{Port: 5985, UseSSL: false}
+			log.Printf("[daemon] WinRM: %s using HTTP (5985) — HTTPS unavailable", hostname)
+		}
+	}
+
+	d.winrmMu.Lock()
+	d.winrmCache[hostname] = result
+	d.winrmMu.Unlock()
+	return result
+}
+
 // serveAgentFiles serves the agent binary directory over HTTP for DC downloads.
 // Used by the auto-deploy DC proxy path — DC downloads agent binary via
 // Invoke-WebRequest instead of slow WinRM chunk uploads.
@@ -930,12 +972,13 @@ func (d *Daemon) buildWinRMTarget(req grpcserver.HealRequest) *winrm.Target {
 		hostname = ipAddr
 	}
 
+	ws := d.probeWinRM(hostname)
 	return &winrm.Target{
 		Hostname:  hostname,
-		Port:      5986,
+		Port:      ws.Port,
 		Username:  username,
 		Password:  password,
-		UseSSL:    true,
+		UseSSL:    ws.UseSSL,
 		VerifySSL: false, // Tolerate self-signed certs during rollout
 	}
 }
@@ -1010,12 +1053,13 @@ func (d *Daemon) fixFirewallGPO(triggerHost string) {
 	log.Printf("[daemon] GPO firewall fix: checking Default Domain Policy on %s (triggered by %s)",
 		dc, triggerHost)
 
+	ws := d.probeWinRM(dc)
 	target := &winrm.Target{
 		Hostname:  dc,
-		Port:      5986,
+		Port:      ws.Port,
 		Username:  *d.config.DCUsername,
 		Password:  *d.config.DCPassword,
-		UseSSL:    true,
+		UseSSL:    ws.UseSSL,
 		VerifySSL: false, // Tolerate self-signed certs during rollout
 	}
 
@@ -1101,12 +1145,13 @@ func (d *Daemon) findWinRMTarget(hostname string) *winrm.Target {
 	if d.config.DCUsername == nil || d.config.DCPassword == nil {
 		return nil
 	}
+	ws := d.probeWinRM(hostname)
 	return &winrm.Target{
 		Hostname:  hostname,
-		Port:      5986,
+		Port:      ws.Port,
 		Username:  *d.config.DCUsername,
 		Password:  *d.config.DCPassword,
-		UseSSL:    true,
+		UseSSL:    ws.UseSSL,
 		VerifySSL: false, // Tolerate self-signed certs during rollout
 	}
 }
