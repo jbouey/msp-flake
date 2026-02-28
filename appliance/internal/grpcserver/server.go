@@ -31,6 +31,11 @@ type HealRequest struct {
 	Metadata     map[string]string
 }
 
+// AgentVersionProvider supplies the current agent binary version info.
+type AgentVersionProvider interface {
+	CurrentAgentVersion() (version, sha256hex, downloadURL string, ok bool)
+}
+
 // Config holds gRPC server configuration.
 type Config struct {
 	Port        int
@@ -42,10 +47,11 @@ type Config struct {
 
 // Server wraps the gRPC server and all its dependencies.
 type Server struct {
-	config   Config
-	registry *AgentRegistry
-	agentCA  *ca.AgentCA
-	grpc     *grpc.Server
+	config       Config
+	registry     *AgentRegistry
+	agentCA      *ca.AgentCA
+	agentVersion AgentVersionProvider
+	grpc         *grpc.Server
 
 	// HealChan receives incidents that need healing. The Python daemon
 	// (or later, the Go daemon) reads from this channel.
@@ -53,12 +59,13 @@ type Server struct {
 }
 
 // NewServer creates a new gRPC server.
-func NewServer(cfg Config, registry *AgentRegistry, agentCA *ca.AgentCA) *Server {
+func NewServer(cfg Config, registry *AgentRegistry, agentCA *ca.AgentCA, agentVersion AgentVersionProvider) *Server {
 	return &Server{
-		config:   cfg,
-		registry: registry,
-		agentCA:  agentCA,
-		HealChan: make(chan HealRequest, 256),
+		config:       cfg,
+		registry:     registry,
+		agentCA:      agentCA,
+		agentVersion: agentVersion,
+		HealChan:     make(chan HealRequest, 256),
 	}
 }
 
@@ -96,10 +103,11 @@ func (s *Server) Serve() error {
 
 	s.grpc = grpc.NewServer(opts...)
 	pb.RegisterComplianceAgentServer(s.grpc, &servicer{
-		registry: s.registry,
-		agentCA:  s.agentCA,
-		healChan: s.HealChan,
-		siteID:   s.config.SiteID,
+		registry:     s.registry,
+		agentCA:      s.agentCA,
+		healChan:     s.HealChan,
+		siteID:       s.config.SiteID,
+		agentVersion: s.agentVersion,
 	})
 
 	log.Printf("[gRPC] Listening on :%d", s.config.Port)
@@ -153,10 +161,11 @@ func (s *Server) loadTLS() (credentials.TransportCredentials, error) {
 // servicer implements the ComplianceAgent gRPC service.
 type servicer struct {
 	pb.UnimplementedComplianceAgentServer
-	registry *AgentRegistry
-	agentCA  *ca.AgentCA
-	healChan chan HealRequest
-	siteID   string
+	registry     *AgentRegistry
+	agentCA      *ca.AgentCA
+	healChan     chan HealRequest
+	siteID       string
+	agentVersion AgentVersionProvider
 }
 
 // checkTypeMap maps Go agent check types to L1 rule check types.
@@ -305,11 +314,26 @@ func (s *servicer) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*pb.H
 		log.Printf("[gRPC] Delivering %d heal commands to %s via heartbeat", len(pending), req.AgentId)
 	}
 
-	return &pb.HeartbeatResponse{
+	resp := &pb.HeartbeatResponse{
 		Acknowledged:    true,
 		ConfigChanged:   false,
 		PendingCommands: pending,
-	}, nil
+	}
+
+	// Check if agent needs an update
+	if s.agentVersion != nil && req.AgentVersion != "" {
+		ver, sha, url, ok := s.agentVersion.CurrentAgentVersion()
+		if ok && ver != "" && ver != req.AgentVersion {
+			resp.UpdateAvailable = true
+			resp.UpdateVersion = ver
+			resp.UpdateUrl = url
+			resp.UpdateSha256 = sha
+			log.Printf("[gRPC] Agent %s running v%s, update v%s available",
+				req.AgentId, req.AgentVersion, ver)
+		}
+	}
+
+	return resp, nil
 }
 
 func (s *servicer) ReportRMMStatus(_ context.Context, req *pb.RMMStatusReport) (*pb.RMMAck, error) {

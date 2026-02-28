@@ -680,6 +680,7 @@ type HeartbeatRequest struct {
 	Timestamp     int64                  `protobuf:"varint,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	DriftCount    int32                  `protobuf:"varint,3,opt,name=drift_count,json=driftCount,proto3" json:"drift_count,omitempty"`       // Number of drift events since last heartbeat
 	HealingCount  int32                  `protobuf:"varint,4,opt,name=healing_count,json=healingCount,proto3" json:"healing_count,omitempty"` // Number of healing attempts
+	AgentVersion  string                 `protobuf:"bytes,5,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`  // Current running version (for update decisions)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -742,12 +743,24 @@ func (x *HeartbeatRequest) GetHealingCount() int32 {
 	return 0
 }
 
+func (x *HeartbeatRequest) GetAgentVersion() string {
+	if x != nil {
+		return x.AgentVersion
+	}
+	return ""
+}
+
 // HeartbeatResponse can signal config changes and pending commands
 type HeartbeatResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Acknowledged    bool                   `protobuf:"varint,1,opt,name=acknowledged,proto3" json:"acknowledged,omitempty"`
 	ConfigChanged   bool                   `protobuf:"varint,2,opt,name=config_changed,json=configChanged,proto3" json:"config_changed,omitempty"`      // If true, agent should re-register
 	PendingCommands []*HealCommand         `protobuf:"bytes,3,rep,name=pending_commands,json=pendingCommands,proto3" json:"pending_commands,omitempty"` // Commands queued for this agent
+	// Self-update fields
+	UpdateAvailable bool   `protobuf:"varint,4,opt,name=update_available,json=updateAvailable,proto3" json:"update_available,omitempty"` // True when a newer version exists
+	UpdateVersion   string `protobuf:"bytes,5,opt,name=update_version,json=updateVersion,proto3" json:"update_version,omitempty"`        // Version string, e.g. "0.4.0"
+	UpdateUrl       string `protobuf:"bytes,6,opt,name=update_url,json=updateUrl,proto3" json:"update_url,omitempty"`                    // HTTP URL to download binary
+	UpdateSha256    string `protobuf:"bytes,7,opt,name=update_sha256,json=updateSha256,proto3" json:"update_sha256,omitempty"`           // Hex-encoded SHA256 of binary at update_url
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -801,6 +814,34 @@ func (x *HeartbeatResponse) GetPendingCommands() []*HealCommand {
 		return x.PendingCommands
 	}
 	return nil
+}
+
+func (x *HeartbeatResponse) GetUpdateAvailable() bool {
+	if x != nil {
+		return x.UpdateAvailable
+	}
+	return false
+}
+
+func (x *HeartbeatResponse) GetUpdateVersion() string {
+	if x != nil {
+		return x.UpdateVersion
+	}
+	return ""
+}
+
+func (x *HeartbeatResponse) GetUpdateUrl() string {
+	if x != nil {
+		return x.UpdateUrl
+	}
+	return ""
+}
+
+func (x *HeartbeatResponse) GetUpdateSha256() string {
+	if x != nil {
+		return x.UpdateSha256
+	}
+	return ""
 }
 
 // RMMStatusReport reports detected RMM tools
@@ -1061,17 +1102,23 @@ const file_compliance_proto_rawDesc = "" +
 	"\n" +
 	"HealingAck\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1a\n" +
-	"\breceived\x18\x02 \x01(\bR\breceived\"\x91\x01\n" +
+	"\breceived\x18\x02 \x01(\bR\breceived\"\xb6\x01\n" +
 	"\x10HeartbeatRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\x12\x1f\n" +
 	"\vdrift_count\x18\x03 \x01(\x05R\n" +
 	"driftCount\x12#\n" +
-	"\rhealing_count\x18\x04 \x01(\x05R\fhealingCount\"\xa2\x01\n" +
+	"\rhealing_count\x18\x04 \x01(\x05R\fhealingCount\x12#\n" +
+	"\ragent_version\x18\x05 \x01(\tR\fagentVersion\"\xb8\x02\n" +
 	"\x11HeartbeatResponse\x12\"\n" +
 	"\facknowledged\x18\x01 \x01(\bR\facknowledged\x12%\n" +
 	"\x0econfig_changed\x18\x02 \x01(\bR\rconfigChanged\x12B\n" +
-	"\x10pending_commands\x18\x03 \x03(\v2\x17.compliance.HealCommandR\x0fpendingCommands\"\xa5\x01\n" +
+	"\x10pending_commands\x18\x03 \x03(\v2\x17.compliance.HealCommandR\x0fpendingCommands\x12)\n" +
+	"\x10update_available\x18\x04 \x01(\bR\x0fupdateAvailable\x12%\n" +
+	"\x0eupdate_version\x18\x05 \x01(\tR\rupdateVersion\x12\x1d\n" +
+	"\n" +
+	"update_url\x18\x06 \x01(\tR\tupdateUrl\x12#\n" +
+	"\rupdate_sha256\x18\a \x01(\tR\fupdateSha256\"\xa5\x01\n" +
 	"\x0fRMMStatusReport\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1a\n" +
 	"\bhostname\x18\x02 \x01(\tR\bhostname\x12=\n" +

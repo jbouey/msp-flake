@@ -20,6 +20,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/osiriscare/agent/internal/healing"
 	"github.com/osiriscare/agent/internal/service"
 	"github.com/osiriscare/agent/internal/transport"
+	"github.com/osiriscare/agent/internal/updater"
 	pb "github.com/osiriscare/agent/proto"
 )
 
@@ -99,6 +101,14 @@ func runAgent(ctx context.Context) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	// Self-update: check if previous update needs confirmation or rollback
+	installDir := filepath.Dir(os.Args[0])
+	if installDir == "." || installDir == "" {
+		installDir = `C:\OsirisCare`
+	}
+	upd := updater.New(cfg.DataDir, installDir, Version, "OsirisCareAgent")
+	upd.CheckRollbackNeeded()
+
 	// DNS SRV discovery if no appliance address configured
 	if cfg.ApplianceAddr == "" {
 		log.Println("[discovery] No appliance address configured, attempting DNS SRV discovery...")
@@ -129,7 +139,7 @@ func runAgent(ctx context.Context) error {
 	// Initialize gRPC transport
 	var grpcClient *transport.GRPCClient
 	if cfg.ApplianceAddr != "" {
-		grpcClient, err = transport.NewGRPCClient(ctx, cfg)
+		grpcClient, err = transport.NewGRPCClient(ctx, cfg, Version)
 		if err != nil {
 			log.Printf("Failed to connect to appliance: %v (will retry)", err)
 		}
@@ -189,9 +199,9 @@ func runAgent(ctx context.Context) error {
 		go runHealExecutor(ctx, grpcClient)
 	}
 
-	// Heartbeat loop
+	// Heartbeat loop (also handles self-update signals)
 	if grpcClient != nil && grpcClient.IsConnected() {
-		go runHeartbeatLoop(ctx, grpcClient)
+		go runHeartbeatLoop(ctx, grpcClient, upd)
 	}
 
 	// Real-time Windows Event Log monitoring
@@ -278,8 +288,9 @@ func runHealExecutor(ctx context.Context, client *transport.GRPCClient) {
 }
 
 // runHeartbeatLoop sends periodic heartbeats to the appliance.
-// Also attempts to re-establish the drift stream if it has disconnected.
-func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient) {
+// Also attempts to re-establish the drift stream if it has disconnected,
+// and triggers self-updates when the appliance signals a new version.
+func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient, upd *updater.Updater) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
@@ -299,6 +310,16 @@ func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient) {
 			}
 			if resp.ConfigChanged {
 				log.Println("[heartbeat] Config changed — re-registration needed")
+			}
+
+			// Self-update check
+			if resp.UpdateAvailable && upd != nil {
+				log.Printf("[heartbeat] Update available: v%s", resp.UpdateVersion)
+				go func() {
+					if err := upd.CheckAndUpdate(ctx, resp.UpdateVersion, resp.UpdateUrl, resp.UpdateSha256); err != nil {
+						log.Printf("[heartbeat] Update failed: %v", err)
+					}
+				}()
 			}
 
 			// Re-establish drift stream if it has disconnected

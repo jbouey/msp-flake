@@ -24,9 +24,6 @@ import (
 	pb "github.com/osiriscare/agent/proto"
 )
 
-// Version is set at build time
-var Version = "0.3.1"
-
 // HealChanSize is the buffer size for the heal command channel
 const HealChanSize = 128
 
@@ -36,6 +33,7 @@ type GRPCClient struct {
 	client     pb.ComplianceAgentClient
 	agentID    string
 	hostname   string
+	version    string // agent version, passed from main
 	connected  bool
 	needsCerts bool // true when no TLS certs present (enrollment needed)
 	mu         sync.RWMutex
@@ -53,8 +51,8 @@ type GRPCClient struct {
 	httpEndpoint string
 }
 
-// NewGRPCClient creates a new gRPC client
-func NewGRPCClient(ctx context.Context, cfg *config.Config) (*GRPCClient, error) {
+// NewGRPCClient creates a new gRPC client. version is the agent's build version.
+func NewGRPCClient(ctx context.Context, cfg *config.Config, version string) (*GRPCClient, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		log.Printf("[gRPC] WARNING: failed to get hostname: %v", err)
@@ -63,6 +61,7 @@ func NewGRPCClient(ctx context.Context, cfg *config.Config) (*GRPCClient, error)
 
 	client := &GRPCClient{
 		hostname:     hostname,
+		version:      version,
 		config:       cfg,
 		httpEndpoint: cfg.HTTPEndpoint,
 		HealCmds:     make(chan *pb.HealCommand, HealChanSize),
@@ -166,7 +165,7 @@ func (c *GRPCClient) Register(ctx context.Context) (*pb.RegisterResponse, error)
 	req := &pb.RegisterRequest{
 		Hostname:          c.hostname,
 		OsVersion:         getOSVersion(),
-		AgentVersion:      Version,
+		AgentVersion:      c.version,
 		MacAddress:        getMACAddress(),
 		NeedsCertificates: c.needsCerts,
 	}
@@ -381,8 +380,9 @@ func (c *GRPCClient) SendHeartbeat(ctx context.Context) (*pb.HeartbeatResponse, 
 	}
 
 	req := &pb.HeartbeatRequest{
-		AgentId:   c.agentID,
-		Timestamp: time.Now().Unix(),
+		AgentId:      c.agentID,
+		Timestamp:    time.Now().Unix(),
+		AgentVersion: c.version,
 	}
 
 	resp, err := c.client.Heartbeat(ctx, req)

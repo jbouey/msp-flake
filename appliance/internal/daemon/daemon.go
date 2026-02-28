@@ -95,6 +95,9 @@ type Daemon struct {
 	// WinRM port cache: probed once per host, 5986 (SSL) preferred, 5985 (HTTP) fallback
 	winrmMu    sync.Mutex
 	winrmCache map[string]winrmSettings
+
+	// Agent binary version cache for self-update endpoint
+	agentVersionCache *agentVersionCache
 }
 
 // isSubscriptionActive returns true if healing should be allowed.
@@ -239,6 +242,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Complete any deferred NixOS rebuild orders from prior restart
 	d.orderProc.CompletePendingRebuild(ctx)
 
+	// Initialize agent version cache (used by both HTTP file server and gRPC heartbeat)
+	agentDir := filepath.Join(d.config.StateDir, "agent")
+	d.agentVersionCache = newAgentVersionCache(agentDir)
+
 	// Start HTTP file server for agent binary distribution.
 	// Domain controllers download the agent binary via Invoke-WebRequest
 	// instead of slow WinRM chunk uploads.
@@ -266,7 +273,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				len(certPEM), len(keyPEM), lanIP)
 		}
 	}
-	d.grpcSrv = grpcserver.NewServer(grpcCfg, d.registry, d.agentCA)
+	d.grpcSrv = grpcserver.NewServer(grpcCfg, d.registry, d.agentCA, d)
 
 	d.wg.Add(1)
 	go func() {
@@ -634,12 +641,15 @@ func (d *Daemon) probeWinRM(hostname string) winrmSettings {
 	return result
 }
 
-// serveAgentFiles serves the agent binary directory over HTTP for DC downloads.
-// Used by the auto-deploy DC proxy path — DC downloads agent binary via
-// Invoke-WebRequest instead of slow WinRM chunk uploads.
+// serveAgentFiles serves the agent binary directory over HTTP for DC downloads
+// and workstation self-updates. Endpoints:
+//   - GET /agent/version.json — version manifest (version, SHA256, size)
+//   - GET /agent/osiris-agent.exe — the agent binary
 func (d *Daemon) serveAgentFiles(ctx context.Context) {
 	agentDir := filepath.Join(d.config.StateDir, "agent")
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("/agent/version.json", d.handleAgentVersion(d.agentVersionCache))
 	mux.Handle("/agent/", http.StripPrefix("/agent/", http.FileServer(http.Dir(agentDir))))
 
 	srv := &http.Server{

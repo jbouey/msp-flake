@@ -113,6 +113,7 @@ message HeartbeatRequest {
   int64 timestamp = 2;
   int32 drift_count = 3;      // Number of drift events since last heartbeat
   int32 healing_count = 4;    // Number of healing attempts
+  string agent_version = 5;   // Current running version (for update decisions)
 }
 
 // HeartbeatResponse can signal config changes and pending commands
@@ -120,6 +121,12 @@ message HeartbeatResponse {
   bool acknowledged = 1;
   bool config_changed = 2;           // If true, agent should re-register
   repeated HealCommand pending_commands = 3;  // Commands queued for this agent
+
+  // Self-update fields
+  bool   update_available = 4;       // True when a newer version exists
+  string update_version   = 5;       // Version string, e.g. "0.4.0"
+  string update_url       = 6;       // HTTP URL to download binary
+  string update_sha256    = 7;       // Hex-encoded SHA256 of binary at update_url
 }
 
 // RMMStatusReport reports detected RMM tools

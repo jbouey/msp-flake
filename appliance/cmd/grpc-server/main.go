@@ -75,7 +75,7 @@ func main() {
 		TLSKeyFile:  *flagTLSKey,
 		CACertFile:  *flagCACert,
 		SiteID:      *flagSiteID,
-	}, registry, agentCA)
+	}, registry, agentCA, nil)
 
 	// Graceful shutdown
 	sigChan := make(chan os.Signal, 1)

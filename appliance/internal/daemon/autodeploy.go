@@ -892,8 +892,18 @@ func (ad *autoDeployer) stageAgentToNETLOGON(ctx context.Context) error {
 	cfg := ad.daemon.config
 	dc := *cfg.DomainController
 
-	if _, done := netlogonStaged.Load(dc); done {
-		return nil
+	// Version-aware guard: re-stage when agent binary version changes
+	currentVersion := readVersionFile(filepath.Join(ad.daemon.config.StateDir, "agent"))
+	if staged, ok := netlogonStaged.Load(dc); ok {
+		if staged.(string) == currentVersion {
+			return nil
+		}
+		log.Printf("[autodeploy] Agent version changed to %s, re-staging to NETLOGON", currentVersion)
+		// Invalidate the binary cache so we re-read from disk
+		ad.mu.Lock()
+		ad.agentLoaded = false
+		ad.agentB64 = ""
+		ad.mu.Unlock()
 	}
 
 	// Make sure the binary exists locally
@@ -970,7 +980,7 @@ try {
 		log.Printf("[autodeploy] Config staging failed (non-fatal): %s", configResult.Error)
 	}
 
-	netlogonStaged.Store(dc, true)
+	netlogonStaged.Store(dc, currentVersion)
 	return nil
 }
 
