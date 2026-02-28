@@ -212,11 +212,23 @@ try {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
 
-    # Only write if script doesn't exist (idempotent)
+    # Write startup script (version-stamped, updated if version changes)
     $scriptPath = "$dir\Setup-WinRM.ps1"
-    if (-not (Test-Path $scriptPath)) {
+    $scriptVersion = "v2"  # Bump this to force re-deploy
+    $needsWrite = $true
+    if (Test-Path $scriptPath) {
+        $existing = Get-Content $scriptPath -Raw -EA SilentlyContinue
+        if ($existing -match "# ScriptVersion: $scriptVersion") { $needsWrite = $false }
+    }
+    if ($needsWrite) {
         $script = @'
+# ScriptVersion: v2
 $ErrorActionPreference = 'SilentlyContinue'
+$logFile = "C:\Windows\Temp\osiris-setup.log"
+$ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+Add-Content $logFile "$ts - Setup-WinRM.ps1 v2 starting"
+
+# Part 1: Enable WinRM and PSRemoting
 Enable-PSRemoting -Force -SkipNetworkProfileCheck
 Set-Item WSMan:\localhost\Service\Auth\Basic $true
 Set-Item WSMan:\localhost\Service\Auth\Negotiate $true
@@ -225,7 +237,37 @@ Set-Item WSMan:\localhost\Service\AllowUnencrypted $true
 Set-Item WSMan:\localhost\Client\TrustedHosts '*' -Force
 netsh advfirewall firewall add rule name="WinRM HTTP" dir=in action=allow protocol=tcp localport=5985
 netsh advfirewall firewall add rule name="DCOM RPC" dir=in action=allow protocol=tcp localport=135
+netsh advfirewall firewall add rule name="SMB" dir=in action=allow protocol=tcp localport=445
 Restart-Service WinRM -Force
+Add-Content $logFile "$ts - WinRM configured"
+
+# Part 2: Deploy OsirisCare Agent from NETLOGON
+$agentDir = "C:\OsirisCare"
+$agentExe = "$agentDir\osiris-agent.exe"
+$configFile = "$agentDir\config.json"
+$svcName = "OsirisCareAgent"
+
+$svc = Get-Service -Name $svcName -EA SilentlyContinue
+if ($svc -and $svc.Status -eq 'Running') {
+    Add-Content $logFile "$ts - Agent already running"
+} else {
+    $netlogonBin = "\\$env:USERDNSDOMAIN\NETLOGON\osiris-agent.exe"
+    $netlogonCfg = "\\$env:USERDNSDOMAIN\NETLOGON\osiris-config.json"
+    if (Test-Path $netlogonBin) {
+        Add-Content $logFile "$ts - Deploying agent from NETLOGON"
+        if (-not (Test-Path $agentDir)) { New-Item -ItemType Directory -Force -Path $agentDir | Out-Null }
+        Copy-Item -Path $netlogonBin -Destination $agentExe -Force
+        if (Test-Path $netlogonCfg) { Copy-Item -Path $netlogonCfg -Destination $configFile -Force }
+        if (-not $svc) {
+            $binPath = ('"' + $agentExe + '" --config "' + $configFile + '"')
+            New-Service -Name $svcName -BinaryPathName $binPath -DisplayName "OsirisCare Agent" -StartupType Automatic -Description "OsirisCare compliance agent" -EA SilentlyContinue
+        }
+        Start-Service -Name $svcName -EA SilentlyContinue
+        Add-Content $logFile "$ts - Agent deployed and started"
+    } else {
+        Add-Content $logFile "$ts - No agent on NETLOGON ($netlogonBin)"
+    }
+}
 '@
         Set-Content -Path $scriptPath -Value $script -Force
         $Result.StartupScript = $true
@@ -903,6 +945,29 @@ try {
 	// Check if the script reported success
 	if strings.Contains(stdout, `"Success":false`) {
 		return fmt.Errorf("NETLOGON stage script error: %s", stdout)
+	}
+
+	// Also stage config.json to NETLOGON so the GPO startup script can use it
+	grpcAddr := ad.daemon.config.GRPCListenAddr()
+	configJSON := fmt.Sprintf(`{"appliance_addr":"%s","check_interval":300,"data_dir":"C:\\ProgramData\\OsirisCare"}`, grpcAddr)
+	configScript := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+try {
+    $netlogon = (Get-SmbShare -Name NETLOGON -ErrorAction Stop).Path
+    $dest = Join-Path $netlogon "osiris-config.json"
+    Set-Content -Path $dest -Value '%s' -Force
+    @{ Success = $true; Path = $dest } | ConvertTo-Json -Compress
+} catch {
+    @{ Success = $false; Error = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+`, strings.ReplaceAll(configJSON, "'", "''"))
+
+	configResult := ad.daemon.winrmExec.Execute(dcTarget, configScript, "NETLOGON-CONFIG", "autodeploy", 30, 1, 15.0, nil)
+	if configResult.Success {
+		configStdout, _ := configResult.Output["std_out"].(string)
+		log.Printf("[autodeploy] Config staged to NETLOGON: %s", configStdout)
+	} else {
+		log.Printf("[autodeploy] Config staging failed (non-fatal): %s", configResult.Error)
 	}
 
 	netlogonStaged.Store(dc, true)
