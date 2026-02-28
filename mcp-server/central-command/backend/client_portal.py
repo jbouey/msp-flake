@@ -480,20 +480,21 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
         site_ids = [s["site_id"] for s in sites]
         if site_ids:
             kpis = await conn.fetchrow("""
-                WITH latest_checks AS (
-                    SELECT DISTINCT ON (cb.site_id, cb.check_type)
-                        cb.site_id, cb.check_type, cb.check_result, cb.checked_at
-                    FROM compliance_bundles cb
+                WITH expanded AS (
+                    SELECT
+                        c->>'status' as check_status
+                    FROM compliance_bundles cb,
+                         jsonb_array_elements(cb.checks) as c
                     WHERE cb.site_id = ANY($1)
                       AND cb.checked_at > NOW() - INTERVAL '24 hours'
-                    ORDER BY cb.site_id, cb.check_type, cb.checked_at DESC
+                      AND jsonb_array_length(cb.checks) > 0
                 )
                 SELECT
-                    COUNT(*) as total_checks,
-                    COUNT(*) FILTER (WHERE check_result = 'pass') as passed,
-                    COUNT(*) FILTER (WHERE check_result = 'fail') as failed,
-                    COUNT(*) FILTER (WHERE check_result = 'warn') as warnings
-                FROM latest_checks
+                    COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total_checks,
+                    COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) as passed,
+                    COUNT(*) FILTER (WHERE check_status IN ('fail', 'non_compliant')) as failed,
+                    COUNT(*) FILTER (WHERE check_status = 'warning') as warnings
+                FROM expanded
             """, site_ids)
         else:
             kpis = {"total_checks": 0, "passed": 0, "failed": 0, "warnings": 0}
@@ -647,16 +648,18 @@ async def get_site_history(
         if not site:
             raise HTTPException(status_code=404, detail="Site not found")
 
-        # Get historical data
+        # Get historical data - expand JSONB checks for accurate per-check scoring
         history = await conn.fetch("""
             SELECT
                 DATE(cb.checked_at) as date,
-                COUNT(*) as total,
-                COUNT(*) FILTER (WHERE cb.check_result = 'pass') as passed,
-                COUNT(*) FILTER (WHERE cb.check_result = 'fail') as failed
-            FROM compliance_bundles cb
+                COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total,
+                COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant')) as passed,
+                COUNT(*) FILTER (WHERE c->>'status' IN ('fail', 'non_compliant')) as failed
+            FROM compliance_bundles cb,
+                 jsonb_array_elements(cb.checks) as c
             WHERE cb.site_id = $1
               AND cb.checked_at > NOW() - INTERVAL '%s days'
+              AND jsonb_array_length(cb.checks) > 0
             GROUP BY DATE(cb.checked_at)
             ORDER BY date DESC
         """ % days, site_id)

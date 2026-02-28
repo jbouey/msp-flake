@@ -882,9 +882,11 @@ async def submit_evidence(
     # Derive check_result from checks if not provided
     if not bundle.check_result and bundle.checks:
         statuses = [c.get("status", "unknown") for c in bundle.checks]
-        if all(s == "pass" for s in statuses):
+        passing = {"pass", "compliant", "warning"}
+        failing = {"fail", "non_compliant"}
+        if all(s in passing for s in statuses):
             bundle.check_result = "pass"
-        elif any(s == "fail" for s in statuses):
+        elif any(s in failing for s in statuses):
             bundle.check_result = "fail"
         else:
             bundle.check_result = "warn"

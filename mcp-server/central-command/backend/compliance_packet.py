@@ -262,8 +262,8 @@ class CompliancePacket:
                       AND jsonb_array_length(cb.checks) > 0
                 )
                 SELECT check_type,
-                       COUNT(*) as total,
-                       COUNT(*) FILTER (WHERE check_status = 'pass') as pass_count
+                       COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total,
+                       COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) as pass_count
                 FROM expanded
                 WHERE check_type IS NOT NULL
                 GROUP BY check_type
@@ -369,16 +369,22 @@ class CompliancePacket:
         return round(row.avg_mttr, 1) if row and row.avg_mttr else 0.0
 
     async def _calculate_backup_success_rate(self) -> float:
-        """Backup pass rate from windows_backup_status checks."""
+        """Backup pass rate from windows_backup_status checks (expanded from JSONB)."""
         result = await self.db.execute(
             text("""
+                WITH expanded AS (
+                    SELECT c->>'status' as check_status
+                    FROM compliance_bundles cb,
+                         jsonb_array_elements(cb.checks) as c
+                    WHERE cb.site_id = :sid
+                      AND cb.checked_at >= :start AND cb.checked_at < :end
+                      AND jsonb_array_length(cb.checks) > 0
+                      AND c->>'check' = 'windows_backup_status'
+                )
                 SELECT
-                    COUNT(*) as total,
-                    COUNT(*) FILTER (WHERE check_result = 'pass') as pass_count
-                FROM compliance_bundles
-                WHERE site_id = :sid
-                  AND checked_at >= :start AND checked_at < :end
-                  AND check_type = 'windows_backup_status'
+                    COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total,
+                    COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) as pass_count
+                FROM expanded
             """),
             {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
         )
@@ -489,19 +495,25 @@ class CompliancePacket:
         return controls
 
     async def _get_backup_summary(self) -> Dict:
-        """Get real backup check results by week."""
+        """Get real backup check results by week (expanded from JSONB)."""
         result = await self.db.execute(
             text("""
+                WITH expanded AS (
+                    SELECT cb.checked_at, c->>'status' as check_status
+                    FROM compliance_bundles cb,
+                         jsonb_array_elements(cb.checks) as c
+                    WHERE cb.site_id = :sid
+                      AND cb.checked_at >= :start AND cb.checked_at < :end
+                      AND jsonb_array_length(cb.checks) > 0
+                      AND c->>'check' = 'windows_backup_status'
+                )
                 SELECT
                     EXTRACT(WEEK FROM checked_at) as week_num,
                     MIN(checked_at::date) as week_start,
-                    COUNT(*) as total,
-                    COUNT(*) FILTER (WHERE check_result = 'pass') as pass_count,
-                    COUNT(*) FILTER (WHERE check_result = 'fail') as fail_count
-                FROM compliance_bundles
-                WHERE site_id = :sid
-                  AND checked_at >= :start AND checked_at < :end
-                  AND check_type = 'windows_backup_status'
+                    COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total,
+                    COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) as pass_count,
+                    COUNT(*) FILTER (WHERE check_status IN ('fail', 'non_compliant')) as fail_count
+                FROM expanded
                 GROUP BY EXTRACT(WEEK FROM checked_at)
                 ORDER BY week_num
             """),

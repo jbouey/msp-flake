@@ -365,11 +365,17 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
     inc_row = inc_row.fetchone()
 
     comp_row = await db.execute(text("""
+        WITH expanded AS (
+            SELECT c->>'status' as check_status
+            FROM compliance_bundles cb,
+                 jsonb_array_elements(cb.checks) as c
+            WHERE cb.created_at > NOW() - INTERVAL '24 hours'
+              AND jsonb_array_length(cb.checks) > 0
+        )
         SELECT
-            COUNT(*) FILTER (WHERE check_result = 'pass') as passed,
-            COUNT(*) as total
-        FROM compliance_bundles
-        WHERE created_at > NOW() - INTERVAL '24 hours'
+            COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) as passed,
+            COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total
+        FROM expanded
     """))
     comp_row = comp_row.fetchone()
 

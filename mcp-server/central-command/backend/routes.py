@@ -1348,22 +1348,26 @@ async def get_fleet_posture(db: AsyncSession = Depends(get_db)):
                 SELECT
                     cb.site_id,
                     ROUND(
-                        COUNT(*) FILTER (WHERE cb.check_result = 'pass')::numeric /
-                        NULLIF(COUNT(*)::numeric, 0) * 100, 1
+                        COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant'))::numeric /
+                        NULLIF(COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning'))::numeric, 0) * 100, 1
                     ) as compliance_score
-                FROM compliance_bundles cb
+                FROM compliance_bundles cb,
+                     jsonb_array_elements(cb.checks) as c
                 WHERE cb.created_at > NOW() - INTERVAL '24 hours'
+                  AND jsonb_array_length(cb.checks) > 0
                 GROUP BY cb.site_id
             ),
             site_compliance_prev AS (
                 SELECT
                     cb.site_id,
                     ROUND(
-                        COUNT(*) FILTER (WHERE cb.check_result = 'pass')::numeric /
-                        NULLIF(COUNT(*)::numeric, 0) * 100, 1
+                        COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant'))::numeric /
+                        NULLIF(COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning'))::numeric, 0) * 100, 1
                     ) as prev_score
-                FROM compliance_bundles cb
+                FROM compliance_bundles cb,
+                     jsonb_array_elements(cb.checks) as c
                 WHERE cb.created_at BETWEEN NOW() - INTERVAL '48 hours' AND NOW() - INTERVAL '24 hours'
+                  AND jsonb_array_length(cb.checks) > 0
                 GROUP BY cb.site_id
             )
             SELECT
@@ -1703,14 +1707,20 @@ async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db)):
     """), {"site_id": site_id})
     inc_row = incident_result.fetchone()
 
-    # Calculate compliance score from compliance bundles
+    # Calculate compliance score from individual checks within bundles
     compliance_result = await db.execute(text("""
+        WITH expanded AS (
+            SELECT c->>'status' as check_status
+            FROM compliance_bundles cb,
+                 jsonb_array_elements(cb.checks) as c
+            WHERE cb.site_id = :site_id
+              AND cb.created_at > NOW() - INTERVAL '24 hours'
+              AND jsonb_array_length(cb.checks) > 0
+        )
         SELECT
-            COUNT(*) FILTER (WHERE check_result = 'pass') as passed,
-            COUNT(*) as total
-        FROM compliance_bundles
-        WHERE site_id = :site_id
-          AND created_at > NOW() - INTERVAL '24 hours'
+            COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) as passed,
+            COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total
+        FROM expanded
     """), {"site_id": site_id})
     comp_row = compliance_result.fetchone()
     compliance_score = round((comp_row.passed or 0) / max(comp_row.total or 1, 1) * 100, 1)
