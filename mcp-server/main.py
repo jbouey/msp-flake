@@ -1351,20 +1351,29 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     
     client_ip = request.client.host if request.client else None
     
-    # Get appliance
+    # Get appliance UUID (for FK in orders table) and canonical ID (for signing)
     result = await db.execute(
         text("SELECT id FROM appliances WHERE site_id = :site_id"),
         {"site_id": incident.site_id}
     )
     appliance = result.fetchone()
-    
+
     if not appliance:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Appliance not registered: {incident.site_id}"
         )
-    
-    appliance_id = str(appliance[0])
+
+    appliance_id = str(appliance[0])  # UUID for orders.appliance_id FK
+
+    # Get canonical appliance_id (site_id + MAC) for order signing.
+    # The Go daemon verifies target_appliance_id against its canonical ID.
+    canonical_result = await db.execute(
+        text("SELECT appliance_id FROM site_appliances WHERE site_id = :site_id ORDER BY last_checkin DESC NULLS LAST LIMIT 1"),
+        {"site_id": incident.site_id}
+    )
+    canonical_row = canonical_result.fetchone()
+    canonical_appliance_id = canonical_row[0] if canonical_row else appliance_id
     now = datetime.now(timezone.utc)
 
     # Deduplicate: Check for existing incident of same type (open OR recently resolved)
@@ -1514,7 +1523,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             "nonce": nonce,
             "issued_at": now.isoformat(),
             "expires_at": expires_at.isoformat(),
-            "target_appliance_id": appliance_id,
+            "target_appliance_id": canonical_appliance_id,
         }, sort_keys=True)
         
         signature = sign_data(order_payload)
@@ -1627,7 +1636,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                         "nonce": nonce,
                         "issued_at": now.isoformat(),
                         "expires_at": expires_at.isoformat(),
-                        "target_appliance_id": appliance_id,
+                        "target_appliance_id": canonical_appliance_id,
                     }, sort_keys=True)
 
                     signature = sign_data(order_payload)

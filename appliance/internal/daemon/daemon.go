@@ -383,6 +383,20 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		req = SystemInfo(d.config, Version)
 	}
 
+	// Include connected Go agent data for sync to Central Command
+	if agents := d.registry.AllAgents(); len(agents) > 0 {
+		for _, a := range agents {
+			req.ConnectedAgents = append(req.ConnectedAgents, ConnectedAgent{
+				AgentID:       a.AgentID,
+				Hostname:      a.Hostname,
+				Tier:          int(a.Tier),
+				ConnectedAt:   a.ConnectedAt.UTC().Format(time.RFC3339),
+				LastHeartbeat: a.LastHeartbeat.UTC().Format(time.RFC3339),
+				DriftCount:    a.DriftCount.Load(),
+			})
+		}
+	}
+
 	resp, err := d.phoneCli.Checkin(ctx, req)
 	if err != nil {
 		log.Printf("[daemon] Checkin failed (%s): %v", classifyConnectivityError(err), err)

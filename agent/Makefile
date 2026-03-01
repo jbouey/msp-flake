@@ -1,8 +1,9 @@
 .PHONY: all proto build-linux build-windows clean test fmt vet
 
-VERSION := 0.3.0
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.3.0")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)"
 
 all: fmt vet build-linux build-windows
 

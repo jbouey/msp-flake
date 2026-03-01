@@ -40,15 +40,27 @@ func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 
 // CheckinRequest is the payload sent to Central Command.
 type CheckinRequest struct {
-	SiteID              string   `json:"site_id"`
-	Hostname            string   `json:"hostname"`
-	MACAddress          string   `json:"mac_address"`
-	IPAddresses         []string `json:"ip_addresses"`
-	UptimeSeconds       int      `json:"uptime_seconds"`
-	AgentVersion        string   `json:"agent_version"`
-	NixOSVersion        string   `json:"nixos_version"`
-	HasLocalCredentials bool     `json:"has_local_credentials"`
-	AgentPublicKey      string   `json:"agent_public_key,omitempty"`
+	SiteID              string           `json:"site_id"`
+	Hostname            string           `json:"hostname"`
+	MACAddress          string           `json:"mac_address"`
+	IPAddresses         []string         `json:"ip_addresses"`
+	UptimeSeconds       int              `json:"uptime_seconds"`
+	AgentVersion        string           `json:"agent_version"`
+	NixOSVersion        string           `json:"nixos_version"`
+	HasLocalCredentials bool             `json:"has_local_credentials"`
+	AgentPublicKey      string           `json:"agent_public_key,omitempty"`
+	ConnectedAgents     []ConnectedAgent `json:"connected_agents,omitempty"`
+}
+
+// ConnectedAgent represents a Go agent connected to this appliance via gRPC.
+type ConnectedAgent struct {
+	AgentID       string `json:"agent_id"`
+	Hostname      string `json:"hostname"`
+	AgentVersion  string `json:"agent_version,omitempty"`
+	Tier          int    `json:"capability_tier"`
+	ConnectedAt   string `json:"connected_at"`
+	LastHeartbeat string `json:"last_heartbeat"`
+	DriftCount    int64  `json:"drift_count"`
 }
 
 // CheckinResponse is what Central Command returns.

@@ -36,8 +36,9 @@ import (
 )
 
 var (
-	Version   = "0.3.0"
+	Version   = "dev"
 	BuildTime = "unknown"
+	GitCommit = "unknown"
 )
 
 // Command-line flags (parsed before SCM detection)
@@ -52,12 +53,12 @@ func main() {
 	flag.Parse()
 
 	if *flagVersion {
-		fmt.Printf("osiris-agent %s (built %s)\n", Version, BuildTime)
+		fmt.Printf("osiris-agent %s (%s, built %s)\n", Version, GitCommit, BuildTime)
 		os.Exit(0)
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Printf("OsirisCare Agent v%s starting...", Version)
+	log.Printf("OsirisCare Agent v%s (%s) starting...", Version, GitCommit)
 
 	// Dry run: always interactive
 	if *flagDryRun {
