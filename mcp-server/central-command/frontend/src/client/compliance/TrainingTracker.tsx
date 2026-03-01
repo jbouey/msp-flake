@@ -49,11 +49,16 @@ export const TrainingTracker: React.FC<TrainingTrackerProps> = ({ apiBase = '/ap
   const save = async () => {
     const method = editId ? 'PUT' : 'POST';
     const url = editId ? `${apiBase}/training/${editId}` : `${apiBase}/training`;
-    await fetch(url, {
+    const res = await fetch(url, {
       method, credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     });
+    if (!res.ok) {
+      const err = await res.text().catch(() => 'Unknown error');
+      alert(`Failed to save training record: ${err}`);
+      return;
+    }
     setShowForm(false); setEditId(null); setForm(EMPTY);
     await fetchRecords();
   };

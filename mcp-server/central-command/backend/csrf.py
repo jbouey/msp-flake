@@ -99,6 +99,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/agent/",           # Agent sync endpoints use API-key auth
         "/api/partners/auth/",   # Partner login/logout
         "/api/client/",          # Client portal — separate session cookie auth
+        "/api/companion/",       # Companion portal — separate session cookie auth
         "/api/portal/",          # Portal uses magic links, not cookies
         "/api/fleet/",           # Fleet updates - admin auth protected
         "/api/orders/",          # Order acknowledgement from appliances
