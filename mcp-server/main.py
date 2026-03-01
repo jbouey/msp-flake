@@ -907,6 +907,10 @@ async def lifespan(app: FastAPI):
     # Start flywheel promotion scanner (every 30 min)
     flywheel_task = asyncio.create_task(_flywheel_promotion_loop())
 
+    # Start companion compliance alert check (every 6h)
+    from dashboard_api.companion import companion_alert_check_loop
+    companion_alert_task = asyncio.create_task(companion_alert_check_loop())
+
     yield
 
     # Shutdown
@@ -916,6 +920,7 @@ async def lifespan(app: FastAPI):
     cve_watch_task.cancel()
     framework_sync_task.cancel()
     flywheel_task.cancel()
+    companion_alert_task.cancel()
     try:
         await asyncio.wait_for(asyncio.shield(ots_upgrade_task), timeout=10)
     except (asyncio.CancelledError, asyncio.TimeoutError):
@@ -934,6 +939,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await asyncio.wait_for(asyncio.shield(flywheel_task), timeout=5)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    try:
+        await asyncio.wait_for(asyncio.shield(companion_alert_task), timeout=5)
     except (asyncio.CancelledError, asyncio.TimeoutError):
         pass
     if redis_client:

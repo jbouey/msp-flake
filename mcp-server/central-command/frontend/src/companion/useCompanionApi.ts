@@ -126,6 +126,63 @@ export function useDeleteNote() {
 }
 
 // =============================================================================
+// Alerts
+// =============================================================================
+
+export function useCompanionAlerts(orgId: string | undefined, moduleKey?: string) {
+  const params = moduleKey ? `?module_key=${moduleKey}` : '';
+  return useQuery({
+    queryKey: ['companion', 'alerts', orgId, moduleKey],
+    queryFn: () => fetchJson(`${BASE}/clients/${orgId}/alerts${params}`),
+    enabled: !!orgId,
+    staleTime: 30_000,
+  });
+}
+
+export function useCompanionAlertSummary() {
+  return useQuery({
+    queryKey: ['companion', 'alerts', 'summary'],
+    queryFn: () => fetchJson(`${BASE}/alerts/summary`),
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateAlert(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (alert: { module_key: string; expected_status: string; target_date: string; description?: string }) =>
+      postJson(`${BASE}/clients/${orgId}/alerts`, alert),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['companion', 'alerts', orgId] });
+      qc.invalidateQueries({ queryKey: ['companion', 'alerts', 'summary'] });
+    },
+  });
+}
+
+export function useUpdateAlert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ alertId, ...data }: { alertId: string; expected_status?: string; target_date?: string; description?: string; status?: string }) =>
+      putJson(`${BASE}/alerts/${alertId}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['companion', 'alerts'] });
+      qc.invalidateQueries({ queryKey: ['companion', 'alerts', 'summary'] });
+    },
+  });
+}
+
+export function useDeleteAlert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (alertId: string) => deleteReq(`${BASE}/alerts/${alertId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['companion', 'alerts'] });
+      qc.invalidateQueries({ queryKey: ['companion', 'alerts', 'summary'] });
+    },
+  });
+}
+
+// =============================================================================
 // Activity
 // =============================================================================
 

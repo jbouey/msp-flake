@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useCompanionClients } from './useCompanionApi';
+import { useCompanionClients, useCompanionAlertSummary } from './useCompanionApi';
 import { companionColors, MODULE_DEFS } from './companion-tokens';
 import { Spinner } from '../components/shared';
 
@@ -52,8 +52,15 @@ const statusColor: Record<string, string> = {
 
 export const CompanionClientList: React.FC = () => {
   const { data, isLoading } = useCompanionClients();
+  const { data: alertSummaryData } = useCompanionAlertSummary();
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
+
+  // Map alert counts by org_id
+  const alertCounts: Record<string, { active: number; triggered: number }> = {};
+  for (const s of (alertSummaryData?.summary || [])) {
+    alertCounts[s.org_id] = { active: s.active_count || 0, triggered: s.triggered_count || 0 };
+  }
 
   const clients = (data?.clients || []).filter((c: any) =>
     !search || c.name.toLowerCase().includes(search.toLowerCase())
@@ -112,9 +119,19 @@ export const CompanionClientList: React.FC = () => {
               >
                 <div className="flex items-start justify-between mb-3">
                   <div>
-                    <h3 className="font-semibold text-base" style={{ color: companionColors.textPrimary }}>
-                      {client.name}
-                    </h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-base" style={{ color: companionColors.textPrimary }}>
+                        {client.name}
+                      </h3>
+                      {(alertCounts[client.id]?.triggered || 0) > 0 && (
+                        <span
+                          className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                          style={{ background: companionColors.actionNeeded, color: 'white' }}
+                        >
+                          {alertCounts[client.id].triggered} overdue
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs mt-0.5" style={{ color: companionColors.textTertiary }}>
                       {client.practice_type || 'Healthcare Practice'}
                       {client.provider_count ? ` \u00b7 ${client.provider_count} provider${client.provider_count > 1 ? 's' : ''}` : ''}

@@ -8,6 +8,7 @@ Companion users have cross-org visibility — they can access any client org's
 HIPAA modules. Auth: require_companion (companion + admin roles).
 """
 
+import asyncio
 import logging
 import uuid as _uuid
 from datetime import datetime, timezone, date
@@ -34,6 +35,26 @@ from .hipaa_templates import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/companion", tags=["companion"])
+
+VALID_MODULE_KEYS = {
+    "sra", "policies", "training", "baas", "ir-plan",
+    "contingency", "workforce", "physical", "officers", "gap-analysis",
+}
+
+MODULE_LABELS = {
+    "sra": "Security Risk Assessment",
+    "policies": "Policy Library",
+    "training": "Training Tracker",
+    "baas": "BAA Inventory",
+    "ir-plan": "Incident Response Plan",
+    "contingency": "Contingency / DR Plans",
+    "workforce": "Workforce Access",
+    "physical": "Physical Safeguards",
+    "officers": "Officer Designation",
+    "gap-analysis": "Gap Analysis",
+}
+
+STATUS_RANK = {"not_started": 0, "action_needed": 1, "in_progress": 1, "complete": 2}
 
 
 # =============================================================================
@@ -1009,6 +1030,359 @@ async def delete_note(note_id: str, request: Request, user: dict = Depends(requi
         await conn.execute("DELETE FROM companion_notes WHERE id = $1", _uid(note_id))
     await _log_activity(pool, user["id"], row["org_id"], "deleted_note", row["module_key"], ip=request.client.host if request.client else None)
     return {"deleted": True}
+
+
+# =============================================================================
+# COMPANION ALERTS
+# =============================================================================
+
+def _evaluate_module_status(overview: dict) -> dict:
+    """Python mirror of frontend getModuleStatusFromOverview().
+
+    Returns {module_key: status_string} where status is one of:
+    'complete', 'in_progress', 'action_needed', 'not_started'.
+    """
+    m = {}
+
+    sra = overview.get("sra", {})
+    if sra.get("status") == "completed":
+        m["sra"] = "complete"
+    elif sra.get("status") == "in_progress":
+        m["sra"] = "in_progress"
+    else:
+        m["sra"] = "not_started"
+
+    p = overview.get("policies", {})
+    if (p.get("review_due") or 0) > 0:
+        m["policies"] = "action_needed"
+    elif (p.get("active") or 0) > 0:
+        m["policies"] = "complete"
+    elif (p.get("total") or 0) > 0:
+        m["policies"] = "in_progress"
+    else:
+        m["policies"] = "not_started"
+
+    t = overview.get("training", {})
+    if (t.get("overdue") or 0) > 0:
+        m["training"] = "action_needed"
+    elif (t.get("compliant") or 0) > 0:
+        m["training"] = "complete"
+    elif (t.get("total_employees") or 0) > 0:
+        m["training"] = "in_progress"
+    else:
+        m["training"] = "not_started"
+
+    b = overview.get("baas", {})
+    if (b.get("expiring_soon") or 0) > 0:
+        m["baas"] = "action_needed"
+    elif (b.get("active") or 0) > 0:
+        m["baas"] = "complete"
+    else:
+        m["baas"] = "not_started"
+
+    ir = overview.get("ir_plan", {})
+    if ir.get("status") == "active":
+        m["ir-plan"] = "complete"
+    elif ir.get("status") not in (None, "not_started"):
+        m["ir-plan"] = "in_progress"
+    else:
+        m["ir-plan"] = "not_started"
+
+    c = overview.get("contingency", {})
+    if (c.get("plans") or 0) > 0:
+        m["contingency"] = "complete" if c.get("all_tested") else "in_progress"
+    else:
+        m["contingency"] = "not_started"
+
+    w = overview.get("workforce", {})
+    if (w.get("pending_termination") or 0) > 0:
+        m["workforce"] = "action_needed"
+    elif (w.get("active") or 0) > 0:
+        m["workforce"] = "complete"
+    else:
+        m["workforce"] = "not_started"
+
+    ph = overview.get("physical", {})
+    if (ph.get("gaps") or 0) > 0:
+        m["physical"] = "action_needed"
+    elif (ph.get("assessed") or 0) > 0:
+        m["physical"] = "complete"
+    else:
+        m["physical"] = "not_started"
+
+    off = overview.get("officers", {})
+    has_priv = bool(off.get("privacy_officer"))
+    has_sec = bool(off.get("security_officer"))
+    if has_priv and has_sec:
+        m["officers"] = "complete"
+    elif has_priv or has_sec:
+        m["officers"] = "in_progress"
+    else:
+        m["officers"] = "not_started"
+
+    gap_pct = overview.get("gap_analysis", {}).get("completion") or 0
+    if gap_pct >= 90:
+        m["gap-analysis"] = "complete"
+    elif gap_pct > 0:
+        m["gap-analysis"] = "in_progress"
+    else:
+        m["gap-analysis"] = "not_started"
+
+    return m
+
+
+class AlertCreate(BaseModel):
+    module_key: str
+    expected_status: str
+    target_date: str
+    description: Optional[str] = None
+
+class AlertUpdate(BaseModel):
+    expected_status: Optional[str] = None
+    target_date: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+
+
+@router.get("/clients/{org_id}/alerts")
+async def list_alerts(
+    org_id: str,
+    module_key: Optional[str] = None,
+    user: dict = Depends(require_companion),
+):
+    pool = await get_pool()
+    await _verify_org(pool, _uid(org_id))
+    async with pool.acquire() as conn:
+        if module_key:
+            rows = await conn.fetch("""
+                SELECT ca.*, au.display_name as companion_name
+                FROM companion_alerts ca
+                JOIN admin_users au ON au.id = ca.companion_user_id
+                WHERE ca.org_id = $1 AND ca.module_key = $2
+                ORDER BY ca.target_date ASC
+            """, _uid(org_id), module_key)
+        else:
+            rows = await conn.fetch("""
+                SELECT ca.*, au.display_name as companion_name
+                FROM companion_alerts ca
+                JOIN admin_users au ON au.id = ca.companion_user_id
+                WHERE ca.org_id = $1
+                ORDER BY ca.target_date ASC
+            """, _uid(org_id))
+    return {"alerts": _rows_list(rows)}
+
+
+@router.post("/clients/{org_id}/alerts")
+async def create_alert(
+    org_id: str, body: AlertCreate, request: Request,
+    user: dict = Depends(require_companion),
+):
+    if body.module_key not in VALID_MODULE_KEYS:
+        raise HTTPException(status_code=400, detail=f"Invalid module_key: {body.module_key}")
+    if body.expected_status not in STATUS_RANK:
+        raise HTTPException(status_code=400, detail=f"Invalid expected_status: {body.expected_status}")
+    pool = await get_pool()
+    await _verify_org(pool, _uid(org_id))
+    td = _parse_date(body.target_date)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            INSERT INTO companion_alerts
+                (companion_user_id, org_id, module_key, expected_status, target_date, description)
+            VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+        """, _uid(user["id"]), _uid(org_id), body.module_key,
+             body.expected_status, td, body.description)
+    await _log_activity(pool, user["id"], _uid(org_id), "created_alert", body.module_key,
+                        ip=request.client.host if request.client else None)
+    return _row_dict(row)
+
+
+@router.put("/alerts/{alert_id}")
+async def update_alert(
+    alert_id: str, body: AlertUpdate, request: Request,
+    user: dict = Depends(require_companion),
+):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        existing = await conn.fetchrow(
+            "SELECT * FROM companion_alerts WHERE id = $1 AND companion_user_id = $2",
+            _uid(alert_id), _uid(user["id"]))
+        if not existing:
+            raise HTTPException(status_code=404, detail="Alert not found or not yours")
+
+        updates = []
+        params = [_uid(alert_id)]
+        idx = 2
+
+        if body.expected_status is not None:
+            if body.expected_status not in STATUS_RANK:
+                raise HTTPException(status_code=400, detail=f"Invalid expected_status")
+            updates.append(f"expected_status = ${idx}")
+            params.append(body.expected_status)
+            idx += 1
+        if body.target_date is not None:
+            updates.append(f"target_date = ${idx}")
+            params.append(_parse_date(body.target_date))
+            idx += 1
+        if body.description is not None:
+            updates.append(f"description = ${idx}")
+            params.append(body.description)
+            idx += 1
+        if body.status is not None:
+            if body.status not in ("active", "dismissed"):
+                raise HTTPException(status_code=400, detail="Can only set status to 'active' or 'dismissed'")
+            updates.append(f"status = ${idx}")
+            params.append(body.status)
+            idx += 1
+            if body.status == "dismissed":
+                updates.append(f"resolved_at = ${idx}")
+                params.append(datetime.now(timezone.utc))
+                idx += 1
+
+        if not updates:
+            return _row_dict(existing)
+
+        updates.append("updated_at = NOW()")
+        sql = f"UPDATE companion_alerts SET {', '.join(updates)} WHERE id = $1 RETURNING *"
+        row = await conn.fetchrow(sql, *params)
+
+    await _log_activity(pool, user["id"], existing["org_id"], "updated_alert",
+                        existing["module_key"], ip=request.client.host if request.client else None)
+    return _row_dict(row)
+
+
+@router.delete("/alerts/{alert_id}")
+async def delete_alert(alert_id: str, request: Request, user: dict = Depends(require_companion)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT org_id, module_key FROM companion_alerts WHERE id = $1 AND companion_user_id = $2",
+            _uid(alert_id), _uid(user["id"]))
+        if not row:
+            raise HTTPException(status_code=404, detail="Alert not found or not yours")
+        await conn.execute("DELETE FROM companion_alerts WHERE id = $1", _uid(alert_id))
+    await _log_activity(pool, user["id"], row["org_id"], "deleted_alert",
+                        row["module_key"], ip=request.client.host if request.client else None)
+    return {"deleted": True}
+
+
+@router.get("/alerts/summary")
+async def alert_summary(user: dict = Depends(require_companion)):
+    """Cross-client alert counts for the companion dashboard."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT ca.org_id, co.name as org_name,
+                   COUNT(*) FILTER (WHERE ca.status = 'active') as active_count,
+                   COUNT(*) FILTER (WHERE ca.status = 'triggered') as triggered_count
+            FROM companion_alerts ca
+            JOIN client_orgs co ON co.id = ca.org_id
+            WHERE ca.status IN ('active', 'triggered')
+            GROUP BY ca.org_id, co.name
+            ORDER BY triggered_count DESC, active_count DESC
+        """)
+    return {"summary": _rows_list(rows)}
+
+
+async def companion_alert_check_loop():
+    """Background loop: evaluate active alerts every 6 hours."""
+    from .email_alerts import send_companion_alert_email
+
+    await asyncio.sleep(30)  # let startup finish
+    while True:
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                alerts = await conn.fetch("""
+                    SELECT ca.*, au.email as companion_email, au.display_name as companion_name,
+                           co.name as org_name
+                    FROM companion_alerts ca
+                    JOIN admin_users au ON au.id = ca.companion_user_id
+                    JOIN client_orgs co ON co.id = ca.org_id
+                    WHERE ca.status IN ('active', 'triggered')
+                """)
+
+            # Group alerts by org to batch overview computation
+            by_org = {}
+            for a in alerts:
+                oid = str(a["org_id"])
+                by_org.setdefault(oid, []).append(a)
+
+            now = datetime.now(timezone.utc)
+            today = now.date()
+
+            for org_id, org_alerts in by_org.items():
+                try:
+                    async with pool.acquire() as conn:
+                        overview = await _compute_overview(conn, org_id)
+                    statuses = _evaluate_module_status(overview)
+
+                    for alert in org_alerts:
+                        mk = alert["module_key"]
+                        current = statuses.get(mk, "not_started")
+                        expected = alert["expected_status"]
+                        target = alert["target_date"]
+
+                        current_rank = STATUS_RANK.get(current, 0)
+                        expected_rank = STATUS_RANK.get(expected, 0)
+
+                        if current_rank >= expected_rank:
+                            # Module met or exceeded expected status — resolve
+                            if alert["status"] != "resolved":
+                                async with pool.acquire() as conn:
+                                    await conn.execute("""
+                                        UPDATE companion_alerts
+                                        SET status = 'resolved', resolved_at = $2, updated_at = NOW()
+                                        WHERE id = $1
+                                    """, alert["id"], now)
+                                logger.info(f"[alerts] Resolved: {mk} for {alert['org_name']}")
+                        elif target <= today and alert["status"] == "active":
+                            # Deadline passed, module not at expected status — trigger
+                            async with pool.acquire() as conn:
+                                await conn.execute("""
+                                    UPDATE companion_alerts
+                                    SET status = 'triggered', triggered_at = $2, updated_at = NOW()
+                                    WHERE id = $1
+                                """, alert["id"], now)
+                            logger.info(f"[alerts] Triggered: {mk} for {alert['org_name']}")
+
+                        # Send email for triggered alerts (24h dedup)
+                        should_notify = (
+                            (alert["status"] == "triggered" or (target <= today and current_rank < expected_rank))
+                            and alert.get("companion_email")
+                            and (alert["last_notified_at"] is None
+                                 or (now - alert["last_notified_at"]).total_seconds() > 86400)
+                        )
+                        if should_notify:
+                            try:
+                                label = MODULE_LABELS.get(mk, mk)
+                                await send_companion_alert_email(
+                                    to_email=alert["companion_email"],
+                                    companion_name=alert["companion_name"] or "Companion",
+                                    org_name=alert["org_name"],
+                                    module_label=label,
+                                    expected_status=expected,
+                                    current_status=current,
+                                    target_date=str(target),
+                                    description=alert.get("description"),
+                                )
+                                async with pool.acquire() as conn:
+                                    await conn.execute("""
+                                        UPDATE companion_alerts
+                                        SET last_notified_at = $2,
+                                            notification_count = notification_count + 1,
+                                            updated_at = NOW()
+                                        WHERE id = $1
+                                    """, alert["id"], now)
+                                logger.info(f"[alerts] Notified {alert['companion_email']} about {mk}/{alert['org_name']}")
+                            except Exception as e:
+                                logger.error(f"[alerts] Failed to send email: {e}")
+                except Exception as e:
+                    logger.error(f"[alerts] Error processing org {org_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"[alerts] Background loop error: {e}")
+
+        await asyncio.sleep(6 * 3600)  # 6 hours
 
 
 # =============================================================================

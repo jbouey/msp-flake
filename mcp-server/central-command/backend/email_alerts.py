@@ -408,3 +408,142 @@ async def create_notification_with_email(
         )
 
     return notification_id
+
+
+async def send_companion_alert_email(
+    to_email: str,
+    companion_name: str,
+    org_name: str,
+    module_label: str,
+    expected_status: str,
+    current_status: str,
+    target_date: str,
+    description: str = None,
+) -> bool:
+    """Send a compliance alert email to a companion user.
+
+    Uses teal branding to match the companion portal aesthetic.
+    """
+    if not is_email_configured():
+        logger.warning("Email not configured - skipping companion alert email")
+        return False
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"[OsirisCare] Compliance Alert: {module_label} overdue for {org_name}"
+        msg["From"] = SMTP_FROM
+        msg["To"] = to_email
+
+        desc_line = f"\nNote: {description}" if description else ""
+
+        text_content = f"""HIPAA Compliance Alert - OsirisCare
+{'=' * 40}
+
+Hi {companion_name},
+
+The following compliance module has not met its expected status by the target date:
+
+  Client:          {org_name}
+  Module:          {module_label}
+  Expected Status: {expected_status.replace('_', ' ').title()}
+  Current Status:  {current_status.replace('_', ' ').title()}
+  Target Date:     {target_date}{desc_line}
+
+Please review this client's progress in the Companion Portal.
+
+---
+This is an automated alert from OsirisCare Central Command.
+https://dashboard.osiriscare.net/companion
+"""
+
+        desc_html = ""
+        if description:
+            desc_html = f"""
+            <div class="field">
+                <div class="field-label">Note</div>
+                <div class="field-value">{_escape_html(description)}</div>
+            </div>"""
+
+        html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #0D7377, #095456); color: white; padding: 20px; border-radius: 8px 8px 0 0; }}
+        .header h1 {{ margin: 0; font-size: 22px; }}
+        .header .badge {{ display: inline-block; background: rgba(255,255,255,0.2); padding: 2px 10px; border-radius: 12px; font-size: 13px; margin-top: 6px; }}
+        .content {{ background: #FAFAF8; padding: 20px; border: 1px solid #E8E5E1; }}
+        .field {{ margin-bottom: 12px; }}
+        .field-label {{ font-weight: 600; color: #6B6B66; font-size: 12px; text-transform: uppercase; }}
+        .field-value {{ color: #1A1A18; }}
+        .status-box {{ display: flex; gap: 24px; background: white; padding: 16px; border-radius: 8px; margin-top: 16px; border: 1px solid #E8E5E1; }}
+        .status-item {{ text-align: center; }}
+        .status-label {{ font-size: 11px; color: #6B6B66; text-transform: uppercase; font-weight: 600; }}
+        .status-expected {{ font-size: 16px; font-weight: 600; color: #2D8A4E; }}
+        .status-current {{ font-size: 16px; font-weight: 600; color: #DC2626; }}
+        .footer {{ padding: 16px 20px; background: #F5F3F0; border-radius: 0 0 8px 8px; font-size: 12px; color: #6B6B66; }}
+        .button {{ display: inline-block; background: #0D7377; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; margin-top: 16px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Compliance Alert</h1>
+            <span class="badge">Overdue</span>
+        </div>
+        <div class="content">
+            <p style="margin:0 0 16px;color:#1A1A18;">Hi {_escape_html(companion_name)},</p>
+            <p style="margin:0 0 16px;color:#6B6B66;">A compliance module has not reached its expected status by the target date.</p>
+
+            <div class="field">
+                <div class="field-label">Client</div>
+                <div class="field-value" style="font-size:16px;font-weight:600;">{_escape_html(org_name)}</div>
+            </div>
+            <div class="field">
+                <div class="field-label">Module</div>
+                <div class="field-value">{_escape_html(module_label)}</div>
+            </div>
+            <div class="field">
+                <div class="field-label">Target Date</div>
+                <div class="field-value">{_escape_html(target_date)}</div>
+            </div>{desc_html}
+
+            <div class="status-box">
+                <div class="status-item" style="flex:1;">
+                    <div class="status-label">Expected</div>
+                    <div class="status-expected">{_escape_html(expected_status.replace('_', ' ').title())}</div>
+                </div>
+                <div class="status-item" style="flex:1;">
+                    <div class="status-label">Current</div>
+                    <div class="status-current">{_escape_html(current_status.replace('_', ' ').title())}</div>
+                </div>
+            </div>
+
+            <a href="https://dashboard.osiriscare.net/companion" class="button">Open Companion Portal</a>
+        </div>
+        <div class="footer">
+            This is an automated alert from OsirisCare Central Command.<br>
+            <a href="https://dashboard.osiriscare.net/companion" style="color:#0D7377;">dashboard.osiriscare.net/companion</a>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+        msg.attach(MIMEText(text_content, "plain"))
+        msg.attach(MIMEText(html_content, "html"))
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls(context=context)
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM, to_email, msg.as_string())
+
+        logger.info(f"Companion alert email sent to {to_email}: {module_label} / {org_name}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send companion alert email: {e}")
+        return False

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useCompanionClientOverview, useCompanionNotes, useClientActivity } from './useCompanionApi';
+import { useCompanionClientOverview, useCompanionNotes, useClientActivity, useCompanionAlerts, useUpdateAlert } from './useCompanionApi';
 import { companionColors, MODULE_DEFS } from './companion-tokens';
 import { Spinner } from '../components/shared';
 
@@ -104,6 +104,8 @@ export const CompanionClientDetail: React.FC = () => {
   const { data: overviewData, isLoading } = useCompanionClientOverview(orgId);
   const { data: notesData } = useCompanionNotes(orgId);
   const { data: activityData } = useClientActivity(orgId, 10);
+  const { data: alertsData } = useCompanionAlerts(orgId);
+  const updateAlert = useUpdateAlert();
 
   if (isLoading || !overviewData) {
     return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
@@ -113,6 +115,15 @@ export const CompanionClientDetail: React.FC = () => {
   const readiness = overviewData.overall_readiness || 0;
   const notes = notesData?.notes || [];
   const activity = activityData?.activity || [];
+  const alerts = alertsData?.alerts || [];
+
+  // Map alerts by module_key for the module grid indicators
+  const alertsByModule: Record<string, any[]> = {};
+  for (const a of alerts) {
+    alertsByModule[a.module_key] = alertsByModule[a.module_key] || [];
+    alertsByModule[a.module_key].push(a);
+  }
+  const activeAlerts = alerts.filter((a: any) => a.status === 'active' || a.status === 'triggered');
 
   return (
     <div className="flex gap-6">
@@ -212,9 +223,19 @@ export const CompanionClientDetail: React.FC = () => {
               <button
                 key={mod.key}
                 onClick={() => navigate(`/companion/clients/${orgId}/${mod.key}`)}
-                className="text-left rounded-xl p-4 transition-all hover:shadow-md"
+                className="text-left rounded-xl p-4 transition-all hover:shadow-md relative"
                 style={{ background: companionColors.cardBg, border: `1px solid ${companionColors.cardBorder}` }}
               >
+                {/* Alert indicator dot */}
+                {alertsByModule[mod.key]?.some((a: any) => a.status === 'triggered') && (
+                  <div className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full" style={{ background: companionColors.actionNeeded }} title="Alert triggered" />
+                )}
+                {alertsByModule[mod.key]?.some((a: any) => a.status === 'active') && !alertsByModule[mod.key]?.some((a: any) => a.status === 'triggered') && (
+                  <div className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full" style={{ background: companionColors.amber }} title="Alert set" />
+                )}
+                {alertsByModule[mod.key]?.some((a: any) => a.status === 'resolved') && !alertsByModule[mod.key]?.some((a: any) => a.status === 'active' || a.status === 'triggered') && (
+                  <div className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full" style={{ background: companionColors.complete }} title="Alert resolved" />
+                )}
                 <div className="flex items-center justify-between mb-1.5">
                   <h4 className="text-sm font-semibold" style={{ color: companionColors.textPrimary }}>
                     {mod.label}
@@ -229,6 +250,11 @@ export const CompanionClientDetail: React.FC = () => {
                 <p className="text-xs" style={{ color: companionColors.textSecondary }}>
                   {ms.detail}
                 </p>
+                {alertsByModule[mod.key]?.filter((a: any) => a.status === 'active' || a.status === 'triggered').map((a: any) => (
+                  <p key={a.id} className="text-xs mt-1" style={{ color: a.status === 'triggered' ? companionColors.actionNeeded : companionColors.amber }}>
+                    Due {new Date(a.target_date).toLocaleDateString()} — {a.expected_status.replace('_', ' ')}
+                  </p>
+                ))}
               </button>
             );
           })}
@@ -285,6 +311,64 @@ export const CompanionClientDetail: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Compliance Alerts */}
+        {activeAlerts.length > 0 && (
+          <div
+            className="rounded-xl p-4 mt-4"
+            style={{ background: companionColors.cardBg, border: `1px solid ${companionColors.cardBorder}` }}
+          >
+            <h4 className="text-sm font-semibold mb-3" style={{ color: companionColors.textPrimary }}>
+              Compliance Alerts ({activeAlerts.length})
+            </h4>
+            <div className="space-y-2">
+              {activeAlerts.map((a: any) => {
+                const modLabel = MODULE_DEFS.find(m => m.key === a.module_key)?.label || a.module_key;
+                const isTriggered = a.status === 'triggered';
+                return (
+                  <div
+                    key={a.id}
+                    className="flex items-center justify-between px-3 py-2 rounded-lg"
+                    style={{
+                      background: isTriggered ? companionColors.actionNeededLight : companionColors.amberLight,
+                      border: `1px solid ${isTriggered ? '#FECACA' : '#FDE68A'}`,
+                    }}
+                  >
+                    <div>
+                      <span className="text-sm font-medium" style={{ color: isTriggered ? companionColors.actionNeeded : companionColors.amberDark }}>
+                        {modLabel}
+                      </span>
+                      <span className="text-xs ml-2" style={{ color: companionColors.textSecondary }}>
+                        Expected "{a.expected_status.replace('_', ' ')}" by {new Date(a.target_date).toLocaleDateString()}
+                      </span>
+                      {a.description && (
+                        <p className="text-xs mt-0.5" style={{ color: companionColors.textTertiary }}>{a.description}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full font-medium"
+                        style={{
+                          background: isTriggered ? companionColors.actionNeeded : companionColors.amber,
+                          color: 'white',
+                        }}
+                      >
+                        {isTriggered ? 'Overdue' : 'Active'}
+                      </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); updateAlert.mutate({ alertId: a.id, status: 'dismissed' }); }}
+                        className="text-xs px-2 py-0.5 rounded hover:opacity-80"
+                        style={{ color: companionColors.textTertiary }}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
