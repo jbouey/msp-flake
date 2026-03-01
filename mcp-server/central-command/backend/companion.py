@@ -9,13 +9,14 @@ HIPAA modules. Auth: require_companion (companion + admin roles).
 """
 
 import asyncio
+import io
 import logging
 import uuid as _uuid
 from datetime import datetime, timezone, date
 from typing import Optional, List
 from decimal import Decimal
 
-from fastapi import APIRouter, Request, HTTPException, Depends, Query
+from fastapi import APIRouter, Request, HTTPException, Depends, Query, UploadFile, File, Form
 from pydantic import BaseModel
 
 from .auth import require_companion
@@ -25,6 +26,9 @@ from .hipaa_modules import (
     TrainingRecord, BAARecord, IRPlanCreate, BreachRecord,
     ContingencyCreate, WorkforceRecord, PhysicalSafeguardBatch,
     OfficerUpsert, GapResponseBatch,
+    _get_minio_client, _ensure_bucket,
+    ALLOWED_MODULE_KEYS as DOC_MODULE_KEYS, ALLOWED_MIME_TYPES,
+    MAX_FILE_SIZE, DOCUMENTS_BUCKET,
 )
 from .db_utils import _uid, _row_dict, _rows_list, _parse_date
 from .hipaa_templates import (
@@ -1435,3 +1439,154 @@ async def list_client_activity(
             ORDER BY cal.created_at DESC LIMIT $2
         """, _uid(org_id),limit)
     return {"activity": _rows_list(rows)}
+
+
+# =============================================================================
+# Documents — companion proxy for client document upload/download
+# =============================================================================
+
+@router.get("/clients/{org_id}/documents")
+async def companion_list_documents(
+    org_id: str,
+    module_key: Optional[str] = Query(None),
+    user: dict = Depends(require_companion),
+):
+    """List uploaded documents for a client org."""
+    pool = await get_pool()
+    oid = str(_uid(org_id))
+    await _verify_org(pool, _uid(org_id))
+    async with pool.acquire() as conn:
+        if module_key:
+            rows = await conn.fetch("""
+                SELECT id::text, module_key, file_name, mime_type, size_bytes,
+                       description, uploaded_by_email, created_at::text
+                FROM hipaa_documents
+                WHERE org_id = $1 AND module_key = $2 AND deleted_at IS NULL
+                ORDER BY created_at DESC
+            """, oid, module_key)
+        else:
+            rows = await conn.fetch("""
+                SELECT id::text, module_key, file_name, mime_type, size_bytes,
+                       description, uploaded_by_email, created_at::text
+                FROM hipaa_documents
+                WHERE org_id = $1 AND deleted_at IS NULL
+                ORDER BY created_at DESC
+            """, oid)
+    return {"documents": [dict(r) for r in rows], "total": len(rows)}
+
+
+@router.post("/clients/{org_id}/documents/upload")
+async def companion_upload_document(
+    org_id: str,
+    file: UploadFile = File(...),
+    module_key: str = Form(...),
+    description: str = Form(None),
+    user: dict = Depends(require_companion),
+):
+    """Upload a compliance document on behalf of a client."""
+    pool = await get_pool()
+    await _verify_org(pool, _uid(org_id))
+
+    if module_key not in DOC_MODULE_KEYS:
+        raise HTTPException(status_code=400, detail=f"Invalid module_key. Must be one of: {', '.join(sorted(DOC_MODULE_KEYS))}")
+
+    content_type = file.content_type or "application/octet-stream"
+    if content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"File type '{content_type}' not allowed.")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"File too large. Maximum is {MAX_FILE_SIZE // (1024*1024)} MB")
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    oid = str(_uid(org_id))
+    doc_id = str(_uuid.uuid4())
+    safe_name = (file.filename or "document").replace("/", "_").replace("\\", "_")
+    minio_key = f"{oid}/{module_key}/{doc_id}_{safe_name}"
+
+    try:
+        mc = _get_minio_client()
+        _ensure_bucket(mc)
+        mc.put_object(DOCUMENTS_BUCKET, minio_key, io.BytesIO(file_bytes),
+                       length=len(file_bytes), content_type=content_type)
+    except Exception as e:
+        logger.error(f"MinIO upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to store file")
+
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO hipaa_documents
+                (id, org_id, module_key, file_name, mime_type, size_bytes, minio_key, description, uploaded_by, uploaded_by_email)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        """, doc_id, oid, module_key, safe_name, content_type,
+            len(file_bytes), minio_key, description,
+            str(user.get("id", "")), user.get("email", ""))
+
+    await _log_activity(pool, user["id"], _uid(org_id), "uploaded_document",
+                        module_key=module_key, details=safe_name)
+
+    return {
+        "id": doc_id, "file_name": safe_name, "mime_type": content_type,
+        "size_bytes": len(file_bytes), "module_key": module_key,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/clients/{org_id}/documents/{doc_id}/download")
+async def companion_download_document(
+    org_id: str, doc_id: str,
+    user: dict = Depends(require_companion),
+):
+    """Generate a presigned download URL for a client document."""
+    from datetime import timedelta
+    pool = await get_pool()
+    oid = str(_uid(org_id))
+    await _verify_org(pool, _uid(org_id))
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT minio_key, file_name
+            FROM hipaa_documents
+            WHERE id = $1::uuid AND org_id = $2 AND deleted_at IS NULL
+        """, doc_id, oid)
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        mc = _get_minio_client()
+        url = mc.presigned_get_object(DOCUMENTS_BUCKET, row["minio_key"],
+                                       expires=timedelta(minutes=15))
+        return {"download_url": url, "expires_in": 900, "file_name": row["file_name"]}
+    except Exception as e:
+        logger.error(f"Presigned URL failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate download URL")
+
+
+@router.delete("/clients/{org_id}/documents/{doc_id}")
+async def companion_delete_document(
+    org_id: str, doc_id: str,
+    user: dict = Depends(require_companion),
+):
+    """Soft-delete a client document."""
+    pool = await get_pool()
+    oid = str(_uid(org_id))
+    await _verify_org(pool, _uid(org_id))
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT file_name FROM hipaa_documents
+            WHERE id = $1::uuid AND org_id = $2 AND deleted_at IS NULL
+        """, doc_id, oid)
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+        await conn.execute("""
+            UPDATE hipaa_documents SET deleted_at = NOW()
+            WHERE id = $1::uuid AND org_id = $2 AND deleted_at IS NULL
+        """, doc_id, oid)
+
+    await _log_activity(pool, user["id"], _uid(org_id), "deleted_document",
+                        details=row["file_name"])
+
+    return {"status": "deleted", "id": doc_id}
