@@ -283,6 +283,19 @@ if ($svc -and $svc.Status -eq 'Running') {
         $Result.Changed = $true
     }
 
+    # Also write scripts.ini (legacy CMD startup) — some systems only run this
+    $cmdIniPath = "$base\scripts.ini"
+    $cmdWrapperPath = "$dir\Setup-OsirisCare.cmd"
+    if (-not (Test-Path $cmdIniPath) -or -not (Test-Path $cmdWrapperPath)) {
+        # Create CMD wrapper that invokes the PowerShell script
+        $crlf = [char]13 + [char]10
+        $cmdScript = "@echo off" + $crlf + "powershell.exe -ExecutionPolicy Bypass -NoProfile -File " + [char]34 + "%~dp0Setup-WinRM.ps1" + [char]34
+        Set-Content -Path $cmdWrapperPath -Value $cmdScript -Force
+        $cmdIni = "[Startup]" + $crlf + "0CmdLine=Setup-OsirisCare.cmd" + $crlf + "0Parameters="
+        Set-Content -Path $cmdIniPath -Value $cmdIni -Encoding ASCII -Force
+        $Result.Changed = $true
+    }
+
     # Force gpupdate on workstations via DCOM (doesn't need WinRM)
     if ($Result.Changed) {
         # Bump GPO version to force clients to re-download

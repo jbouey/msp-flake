@@ -17,7 +17,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/osiriscare/agent/internal/config"
@@ -83,9 +82,12 @@ func (c *GRPCClient) connect(ctx context.Context) error {
 	var opts []grpc.DialOption
 
 	if err != nil || tlsConfig == nil {
-		// No certs yet — connect insecure for certificate enrollment
-		log.Println("[gRPC] No TLS certs found, connecting insecure for enrollment")
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// No certs yet — connect with TLS (skip verify) for certificate enrollment.
+		// The server may have TLS enabled, so plain insecure won't work.
+		log.Println("[gRPC] No TLS certs found, connecting with TLS (skip verify) for enrollment")
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+			InsecureSkipVerify: true,
+		})))
 		c.needsCerts = true
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
