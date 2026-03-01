@@ -181,10 +181,12 @@ var healMap = map[string]struct {
 	Action  string
 	Timeout int64
 }{
-	"firewall":   {"enable", 60},
-	"defender":   {"start", 60},
-	"bitlocker":  {"enable", 120},
-	"screenlock": {"configure", 30},
+	"firewall":    {"enable", 60},
+	"defender":    {"start", 60},
+	"bitlocker":   {"enable", 120},
+	"screenlock":  {"configure", 30},
+	"winrm":       {"restore", 60},
+	"dns_service": {"restart", 30},
 }
 
 func (s *servicer) Register(_ context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
@@ -233,6 +235,7 @@ func (s *servicer) Register(_ context.Context, req *pb.RegisterRequest) (*pb.Reg
 		EnabledChecks: []string{
 			"bitlocker", "defender", "patches",
 			"firewall", "screenlock", "rmm_detection",
+			"winrm", "dns_service",
 		},
 		CapabilityTier: pb.CapabilityTier_MONITOR_ONLY,
 		CheckConfig:    map[string]string{},

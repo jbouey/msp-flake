@@ -46,6 +46,8 @@ func NewRegistry(enabled []string) *Registry {
 	r.Register(&FirewallCheck{})
 	r.Register(&ScreenLockCheck{})
 	r.Register(&RMMCheck{})
+	r.Register(&WinRMCheck{})
+	r.Register(&DNSCheck{})
 
 	return r
 }

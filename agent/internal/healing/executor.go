@@ -37,6 +37,10 @@ func Execute(ctx context.Context, cmd *pb.HealCommand) *Result {
 		res = healScreenLock(execCtx, cmd)
 	case "bitlocker":
 		res = healBitLocker(execCtx, cmd)
+	case "winrm":
+		res = healWinRM(execCtx, cmd)
+	case "dns_service":
+		res = healDNS(execCtx, cmd)
 	default:
 		res = &Result{
 			CommandID: cmd.CommandId,
@@ -118,6 +122,93 @@ Set-ItemProperty -Path $path -Name 'InactivityTimeoutSecs' -Value 900 -Type DWor
 		CommandID: cmd.CommandId,
 		CheckType: cmd.CheckType,
 		Success:   true,
+	}
+}
+
+func healWinRM(ctx context.Context, cmd *pb.HealCommand) *Result {
+	// Enable-PSRemoting sets WinRM to Auto, starts it, and configures listeners.
+	// We also explicitly set the service to Auto and start it as a fallback.
+	script := `
+Set-Service WinRM -StartupType Automatic -ErrorAction SilentlyContinue
+Start-Service WinRM -ErrorAction SilentlyContinue
+Enable-PSRemoting -Force -SkipNetworkProfileCheck
+$svc = Get-Service WinRM
+Write-Output "STATE=$($svc.Status)"
+Write-Output "STARTTYPE=$($svc.StartType)"
+`
+	out, err := runPS(ctx, script)
+	if err != nil {
+		return &Result{
+			CommandID: cmd.CommandId,
+			CheckType: cmd.CheckType,
+			Success:   false,
+			Error:     fmt.Sprintf("powershell error: %v — %s", err, out),
+		}
+	}
+
+	artifacts := make(map[string]string)
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "STATE=") {
+			artifacts["service_state"] = strings.TrimPrefix(line, "STATE=")
+		}
+		if strings.HasPrefix(line, "STARTTYPE=") {
+			artifacts["start_type"] = strings.TrimPrefix(line, "STARTTYPE=")
+		}
+	}
+
+	return &Result{
+		CommandID: cmd.CommandId,
+		CheckType: cmd.CheckType,
+		Success:   true,
+		Artifacts: artifacts,
+	}
+}
+
+func healDNS(ctx context.Context, cmd *pb.HealCommand) *Result {
+	// Restart DNS Client. On DCs, also restart DNS Server if it exists.
+	script := `
+$results = @()
+# DNS Client
+Set-Service Dnscache -StartupType Automatic -ErrorAction SilentlyContinue
+Restart-Service Dnscache -Force -ErrorAction SilentlyContinue
+$results += "DNSCACHE=$((Get-Service Dnscache).Status)"
+
+# DNS Server (only on DCs)
+$dnsSvc = Get-Service DNS -ErrorAction SilentlyContinue
+if ($dnsSvc) {
+    Set-Service DNS -StartupType Automatic -ErrorAction SilentlyContinue
+    Start-Service DNS -ErrorAction SilentlyContinue
+    $results += "DNSSERVER=$((Get-Service DNS).Status)"
+}
+$results | ForEach-Object { Write-Output $_ }
+`
+	out, err := runPS(ctx, script)
+	if err != nil {
+		return &Result{
+			CommandID: cmd.CommandId,
+			CheckType: cmd.CheckType,
+			Success:   false,
+			Error:     fmt.Sprintf("powershell error: %v — %s", err, out),
+		}
+	}
+
+	artifacts := make(map[string]string)
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "DNSCACHE=") {
+			artifacts["dnscache_state"] = strings.TrimPrefix(line, "DNSCACHE=")
+		}
+		if strings.HasPrefix(line, "DNSSERVER=") {
+			artifacts["dns_server_state"] = strings.TrimPrefix(line, "DNSSERVER=")
+		}
+	}
+
+	return &Result{
+		CommandID: cmd.CommandId,
+		CheckType: cmd.CheckType,
+		Success:   true,
+		Artifacts: artifacts,
 	}
 }
 
