@@ -534,12 +534,44 @@ export const sitesApi = {
 // ORGANIZATIONS API
 // =============================================================================
 
+export interface OrgCredential {
+  id: string;
+  credential_type: string;
+  credential_name: string;
+  host: string;
+  username: string;
+  domain: string;
+  created_at: string | null;
+}
+
 export const organizationsApi = {
   getOrganizations: () =>
     fetchApi<{ organizations: Organization[]; count: number }>('/dashboard/organizations'),
 
   getOrganization: (orgId: string) =>
     fetchApi<OrganizationDetail>(`/dashboard/organizations/${orgId}`),
+
+  getCredentials: (orgId: string) =>
+    fetchSitesApi<{ credentials: OrgCredential[]; count: number }>(`/organizations/${orgId}/credentials`),
+
+  createCredential: (orgId: string, data: {
+    credential_type: string;
+    credential_name: string;
+    host: string;
+    username: string;
+    password: string;
+    domain?: string;
+    port?: number;
+  }) =>
+    fetchSitesApi<{ status: string; id: string }>(`/organizations/${orgId}/credentials`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  deleteCredential: (orgId: string, credentialId: string) =>
+    fetchSitesApi<{ status: string }>(`/organizations/${orgId}/credentials/${credentialId}`, {
+      method: 'DELETE',
+    }),
 };
 
 // =============================================================================
