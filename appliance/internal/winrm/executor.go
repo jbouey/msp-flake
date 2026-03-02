@@ -288,9 +288,8 @@ func (e *Executor) getSession(target *Target) (*gowinrm.Client, error) {
 
 	endpoint := gowinrm.NewEndpoint(target.Hostname, port, target.UseSSL, !target.VerifySSL, nil, nil, nil, 120*time.Second)
 
-	// Use NTLM auth (required for domain environments; Basic is rarely enabled)
+	// Use default (Basic) auth — both DC and workstations have Basic enabled via GPO
 	params := gowinrm.NewParameters("PT120S", "en-US", 153600)
-	params.TransportDecorator = func() gowinrm.Transporter { return &gowinrm.ClientNTLM{} }
 
 	client, err := gowinrm.NewClientWithParameters(endpoint, target.Username, target.Password, params)
 	if err != nil {
