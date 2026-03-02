@@ -2321,3 +2321,133 @@ async def generate_compliance_packet(
             status_code=500,
             detail=f"Failed to generate compliance packet: {str(e)}"
         )
+
+
+# =============================================================================
+# ORGANIZATION-LEVEL EVIDENCE BUNDLE
+# =============================================================================
+
+@router.get("/organizations/{org_id}/bundle")
+async def get_org_evidence_bundle(
+    org_id: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+):
+    """Download a cross-site evidence bundle ZIP for an organization.
+
+    Streams a ZIP containing evidence bundles from all sites in the org,
+    organized by site, plus HIPAA module completion summaries.
+    """
+    import zipfile
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+
+    # Get database session
+    try:
+        from main import async_session
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Database not configured")
+
+    async with async_session() as db:
+        # Verify org exists and get its sites
+        org_result = await db.execute(
+            text("SELECT name FROM client_orgs WHERE id = :org_id"),
+            {"org_id": org_id}
+        )
+        org = org_result.fetchone()
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        sites_result = await db.execute(
+            text("SELECT site_id, clinic_name FROM sites WHERE client_org_id = :org_id"),
+            {"org_id": org_id}
+        )
+        sites = sites_result.fetchall()
+
+        if not sites:
+            raise HTTPException(status_code=404, detail="No sites in organization")
+
+        # Parse date range
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        start_dt = datetime.fromisoformat(start) if start else now - timedelta(days=30)
+        end_dt = datetime.fromisoformat(end) if end else now
+
+        # Build ZIP in memory (orgs typically have <10 sites, manageable)
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # Summary file
+            summary_lines = [
+                f"# Evidence Bundle: {org.name}",
+                f"Generated: {now.isoformat()}",
+                f"Period: {start_dt.date()} to {end_dt.date()}",
+                f"Sites: {len(sites)}",
+                "",
+            ]
+
+            for site in sites:
+                site_name = site.clinic_name or site.site_id
+                site_dir = f"sites/{site.site_id}/"
+
+                # Get evidence bundles for this site
+                bundles_result = await db.execute(
+                    text("""
+                        SELECT id, check_type, result_status, created_at, sha256_hash
+                        FROM evidence_bundles
+                        WHERE site_id = :site_id
+                          AND created_at >= :start_dt
+                          AND created_at <= :end_dt
+                        ORDER BY created_at DESC
+                    """),
+                    {"site_id": site.site_id, "start_dt": start_dt, "end_dt": end_dt}
+                )
+                bundles = bundles_result.fetchall()
+
+                # Write site summary
+                site_summary = [
+                    f"# {site_name} ({site.site_id})",
+                    f"Evidence bundles: {len(bundles)}",
+                    "",
+                ]
+                for b in bundles:
+                    site_summary.append(
+                        f"- [{b.created_at.isoformat()}] {b.check_type}: {b.result_status} (hash: {b.sha256_hash[:16]}...)"
+                    )
+
+                zf.writestr(f"{site_dir}summary.txt", "\n".join(site_summary))
+                summary_lines.append(f"- {site_name}: {len(bundles)} evidence bundles")
+
+            # Get HIPAA module completion for the org
+            hipaa_modules = [
+                ("hipaa_sra_assessments", "Security Risk Assessment"),
+                ("hipaa_policies", "Policies"),
+                ("hipaa_training_records", "Training"),
+                ("hipaa_baas", "Business Associate Agreements"),
+                ("hipaa_ir_plans", "Incident Response Plans"),
+                ("hipaa_contingency_plans", "Contingency Plans"),
+            ]
+
+            hipaa_lines = ["\n# HIPAA Module Completion", ""]
+            for table, label in hipaa_modules:
+                try:
+                    count_result = await db.execute(
+                        text(f"SELECT COUNT(*) FROM {table} WHERE org_id = :org_id"),
+                        {"org_id": org_id}
+                    )
+                    count = count_result.scalar() or 0
+                    hipaa_lines.append(f"- {label}: {count} record(s)")
+                except Exception:
+                    hipaa_lines.append(f"- {label}: N/A")
+
+            zf.writestr("hipaa-modules/summary.txt", "\n".join(hipaa_lines))
+            summary_lines.extend(hipaa_lines)
+            zf.writestr("summary.md", "\n".join(summary_lines))
+
+        buf.seek(0)
+        filename = f"evidence-bundle-{org.name.replace(' ', '-').lower()}-{now.strftime('%Y%m%d')}.zip"
+
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )

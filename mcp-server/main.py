@@ -43,6 +43,7 @@ from dashboard_api.routes import router as dashboard_router, auth_router
 from dashboard_api.sites import router as sites_router, orders_router, appliances_router, alerts_router
 from dashboard_api.portal import router as portal_router
 from dashboard_api.evidence_chain import router as evidence_router
+from dashboard_api.org_credentials import router as org_credentials_router
 from dashboard_api.provisioning import router as provisioning_router
 from dashboard_api.partners import router as partners_router
 from dashboard_api.discovery import router as discovery_router
@@ -1042,6 +1043,7 @@ app.include_router(client_auth_router, prefix="/api")  # Client portal auth (mag
 app.include_router(client_portal_router, prefix="/api")  # Client portal endpoints
 app.include_router(hipaa_modules_router, prefix="/api")  # HIPAA compliance modules
 app.include_router(companion_router, prefix="/api")  # Compliance Companion portal
+app.include_router(org_credentials_router)  # Organization-level shared credentials
 app.include_router(billing_webhook_router, prefix="/api")  # Stripe webhooks
 
 # WebSocket endpoint for real-time event push
@@ -4264,30 +4266,46 @@ async def appliances_checkin(req: ApplianceCheckinRequest, request: Request, db:
         })
         await db.commit()
 
-        # Fetch Windows targets with credentials for credential-pull
+        # Fetch Windows targets — site credentials first, then fill gaps from org credentials
         windows_targets = []
+        seen_hosts = set()
         try:
+            # Site-level credentials (take precedence)
             result = await db.execute(text("""
                 SELECT credential_type, credential_name, encrypted_data
                 FROM site_credentials
                 WHERE site_id = :site_id
                 AND credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
-                ORDER BY created_at DESC
+                ORDER BY CASE WHEN credential_type = 'domain_admin' THEN 0 ELSE 1 END, created_at DESC
             """), {"site_id": req.site_id})
             creds = result.fetchall()
-            
-            for cred in creds:
+
+            # Org-level credentials (fill gaps)
+            org_creds_result = await db.execute(text("""
+                SELECT oc.credential_type, oc.credential_name, oc.encrypted_data
+                FROM org_credentials oc
+                JOIN sites s ON s.client_org_id = oc.client_org_id
+                WHERE s.site_id = :site_id
+                AND oc.credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
+                ORDER BY CASE WHEN oc.credential_type = 'domain_admin' THEN 0 ELSE 1 END, oc.created_at DESC
+            """), {"site_id": req.site_id})
+            org_creds = org_creds_result.fetchall()
+
+            for cred in list(creds) + list(org_creds):
                 try:
-                    cred_data = json.loads(bytes(cred.encrypted_data).decode())
+                    raw = cred.encrypted_data
+                    cred_data = json.loads(bytes(raw).decode() if isinstance(raw, (bytes, memoryview)) else raw)
                     hostname = cred_data.get('host') or cred_data.get('target_host')
                     username = cred_data.get('username', '')
                     password = cred_data.get('password', '')
                     domain = cred_data.get('domain', '')
                     use_ssl = cred_data.get('use_ssl', False)
-                    
+
                     full_username = f"{domain}\\{username}" if domain else username
-                    
-                    if hostname:
+
+                    # Skip if we already have a credential for this host (site takes precedence)
+                    if hostname and hostname not in seen_hosts:
+                        seen_hosts.add(hostname)
                         windows_targets.append({
                             "hostname": hostname,
                             "username": full_username,

@@ -365,6 +365,43 @@ export interface Site {
   updated_at: string | null;
   last_checkin: string | null;
   appliance_count: number;
+  client_org_id?: string | null;
+  org_name?: string | null;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  primary_email: string;
+  practice_type: string | null;
+  provider_count: number | null;
+  status: string;
+  created_at: string | null;
+  site_count: number;
+  appliance_count: number;
+  last_checkin: string | null;
+  avg_compliance: number;
+}
+
+export interface OrganizationDetail extends Organization {
+  primary_phone: string | null;
+  address: string | null;
+  npi_number: string | null;
+  sites: OrgSite[];
+}
+
+export interface OrgSite {
+  site_id: string;
+  clinic_name: string;
+  tier: string;
+  onboarding_stage: string;
+  appliance_count: number;
+  online_count: number;
+  live_status: string;
+  last_checkin: string | null;
+  compliance_score: number;
+  healing_success_rate: number;
+  incidents_24h: number;
 }
 
 export interface SiteDetail extends Site {
@@ -491,6 +528,18 @@ export const sitesApi = {
       method: 'PUT',
       body: JSON.stringify({ healing_tier: healingTier }),
     }),
+};
+
+// =============================================================================
+// ORGANIZATIONS API
+// =============================================================================
+
+export const organizationsApi = {
+  getOrganizations: () =>
+    fetchApi<{ organizations: Organization[]; count: number }>('/dashboard/organizations'),
+
+  getOrganization: (orgId: string) =>
+    fetchApi<OrganizationDetail>(`/dashboard/organizations/${orgId}`),
 };
 
 // =============================================================================

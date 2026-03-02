@@ -92,10 +92,18 @@ func (d *Daemon) makeActionExecutor() healing.ActionExecutor {
 	}
 }
 
+const (
+	l1HealingTimeout    = 5 * time.Minute  // Max time for L1 deterministic healing
+	orderHealingTimeout = 10 * time.Minute // Max time for healing orders from Central Command
+)
+
 // executeRunbook runs a remediation runbook via WinRM (windows) or SSH (linux).
-// Uses the daemon's run context so healing operations cancel on shutdown.
+// Uses the daemon's run context with an L1 timeout so healing operations
+// cancel on shutdown or if they exceed the time boundary.
 func (d *Daemon) executeRunbook(params map[string]interface{}, hostID, platform string) (map[string]interface{}, error) {
-	return d.executeRunbookCtx(d.runCtx, params, hostID, platform)
+	ctx, cancel := context.WithTimeout(d.runCtx, l1HealingTimeout)
+	defer cancel()
+	return d.executeRunbookCtx(ctx, params, hostID, platform)
 }
 
 func (d *Daemon) executeRunbookCtx(ctx context.Context, params map[string]interface{}, hostID, platform string) (map[string]interface{}, error) {
@@ -129,6 +137,9 @@ func (d *Daemon) executeRunbookCtx(ctx context.Context, params map[string]interf
 
 	results := map[string]interface{}{}
 
+	// Journal ID for phase tracking — use runbookID:hostID as composite key
+	journalID := fmt.Sprintf("%s:%s", runbookID, hostID)
+
 	for _, phase := range phases {
 		phaseStr, _ := phase.(string)
 		script := phaseScripts[phaseStr]
@@ -144,12 +155,13 @@ func (d *Daemon) executeRunbookCtx(ctx context.Context, params map[string]interf
 			if target == nil {
 				return nil, fmt.Errorf("no WinRM credentials for host %s", hostID)
 			}
-			result := d.winrmExec.Execute(target, script, runbookID, phaseStr, timeout, 1, 15.0, rb.HIPAAControls)
+			result := d.winrmExec.ExecuteCtx(ctx, target, script, runbookID, phaseStr, timeout, 1, 15.0, rb.HIPAAControls)
 			if !result.Success {
 				return map[string]interface{}{
 					"success": false, "phase": phaseStr, "error": result.Error,
 				}, fmt.Errorf("%s phase %s failed: %s", runbookID, phaseStr, result.Error)
 			}
+			d.healJournal.CompletePhase(journalID, phaseStr)
 			results[phaseStr] = result.Output
 
 		case "linux":
@@ -161,6 +173,7 @@ func (d *Daemon) executeRunbookCtx(ctx context.Context, params map[string]interf
 						"success": false, "phase": phaseStr, "error": result.Error,
 					}, fmt.Errorf("%s phase %s failed: %s", runbookID, phaseStr, result.Error)
 				}
+				d.healJournal.CompletePhase(journalID, phaseStr)
 				results[phaseStr] = result.Output
 			} else {
 				target := d.buildHealingSSHTarget(hostID)
@@ -173,6 +186,7 @@ func (d *Daemon) executeRunbookCtx(ctx context.Context, params map[string]interf
 						"success": false, "phase": phaseStr, "error": result.Error,
 					}, fmt.Errorf("%s phase %s failed: %s", runbookID, phaseStr, result.Error)
 				}
+				d.healJournal.CompletePhase(journalID, phaseStr)
 				results[phaseStr] = result.Output
 			}
 
@@ -254,7 +268,9 @@ func (d *Daemon) executeLocalCtx(parent context.Context, script, runbookID, phas
 // executeInlineScript runs a script directly (not from runbook registry) via WinRM or SSH.
 // Used for L1 actions that don't map to a specific runbook.
 func (d *Daemon) executeInlineScript(script, hostID, platform string, params map[string]interface{}) (map[string]interface{}, error) {
-	return d.executeInlineScriptCtx(d.runCtx, script, hostID, platform, params)
+	ctx, cancel := context.WithTimeout(d.runCtx, l1HealingTimeout)
+	defer cancel()
+	return d.executeInlineScriptCtx(ctx, script, hostID, platform, params)
 }
 
 func (d *Daemon) executeInlineScriptCtx(ctx context.Context, script, hostID, platform string, params map[string]interface{}) (map[string]interface{}, error) {
@@ -269,7 +285,7 @@ func (d *Daemon) executeInlineScriptCtx(ctx context.Context, script, hostID, pla
 		if target == nil {
 			return nil, fmt.Errorf("no WinRM credentials for host %s", hostID)
 		}
-		result := d.winrmExec.Execute(target, script, actionName, "remediate", 120, 1, 15.0, nil)
+		result := d.winrmExec.ExecuteCtx(ctx, target, script, actionName, "remediate", 120, 1, 15.0, nil)
 		if !result.Success {
 			return map[string]interface{}{"success": false, "error": result.Error}, fmt.Errorf("%s failed: %s", actionName, result.Error)
 		}
@@ -399,13 +415,22 @@ func (d *Daemon) executeHealingOrder(ctx context.Context, params map[string]inte
 
 	log.Printf("[healing-order] Executing %s on %s (platform=%s check_type=%s)", runbookID, hostname, platform, checkType)
 
+	// Journal: checkpoint before execution
+	orderID := fmt.Sprintf("order-%s-%s-%d", runbookID, hostname, time.Now().UnixMilli())
+	d.healJournal.StartHealing(orderID, runbookID, hostname, platform, checkType, "order")
+
+	// Enforce per-order timeout boundary
+	orderCtx, orderCancel := context.WithTimeout(ctx, orderHealingTimeout)
+	defer orderCancel()
+
 	rbParams := map[string]interface{}{
 		"runbook_id": runbookID,
 		"phases":     []interface{}{"remediate", "verify"},
 	}
 
-	result, err := d.executeRunbookCtx(ctx, rbParams, hostname, platform)
+	result, err := d.executeRunbookCtx(orderCtx, rbParams, hostname, platform)
 	if err != nil {
+		d.healJournal.FinishHealing(orderID, false, err.Error())
 		log.Printf("[healing-order] %s on %s FAILED: %v", runbookID, hostname, err)
 		return map[string]interface{}{
 			"status":     "failed",
@@ -415,6 +440,7 @@ func (d *Daemon) executeHealingOrder(ctx context.Context, params map[string]inte
 		}, err
 	}
 
+	d.healJournal.FinishHealing(orderID, true, "")
 	log.Printf("[healing-order] %s on %s SUCCEEDED", runbookID, hostname)
 	result["status"] = "healed"
 	result["runbook_id"] = runbookID

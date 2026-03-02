@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { useSites, useCreateSite } from '../hooks';
@@ -63,7 +63,7 @@ function formatRelativeTime(dateString: string | null): string {
 /**
  * Site row component
  */
-const SiteRow: React.FC<{ site: Site; onClick: () => void }> = ({ site, onClick }) => {
+const SiteRow: React.FC<{ site: Site; onClick: () => void; showOrg?: boolean }> = ({ site, onClick, showOrg }) => {
   return (
     <tr
       onClick={onClick}
@@ -75,6 +75,11 @@ const SiteRow: React.FC<{ site: Site; onClick: () => void }> = ({ site, onClick 
           <p className="text-xs text-label-tertiary">{site.site_id}</p>
         </div>
       </td>
+      {showOrg && (
+        <td className="px-4 py-3 text-sm text-label-secondary">
+          {site.org_name || '-'}
+        </td>
+      )}
       <td className="px-4 py-3">
         <StatusBadge status={site.live_status} />
       </td>
@@ -214,11 +219,30 @@ export const Sites: React.FC = () => {
   const navigate = useNavigate();
   const [showNewSiteModal, setShowNewSiteModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
+  const [groupByOrg, setGroupByOrg] = useState(false);
 
   const { data, isLoading } = useSites(statusFilter);
   const createSite = useCreateSite();
 
   const sites = data?.sites || [];
+
+  // Group sites by org when toggled
+  const orgGroups = useMemo(() => {
+    if (!groupByOrg) return null;
+    const groups: Record<string, { orgName: string; orgId: string | null; sites: Site[] }> = {};
+    for (const site of sites) {
+      const key = site.client_org_id || 'unassigned';
+      if (!groups[key]) {
+        groups[key] = {
+          orgName: site.org_name || 'Unassigned',
+          orgId: site.client_org_id || null,
+          sites: [],
+        };
+      }
+      groups[key].sites.push(site);
+    }
+    return Object.values(groups).sort((a, b) => a.orgName.localeCompare(b.orgName));
+  }, [sites, groupByOrg]);
 
   // Count by status
   const statusCounts = {
@@ -227,6 +251,12 @@ export const Sites: React.FC = () => {
     offline: sites.filter(s => s.live_status === 'offline').length,
     pending: sites.filter(s => s.live_status === 'pending').length,
   };
+
+  // Count unique orgs
+  const orgCount = useMemo(() => {
+    const orgIds = new Set(sites.map(s => s.client_org_id).filter(Boolean));
+    return orgIds.size;
+  }, [sites]);
 
   const handleCreateSite = async (siteData: Parameters<typeof createSite.mutate>[0]) => {
     try {
@@ -238,6 +268,34 @@ export const Sites: React.FC = () => {
     }
   };
 
+  const tableHeaders = (
+    <tr>
+      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
+        Site
+      </th>
+      {!groupByOrg && (
+        <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
+          Organization
+        </th>
+      )}
+      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
+        Status
+      </th>
+      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
+        Last Checkin
+      </th>
+      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
+        Stage
+      </th>
+      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
+        Appliances
+      </th>
+      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
+        Tier
+      </th>
+    </tr>
+  );
+
   return (
     <div className="space-y-6 page-enter">
       {/* Header */}
@@ -245,15 +303,23 @@ export const Sites: React.FC = () => {
         <div>
           <h1 className="text-2xl font-semibold text-label-primary tracking-tight">Sites</h1>
           <p className="text-label-tertiary text-sm mt-1">
-            {sites.length} client site{sites.length !== 1 ? 's' : ''}
+            {sites.length} site{sites.length !== 1 ? 's' : ''} across {orgCount} organization{orgCount !== 1 ? 's' : ''}
           </p>
         </div>
-        <button
-          onClick={() => setShowNewSiteModal(true)}
-          className="btn-primary"
-        >
-          + New Site
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/organizations')}
+            className="px-4 py-2 rounded-ios bg-fill-quaternary text-label-primary hover:bg-fill-secondary transition-colors text-sm"
+          >
+            View Organizations
+          </button>
+          <button
+            onClick={() => setShowNewSiteModal(true)}
+            className="btn-primary"
+          >
+            + New Site
+          </button>
+        </div>
       </div>
 
       {/* Stats row */}
@@ -275,34 +341,46 @@ export const Sites: React.FC = () => {
           <p className="text-xs text-label-tertiary">Pending</p>
         </GlassCard>
         <GlassCard padding="md" className="text-center">
-          <p className="text-2xl font-bold text-accent-primary">{statusCounts.all}</p>
-          <p className="text-xs text-label-tertiary">Total</p>
+          <p className="text-2xl font-bold text-accent-primary">{orgCount}</p>
+          <p className="text-xs text-label-tertiary">Organizations</p>
         </GlassCard>
       </div>
 
-      {/* Filter tabs */}
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-label-tertiary">Filter:</span>
-        <div className="flex gap-1">
-          {[
-            { value: undefined, label: 'All' },
-            { value: 'online', label: 'Online' },
-            { value: 'offline', label: 'Offline' },
-            { value: 'pending', label: 'Pending' },
-          ].map((option) => (
-            <button
-              key={option.value || 'all'}
-              onClick={() => setStatusFilter(option.value)}
-              className={`px-3 py-1.5 text-sm rounded-ios-sm transition-colors ${
-                statusFilter === option.value
-                  ? 'bg-accent-primary text-white'
-                  : 'bg-separator-light text-label-secondary hover:bg-separator-light/80'
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
+      {/* Filter tabs + Group toggle */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-label-tertiary">Filter:</span>
+          <div className="flex gap-1">
+            {[
+              { value: undefined, label: 'All' },
+              { value: 'online', label: 'Online' },
+              { value: 'offline', label: 'Offline' },
+              { value: 'pending', label: 'Pending' },
+            ].map((option) => (
+              <button
+                key={option.value || 'all'}
+                onClick={() => setStatusFilter(option.value)}
+                className={`px-3 py-1.5 text-sm rounded-ios-sm transition-colors ${
+                  statusFilter === option.value
+                    ? 'bg-accent-primary text-white'
+                    : 'bg-separator-light text-label-secondary hover:bg-separator-light/80'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
+        <button
+          onClick={() => setGroupByOrg(!groupByOrg)}
+          className={`px-3 py-1.5 text-sm rounded-ios-sm transition-colors ${
+            groupByOrg
+              ? 'bg-accent-primary text-white'
+              : 'bg-separator-light text-label-secondary hover:bg-separator-light/80'
+          }`}
+        >
+          Group by Org
+        </button>
       </div>
 
       {/* Sites table */}
@@ -329,29 +407,48 @@ export const Sites: React.FC = () => {
               + New Site
             </button>
           </div>
+        ) : groupByOrg && orgGroups ? (
+          /* Grouped by org view */
+          <div>
+            {orgGroups.map((group) => (
+              <div key={group.orgId || 'unassigned'}>
+                <div
+                  className="px-4 py-3 bg-fill-quaternary border-b border-separator-light flex items-center justify-between cursor-pointer hover:bg-fill-secondary transition-colors"
+                  onClick={() => group.orgId && navigate(`/organizations/${group.orgId}`)}
+                >
+                  <div className="flex items-center gap-3">
+                    <svg className="w-5 h-5 text-accent-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                    </svg>
+                    <span className="font-semibold text-label-primary">{group.orgName}</span>
+                    <Badge variant="default">{group.sites.length} site{group.sites.length !== 1 ? 's' : ''}</Badge>
+                  </div>
+                  {group.orgId && (
+                    <span className="text-xs text-label-tertiary">View org detail</span>
+                  )}
+                </div>
+                <table className="w-full">
+                  <thead className="bg-fill-quaternary/50 border-b border-separator-light">
+                    {tableHeaders}
+                  </thead>
+                  <tbody className="divide-y divide-separator-light">
+                    {group.sites.map((site) => (
+                      <SiteRow
+                        key={site.site_id}
+                        site={site}
+                        onClick={() => navigate(`/sites/${site.site_id}`)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
         ) : (
+          /* Flat list view */
           <table className="w-full">
             <thead className="bg-fill-quaternary border-b border-separator-light">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-                  Site
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-                  Last Checkin
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-                  Stage
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-                  Appliances
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-                  Tier
-                </th>
-              </tr>
+              {tableHeaders}
             </thead>
             <tbody className="divide-y divide-separator-light">
               {sites.map((site) => (
@@ -359,6 +456,7 @@ export const Sites: React.FC = () => {
                   key={site.site_id}
                   site={site}
                   onClick={() => navigate(`/sites/${site.site_id}`)}
+                  showOrg
                 />
               ))}
             </tbody>

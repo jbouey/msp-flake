@@ -11,12 +11,20 @@ import (
 
 const stateFileName = "daemon_state.json"
 
+// persistedCooldown is the on-disk representation of a driftCooldown entry.
+type persistedCooldown struct {
+	LastSeen    time.Time     `json:"last_seen"`
+	Count       int           `json:"count"`
+	CooldownDur time.Duration `json:"cooldown_dur"` // nanoseconds
+}
+
 // PersistedState holds daemon state that survives restarts.
 type PersistedState struct {
-	LinuxTargets       []linuxTarget `json:"linux_targets,omitempty"`
-	L2Mode             string        `json:"l2_mode,omitempty"`
-	SubscriptionStatus string        `json:"subscription_status,omitempty"`
-	SavedAt            time.Time     `json:"saved_at"`
+	LinuxTargets       []linuxTarget                `json:"linux_targets,omitempty"`
+	L2Mode             string                       `json:"l2_mode,omitempty"`
+	SubscriptionStatus string                       `json:"subscription_status,omitempty"`
+	Cooldowns          map[string]persistedCooldown `json:"cooldowns,omitempty"`
+	SavedAt            time.Time                    `json:"saved_at"`
 }
 
 // statePath returns the full path to the state file.
@@ -40,10 +48,23 @@ func (d *Daemon) saveState() {
 	sub := d.subscriptionStatus
 	d.subscriptionMu.RUnlock()
 
+	// Snapshot cooldown state
+	d.cooldownMu.Lock()
+	cooldowns := make(map[string]persistedCooldown, len(d.cooldowns))
+	for k, v := range d.cooldowns {
+		cooldowns[k] = persistedCooldown{
+			LastSeen:    v.lastSeen,
+			Count:       v.count,
+			CooldownDur: v.cooldownDur,
+		}
+	}
+	d.cooldownMu.Unlock()
+
 	state := PersistedState{
 		LinuxTargets:       targets,
 		L2Mode:             l2,
 		SubscriptionStatus: sub,
+		Cooldowns:          cooldowns,
 		SavedAt:            time.Now(),
 	}
 

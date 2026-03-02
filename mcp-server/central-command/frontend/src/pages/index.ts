@@ -19,3 +19,5 @@ export { SiteDevices } from './SiteDevices';
 export { RMMComparison } from './RMMComparison';
 export { IntegrationError } from './IntegrationError';
 export { Settings } from './Settings';
+export { Organizations } from './Organizations';
+export { OrgDashboard } from './OrgDashboard';

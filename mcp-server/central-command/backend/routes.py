@@ -142,25 +142,35 @@ async def get_fleet_overview(
     limit: int = Query(default=100, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
 ):
     """Get all clients with aggregated health scores."""
-    # Get site data
-    query = text("""
+    # Get site data with org info
+    org_scope = user.get("org_scope")
+    where_clause = "WHERE s.client_org_id = ANY(:org_scope_ids)" if org_scope else ""
+    query_str = f"""
         SELECT
             s.site_id,
             s.clinic_name as name,
             s.status,
+            s.client_org_id,
+            co.name as org_name,
             COUNT(sa.id) as appliance_count,
             COUNT(sa.id) FILTER (WHERE sa.status = 'online') as online_count,
             MAX(sa.last_checkin) as last_checkin
         FROM sites s
         LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
-        GROUP BY s.site_id, s.clinic_name, s.status
+        LEFT JOIN client_orgs co ON co.id = s.client_org_id
+        {where_clause}
+        GROUP BY s.site_id, s.clinic_name, s.status, s.client_org_id, co.name
         ORDER BY MAX(sa.last_checkin) DESC NULLS LAST
         LIMIT :limit OFFSET :offset
-    """)
+    """
+    params = {"limit": limit, "offset": offset}
+    if org_scope:
+        params["org_scope_ids"] = org_scope
 
-    result = await db.execute(query, {"limit": limit, "offset": offset})
+    result = await db.execute(text(query_str), params)
     rows = result.fetchall()
 
     # Get compliance scores for all sites
@@ -222,6 +232,8 @@ async def get_fleet_overview(
         clients.append(ClientOverview(
             site_id=row.site_id,
             name=row.name or row.site_id,
+            client_org_id=str(row.client_org_id) if row.client_org_id else None,
+            org_name=row.org_name,
             appliance_count=row.appliance_count or 0,
             online_count=row.online_count or 0,
             health=HealthMetrics(
@@ -2325,4 +2337,165 @@ async def reset_learning_data(db: AsyncSession = Depends(get_db)):
     return {
         "patterns_deleted": patterns_result.rowcount,
         "rules_deleted": rules_result.rowcount
+    }
+
+
+# =============================================================================
+# ORGANIZATION ENDPOINTS
+# =============================================================================
+
+@router.get("/organizations")
+async def list_organizations(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """List all organizations with site counts and aggregate health."""
+    org_scope = user.get("org_scope")
+    where_clause = "WHERE co.id = ANY(:org_scope_ids)" if org_scope else ""
+    params = {}
+    if org_scope:
+        params["org_scope_ids"] = org_scope
+
+    result = await db.execute(text(f"""
+        SELECT
+            co.id,
+            co.name,
+            co.primary_email,
+            co.practice_type,
+            co.provider_count,
+            co.status,
+            co.created_at,
+            COUNT(DISTINCT s.site_id) as site_count,
+            COUNT(DISTINCT sa.appliance_id) as appliance_count,
+            MAX(sa.last_checkin) as last_checkin
+        FROM client_orgs co
+        LEFT JOIN sites s ON s.client_org_id = co.id
+        LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+        {where_clause}
+        GROUP BY co.id, co.name, co.primary_email, co.practice_type,
+                 co.provider_count, co.status, co.created_at
+        ORDER BY co.name
+    """), params)
+    rows = result.fetchall()
+
+    # Get compliance scores for averaging per org
+    all_compliance = await get_all_compliance_scores(db)
+
+    orgs = []
+    for row in rows:
+        # Calculate avg compliance across org's sites
+        org_sites_compliance = []
+        site_result = await db.execute(
+            text("SELECT site_id FROM sites WHERE client_org_id = :org_id"),
+            {"org_id": str(row.id)}
+        )
+        for site_row in site_result.fetchall():
+            sc = all_compliance.get(site_row.site_id, {})
+            if sc.get("has_data"):
+                org_sites_compliance.append(sc.get("score", 0))
+
+        avg_compliance = (
+            sum(org_sites_compliance) / len(org_sites_compliance)
+            if org_sites_compliance else 0
+        )
+
+        orgs.append({
+            "id": str(row.id),
+            "name": row.name,
+            "primary_email": row.primary_email,
+            "practice_type": row.practice_type,
+            "provider_count": row.provider_count,
+            "status": row.status,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "site_count": row.site_count,
+            "appliance_count": row.appliance_count,
+            "last_checkin": row.last_checkin.isoformat() if row.last_checkin else None,
+            "avg_compliance": round(avg_compliance, 1),
+        })
+
+    return {"organizations": orgs, "count": len(orgs)}
+
+
+@router.get("/organizations/{org_id}")
+async def get_organization_detail(org_id: str, db: AsyncSession = Depends(get_db)):
+    """Get organization detail with nested site list."""
+    # Get org info
+    result = await db.execute(text("""
+        SELECT id, name, primary_email, primary_phone, address_line1,
+               city, state, postal_code, npi_number, practice_type,
+               provider_count, status, created_at
+        FROM client_orgs
+        WHERE id = :org_id
+    """), {"org_id": org_id})
+    org = result.fetchone()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Get org's sites with appliance data
+    sites_result = await db.execute(text("""
+        SELECT
+            s.site_id,
+            s.clinic_name,
+            s.tier,
+            s.onboarding_stage,
+            COUNT(sa.id) as appliance_count,
+            COUNT(sa.id) FILTER (WHERE sa.status = 'online') as online_count,
+            MAX(sa.last_checkin) as last_checkin
+        FROM sites s
+        LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+        WHERE s.client_org_id = :org_id
+        GROUP BY s.site_id, s.clinic_name, s.tier, s.onboarding_stage
+        ORDER BY s.clinic_name
+    """), {"org_id": org_id})
+    site_rows = sites_result.fetchall()
+
+    all_compliance = await get_all_compliance_scores(db)
+    healing_cache = await get_all_healing_metrics(db)
+
+    sites = []
+    for row in site_rows:
+        sc = all_compliance.get(row.site_id, {})
+        sh = healing_cache.get(row.site_id, {})
+        compliance_score = sc.get("score", 0) if sc.get("has_data") else 0
+
+        # Live status
+        live_status = "pending"
+        if row.last_checkin:
+            age = datetime.now(timezone.utc) - row.last_checkin
+            if age < timedelta(minutes=15):
+                live_status = "online"
+            elif age < timedelta(hours=1):
+                live_status = "stale"
+            else:
+                live_status = "offline"
+
+        sites.append({
+            "site_id": row.site_id,
+            "clinic_name": row.clinic_name or row.site_id.replace('-', ' ').title(),
+            "tier": row.tier or "standard",
+            "onboarding_stage": row.onboarding_stage or "active",
+            "appliance_count": row.appliance_count,
+            "online_count": row.online_count,
+            "live_status": live_status,
+            "last_checkin": row.last_checkin.isoformat() if row.last_checkin else None,
+            "compliance_score": round(compliance_score, 1),
+            "healing_success_rate": sh.get("healing_success_rate", 0),
+            "incidents_24h": sh.get("incidents_24h", 0),
+        })
+
+    return {
+        "id": str(org.id),
+        "name": org.name,
+        "primary_email": org.primary_email,
+        "primary_phone": org.primary_phone,
+        "address": ", ".join(filter(None, [
+            org.address_line1, org.city, org.state, org.postal_code
+        ])) or None,
+        "npi_number": org.npi_number,
+        "practice_type": org.practice_type,
+        "provider_count": org.provider_count,
+        "status": org.status,
+        "created_at": org.created_at.isoformat() if org.created_at else None,
+        "site_count": len(sites),
+        "sites": sites,
     }

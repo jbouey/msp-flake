@@ -5,6 +5,7 @@ package winrm
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -68,6 +69,40 @@ type Executor struct {
 func NewExecutor() *Executor {
 	return &Executor{
 		sessions: make(map[string]*cachedSession),
+	}
+}
+
+// ExecuteCtx runs a PowerShell script with context cancellation support.
+// If the context is cancelled during execution, the result is marked as failed
+// with a context error. The underlying WinRM session may still complete in the
+// background but its result is discarded.
+func (e *Executor) ExecuteCtx(ctx context.Context, target *Target, script, runbookID, phase string, timeout int, retries int, retryDelay float64, hipaaControls []string) *ExecutionResult {
+	type resultOrError struct {
+		result *ExecutionResult
+	}
+	ch := make(chan resultOrError, 1)
+
+	go func() {
+		ch <- resultOrError{result: e.Execute(target, script, runbookID, phase, timeout, retries, retryDelay, hipaaControls)}
+	}()
+
+	select {
+	case <-ctx.Done():
+		start := time.Now().UTC()
+		e.InvalidateSession(target.Hostname)
+		return &ExecutionResult{
+			Success:       false,
+			RunbookID:     runbookID,
+			Target:        target.Hostname,
+			Phase:         phase,
+			Output:        map[string]interface{}{"success": false, "std_out": "", "std_err": ctx.Err().Error()},
+			DurationSecs:  time.Since(start).Seconds(),
+			Error:         fmt.Sprintf("context cancelled: %v", ctx.Err()),
+			Timestamp:     start.Format(time.RFC3339),
+			HIPAAControls: hipaaControls,
+		}
+	case res := <-ch:
+		return res.result
 	}
 }
 

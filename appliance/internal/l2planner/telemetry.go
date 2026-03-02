@@ -20,6 +20,7 @@ type TelemetryReporter struct {
 	siteID      string
 	applianceID string
 	client      *http.Client
+	queueDir    string // File-backed retry queue directory (empty = no queue)
 }
 
 // NewTelemetryReporter creates a new telemetry reporter.
@@ -134,13 +135,15 @@ func (r *TelemetryReporter) ReportExecution(
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		log.Printf("[l2planner] Telemetry POST failed: %v", err)
+		log.Printf("[l2planner] Telemetry POST failed (queuing): %v", err)
+		r.queuePayload(payload)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		log.Printf("[l2planner] Telemetry POST returned %d", resp.StatusCode)
+		log.Printf("[l2planner] Telemetry POST returned %d (queuing)", resp.StatusCode)
+		r.queuePayload(payload)
 		return
 	}
 
@@ -203,13 +206,15 @@ func (r *TelemetryReporter) ReportL1Execution(
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		log.Printf("[telemetry] L1 POST failed: %v", err)
+		log.Printf("[telemetry] L1 POST failed (queuing): %v", err)
+		r.queuePayload(payload)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		log.Printf("[telemetry] L1 POST returned %d", resp.StatusCode)
+		log.Printf("[telemetry] L1 POST returned %d (queuing)", resp.StatusCode)
+		r.queuePayload(payload)
 		return
 	}
 

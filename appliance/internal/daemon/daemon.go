@@ -92,6 +92,9 @@ type Daemon struct {
 	// WaitGroup for graceful goroutine drain on shutdown
 	wg sync.WaitGroup
 
+	// Healing journal: crash-safe tracking of in-flight healing operations
+	healJournal *HealingJournal
+
 	// gpoFixDone tracks whether the GPO firewall fix has been applied per DC.
 	// key = DC hostname, value = true
 	gpoFixDone sync.Map
@@ -157,8 +160,15 @@ func New(cfg *Config) *Daemon {
 	// Initialize telemetry reporter for L1/L2 execution data flywheel
 	if cfg.APIEndpoint != "" && cfg.APIKey != "" {
 		d.telemetry = l2planner.NewTelemetryReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
+		d.telemetry.EnableQueue(cfg.StateDir)
 		d.incidents = newIncidentReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
 		log.Printf("[daemon] Telemetry + incident reporters initialized (endpoint=%s)", cfg.APIEndpoint)
+	}
+
+	// Initialize healing journal for crash-safe execution tracking
+	d.healJournal = newHealingJournal(cfg.StateDir)
+	if active := d.healJournal.ActiveCount(); active > 0 {
+		log.Printf("[daemon] Healing journal: %d recovered entries", active)
 	}
 
 	// Initialize order processor with completion callback
@@ -204,8 +214,23 @@ func New(cfg *Config) *Daemon {
 		d.linuxTargets = saved.LinuxTargets
 		d.l2Mode = saved.L2Mode
 		d.subscriptionStatus = saved.SubscriptionStatus
-		log.Printf("[daemon] Restored state from disk: %d linux_targets, l2=%s, sub=%s (saved %s ago)",
-			len(saved.LinuxTargets), saved.L2Mode, saved.SubscriptionStatus, time.Since(saved.SavedAt).Round(time.Second))
+
+		// Restore cooldowns, pruning any that have expired during downtime
+		now := time.Now()
+		restored := 0
+		for k, pc := range saved.Cooldowns {
+			if now.Sub(pc.LastSeen) < cooldownCleanup {
+				d.cooldowns[k] = &driftCooldown{
+					lastSeen:    pc.LastSeen,
+					count:       pc.Count,
+					cooldownDur: pc.CooldownDur,
+				}
+				restored++
+			}
+		}
+
+		log.Printf("[daemon] Restored state from disk: %d linux_targets, l2=%s, sub=%s, cooldowns=%d (saved %s ago)",
+			len(saved.LinuxTargets), saved.L2Mode, saved.SubscriptionStatus, restored, time.Since(saved.SavedAt).Round(time.Second))
 	}
 
 	return d
@@ -468,6 +493,11 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	// Process pending orders via order processor
 	if len(resp.PendingOrders) > 0 {
 		d.processOrders(ctx, resp.PendingOrders)
+	}
+
+	// Drain queued telemetry entries (network is known-good after successful checkin)
+	if d.telemetry != nil {
+		d.telemetry.DrainQueue()
 	}
 
 	// Persist state to disk for survival across restarts
@@ -768,15 +798,19 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 		log.Printf("[daemon] L1 match: rule=%s action=%s for %s/%s",
 			match.Rule.ID, match.Action, req.Hostname, req.CheckType)
 
-		result := d.l1Engine.Execute(match, d.config.SiteID, req.Hostname)
-
 		// Extract runbook_id from action params for telemetry (flywheel needs runbook_id, not rule ID)
 		telemetryRunbookID := match.Rule.ID // fallback to rule ID
 		if rbID, ok := match.Rule.ActionParams["runbook_id"].(string); ok && rbID != "" {
 			telemetryRunbookID = rbID
 		}
 
+		// Journal: checkpoint before execution
+		d.healJournal.StartHealing(incidentID, telemetryRunbookID, req.Hostname, platform, req.CheckType, "L1")
+
+		result := d.l1Engine.Execute(match, d.config.SiteID, req.Hostname)
+
 		if result.Success {
+			d.healJournal.FinishHealing(incidentID, true, "")
 			log.Printf("[daemon] L1 healed %s/%s via %s in %dms",
 				req.Hostname, req.CheckType, match.Rule.ID, result.DurationMs)
 
@@ -798,6 +832,7 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 				go func() { defer d.wg.Done(); d.fixFirewallGPO(req.Hostname) }()
 			}
 		} else {
+			d.healJournal.FinishHealing(incidentID, false, result.Error)
 			log.Printf("[daemon] L1 execution failed for %s/%s: %s",
 				req.Hostname, req.CheckType, result.Error)
 
@@ -862,8 +897,10 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 
 			log.Printf("[daemon] L2 decision: %s (confidence=%.2f, approval=%v) for %s/%s",
 				decision.RecommendedAction, decision.Confidence, decision.RequiresApproval, req.Hostname, req.CheckType)
+			d.healJournal.StartHealing(incidentID, decision.RunbookID, req.Hostname, platform, req.CheckType, "L2")
 			l2Start := time.Now()
 			l2Success, l2Err := d.executeL2Action(ctx, decision, req, incidentID)
+			d.healJournal.FinishHealing(incidentID, l2Success, l2Err)
 			// Report telemetry for data flywheel (async) with actual success/failure
 			d.wg.Add(1)
 			dur := time.Since(l2Start).Milliseconds()
@@ -951,7 +988,7 @@ func (d *Daemon) executeL2Action(ctx context.Context, decision *l2bridge.LLMDeci
 			d.escalateToL3(incidentID, req, "No WinRM credentials for target")
 			return false, "No WinRM credentials for target"
 		}
-		result := d.winrmExec.Execute(target, script, runbookID, "l2_auto", 300, 1, 30.0, hipaaControls)
+		result := d.winrmExec.ExecuteCtx(ctx, target, script, runbookID, "l2_auto", 300, 1, 30.0, hipaaControls)
 		if result.Success {
 			log.Printf("[daemon] L2 healed %s/%s via WinRM in %.1fs (hash=%s)",
 				req.Hostname, req.CheckType, result.DurationSecs, result.OutputHash)

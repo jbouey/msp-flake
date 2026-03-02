@@ -505,29 +505,45 @@ async def list_sites(status: Optional[str] = None, user: dict = Depends(require_
     pool = await get_pool()
     
     async with pool.acquire() as conn:
-        # Get unique sites from site_appliances with aggregated info
-        rows = await conn.fetch("""
-            SELECT 
-                site_id,
+        # Build query with optional org scope filter
+        org_scope = user.get("org_scope")
+        query = """
+            SELECT
+                sa.site_id,
                 COUNT(*) as appliance_count,
-                MAX(last_checkin) as last_checkin,
-                MIN(first_checkin) as created_at,
-                MAX(last_checkin) as updated_at,
-                array_agg(DISTINCT COALESCE(status, 'pending')) as statuses
-            FROM site_appliances
-            GROUP BY site_id
-            ORDER BY site_id
-        """)
-        
+                MAX(sa.last_checkin) as last_checkin,
+                MIN(sa.first_checkin) as created_at,
+                MAX(sa.last_checkin) as updated_at,
+                array_agg(DISTINCT COALESCE(sa.status, 'pending')) as statuses,
+                s.clinic_name,
+                s.tier,
+                s.onboarding_stage,
+                s.client_org_id,
+                co.name as org_name
+            FROM site_appliances sa
+            LEFT JOIN sites s ON s.site_id = sa.site_id
+            LEFT JOIN client_orgs co ON co.id = s.client_org_id
+        """
+        args = []
+        if org_scope is not None:
+            query += " WHERE s.client_org_id = ANY($1::uuid[])"
+            args.append(org_scope)
+        query += """
+            GROUP BY sa.site_id, s.clinic_name, s.tier, s.onboarding_stage,
+                     s.client_org_id, co.name
+            ORDER BY co.name NULLS LAST, sa.site_id
+        """
+        rows = await conn.fetch(query, *args)
+
         sites = []
         for row in rows:
             last_checkin = row['last_checkin']
             live_status = calculate_live_status(last_checkin)
-            
+
             # Filter by status if provided
             if status and live_status != status:
                 continue
-            
+
             # Determine overall status from appliance statuses
             statuses = row['statuses'] or []
             if 'online' in statuses:
@@ -536,25 +552,27 @@ async def list_sites(status: Optional[str] = None, user: dict = Depends(require_
                 overall_status = 'stale'
             else:
                 overall_status = 'offline'
-            
-            # Create human-readable name from site_id
-            clinic_name = row['site_id'].replace('-', ' ').title()
-            
+
+            # Use clinic_name from sites table, fall back to derived name
+            clinic_name = row['clinic_name'] or row['site_id'].replace('-', ' ').title()
+
             sites.append({
                 'site_id': row['site_id'],
                 'clinic_name': clinic_name,
                 'contact_name': None,
                 'contact_email': None,
-                'tier': 'standard',
+                'tier': row['tier'] or 'standard',
                 'status': overall_status,
                 'live_status': live_status,
-                'onboarding_stage': 'active',
+                'onboarding_stage': row['onboarding_stage'] or 'active',
                 'created_at': row['created_at'].isoformat() if row['created_at'] else None,
                 'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None,
                 'last_checkin': last_checkin.isoformat() if last_checkin else None,
                 'appliance_count': row['appliance_count'],
+                'client_org_id': str(row['client_org_id']) if row['client_org_id'] else None,
+                'org_name': row['org_name'],
             })
-        
+
         return {'sites': sites, 'count': len(sites)}
 
 
@@ -648,12 +666,14 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
         else:
             overall_status = 'offline'
 
-        # Get site metadata from sites table
+        # Get site metadata from sites table with org info
         site_row = await conn.fetchrow("""
-            SELECT clinic_name, contact_name, contact_email, contact_phone,
-                   address, notes, tier, onboarding_stage, healing_tier
-            FROM sites
-            WHERE site_id = $1
+            SELECT s.clinic_name, s.contact_name, s.contact_email, s.contact_phone,
+                   s.address, s.notes, s.tier, s.onboarding_stage, s.healing_tier,
+                   s.client_org_id, co.name as org_name
+            FROM sites s
+            LEFT JOIN client_orgs co ON co.id = s.client_org_id
+            WHERE s.site_id = $1
         """, site_id)
 
         # Human-readable name (from sites table or derived)
@@ -695,6 +715,8 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
                 'baseline_at': None,
                 'active_at': earliest_checkin.isoformat() if earliest_checkin else None,
             },
+            'client_org_id': str(site_row['client_org_id']) if site_row and site_row['client_org_id'] else None,
+            'org_name': site_row['org_name'] if site_row else None,
             'appliances': appliances,
             'credentials': credentials,
         }

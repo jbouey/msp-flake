@@ -346,12 +346,40 @@ async def validate_session(
     )
     await db.commit()
 
+    # Check org-level scoping (no rows = global admin)
+    org_result = await db.execute(
+        text("SELECT client_org_id FROM admin_org_assignments WHERE admin_user_id = :uid"),
+        {"uid": str(user_id)}
+    )
+    org_rows = org_result.fetchall()
+    org_scope = [str(r[0]) for r in org_rows] if org_rows else None
+
     return {
         "id": str(user_id),
         "username": username,
         "displayName": display_name,
         "role": role,
+        "org_scope": org_scope,
     }
+
+
+def apply_org_filter(base_query: str, user: Dict[str, Any], params: dict, site_alias: str = "s") -> tuple:
+    """Apply org-level filtering to a SQL query if the user is org-scoped.
+
+    Args:
+        base_query: The SQL query string
+        user: The authenticated user dict from require_auth
+        params: The query parameters dict (will be mutated)
+        site_alias: The alias used for the sites table in the query
+
+    Returns:
+        Tuple of (modified_query, params) with org filter appended if needed
+    """
+    if user.get("org_scope") is not None:
+        param_name = "_org_scope_ids"
+        base_query += f" AND {site_alias}.client_org_id = ANY(:{param_name})"
+        params[param_name] = user["org_scope"]
+    return base_query, params
 
 
 async def logout(db: AsyncSession, token: str, ip_address: Optional[str] = None) -> bool:
