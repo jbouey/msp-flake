@@ -4,6 +4,8 @@ package checks
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"strings"
 
 	"github.com/osiriscare/agent/internal/wmi"
 )
@@ -78,8 +80,23 @@ func (c *WinRMCheck) Run(ctx context.Context) CheckResult {
 		result.Metadata["http_service_state"] = httpState
 	}
 
+	// Check Basic auth is enabled at GPO policy level — appliance daemon requires it.
+	// Registry: HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\Auth\AllowBasic
+	basicScript := `(Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\Auth' -Name 'AllowBasic' -ErrorAction SilentlyContinue).AllowBasic`
+	basicCmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", basicScript)
+	basicOut, basicErr := basicCmd.CombinedOutput()
+	basicVal := strings.TrimSpace(string(basicOut))
+	result.Metadata["basic_auth_policy"] = basicVal
+
+	if basicErr != nil || basicVal != "1" {
+		result.Passed = false
+		result.Expected = "WinRM running + Basic auth enabled (AllowBasic=1)"
+		result.Actual = fmt.Sprintf("WinRM running but Basic auth not enabled (AllowBasic=%s)", basicVal)
+		return result
+	}
+
 	result.Passed = true
-	result.Expected = "WinRM service running (StartMode=Auto)"
-	result.Actual = fmt.Sprintf("WinRM running, StartMode=%s", startMode)
+	result.Expected = "WinRM running (StartMode=Auto, BasicAuth=1)"
+	result.Actual = fmt.Sprintf("WinRM running, StartMode=%s, BasicAuth=%s", startMode, basicVal)
 	return result
 }

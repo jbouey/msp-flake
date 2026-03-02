@@ -128,13 +128,28 @@ Set-ItemProperty -Path $path -Name 'InactivityTimeoutSecs' -Value 900 -Type DWor
 func healWinRM(ctx context.Context, cmd *pb.HealCommand) *Result {
 	// Enable-PSRemoting sets WinRM to Auto, starts it, and configures listeners.
 	// We also explicitly set the service to Auto and start it as a fallback.
+	// Additionally restore Basic auth via GPO policy registry keys — the appliance
+	// daemon uses Basic auth over HTTP, and GPO can override local winrm set commands.
 	script := `
 Set-Service WinRM -StartupType Automatic -ErrorAction SilentlyContinue
 Start-Service WinRM -ErrorAction SilentlyContinue
 Enable-PSRemoting -Force -SkipNetworkProfileCheck
+
+# Ensure Basic auth is enabled at the GPO policy level (local winrm set is overridden by GPO)
+$authPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\Auth'
+$svcPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service'
+if (!(Test-Path $authPath)) { New-Item -Path $authPath -Force | Out-Null }
+Set-ItemProperty -Path $authPath -Name 'AllowBasic' -Value 1 -Type DWord -Force
+if (!(Test-Path $svcPath)) { New-Item -Path $svcPath -Force | Out-Null }
+Set-ItemProperty -Path $svcPath -Name 'AllowUnencryptedTraffic' -Value 1 -Type DWord -Force
+
+Restart-Service WinRM -Force -ErrorAction SilentlyContinue
+
 $svc = Get-Service WinRM
+$basicAuth = (Get-ItemProperty -Path $authPath -Name 'AllowBasic' -ErrorAction SilentlyContinue).AllowBasic
 Write-Output "STATE=$($svc.Status)"
 Write-Output "STARTTYPE=$($svc.StartType)"
+Write-Output "BASIC_AUTH=$basicAuth"
 `
 	out, err := runPS(ctx, script)
 	if err != nil {
@@ -154,6 +169,9 @@ Write-Output "STARTTYPE=$($svc.StartType)"
 		}
 		if strings.HasPrefix(line, "STARTTYPE=") {
 			artifacts["start_type"] = strings.TrimPrefix(line, "STARTTYPE=")
+		}
+		if strings.HasPrefix(line, "BASIC_AUTH=") {
+			artifacts["basic_auth"] = strings.TrimPrefix(line, "BASIC_AUTH=")
 		}
 	}
 

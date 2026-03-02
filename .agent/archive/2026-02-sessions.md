@@ -678,3 +678,288 @@ Analyzed agent logs during and after 180s healing window:
 [truncated...]
 
 ---
+
+## 2026-02-15-session109-evidence-chain-fix-landing-page.md
+
+# Session 109 - Evidence Chain Race Fix + Landing Page + Client Portal
+
+**Date:** 2026-02-15
+**Agent Version:** 1.0.70
+
+## Completed
+
+### Client Portal Healing Logs (commits 37ebf33, 3ee12e9)
+- 3 new backend endpoints: `GET /client/healing-logs`, `GET /client/promotion-candidates`, `POST /client/promotion-candidates/{id}/forward`
+- New `ClientHealingLogs.tsx` with two tabs (Healing Logs + Promotion Candidates)
+- Migration 042: added client endorsement columns to `learning_promotion_candidates`
+- Fixed bug: `main.py` was not importing client_portal routers (only `server.py` was)
+
+### OsirisCare Landing Page (commits 3ee12e9, 2fcdc87)
+- Created `LandingPage.tsx` with medical-grade aesthetic (teal/slate, DM Sans + Source Serif)
+- Hostname-based routing: www.osiriscare.net serves landing page, dashboard.osiriscare.net serves admin
+- Caddy config added for www.osiriscare.net + bare domain redirect
+- DNS already configured (CNAME www -> osiriscare.net, A @ -> 178.156.162.116)
+
+### Evidence Chain Race Condition Fix (commit 3a68713)
+- **Root cause:** Concurrent evidence submissions both read same MAX(chain_position) without locking
+- **Impact:** 1,137 broken hash chain links (0.55% of 203,076 bundles), started Feb 11
+- **Code fix:** `pg_advisory_xact_lock(hashtext(site_id))` serializes per-site submissions
+- **Also:** Changed ORDER BY from `checked_at` to `chain_position`, uses `"0"*64` sentinel for genesis prev_hash
+- **Data repair (migration 043):**
+  - Re-sequenced 10,825 chain positions
+  - Fixed 1,435 prev_hash references
+  - Recomputed 203,075 chain hashes
+  - Added unique index on (site_id, chain_position)
+- **Result:** 1,137 broken links -> 0 broken links
+
+### Chaos Tests
+- Run 1 (earlier session): 10/21 healed in 300s (48%)
+- 3x back-to-back test launched (still running when session ended)
+- Run 1 of 3x: 7/16 verified checks healed in 300s
+  - Windows: 5/8 (WS-FW, SRV-FW, NetProfile, Task, Registry)
+  - Linux: 2/8 (Firewall, rsyslog)
+  - Persistent gaps: DC-Firewall, DC-DNS, DC-SMB, SSH configs, audit, kernel params, cron perms, SUID
+
+### macOS Runbook Plan
+- 17 HIPAA compliance checks proposed
+- 13/17 L1 auto-healable via SSH + `defaults`/`launchctl`/`fdesetup`
+- Key checks: FileVault, Firewall, Screen Lock, Auto-login, Gatekeeper, SIP, NTP, etc.
+- Plan complete, implementation pending
+
+## Key Findings
+
+### Evidence Chain Architecture
+- `compliance_bundles` table stores hash chain per site
+- `prev_hash` is NOT NULL — genesis bundles use 64-zero sentinel
+
+[truncated...]
+
+---
+
+## 2026-02-15-session110-flywheel-pipeline-fix.md
+
+# Session 110 - Flywheel Pipeline Fix + Production Audit Fixes
+
+**Date:** 2026-02-15 (continuation)
+**Agent Version:** 1.0.70
+
+## Completed
+
+### Migration 045 - Audit Fixes (5 bugs fixed)
+- **Evidence_bundles index**: Used `appliance_id` not `site_id` (column didn't exist)
+- **patterns.site_id index**: Removed (column doesn't exist in patterns table)
+- **l1_rules.incident_type index**: Removed (column doesn't exist, uses `incident_pattern JSONB`)
+- **Counter trigger**: Fixed 3 column references:
+  - `NEW.rule_id` → `NEW.runbook_id` (execution_telemetry column)
+  - `NEW.outcome = 'success'` → `NEW.success` (boolean column)
+  - `WHERE runbook_id = ...` → `WHERE rule_id = ...` (agents store rule_id in runbook_id field)
+  - Removed `success_rate = ...` SET (GENERATED ALWAYS column — auto-computed)
+- **appliance_commands table**: Fixed schema to match learning_api.py:
+  - `site_id` → `appliance_id`
+  - `payload` → `params`
+  - Added unique index for ON CONFLICT clause
+
+### Flywheel Promotion Pipeline Validation
+- **Pipeline is WORKING**: 46 patterns auto-promoted to L1 rules
+- **9 enabled promoted rules** with real runbook IDs served via `/agent/sync`
+- **11 broken rules disabled**: Had `AUTO-*` placeholder runbook IDs (100% failure rate)
+- **Counter trigger**: Backfilled 13,131 execution_telemetry records → 5 rules with counters
+- **Flywheel scan**: Confirmed real-time promotion (3 patterns promoted within 5 min of crossing threshold)
+
+### Production Database State
+- 56 total patterns (10 pending, 46 promoted)
+- 20 l1_rules (9 enabled, 11 disabled)
+- 13,135 execution_telemetry records (12,221 L1, 8,745 successful)
+- Counter trigger active on execution_telemetry INSERT
+- appliance_commands table created for deployment pipeline
+
+### Top L1 Rules (by success rate)
+| Rule | Matches | Success Rate |
+|------|---------|-------------|
+| RB-AUTO-FIREWALL | 166 | 100% |
+| RB-AUTO-SSH_CONF | 20 | 100% |
+| RB-AUTO-AUDIT_PO | 24 | 67% |
+| RB-AUTO-BACKUP_S | 260 | 56% |
+| RB-AUTO-BITLOCKE | 3,057 | 30% |
+
+### Other Fixes
+- **CSP dedup**: Removed Content-Security-Policy from SecurityHeadersMiddleware (Caddy is single source)
+- **run_windows_runbook: handler**: Added colon-format handler in appliance_agent.py
+- **Flywheel query**: Excludes `AUTO-*` placeholder runbook IDs from auto-promotion
+
+## Commits
+
+[truncated...]
+
+---
+
+## 2026-02-15-session110-production-audit-fixes.md
+
+# Session 110: Production Audit + Critical Fixes
+**Date:** 2026-02-15 | **Duration:** ~2 hours
+
+## Key Changes Made
+
+### 1. Evidence Signature Fix (HIGH - DEPLOYED)
+- **Root cause**: Double PHI scrub in `appliance_client.py` — phone regex matched NTP float values (e.g. `16.2353515625`) inside `signed_data` JSON string, corrupting Ed25519 signatures
+- **Fix**: Added `pre_scrubbed=True` parameter to `_request()` so `submit_evidence()` skips redundant second scrub
+- **File**: `packages/compliance-agent/src/compliance_agent/appliance_client.py`
+- **Commit**: `9a7a78f`
+
+### 2. CVE Sync Fix (DEPLOYED)
+- `isinstance(affected_cpes, str)` guard was in local code but not deployed to VPS
+- Deployed via same push — fixes `'str' object has no attribute 'get'` error in CVE sync loop
+- **File**: `mcp-server/central-command/backend/cve_watch.py` line 608-609
+
+### 3. Disk Space Cleanup (86% → 66%)
+- **Freed 29GB** on VPS (21GB → 50GB free)
+- Capped journald at 1G (was 3.9G unbounded)
+- Removed stale `/root` files (gallery-dl 1.6G, puppeteer 609M, old repos)
+- Pruned Docker images (python:3.11, old builds ~2.5G)
+- Unmounted stale ISO loopback in `/tmp` (1.1G)
+- Removed old appliance images/ISOs keeping only latest versions (~5G)
+- Added `/etc/docker/daemon.json` for log rotation
+
+### 4. L1 Healing Rule Fixes (DEPLOYED)
+- **L1-FW-002**: New rule for `check_type="firewall_status"` (agent sends this, L1-FW-001 only matched `"firewall"`)
+- **L1-AUDIT-002**: New rule for `check_type="audit_policy"` (no built-in rule existed)
+- **L1-WIN-SMB-001**: Fixed wrong runbook `RB-WIN-SEC-006` → `RB-WIN-SEC-007` in `l1_rules_full_coverage.json`
+- **File**: `packages/compliance-agent/src/compliance_agent/level1_deterministic.py`, `config/l1_rules_full_coverage.json`
+- **Commit**: `5dc0dd5`
+
+### 5. Brand Toolkit (DEPLOYED)
+- Created `mcp-server/central-command/frontend/public/brand-toolkit.html`
+- Updated personal banner text to right side (clear of LinkedIn profile pic)
+- 6 downloadable LinkedIn marketing graphics via Canvas API
+
+## Full System Audit Results
+
+### PASS
+- All 7 Docker containers healthy (46 days uptime)
+- API health: Redis, Postgres, MinIO all connected
+- OTS blockchain: 103K proofs, 98.5K anchored, 0 bad block heights
+- Hash chain integrity: 204K compliance bundles, 0 gaps, 0 broken links
+- WORM protection: append-only triggers working
+- HIPAA mapping: 51/51 runbooks mapped, 16 controls covered
+- SSL/HTTPS: HTTP/2, security headers, cert valid 90 days
+- System resources: 66% disk, 6.3GB RAM available, CPU load 0.21
+
+### WARN
+
+[truncated...]
+
+---
+
+## 2026-02-15-session111-audit-fixes-chaos-validation.md
+
+# Session 111: Audit Fixes + Chaos Lab Validation
+
+**Date:** 2026-02-15
+**Duration:** ~2 hours
+**Version:** v1.0.70 overlay on v1.0.57 NixOS base
+
+## What Was Done
+
+### 1. Runbook ID Mismatch Fix (Migration 046)
+- **Problem:** Three incompatible ID namespaces — agent builtins (L1-SVC-DNS-001), promoted rules (RB-AUTO-XXXXXXXX truncated to 8 chars), and counter trigger (045) that never matched builtins. Data flywheel blind to 65% of telemetry.
+- **Fix:** Created `046_runbook_id_fix.sql`:
+  - ALTER patterns.pattern_signature VARCHAR(64) → VARCHAR(255)
+  - Added `source` column to l1_rules (builtin vs promoted)
+  - Seeded 51 builtin L1 rule IDs from execution_telemetry
+  - Backfilled counters for all 62 rules (12K+ records)
+  - Fixed pattern_signature truncation in db_queries.py, learning_api.py, store.py
+  - Filtered builtin rules from /api/agent/l1-rules to prevent double-serving
+- **Commit:** `e38ba5d`
+
+### 2. Remediation Order Delivery Fix
+- **Problem:** complete_order/acknowledge_order endpoints only handled admin_orders table, leaving healing orders stuck permanently.
+- **Fix:** Updated sites.py to fall back to `orders` table with JOIN to appliances for site_id. Added auto-expiration of stale orders during polling. Expired 425 stale orders.
+- **Commit:** `0ad09ba`
+
+### 3. Flywheel Pattern Generation Fix
+- **Problem:** Flywheel promotion pipeline architecturally complete but entry point dead — no patterns being generated from L2 telemetry.
+- **Fix:** Added Step 0 to _flywheel_promotion_loop() that generates patterns from L2 execution_telemetry (requires 5+ occurrences). All 56 existing patterns already promoted.
+- **Commit:** `d67766f`
+
+### 4. DB Index Cleanup
+- Confirmed small tables (sites: 2 rows, runbooks: 51 rows) make seq scans optimal
+- Cleaned 2 duplicate indexes
+
+### 5. Chaos Lab Testing
+- **Run 2:** 13/16 (81%) — Linux 8/8 HEALED, Windows 5/8
+- **Run 3:** 8/16 (50%) — Linux 6/8, Windows 2/8 (degraded due to WinRM timeouts)
+- **Observer run:** Launched at end of session
+
+## Files Modified
+- `mcp-server/central-command/backend/migrations/046_runbook_id_fix.sql` (NEW)
+- `mcp-server/central-command/backend/db_queries.py` (truncation fix)
+- `mcp-server/central-command/backend/learning_api.py` (truncation fix)
+- `mcp-server/database/store.py` (truncation fix)
+- `mcp-server/main.py` (builtin filter + flywheel Step 0)
+- `mcp-server/central-command/backend/sites.py` (order completion + auto-expiration)
+- `.claude/skills/docs/database/database.md` (migration count update)
+
+## Commits Pushed
+- `e38ba5d` — fix: Runbook ID mismatch — seed 51 builtin rules + fix truncation
+- `0ad09ba` — fix: Order completion now handles both admin_orders and healing orders
+
+[truncated...]
+
+---
+
+## 2026-02-15-session112-dns-heal-fix-hipaa-research.md
+
+# Session 112: DNS Healing Fix + HIPAA 2026 Research
+
+**Date:** 2026-02-15/16
+**Focus:** Fix DNS remediation failure, WinRM tempfile executor, chaos testing, HIPAA 2026 readiness
+
+## Changes Made
+
+### 1. WinRM Long Script Execution (`executor.py`)
+- **Problem:** DNS remediation script (~4.7KB) exceeded cmd.exe's 8,191 char limit after pywinrm's UTF-16LE + base64 encoding (~12.7KB)
+- **Fix:** Added `_execute_via_tempfile()` method that:
+  1. Base64 encodes the script (UTF-8)
+  2. Writes chunks via cmd.exe `echo` (6000 chars/chunk, well under 8191 limit)
+  3. Short PowerShell bootstrap decodes base64, writes .ps1, executes, cleans up
+- **Threshold:** `_MAX_INLINE_SCRIPT_LEN = 2000` — scripts above this use tempfile path
+- **File:** `packages/compliance-agent/src/compliance_agent/runbooks/windows/executor.py`
+
+### 2. DNS Healing (from prior session, deployed this session)
+- DC self-detection: `DomainRole >= 4` uses own IP as DNS target
+- Verify script rejects public DNS on domain-joined machines
+- WinRM session invalidation on ALL errors (not just connection errors)
+- **File:** `packages/compliance-agent/src/compliance_agent/runbooks/windows/network.py`
+
+### 3. HIPAA 2026 Security Rule Research
+- Mapped NPRM proposed requirements to OsirisCare platform
+- 15+ requirements already covered (encryption, MFA checks, patching, logging, incident response)
+- 6 gaps identified: MFA enrollment verification, vuln scan integration, AD account termination monitoring, BAA tracker, training tracker, annual compliance report
+- Phased roadmap: Phase 1 (now), Phase 2 (Q2), Phase 3 (Q3 before final rule)
+
+## Chaos Test Run 6 Results (v1.0.72)
+
+| Target | Result | Details |
+|--------|--------|---------|
+| DC (.250) | **3/3 (100%)** | Firewall, DNS (192.168.88.250), SMB signing |
+| SRV (.244) | **2/3 (67%)** | Task persistence + firewall (healed 2min after verify window) |
+| WS (.251) | **0/3** | WinRM port 5985 connection refused after reboot |
+| Linux (.242) | **Active** | Agent heals SSH/FW/services; chaos test SSH verification times out |
+
+## Commits
+- `fdea87c` — fix: WinRM long script execution via temp file (cmd.exe 8191 char limit)
+- `5cf6e11` — fix: DC DNS healing + WinRM session invalidation (prior session, deployed)
+
+## Deployment
+- Overlay v1.0.72 deployed to physical appliance via SCP
+- Pushed to main (CI/CD deploys backend)
+- Cleared 2 flap suppressions before chaos test
+
+## Known Issues
+1. WS (.251) WinRM not starting after reboot — needs Guest Additions or manual console fix
+2. SRV scan cycle ~2min too slow for 180s chaos test verification window
+3. iMac SSH to Linux (.242) times out during chaos test verification phase
+
+[truncated...]
+
+---
