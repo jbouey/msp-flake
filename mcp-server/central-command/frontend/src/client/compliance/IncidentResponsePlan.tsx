@@ -99,47 +99,82 @@ export const IncidentResponsePlan: React.FC<IncidentResponsePlanProps> = ({ apiB
         <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
         <p className="text-sm text-teal-800 leading-relaxed">Your Incident Response Plan documents what your practice will do if patient data is lost, stolen, or accessed by an unauthorized person. HIPAA requires you to have a written plan before a breach happens — not after. The Breach Log below tracks any incidents if they occur.</p>
         <p className="text-sm font-medium text-teal-900 mt-3 mb-1">How to complete it</p>
-        <p className="text-sm text-teal-800 leading-relaxed">Click "Create from Template" to start with a pre-built plan that covers HIPAA's required steps: detection, containment, notification, and remediation. Edit the plan to reflect your practice's actual contacts and procedures (e.g., who to call first, where your backup systems are). If you already have an IR plan, upload it in Supporting Documents below.</p>
+        <p className="text-sm text-teal-800 leading-relaxed">Upload your existing IR plan in Supporting Documents below. If you don't have one, download our template, customize it for your practice (contacts, backup systems, escalation procedures), and re-upload. HIPAA requires periodic review — use "Mark as Reviewed" to track your annual review cycle.</p>
       </div>
 
-      {/* Plan section */}
+      {/* IR Plan Status Panel */}
       <div className="bg-white rounded-2xl border border-slate-100 p-6 mb-6">
         {plan ? (
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="font-semibold text-slate-900">{plan.title}</h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  Version {plan.version}
-                  {plan.approved_by && ` | Approved by ${plan.approved_by}`}
-                  {plan.last_tested && ` | Last tested ${new Date(plan.last_tested).toLocaleDateString()}`}
-                </p>
+            <div className="flex items-center gap-3 mb-4">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${plan.status === 'active' ? 'bg-green-100' : 'bg-yellow-100'}`}>
+                <svg className={`w-5 h-5 ${plan.status === 'active' ? 'text-green-600' : 'text-yellow-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={plan.status === 'active' ? 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' : 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z'} />
+                </svg>
               </div>
-              <div className="flex gap-2">
-                <span className={`px-2 py-0.5 text-xs rounded-full ${plan.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{plan.status}</span>
-                <button onClick={() => { setEditing(true); setEditContent(plan.content); }} className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg hover:bg-slate-50">
-                  Edit
-                </button>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-slate-900">IR Plan Status:</h3>
+                  <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${plan.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                    {plan.status === 'active' ? 'Active' : plan.status}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">Version {plan.version}</p>
               </div>
             </div>
-            {editing ? (
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 p-4 bg-slate-50 rounded-xl">
               <div>
+                <p className="text-xs text-slate-400">Document</p>
+                <p className="text-sm font-medium text-slate-900 mt-0.5">{plan.title}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">Last Updated</p>
+                <p className="text-sm font-medium text-slate-900 mt-0.5">{plan.approved_at ? new Date(plan.approved_at).toLocaleDateString() : 'Not yet'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">Last Reviewed</p>
+                <p className="text-sm font-medium text-slate-900 mt-0.5">{plan.last_tested ? new Date(plan.last_tested).toLocaleDateString() : 'Not yet reviewed'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">Next Review Due</p>
+                <p className="text-sm font-medium text-slate-900 mt-0.5">{plan.next_review ? new Date(plan.next_review).toLocaleDateString() : 'Not set'}</p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button onClick={async () => {
+                await fetch(`${apiBase}/ir-plan/review`, { method: 'POST', credentials: 'include' });
+                fetchData();
+              }} className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700">
+                Mark as Reviewed
+              </button>
+              <button onClick={() => { setEditing(true); setEditContent(plan.content); }} className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700">
+                Edit Plan
+              </button>
+            </div>
+
+            {editing && (
+              <div className="mt-4">
                 <textarea className="w-full border border-slate-200 rounded-lg p-4 text-sm font-mono" rows={15} value={editContent} onChange={e => setEditContent(e.target.value)} />
                 <div className="flex gap-2 mt-3">
                   <button onClick={savePlan} className="px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-700">Save New Version</button>
                   <button onClick={() => setEditing(false)} className="px-4 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded-lg">Cancel</button>
                 </div>
               </div>
-            ) : (
-              <pre className="whitespace-pre-wrap text-sm text-slate-700 bg-slate-50 p-4 rounded-xl max-h-96 overflow-y-auto">{plan.content}</pre>
             )}
           </div>
         ) : (
-          <div className="text-center py-8">
-            <p className="text-slate-500 mb-4">No incident response plan created yet.</p>
-            <button onClick={() => { setEditing(true); setEditContent(template); }} className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 text-sm">
-              Create from Template
-            </button>
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <div className="flex items-start gap-3">
+              <svg className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <div>
+                <p className="text-sm font-medium text-amber-900">No Incident Response Plan on file</p>
+                <p className="text-sm text-amber-700 mt-1">HIPAA requires a written IR plan before a breach occurs. Upload your existing plan in Supporting Documents below, or download our template, customize it, and re-upload.</p>
+              </div>
+            </div>
           </div>
         )}
       </div>

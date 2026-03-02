@@ -781,6 +781,25 @@ async def create_ir_plan(body: IRPlanCreate, user: dict = Depends(require_client
     return _row_dict(row)
 
 
+@router.post("/ir-plan/review")
+async def mark_ir_plan_reviewed(user: dict = Depends(require_client_user)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        now = datetime.now(timezone.utc)
+        next_review = now + timedelta(days=365)
+        row = await conn.fetchrow("""
+            UPDATE hipaa_ir_plans
+            SET last_tested = $2, next_review = $3
+            WHERE org_id = $1 AND id = (
+                SELECT id FROM hipaa_ir_plans WHERE org_id = $1 ORDER BY version DESC LIMIT 1
+            )
+            RETURNING *
+        """, user["org_id"], now, next_review)
+        if not row:
+            raise HTTPException(status_code=404, detail="No IR plan found")
+    return _row_dict(row)
+
+
 @router.post("/breaches")
 async def create_breach(body: BreachRecord, user: dict = Depends(require_client_user)):
     pool = await get_pool()
