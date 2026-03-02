@@ -116,12 +116,17 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({ moduleKey, apiBa
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  const handleDownload = async (docId: string) => {
+  const handleDownload = async (docId: string, fileName: string) => {
     try {
       const res = await fetch(`${apiBase}/documents/${docId}/download`, { credentials: 'include' });
       if (res.ok) {
-        const data = await res.json();
-        window.open(data.download_url, '_blank');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        URL.revokeObjectURL(url);
       }
     } catch (e) {
       console.error('Download failed:', e);
@@ -224,7 +229,7 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({ moduleKey, apiBa
                 </p>
               </div>
               <button
-                onClick={(e) => { e.stopPropagation(); handleDownload(doc.id); }}
+                onClick={(e) => { e.stopPropagation(); handleDownload(doc.id, doc.file_name); }}
                 className="p-1.5 text-slate-400 hover:text-teal-600 rounded opacity-0 group-hover:opacity-100 transition-opacity"
                 title="Download"
               >

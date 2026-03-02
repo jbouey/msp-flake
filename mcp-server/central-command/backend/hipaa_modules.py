@@ -1215,13 +1215,14 @@ async def download_document(
     doc_id: str,
     user: dict = Depends(require_client_user),
 ):
-    """Generate a presigned download URL for a document."""
+    """Stream a document file from MinIO storage."""
+    from starlette.responses import StreamingResponse
     pool = await get_pool()
     org_id = str(user["org_id"])
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
-            SELECT minio_key, file_name
+            SELECT minio_key, file_name, mime_type
             FROM hipaa_documents
             WHERE id = $1::uuid AND org_id = $2 AND deleted_at IS NULL
         """, doc_id, org_id)
@@ -1231,19 +1232,17 @@ async def download_document(
 
     try:
         mc = _get_minio_client()
-        url = mc.presigned_get_object(
-            DOCUMENTS_BUCKET,
-            row["minio_key"],
-            expires=timedelta(minutes=15),
+        response = mc.get_object(DOCUMENTS_BUCKET, row["minio_key"])
+        mime = row.get("mime_type") or "application/octet-stream"
+        fname = row["file_name"]
+        return StreamingResponse(
+            response.stream(32 * 1024),
+            media_type=mime,
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
         )
-        return {
-            "download_url": url,
-            "expires_in": 900,
-            "file_name": row["file_name"],
-        }
     except Exception as e:
-        logger.error(f"Presigned URL generation failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate download URL")
+        logger.error(f"Document download failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to download document")
 
 
 @router.delete("/documents/{doc_id}")
