@@ -51,7 +51,6 @@ interface IncidentResponsePlanProps {
 export const IncidentResponsePlan: React.FC<IncidentResponsePlanProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [plan, setPlan] = useState<IRPlan | null>(null);
   const [breaches, setBreaches] = useState<Breach[]>([]);
-  const [template, setTemplate] = useState('');
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [showBreachForm, setShowBreachForm] = useState(false);
@@ -66,7 +65,6 @@ export const IncidentResponsePlan: React.FC<IncidentResponsePlanProps> = ({ apiB
       const d = await res.json();
       setPlan(d.plan);
       setBreaches(d.breaches || []);
-      setTemplate(d.template || '');
     }
   };
 
