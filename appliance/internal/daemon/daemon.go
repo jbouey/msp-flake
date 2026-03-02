@@ -85,6 +85,10 @@ type Daemon struct {
 	subscriptionMu     sync.RWMutex
 	subscriptionStatus string // "active", "trialing", "past_due", "canceled", "none"
 
+	// Run context: cancelled on daemon shutdown, propagated to healing operations
+	runCtx    context.Context
+	runCancel context.CancelFunc
+
 	// WaitGroup for graceful goroutine drain on shutdown
 	wg sync.WaitGroup
 
@@ -209,6 +213,7 @@ func New(cfg *Config) *Daemon {
 
 // Run starts the daemon and blocks until the context is cancelled.
 func (d *Daemon) Run(ctx context.Context) error {
+	d.runCtx, d.runCancel = context.WithCancel(ctx)
 	log.Printf("[daemon] OsirisCare Appliance Daemon v%s starting", Version)
 	l2Mode := "disabled"
 	if d.l2Planner != nil {
@@ -753,7 +758,8 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 		platform = "windows"
 	}
 	if d.incidents != nil {
-		go d.incidents.ReportDriftIncident(req.Hostname, req.CheckType, req.Expected, req.Actual, req.HIPAAControl, severity, platform)
+		d.wg.Add(1)
+		go func() { defer d.wg.Done(); d.incidents.ReportDriftIncident(req.Hostname, req.CheckType, req.Expected, req.Actual, req.HIPAAControl, severity, platform) }()
 	}
 
 	// L1: Deterministic matching
@@ -774,29 +780,30 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 			log.Printf("[daemon] L1 healed %s/%s via %s in %dms",
 				req.Hostname, req.CheckType, match.Rule.ID, result.DurationMs)
 
-			// Report L1 telemetry for data flywheel (async, fire-and-forget)
 			if d.telemetry != nil {
-				go d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, true, "", result.DurationMs)
+				d.wg.Add(1)
+				go func() { defer d.wg.Done(); d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, true, "", result.DurationMs) }()
 			}
 
-			// Report healing to dashboard incidents table
 			if d.incidents != nil {
-				go d.incidents.ReportHealed(req.Hostname, req.CheckType, "L1", match.Rule.ID)
+				d.wg.Add(1)
+				go func() { defer d.wg.Done(); d.incidents.ReportHealed(req.Hostname, req.CheckType, "L1", match.Rule.ID) }()
 			}
 
 			// GPO firewall fix: when firewall drift is healed, also fix the
 			// domain GPO to prevent GPO from turning firewall back off.
 			// Zero-friction: runs automatically without operator intervention.
 			if req.CheckType == "firewall_status" {
-				go d.fixFirewallGPO(req.Hostname)
+				d.wg.Add(1)
+				go func() { defer d.wg.Done(); d.fixFirewallGPO(req.Hostname) }()
 			}
 		} else {
 			log.Printf("[daemon] L1 execution failed for %s/%s: %s",
 				req.Hostname, req.CheckType, result.Error)
 
-			// Report L1 failure telemetry too — helps identify broken rules
 			if d.telemetry != nil {
-				go d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, false, result.Error, result.DurationMs)
+				d.wg.Add(1)
+				go func() { defer d.wg.Done(); d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, false, result.Error, result.DurationMs) }()
 			}
 		}
 		return
@@ -858,8 +865,9 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 			l2Start := time.Now()
 			l2Success, l2Err := d.executeL2Action(ctx, decision, req, incidentID)
 			// Report telemetry for data flywheel (async) with actual success/failure
-			go d.l2Planner.ReportExecution(incident, decision, l2Success, l2Err,
-				time.Since(l2Start).Milliseconds())
+			d.wg.Add(1)
+			dur := time.Since(l2Start).Milliseconds()
+			go func() { defer d.wg.Done(); d.l2Planner.ReportExecution(incident, decision, l2Success, l2Err, dur) }()
 			return
 		}
 
@@ -1198,12 +1206,10 @@ func (d *Daemon) shouldSuppressDrift(key string) bool {
 
 	now := time.Now()
 
-	// Lazy cleanup of stale entries
-	if len(d.cooldowns) > 100 {
-		for k, entry := range d.cooldowns {
-			if now.Sub(entry.lastSeen) > cooldownCleanup {
-				delete(d.cooldowns, k)
-			}
+	// Proactive cleanup of stale entries every call (cheap: map iteration)
+	for k, entry := range d.cooldowns {
+		if now.Sub(entry.lastSeen) > cooldownCleanup {
+			delete(d.cooldowns, k)
 		}
 	}
 

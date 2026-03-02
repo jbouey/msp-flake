@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	gowinrm "github.com/masterzen/winrm"
@@ -47,9 +48,12 @@ func main() {
 	defer cmd.Close()
 
 	var stdoutBuf, stderrBuf bytes.Buffer
-	go io.Copy(&stdoutBuf, cmd.Stdout)
-	go io.Copy(&stderrBuf, cmd.Stderr)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); io.Copy(&stdoutBuf, cmd.Stdout) }()
+	go func() { defer wg.Done(); io.Copy(&stderrBuf, cmd.Stderr) }()
 	cmd.Wait()
+	wg.Wait()
 
 	fmt.Printf("Exit: %d\nSTDOUT: %s\n", cmd.ExitCode(), stdoutBuf.String())
 	if stderrBuf.Len() > 0 {

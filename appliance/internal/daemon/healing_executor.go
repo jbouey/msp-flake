@@ -93,9 +93,9 @@ func (d *Daemon) makeActionExecutor() healing.ActionExecutor {
 }
 
 // executeRunbook runs a remediation runbook via WinRM (windows) or SSH (linux).
-// ctx controls cancellation for SSH sessions; pass context.Background() if no parent context.
+// Uses the daemon's run context so healing operations cancel on shutdown.
 func (d *Daemon) executeRunbook(params map[string]interface{}, hostID, platform string) (map[string]interface{}, error) {
-	return d.executeRunbookCtx(context.Background(), params, hostID, platform)
+	return d.executeRunbookCtx(d.runCtx, params, hostID, platform)
 }
 
 func (d *Daemon) executeRunbookCtx(ctx context.Context, params map[string]interface{}, hostID, platform string) (map[string]interface{}, error) {
@@ -228,7 +228,7 @@ type localExecResult struct {
 // executeLocal runs a remediation script locally via bash instead of SSH.
 // Used for self-healing on the appliance itself.
 func (d *Daemon) executeLocal(script, runbookID, phase string, timeout int) localExecResult {
-	return d.executeLocalCtx(context.Background(), script, runbookID, phase, timeout)
+	return d.executeLocalCtx(d.runCtx, script, runbookID, phase, timeout)
 }
 
 func (d *Daemon) executeLocalCtx(parent context.Context, script, runbookID, phase string, timeout int) localExecResult {
@@ -254,7 +254,7 @@ func (d *Daemon) executeLocalCtx(parent context.Context, script, runbookID, phas
 // executeInlineScript runs a script directly (not from runbook registry) via WinRM or SSH.
 // Used for L1 actions that don't map to a specific runbook.
 func (d *Daemon) executeInlineScript(script, hostID, platform string, params map[string]interface{}) (map[string]interface{}, error) {
-	return d.executeInlineScriptCtx(context.Background(), script, hostID, platform, params)
+	return d.executeInlineScriptCtx(d.runCtx, script, hostID, platform, params)
 }
 
 func (d *Daemon) executeInlineScriptCtx(ctx context.Context, script, hostID, platform string, params map[string]interface{}) (map[string]interface{}, error) {

@@ -186,16 +186,7 @@ func (e *Executor) executeInline(client *gowinrm.Client, script string, timeout 
 	}
 	defer cmd.Close()
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	go io.Copy(&stdoutBuf, cmd.Stdout)
-	go io.Copy(&stderrBuf, cmd.Stderr)
-
-	cmd.Wait()
-
-	stdout := strings.TrimSpace(stdoutBuf.String())
-	stderr := strings.TrimSpace(stderrBuf.String())
-
-	return stdout, stderr, cmd.ExitCode(), nil
+	return captureCommandOutput(cmd)
 }
 
 // executeViaTempFile handles the cmd.exe 8191 character limit by writing
@@ -253,11 +244,28 @@ func (e *Executor) executeViaTempFile(client *gowinrm.Client, script string, tim
 	}
 	defer cmd.Close()
 
+	return captureCommandOutput(cmd)
+}
+
+// captureCommandOutput waits for a WinRM command to complete and captures
+// stdout/stderr. Uses a WaitGroup to ensure io.Copy goroutines finish
+// before reading buffers (prevents data races and goroutine leaks).
+func captureCommandOutput(cmd *gowinrm.Command) (string, string, int, error) {
 	var stdoutBuf, stderrBuf bytes.Buffer
-	go io.Copy(&stdoutBuf, cmd.Stdout)
-	go io.Copy(&stderrBuf, cmd.Stderr)
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		io.Copy(&stdoutBuf, cmd.Stdout)
+	}()
+	go func() {
+		defer wg.Done()
+		io.Copy(&stderrBuf, cmd.Stderr)
+	}()
 
 	cmd.Wait()
+	wg.Wait()
 
 	stdout := strings.TrimSpace(stdoutBuf.String())
 	stderr := strings.TrimSpace(stderrBuf.String())

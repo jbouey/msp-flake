@@ -99,6 +99,8 @@ func (c *Client) Connect() error {
 
 	if c.conn != nil {
 		c.conn.Close()
+		c.conn = nil
+		c.reader = nil
 	}
 
 	conn, err := net.DialTimeout("unix", c.socketPath, 5*time.Second)
