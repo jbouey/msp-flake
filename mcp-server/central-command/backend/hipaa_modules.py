@@ -438,6 +438,19 @@ async def complete_sra_assessment(assessment_id: str, user: dict = Depends(requi
         if str(owner) != str(user["org_id"]):
             raise HTTPException(status_code=403, detail="Access denied")
 
+        # Require remediation plans for high/critical findings
+        unplanned = await conn.fetch("""
+            SELECT question_key FROM hipaa_sra_responses
+            WHERE assessment_id = $1
+              AND risk_level IN ('high', 'critical')
+              AND (remediation_plan IS NULL OR TRIM(remediation_plan) = '' OR remediation_due IS NULL)
+        """, _uid(assessment_id))
+        if unplanned:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Remediation plan and due date required for {len(unplanned)} high/critical finding(s) before completing.",
+            )
+
         # Calculate risk score
         responses = await conn.fetch("""
             SELECT risk_level FROM hipaa_sra_responses WHERE assessment_id = $1

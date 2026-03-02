@@ -226,6 +226,9 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
   const categoryQuestions = currentCategory ? questions.filter(q => q.category === currentCategory) : [];
   const allAnswered = questions.every(q => responses[q.key]?.response);
   const findings = Object.values(responses).filter(r => r.risk_level === 'high' || r.risk_level === 'critical');
+  const remediationComplete = findings.length === 0 || findings.every(
+    f => f.remediation_plan && f.remediation_plan.trim() !== '' && f.remediation_due
+  );
 
   return (
     <div>
@@ -287,14 +290,22 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
                 );
               })}
               <button onClick={() => setStep(5)} className="mt-4 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 text-sm">
-                Create Remediation Plan
+                {remediationComplete ? 'Edit Remediation Plan' : 'Create Remediation Plan'}
               </button>
             </div>
           )}
           {activeAssessment.status !== 'completed' && (
-            <button onClick={completeAssessment} className="mt-6 px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium">
-              Complete Assessment
-            </button>
+            findings.length > 0 && !remediationComplete ? (
+              <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                <p className="text-sm text-amber-800">
+                  <span className="font-semibold">Remediation plan required.</span> You must create a remediation plan with due dates for all high/critical findings before completing this assessment.
+                </p>
+              </div>
+            ) : (
+              <button onClick={completeAssessment} className="mt-6 px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium">
+                Complete Assessment
+              </button>
+            )
           )}
         </div>
       )}
@@ -331,6 +342,23 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
                           value={f.remediation_due || ''}
                           onChange={e => updateResponse(f.question_key, 'remediation_due', e.target.value)}
                         />
+                        <div className="flex gap-2 mt-1.5">
+                          {[30, 60, 90].map(days => {
+                            const d = new Date();
+                            d.setDate(d.getDate() + days);
+                            const iso = d.toISOString().split('T')[0];
+                            return (
+                              <button
+                                key={days}
+                                type="button"
+                                onClick={() => updateResponse(f.question_key, 'remediation_due', iso)}
+                                className="px-2 py-0.5 text-xs border border-slate-200 rounded hover:bg-slate-50 text-slate-500"
+                              >
+                                {days}d
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   </div>

@@ -2042,8 +2042,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                             domain = cred_data.get('domain', '')
                             use_ssl = cred_data.get('use_ssl', False)
 
-                            # Combine domain\username for NTLM auth
-                            full_username = f"{domain}\\{username}" if domain else username
+                            # Send username without domain prefix — Basic auth
+                            # over HTTP rejects domain\user format on many DCs.
+                            # The Go daemon handles domain context separately.
+                            full_username = username
 
                             if hostname:
                                 windows_targets.append({
