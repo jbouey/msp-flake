@@ -6,14 +6,18 @@
 //  3. Dispatch to handler by order_type
 //  4. Complete order with result (success/failure)
 //
-// 17 order types are handled, from simple checkins to NixOS rebuilds.
+// 18 order types are handled, from simple checkins to NixOS rebuilds.
 package orders
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -228,6 +232,7 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p.handlers["sync_promoted_rule"] = p.handleSyncPromotedRule
 	p.handlers["healing"] = p.handleHealing
 	p.handlers["update_credentials"] = p.handleUpdateCredentials
+	p.handlers["update_daemon"] = p.handleUpdateDaemon
 
 	return p
 }
@@ -759,6 +764,111 @@ func (p *Processor) handleHealing(_ context.Context, params map[string]interface
 func (p *Processor) handleUpdateCredentials(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
 	// Credential refresh is handled by the daemon's phone-home client
 	return map[string]interface{}{"status": "credential_refresh_triggered"}, nil
+}
+
+// handleUpdateDaemon downloads a new daemon binary, verifies its SHA256 hash,
+// writes it to /var/lib/msp/appliance-daemon, creates a systemd override to use
+// the new binary, and schedules a daemon restart.
+func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	binaryURL, _ := params["binary_url"].(string)
+	expectedHash, _ := params["binary_sha256"].(string)
+	version, _ := params["version"].(string)
+
+	if err := validateDownloadURL(binaryURL, "binary_url"); err != nil {
+		return nil, fmt.Errorf("SECURITY: %w", err)
+	}
+	if expectedHash == "" {
+		return nil, fmt.Errorf("binary_sha256 is required for integrity verification")
+	}
+	if len(expectedHash) != 64 {
+		return nil, fmt.Errorf("binary_sha256 must be 64 hex chars, got %d", len(expectedHash))
+	}
+
+	// Download binary
+	log.Printf("[orders] Downloading daemon binary from %s", binaryURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, binaryURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create download request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download daemon binary: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
+	}
+
+	// Read with size limit (100MB max)
+	const maxSize = 100 * 1024 * 1024
+	limitReader := io.LimitReader(resp.Body, maxSize+1)
+	data, err := io.ReadAll(limitReader)
+	if err != nil {
+		return nil, fmt.Errorf("read download: %w", err)
+	}
+	if len(data) > maxSize {
+		return nil, fmt.Errorf("binary exceeds 100MB size limit")
+	}
+
+	// Verify SHA256
+	actualHash := sha256.Sum256(data)
+	actualHex := hex.EncodeToString(actualHash[:])
+	if actualHex != expectedHash {
+		return nil, fmt.Errorf("SHA256 mismatch: expected %s, got %s", expectedHash, actualHex)
+	}
+	log.Printf("[orders] Binary SHA256 verified: %s (%d bytes)", actualHex, len(data))
+
+	// Write to state dir
+	binaryPath := filepath.Join(p.stateDir, "appliance-daemon")
+	tmpPath := binaryPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o755); err != nil {
+		return nil, fmt.Errorf("write binary: %w", err)
+	}
+	if err := os.Rename(tmpPath, binaryPath); err != nil {
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("install binary: %w", err)
+	}
+	log.Printf("[orders] Daemon binary installed to %s", binaryPath)
+
+	// Create systemd override to use the new binary
+	overrideDir := "/etc/systemd/system/appliance-daemon.service.d"
+	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
+		// Fall back to runtime override (VM environment)
+		overrideDir = "/run/systemd/system/appliance-daemon.service.d"
+		if err := os.MkdirAll(overrideDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create override dir: %w", err)
+		}
+	}
+	overrideContent := fmt.Sprintf("[Service]\nExecStart=\nExecStart=%s\n", binaryPath)
+	overridePath := filepath.Join(overrideDir, "override.conf")
+	if err := os.WriteFile(overridePath, []byte(overrideContent), 0o644); err != nil {
+		return nil, fmt.Errorf("write systemd override: %w", err)
+	}
+	log.Printf("[orders] Systemd override written to %s", overridePath)
+
+	// Reload systemd and schedule restart
+	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
+		log.Printf("[orders] WARNING: systemctl daemon-reload failed: %v", err)
+	}
+
+	log.Printf("[orders] Scheduling daemon restart in 10 seconds (version=%s)", version)
+	go func() {
+		time.Sleep(10 * time.Second)
+		if err := exec.Command("systemctl", "restart", "appliance-daemon").Run(); err != nil {
+			log.Printf("[orders] Daemon restart failed: %v", err)
+		}
+	}()
+
+	return map[string]interface{}{
+		"status":      "update_installed",
+		"version":     version,
+		"binary_path": binaryPath,
+		"sha256":      actualHex,
+		"message":     "Daemon binary installed, restart scheduled in 10s",
+	}, nil
 }
 
 // --- Nonce replay protection ---

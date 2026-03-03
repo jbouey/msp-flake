@@ -2,11 +2,34 @@
 
 All orders sent to appliances must be signed so the daemon can verify
 they originated from Central Command and haven't been tampered with.
+
+IMPORTANT: Signatures MUST be hex-encoded (128 chars for Ed25519).
+The Go daemon calls hex.DecodeString() on the signature — base64 will fail
+with "invalid byte" errors. Python's nacl sign().signature.hex() is correct.
 """
 
 import json
+import re
 import secrets
 from datetime import datetime, timezone
+
+
+_HEX_PATTERN = re.compile(r"^[0-9a-f]{128}$")
+
+
+def _validate_signature_hex(signature: str) -> str:
+    """Validate that a signature is 128-char lowercase hex (Ed25519).
+
+    The Go daemon expects hex — base64 causes 'invalid byte' errors.
+    This catches misconfiguration early on the Python side.
+    """
+    if not _HEX_PATTERN.match(signature):
+        raise ValueError(
+            f"Signature must be 128 lowercase hex chars (Ed25519). "
+            f"Got {len(signature)} chars. "
+            f"Ensure sign_data() returns .signature.hex(), not base64."
+        )
+    return signature
 
 
 def sign_admin_order(
@@ -42,7 +65,7 @@ def sign_admin_order(
         payload_dict["target_appliance_id"] = target_appliance_id
 
     signed_payload = json.dumps(payload_dict, sort_keys=True)
-    signature = sign_data(signed_payload)
+    signature = _validate_signature_hex(sign_data(signed_payload))
 
     return nonce, signature, signed_payload
 
@@ -73,6 +96,6 @@ def sign_fleet_order(
     }
 
     signed_payload = json.dumps(payload_dict, sort_keys=True)
-    signature = sign_data(signed_payload)
+    signature = _validate_signature_hex(sign_data(signed_payload))
 
     return nonce, signature, signed_payload

@@ -1,14 +1,14 @@
 {
-  "session": 147,
-  "updated": "2026-03-02T01:07:08.983108Z",
+  "session": 149,
+  "updated": "2026-03-03T10:55:15.642778Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "go_daemon_v0.3.9_confirmed_v0.3.10_fleet_order_pending_winrm_http_fallback_working",
-    "vm_appliance": "go_daemon_v0.3.9_confirmed_v0.3.10_fleet_order_pending",
+    "physical_appliance": "go_daemon_v0.3.12_self_scan_removed_port80_expected",
+    "vm_appliance": "go_daemon_v0.3.12_self_scan_removed_port80_expected",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_37_eligible_2_l2_patterns_promoted_flywheel_aggregation_bridge_deployed",
@@ -16,9 +16,9 @@
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "fleet_wide_orders_live_v0.3.10_fleet_order_50311a01_active"
+    "fleet_updates": "fleet_wide_orders_live_update_daemon_handler_added_v0.3.13"
   },
-  "current_blocker": "v0.3.10 fleet order active (50311a01). Awaiting home WiFi to verify deployment. After rebuild: reboot ws01 for GPO agent self-deploy from NETLOGON.",
+  "current_blocker": "ws01 trust relationship broken (can't authenticate to domain). GPO scripts in SYSVOL ready but won't apply until trust is restored. Need to rejoin domain or reset machine account from ws01 console.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -174,7 +174,19 @@
       "note": "Built overlay with all session 106 changes (L1 rules, flap fix, scan checks, parallel scans). Uploaded to root@178.156.162.116:/var/www/updates/agent-overlay.tar.gz"
     }
   ],
-  "completed_this_session": [],
+  "completed_this_session": [
+    "Removed NixOS self-scan from Go daemon (linuxscan.go) — eliminated 6 false positive incident types every 2h",
+    "Added port 80 to expectedPorts in netscan.go (http-file-server)",
+    "Deployed v0.3.12 to both appliances via SCP",
+    "Added update_daemon order handler to Go daemon (download+SHA256+systemd override+restart)",
+    "Added base64-vs-hex signature detection in verify.go with helpful error message",
+    "Added _validate_signature_hex() assertion in order_signing.py backend",
+    "Bumped daemon to v0.3.13",
+    "Fixed ADWS on DC (EventLog service was Stopped/Disabled by chaos lab)",
+    "Created OsirisCare-WinRM GPO with startup scripts (Setup-WinRM.ps1, Deploy-Agent.ps1)",
+    "Staged osiris-agent.exe + osiris-config.json to NETLOGON share",
+    "Reset ws01 machine account password in AD"
+  ],
   "recent_commits": [
     {
       "hash": "c73c478",
@@ -283,6 +295,6 @@
     "phase_status": "IMPLEMENTATION-STATUS.md",
     "session_logs": ".agent/sessions/"
   },
-  "physical_appliance": "go_daemon_v0.3.11_basic_auth_winrm_both_dc_and_ws01",
-  "blocker": "None"
+  "physical_appliance": "go_daemon_v0.3.12_deployed",
+  "blocker": "ws01 trust broken — needs domain rejoin from ws01 console"
 }

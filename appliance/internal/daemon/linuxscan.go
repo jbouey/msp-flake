@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -14,30 +12,6 @@ import (
 	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/sshexec"
 )
-
-// bashCandidates lists paths to search for bash, in priority order.
-// NixOS puts bash in /run/current-system/sw/bin/ which is often missing
-// from the restricted PATH set by systemd services.
-var bashCandidates = []string{
-	"/run/current-system/sw/bin/bash", // NixOS system profile
-	"/usr/bin/bash",                   // most distros
-	"/bin/bash",                       // traditional path
-}
-
-// findBash returns the full path to a working bash binary.
-// It first tries exec.LookPath (honours $PATH), then falls back to
-// well-known absolute paths. Returns an error if no bash is found.
-func findBash() (string, error) {
-	if p, err := exec.LookPath("bash"); err == nil {
-		return p, nil
-	}
-	for _, p := range bashCandidates {
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("bash not found in $PATH or at %v", bashCandidates)
-}
 
 // linuxScanScript is a comprehensive bash script that checks all Linux security
 // controls in a single SSH call. Outputs JSON to minimize round-trips.
@@ -294,24 +268,15 @@ type linuxScanState struct {
 }
 
 // scanLinuxTargets scans all Linux targets for security drift.
-// This includes the appliance itself (localhost) and any remote linux_targets
-// received from the checkin response.
+// Only scans remote linux_targets received from the checkin response.
+// The NixOS appliance itself is NOT scanned — it is declaratively managed
+// and self-scanning produces false positives (NixOS SUID wrappers, nftables
+// vs iptables, NixOS-specific sysctl paths, etc.).
 func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 	var allFindings []driftFinding
 	var scannedHosts []string
 
-	// 1. Self-scan: the NixOS appliance itself
-	selfFindings := ds.scanLinuxSelf(ctx)
-	if len(selfFindings) > 0 {
-		allFindings = append(allFindings, selfFindings...)
-	}
-	hostname := "localhost"
-	if h := ds.daemon.config.SiteID; h != "" {
-		hostname = h + "-appliance"
-	}
-	scannedHosts = append(scannedHosts, hostname)
-
-	// 2. Remote Linux targets from checkin response
+	// Remote Linux targets from checkin response
 	ds.daemon.linuxTargetsMu.RLock()
 	targets := make([]linuxTarget, len(ds.daemon.linuxTargets))
 	copy(targets, ds.daemon.linuxTargets)
@@ -369,30 +334,6 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 			log.Printf("[linuxscan] Evidence submission failed: %v", err)
 		}
 	}
-}
-
-// scanLinuxSelf scans the local NixOS appliance via direct command execution.
-// No SSH needed — runs bash locally.
-func (ds *driftScanner) scanLinuxSelf(ctx context.Context) []driftFinding {
-	hostname := "localhost"
-	if h := ds.daemon.config.SiteID; h != "" {
-		hostname = h + "-appliance"
-	}
-
-	bashPath, err := findBash()
-	if err != nil {
-		log.Printf("[linuxscan] Self-scan failed: %v", err)
-		return nil
-	}
-
-	cmd := exec.CommandContext(ctx, bashPath, "-c", linuxScanScript)
-	out, err := cmd.Output()
-	if err != nil {
-		log.Printf("[linuxscan] Self-scan failed: %v", err)
-		return nil
-	}
-
-	return ds.parseLinuxFindings(string(out), hostname)
 }
 
 // scanLinuxRemote scans a remote Linux target via SSH.

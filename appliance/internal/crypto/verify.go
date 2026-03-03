@@ -8,6 +8,7 @@ package crypto
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -78,10 +79,18 @@ func (v *OrderVerifier) VerifyOrder(signedPayload, signatureHex string) error {
 
 	sig, err := hex.DecodeString(signatureHex)
 	if err != nil {
-		return fmt.Errorf("decode signature hex: %w", err)
+		// Detect base64-encoded signatures and give a clear diagnostic
+		if decoded, b64Err := base64.StdEncoding.DecodeString(signatureHex); b64Err == nil && len(decoded) == ed25519.SignatureSize {
+			return fmt.Errorf("signature is base64-encoded but must be hex-encoded (128 hex chars). "+
+				"Use signature.hex() in Python, not base64.b64encode(). Got %d chars, expected 128",
+				len(signatureHex))
+		}
+		return fmt.Errorf("decode signature: expected 128-char hex string, got %d chars: %w",
+			len(signatureHex), err)
 	}
 	if len(sig) != ed25519.SignatureSize {
-		return fmt.Errorf("invalid signature size: got %d, want %d", len(sig), ed25519.SignatureSize)
+		return fmt.Errorf("invalid signature size: got %d bytes (from %d hex chars), want %d bytes (128 hex chars)",
+			len(sig), len(signatureHex), ed25519.SignatureSize)
 	}
 
 	if !ed25519.Verify(pk, []byte(signedPayload), sig) {

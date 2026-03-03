@@ -102,6 +102,7 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 // expectedPorts are the ports the appliance should have open.
 var expectedPorts = map[int]string{
 	22:    "sshd",
+	80:    "http-file-server",
 	8090:  "agent-file-server",
 	50051: "grpc",
 }
