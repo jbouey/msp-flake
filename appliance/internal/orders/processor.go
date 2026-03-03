@@ -39,9 +39,10 @@ var allowedFlakeRefPattern = regexp.MustCompile(`^github:jbouey/msp-flake#[a-zA-
 
 // allowedDownloadDomains are the only domains from which we accept package/ISO URLs.
 var allowedDownloadDomains = map[string]bool{
-	"github.com":           true,
+	"github.com":                    true,
 	"objects.githubusercontent.com": true,
-	"178.156.162.116":      true, // VPS
+	"178.156.162.116":               true, // VPS IP
+	"api.osiriscare.net":            true, // VPS domain
 }
 
 // validateFlakeRef ensures flake_ref points to the official repo.
@@ -833,26 +834,35 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 	}
 	log.Printf("[orders] Daemon binary installed to %s", binaryPath)
 
-	// Create systemd override to use the new binary
-	overrideDir := "/etc/systemd/system/appliance-daemon.service.d"
-	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
-		// Fall back to runtime override (VM environment)
-		overrideDir = "/run/systemd/system/appliance-daemon.service.d"
-		if err := os.MkdirAll(overrideDir, 0o755); err != nil {
-			return nil, fmt.Errorf("create override dir: %w", err)
-		}
-	}
+	// Create systemd override to use the new binary.
+	// The daemon runs under ProtectSystem=strict, so /etc and /run/systemd are
+	// read-only from inside the sandbox. Write the override content to a temp file
+	// in the state dir (writable), then use systemd-run to install it outside the
+	// sandbox — same pattern as handleNixOSRebuild.
 	overrideContent := fmt.Sprintf("[Service]\nExecStart=\nExecStart=%s\n", binaryPath)
-	overridePath := filepath.Join(overrideDir, "override.conf")
-	if err := os.WriteFile(overridePath, []byte(overrideContent), 0o644); err != nil {
-		return nil, fmt.Errorf("write systemd override: %w", err)
+	overrideTmp := filepath.Join(p.stateDir, ".override.conf.tmp")
+	if err := os.WriteFile(overrideTmp, []byte(overrideContent), 0o644); err != nil {
+		return nil, fmt.Errorf("write temp override: %w", err)
 	}
-	log.Printf("[orders] Systemd override written to %s", overridePath)
+	defer os.Remove(overrideTmp)
 
-	// Reload systemd and schedule restart
-	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
-		log.Printf("[orders] WARNING: systemctl daemon-reload failed: %v", err)
+	overrideDir := "/run/systemd/system/appliance-daemon.service.d"
+	installScript := fmt.Sprintf(
+		"mkdir -p %s && cp %s %s/override.conf && systemctl daemon-reload",
+		overrideDir, overrideTmp, overrideDir)
+
+	// NixOS: /bin/bash doesn't exist, and systemd-run transient units have minimal PATH.
+	// Use /run/current-system/sw/bin/bash and set PATH to include coreutils + systemd.
+	installCmd := exec.CommandContext(ctx, "systemd-run",
+		"--unit=msp-daemon-update", "--wait", "--pipe", "--collect",
+		"--property=TimeoutStartSec=30",
+		"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",
+		"/run/current-system/sw/bin/bash", "-c", installScript)
+	installOut, err := installCmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("install systemd override via systemd-run: %v\n%s", err, string(installOut))
 	}
+	log.Printf("[orders] Systemd override installed to %s via systemd-run", overrideDir)
 
 	log.Printf("[orders] Scheduling daemon restart in 10 seconds (version=%s)", version)
 	go func() {
