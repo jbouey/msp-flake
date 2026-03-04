@@ -406,6 +406,67 @@ foreach ($svc in @("DNS","Netlogon","NTDS")) {
 }
 $result.ADServices = $adServices
 
+# 19. WMI event subscriptions (persistence mechanism)
+$wmiSubs = @()
+try {
+    Get-WmiObject -Namespace root\subscription -Class __EventFilter -EA Stop | ForEach-Object {
+        if ($_.Name -notmatch '^(BVTFilter|SCM Event Log Filter)$') {
+            $wmiSubs += @{ Name=$_.Name; Query=$_.Query }
+        }
+    }
+} catch {}
+$result.WMIPersistence = $wmiSubs
+
+# 20. Registry Run key entries (persistence mechanism)
+$runKeys = @()
+$runPaths = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
+)
+foreach ($p in $runPaths) {
+    $props = Get-ItemProperty -Path $p -EA SilentlyContinue
+    if ($props) {
+        $props.PSObject.Properties | Where-Object {
+            $_.Name -notmatch '^(PS|SecurityHealth|Windows Defender|VMware|VBox)' -and
+            $_.Name -ne 'OsirisCareAgent'
+        } | ForEach-Object {
+            $val = $_.Value.ToString()
+            $runKeys += @{ Name=$_.Name; Value=$val.Substring(0, [Math]::Min(200, $val.Length)); Path=$p }
+        }
+    }
+}
+$result.RegistryRunKeys = $runKeys
+
+# 21. Audit policy subcategories (critical for HIPAA)
+$auditPolicy = @{}
+try {
+    $ap = auditpol /get /category:* /r 2>$null | ConvertFrom-Csv
+    $critical = @('Logon','Account Lockout','Process Creation','Security Group Management','User Account Management','Audit Policy Change')
+    foreach ($entry in $ap) {
+        if ($critical -contains $entry.'Subcategory') {
+            $auditPolicy[$entry.'Subcategory'] = $entry.'Inclusion Setting'
+        }
+    }
+} catch {}
+$result.AuditPolicy = $auditPolicy
+
+# 22. Defender advanced protection settings
+$defAdv = @{}
+try {
+    $status = Get-MpComputerStatus -EA Stop
+    $defAdv.RealTimeProtection = $status.RealTimeProtectionEnabled.ToString()
+    $defAdv.AntivirusEnabled = $status.AntivirusEnabled.ToString()
+    $prefs = Get-MpPreference -EA Stop
+    $defAdv.MAPSReporting = $prefs.MAPSReporting.ToString()
+    $defAdv.CloudBlockLevel = $prefs.CloudBlockLevel.ToString()
+    $defAdv.SubmitSamplesConsent = $prefs.SubmitSamplesConsent.ToString()
+} catch {}
+$result.DefenderAdvanced = $defAdv
+
+# 23. Print Spooler service (attack surface)
+$sp = Get-Service Spooler -EA SilentlyContinue
+$result.SpoolerService = if ($sp) { $sp.Status.ToString() } else { "NotFound" }
+
 $result | ConvertTo-Json -Depth 3 -Compress
 `
 
@@ -461,6 +522,19 @@ type windowsScanState struct {
 	RDPNLA       string            `json:"RDPNLA"`
 	GuestAccount string            `json:"GuestAccount"`
 	ADServices   map[string]string `json:"ADServices"`
+	// New checks for chaos lab coverage
+	WMIPersistence []struct {
+		Name  string `json:"Name"`
+		Query string `json:"Query"`
+	} `json:"WMIPersistence"`
+	RegistryRunKeys []struct {
+		Name  string `json:"Name"`
+		Value string `json:"Value"`
+		Path  string `json:"Path"`
+	} `json:"RegistryRunKeys"`
+	AuditPolicy      map[string]string `json:"AuditPolicy"`
+	DefenderAdvanced map[string]string `json:"DefenderAdvanced"`
+	SpoolerService   string            `json:"SpoolerService"`
 }
 
 // evaluateWindowsFindings converts a parsed Windows scan state into drift findings.
@@ -733,6 +807,99 @@ func (ds *driftScanner) evaluateWindowsFindings(state windowsScanState, t scanTa
 				})
 			}
 		}
+	}
+
+	// 19. WMI event subscription persistence
+	if len(state.WMIPersistence) > 0 {
+		wmiNames := make([]string, 0, len(state.WMIPersistence))
+		for _, sub := range state.WMIPersistence {
+			wmiNames = append(wmiNames, sub.Name)
+		}
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "wmi_event_persistence",
+			Expected:     "none",
+			Actual:       strings.Join(wmiNames, ", "),
+			HIPAAControl: "164.308(a)(5)(ii)(C)",
+			Severity:     "critical",
+			Details:      map[string]string{"subscriptions": strings.Join(wmiNames, ",")},
+		})
+	}
+
+	// 20. Registry Run key persistence
+	if len(state.RegistryRunKeys) > 0 {
+		keyNames := make([]string, 0, len(state.RegistryRunKeys))
+		for _, rk := range state.RegistryRunKeys {
+			keyNames = append(keyNames, rk.Name)
+		}
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "registry_run_persistence",
+			Expected:     "none",
+			Actual:       strings.Join(keyNames, ", "),
+			HIPAAControl: "164.308(a)(5)(ii)(C)",
+			Severity:     "high",
+			Details:      map[string]string{"keys": strings.Join(keyNames, ",")},
+		})
+	}
+
+	// 21. Audit policy — flag if any critical subcategory is "No Auditing"
+	if len(state.AuditPolicy) > 0 {
+		nonCompliant := []string{}
+		for subcategory, setting := range state.AuditPolicy {
+			if setting == "No Auditing" {
+				nonCompliant = append(nonCompliant, subcategory)
+			}
+		}
+		if len(nonCompliant) > 0 {
+			findings = append(findings, driftFinding{
+				Hostname:     t.hostname,
+				CheckType:    "audit_policy",
+				Expected:     "Success and Failure",
+				Actual:       "No Auditing: " + strings.Join(nonCompliant, ", "),
+				HIPAAControl: "164.312(b)",
+				Severity:     "critical",
+				Details:      map[string]string{"subcategories": strings.Join(nonCompliant, ",")},
+			})
+		}
+	}
+
+	// 22. Defender advanced — cloud protection / MAPS disabled
+	if len(state.DefenderAdvanced) > 0 {
+		problems := []string{}
+		if v, ok := state.DefenderAdvanced["RealTimeProtection"]; ok && v == "False" {
+			problems = append(problems, "RealTimeProtection=off")
+		}
+		if v, ok := state.DefenderAdvanced["MAPSReporting"]; ok && v == "0" {
+			problems = append(problems, "CloudProtection=off")
+		}
+		if v, ok := state.DefenderAdvanced["SubmitSamplesConsent"]; ok && v == "0" {
+			problems = append(problems, "SampleSubmission=off")
+		}
+		if len(problems) > 0 {
+			findings = append(findings, driftFinding{
+				Hostname:     t.hostname,
+				CheckType:    "defender_cloud_protection",
+				Expected:     "all_enabled",
+				Actual:       strings.Join(problems, ", "),
+				HIPAAControl: "164.308(a)(5)(ii)(B)",
+				Severity:     "high",
+				Details:      map[string]string{"issues": strings.Join(problems, ",")},
+			})
+		}
+	}
+
+	// 23. Spooler service — should be disabled on DCs and servers
+	if state.SpoolerService == "Running" && t.label == "DC" {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "spooler_service",
+			Expected:     "Stopped",
+			Actual:       "Running",
+			HIPAAControl: "164.312(e)(1)",
+			Severity:     "medium",
+			Details:      map[string]string{"note": "PrintNightmare attack surface"},
+		})
 	}
 
 	if len(findings) > 0 {

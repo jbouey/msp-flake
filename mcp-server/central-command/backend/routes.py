@@ -701,6 +701,8 @@ async def get_promotion_candidates(db: AsyncSession = Depends(get_db)):
         PromotionCandidate(
             id=c["id"],
             pattern_signature=c["pattern_signature"],
+            site_id=c.get("site_id"),
+            site_name=c.get("site_name"),
             description=c.get("description") or "",
             occurrences=c["occurrences"],
             success_rate=c["success_rate"],
@@ -763,33 +765,114 @@ async def get_promotion_history(limit: int = Query(default=20, le=100), db: Asyn
 async def promote_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
     """Manually trigger promotion of a pattern to L1.
 
-    Requires: Human review confirmation.
+    Supports both legacy patterns table and aggregated_pattern_stats IDs.
     """
+    # First try legacy patterns table
     from .db_queries import promote_pattern_in_db
-
     rule_id = await promote_pattern_in_db(db, pattern_id)
     if rule_id:
         return {"status": "promoted", "pattern_id": pattern_id, "new_rule_id": rule_id}
 
-    raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+    # Try aggregated_pattern_stats (new path)
+    result = await db.execute(text("""
+        SELECT id, pattern_signature, site_id, recommended_action
+        FROM aggregated_pattern_stats
+        WHERE id::text = :pid AND promotion_eligible = true
+    """), {"pid": pattern_id})
+    aps_row = result.fetchone()
+
+    if not aps_row:
+        raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
+    # Parse check_type from pattern_signature (format: "check_type:runbook_id")
+    parts = aps_row.pattern_signature.split(":")
+    incident_type = parts[0] if parts else aps_row.pattern_signature
+    runbook_id = parts[1] if len(parts) > 1 else aps_row.recommended_action or ""
+
+    rule_id = f"L1-AUTO-{incident_type.upper().replace('_', '-')[:20]}"
+
+    try:
+        # Create L1 rule
+        await db.execute(text("""
+            INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, promoted_from_l2, enabled)
+            VALUES (:rule_id, :pattern, :runbook_id, 0.95, true, true)
+            ON CONFLICT (rule_id) DO NOTHING
+        """), {
+            "rule_id": rule_id,
+            "pattern": json.dumps({"incident_type": incident_type}),
+            "runbook_id": runbook_id,
+        })
+
+        # Mark as no longer eligible
+        await db.execute(text("""
+            UPDATE aggregated_pattern_stats SET promotion_eligible = false WHERE id = :pid
+        """), {"pid": int(pattern_id)})
+
+        # Record in learning_promotion_candidates
+        await db.execute(text("""
+            INSERT INTO learning_promotion_candidates (
+                site_id, pattern_signature, approval_status,
+                approved_at, promoted_to_rule_id
+            ) VALUES (:site_id, :sig, 'approved', NOW(), :rule_id)
+            ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                approval_status = 'approved', approved_at = NOW(),
+                promoted_to_rule_id = :rule_id
+        """), {
+            "site_id": aps_row.site_id,
+            "sig": aps_row.pattern_signature,
+            "rule_id": rule_id,
+        })
+
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+    return {"status": "promoted", "pattern_id": pattern_id, "new_rule_id": rule_id}
 
 
 @router.post("/learning/reject/{pattern_id}")
 async def reject_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
     """Reject a promotion candidate, marking it as dismissed."""
+    # Try legacy patterns table first
     result = await db.execute(
         text("SELECT pattern_id, status FROM patterns WHERE pattern_id = :pid"),
         {"pid": pattern_id}
     )
     pattern = result.fetchone()
-    if not pattern:
+    if pattern:
+        await db.execute(text("""
+            UPDATE patterns SET status = 'rejected' WHERE pattern_id = :pid
+        """), {"pid": pattern_id})
+        await db.commit()
+        return {"status": "rejected", "pattern_id": pattern_id}
+
+    # Try aggregated_pattern_stats
+    result = await db.execute(text("""
+        SELECT id, pattern_signature, site_id
+        FROM aggregated_pattern_stats
+        WHERE id::text = :pid AND promotion_eligible = true
+    """), {"pid": pattern_id})
+    aps_row = result.fetchone()
+
+    if not aps_row:
         raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
 
+    # Mark as no longer eligible
     await db.execute(text("""
-        UPDATE patterns SET status = 'rejected' WHERE pattern_id = :pid
-    """), {"pid": pattern_id})
-    await db.commit()
+        UPDATE aggregated_pattern_stats SET promotion_eligible = false WHERE id = :pid
+    """), {"pid": int(pattern_id)})
 
+    # Record rejection
+    await db.execute(text("""
+        INSERT INTO learning_promotion_candidates (
+            site_id, pattern_signature, approval_status, rejection_reason
+        ) VALUES (:site_id, :sig, 'rejected', 'Manually rejected by admin')
+        ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+            approval_status = 'rejected', rejection_reason = 'Manually rejected by admin'
+    """), {"site_id": aps_row.site_id, "sig": aps_row.pattern_signature})
+
+    await db.commit()
     return {"status": "rejected", "pattern_id": pattern_id}
 
 

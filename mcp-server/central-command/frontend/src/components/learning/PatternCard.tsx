@@ -44,31 +44,42 @@ export const PatternCard: React.FC<PatternCardProps> = memo(({
 
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          {/* Pattern signature */}
+          {/* Pattern signature + site */}
           <div className="flex items-center gap-2 mb-2">
             <span className="px-2 py-0.5 text-xs font-medium bg-level-l2 text-white rounded">
               L2
             </span>
-            <span className="text-xs text-label-tertiary">
-              {formatDate(candidate.first_seen)} - {formatDate(candidate.last_seen)}
-            </span>
+            {candidate.site_name && (
+              <span className="px-2 py-0.5 text-xs font-medium bg-accent-primary/10 text-accent-primary rounded">
+                {candidate.site_name}
+              </span>
+            )}
+            {candidate.first_seen && candidate.last_seen && (
+              <span className="text-xs text-label-tertiary">
+                {formatDate(candidate.first_seen)} - {formatDate(candidate.last_seen)}
+              </span>
+            )}
           </div>
 
           <h3 className="font-mono text-sm font-medium text-label-primary mb-1">
             {candidate.pattern_signature}
           </h3>
 
-          <p className="text-sm text-label-secondary mb-3">
-            {candidate.description}
-          </p>
-
-          {/* Proposed rule */}
-          <div className="bg-separator-light/50 rounded-ios-sm p-3 mb-3">
-            <p className="text-xs text-label-tertiary mb-1">Proposed L1 Rule:</p>
-            <p className="text-sm font-medium text-label-primary">
-              {candidate.proposed_rule}
+          {candidate.description && (
+            <p className="text-sm text-label-secondary mb-3">
+              {candidate.description}
             </p>
-          </div>
+          )}
+
+          {/* Proposed rule / recommended action */}
+          {candidate.proposed_rule && (
+            <div className="bg-separator-light/50 rounded-ios-sm p-3 mb-3">
+              <p className="text-xs text-label-tertiary mb-1">Recommended Action:</p>
+              <p className="text-sm font-medium text-label-primary">
+                {candidate.proposed_rule}
+              </p>
+            </div>
+          )}
 
           {/* Stats */}
           <div className="flex items-center gap-4 text-xs">

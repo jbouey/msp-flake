@@ -920,6 +920,59 @@ func builtinRules() []*Rule {
 			GPOManaged:      true,
 		},
 
+		{
+			ID:          "L1-WIN-SEC-DEFENDER-CLOUD",
+			Name:        "Windows Defender Cloud Protection Disabled",
+			Description: "Defender cloud protection or MAPS reporting disabled — remediate via runbook",
+			Conditions: []RuleCondition{
+				{Field: "check_type", Operator: OpEquals, Value: "defender_cloud_protection"},
+				{Field: "drift_detected", Operator: OpEquals, Value: true},
+			},
+			Action:          "run_windows_runbook",
+			ActionParams:    map[string]interface{}{"runbook_id": "RB-WIN-SEC-025", "phases": []interface{}{"remediate", "verify"}},
+			HIPAAControls:   []string{"164.308(a)(5)(ii)(B)"},
+			Enabled:         true,
+			Priority:        5,
+			CooldownSeconds: 300,
+			MaxRetries:      1,
+			Source:          "builtin",
+		},
+		{
+			ID:          "L1-WIN-SVC-SPOOLER",
+			Name:        "Print Spooler Running on DC",
+			Description: "Print Spooler service running on domain controller — disable to prevent PrintNightmare",
+			Conditions: []RuleCondition{
+				{Field: "check_type", Operator: OpEquals, Value: "spooler_service"},
+				{Field: "drift_detected", Operator: OpEquals, Value: true},
+			},
+			Action:          "run_windows_runbook",
+			ActionParams:    map[string]interface{}{"runbook_id": "RB-WIN-SVC-005", "phases": []interface{}{"remediate", "verify"}},
+			HIPAAControls:   []string{"164.312(e)(1)"},
+			Enabled:         true,
+			Priority:        5,
+			CooldownSeconds: 300,
+			MaxRetries:      1,
+			Source:          "builtin",
+		},
+		{
+			ID:          "L1-WIN-SEC-AUDIT-POLICY",
+			Name:        "Windows Audit Policy Non-Compliant",
+			Description: "Critical audit subcategories set to No Auditing — restore HIPAA-required logging",
+			Conditions: []RuleCondition{
+				{Field: "check_type", Operator: OpEquals, Value: "audit_policy"},
+				{Field: "drift_detected", Operator: OpEquals, Value: true},
+			},
+			Action:          "run_windows_runbook",
+			ActionParams:    map[string]interface{}{"runbook_id": "RB-WIN-SEC-026", "phases": []interface{}{"remediate", "verify"}},
+			HIPAAControls:   []string{"164.312(b)"},
+			Enabled:         true,
+			Priority:        3,
+			CooldownSeconds: 300,
+			MaxRetries:      1,
+			Source:          "builtin",
+			GPOManaged:      true,
+		},
+
 		// --- Network Check Types ---
 
 		{

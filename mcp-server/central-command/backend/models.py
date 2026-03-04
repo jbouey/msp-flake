@@ -260,13 +260,15 @@ class PromotionCandidate(BaseModel):
     """Pattern that is a candidate for L1 promotion."""
     id: str
     pattern_signature: str
+    site_id: Optional[str] = None
+    site_name: Optional[str] = None
     description: Optional[str] = None
     occurrences: int
     success_rate: float
-    avg_resolution_time_ms: int
+    avg_resolution_time_ms: float = 0
     proposed_rule: Optional[str] = None
-    first_seen: datetime
-    last_seen: datetime
+    first_seen: Optional[datetime] = None
+    last_seen: Optional[datetime] = None
 
 
 class PromotionHistory(BaseModel):

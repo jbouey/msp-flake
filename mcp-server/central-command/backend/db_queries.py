@@ -244,8 +244,16 @@ async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
     result = await db.execute(text("SELECT COUNT(*) FROM l1_rules WHERE enabled = true"))
     l1_count = result.scalar() or 0
 
-    # Pending patterns
-    result = await db.execute(text("SELECT COUNT(*) FROM patterns WHERE status = 'pending'"))
+    # Pending patterns (from aggregated_pattern_stats, not legacy patterns table)
+    result = await db.execute(text("""
+        SELECT COUNT(*) FROM aggregated_pattern_stats aps
+        LEFT JOIN learning_promotion_candidates lpc
+            ON lpc.pattern_signature::text = aps.pattern_signature::text
+            AND lpc.site_id::text = aps.site_id::text
+        WHERE aps.promotion_eligible = true
+          AND COALESCE(lpc.approval_status, 'not_submitted') NOT IN ('approved', 'rejected')
+          AND aps.last_seen > NOW() - INTERVAL '14 days'
+    """))
     pending_patterns = result.scalar() or 0
 
     # Recently promoted
@@ -300,35 +308,46 @@ async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
 
 
 async def get_promotion_candidates_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
-    """Get patterns eligible for promotion."""
+    """Get patterns eligible for promotion from aggregated_pattern_stats.
+
+    The legacy `patterns` table only tracked L2 decisions. The current system
+    aggregates L1+L2 telemetry into aggregated_pattern_stats, which is the
+    authoritative source for promotion candidates.
+    """
     result = await db.execute(text("""
-        SELECT 
-            pattern_id,
-            pattern_signature,
-            description,
-            incident_type,
-            runbook_id,
-            occurrences,
-            success_rate,
-            avg_resolution_time_ms,
-            proposed_rule,
-            first_seen,
-            last_seen
-        FROM patterns
-        WHERE status = 'pending'
-        AND occurrences >= 5
-        AND success_rate >= 90
-        ORDER BY success_rate DESC, occurrences DESC
+        SELECT
+            aps.id::text as id,
+            aps.pattern_signature,
+            aps.site_id,
+            s.clinic_name as site_name,
+            aps.total_occurrences,
+            CASE WHEN aps.success_rate <= 1
+                THEN aps.success_rate * 100
+                ELSE aps.success_rate END as success_rate,
+            aps.avg_resolution_time_ms,
+            aps.recommended_action,
+            aps.first_seen,
+            aps.last_seen
+        FROM aggregated_pattern_stats aps
+        JOIN sites s ON s.site_id::text = aps.site_id::text
+        LEFT JOIN learning_promotion_candidates lpc
+            ON lpc.pattern_signature::text = aps.pattern_signature::text
+            AND lpc.site_id::text = aps.site_id::text
+        WHERE aps.promotion_eligible = true
+          AND COALESCE(lpc.approval_status, 'not_submitted') NOT IN ('approved', 'rejected')
+          AND aps.last_seen > NOW() - INTERVAL '14 days'
+        ORDER BY aps.total_occurrences DESC
     """))
-    
+
     return [{
-        "id": row.pattern_id,
+        "id": row.id,
         "pattern_signature": row.pattern_signature,
-        "description": row.description,
-        "occurrences": row.occurrences,
-        "success_rate": row.success_rate,
-        "avg_resolution_time_ms": row.avg_resolution_time_ms or 0,
-        "proposed_rule": row.proposed_rule,
+        "site_id": row.site_id,
+        "site_name": row.site_name,
+        "occurrences": row.total_occurrences,
+        "success_rate": float(row.success_rate or 0),
+        "avg_resolution_time_ms": float(row.avg_resolution_time_ms or 0),
+        "proposed_rule": row.recommended_action,
         "first_seen": row.first_seen,
         "last_seen": row.last_seen,
     } for row in result.fetchall()]

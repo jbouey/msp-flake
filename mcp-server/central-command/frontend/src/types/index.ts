@@ -223,13 +223,15 @@ export interface LearningStatus {
 export interface PromotionCandidate {
   id: string;
   pattern_signature: string;
-  description: string;
+  site_id?: string;
+  site_name?: string;
+  description?: string;
   occurrences: number;
   success_rate: number;
   avg_resolution_time_ms: number;
-  proposed_rule: string;
-  first_seen: string;
-  last_seen: string;
+  proposed_rule?: string;
+  first_seen?: string;
+  last_seen?: string;
 }
 
 export interface PromotionHistory {
