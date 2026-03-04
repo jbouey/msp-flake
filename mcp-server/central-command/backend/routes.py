@@ -822,11 +822,11 @@ async def promote_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
         await db.execute(text("""
             INSERT INTO learning_promotion_candidates (
                 site_id, pattern_signature, approval_status,
-                approved_at, promoted_to_rule_id
+                approved_at, custom_rule_name
             ) VALUES (:site_id, :sig, 'approved', NOW(), :rule_id)
             ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
                 approval_status = 'approved', approved_at = NOW(),
-                promoted_to_rule_id = :rule_id
+                custom_rule_name = :rule_id
         """), {
             "site_id": aps_row.site_id,
             "sig": aps_row.pattern_signature,
