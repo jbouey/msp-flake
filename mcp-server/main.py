@@ -63,6 +63,7 @@ from dashboard_api.learning_api import partner_learning_router
 from dashboard_api.client_portal import public_router as client_auth_router, auth_router as client_portal_router, billing_webhook_router
 from dashboard_api.hipaa_modules import router as hipaa_modules_router
 from dashboard_api.companion import router as companion_router
+from dashboard_api.protection_profiles import router as protection_profiles_router
 from dashboard_api.cve_watch import router as cve_watch_router, cve_sync_loop
 from dashboard_api.framework_sync import router as framework_sync_router, framework_sync_loop
 from dashboard_api.websocket_manager import ws_manager
@@ -1044,6 +1045,7 @@ app.include_router(client_portal_router, prefix="/api")  # Client portal endpoin
 app.include_router(hipaa_modules_router, prefix="/api")  # HIPAA compliance modules
 app.include_router(companion_router, prefix="/api")  # Compliance Companion portal
 app.include_router(org_credentials_router)  # Organization-level shared credentials
+app.include_router(protection_profiles_router, prefix="/api")  # Application Protection Profiles
 app.include_router(billing_webhook_router, prefix="/api")  # Stripe webhooks
 
 # WebSocket endpoint for real-time event push
@@ -3613,11 +3615,12 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
     else:
         builtin_rules = standard_rules
 
-    # Fetch custom/promoted rules from database
+    # Fetch custom/promoted/protection_profile rules from database
     try:
         result = await db.execute(
             text("""
-                SELECT rule_id, incident_pattern, runbook_id, confidence
+                SELECT rule_id, incident_pattern, runbook_id, confidence,
+                       COALESCE(source, 'promoted') as source
                 FROM l1_rules
                 WHERE enabled = true AND COALESCE(source, 'promoted') != 'builtin'
                 ORDER BY confidence DESC
@@ -3625,6 +3628,23 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
         )
         db_rules = []
         for row in result.fetchall():
+            rule_source = row[4]
+
+            # For protection_profile rules, try to get the full rule_json
+            if rule_source == "protection_profile":
+                try:
+                    ppr = await db.execute(
+                        text("SELECT rule_json FROM app_profile_rules WHERE l1_rule_id = :rid LIMIT 1"),
+                        {"rid": row[0]}
+                    )
+                    ppr_row = ppr.fetchone()
+                    if ppr_row and ppr_row[0]:
+                        rule_json = ppr_row[0] if isinstance(ppr_row[0], dict) else json.loads(ppr_row[0])
+                        db_rules.append(rule_json)
+                        continue
+                except Exception:
+                    pass  # Fall through to generic format
+
             # Convert incident_pattern dict to conditions list
             # Database stores: {"incident_type": "firewall"} or {"check_type": "screen_lock"}
             # Conditions format: [{"field": "incident_type", "operator": "eq", "value": "firewall"}]
@@ -3648,10 +3668,10 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
                 "description": f"Auto-promoted rule with {row[3]:.0%} confidence",
                 "conditions": conditions,
                 "actions": [f"run_runbook:{row[2]}"],
-                "severity": "medium",
+                "severity": "critical" if rule_source == "protection_profile" else "medium",
                 "cooldown_seconds": 300,
-                "max_retries": 2,
-                "source": "promoted"
+                "max_retries": 3 if rule_source == "protection_profile" else 2,
+                "source": rule_source
             })
     except Exception as e:
         logger.warning(f"Failed to fetch DB rules: {e}")

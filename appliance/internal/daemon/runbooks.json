@@ -1355,5 +1355,86 @@
     ],
     "severity": "critical",
     "timeout_seconds": 60
+  },
+  "RB-WIN-CFG-001": {
+    "id": "RB-WIN-CFG-001",
+    "name": "Config File Integrity",
+    "platform": "windows",
+    "detect_script": "param($FilePath, $ExpectedHash)\n$Result = @{ Drifted = $true }\ntry {\n    if (Test-Path $FilePath) {\n        $hash = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash\n        $Result.CurrentHash = $hash\n        $Result.ExpectedHash = $ExpectedHash\n        $Result.Drifted = ($hash -ne $ExpectedHash)\n        $Result.FileExists = $true\n    } else {\n        $Result.FileExists = $false\n        $Result.Error = \"File not found: $FilePath\"\n    }\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "remediate_script": "param($FilePath, $BackupPath)\n$Result = @{ Success = $false }\ntry {\n    if (-not $BackupPath) { $BackupPath = \"$FilePath.baseline\" }\n    if (Test-Path $BackupPath) {\n        Copy-Item -Path $BackupPath -Destination $FilePath -Force\n        $Result.Success = $true\n        $Result.RestoredFrom = $BackupPath\n    } else {\n        $Result.Error = \"Backup file not found: $BackupPath\"\n    }\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "verify_script": "param($FilePath, $ExpectedHash)\n$Result = @{ Verified = $false }\ntry {\n    $hash = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash\n    $Result.CurrentHash = $hash\n    $Result.Verified = ($hash -eq $ExpectedHash)\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "hipaa_controls": [
+      "164.312(c)(1)",
+      "164.312(e)(2)(i)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 120
+  },
+  "RB-WIN-TCP-001": {
+    "id": "RB-WIN-TCP-001",
+    "name": "TCP Connectivity Check",
+    "platform": "windows",
+    "detect_script": "param($Host, $Port, $ServiceName)\n$Result = @{ Drifted = $true }\ntry {\n    $conn = Test-NetConnection -ComputerName $Host -Port $Port -WarningAction SilentlyContinue\n    $Result.TcpTestSucceeded = $conn.TcpTestSucceeded\n    $Result.RemoteAddress = $conn.RemoteAddress.ToString()\n    $Result.Host = $Host\n    $Result.Port = $Port\n    $Result.Drifted = -not $conn.TcpTestSucceeded\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "remediate_script": "param($ServiceName)\n$Result = @{ Success = $false }\ntry {\n    if ($ServiceName) {\n        Restart-Service -Name $ServiceName -Force -ErrorAction Stop\n        Start-Sleep -Seconds 5\n        $svc = Get-Service -Name $ServiceName\n        $Result.Success = ($svc.Status -eq 'Running')\n        $Result.ServiceStatus = $svc.Status.ToString()\n    } else {\n        $Result.Error = 'No service name provided for remediation'\n    }\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "verify_script": "param($Host, $Port)\n$Result = @{ Verified = $false }\ntry {\n    $conn = Test-NetConnection -ComputerName $Host -Port $Port -WarningAction SilentlyContinue\n    $Result.Verified = $conn.TcpTestSucceeded\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "hipaa_controls": [
+      "164.312(a)(1)"
+    ],
+    "severity": "critical",
+    "timeout_seconds": 60
+  },
+  "RB-WIN-IIS-001": {
+    "id": "RB-WIN-IIS-001",
+    "name": "IIS Site Binding Verification",
+    "platform": "windows",
+    "detect_script": "param($SiteName, $ExpectedBindings)\n$Result = @{ Drifted = $true }\ntry {\n    Import-Module WebAdministration -ErrorAction Stop\n    $site = Get-Website -Name $SiteName -ErrorAction Stop\n    $bindings = Get-WebBinding -Name $SiteName | ForEach-Object { $_.bindingInformation }\n    $Result.SiteName = $SiteName\n    $Result.State = $site.State\n    $Result.CurrentBindings = $bindings\n    $Result.Drifted = ($site.State -ne 'Started') -or ($ExpectedBindings -and ($bindings -join ',' -ne $ExpectedBindings))\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "remediate_script": "param($SiteName)\n$Result = @{ Success = $false }\ntry {\n    Import-Module WebAdministration -ErrorAction Stop\n    Start-Website -Name $SiteName -ErrorAction Stop\n    Start-Sleep -Seconds 3\n    $site = Get-Website -Name $SiteName\n    $Result.Success = ($site.State -eq 'Started')\n    $Result.State = $site.State\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "verify_script": "param($SiteName)\n$Result = @{ Verified = $false }\ntry {\n    Import-Module WebAdministration -ErrorAction Stop\n    $site = Get-Website -Name $SiteName\n    $Result.Verified = ($site.State -eq 'Started')\n    $Result.State = $site.State\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "hipaa_controls": [
+      "164.312(a)(1)",
+      "164.312(e)(1)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 120
+  },
+  "RB-WIN-ODBC-001": {
+    "id": "RB-WIN-ODBC-001",
+    "name": "ODBC DSN Configuration",
+    "platform": "windows",
+    "detect_script": "param($DsnName, $ExpectedServer)\n$Result = @{ Drifted = $true }\ntry {\n    $dsn = Get-OdbcDsn -Name $DsnName -ErrorAction Stop\n    $Result.DsnName = $dsn.Name\n    $Result.DriverName = $dsn.DriverName\n    $Result.Platform = $dsn.Platform\n    $currentServer = $dsn.Attribute['Server']\n    $Result.CurrentServer = $currentServer\n    $Result.Drifted = ($ExpectedServer -and $currentServer -ne $ExpectedServer)\n} catch {\n    $Result.Error = $_.Exception.Message\n    $Result.DsnExists = $false\n}\n$Result | ConvertTo-Json -Compress",
+    "remediate_script": "param($DsnName, $ExpectedServer)\n$Result = @{ Success = $false }\ntry {\n    $dsn = Get-OdbcDsn -Name $DsnName -ErrorAction Stop\n    if ($ExpectedServer) {\n        Set-OdbcDsn -Name $DsnName -SetPropertyValue \"Server=$ExpectedServer\" -ErrorAction Stop\n    }\n    $Result.Success = $true\n    $Result.ServerSet = $ExpectedServer\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "verify_script": "param($DsnName, $ExpectedServer)\n$Result = @{ Verified = $false }\ntry {\n    $dsn = Get-OdbcDsn -Name $DsnName -ErrorAction Stop\n    $Result.Verified = (-not $ExpectedServer -or $dsn.Attribute['Server'] -eq $ExpectedServer)\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "hipaa_controls": [
+      "164.312(a)(1)"
+    ],
+    "severity": "medium",
+    "timeout_seconds": 60
+  },
+  "RB-WIN-RECOV-001": {
+    "id": "RB-WIN-RECOV-001",
+    "name": "Service Recovery Options",
+    "platform": "windows",
+    "detect_script": "param($ServiceName)\n$Result = @{ Drifted = $true }\ntry {\n    $recovery = sc.exe qfailure $ServiceName 2>&1\n    $firstAction = ($recovery | Select-String 'FIRST').ToString().Trim()\n    $secondAction = ($recovery | Select-String 'SECOND').ToString().Trim()\n    $Result.ServiceName = $ServiceName\n    $Result.FirstFailure = $firstAction\n    $Result.SecondFailure = $secondAction\n    $Result.Drifted = ($firstAction -notmatch 'RESTART') -or ($secondAction -notmatch 'RESTART')\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "remediate_script": "param($ServiceName)\n$Result = @{ Success = $false }\ntry {\n    $out = sc.exe failure $ServiceName reset= 86400 actions= restart/60000/restart/120000/restart/300000 2>&1\n    $Result.Success = ($LASTEXITCODE -eq 0)\n    $Result.Output = $out -join ' '\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "verify_script": "param($ServiceName)\n$Result = @{ Verified = $false }\ntry {\n    $recovery = sc.exe qfailure $ServiceName 2>&1\n    $firstAction = ($recovery | Select-String 'FIRST').ToString().Trim()\n    $Result.Verified = ($firstAction -match 'RESTART')\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "hipaa_controls": [
+      "164.312(a)(1)",
+      "164.308(a)(7)(i)"
+    ],
+    "severity": "medium",
+    "timeout_seconds": 60
+  },
+  "RB-WIN-PROC-001": {
+    "id": "RB-WIN-PROC-001",
+    "name": "Process Health Monitor",
+    "platform": "windows",
+    "detect_script": "param($ProcessName, $MaxMemoryMB, $MaxCpuPercent)\n$Result = @{ Drifted = $true }\ntry {\n    $proc = Get-Process -Name $ProcessName -ErrorAction Stop | Select-Object -First 1\n    $memMB = [math]::Round($proc.WorkingSet64 / 1MB, 1)\n    $cpuSec = [math]::Round($proc.CPU, 1)\n    $Result.ProcessName = $proc.Name\n    $Result.PID = $proc.Id\n    $Result.MemoryMB = $memMB\n    $Result.CpuSeconds = $cpuSec\n    $Result.Responding = $proc.Responding\n    $overMem = ($MaxMemoryMB -and $memMB -gt $MaxMemoryMB)\n    $Result.Drifted = -not $proc.Responding -or $overMem\n} catch {\n    $Result.Error = $_.Exception.Message\n    $Result.ProcessRunning = $false\n    $Result.Drifted = $true\n}\n$Result | ConvertTo-Json -Compress",
+    "remediate_script": "param($ProcessName, $ServiceName)\n$Result = @{ Success = $false }\ntry {\n    if ($ServiceName) {\n        Restart-Service -Name $ServiceName -Force -ErrorAction Stop\n        Start-Sleep -Seconds 5\n        $svc = Get-Service -Name $ServiceName\n        $Result.Success = ($svc.Status -eq 'Running')\n    } else {\n        $proc = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue\n        if ($proc) { Stop-Process -Name $ProcessName -Force; Start-Sleep -Seconds 3 }\n        Start-Process $ProcessName -ErrorAction Stop\n        $Result.Success = $true\n    }\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "verify_script": "param($ProcessName)\n$Result = @{ Verified = $false }\ntry {\n    $proc = Get-Process -Name $ProcessName -ErrorAction Stop | Select-Object -First 1\n    $Result.Verified = $proc.Responding\n    $Result.MemoryMB = [math]::Round($proc.WorkingSet64 / 1MB, 1)\n} catch { $Result.Error = $_.Exception.Message }\n$Result | ConvertTo-Json -Compress",
+    "hipaa_controls": [
+      "164.312(a)(1)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 120
   }
 }

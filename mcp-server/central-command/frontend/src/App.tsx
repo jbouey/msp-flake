@@ -47,6 +47,8 @@ const AdminOAuthSettings = lazy(() => import('./pages/AdminOAuthSettings'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const Organizations = lazy(() => import('./pages/Organizations').then(m => ({ default: m.Organizations })));
 const OrgDashboard = lazy(() => import('./pages/OrgDashboard').then(m => ({ default: m.OrgDashboard })));
+const ProtectionProfiles = lazy(() => import('./pages/ProtectionProfiles').then(m => ({ default: m.ProtectionProfiles })));
+const ProtectionProfileView = lazy(() => import('./pages/ProtectionProfiles').then(m => ({ default: m.ProtectionProfileView })));
 
 // Detect if serving from marketing domain (www.osiriscare.net or osiriscare.net)
 const isLandingSite = typeof window !== 'undefined' &&
@@ -287,6 +289,8 @@ const AppLayout: React.FC = () => {
               <Route path="/sites/:siteId/workstations/rmm-compare" element={<RMMComparison />} />
               <Route path="/sites/:siteId/agents" element={<SiteGoAgents />} />
               <Route path="/sites/:siteId/devices" element={<SiteDevices />} />
+              <Route path="/sites/:siteId/protection" element={<ProtectionProfiles />} />
+              <Route path="/sites/:siteId/protection/:profileId" element={<ProtectionProfileView />} />
               <Route path="/sites/:siteId/integrations" element={<Integrations />} />
               <Route path="/sites/:siteId/integrations/setup" element={<IntegrationSetup />} />
               <Route path="/sites/:siteId/integrations/:integrationId" element={<IntegrationResources />} />

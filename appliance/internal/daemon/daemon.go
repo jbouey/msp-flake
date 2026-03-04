@@ -105,6 +105,10 @@ type Daemon struct {
 
 	// Agent binary version cache for self-update endpoint
 	agentVersionCache *agentVersionCache
+
+	// Pending app discovery results to send in next checkin
+	discoveryMu      sync.Mutex
+	discoveryResults map[string]interface{}
 }
 
 // isSubscriptionActive returns true if healing should be allowed.
@@ -181,7 +185,10 @@ func New(cfg *Config) *Daemon {
 	d.scanner = newDriftScanner(d)
 
 	// Override run_drift order stub with real handler that triggers scanner
-	d.orderProc.RegisterHandler("run_drift", func(ctx context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	d.orderProc.RegisterHandler("run_drift", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+		if mode, _ := params["mode"].(string); mode == "app_discovery" {
+			return d.scanner.RunAppDiscovery(ctx, params)
+		}
 		return d.scanner.ForceScan(ctx), nil
 	})
 
@@ -426,6 +433,14 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 			})
 		}
 	}
+
+	// Include pending app discovery results (one-shot: cleared after send)
+	d.discoveryMu.Lock()
+	if d.discoveryResults != nil {
+		req.DiscoveryResults = d.discoveryResults
+		d.discoveryResults = nil
+	}
+	d.discoveryMu.Unlock()
 
 	resp, err := d.phoneCli.Checkin(ctx, req)
 	if err != nil {

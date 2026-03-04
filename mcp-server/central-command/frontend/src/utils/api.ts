@@ -1447,4 +1447,122 @@ export const frameworkSyncApi = {
     fetchFrameworkSyncApi<{ status: string }>(`/sync/${framework}`, { method: 'POST' }),
 };
 
+// =============================================================================
+// PROTECTION PROFILES API
+// =============================================================================
+
+export interface ProtectionProfileSummary {
+  id: string;
+  site_id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  asset_count: number;
+  rule_count: number;
+  enabled_asset_count: number;
+}
+
+export interface ProfileAsset {
+  id: string;
+  asset_type: string;
+  asset_name: string;
+  display_name: string | null;
+  baseline_value: Record<string, unknown>;
+  enabled: boolean;
+  runbook_id: string | null;
+}
+
+export interface ProfileRule {
+  id: string;
+  l1_rule_id: string;
+  asset_id: string;
+  enabled: boolean;
+  rule_json: Record<string, unknown>;
+}
+
+export interface ProtectionProfileDetail extends ProtectionProfileSummary {
+  discovery_data: Record<string, unknown> | null;
+  baseline_data: Record<string, unknown> | null;
+  template_id: string | null;
+  assets: ProfileAsset[];
+  rules: ProfileRule[];
+}
+
+export interface ProfileTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  discovery_hints: Record<string, unknown>;
+  icon: string | null;
+}
+
+export const protectionProfilesApi = {
+  list: (siteId?: string) =>
+    fetchApi<ProtectionProfileSummary[]>(
+      `/protection-profiles${siteId ? `?site_id=${siteId}` : ''}`
+    ),
+
+  get: (profileId: string) =>
+    fetchApi<ProtectionProfileDetail>(`/protection-profiles/${profileId}`),
+
+  create: (data: { site_id: string; name: string; description?: string; template_id?: string }) =>
+    fetchApi<ProtectionProfileSummary>('/protection-profiles', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  update: (profileId: string, data: { name?: string; description?: string; status?: string }) =>
+    fetchApi<ProtectionProfileSummary>(`/protection-profiles/${profileId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  delete: (profileId: string) =>
+    fetchApi<{ status: string; rules_disabled: number }>(`/protection-profiles/${profileId}`, {
+      method: 'DELETE',
+    }),
+
+  discover: (profileId: string) =>
+    fetchApi<{ status: string; order_id: string }>(`/protection-profiles/${profileId}/discover`, {
+      method: 'POST',
+    }),
+
+  lockBaseline: (profileId: string) =>
+    fetchApi<{ status: string; assets_protected: number; rules_created: number }>(
+      `/protection-profiles/${profileId}/lock-baseline`,
+      { method: 'POST' }
+    ),
+
+  toggleAsset: (profileId: string, assetId: string, enabled: boolean) =>
+    fetchApi<{ status: string; enabled: boolean }>(
+      `/protection-profiles/${profileId}/assets/${assetId}`,
+      { method: 'PATCH', body: JSON.stringify({ enabled }) }
+    ),
+
+  pause: (profileId: string) =>
+    fetchApi<{ status: string; rules_disabled: number }>(
+      `/protection-profiles/${profileId}/pause`,
+      { method: 'POST' }
+    ),
+
+  resume: (profileId: string) =>
+    fetchApi<{ status: string; rules_enabled: number }>(
+      `/protection-profiles/${profileId}/resume`,
+      { method: 'POST' }
+    ),
+
+  listTemplates: () =>
+    fetchApi<ProfileTemplate[]>('/protection-profiles/templates'),
+
+  createFromTemplate: (siteId: string, templateId: string, name?: string) =>
+    fetchApi<ProtectionProfileSummary>(
+      `/protection-profiles/from-template?site_id=${siteId}&template_id=${templateId}${name ? `&name=${encodeURIComponent(name)}` : ''}`,
+      { method: 'POST' }
+    ),
+};
+
 export { ApiError };

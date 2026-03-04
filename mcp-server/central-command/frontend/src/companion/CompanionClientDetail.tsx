@@ -1,8 +1,10 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useCompanionClientOverview, useCompanionNotes, useClientActivity, useCompanionAlerts, useUpdateAlert } from './useCompanionApi';
 import { companionColors, MODULE_DEFS } from './companion-tokens';
 import { Spinner } from '../components/shared';
+import { protectionProfilesApi } from '../utils/api';
 
 function getModuleStatusFromOverview(overview: any): Record<string, { status: string; detail: string }> {
   if (!overview) return {};
@@ -312,6 +314,9 @@ export const CompanionClientDetail: React.FC = () => {
           </div>
         </div>
 
+        {/* Protected Applications (read-only) */}
+        <ProtectedAppsSection orgId={orgId!} />
+
         {/* Compliance Alerts */}
         {activeAlerts.length > 0 && (
           <div
@@ -369,6 +374,68 @@ export const CompanionClientDetail: React.FC = () => {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+};
+
+// ─── Protected Applications (read-only) ─────────────────────────────────────
+
+const PROFILE_STATUS_DOTS: Record<string, string> = {
+  active: companionColors.complete,
+  paused: companionColors.notStarted,
+  discovering: companionColors.inProgress,
+  discovered: companionColors.inProgress,
+  draft: companionColors.notStarted,
+};
+
+const ProtectedAppsSection: React.FC<{ orgId: string }> = ({ orgId }) => {
+  // Fetch all protection profiles (companion has cross-org access)
+  const { data: profiles } = useQuery({
+    queryKey: ['protection-profiles-companion', orgId],
+    queryFn: () => protectionProfilesApi.list(),
+    staleTime: 60_000,
+  });
+
+  const activeProfiles = (profiles || []).filter(p => p.status === 'active' || p.status === 'paused');
+
+  if (activeProfiles.length === 0) return null;
+
+  return (
+    <div
+      className="rounded-xl p-4 mt-4"
+      style={{ background: companionColors.cardBg, border: `1px solid ${companionColors.cardBorder}` }}
+    >
+      <h4 className="text-sm font-semibold mb-3" style={{ color: companionColors.textPrimary }}>
+        Protected Applications ({activeProfiles.length})
+      </h4>
+      <div className="space-y-2">
+        {activeProfiles.map((p) => (
+          <div key={p.id} className="flex items-center justify-between py-1.5">
+            <div className="flex items-center gap-2">
+              <span
+                className="w-2 h-2 rounded-full"
+                style={{ background: PROFILE_STATUS_DOTS[p.status] || companionColors.notStarted }}
+              />
+              <span className="text-sm font-medium" style={{ color: companionColors.textPrimary }}>
+                {p.name}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-xs" style={{ color: companionColors.textTertiary }}>
+              <span>{p.enabled_asset_count} assets</span>
+              <span>{p.rule_count} rules</span>
+              <span
+                className="px-1.5 py-0.5 rounded text-xs font-medium"
+                style={{
+                  background: p.status === 'active' ? companionColors.complete : companionColors.notStarted,
+                  color: 'white',
+                }}
+              >
+                {p.status === 'active' ? 'Protected' : 'Paused'}
+              </span>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

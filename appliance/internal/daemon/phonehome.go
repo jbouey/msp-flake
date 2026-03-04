@@ -49,7 +49,8 @@ type CheckinRequest struct {
 	NixOSVersion        string           `json:"nixos_version"`
 	HasLocalCredentials bool             `json:"has_local_credentials"`
 	AgentPublicKey      string           `json:"agent_public_key,omitempty"`
-	ConnectedAgents     []ConnectedAgent `json:"connected_agents,omitempty"`
+	ConnectedAgents     []ConnectedAgent        `json:"connected_agents,omitempty"`
+	DiscoveryResults    map[string]interface{}   `json:"discovery_results,omitempty"`
 }
 
 // ConnectedAgent represents a Go agent connected to this appliance via gRPC.

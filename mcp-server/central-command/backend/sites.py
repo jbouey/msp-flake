@@ -7,6 +7,7 @@ that modify site data directly.
 import json
 import secrets
 import logging
+import uuid as _uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -1358,6 +1359,7 @@ class ApplianceCheckin(BaseModel):
     has_local_credentials: bool = False  # If True, appliance has fresh local creds
     agent_public_key: Optional[str] = None  # Ed25519 public key hex for evidence signing
     connected_agents: Optional[list[ConnectedAgentInfo]] = None  # Go agents on this appliance
+    discovery_results: Optional[Dict[str, Any]] = None  # App protection profile discovery results
 
 
 def normalize_mac(mac: str) -> str:
@@ -1966,6 +1968,45 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
             except Exception as e:
                 import logging
                 logging.warning(f"Failed to sync go_agents: {e}")
+
+        # === STEP 3.8: Handle app protection discovery results ===
+        if checkin.discovery_results and checkin.discovery_results.get("profile_id"):
+            try:
+                from .protection_profiles import receive_discovery_results
+                profile_id = checkin.discovery_results["profile_id"]
+                assets_data = checkin.discovery_results.get("assets", {})
+                pid = _uuid.UUID(profile_id)
+                now_disc = datetime.now(timezone.utc)
+
+                await conn.execute(
+                    "UPDATE app_protection_profiles SET discovery_data = $2::jsonb, status = 'discovered', updated_at = $3 WHERE id = $1",
+                    pid, json.dumps(assets_data), now_disc,
+                )
+
+                # Clear previous assets and re-create from discovery
+                await conn.execute("DELETE FROM app_profile_assets WHERE profile_id = $1", pid)
+                from .protection_profiles import ASSET_RUNBOOK_MAP
+                for asset_type, items in assets_data.items():
+                    runbook_id = ASSET_RUNBOOK_MAP.get(asset_type)
+                    for item in items:
+                        asset_id = _uuid.uuid4()
+                        await conn.execute("""
+                            INSERT INTO app_profile_assets
+                                (id, profile_id, asset_type, asset_name, display_name,
+                                 baseline_value, enabled, runbook_id, created_at)
+                            VALUES ($1, $2, $3, $4, $5, $6::jsonb, true, $7, $8)
+                        """,
+                            asset_id, pid, asset_type,
+                            item.get("name", ""),
+                            item.get("display_name"),
+                            json.dumps(item.get("value", {})),
+                            runbook_id, now_disc,
+                        )
+                import logging as _log
+                _log.info(f"Stored app discovery results for profile {profile_id}")
+            except Exception as e:
+                import logging as _log
+                _log.warning(f"Failed to process discovery results: {e}")
 
         # === STEP 4: Get pending orders for this appliance ===
         # Check admin_orders table (fleet management orders)
