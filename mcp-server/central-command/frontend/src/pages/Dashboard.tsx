@@ -3,16 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '../components/shared';
 import { HealthGauge } from '../components/fleet';
 import { IncidentTrendChart, FleetHealthMatrix, AttentionPanel, ResolutionBreakdown, TopIncidentTypes } from '../components/command-center';
-import { useGlobalStats, useLearningStatus, useAttentionRequired } from '../hooks';
+import { IncidentFeed } from '../components/incidents';
+import { useGlobalStats, useLearningStatus, useIncidents } from '../hooks';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
 
   const { data: stats, isLoading: statsLoading } = useGlobalStats();
   const { data: learning, isLoading: learningLoading } = useLearningStatus();
-  const { data: attention } = useAttentionRequired();
-
-  const attentionCount = attention?.count ?? 0;
+  const { data: incidents, isLoading: incidentsLoading, error: incidentsError } = useIncidents({ limit: 10 });
 
   return (
     <div className="space-y-5 page-enter">
@@ -87,32 +86,22 @@ export const Dashboard: React.FC = () => {
           </div>
         </GlassCard>
 
-        {/* Attention count — the new KPI */}
+        {/* Drift Detection — 6 HIPAA checks active */}
         <GlassCard padding="md">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Needs You</p>
-              <p className={`text-2xl font-bold mt-1 tabular-nums ${attentionCount > 0 ? 'text-health-critical' : 'text-health-healthy'}`}>
-                {attentionCount}
+              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Drift Checks</p>
+              <p className="text-2xl font-bold text-health-healthy mt-1 tabular-nums">
+                {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : '6 Active'}
               </p>
             </div>
             <div
               className="w-9 h-9 rounded-ios-md flex items-center justify-center"
-              style={{
-                background: attentionCount > 0
-                  ? 'linear-gradient(135deg, rgba(255, 59, 48, 0.15) 0%, rgba(255, 149, 0, 0.08) 100%)'
-                  : 'linear-gradient(135deg, rgba(52, 199, 89, 0.12) 0%, rgba(0, 199, 190, 0.06) 100%)',
-              }}
+              style={{ background: 'linear-gradient(135deg, rgba(52, 199, 89, 0.12) 0%, rgba(0, 199, 190, 0.06) 100%)' }}
             >
-              {attentionCount > 0 ? (
-                <svg className="w-4.5 h-4.5 text-health-critical" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                </svg>
-              ) : (
-                <svg className="w-4.5 h-4.5 text-health-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              )}
+              <svg className="w-4.5 h-4.5 text-health-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+              </svg>
             </div>
           </div>
         </GlassCard>
@@ -123,6 +112,17 @@ export const Dashboard: React.FC = () => {
         <AttentionPanel className="lg:col-span-2" />
         <IncidentTrendChart className="lg:col-span-3" />
       </div>
+
+      {/* Recent incidents feed */}
+      <IncidentFeed
+        incidents={incidents ?? []}
+        isLoading={incidentsLoading}
+        error={incidentsError}
+        title="Recent Incidents"
+        showViewAll={true}
+        compact={true}
+        limit={8}
+      />
 
       {/* Incident analytics row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

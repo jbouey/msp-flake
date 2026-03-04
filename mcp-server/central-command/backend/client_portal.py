@@ -28,7 +28,7 @@ from typing import Optional, List, Literal
 from decimal import Decimal
 
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, Cookie, Query, Header
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 import httpx
 
@@ -844,48 +844,30 @@ async def download_evidence(bundle_id: str, user: dict = Depends(require_client_
         if not bundle:
             raise HTTPException(status_code=404, detail="Evidence bundle not found")
 
-        # For compliance_bundles, we don't have MinIO storage - return inline data
-        # This is a limitation vs evidence_bundles which has s3_uri
-        raise HTTPException(status_code=404, detail="Evidence file not available in WORM storage")
-
-    # Generate presigned URL
-    try:
-        from minio import Minio
-
-        minio_endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-        minio_access = os.getenv("MINIO_ACCESS_KEY", "minio")
-        minio_secret = os.getenv("MINIO_SECRET_KEY", "minio123")
-        minio_secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
-
-        client = Minio(
-            minio_endpoint,
-            access_key=minio_access,
-            secret_key=minio_secret,
-            secure=minio_secure
-        )
-
-        # Parse bucket and object from s3_uri (format: s3://bucket/path or bucket/path)
-        s3_uri = bundle["s3_uri"]
-        if s3_uri.startswith("s3://"):
-            s3_uri = s3_uri[5:]
-        path_parts = s3_uri.split("/", 1)
-        bucket = path_parts[0] if len(path_parts) > 1 else "evidence-worm"
-        obj_path = path_parts[1] if len(path_parts) > 1 else s3_uri
-
-        url = client.presigned_get_object(
-            bucket,
-            obj_path,
-            expires=timedelta(minutes=15)
-        )
-
-        return {
-            "download_url": url,
-            "expires_in": 900,
-            "bundle_hash": bundle["bundle_id"],
+        # Build downloadable JSON evidence package from compliance_bundles data
+        import json as _json
+        checked_at = bundle["checked_at"]
+        evidence_data = {
+            "bundle_id": bundle["bundle_id"],
+            "check_type": bundle["check_type"],
+            "check_result": bundle["check_result"],
+            "checked_at": checked_at.isoformat() if checked_at else None,
+            "summary": _json.loads(bundle["summary"]) if isinstance(bundle["summary"], str) else bundle["summary"],
+            "checks": _json.loads(bundle["checks"]) if isinstance(bundle["checks"], str) else bundle["checks"],
+            "metadata": {
+                "format": "OsirisCare Evidence Bundle v1",
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "integrity": "compliance_bundle",
+            },
         }
-    except Exception as e:
-        logger.error(f"Failed to generate presigned URL: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate download URL")
+        content = _json.dumps(evidence_data, indent=2, default=str)
+        filename = f"evidence-{bundle['bundle_id'][:12]}-{(checked_at or datetime.now(timezone.utc)).strftime('%Y%m%d')}.json"
+
+        return StreamingResponse(
+            iter([content.encode()]),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
 
 @auth_router.get("/evidence/verify/{bundle_id}")
