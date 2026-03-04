@@ -463,11 +463,17 @@ func (p *Processor) handleSyncRules(_ context.Context, _ map[string]interface{})
 func (p *Processor) handleRestartAgent(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
 	log.Printf("[orders] Scheduling agent restart in 5 seconds")
 
+	// Use systemd-run to escape ProtectSystem=strict sandbox (NixOS PATH issue).
 	go func() {
 		time.Sleep(5 * time.Second)
-		cmd := exec.Command("systemctl", "restart", "appliance-daemon")
-		if err := cmd.Run(); err != nil {
-			log.Printf("[orders] Restart failed: %v", err)
+		cmd := exec.Command("systemd-run",
+			"--unit=msp-daemon-restart", "--collect",
+			"--property=TimeoutStartSec=30",
+			"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",
+			"/run/current-system/sw/bin/bash", "-c",
+			"systemctl restart appliance-daemon")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("[orders] Restart failed: %v\n%s", err, string(out))
 		}
 	}()
 
@@ -534,9 +540,18 @@ func (p *Processor) handleNixOSRebuild(ctx context.Context, params map[string]in
 	log.Printf("[orders] nixos-rebuild test succeeded, scheduling daemon restart in 10s")
 
 	// Schedule restart — the daemon will come back up and call CompletePendingRebuild()
+	// Use systemd-run to escape ProtectSystem=strict sandbox (NixOS PATH issue).
 	go func() {
 		time.Sleep(10 * time.Second)
-		exec.Command("systemctl", "restart", "appliance-daemon").Run()
+		cmd := exec.Command("systemd-run",
+			"--unit=msp-daemon-restart", "--collect",
+			"--property=TimeoutStartSec=30",
+			"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",
+			"/run/current-system/sw/bin/bash", "-c",
+			"systemctl restart appliance-daemon")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("[orders] Daemon restart failed: %v\n%s", err, string(out))
+		}
 	}()
 
 	return map[string]interface{}{
@@ -867,8 +882,17 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 	log.Printf("[orders] Scheduling daemon restart in 10 seconds (version=%s)", version)
 	go func() {
 		time.Sleep(10 * time.Second)
-		if err := exec.Command("systemctl", "restart", "appliance-daemon").Run(); err != nil {
-			log.Printf("[orders] Daemon restart failed: %v", err)
+		// Use systemd-run to escape the ProtectSystem=strict sandbox.
+		// NixOS: systemctl may not be in the daemon's PATH; systemd-run
+		// sets an explicit PATH so the restart command can find it.
+		cmd := exec.Command("systemd-run",
+			"--unit=msp-daemon-restart", "--collect",
+			"--property=TimeoutStartSec=30",
+			"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",
+			"/run/current-system/sw/bin/bash", "-c",
+			"systemctl restart appliance-daemon")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("[orders] Daemon restart failed: %v\n%s", err, string(out))
 		}
 	}()
 

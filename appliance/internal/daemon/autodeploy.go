@@ -1163,13 +1163,11 @@ try {
         New-Item -ItemType Directory -Force -Path "%s" | Out-Null
     } -ErrorAction Stop
 
-    # Step 3: Copy binary from NETLOGON (fast SMB, no WinRM transfer needed)
+    # Step 3: Copy binary from DC local NETLOGON to workstation via -ToSession (avoids Kerberos double-hop)
     $Result.Step = "copy"
-    $netlogonPath = "\\$domain\NETLOGON\%s"
-    Invoke-Command -Session $session -ScriptBlock {
-        param($src, $dest)
-        Copy-Item -Path $src -Destination $dest -Force -ErrorAction Stop
-    } -ArgumentList $netlogonPath, "%s\%s" -ErrorAction Stop
+    $netlogonLocal = (Get-SmbShare -Name NETLOGON -ErrorAction Stop).Path
+    $localBinPath = Join-Path $netlogonLocal "%s"
+    Copy-Item -Path $localBinPath -Destination "%s\%s" -ToSession $session -Force -ErrorAction Stop
 
     # Step 4: Write config
     $Result.Step = "config"
