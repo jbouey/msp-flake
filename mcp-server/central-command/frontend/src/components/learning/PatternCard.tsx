@@ -82,7 +82,7 @@ export const PatternCard: React.FC<PatternCardProps> = memo(({
           )}
 
           {/* Stats */}
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex items-center gap-4 text-xs flex-wrap">
             <div>
               <span className="text-label-tertiary">Occurrences: </span>
               <span className="font-medium text-label-primary">{candidate.occurrences}</span>
@@ -99,6 +99,11 @@ export const PatternCard: React.FC<PatternCardProps> = memo(({
                 {formatTime(candidate.avg_resolution_time_ms)}
               </span>
             </div>
+            {(candidate.impact_count_7d ?? 0) > 0 && (
+              <div className="px-2 py-0.5 bg-health-healthy/10 text-health-healthy rounded">
+                Would auto-heal ~{candidate.impact_count_7d}/wk
+              </div>
+            )}
           </div>
         </div>
 

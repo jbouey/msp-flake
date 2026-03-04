@@ -220,12 +220,14 @@ export const runbookApi = {
 // LEARNING API
 // =============================================================================
 
-import type { LearningStatus, PromotionCandidate, PromotionHistory } from '../types';
+import type { LearningStatus, PromotionCandidate, PromotionHistory, CoverageGap } from '../types';
 
 export const learningApi = {
   getStatus: () => fetchApi<LearningStatus>('/learning/status'),
 
   getCandidates: () => fetchApi<PromotionCandidate[]>('/learning/candidates'),
+
+  getCoverageGaps: () => fetchApi<CoverageGap[]>('/learning/coverage-gaps'),
 
   getHistory: (limit?: number) => {
     const query = limit ? `?limit=${limit}` : '';

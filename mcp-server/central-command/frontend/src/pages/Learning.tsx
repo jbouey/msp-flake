@@ -1,13 +1,15 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { GlassCard, Spinner } from '../components/shared';
-import { PatternCard, PromotionTimeline } from '../components/learning';
+import { PatternCard, PromotionTimeline, CoverageGapPanel } from '../components/learning';
 import {
   useLearningStatus,
   usePromotionCandidates,
   usePromotionHistory,
   usePromotePattern,
   useRejectPattern,
+  useCoverageGaps,
 } from '../hooks';
+import type { PromotionCandidate } from '../types';
 
 /**
  * Learning page - L2 -> L1 promotion dashboard
@@ -18,15 +20,43 @@ import {
 export const Learning: React.FC = () => {
   const [promotingId, setPromotingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [collapsedSites, setCollapsedSites] = useState<Set<string>>(new Set());
 
   // Fetch data
   const { data: status, isLoading: isLoadingStatus, isError: isStatusError } = useLearningStatus();
   const { data: candidates = [], isLoading: isLoadingCandidates, isError: isCandidatesError } = usePromotionCandidates();
   const { data: history = [], isLoading: isLoadingHistory } = usePromotionHistory(50);
+  const { data: coverageGaps = [], isLoading: isLoadingGaps } = useCoverageGaps();
 
   // Mutations
   const promoteMutation = usePromotePattern();
   const rejectMutation = useRejectPattern();
+
+  // Group candidates by site
+  const siteGroups = useMemo(() => {
+    const groups: Record<string, { siteName: string; candidates: PromotionCandidate[] }> = {};
+    for (const c of candidates) {
+      const key = c.site_id || 'unknown';
+      if (!groups[key]) {
+        groups[key] = { siteName: c.site_name || 'Unknown Site', candidates: [] };
+      }
+      groups[key].candidates.push(c);
+    }
+    // Sort by candidate count descending
+    return Object.entries(groups).sort(([, a], [, b]) => b.candidates.length - a.candidates.length);
+  }, [candidates]);
+
+  const toggleSite = useCallback((siteId: string) => {
+    setCollapsedSites((prev) => {
+      const next = new Set(prev);
+      if (next.has(siteId)) {
+        next.delete(siteId);
+      } else {
+        next.add(siteId);
+      }
+      return next;
+    });
+  }, []);
 
   const showFeedback = useCallback((type: 'success' | 'error', message: string) => {
     setFeedback({ type, message });
@@ -141,58 +171,102 @@ export const Learning: React.FC = () => {
         </GlassCard>
       </div>
 
-      {/* Awaiting promotion */}
-      <GlassCard>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-semibold">
-              Awaiting Promotion ({candidates.length})
-            </h2>
-            <p className="text-sm text-label-tertiary mt-1">
-              L2 patterns with consistent success ready for L1 promotion
-            </p>
-          </div>
-          {candidates.length > 0 && (
-            <button
-              onClick={handleApproveAll}
-              disabled={promotingId !== null}
-              className="btn-primary text-sm disabled:opacity-50"
-            >
-              Approve All
-            </button>
-          )}
+      {/* Coverage gaps + candidates side by side on wide screens */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Coverage gap panel (1/3 width) */}
+        <div className="lg:col-span-1">
+          <CoverageGapPanel gaps={coverageGaps} isLoading={isLoadingGaps} />
         </div>
 
-        {isLoadingCandidates ? (
-          <div className="flex items-center justify-center py-12">
-            <Spinner size="lg" />
-          </div>
-        ) : candidates.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-health-healthy/10 flex items-center justify-center">
-              <svg className="w-8 h-8 text-health-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
+        {/* Awaiting promotion - site grouped (2/3 width) */}
+        <div className="lg:col-span-2">
+          <GlassCard>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-semibold">
+                  Awaiting Promotion ({candidates.length})
+                </h2>
+                <p className="text-sm text-label-tertiary mt-1">
+                  {siteGroups.length > 0
+                    ? `Across ${siteGroups.length} site${siteGroups.length !== 1 ? 's' : ''}`
+                    : 'L2 patterns with consistent success ready for L1 promotion'}
+                </p>
+              </div>
+              {candidates.length > 0 && (
+                <button
+                  onClick={handleApproveAll}
+                  disabled={promotingId !== null}
+                  className="btn-primary text-sm disabled:opacity-50"
+                >
+                  Approve All
+                </button>
+              )}
             </div>
-            <p className="text-label-secondary font-medium">All caught up!</p>
-            <p className="text-label-tertiary text-sm mt-1">
-              No patterns awaiting promotion at this time.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {candidates.map((candidate) => (
-              <PatternCard
-                key={candidate.id}
-                candidate={candidate}
-                onApprove={handleApprove}
-                onReject={handleReject}
-                isPromoting={promotingId === candidate.id}
-              />
-            ))}
-          </div>
-        )}
-      </GlassCard>
+
+            {isLoadingCandidates ? (
+              <div className="flex items-center justify-center py-12">
+                <Spinner size="lg" />
+              </div>
+            ) : candidates.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-health-healthy/10 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-health-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <p className="text-label-secondary font-medium">All caught up!</p>
+                <p className="text-label-tertiary text-sm mt-1">
+                  No patterns awaiting promotion at this time.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {siteGroups.map(([siteId, group]) => (
+                  <div key={siteId}>
+                    {/* Site header - collapsible */}
+                    <button
+                      onClick={() => toggleSite(siteId)}
+                      className="flex items-center gap-2 w-full text-left py-2 px-1 hover:bg-separator-light/30 rounded-ios-sm transition-colors"
+                    >
+                      <svg
+                        className={`w-4 h-4 text-label-tertiary transition-transform ${
+                          collapsedSites.has(siteId) ? '' : 'rotate-90'
+                        }`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                      <span className="font-medium text-sm text-label-primary">
+                        {group.siteName}
+                      </span>
+                      <span className="text-xs text-label-tertiary">
+                        {group.candidates.length} candidate{group.candidates.length !== 1 ? 's' : ''}
+                      </span>
+                    </button>
+
+                    {/* Site candidates */}
+                    {!collapsedSites.has(siteId) && (
+                      <div className="space-y-3 ml-6 mt-1">
+                        {group.candidates.map((candidate) => (
+                          <PatternCard
+                            key={candidate.id}
+                            candidate={candidate}
+                            onApprove={handleApprove}
+                            onReject={handleReject}
+                            isPromoting={promotingId === candidate.id}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </GlassCard>
+        </div>
+      </div>
 
       {/* Recently promoted */}
       <PromotionTimeline history={history} isLoading={isLoadingHistory} />

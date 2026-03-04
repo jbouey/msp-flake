@@ -232,6 +232,14 @@ export interface PromotionCandidate {
   proposed_rule?: string;
   first_seen?: string;
   last_seen?: string;
+  impact_count_7d?: number;
+}
+
+export interface CoverageGap {
+  check_type: string;
+  incident_count_30d: number;
+  last_seen?: string;
+  has_l1_rule: boolean;
 }
 
 export interface PromotionHistory {

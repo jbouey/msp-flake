@@ -11,6 +11,7 @@ export {
   useRunbookExecutions,
   usePromotionCandidates,
   usePromotionHistory,
+  useCoverageGaps,
   usePromotePattern,
   useRejectPattern,
   useOnboardingPipeline,

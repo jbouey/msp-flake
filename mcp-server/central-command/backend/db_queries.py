@@ -327,12 +327,20 @@ async def get_promotion_candidates_from_db(db: AsyncSession) -> List[Dict[str, A
             aps.avg_resolution_time_ms,
             aps.recommended_action,
             aps.first_seen,
-            aps.last_seen
+            aps.last_seen,
+            COALESCE(impact.cnt, 0) as impact_count_7d
         FROM aggregated_pattern_stats aps
         JOIN sites s ON s.site_id::text = aps.site_id::text
         LEFT JOIN learning_promotion_candidates lpc
             ON lpc.pattern_signature::text = aps.pattern_signature::text
             AND lpc.site_id::text = aps.site_id::text
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) as cnt
+            FROM execution_telemetry et
+            WHERE et.incident_type = split_part(aps.pattern_signature, ':', 1)
+              AND et.site_id::text = aps.site_id::text
+              AND et.created_at > NOW() - INTERVAL '7 days'
+        ) impact ON true
         WHERE aps.promotion_eligible = true
           AND COALESCE(lpc.approval_status, 'not_submitted') NOT IN ('approved', 'rejected')
           AND aps.last_seen > NOW() - INTERVAL '14 days'
@@ -350,6 +358,38 @@ async def get_promotion_candidates_from_db(db: AsyncSession) -> List[Dict[str, A
         "proposed_rule": row.recommended_action,
         "first_seen": row.first_seen,
         "last_seen": row.last_seen,
+        "impact_count_7d": int(row.impact_count_7d or 0),
+    } for row in result.fetchall()]
+
+
+async def get_coverage_gaps_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
+    """Get check_types seen in telemetry that lack L1 rules."""
+    result = await db.execute(text("""
+        SELECT
+            et.incident_type as check_type,
+            COUNT(*) as incident_count_30d,
+            MAX(et.created_at) as last_seen,
+            EXISTS(
+                SELECT 1 FROM l1_rules lr
+                WHERE lr.enabled = true
+                  AND (
+                    lr.incident_pattern::text LIKE '%"check_type": "' || et.incident_type || '"%'
+                    OR lr.incident_pattern::text LIKE '%"check_type":"' || et.incident_type || '"%'
+                    OR lr.rule_id ILIKE '%' || REPLACE(et.incident_type, '_', '-') || '%'
+                  )
+            ) as has_l1_rule
+        FROM execution_telemetry et
+        WHERE et.created_at > NOW() - INTERVAL '30 days'
+          AND et.incident_type IS NOT NULL
+          AND et.incident_type != ''
+        GROUP BY et.incident_type
+        ORDER BY incident_count_30d DESC
+    """))
+    return [{
+        "check_type": row.check_type,
+        "incident_count_30d": row.incident_count_30d,
+        "last_seen": row.last_seen,
+        "has_l1_rule": row.has_l1_rule,
     } for row in result.fetchall()]
 
 

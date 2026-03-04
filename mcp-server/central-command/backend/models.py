@@ -269,6 +269,15 @@ class PromotionCandidate(BaseModel):
     proposed_rule: Optional[str] = None
     first_seen: Optional[datetime] = None
     last_seen: Optional[datetime] = None
+    impact_count_7d: int = 0
+
+
+class CoverageGap(BaseModel):
+    """A check_type seen in telemetry without an L1 rule."""
+    check_type: str
+    incident_count_30d: int
+    last_seen: Optional[datetime] = None
+    has_l1_rule: bool = False
 
 
 class PromotionHistory(BaseModel):

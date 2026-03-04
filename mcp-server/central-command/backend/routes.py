@@ -35,6 +35,7 @@ from .models import (
     LearningStatus,
     PromotionCandidate,
     PromotionHistory,
+    CoverageGap,
     PatternReport,
     PatternReportResponse,
     OnboardingClient,
@@ -710,9 +711,18 @@ async def get_promotion_candidates(db: AsyncSession = Depends(get_db)):
             proposed_rule=c.get("proposed_rule"),
             first_seen=c.get("first_seen"),
             last_seen=c.get("last_seen"),
+            impact_count_7d=c.get("impact_count_7d", 0),
         )
         for c in candidates
     ]
+
+
+@router.get("/learning/coverage-gaps", response_model=List[CoverageGap])
+async def get_coverage_gaps(db: AsyncSession = Depends(get_db)):
+    """Get check_types seen in telemetry that lack L1 rules."""
+    from .db_queries import get_coverage_gaps_from_db
+    gaps = await get_coverage_gaps_from_db(db)
+    return [CoverageGap(**g) for g in gaps]
 
 
 @router.get("/learning/history", response_model=List[PromotionHistory])
