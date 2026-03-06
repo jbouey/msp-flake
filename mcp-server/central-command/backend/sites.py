@@ -1936,14 +1936,16 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         if checkin.connected_agents:
             try:
                 for agent in checkin.connected_agents:
-                    # Parse ISO timestamp strings to datetime objects for asyncpg
+                    # Parse ISO timestamp strings to naive datetime objects for asyncpg
+                    # (go_agents columns are 'timestamp without time zone')
                     def _parse_ts(s):
                         if not s:
-                            return datetime.now(timezone.utc)
+                            return datetime.utcnow()
                         try:
-                            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+                            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                            return dt.replace(tzinfo=None)  # strip tz for naive column
                         except (ValueError, AttributeError):
-                            return datetime.now(timezone.utc)
+                            return datetime.utcnow()
                     connected_at_dt = _parse_ts(agent.connected_at)
                     last_heartbeat_dt = _parse_ts(agent.last_heartbeat)
                     await conn.execute("""
