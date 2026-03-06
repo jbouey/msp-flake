@@ -1277,6 +1277,21 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, raw_reque
             else:
                 raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
 
+        # Post-completion hooks for specific order types
+        if result['order_type'] == 'validate_credential' and 'credential_id' in result_data:
+            cred_status = 'valid' if result_data.get('can_connect') else 'invalid'
+            try:
+                await conn.execute("""
+                    UPDATE site_credentials
+                    SET validation_status = $1,
+                        last_validated_at = NOW(),
+                        validation_details = $2
+                    WHERE id = $3::uuid
+                """, cred_status, json.dumps(result_data), result_data['credential_id'])
+            except Exception as e:
+                import logging
+                logging.warning(f"Failed to update credential validation: {e}")
+
         # Calculate execution time if acknowledged
         execution_time_ms = None
         if result['acknowledged_at']:

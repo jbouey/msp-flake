@@ -20,9 +20,9 @@ Last updated: 2026-03-06 (Session 152 — Anti-Slop Audit)
 
 | File | Line | Issue | Priority |
 |------|------|-------|----------|
-| `review/review_queue.py` | 392 | Aggregation pipeline for average review time | Low |
-| `review/review_queue.py` | 423, 435, 448 | Notification system (email/Slack/webhook) | Low |
-| `central-command/backend/partners.py` | 1341 | WinRM/LDAP validation for partner credentials | Medium |
+| `review/review_queue.py` | 392 | Aggregation pipeline for average review time | N/A — legacy MongoDB system |
+| `review/review_queue.py` | 423, 435, 448 | Notification system (email/Slack/webhook) | N/A — legacy; active system at `routes.py:1992+` |
+| `central-command/backend/partners.py` | 1341 | ~~WinRM/LDAP validation~~ | **Done** — queues `validate_credential` fleet order |
 | `central-command/backend/integrations/api.py` | 443 | Server-side AWS credentials for role validation | Low |
 
 ### Legacy / Deprecated

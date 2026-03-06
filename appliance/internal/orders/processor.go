@@ -6,7 +6,7 @@
 //  3. Dispatch to handler by order_type
 //  4. Complete order with result (success/failure)
 //
-// 18 order types are handled, from simple checkins to NixOS rebuilds.
+// 19 order types are handled, from simple checkins to NixOS rebuilds.
 package orders
 
 import (
@@ -234,6 +234,7 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p.handlers["healing"] = p.handleHealing
 	p.handlers["update_credentials"] = p.handleUpdateCredentials
 	p.handlers["update_daemon"] = p.handleUpdateDaemon
+	p.handlers["validate_credential"] = p.handleValidateCredential
 
 	return p
 }
@@ -780,6 +781,35 @@ func (p *Processor) handleHealing(_ context.Context, params map[string]interface
 func (p *Processor) handleUpdateCredentials(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
 	// Credential refresh is handled by the daemon's phone-home client
 	return map[string]interface{}{"status": "credential_refresh_triggered"}, nil
+}
+
+// handleValidateCredential tests WinRM connectivity with a credential.
+// The daemon calls back to Central Command with the result via checkin telemetry.
+func (p *Processor) handleValidateCredential(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	credID, _ := params["credential_id"].(string)
+	hostname, _ := params["hostname"].(string)
+	credType, _ := params["credential_type"].(string)
+
+	if credID == "" {
+		return nil, fmt.Errorf("credential_id is required")
+	}
+
+	result := map[string]interface{}{
+		"credential_id":   credID,
+		"hostname":        hostname,
+		"credential_type": credType,
+		"can_connect":     false,
+		"can_read_ad":     false,
+		"is_domain_admin": false,
+	}
+
+	// The actual WinRM test is performed by the daemon via RegisterHandler override.
+	// This stub returns the result shape; the daemon injects the real handler
+	// that has access to winTargets and the WinRM executor.
+	log.Printf("[orders] validate_credential stub for %s (%s) — daemon must register real handler", hostname, credType)
+	result["status"] = "stub_only"
+	result["error"] = "validate_credential handler not initialized — daemon must register real handler"
+	return result, nil
 }
 
 // handleUpdateDaemon downloads a new daemon binary, verifies its SHA256 hash,

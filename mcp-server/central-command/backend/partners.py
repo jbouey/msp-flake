@@ -1338,28 +1338,80 @@ async def validate_credential(
         if not cred:
             raise HTTPException(status_code=404, detail="Credential not found")
 
-        # TODO: Actually validate via WinRM/LDAP
-        # For now, return mock validation
-        # In production, this would queue an order to the appliance
-
-        validation_result = {
-            'can_connect': True,
-            'can_read_ad': cred['credential_type'] == 'domain_admin',
-            'is_domain_admin': cred['credential_type'] == 'domain_admin',
-            'servers_found': [],
-            'servers_accessible': [],
-            'warnings': ['Credential validation pending - appliance will test on next sync'],
-            'errors': [],
-        }
-
-        # Update validation status
+        # Update validation status to pending
         await conn.execute("""
             UPDATE site_credentials
             SET validation_status = 'pending',
-                last_validated_at = NOW(),
-                validation_details = $1
-            WHERE id = $2
-        """, json.dumps(validation_result), _uid(credential_id))
+                last_validated_at = NOW()
+            WHERE id = $1
+        """, _uid(credential_id))
+
+        # Find an active appliance to run the validation
+        appliance = await conn.fetchrow("""
+            SELECT appliance_id FROM site_appliances
+            WHERE site_id = $1 AND status = 'online'
+            ORDER BY last_checkin DESC NULLS LAST
+            LIMIT 1
+        """, site_id)
+
+        if not appliance:
+            appliance = await conn.fetchrow("""
+                SELECT appliance_id FROM site_appliances
+                WHERE site_id = $1
+                ORDER BY last_checkin DESC NULLS LAST
+                LIMIT 1
+            """, site_id)
+
+        validation_result = {
+            'can_connect': None,
+            'can_read_ad': None,
+            'is_domain_admin': None,
+            'servers_found': [],
+            'servers_accessible': [],
+            'warnings': [],
+            'errors': [],
+        }
+
+        if appliance:
+            import secrets
+            from datetime import timedelta
+            from .order_signing import sign_admin_order
+
+            order_id = f"ORD-{secrets.token_hex(8).upper()}"
+            now_ts = datetime.now(timezone.utc)
+            expires_at = now_ts + timedelta(hours=1)
+            validate_params = {
+                'credential_id': str(cred['id']),
+                'hostname': cred.get('hostname', ''),
+                'credential_type': cred['credential_type'],
+            }
+
+            nonce, signature, signed_payload = sign_admin_order(
+                order_id, 'validate_credential', validate_params, now_ts, expires_at,
+                target_appliance_id=appliance['appliance_id'],
+            )
+
+            await conn.execute("""
+                INSERT INTO admin_orders (
+                    order_id, appliance_id, site_id, order_type,
+                    parameters, priority, status, created_at, expires_at,
+                    nonce, signature, signed_payload
+                ) VALUES ($1, $2, $3, 'validate_credential', $4::jsonb, 1, 'pending', $5, $6, $7, $8, $9)
+            """,
+                order_id,
+                appliance['appliance_id'],
+                site_id,
+                json.dumps(validate_params),
+                now_ts,
+                expires_at,
+                nonce,
+                signature,
+                signed_payload,
+            )
+            validation_result['warnings'].append('Validation order queued to appliance')
+        else:
+            validation_result['warnings'].append('No appliance available — validation will run on next checkin')
+            validation_result['errors'].append('No active appliance found for this site')
 
     await log_partner_activity(
         partner_id=str(partner['id']),

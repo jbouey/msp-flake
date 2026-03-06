@@ -212,6 +212,11 @@ func New(cfg *Config) *Daemon {
 		return d.executeHealingOrder(ctx, params)
 	})
 
+	// Override validate_credential stub with real WinRM connectivity test
+	d.orderProc.RegisterHandler("validate_credential", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+		return d.handleValidateCredential(ctx, params)
+	})
+
 	// Initialize network scanner for port/reachability checks
 	d.netScan = newNetScanner(d)
 
@@ -1098,6 +1103,102 @@ func (d *Daemon) buildWinRMTarget(req *grpcserver.HealRequest) *winrm.Target {
 		UseSSL:    ws.UseSSL,
 		VerifySSL: false, // Tolerate self-signed certs during rollout
 	}
+}
+
+// handleValidateCredential tests WinRM connectivity using a stored credential.
+// It looks up the credential's hostname in winTargets and runs a simple test command.
+func (d *Daemon) handleValidateCredential(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	credID := maputil.String(params, "credential_id")
+	hostname := maputil.String(params, "hostname")
+	credType := maputil.String(params, "credential_type")
+
+	result := map[string]interface{}{
+		"credential_id":   credID,
+		"hostname":        hostname,
+		"credential_type": credType,
+		"can_connect":     false,
+		"can_read_ad":     false,
+		"is_domain_admin": false,
+		"errors":          []string{},
+	}
+
+	if hostname == "" {
+		result["errors"] = []string{"no hostname specified"}
+		return result, nil
+	}
+
+	// Look up credentials from checkin cache
+	target, ok := d.LookupWinTarget(hostname)
+	if !ok {
+		// Try DC credentials as fallback
+		dcHost := ""
+		dcUser := ""
+		dcPass := ""
+		if d.config.DomainController != nil {
+			dcHost = *d.config.DomainController
+		}
+		if d.config.DCUsername != nil {
+			dcUser = *d.config.DCUsername
+		}
+		if d.config.DCPassword != nil {
+			dcPass = *d.config.DCPassword
+		}
+
+		if dcUser != "" && dcPass != "" && (hostname == dcHost || credType == "domain_admin") {
+			target = winTarget{
+				Hostname: hostname,
+				Username: dcUser,
+				Password: dcPass,
+				Role:     "domain_admin",
+			}
+			ok = true
+		}
+	}
+
+	if !ok {
+		result["errors"] = []string{"no cached credentials for hostname " + hostname}
+		return result, nil
+	}
+
+	ws := d.probeWinRM(hostname)
+	winrmTarget := &winrm.Target{
+		Hostname:  hostname,
+		Port:      ws.Port,
+		Username:  target.Username,
+		Password:  target.Password,
+		UseSSL:    ws.UseSSL,
+		VerifySSL: false,
+	}
+
+	// Test basic WinRM connectivity with a simple command
+	testScript := `$env:COMPUTERNAME`
+	execResult := d.winrmExec.ExecuteCtx(ctx, winrmTarget, testScript, "credential-validate", "connect-test", 30, 1, 0, nil)
+
+	if execResult.Success {
+		result["can_connect"] = true
+		log.Printf("[orders] validate_credential: WinRM OK for %s (%s)", hostname, credType)
+
+		// If domain_admin, test AD read access
+		if credType == "domain_admin" {
+			adScript := `try { Get-ADDomain | Select-Object -ExpandProperty DNSRoot } catch { "AD_ERROR: $_" }`
+			adResult := d.winrmExec.ExecuteCtx(ctx, winrmTarget, adScript, "credential-validate", "ad-test", 30, 1, 0, nil)
+			stdout, _ := adResult.Output["std_out"].(string)
+			if adResult.Success && !strings.Contains(stdout, "AD_ERROR") {
+				result["can_read_ad"] = true
+				result["is_domain_admin"] = true
+			}
+		}
+	} else {
+		errMsg := execResult.Error
+		if errMsg == "" {
+			errMsg = "WinRM connection failed"
+		}
+		result["errors"] = []string{errMsg}
+		log.Printf("[orders] validate_credential: WinRM FAILED for %s: %s", hostname, errMsg)
+	}
+
+	result["status"] = "validated"
+	return result, nil
 }
 
 // buildSSHTarget creates an SSH target from the heal request metadata.
