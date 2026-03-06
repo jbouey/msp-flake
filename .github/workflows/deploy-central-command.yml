@@ -33,7 +33,7 @@ jobs:
 
       - name: Run backend tests
         working-directory: mcp-server/central-command/backend
-        run: python -m pytest tests/ -v --tb=short || true  # non-blocking until test suite stabilizes
+        run: python -m pytest tests/ -v --tb=short
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -53,6 +53,10 @@ jobs:
       - name: ESLint
         working-directory: mcp-server/central-command/frontend
         run: npx eslint src/ --max-warnings 100
+
+      - name: Vitest
+        working-directory: mcp-server/central-command/frontend
+        run: npx vitest run
 
   deploy:
     needs: test
