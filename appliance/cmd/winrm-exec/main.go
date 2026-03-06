@@ -33,9 +33,9 @@ func main() {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
 	stdout, stderr, exitCode, err := client.RunPSWithContextWithString(ctx, *cmd, "")
+	cancel()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed: %v\n", err)
 		os.Exit(1)

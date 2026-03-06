@@ -3,6 +3,7 @@
 package sdnotify
 
 import (
+	"context"
 	"net"
 	"os"
 )
@@ -33,7 +34,8 @@ func notify(state string) error {
 		return nil // Not running under systemd — silently ignore
 	}
 
-	conn, err := net.Dial("unixgram", socketPath)
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(context.Background(), "unixgram", socketPath)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,15 @@ import { useCompanionActivity } from './useCompanionApi';
 import { companionColors } from './companion-tokens';
 import { Spinner } from '../components/shared';
 
+interface ActivityEntry {
+  id: string;
+  created_at: string;
+  companion_name: string;
+  org_name?: string;
+  action: string;
+  module_key?: string;
+}
+
 export const CompanionActivityLog: React.FC = () => {
   const [limit, setLimit] = useState(100);
   const { data, isLoading } = useCompanionActivity(undefined, limit);
@@ -44,7 +53,7 @@ export const CompanionActivityLog: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {activity.map((a: any) => (
+              {activity.map((a: ActivityEntry) => (
                 <tr
                   key={a.id}
                   style={{ borderBottom: `1px solid ${companionColors.divider}` }}

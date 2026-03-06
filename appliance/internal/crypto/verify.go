@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 )
@@ -28,7 +29,9 @@ type OrderVerifier struct {
 func NewOrderVerifier(publicKeyHex string) *OrderVerifier {
 	v := &OrderVerifier{}
 	if publicKeyHex != "" {
-		_ = v.SetPublicKey(publicKeyHex)
+		if err := v.SetPublicKey(publicKeyHex); err != nil {
+			log.Printf("[crypto] Failed to set initial public key: %v", err)
+		}
 	}
 	return v
 }

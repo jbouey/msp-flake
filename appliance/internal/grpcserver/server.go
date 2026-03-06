@@ -71,7 +71,8 @@ func NewServer(cfg Config, registry *AgentRegistry, agentCA *ca.AgentCA, agentVe
 
 // Serve starts the gRPC server and blocks until stopped.
 func (s *Server) Serve() error {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.config.Port))
+	lc := net.ListenConfig{}
+	lis, err := lc.Listen(context.Background(), "tcp", fmt.Sprintf(":%d", s.config.Port))
 	if err != nil {
 		return fmt.Errorf("listen on port %d: %w", s.config.Port, err)
 	}

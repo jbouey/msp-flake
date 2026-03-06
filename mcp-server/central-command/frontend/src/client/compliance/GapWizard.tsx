@@ -60,12 +60,12 @@ export const GapWizard: React.FC<GapWizardProps> = ({ apiBase = '/api/client/com
       const d = await res.json();
       setQuestions(d.questions || []);
       const rMap: Record<string, GapResponse> = {};
-      (d.responses || []).forEach((r: any) => { rMap[r.question_key] = r; });
+      (d.responses || []).forEach((r: GapResponse) => { rMap[r.question_key] = r; });
       setResponses(rMap);
     }
   };
 
-  const updateResponse = (key: string, field: string, value: any) => {
+  const updateResponse = (key: string, field: string, value: string | number | null) => {
     const q = questions.find(q => q.question_key === key);
     setResponses(prev => ({
       ...prev,

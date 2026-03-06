@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -40,7 +41,7 @@ func main() {
 	}
 	defer shell.Close()
 
-	cmd, err := shell.Execute("powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded)
+	cmd, err := shell.ExecuteWithContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded)
 	if err != nil {
 		fmt.Printf("Execute error: %v\n", err)
 		return

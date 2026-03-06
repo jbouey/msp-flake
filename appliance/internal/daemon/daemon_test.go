@@ -86,7 +86,7 @@ func TestHealIncidentL1Match(t *testing.T) {
 	}
 
 	// Should match L1-FW-001 and execute (dry-run since no executor configured)
-	d.healIncident(context.Background(), req)
+	d.healIncident(context.Background(), &req)
 }
 
 func TestHealIncidentNoMatch(t *testing.T) {
@@ -102,7 +102,7 @@ func TestHealIncidentNoMatch(t *testing.T) {
 	}
 
 	// Should not panic, should escalate to L3
-	d.healIncident(context.Background(), req)
+	d.healIncident(context.Background(), &req)
 }
 
 func TestHealIncidentHealingDisabled(t *testing.T) {
@@ -226,7 +226,7 @@ func TestEscalateToL3(t *testing.T) {
 	}
 
 	// Should not panic
-	d.escalateToL3("incident-123", req, "test escalation")
+	d.escalateToL3("incident-123", &req, "test escalation")
 }
 
 func TestBuildWinRMTarget(t *testing.T) {
@@ -237,7 +237,7 @@ func TestBuildWinRMTarget(t *testing.T) {
 		Hostname: "ws01.test.local",
 		Metadata: map[string]string{},
 	}
-	if d.buildWinRMTarget(req) != nil {
+	if d.buildWinRMTarget(&req) != nil {
 		t.Fatal("expected nil target without credentials")
 	}
 
@@ -247,7 +247,7 @@ func TestBuildWinRMTarget(t *testing.T) {
 		"winrm_password": "secret",
 		"ip_address":     "192.168.1.10",
 	}
-	target := d.buildWinRMTarget(req)
+	target := d.buildWinRMTarget(&req)
 	if target == nil {
 		t.Fatal("expected non-nil target")
 	}
@@ -257,8 +257,8 @@ func TestBuildWinRMTarget(t *testing.T) {
 	if target.Username != "DOMAIN\\admin" {
 		t.Fatalf("expected DOMAIN\\admin, got %s", target.Username)
 	}
-	if target.Port != 5985 {
-		t.Fatalf("expected port 5985, got %d", target.Port)
+	if target.Port != 5986 {
+		t.Fatalf("expected port 5986 (default HTTPS), got %d", target.Port)
 	}
 }
 
@@ -270,7 +270,7 @@ func TestBuildSSHTarget(t *testing.T) {
 		Hostname: "linux01.test.local",
 		Metadata: map[string]string{},
 	}
-	if d.buildSSHTarget(req) != nil {
+	if d.buildSSHTarget(&req) != nil {
 		t.Fatal("expected nil target without credentials")
 	}
 
@@ -279,7 +279,7 @@ func TestBuildSSHTarget(t *testing.T) {
 		"ssh_username": "admin",
 		"ssh_password": "secret",
 	}
-	target := d.buildSSHTarget(req)
+	target := d.buildSSHTarget(&req)
 	if target == nil {
 		t.Fatal("expected non-nil target")
 	}
@@ -295,7 +295,7 @@ func TestBuildSSHTarget(t *testing.T) {
 		"ssh_private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\ntest\n-----END OPENSSH PRIVATE KEY-----",
 		"ip_address":      "10.0.0.5",
 	}
-	target = d.buildSSHTarget(req)
+	target = d.buildSSHTarget(&req)
 	if target == nil {
 		t.Fatal("expected non-nil target")
 	}
@@ -324,7 +324,7 @@ func TestExecuteL2ActionNoCredentials(t *testing.T) {
 	}
 
 	// Should escalate to L3 (no credentials) without panicking
-	d.executeL2Action(context.Background(), decision, req, "incident-test")
+	d.executeL2Action(context.Background(), decision, &req, "incident-test")
 }
 
 func TestExecuteL2ActionLinuxPlatform(t *testing.T) {
@@ -347,7 +347,7 @@ func TestExecuteL2ActionLinuxPlatform(t *testing.T) {
 	}
 
 	// Will fail (can't connect) but should not panic
-	d.executeL2Action(context.Background(), decision, req, "incident-linux-test")
+	d.executeL2Action(context.Background(), decision, &req, "incident-linux-test")
 }
 
 func TestDaemonShutdown(t *testing.T) {

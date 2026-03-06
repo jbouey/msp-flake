@@ -269,7 +269,7 @@ export const Notifications: React.FC = () => {
             `}
           >
             {t.label}
-            {t.count != null && t.count > 0 && (
+            {t.count !== null && t.count !== undefined && t.count > 0 && (
               <span className={`
                 px-1.5 py-0.5 text-[10px] font-bold rounded-full leading-none
                 ${tab === t.id

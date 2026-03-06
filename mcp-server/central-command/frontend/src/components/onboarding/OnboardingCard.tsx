@@ -122,7 +122,7 @@ export const OnboardingCard: React.FC<OnboardingCardProps> = memo(({ client, onC
           )}
 
           {/* Compliance score (Phase 2 only) */}
-          {phase === 2 && client.compliance_score != null && (
+          {phase === 2 && client.compliance_score !== null && client.compliance_score !== undefined && (
             <div className="text-right">
               <p className="text-sm font-medium text-label-secondary">
                 {(client?.compliance_score ?? 0).toFixed(0)}%

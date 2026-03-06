@@ -6,8 +6,8 @@ package daemon
 // This file provides the ActionExecutor callback that dispatches those actions
 // to the appropriate executor (WinRM for Windows, SSH for Linux).
 //
-// Runbook scripts are loaded from runbooks.json (embedded at compile time via
-// go:embed in runbooks_embed.go). This file contains 92 runbooks exported from
+// Runbook scripts are loaded from runbooks.json (embedded at compile time
+// via go:embed in runbooks_embed.go). This file contains 92 runbooks exported from
 // the Python agent's runbook library.
 
 import (
@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/osiriscare/appliance/internal/healing"
+	"github.com/osiriscare/appliance/internal/maputil"
 	"github.com/osiriscare/appliance/internal/sshexec"
 	"github.com/osiriscare/appliance/internal/winrm"
 )
@@ -46,7 +47,7 @@ func (d *Daemon) makeActionExecutor() healing.ActionExecutor {
 		case "run_linux_runbook":
 			return d.executeRunbook(params, hostID, "linux")
 		case "escalate":
-			reason, _ := params["reason"].(string)
+			reason := maputil.String(params, "reason")
 			if reason == "" {
 				reason = "Rule action is escalate"
 			}
@@ -68,10 +69,7 @@ func (d *Daemon) makeActionExecutor() healing.ActionExecutor {
 			return d.executeInlineScript(script, hostID, "windows", params)
 		case "run_backup_job":
 			// Trigger restic backup on the Linux appliance
-			jobName, _ := params["job_name"].(string)
-			if jobName == "" {
-				jobName = "restic-backup"
-			}
+			jobName := maputil.StringDefault(params, "job_name", "restic-backup")
 			script := fmt.Sprintf("systemctl start %s.service && systemctl is-active %s.service", jobName, jobName)
 			return d.executeInlineScript(script, hostID, "linux", params)
 		case "restart_logging_services":
@@ -107,12 +105,12 @@ func (d *Daemon) executeRunbook(params map[string]interface{}, hostID, platform 
 }
 
 func (d *Daemon) executeRunbookCtx(ctx context.Context, params map[string]interface{}, hostID, platform string) (map[string]interface{}, error) {
-	runbookID, _ := params["runbook_id"].(string)
+	runbookID := maputil.String(params, "runbook_id")
 	if runbookID == "" {
 		return nil, fmt.Errorf("runbook_id required")
 	}
 
-	phases, _ := params["phases"].([]interface{})
+	phases := maputil.Slice(params, "phases")
 	if len(phases) == 0 {
 		phases = []interface{}{"remediate", "verify"}
 	}
@@ -141,7 +139,11 @@ func (d *Daemon) executeRunbookCtx(ctx context.Context, params map[string]interf
 	journalID := fmt.Sprintf("%s:%s", runbookID, hostID)
 
 	for _, phase := range phases {
-		phaseStr, _ := phase.(string)
+		phaseStr, ok := phase.(string)
+		if !ok {
+			log.Printf("[l1-exec] skipping non-string phase: %T", phase)
+			continue
+		}
 		script := phaseScripts[phaseStr]
 		if script == "" {
 			continue
@@ -239,12 +241,8 @@ type localExecResult struct {
 	Error   string
 }
 
-// executeLocal runs a remediation script locally via bash instead of SSH.
+// executeLocalCtx runs a remediation script locally via bash instead of SSH.
 // Used for self-healing on the appliance itself.
-func (d *Daemon) executeLocal(script, runbookID, phase string, timeout int) localExecResult {
-	return d.executeLocalCtx(d.runCtx, script, runbookID, phase, timeout)
-}
-
 func (d *Daemon) executeLocalCtx(parent context.Context, script, runbookID, phase string, timeout int) localExecResult {
 	ctx, cancel := context.WithTimeout(parent, time.Duration(timeout)*time.Second)
 	defer cancel()
@@ -364,13 +362,13 @@ func (d *Daemon) isKnownTarget(hostname, platform string) bool {
 // orders arrive pre-matched with a runbook_id. We look up the runbook,
 // determine the platform, and dispatch to the appropriate executor.
 func (d *Daemon) executeHealingOrder(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
-	runbookID, _ := params["runbook_id"].(string)
+	runbookID := maputil.String(params, "runbook_id")
 	if runbookID == "" {
 		return nil, fmt.Errorf("runbook_id is required")
 	}
 
-	hostname, _ := params["hostname"].(string)
-	checkType, _ := params["check_type"].(string)
+	hostname := maputil.String(params, "hostname")
+	checkType := maputil.String(params, "check_type")
 
 	// Look up runbook to determine platform
 	rb, ok := runbookRegistry[runbookID]

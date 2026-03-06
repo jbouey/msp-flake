@@ -82,7 +82,7 @@ type CheckinResponse struct {
 }
 
 // Checkin sends a phone-home checkin to Central Command.
-func (c *PhoneHomeClient) Checkin(ctx context.Context, req CheckinRequest) (*CheckinResponse, error) {
+func (c *PhoneHomeClient) Checkin(ctx context.Context, req *CheckinRequest) (*CheckinResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal checkin: %w", err)

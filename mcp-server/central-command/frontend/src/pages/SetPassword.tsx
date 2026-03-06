@@ -78,7 +78,7 @@ export default function SetPassword() {
   const hasUpper = /[A-Z]/.test(password);
   const hasLower = /[a-z]/.test(password);
   const hasDigit = /\d/.test(password);
-  const hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password);
+  const hasSpecial = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?~`]/.test(password);
   const passwordValid = hasMinLength && hasUpper && hasLower && hasDigit && hasSpecial;
 
   // Loading state

@@ -122,7 +122,9 @@ func (d *Daemon) handleAgentVersion(cache *agentVersionCache) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(info)
+		if err := json.NewEncoder(w).Encode(info); err != nil {
+			log.Printf("[agent-version] Failed to encode response: %v", err)
+		}
 	}
 }
 

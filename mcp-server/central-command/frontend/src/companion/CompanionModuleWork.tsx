@@ -5,6 +5,15 @@ import { CompanionNotes } from './CompanionNotes';
 import { useCompanionAlerts, useCreateAlert, useUpdateAlert, useDeleteAlert } from './useCompanionApi';
 import { Spinner } from '../components/shared';
 
+interface ModuleAlert {
+  id: string;
+  module_key: string;
+  status: string;
+  expected_status: string;
+  target_date: string;
+  description?: string;
+}
+
 // Lazy import the compliance components from the client module
 const SRAWizard = lazy(() => import('../client/compliance/SRAWizard').then(m => ({ default: m.SRAWizard })));
 const PolicyLibrary = lazy(() => import('../client/compliance/PolicyLibrary').then(m => ({ default: m.PolicyLibrary })));
@@ -54,7 +63,7 @@ export const CompanionModuleWork: React.FC = () => {
     );
   }
 
-  const moduleAlerts = (alertsData?.alerts || []).filter((a: any) => a.status !== 'dismissed' && a.status !== 'resolved');
+  const moduleAlerts = (alertsData?.alerts || []).filter((a: ModuleAlert) => a.status !== 'dismissed' && a.status !== 'resolved');
   const apiBase = `/api/companion/clients/${orgId}`;
 
   return (
@@ -114,7 +123,7 @@ export const CompanionModuleWork: React.FC = () => {
           </h4>
 
           {/* Existing alerts */}
-          {moduleAlerts.map((a: any) => (
+          {moduleAlerts.map((a: ModuleAlert) => (
             <div
               key={a.id}
               className="flex items-center justify-between px-3 py-2 rounded-lg mb-2"

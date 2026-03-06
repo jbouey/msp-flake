@@ -475,7 +475,6 @@ func builtinRules() []*Rule {
 			Conditions: []RuleCondition{
 				{Field: "check_type", Operator: OpEquals, Value: "smb_signing"},
 				{Field: "drift_detected", Operator: OpEquals, Value: true},
-				{Field: "platform", Operator: OpEquals, Value: "windows"},
 			},
 			Action:          "run_windows_runbook",
 			ActionParams:    map[string]interface{}{"runbook_id": "RB-WIN-SEC-007", "phases": []interface{}{"remediate", "verify"}},

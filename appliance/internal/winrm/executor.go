@@ -136,8 +136,9 @@ func (e *Executor) Execute(target *Target, script, runbookID, phase string, time
 		}
 
 		elapsed := time.Since(start).Seconds()
+		success, _ := output["success"].(bool)
 		return &ExecutionResult{
-			Success:       output["success"].(bool),
+			Success:       success,
 			RunbookID:     runbookID,
 			Target:        target.Hostname,
 			Phase:         phase,
@@ -215,7 +216,7 @@ func (e *Executor) executeInline(client *gowinrm.Client, script string, timeout 
 
 	// PowerShell base64-encoded command
 	encoded := encodePowerShell(script)
-	cmd, err := shell.Execute("powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded)
+	cmd, err := shell.ExecuteWithContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded)
 	if err != nil {
 		return "", "", -1, fmt.Errorf("execute: %w", err)
 	}
@@ -251,7 +252,7 @@ func (e *Executor) executeViaTempFile(client *gowinrm.Client, script string, tim
 			op = ">>"
 		}
 		cmdStr := fmt.Sprintf(`echo %s%s"%s"`, chunk, op, tempB64)
-		cmd, err := shell.Execute("cmd.exe", "/c", cmdStr)
+		cmd, err := shell.ExecuteWithContext(context.Background(), "cmd.exe", "/c", cmdStr)
 		if err != nil {
 			return "", "", -1, fmt.Errorf("write chunk %d: %w", i, err)
 		}
@@ -273,7 +274,7 @@ func (e *Executor) executeViaTempFile(client *gowinrm.Client, script string, tim
 	)
 
 	encodedCmd := encodePowerShell(decodeAndRun)
-	cmd, err := shell.Execute("powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCmd)
+	cmd, err := shell.ExecuteWithContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCmd)
 	if err != nil {
 		return "", "", -1, fmt.Errorf("execute temp file: %w", err)
 	}

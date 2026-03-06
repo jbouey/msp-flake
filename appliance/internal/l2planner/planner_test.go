@@ -11,7 +11,7 @@ import (
 )
 
 // mockCentralCommand creates a test server that mimics Central Command's /api/agent/l2/plan.
-func mockCentralCommand(t *testing.T, response l2PlanResponse) *httptest.Server {
+func mockCentralCommand(t *testing.T, response *l2PlanResponse) *httptest.Server {
 	t.Helper()
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -45,12 +45,12 @@ func mockCentralCommand(t *testing.T, response l2PlanResponse) *httptest.Server 
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		json.NewEncoder(w).Encode(*response)
 	}))
 }
 
 func TestPlannerEndToEnd(t *testing.T) {
-	server := mockCentralCommand(t, l2PlanResponse{
+	server := mockCentralCommand(t, &l2PlanResponse{
 		IncidentID:        "drift-DC01-firewall-123",
 		RecommendedAction: "configure_firewall",
 		ActionParams:      map[string]interface{}{"runbook_id": "RB-FIREWALL-001"},
@@ -66,7 +66,7 @@ func TestPlannerEndToEnd(t *testing.T) {
 	})
 	defer server.Close()
 
-	planner := NewPlanner(PlannerConfig{
+	planner := NewPlanner(&PlannerConfig{
 		APIKey:      "test-site-api-key",
 		APIEndpoint: server.URL,
 		SiteID:      "test-site",
@@ -115,7 +115,7 @@ func TestPlannerEndToEnd(t *testing.T) {
 }
 
 func TestPlannerGuardrailBlocks(t *testing.T) {
-	server := mockCentralCommand(t, l2PlanResponse{
+	server := mockCentralCommand(t, &l2PlanResponse{
 		RecommendedAction: "format_disk", // NOT in allowlist
 		ActionParams:      map[string]interface{}{"script": "mkfs.ext4 /dev/sda"},
 		Confidence:        0.95,
@@ -124,7 +124,7 @@ func TestPlannerGuardrailBlocks(t *testing.T) {
 	})
 	defer server.Close()
 
-	planner := NewPlanner(PlannerConfig{
+	planner := NewPlanner(&PlannerConfig{
 		APIKey:      "test-key",
 		APIEndpoint: server.URL,
 		SiteID:      "test-site",
@@ -155,7 +155,7 @@ func TestPlannerGuardrailBlocks(t *testing.T) {
 }
 
 func TestPlannerBudgetExhausted(t *testing.T) {
-	planner := NewPlanner(PlannerConfig{
+	planner := NewPlanner(&PlannerConfig{
 		APIKey:      "test-key",
 		APIEndpoint: "http://unused",
 		SiteID:      "test-site",
@@ -191,7 +191,7 @@ func TestPlannerCentralCommandError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	planner := NewPlanner(PlannerConfig{
+	planner := NewPlanner(&PlannerConfig{
 		APIKey:      "test-key",
 		APIEndpoint: server.URL,
 		SiteID:      "test-site",
@@ -214,12 +214,12 @@ func TestPlannerCentralCommandError(t *testing.T) {
 }
 
 func TestPlannerIsConnected(t *testing.T) {
-	p1 := NewPlanner(PlannerConfig{APIKey: "has-key", APIEndpoint: "https://api.example.com"})
+	p1 := NewPlanner(&PlannerConfig{APIKey: "has-key", APIEndpoint: "https://api.example.com"})
 	if !p1.IsConnected() {
 		t.Error("Should be connected with API key + endpoint")
 	}
 
-	p2 := NewPlanner(PlannerConfig{APIKey: "", APIEndpoint: "https://api.example.com"})
+	p2 := NewPlanner(&PlannerConfig{APIKey: "", APIEndpoint: "https://api.example.com"})
 	if p2.IsConnected() {
 		t.Error("Should not be connected without API key")
 	}
@@ -245,7 +245,7 @@ func TestPlanWithRetry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	planner := NewPlanner(PlannerConfig{
+	planner := NewPlanner(&PlannerConfig{
 		APIKey:      "test-key",
 		APIEndpoint: server.URL,
 		SiteID:      "test-site",
@@ -286,7 +286,7 @@ func TestPlannerPHIScrubbing(t *testing.T) {
 	}))
 	defer server.Close()
 
-	planner := NewPlanner(PlannerConfig{
+	planner := NewPlanner(&PlannerConfig{
 		APIKey:      "test-key",
 		APIEndpoint: server.URL,
 		SiteID:      "test-site",
@@ -340,7 +340,8 @@ func TestPlannerPHIScrubbing(t *testing.T) {
 }
 
 func TestPlannerClose(t *testing.T) {
-	p := NewPlanner(DefaultPlannerConfig())
+	cfg := DefaultPlannerConfig()
+	p := NewPlanner(&cfg)
 	// Should not panic
 	p.Close()
 }

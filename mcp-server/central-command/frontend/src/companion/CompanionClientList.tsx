@@ -4,7 +4,28 @@ import { useCompanionClients, useCompanionAlertSummary } from './useCompanionApi
 import { companionColors, MODULE_DEFS } from './companion-tokens';
 import { Spinner } from '../components/shared';
 
-function getModuleStatus(overview: any): Record<string, 'complete' | 'in_progress' | 'not_started' | 'action_needed'> {
+interface ClientOverview {
+  sra?: { status: string };
+  policies?: { active: number; total: number; review_due: number };
+  training?: { overdue: number; compliant: number; total_employees: number };
+  baas?: { expiring_soon: number; active: number; total: number };
+  ir_plan?: { status: string };
+  contingency?: { plans: number; all_tested?: boolean };
+  workforce?: { pending_termination: number; active: number };
+  physical?: { gaps: number; assessed: number };
+  officers?: { privacy_officer?: string; security_officer?: string };
+  gap_analysis?: { completion: number };
+}
+
+interface CompanionClient {
+  id: string;
+  name: string;
+  practice_type?: string;
+  provider_count?: number;
+  overview?: ClientOverview & { overall_readiness?: number };
+}
+
+function getModuleStatus(overview: ClientOverview | undefined): Record<string, 'complete' | 'in_progress' | 'not_started' | 'action_needed'> {
   if (!overview) return {};
   const m: Record<string, 'complete' | 'in_progress' | 'not_started' | 'action_needed'> = {};
   // SRA
@@ -62,7 +83,7 @@ export const CompanionClientList: React.FC = () => {
     alertCounts[s.org_id] = { active: s.active_count || 0, triggered: s.triggered_count || 0 };
   }
 
-  const clients = (data?.clients || []).filter((c: any) =>
+  const clients = (data?.clients || []).filter((c: CompanionClient) =>
     !search || c.name.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -103,7 +124,7 @@ export const CompanionClientList: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {clients.map((client: any) => {
+          {clients.map((client: CompanionClient) => {
             const moduleStatus = getModuleStatus(client.overview);
             const readiness = client.overview?.overall_readiness || 0;
             return (

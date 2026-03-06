@@ -53,6 +53,8 @@ func main() {
 
 	d := daemon.New(cfg)
 	if err := d.Run(ctx); err != nil {
-		log.Fatalf("Daemon failed: %v", err)
+		cancel()
+		log.Printf("Daemon failed: %v", err)
+		os.Exit(1)
 	}
 }

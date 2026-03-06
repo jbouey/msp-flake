@@ -33,9 +33,7 @@ func setupTestServer(t *testing.T, agentCA *ca.AgentCA) (pb.ComplianceAgentClien
 	})
 
 	go func() {
-		if err := srv.Serve(lis); err != nil {
-			// Server stopped — expected on cleanup
-		}
+		_ = srv.Serve(lis)
 	}()
 
 	dialer := func(context.Context, string) (net.Conn, error) {
@@ -86,8 +84,8 @@ func TestRegisterRPC(t *testing.T) {
 	if resp.CheckIntervalSeconds != 300 {
 		t.Fatalf("expected interval 300, got %d", resp.CheckIntervalSeconds)
 	}
-	if len(resp.EnabledChecks) != 6 {
-		t.Fatalf("expected 6 enabled checks, got %d", len(resp.EnabledChecks))
+	if len(resp.EnabledChecks) != 8 {
+		t.Fatalf("expected 8 enabled checks, got %d", len(resp.EnabledChecks))
 	}
 	if resp.CapabilityTier != pb.CapabilityTier_MONITOR_ONLY {
 		t.Fatalf("expected MONITOR_ONLY tier, got %v", resp.CapabilityTier)

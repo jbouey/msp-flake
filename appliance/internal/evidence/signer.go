@@ -19,8 +19,11 @@ func LoadOrCreateSigningKey(path string) (ed25519.PrivateKey, string, error) {
 	if err == nil && len(data) == ed25519.SeedSize {
 		// Reconstruct from seed (32 bytes)
 		priv := ed25519.NewKeyFromSeed(data)
-		pub := hex.EncodeToString(priv.Public().(ed25519.PublicKey))
-		return priv, pub, nil
+		pub, ok := priv.Public().(ed25519.PublicKey)
+		if !ok {
+			return nil, "", fmt.Errorf("unexpected public key type from seed")
+		}
+		return priv, hex.EncodeToString(pub), nil
 	}
 
 	// Generate new keypair

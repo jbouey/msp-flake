@@ -106,7 +106,7 @@ func (db *DB) DeleteDuplicates(ctx context.Context, tx pgx.Tx, ids []string) err
 }
 
 // UpsertAppliance creates or updates the canonical appliance entry.
-func (db *DB) UpsertAppliance(ctx context.Context, tx pgx.Tx, req CheckinRequest, canonicalID string, firstCheckin, now time.Time) error {
+func (db *DB) UpsertAppliance(ctx context.Context, tx pgx.Tx, req *CheckinRequest, canonicalID string, firstCheckin, now time.Time) error {
 	ipJSON, _ := json.Marshal(req.IPAddresses)
 
 	_, err := tx.Exec(ctx, `
@@ -131,7 +131,7 @@ func (db *DB) UpsertAppliance(ctx context.Context, tx pgx.Tx, req CheckinRequest
 }
 
 // UpdateLegacyAppliance updates the legacy appliances table (non-critical).
-func (db *DB) UpdateLegacyAppliance(ctx context.Context, tx pgx.Tx, req CheckinRequest, now time.Time) {
+func (db *DB) UpdateLegacyAppliance(ctx context.Context, tx pgx.Tx, req *CheckinRequest, now time.Time) {
 	var ipAddr *string
 	if len(req.IPAddresses) > 0 {
 		ipAddr = &req.IPAddresses[0]
@@ -204,7 +204,9 @@ func (db *DB) FetchAdminOrders(ctx context.Context, tx pgx.Tx, canonicalID strin
 			return nil, err
 		}
 		if params != nil {
-			json.Unmarshal(params, &o.Parameters)
+			if err := json.Unmarshal(params, &o.Parameters); err != nil {
+				log.Printf("[checkin] failed to parse order params %s: %v", o.OrderID, err)
+			}
 		}
 		o.CreatedAt = isoTimePtr(createdAt)
 		o.ExpiresAt = isoTimePtr(expiresAt)
@@ -255,7 +257,9 @@ func (db *DB) FetchHealingOrders(ctx context.Context, tx pgx.Tx, siteID string) 
 		o.OrderType = "healing"
 		o.Priority = 10 // High priority for healing
 		if params != nil {
-			json.Unmarshal(params, &o.Parameters)
+			if err := json.Unmarshal(params, &o.Parameters); err != nil {
+				log.Printf("[checkin] failed to parse healing order params %s: %v", o.OrderID, err)
+			}
 		}
 		if o.Parameters == nil {
 			o.Parameters = make(map[string]interface{})
@@ -316,11 +320,13 @@ func (db *DB) FetchFleetOrders(ctx context.Context, tx pgx.Tx, canonicalID, agen
 		// Skip if appliance already at target version
 		if skipVersion != nil && agentVersion == *skipVersion {
 			// Record as skipped
-			tx.Exec(ctx, `
+			if _, err := tx.Exec(ctx, `
 				INSERT INTO fleet_order_completions (fleet_order_id, appliance_id, status)
 				VALUES ($1, $2, 'skipped')
 				ON CONFLICT DO NOTHING
-			`, fleetID, canonicalID)
+			`, fleetID, canonicalID); err != nil {
+				log.Printf("[checkin] failed to record fleet skip for %s: %v", fleetID, err)
+			}
 			continue
 		}
 
@@ -329,7 +335,9 @@ func (db *DB) FetchFleetOrders(ctx context.Context, tx pgx.Tx, canonicalID, agen
 		o.OrderType = orderType
 		o.Priority = 5
 		if params != nil {
-			json.Unmarshal(params, &o.Parameters)
+			if err := json.Unmarshal(params, &o.Parameters); err != nil {
+				log.Printf("[checkin] failed to parse fleet order params %s: %v", fleetID, err)
+			}
 		}
 		if o.Parameters == nil {
 			o.Parameters = make(map[string]interface{})
@@ -577,7 +585,7 @@ func (db *DB) BeginTx(ctx context.Context) (pgx.Tx, error) {
 }
 
 // ProcessCheckin executes the full checkin pipeline in a single transaction.
-func (db *DB) ProcessCheckin(ctx context.Context, req CheckinRequest) (*CheckinResponse, error) {
+func (db *DB) ProcessCheckin(ctx context.Context, req *CheckinRequest) (*CheckinResponse, error) {
 	now := time.Now().UTC()
 	macClean := CleanMAC(req.MACAddress)
 	hostnameLower := strings.ToLower(req.Hostname)
@@ -587,7 +595,7 @@ func (db *DB) ProcessCheckin(ctx context.Context, req CheckinRequest) (*CheckinR
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Step 1: Find existing appliances (dedup)
 	existing, err := db.FindExistingAppliances(ctx, tx, req.SiteID, macClean, hostnameLower)

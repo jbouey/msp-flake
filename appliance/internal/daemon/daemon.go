@@ -19,6 +19,7 @@ import (
 	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/healing"
 	"github.com/osiriscare/appliance/internal/l2bridge"
+	"github.com/osiriscare/appliance/internal/maputil"
 	"github.com/osiriscare/appliance/internal/l2planner"
 	"github.com/osiriscare/appliance/internal/orders"
 	"github.com/osiriscare/appliance/internal/sdnotify"
@@ -159,7 +160,7 @@ func New(cfg *Config) *Daemon {
 
 	// Initialize L2 planner (calls Central Command → Anthropic, no LLM key on device)
 	if cfg.L2Enabled {
-		d.l2Planner = l2planner.NewPlanner(l2planner.PlannerConfig{
+		d.l2Planner = l2planner.NewPlanner(&l2planner.PlannerConfig{
 			APIEndpoint: cfg.APIEndpoint, // Same Central Command endpoint as checkins
 			APIKey:      cfg.APIKey,      // Same site API key as checkins
 			SiteID:      cfg.SiteID,
@@ -200,7 +201,7 @@ func New(cfg *Config) *Daemon {
 
 	// Override run_drift order stub with real handler that triggers scanner
 	d.orderProc.RegisterHandler("run_drift", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
-		if mode, _ := params["mode"].(string); mode == "app_discovery" {
+		if maputil.String(params, "mode") == "app_discovery" {
 			return d.scanner.RunAppDiscovery(ctx, params)
 		}
 		return d.scanner.ForceScan(ctx), nil
@@ -456,7 +457,7 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	}
 	d.discoveryMu.Unlock()
 
-	resp, err := d.phoneCli.Checkin(ctx, req)
+	resp, err := d.phoneCli.Checkin(ctx, &req)
 	if err != nil {
 		log.Printf("[daemon] Checkin failed (%s): %v", classifyConnectivityError(err), err)
 		return
@@ -543,11 +544,11 @@ func (d *Daemon) loadWindowsTargets(targets []map[string]interface{}) {
 
 	// Two passes: first look for domain_admin, then fall back to first valid
 	for _, t := range targets {
-		hostname, _ := t["hostname"].(string)
-		username, _ := t["username"].(string)
-		password, _ := t["password"].(string)
-		role, _ := t["role"].(string)
-		useSSL, _ := t["use_ssl"].(bool)
+		hostname := maputil.String(t, "hostname")
+		username := maputil.String(t, "username")
+		password := maputil.String(t, "password")
+		role := maputil.String(t, "role")
+		useSSL := maputil.Bool(t, "use_ssl")
 		if hostname == "" || username == "" {
 			continue
 		}
@@ -603,12 +604,12 @@ func (d *Daemon) LookupWinTarget(hostname string) (winTarget, bool) {
 func (d *Daemon) processOrders(ctx context.Context, rawOrders []map[string]interface{}) {
 	orderList := make([]orders.Order, 0, len(rawOrders))
 	for _, raw := range rawOrders {
-		orderID, _ := raw["order_id"].(string)
-		orderType, _ := raw["order_type"].(string)
+		orderID := maputil.String(raw, "order_id")
+		orderType := maputil.String(raw, "order_type")
 
-		params := make(map[string]interface{})
-		if p, ok := raw["parameters"].(map[string]interface{}); ok {
-			params = p
+		params := maputil.Map(raw, "parameters")
+		if params == nil {
+			params = make(map[string]interface{})
 		}
 		// Inject order_id into params so handlers like nixos_rebuild can persist it
 		params["_order_id"] = orderID
@@ -619,9 +620,9 @@ func (d *Daemon) processOrders(ctx context.Context, rawOrders []map[string]inter
 		}
 
 		// Extract signature fields for verification
-		nonce, _ := raw["nonce"].(string)
-		signature, _ := raw["signature"].(string)
-		signedPayload, _ := raw["signed_payload"].(string)
+		nonce := maputil.String(raw, "nonce")
+		signature := maputil.String(raw, "signature")
+		signedPayload := maputil.String(raw, "signed_payload")
 
 		orderList = append(orderList, orders.Order{
 			OrderID:       orderID,
@@ -724,11 +725,12 @@ func (d *Daemon) probeWinRM(hostname string) winrmSettings {
 	d.winrmMu.Unlock()
 
 	result := winrmSettings{Port: 5986, UseSSL: true} // default
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostname, 5986), 3*time.Second)
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", hostname, 5986))
 	if err == nil {
 		conn.Close()
 	} else {
-		conn2, err2 := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostname, 5985), 3*time.Second)
+		conn2, err2 := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", hostname, 5985))
 		if err2 == nil {
 			conn2.Close()
 			result = winrmSettings{Port: 5985, UseSSL: false}
@@ -793,13 +795,13 @@ func (d *Daemon) processHealRequests(ctx context.Context) {
 				continue
 			}
 
-			d.healIncident(ctx, req)
+			d.healIncident(ctx, &req)
 		}
 	}
 }
 
 // healIncident routes an incident through L1 deterministic → L2 LLM → L3 escalation.
-func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
+func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) {
 	// Drift report cooldown: suppress repeated incidents for the same host+check
 	// Default 10 min cooldown, escalates to 1 hour on flap detection (>3 in 30 min)
 	cooldownKey := req.Hostname + ":" + req.CheckType
@@ -835,10 +837,7 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 	}
 
 	// Report incident to Central Command dashboard (async, fire-and-forget)
-	platform, _ := data["platform"].(string)
-	if platform == "" {
-		platform = "windows"
-	}
+	platform := maputil.StringDefault(data, "platform", "windows")
 	if d.incidents != nil {
 		d.wg.Add(1)
 		go func() { defer d.wg.Done(); d.incidents.ReportDriftIncident(req.Hostname, req.CheckType, req.Expected, req.Actual, req.HIPAAControl, severity, platform) }()
@@ -1011,16 +1010,13 @@ func (d *Daemon) healIncident(ctx context.Context, req grpcserver.HealRequest) {
 
 // executeL2Action dispatches an L2 decision to the appropriate executor (WinRM or SSH).
 // Returns (success, errorMessage) for telemetry reporting.
-func (d *Daemon) executeL2Action(ctx context.Context, decision *l2bridge.LLMDecision, req grpcserver.HealRequest, incidentID string) (bool, string) {
-	platform, _ := req.Metadata["platform"]
+func (d *Daemon) executeL2Action(ctx context.Context, decision *l2bridge.LLMDecision, req *grpcserver.HealRequest, incidentID string) (bool, string) {
+	platform := req.Metadata["platform"]
 	if platform == "" {
 		platform = "windows" // default: gRPC drift events come from Windows agents
 	}
 
-	script, _ := decision.ActionParams["script"].(string)
-	if script == "" {
-		script = decision.RecommendedAction
-	}
+	script := maputil.StringDefault(decision.ActionParams, "script", decision.RecommendedAction)
 
 	runbookID := decision.RunbookID
 	if runbookID == "" {
@@ -1078,11 +1074,11 @@ func (d *Daemon) executeL2Action(ctx context.Context, decision *l2bridge.LLMDeci
 
 // buildWinRMTarget creates a WinRM target from the heal request metadata.
 // Credentials come from the checkin response's windows_targets list, cached in the daemon.
-func (d *Daemon) buildWinRMTarget(req grpcserver.HealRequest) *winrm.Target {
+func (d *Daemon) buildWinRMTarget(req *grpcserver.HealRequest) *winrm.Target {
 	// Extract credentials from metadata (populated during drift report with target info)
-	username, _ := req.Metadata["winrm_username"]
-	password, _ := req.Metadata["winrm_password"]
-	ipAddr, _ := req.Metadata["ip_address"]
+	username := req.Metadata["winrm_username"]
+	password := req.Metadata["winrm_password"]
+	ipAddr := req.Metadata["ip_address"]
 
 	if username == "" || password == "" {
 		return nil
@@ -1105,11 +1101,11 @@ func (d *Daemon) buildWinRMTarget(req grpcserver.HealRequest) *winrm.Target {
 }
 
 // buildSSHTarget creates an SSH target from the heal request metadata.
-func (d *Daemon) buildSSHTarget(req grpcserver.HealRequest) *sshexec.Target {
-	username, _ := req.Metadata["ssh_username"]
-	password, _ := req.Metadata["ssh_password"]
-	key, _ := req.Metadata["ssh_private_key"]
-	ipAddr, _ := req.Metadata["ip_address"]
+func (d *Daemon) buildSSHTarget(req *grpcserver.HealRequest) *sshexec.Target {
+	username := req.Metadata["ssh_username"]
+	password := req.Metadata["ssh_password"]
+	key := req.Metadata["ssh_private_key"]
+	ipAddr := req.Metadata["ip_address"]
 
 	if username == "" {
 		username = "root"
@@ -1139,7 +1135,7 @@ func (d *Daemon) buildSSHTarget(req grpcserver.HealRequest) *sshexec.Target {
 }
 
 // escalateToL3 logs an incident that requires human intervention.
-func (d *Daemon) escalateToL3(incidentID string, req grpcserver.HealRequest, reason string) {
+func (d *Daemon) escalateToL3(incidentID string, req *grpcserver.HealRequest, reason string) {
 	log.Printf("[daemon] L3 ESCALATION: incident=%s host=%s check=%s hipaa=%s reason=%s",
 		incidentID, req.Hostname, req.CheckType, req.HIPAAControl, reason)
 	// In production, this would create an escalation record in Central Command

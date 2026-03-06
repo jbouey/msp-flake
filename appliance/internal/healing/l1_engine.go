@@ -492,7 +492,10 @@ func (e *Engine) loadSyncedJSONRules(dir string) {
 				// Python uses json.dumps(all_rules, sort_keys=True)
 				// Re-parse and re-serialize with sort_keys for determinism
 				var rulesForVerify interface{}
-				json.Unmarshal(rulesBytes, &rulesForVerify)
+				if err := json.Unmarshal(rulesBytes, &rulesForVerify); err != nil {
+					log.Printf("[l1] Failed to re-parse rules for signature verify: %v", err)
+					continue
+				}
 				canonicalRules, _ := jsonMarshalSorted(rulesForVerify)
 				if err := e.verifier.VerifyRulesBundle(string(canonicalRules), sigHex); err != nil {
 					log.Printf("[l1] SECURITY: Rules signature verification failed for %s: %v — skipping",

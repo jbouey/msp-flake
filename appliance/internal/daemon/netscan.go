@@ -73,8 +73,8 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 	findings = append(findings, reachFindings...)
 
 	// Report all findings through the healing pipeline
-	for _, f := range findings {
-		ns.reportNetDrift(f)
+	for i := range findings {
+		ns.reportNetDrift(&findings[i])
 	}
 
 	// Submit network evidence bundle for compliance scoring
@@ -125,7 +125,8 @@ func (ns *netScanner) checkListeningPorts(hostname string) []driftFinding {
 			continue // Skip expected ports
 		}
 
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
+		dialer := net.Dialer{Timeout: 500 * time.Millisecond}
+		conn, err := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err == nil {
 			conn.Close()
 			unexpectedOpen = append(unexpectedOpen, fmt.Sprintf("%d", port))
@@ -146,7 +147,8 @@ func (ns *netScanner) checkListeningPorts(hostname string) []driftFinding {
 
 	// Check that expected ports are actually open
 	for port, service := range expectedPorts {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
+		dialer := net.Dialer{Timeout: 500 * time.Millisecond}
+		conn, err := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			findings = append(findings, driftFinding{
 				Hostname:     hostname,
@@ -173,7 +175,8 @@ func (ns *netScanner) checkHostReachability(ctx context.Context, applianceHostna
 	// Check DC reachability on WinRM port
 	if cfg.DomainController != nil && *cfg.DomainController != "" {
 		dc := *cfg.DomainController
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", dc, 5985), portTimeout)
+		dialer := net.Dialer{Timeout: portTimeout}
+		conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", dc, 5985))
 		if err != nil {
 			findings = append(findings, driftFinding{
 				Hostname:     applianceHostname,
@@ -195,7 +198,8 @@ func (ns *netScanner) checkHostReachability(ctx context.Context, applianceHostna
 	apiHost = strings.Split(apiHost, "/")[0]
 	apiHost = strings.Split(apiHost, ":")[0]
 	if apiHost != "" {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", apiHost, 443), portTimeout)
+		dialer := net.Dialer{Timeout: portTimeout}
+		conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", apiHost, 443))
 		if err != nil {
 			findings = append(findings, driftFinding{
 				Hostname:     applianceHostname,
@@ -226,7 +230,8 @@ func (ns *netScanner) checkHostReachability(ctx context.Context, applianceHostna
 				return findings
 			default:
 			}
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, 5985), portTimeout)
+			dialer := net.Dialer{Timeout: portTimeout}
+			conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", host, 5985))
 			if err != nil {
 				findings = append(findings, driftFinding{
 					Hostname:     applianceHostname,
@@ -244,7 +249,7 @@ func (ns *netScanner) checkHostReachability(ctx context.Context, applianceHostna
 	}
 
 	// Check DNS resolution works
-	_, err := net.LookupHost("api.osiriscare.net")
+	_, err := net.DefaultResolver.LookupHost(ctx, "api.osiriscare.net")
 	if err != nil {
 		findings = append(findings, driftFinding{
 			Hostname:     applianceHostname,
@@ -260,7 +265,7 @@ func (ns *netScanner) checkHostReachability(ctx context.Context, applianceHostna
 }
 
 // reportNetDrift sends a network finding through the healing pipeline.
-func (ns *netScanner) reportNetDrift(f driftFinding) {
+func (ns *netScanner) reportNetDrift(f *driftFinding) {
 	metadata := map[string]string{
 		"platform": "network",
 		"source":   "netscan",
@@ -282,5 +287,5 @@ func (ns *netScanner) reportNetDrift(f driftFinding) {
 	log.Printf("[netscan] DRIFT: %s/%s expected=%s actual=%s",
 		f.Hostname, f.CheckType, f.Expected, f.Actual)
 
-	ns.daemon.healIncident(context.Background(), req)
+	ns.daemon.healIncident(context.Background(), &req)
 }

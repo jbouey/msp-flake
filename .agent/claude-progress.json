@@ -1,14 +1,14 @@
 {
-  "session": 149,
-  "updated": "2026-03-03T10:55:15.642778Z",
+  "session": 152,
+  "updated": "2026-03-06T05:23:44.547223Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "go_daemon_v0.3.12_self_scan_removed_port80_expected",
-    "vm_appliance": "go_daemon_v0.3.12_self_scan_removed_port80_expected",
+    "physical_appliance": "go_daemon_v0.3.18_live_agent_enrolled",
+    "vm_appliance": "go_daemon_v0.3.18_live",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_37_eligible_2_l2_patterns_promoted_flywheel_aggregation_bridge_deployed",
@@ -16,9 +16,10 @@
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "fleet_wide_orders_live_update_daemon_handler_added_v0.3.13"
+    "fleet_updates": "fleet_wide_orders_live_update_daemon_e2e_verified_v0.3.18",
+    "app_protection_profiles": "feature_complete_migration_070_applied_13_endpoints_6_runbooks"
   },
-  "current_blocker": "ws01 trust relationship broken (can't authenticate to domain). GPO scripts in SYSVOL ready but won't apply until trust is restored. Need to rejoin domain or reset machine account from ws01 console.",
+  "current_blocker": "ws01 Kerberos machine trust still broken (domain admin can't auth to ws01, only localadmin works). Agent enrolled and working via localadmin. Need domain re-join or Reset-ComputerMachinePassword on ws01.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -175,42 +176,62 @@
     }
   ],
   "completed_this_session": [
-    "Removed NixOS self-scan from Go daemon (linuxscan.go) — eliminated 6 false positive incident types every 2h",
-    "Added port 80 to expectedPorts in netscan.go (http-file-server)",
-    "Deployed v0.3.12 to both appliances via SCP",
-    "Added update_daemon order handler to Go daemon (download+SHA256+systemd override+restart)",
-    "Added base64-vs-hex signature detection in verify.go with helpful error message",
-    "Added _validate_signature_hex() assertion in order_signing.py backend",
-    "Bumped daemon to v0.3.13",
-    "Fixed ADWS on DC (EventLog service was Stopped/Disabled by chaos lab)",
-    "Created OsirisCare-WinRM GPO with startup scripts (Setup-WinRM.ps1, Deploy-Agent.ps1)",
-    "Staged osiris-agent.exe + osiris-config.json to NETLOGON share",
-    "Reset ws01 machine account password in AD"
+    "Agent gRPC reconnect logic (exponential backoff 30s-5min)",
+    "go_agents VPS sync — timestamp parsing fix (ISO→naive datetime)",
+    "Autodeploy version-aware probe (checks binary version + config, not just service status)",
+    "VM appliance updated to v0.3.18",
+    "Physical appliance updated to v0.3.18",
+    "Pure-Go SQLite (modernc.org/sqlite) replaces CGO-dependent mattn/go-sqlite3",
+    "Driftscan hostname/IP credential mismatch fix (DNS resolution fallback)",
+    "Agent io.MultiWriter order fix (logFile first, stderr second for Windows services)",
+    "Config BOM encoding fix (UTF8Encoding($false) in autodeploy)",
+    "ws01 agent enrolled: go-NVWS01-47d98ba3 in go_agents table",
+    "Full agent pipeline verified: deploy → enroll → mTLS → drift stream → heal commands",
+    "Anti-slop audit: maputil package replaces 50+ silent type assertions in Go daemon",
+    "Fixed 3 failing Go tests (smb_signing rule, grpcserver check count, WinRM port default)",
+    "Added golangci-lint config (appliance/.golangci.yml) — 547→0 issues",
+    "Consolidated TODOs into KNOWN_ISSUES.md",
+    "Fixed latent bug: L2 planner token counts used int assertion on float64 JSON numbers",
+    "CI/CD test gate: pytest + tsc --noEmit + eslint in deploy-central-command.yml",
+    "Frontend ESLint: flat config v10, 0 errors, fixed eqeqeq/no-undef/no-redeclare",
+    "Go noctx: 25 fixes (DialContext, NewRequestWithContext, CommandContext, ListenConfig)",
+    "Go gocritic: 35 fixes (hugeParam→pointer, ifElseChain→switch, equalFold, indexAlloc)",
+    "Go staticcheck: 11 fixes (deprecated Execute→ExecuteWithContext, QF1012 Fprintf)",
+    "Go errcheck: 50+ fixes (type assertions, Close, json.Unmarshal, WriteFile)",
+    "Dead code removed: 5 items (verifyAgentPostDeploy, writeB64ChunksToTarget, executeLocal, etc)",
+    "Doc consolidation: 10 stale/duplicate docs archived to docs/archive/",
+    "Frontend vitest setup + initial test suite (api, shared components, hooks)",
+    "Python backend integration tests (incident pipeline, checkin, evidence chain)",
+    "ESLint no-explicit-any: 29 warnings fixed with proper types"
   ],
   "recent_commits": [
     {
-      "hash": "c73c478",
-      "message": "feat: GPO startup script deploys agent from NETLOGON + config staging (v0.3.10)"
+      "hash": "7b9fe91",
+      "message": "fix: agent reconnect, go_agents sync, autodeploy version check, pure-Go SQLite"
     },
     {
-      "hash": "1248601",
-      "message": "fix: bump daemon version to 0.3.9 in appliance-disk-image.nix"
+      "hash": "51a3963",
+      "message": "feat: application protection profiles - auto-generated L1 rules for EHR/app protection"
     },
     {
-      "hash": "2a12a31",
-      "message": "chore: bump Nix daemon derivation to v0.3.9"
+      "hash": "a4edc3b",
+      "message": "fix: autodeploy Kerberos double-hop + daemon restart sandbox escape"
     },
     {
-      "hash": "b79db26",
-      "message": "feat: WinRM port fallback \u2014 probe 5986 then 5985"
+      "hash": "0b1517c",
+      "message": "fix: demo audit - evidence download, incident feed, drift detection KPI"
     },
     {
-      "hash": "613bbb1",
-      "message": "feat: wire TLS into gRPC server startup + osiris-agent 0.3.1"
+      "hash": "691ac39",
+      "message": "fix: use custom_rule_name instead of promoted_to_rule_id in promote endpoint"
     },
     {
-      "hash": "7fd0661",
-      "message": "chore: bump Go daemon version to 0.3.8"
+      "hash": "b86b9fa",
+      "message": "feat: learning loop enhancements - site grouping, coverage gaps, impact preview"
+    },
+    {
+      "hash": "9ae2f47",
+      "message": "fix: Go daemon audit \u2014 probe 5986 then 5985"
     }
   ],
   "key_findings": {
@@ -292,9 +313,9 @@
   "context_files": {
     "credentials": ".agent/LAB_CREDENTIALS.md",
     "architecture": "docs/ARCHITECTURE.md",
-    "phase_status": "IMPLEMENTATION-STATUS.md",
+    "phase_status": "docs/archive/IMPLEMENTATION-STATUS.md",
     "session_logs": ".agent/sessions/"
   },
-  "physical_appliance": "go_daemon_v0.3.12_deployed",
-  "blocker": "ws01 trust broken — needs domain rejoin from ws01 console"
+  "physical_appliance": "go_daemon_v0.3.18_live_agent_enrolled",
+  "blocker": "ws01 Kerberos machine trust broken — localadmin works, domain admin cannot auth"
 }

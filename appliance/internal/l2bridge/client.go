@@ -10,6 +10,7 @@ package l2bridge
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/osiriscare/appliance/internal/maputil"
 )
 
 // Incident is the input to the L2 planner (matches Python Incident dataclass).
@@ -103,7 +106,8 @@ func (c *Client) Connect() error {
 		c.reader = nil
 	}
 
-	conn, err := net.DialTimeout("unix", c.socketPath, 5*time.Second)
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	conn, err := dialer.DialContext(context.Background(), "unix", c.socketPath)
 	if err != nil {
 		return fmt.Errorf("connect to L2 sidecar at %s: %w", c.socketPath, err)
 	}
@@ -160,7 +164,7 @@ func (c *Client) Health() error {
 		return fmt.Errorf("parse health: %w", err)
 	}
 
-	status, _ := result["status"].(string)
+	status := maputil.String(result, "status")
 	if status != "ok" {
 		return fmt.Errorf("L2 sidecar unhealthy: %s", status)
 	}

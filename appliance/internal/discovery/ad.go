@@ -182,12 +182,13 @@ func (e *ADEnumerator) ResolveMissingIPs(ctx context.Context, computers []ADComp
 
 // TestConnectivity tests if a host is reachable on a given port (TCP connect test).
 func TestConnectivity(ctx context.Context, target *ADComputer, port int) bool {
-	host := ""
-	if target.IPAddress != nil && *target.IPAddress != "" {
+	var host string
+	switch {
+	case target.IPAddress != nil && *target.IPAddress != "":
 		host = *target.IPAddress
-	} else if target.FQDN != "" {
+	case target.FQDN != "":
 		host = target.FQDN
-	} else {
+	default:
 		host = target.Hostname
 	}
 
@@ -271,13 +272,29 @@ func parseComputerMaps(raw []map[string]interface{}) []ADComputer {
 // --- Map access helpers ---
 
 func strVal(m map[string]interface{}, key string) string {
-	v, _ := m[key].(string)
-	return v
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		log.Printf("[ad] key %q: expected string, got %T", key, v)
+		return ""
+	}
+	return s
 }
 
 func boolVal(m map[string]interface{}, key string) bool {
-	v, _ := m[key].(bool)
-	return v
+	v, ok := m[key]
+	if !ok || v == nil {
+		return false
+	}
+	b, ok := v.(bool)
+	if !ok {
+		log.Printf("[ad] key %q: expected bool, got %T", key, v)
+		return false
+	}
+	return b
 }
 
 func intVal(m map[string]interface{}, key string) int {

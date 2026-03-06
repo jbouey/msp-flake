@@ -13,6 +13,7 @@ import (
 
 	"github.com/osiriscare/appliance/internal/evidence"
 	"github.com/osiriscare/appliance/internal/grpcserver"
+	"github.com/osiriscare/appliance/internal/maputil"
 	"github.com/osiriscare/appliance/internal/winrm"
 )
 
@@ -44,10 +45,6 @@ func (f *flexStringSlice) UnmarshalJSON(data []byte) error {
 
 const (
 	driftScanInterval = 15 * time.Minute // How often to scan all targets
-
-	// Known safe scheduled tasks — everything else is suspicious
-	// These are default Windows tasks that should not be flagged.
-	safeTaskPrefix = `\Microsoft\Windows\`
 )
 
 // driftScanner periodically checks Windows and Linux targets for security drift.
@@ -178,7 +175,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 				connectHost = wt.Hostname // use the IP from credential if available
 			} else {
 				// Resolve hostname to IP and retry lookup
-				if addrs, err := net.LookupHost(hostname); err == nil && len(addrs) > 0 {
+				if addrs, err := net.DefaultResolver.LookupHost(ctx, hostname); err == nil && len(addrs) > 0 {
 					for _, addr := range addrs {
 						if wt2, ok2 := ds.daemon.LookupWinTarget(addr); ok2 && wt2.Role != "domain_admin" {
 							wsUser = wt2.Username
@@ -218,8 +215,8 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		scannedHosts = append(scannedHosts, t.hostname)
 		drifts := ds.checkTarget(ctx, t)
 		allFindings = append(allFindings, drifts...)
-		for _, d := range drifts {
-			ds.reportDrift(d)
+		for i := range drifts {
+			ds.reportDrift(&drifts[i])
 		}
 	}
 
@@ -503,7 +500,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		return nil
 	}
 
-	stdout, _ := scanResult.Output["std_out"].(string)
+	stdout := maputil.String(scanResult.Output, "std_out")
 	if stdout == "" {
 		return nil
 	}
@@ -514,7 +511,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		return nil
 	}
 
-	return ds.evaluateWindowsFindings(state, t)
+	return ds.evaluateWindowsFindings(&state, t)
 }
 
 // windowsScanState is the parsed output of the Windows drift scan PowerShell script.
@@ -561,12 +558,12 @@ type windowsScanState struct {
 }
 
 // evaluateWindowsFindings converts a parsed Windows scan state into drift findings.
-func (ds *driftScanner) evaluateWindowsFindings(state windowsScanState, t scanTarget) []driftFinding {
+func (ds *driftScanner) evaluateWindowsFindings(state *windowsScanState, t scanTarget) []driftFinding {
 	var findings []driftFinding
 
 	// 1. Firewall
 	for profile, enabled := range state.Firewall {
-		if strings.ToLower(enabled) == "false" {
+		if strings.EqualFold(enabled, "false") {
 			findings = append(findings, driftFinding{
 				Hostname:     t.hostname,
 				CheckType:    "firewall_status",
@@ -1013,7 +1010,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		return nil
 	}
 
-	stdout, _ := scanResult.Output["std_out"].(string)
+	stdout := maputil.String(scanResult.Output, "std_out")
 	if stdout == "" {
 		return nil
 	}
@@ -1032,7 +1029,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		return nil
 	}
 
-	return ds.evaluateWindowsFindings(proxyState.windowsScanState, t)
+	return ds.evaluateWindowsFindings(&proxyState.windowsScanState, t)
 }
 
 // runLinuxScanIfNeeded runs a Linux scan if the interval has elapsed.
@@ -1060,7 +1057,7 @@ func (ds *driftScanner) runLinuxScanIfNeeded(ctx context.Context) {
 }
 
 // reportDrift sends a drift finding through the L1→L2→L3 healing pipeline.
-func (ds *driftScanner) reportDrift(f driftFinding) {
+func (ds *driftScanner) reportDrift(f *driftFinding) {
 	metadata := map[string]string{
 		"platform": "windows",
 		"source":   "driftscan",
@@ -1091,5 +1088,5 @@ func (ds *driftScanner) reportDrift(f driftFinding) {
 		f.Hostname, f.CheckType, f.Expected, f.Actual, f.HIPAAControl)
 
 	// Route through the healing pipeline
-	ds.daemon.healIncident(context.Background(), req)
+	ds.daemon.healIncident(context.Background(), &req)
 }

@@ -95,7 +95,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	// Process checkin
-	resp, err := h.db.ProcessCheckin(r.Context(), req)
+	resp, err := h.db.ProcessCheckin(r.Context(), &req)
 	if err != nil {
 		log.Printf("[checkin] ERROR processing %s/%s: %v", req.SiteID, req.Hostname, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{

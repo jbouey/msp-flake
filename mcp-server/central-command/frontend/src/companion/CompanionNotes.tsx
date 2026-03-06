@@ -2,6 +2,13 @@ import React, { useState } from 'react';
 import { useCompanionNotes, useCreateNote, useUpdateNote, useDeleteNote } from './useCompanionApi';
 import { companionColors } from './companion-tokens';
 
+interface NoteEntry {
+  id: string;
+  note: string;
+  companion_name: string;
+  created_at: string;
+}
+
 interface CompanionNotesProps {
   orgId: string;
   moduleKey: string;
@@ -101,7 +108,7 @@ export const CompanionNotes: React.FC<CompanionNotesProps> = ({ orgId, moduleKey
             <p className="text-sm text-center py-8" style={{ color: companionColors.textTertiary }}>No notes yet for this module.</p>
           ) : (
             <div className="space-y-3">
-              {notes.map((note: any) => (
+              {notes.map((note: NoteEntry) => (
                 <div
                   key={note.id}
                   className="rounded-lg p-3"

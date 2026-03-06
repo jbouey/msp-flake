@@ -80,7 +80,7 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
       setActiveAssessment(data.assessment);
       setQuestions(data.questions || []);
       const rMap: Record<string, SRAResponse> = {};
-      (data.responses || []).forEach((r: any) => {
+      (data.responses || []).forEach((r: SRAResponse) => {
         rMap[r.question_key] = r;
       });
       setResponses(rMap);

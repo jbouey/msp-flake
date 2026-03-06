@@ -457,8 +457,8 @@ export default function IntegrationSetup() {
 
       // For AWS, go to complete step
       setStep('complete');
-    } catch (err: any) {
-      setError(err.message || 'Failed to create integration');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create integration');
     }
   };
 

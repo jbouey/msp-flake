@@ -1,6 +1,7 @@
 package ca
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
@@ -162,7 +163,7 @@ func TestGenerateServerCert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateServerCert cached: %v", err)
 	}
-	if string(certPEM2) != string(certPEM) {
+	if !bytes.Equal(certPEM2, certPEM) {
 		t.Fatal("second call should return cached cert")
 	}
 }

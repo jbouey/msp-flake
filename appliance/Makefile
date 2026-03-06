@@ -1,4 +1,4 @@
-.PHONY: proto build test clean
+.PHONY: proto build test vet lint clean
 
 PROTO_DIR := ../proto
 OUT_DIR := proto
@@ -17,6 +17,12 @@ build: proto
 
 test:
 	go test ./... -v -count=1
+
+vet:
+	go vet ./...
+
+lint:
+	golangci-lint run ./...
 
 clean:
 	rm -f $(OUT_DIR)/*.pb.go

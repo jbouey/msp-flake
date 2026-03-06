@@ -32,7 +32,7 @@ export const OfficerDesignation: React.FC<OfficerDesignationProps> = ({ apiBase 
     if (res.ok) {
       const d = await res.json();
       const map: Record<string, Officer> = {};
-      (d.officers || []).forEach((o: any) => {
+      (d.officers || []).forEach((o: Officer) => {
         map[o.role_type] = {
           role_type: o.role_type,
           name: o.name || '',

@@ -6,6 +6,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -294,7 +295,7 @@ func buildRootDSESearchRequest() []byte {
 func extractDefaultNamingContext(data []byte) string {
 	// Look for "defaultNamingContext" marker
 	marker := "defaultNamingContext"
-	idx := strings.Index(string(data), marker)
+	idx := bytes.Index(data, []byte(marker))
 	if idx < 0 {
 		// Fallback: regex for DC= pattern
 		return extractDCPattern(data)
@@ -350,13 +351,14 @@ func berLength(l int) []byte {
 
 func berInteger(val int) []byte {
 	var data []byte
-	if val == 0 {
+	switch {
+	case val == 0:
 		data = []byte{0}
-	} else if val < 128 {
+	case val < 128:
 		data = []byte{byte(val)}
-	} else if val < 32768 {
+	case val < 32768:
 		data = []byte{byte(val >> 8), byte(val & 0xff)}
-	} else {
+	default:
 		data = []byte{byte(val >> 24), byte(val >> 16), byte(val >> 8), byte(val)}
 	}
 	return append([]byte{0x02, byte(len(data))}, data...)

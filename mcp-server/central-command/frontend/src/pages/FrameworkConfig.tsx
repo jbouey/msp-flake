@@ -157,7 +157,7 @@ export default function FrameworkConfig() {
         ]);
         setAppliances(appliancesData.appliances);
         // API returns {frameworks: {...}, supported_count: N} - extract frameworks object
-        setMetadata((metadataResponse as any).frameworks || metadataResponse);
+        setMetadata((metadataResponse as Record<ComplianceFramework, FrameworkMetadata> & { frameworks?: Record<ComplianceFramework, FrameworkMetadata> }).frameworks || metadataResponse);
 
         // Auto-select first appliance
         if (appliancesData.appliances.length > 0) {
@@ -196,7 +196,7 @@ export default function FrameworkConfig() {
             updated_at: new Date().toISOString(),
           }
         );
-        const scoresArray = Array.isArray(scoresData) ? scoresData : (scoresData as any)?.scores || [];
+        const scoresArray = Array.isArray(scoresData) ? scoresData : (scoresData as FrameworkScore[] & { scores?: FrameworkScore[] })?.scores || [];
         setScores(scoresArray);
       } catch (err) {
         console.error('Failed to load appliance config:', err);

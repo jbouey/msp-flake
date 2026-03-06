@@ -16,6 +16,7 @@ import (
 
 	"github.com/osiriscare/appliance/internal/discovery"
 	"github.com/osiriscare/appliance/internal/grpcserver"
+	"github.com/osiriscare/appliance/internal/maputil"
 	"github.com/osiriscare/appliance/internal/winrm"
 )
 
@@ -337,7 +338,7 @@ $Result | ConvertTo-Json -Compress
 
 	result := ad.daemon.winrmExec.Execute(target, gpoScript, "WINRM-GPO", "autodeploy", 120, 1, 15.0, nil)
 	if result.Success {
-		stdout, _ := result.Output["std_out"].(string)
+		stdout := maputil.String(result.Output, "std_out")
 		log.Printf("[autodeploy] WinRM GPO configured on %s: %s", dc, stdout)
 	} else {
 		log.Printf("[autodeploy] WinRM GPO config failed on %s: %s (will use DC proxy)", dc, result.Error)
@@ -418,7 +419,9 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 	failed := 0
 
 	// Combine all workstations — reachable first, then unreachable (DC proxy only)
-	allTargets := append(reachable, unreachableDirect...)
+	allTargets := make([]discovery.ADComputer, 0, len(reachable)+len(unreachableDirect))
+	allTargets = append(allTargets, reachable...)
+	allTargets = append(allTargets, unreachableDirect...)
 
 	for _, ws := range allTargets {
 		// Bail out if daemon is shutting down
@@ -451,7 +454,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		ad.mu.Unlock()
 
 		// Deploy with fallback chain
-		err := ad.deployWithFallback(ctx, ws)
+		err := ad.deployWithFallback(ctx, &ws)
 		if err != nil {
 			log.Printf("[autodeploy] Deploy to %s failed (all methods): %v", hostname, err)
 			ad.mu.Lock()
@@ -485,7 +488,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 // IMPORTANT: The direct WinRM probe uses exactly 1 attempt (no retries) to
 // avoid triggering domain account lockout (default threshold: 5 attempts).
 // Each 401 failure counts against the lockout counter.
-func (ad *autoDeployer) deployWithFallback(ctx context.Context, ws discovery.ADComputer) error {
+func (ad *autoDeployer) deployWithFallback(ctx context.Context, ws *discovery.ADComputer) error {
 	hostname := ws.Hostname
 
 	// Check if we already know this host needs DC proxy
@@ -513,8 +516,9 @@ if ($ver -eq "%s" -and $cfg.appliance_addr -eq "%s") { "OK" } else { "STALE|ver=
 				probeScript,
 				"AGENT-PROBE", "autodeploy", 20, 0, 10.0, nil)
 
-			if probeResult.Success {
-				stdout, _ := probeResult.Output["std_out"].(string)
+			switch {
+			case probeResult.Success:
+				stdout := maputil.String(probeResult.Output, "std_out")
 				trimmed := strings.TrimSpace(stdout)
 				if trimmed == "OK" {
 					return nil // Already deployed, correct version and config
@@ -530,10 +534,10 @@ if ($ver -eq "%s" -and $cfg.appliance_addr -eq "%s") { "OK" } else { "STALE|ver=
 					return nil
 				}
 				log.Printf("[autodeploy] [%s] Direct deploy failed: %v — trying DC proxy", hostname, err)
-			} else if strings.Contains(probeResult.Error, "401") {
+			case strings.Contains(probeResult.Error, "401"):
 				log.Printf("[autodeploy] [%s] Direct WinRM auth failed (401) — switching to DC proxy", hostname)
 				ad.needsProxy.Store(hostname, true)
-			} else {
+			default:
 				log.Printf("[autodeploy] [%s] Direct WinRM failed: %s — trying DC proxy", hostname, probeResult.Error)
 			}
 		}
@@ -559,14 +563,15 @@ func (ad *autoDeployer) dcTarget() *winrm.Target {
 	if !ad.dcSSLProbed {
 		ad.dcSSLProbed = true
 		dc := *cfg.DomainController
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", dc, 5986), 3*time.Second)
+		dialer := net.Dialer{Timeout: 3 * time.Second}
+		conn, err := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", dc, 5986))
 		if err == nil {
 			conn.Close()
 			ad.dcUseSSL = true
 			ad.dcPort = 5986
 			log.Printf("[autodeploy] DC %s: WinRM HTTPS (5986) available", dc)
 		} else {
-			conn2, err2 := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", dc, 5985), 3*time.Second)
+			conn2, err2 := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", dc, 5985))
 			if err2 == nil {
 				conn2.Close()
 				ad.dcUseSSL = false
@@ -593,15 +598,16 @@ func (ad *autoDeployer) dcTarget() *winrm.Target {
 
 // buildTarget creates a WinRM target for direct workstation connection.
 // Probes 5986 (HTTPS) first, then falls back to 5985 (HTTP).
-func (ad *autoDeployer) buildTarget(ws discovery.ADComputer) *winrm.Target {
+func (ad *autoDeployer) buildTarget(ws *discovery.ADComputer) *winrm.Target {
 	cfg := ad.daemon.config
 
-	hostname := ""
-	if ws.IPAddress != nil && *ws.IPAddress != "" {
+	var hostname string
+	switch {
+	case ws.IPAddress != nil && *ws.IPAddress != "":
 		hostname = *ws.IPAddress
-	} else if ws.FQDN != "" {
+	case ws.FQDN != "":
 		hostname = ws.FQDN
-	} else {
+	default:
 		hostname = ws.Hostname
 	}
 
@@ -622,11 +628,12 @@ func (ad *autoDeployer) buildTarget(ws discovery.ADComputer) *winrm.Target {
 	// Probe workstation: prefer HTTPS, fall back to HTTP
 	port := 5986
 	useSSL := true
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostname, 5986), 2*time.Second)
+	dialer := net.Dialer{Timeout: 2 * time.Second}
+	conn, err := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", hostname, 5986))
 	if err == nil {
 		conn.Close()
 	} else {
-		conn2, err2 := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostname, 5985), 2*time.Second)
+		conn2, err2 := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", hostname, 5985))
 		if err2 == nil {
 			conn2.Close()
 			port = 5985
@@ -660,7 +667,7 @@ if ($svc) {
 		return false, false
 	}
 
-	stdout, _ := result.Output["std_out"].(string)
+	stdout := maputil.String(result.Output, "std_out")
 	if stdout == "" {
 		return false, false
 	}
@@ -734,7 +741,7 @@ try {
 		return false, false
 	}
 
-	stdout, _ := result.Output["std_out"].(string)
+	stdout := maputil.String(result.Output, "std_out")
 	if stdout == "" {
 		return false, false
 	}
@@ -755,38 +762,6 @@ try {
 	return status.Installed, status.Running
 }
 
-// verifyAgentPostDeploy confirms the agent is actually installed and running
-// after a deploy attempt. Uses direct WinRM first, falls back to DC proxy.
-func (ad *autoDeployer) verifyAgentPostDeploy(ctx context.Context, ws discovery.ADComputer) (installed, running bool) {
-	hostname := ws.Hostname
-
-	// Try direct WinRM first
-	target := ad.buildTarget(ws)
-	if target != nil {
-		probeResult := ad.daemon.winrmExec.Execute(target,
-			fmt.Sprintf(`$svc = Get-Service -Name "%s" -EA SilentlyContinue; if ($svc) { @{installed=$true;running=($svc.Status -eq "Running")} } else { @{installed=$false;running=$false} } | ConvertTo-Json -Compress`, agentServiceName),
-			"AGENT-VERIFY", "autodeploy", 15, 0, 10.0, nil)
-
-		if probeResult.Success {
-			stdout, _ := probeResult.Output["std_out"].(string)
-			var status struct {
-				Installed bool `json:"installed"`
-				Running   bool `json:"running"`
-			}
-			if err := json.Unmarshal([]byte(stdout), &status); err == nil {
-				log.Printf("[autodeploy] [%s] Post-deploy verify (direct): installed=%v running=%v",
-					hostname, status.Installed, status.Running)
-				return status.Installed, status.Running
-			}
-		}
-	}
-
-	// Fall back to DC proxy
-	installed, running = ad.checkAgentStatusViaDC(ctx, hostname)
-	log.Printf("[autodeploy] [%s] Post-deploy verify (DC proxy): installed=%v running=%v",
-		hostname, installed, running)
-	return installed, running
-}
 
 // escalateDeployFailure reports persistent deployment failures as incidents
 // for operator investigation. After maxConsecutiveFailures, we stop hammering
@@ -818,7 +793,7 @@ func (ad *autoDeployer) escalateDeployFailure(hostname string, failCount int, la
 			"remediation": "Enable-PSRemoting -Force on workstation, or reboot for GPO startup script",
 		},
 	}
-	ad.daemon.healIncident(context.Background(), req)
+	ad.daemon.healIncident(context.Background(), &req)
 }
 
 // loadAgentBinary reads and base64-encodes the agent binary (cached).
@@ -858,7 +833,7 @@ func (ad *autoDeployer) loadAgentBinary() (string, error) {
 
 // deployAgentDirect deploys the agent via direct WinRM to the workstation.
 // Uses HTTP download from appliance file server instead of chunked WinRM transfer.
-func (ad *autoDeployer) deployAgentDirect(ctx context.Context, target *winrm.Target, ws discovery.ADComputer) error {
+func (ad *autoDeployer) deployAgentDirect(ctx context.Context, target *winrm.Target, ws *discovery.ADComputer) error {
 	grpcAddr := ad.daemon.config.GRPCListenAddr()
 	hostname := ws.Hostname
 
@@ -897,10 +872,10 @@ try {
 	dlResult := ad.daemon.winrmExec.Execute(target,
 		dlScript, "AGENT-DEPLOY-DL", "autodeploy", 120, 0, 10.0, nil)
 	if !dlResult.Success {
-		stderr, _ := dlResult.Output["std_err"].(string)
+		stderr := maputil.String(dlResult.Output, "std_err")
 		return fmt.Errorf("download failed: err=%s stderr=%s", dlResult.Error, stderr)
 	}
-	stdout, _ := dlResult.Output["std_out"].(string)
+	stdout := maputil.String(dlResult.Output, "std_out")
 	log.Printf("[autodeploy] [%s] Direct: Download result: %s", hostname, strings.TrimSpace(stdout))
 
 	// Step 3: Write config + install service
@@ -937,7 +912,7 @@ func (ad *autoDeployer) stageAgentToNETLOGON(ctx context.Context) error {
 	// Version-aware guard: re-stage when agent binary version changes
 	currentVersion := readVersionFile(filepath.Join(ad.daemon.config.StateDir, "agent"))
 	if staged, ok := netlogonStaged.Load(dc); ok {
-		if staged.(string) == currentVersion {
+		if s, ok := staged.(string); ok && s == currentVersion {
 			return nil
 		}
 		log.Printf("[autodeploy] Agent version changed to %s, re-staging to NETLOGON", currentVersion)
@@ -991,7 +966,7 @@ try {
 		return fmt.Errorf("NETLOGON stage failed: %s", result.Error)
 	}
 
-	stdout, _ := result.Output["std_out"].(string)
+	stdout := maputil.String(result.Output, "std_out")
 	log.Printf("[autodeploy] Agent staged to NETLOGON: %s", stdout)
 
 	// Check if the script reported success
@@ -1016,7 +991,7 @@ try {
 
 	configResult := ad.daemon.winrmExec.Execute(dcTarget, configScript, "NETLOGON-CONFIG", "autodeploy", 30, 1, 15.0, nil)
 	if configResult.Success {
-		configStdout, _ := configResult.Output["std_out"].(string)
+		configStdout := maputil.String(configResult.Output, "std_out")
 		log.Printf("[autodeploy] Config staged to NETLOGON: %s", configStdout)
 	} else {
 		log.Printf("[autodeploy] Config staging failed (non-fatal): %s", configResult.Error)
@@ -1034,7 +1009,7 @@ try {
 //   a) Kerberos PSSession (default, works when SPNs are correct)
 //   b) Negotiate with TrustedHosts (works when Kerberos SPNs are broken)
 //   c) Log error for manual investigation
-func (ad *autoDeployer) deployAgentViaDC(ctx context.Context, ws discovery.ADComputer) error {
+func (ad *autoDeployer) deployAgentViaDC(ctx context.Context, ws *discovery.ADComputer) error {
 	cfg := ad.daemon.config
 	grpcAddr := cfg.GRPCListenAddr()
 	hostname := ws.Hostname
@@ -1261,7 +1236,7 @@ $Result | ConvertTo-Json -Compress
 
 	deployResult := ad.daemon.winrmExec.Execute(dcTarget, deployScript, "AGENT-DEPLOY-PROXY", "autodeploy", 300, 1, 60.0, nil)
 
-	stdout, _ := deployResult.Output["std_out"].(string)
+	stdout := maputil.String(deployResult.Output, "std_out")
 	log.Printf("[autodeploy] [%s] DC proxy result: %s", hostname, stdout)
 
 	if !deployResult.Success {
@@ -1295,35 +1270,6 @@ $Result | ConvertTo-Json -Compress
 
 	log.Printf("[autodeploy] [%s] DC proxy: Deployed via %s — agent installed and running",
 		hostname, proxyResult.Method)
-	return nil
-}
-
-// writeB64ChunksToTarget writes base64-encoded data in chunks to a target via WinRM.
-func (ad *autoDeployer) writeB64ChunksToTarget(target *winrm.Target, b64Data string, label string) error {
-	tempB64File := agentInstallDir + `\agent.b64`
-
-	// Clear any previous temp file
-	ad.daemon.winrmExec.Execute(target,
-		fmt.Sprintf(`New-Item -ItemType Directory -Force -Path "%s" | Out-Null; Remove-Item -Path "%s" -Force -ErrorAction SilentlyContinue`, agentInstallDir, tempB64File),
-		"DEPLOY-PREP-"+label, "autodeploy", 10, 0, 5.0, nil)
-
-	chunkSize := 100000 // Must fit within WinRM max envelope (153600 bytes)
-	for i := 0; i < len(b64Data); i += chunkSize {
-		end := i + chunkSize
-		if end > len(b64Data) {
-			end = len(b64Data)
-		}
-		chunk := b64Data[i:end]
-
-		appendScript := fmt.Sprintf(`Add-Content -Path "%s" -Value "%s" -NoNewline`, tempB64File, chunk)
-		chunkResult := ad.daemon.winrmExec.Execute(target,
-			appendScript, "DEPLOY-CHUNK-"+label, "autodeploy", 60, 1, 30.0, nil)
-		if !chunkResult.Success {
-			stderr, _ := chunkResult.Output["std_err"].(string)
-			return fmt.Errorf("write chunk %d failed: err=%s stderr=%s", i/chunkSize, chunkResult.Error, stderr)
-		}
-	}
-
 	return nil
 }
 
@@ -1434,6 +1380,6 @@ func (e *adScriptExec) RunScript(_ context.Context, hostname, script, username, 
 	if !result.Success {
 		return "", fmt.Errorf("%s", result.Error)
 	}
-	stdout, _ := result.Output["std_out"].(string)
+	stdout := maputil.String(result.Output, "std_out")
 	return stdout, nil
 }

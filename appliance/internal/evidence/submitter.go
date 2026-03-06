@@ -73,15 +73,6 @@ var networkCheckTypes = []string{
 	"net_dns_resolution",
 }
 
-// allCheckTypes combines all platform check types.
-var allCheckTypes = func() []string {
-	all := make([]string, 0, len(windowsCheckTypes)+len(linuxCheckTypes)+len(networkCheckTypes))
-	all = append(all, windowsCheckTypes...)
-	all = append(all, linuxCheckTypes...)
-	all = append(all, networkCheckTypes...)
-	return all
-}()
-
 // Submitter builds and submits evidence bundles to Central Command.
 type Submitter struct {
 	siteID      string
@@ -233,7 +224,10 @@ func (s *Submitter) submitBundle(ctx context.Context, checks []map[string]any, c
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read evidence response: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("evidence submit returned %d: %s", resp.StatusCode, string(respBody))
 	}

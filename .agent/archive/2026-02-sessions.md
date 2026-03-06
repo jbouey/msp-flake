@@ -963,3 +963,693 @@ Analyzed agent logs during and after 180s healing window:
 [truncated...]
 
 ---
+
+## 2026-02-17-session-113-GPO deployment pipeline complete, healing gap investigation.md
+
+# Session 113 - GPO Deployment Pipeline Complete + Healing Gap Investigation
+
+**Date:** 2026-02-17
+**Started:** 02:50
+**Previous Session:** 112
+
+---
+
+## Goals
+
+- [x] Complete Phase 3: Proto update + certificate auto-enrollment (Go + Python)
+- [x] Complete Phases 4-6: Wire CA, DNS SRV, GPO into appliance boot sequence
+- [x] Run Linux chaos attacks on Ubuntu VM (.242)
+- [x] Investigate Windows healing gaps (firewall, network profile, registry persistence)
+- [x] Clear flap suppressions
+- [x] Update technical documentation (.md skills docs)
+
+---
+
+## Progress
+
+### Completed
+
+1. **Proto + Cert Enrollment (Phase 3)** — Added needs_certificates/cert PEM fields to proto, regenerated Go+Python stubs, implemented cert enrollment in grpc.go and grpc_server.py
+2. **Orchestration Wiring (Phases 4-6)** — CA init, DNS SRV registration, GPO deployment all wired into appliance_agent.py boot sequence
+3. **Linux Chaos Attacks** — 6/6 injected on .242, 5/6 auto-healed at L1 (crypto verify failed)
+4. **Healing Gap Root Cause** — Identified: appliance firewall escalation is correct (NixOS); Windows firewall_status IS healing (DB confirms success on .244/.251); service flapping is GPO conflict (correct flap detection)
+5. **Flap Suppressions** — Cleared 6, but they regenerate due to GPO conflicts (by design)
+6. **Docs Updated** — api.md and backend.md updated with gRPC v0.3.0, CA, DNS SRV, GPO
+
+### Blocked
+
+- WinRM session exhaustion on .251 (HTTP 400 after ~15 sequential PS commands)
+- LIN-CRYPTO-001 verify phase fails after successful remediate
+- GPO in lab overrides healed settings (services, screen lock) causing flap loops
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `agent/proto/compliance.proto` | Added cert enrollment fields |
+| `agent/proto/compliance.pb.go` | Regenerated |
+| `agent/proto/compliance_grpc.pb.go` | Regenerated |
+| `agent/internal/transport/grpc.go` | Cert enrollment flow, v0.3.0 |
+| `agent/Makefile` | VERSION 0.3.0 |
+| `packages/.../compliance_pb2.py` | Regenerated |
+| `packages/.../compliance_pb2_grpc.py` | Regenerated |
+| `packages/.../grpc_server.py` | agent_ca parameter, cert issuance |
+
+[truncated...]
+
+---
+
+## 2026-02-17-session-113-WinRM batching, crypto verify fix, GPO conflicts.md
+
+# Session 113 - Winrm Batching, Crypto Verify Fix, Gpo Conflicts
+
+**Date:** 2026-02-17
+**Started:** 02:54
+**Previous Session:** 112
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-02-17-session113-go-rewrite-phase3.md
+
+# Session 113: Go Rewrite — Phases 3A-3F + Phase 4 Wiring Complete
+
+**Date:** 2026-02-17
+**Duration:** ~2 hours (across multiple context windows)
+**Context:** Continuation of Go rewrite from session that ran out of context
+
+## Summary
+
+Completed all phases of the Go appliance daemon rewrite: Phases 3A through 3F plus Phase 4 wiring. The entire `appliance/` Go module now has 10 packages with 141 tests, all passing with zero vet issues.
+
+## What Was Done
+
+### Phase 3A: Daemon Config + Phone-Home (completed in prior session, tests run here)
+- 7 config tests verified passing
+
+### Phase 3B: L1 Deterministic Healing Engine
+- **`internal/healing/l1_engine.go`** (~450 lines) — Full L1 engine with:
+  - 9 match operators: eq, ne, contains, regex, gt, lt, in, not_in, exists
+  - Dot-notation nested field access
+  - Rule loading: builtin, YAML, synced JSON, promoted
+  - Cooldown tracking (per rule+host)
+  - Action execution with dry-run support
+  - Stats and rule listing
+- **`internal/healing/builtin_rules.go`** (~500 lines) — All 38 builtin rules ported from Python:
+  - 12 generic/NixOS rules (patching, AV, backup, logging, firewall, encryption, cert, disk, service crash)
+  - 13 Linux rules (SSH, kernel, cron, SUID, firewall, audit, services, logging, permissions, network, banner, crypto, IR)
+  - 13 Windows rules (DNS, SMB, WUAU, network profile, screen lock, BitLocker, NetLogon, DNS hijack, Defender exclusions, scheduled task/registry/WMI persistence, SMBv1)
+- **22 tests** (56 assertions with subtests): all operators, Linux rules, Windows rules, synced JSON override, cooldown, severity filter, YAML loading, reload
+
+### Phase 3C: L2 Bridge (Go→Python Unix Socket)
+- **`internal/l2bridge/client.go`** (~200 lines) — JSON-RPC 2.0 client over Unix socket:
+  - `Plan(incident)` → `LLMDecision` with confidence + escalation flags
+  - `Health()` liveness check
+  - `PlanWithRetry()` with auto-reconnection
+  - `ShouldExecute()` — checks confidence >= 0.6, no escalation flags
+- **11 tests** (16 with subtests): plan, health, escalation, reconnection, RPC errors, multiple requests, ShouldExecute decisions
+
+### Phase 3D: WinRM + SSH Executors
+- **`internal/winrm/executor.go`** (~340 lines) — WinRM executor:
+  - Session caching with 300s refresh
+  - Inline execution for scripts ≤2000 chars
+  - Temp file execution for longer scripts (cmd.exe 8191 char limit workaround)
+  - Base64 chunking (6000-char chunks via cmd.exe echo)
+  - UTF-16LE PowerShell encoding
+  - Retry with exponential backoff
+  - SHA256 output hashing for evidence
+- **`internal/sshexec/executor.go`** (~310 lines) — SSH executor:
+  - Connection caching with staleness detection
+  - Base64 script encoding (avoids shell quoting)
+  - sudo support (with/without password)
+
+[truncated...]
+
+---
+
+## 2026-02-17-session114-full-audit-remediation-gpo-hardening.md
+
+# Session 114: Full Audit Remediation + GPO Pipeline Hardening
+
+**Date:** 2026-02-17
+**Duration:** ~3 hours (spans sessions 112-114)
+**Status:** COMPLETE
+
+## Summary
+
+Executed a comprehensive 4-track plan to remediate all audit findings from Go agent, Central Command, NixOS infrastructure, and Python compliance agent audits. Also hardened the GPO deployment pipeline and added 43 new tests.
+
+## Commits
+
+| Hash | Description |
+|------|-------------|
+| `dd83883` | fix: Go agent — GC pinning, error logging, backpressure, timeout validation |
+| `e9de57a` | fix: Central Command — real onboarding endpoints, pagination, metrics, indexes |
+| `cc135f1` | fix: NixOS hardening — SSH, resource limits, firewall, service ordering |
+| `a67c079` | feat: GPO pipeline hardening — cert warnings, rollback, 43 new tests |
+
+## Track A: Go Agent Audit Fixes (7 items)
+
+1. **EventLog GC pinning** — `callbackPins` field prevents GC from collecting Windows callback data passed via unsafe.Pointer
+2. **EventLog error logging** — Capture `lastErr` from `procEvtRender.Call` instead of discarding
+3. **OfflineQueue enforceLimit** — Log error from DELETE instead of silent discard
+4. **HealCmds backpressure** — Buffer 32→128, capacity warnings at 75% at all 3 send sites
+5. **WMI context deadline** — `ctx.Err()` checks before ConnectServer, ExecQuery, and 3 registry functions
+6. **RMM sanitization** — `strings.NewReplacer` replaces 3 chained `strings.ReplaceAll`
+7. **Healing timeout validation** — Validate 0-600s range before `time.Duration` conversion
+
+## Track B: Central Command Fixes (7 items)
+
+1. **Real onboarding endpoints** — advance_stage, update_blockers, add_note now use SQL + `Depends(get_db)`
+2. **Pagination offset** — Added `offset` param to incidents, events, runbook_executions (routes.py + db_queries.py)
+3. **Onboarding metrics** — Replaced hardcoded zeros with real SQL aggregates
+4. **Notification log level** — `logger.debug` → `logger.warning` for broadcast failures
+5. **Cache TTL** — Configurable via `CACHE_TTL_SCORES`/`CACHE_TTL_METRICS` env vars
+6. **Vite proxy** — `VITE_API_URL` env var instead of hardcoded IP
+7. **Migration 047** — Composite index on `compliance_bundles(appliance_id, reported_at DESC, check_type)`
+
+## Track C: NixOS Infrastructure Hardening (4 items)
+
+1. **SSH** — `PermitRootLogin=prohibit-password`, `PasswordAuthentication=false`, `mkDefault` on root password
+2. **Resource limits** — `MemoryMax`, `CPUQuota`, `LimitNOFILE`, `StartLimitIntervalSec/Burst` on 3 services
+3. **Service ordering** — `requires = [ "msp-auto-provision.service" ]` for compliance-agent + scanner
+4. **Firewall** — Reduced TCP ports from 7 to 5 (8081/8082 bind localhost only)
+
+## Track D: GPO Pipeline Hardening + Tests (4 items)
+
+1. **Cert enrollment warning** — `elif request.needs_certificates and not self.agent_ca` logs warning in Register handler; startup warnings in `serve_sync()` and `serve()`
+2. **GPO rollback** — `_rollback(artifacts)` cleans up SYSVOL dir + GPO on partial deployment failure
+
+[truncated...]
+
+---
+
+## 2026-02-17-session114-production-cleanup-audit.md
+
+# Session 114 — Production Cleanup Audit
+
+**Date:** 2026-02-17
+**Focus:** Full codebase production-readiness audit and efficiency fixes
+**Commits:** `2823bd8`, `8102d03`, `7b66796`
+
+## Summary
+
+Continued from session 113. Fixed critical/high Go agent bugs, then ran a full 4-agent production audit across Python agent, Go agent, Central Command, and NixOS infrastructure. Applied all critical and high-priority fixes.
+
+## Changes
+
+### Go Agent (commits 2823bd8, 7b66796)
+- **CRITICAL: readDriftAcks race condition** — capture stream/done refs once at goroutine start
+- **CRITICAL: WMI VARIANT leak** — added `valRaw.Clear()` after extracting property values
+- **HIGH: Close()/Reconnect() deadlock** — release mutex before waiting for streamDone
+- **HIGH: Registry EnumKey error** — check WMI ReturnValue instead of treating all as "not found"
+- **MED: EventLog zero subscriptions** — Start() returns error if no channels subscribe
+- **MED: Defender DMT timezone** — parse CIM_DATETIME UTC offset from position 21-24
+- **LOW: Dead code removal** — removed unused parseRegistryInt + strconv import
+- **LOW: OfflineQueue batch DELETE** — single DELETE with WHERE IN instead of one-by-one, with error logging
+
+### Python Agent (commit 7b66796)
+- **SQLite synchronous=FULL → NORMAL** — WAL mode provides equivalent safety, better perf
+- **Float validation in L1 operators** — try/except around GREATER_THAN/LESS_THAN float conversion
+- **Bounded cache eviction** — auto_healer evicts expired cooldowns/flap tracker entries every 100 heal() calls
+
+### Central Command (commit 7b66796)
+- **CRITICAL: get_onboarding_detail()** — missing `db` parameter caused runtime crash
+- **CRITICAL: create_prospect()** — undefined `stage_progress`/`stage_val` caused NameError; now persists to DB
+- **Duplicate imports** — moved mid-file pydantic/enum imports to top of routes.py
+- **O(n) → O(1) category lookup** — db_queries.py uses existing `_CHECK_TYPE_TO_CATEGORY` reverse dict
+
+## Tests
+- Go: all 3 test packages pass
+- Python: 994 passed, 13 skipped, 3 warnings (pre-existing)
+
+## Remaining from Audit (lower priority)
+- NixOS: hardcoded root password in iso config (lab-only, not production risk)
+- NixOS: SSH keys baked into disk image (same — lab config)
+- Go: callback data persistence across restarts (nice-to-have)
+- Central Command: POST/PATCH onboarding endpoints still return mock data for advance_stage/update_blockers/add_note
+
+---
+
+## 2026-02-17-session115-nix-warnings-docs-audit.md
+
+# Session 115: NixOS Trace Warnings + Full Docs Audit
+
+**Date:** 2026-02-17
+**Status:** COMPLETE
+
+## Commits
+
+| Hash | Description |
+|------|-------------|
+| `5629e34` | fix: resolve NixOS trace warnings (health-check ordering + root password conflict) |
+| `7207c52` | docs: audit and correct all technical skill docs against codebase |
+
+## NixOS Trace Warning Fixes
+
+Two warnings that appeared on every `nixos-rebuild`:
+
+1. **msp-health-check ordering** — Had `after = ["network-online.target"]` but no `wants`. NixOS requires both. Added `wants`.
+
+2. **Root multiple password options** — `configuration.nix` set `hashedPassword`, installer ISO profile set `initialHashedPassword`, and `appliance-disk-image.nix` set `initialPassword`. Consolidated: moved `hashedPassword` to `appliance-disk-image.nix` only, removed redundant `initialPassword` from both image configs.
+
+Both appliances rebuilt: exit 0, zero warnings, zero failed services.
+
+## Full Documentation Audit
+
+Ran 6 parallel explore agents to audit all 9 skill docs against the actual codebase. Findings and fixes:
+
+| Doc | Key Corrections |
+|-----|-----------------|
+| CLAUDE.md | Tests 950→1037, migrations 41→49, hooks 77→78, added VM IP (.254), replaced missing preflight.sh |
+| testing.md | Files 39→45, backend tests 55→114, added Go tests, removed nonexistent conftest.py |
+| database.md | Migrations 47→49 |
+| hipaa.md | PHI patterns 12→14, L1 rules 22→38, fixed rules file path |
+| performance.md | Removed virtual scrolling (not installed), removed React.memo (not used) |
+| infrastructure.md | Replaced fictional A/B partition with actual 3-partition layout + rebuild watchdog |
+| frontend.md | Hooks 77→78 |
+| backend.md | Fixed rules path, removed healing_orders reference |
+
+---
+
+## 2026-02-17-session116-gpo-live-test-ws-trust-fix.md
+
+# Session 116: GPO Live Integration Test + WS Trust Relationship Fix
+
+**Date:** 2026-02-17
+**Status:** COMPLETE
+
+## Commits
+
+No code commits this session — all work was live lab infrastructure testing/repair.
+
+## GPO Integration Test — PASSED
+
+Ran the full GPO deployment pipeline against the live AD domain controller (NVDC01 at 192.168.88.250) from the physical appliance (192.168.88.241). Script: `/tmp/gpo_test.py`
+
+| Step | Test | Result |
+|------|------|--------|
+| 1 | Verify AD domain | `northvalley.local` confirmed |
+| 2 | List existing GPOs | Default Domain Policy + Default DC Policy |
+| 3 | SYSVOL read access | Policies + scripts visible |
+| 4 | Create OsirisCare dir in SYSVOL | `DIR_OK` |
+| 5 | Write test file to SYSVOL | `CONTENT:integration-test` verified |
+| 6 | Create test GPO | ID: `ed3e8df4-d63c-4715-b2e3-4f51056afab1` |
+| 7 | Link GPO to domain root | `DC=northvalley,DC=local` linked |
+| 8 | Verify GPO + link | `AllSettingsEnabled`, `LINK_VERIFIED` |
+| 9 | Cleanup | GPO removed, test file cleaned |
+
+**Conclusion:** GPO deployment pipeline code (`gpo_deployment.py`) is validated against real AD infrastructure.
+
+## WS (.251) Trust Relationship Fix — RESOLVED
+
+### Problem
+- WS (.251) WinRM port 5985 was open but domain admin creds were rejected
+- `Get-LocalGroupMember` returned error 1789 (broken trust relationship)
+- Local admin (`localadmin`/`NorthValley2024!`) still worked via NTLM
+
+### Attempts
+1. **`Test-ComputerSecureChannel -Repair` via WinRM on WS** — HTTP 400 error (the broken trust itself caused the WinRM session to fail mid-command)
+2. **`netdom resetpwd` on WS** — `netdom` not installed on Windows 10 (server tool only)
+3. **`Reset-ComputerMachinePassword -Server NVDC01` from DC side** — SUCCESS
+
+### Root Cause
+Machine account password out of sync between WS and DC. NTLM auth still works (goes directly to DC for password verification), but Kerberos/machine trust was broken.
+
+### Verification
+- `Test-ComputerSecureChannel`: `True`
+- Domain admin WinRM session: `NVWS01 / northvalley\administrator`
+- `gpresult /scope computer /r`: Working (Member Workstation in `northvalley.local`)
+
+### Key Lesson
+When trust relationship is broken, don't try to repair from the broken WS via WinRM — the WinRM session itself becomes unstable. Instead, reset the computer account from the DC side using `Reset-ComputerMachinePassword`.
+
+
+[truncated...]
+
+---
+
+## 2026-02-17-session117-4track-verify-overlay-deploy.md
+
+# Session 117: 4-Track Plan Verification + v1.0.74 Overlay Deploy
+
+**Date:** 2026-02-17
+**Status:** COMPLETE
+
+## Commits
+
+| Hash | Description |
+|------|-------------|
+| `03693aa` | fix: msp-first-boot hard dependency on auto-provision service |
+
+## 4-Track Audit Plan — Verified Complete
+
+Audited all 22 items across 4 tracks. 21/22 were already implemented in previous sessions. Applied the one remaining fix:
+
+| Track | Items | Status |
+|-------|-------|--------|
+| A: Go Agent | 7/7 | All done (GC pinning, error logging, backpressure, WMI checks, sanitization, timeout) |
+| B: Central Command | 7/7 | All done (onboarding endpoints, pagination, metrics, broadcast, cache TTL, vite proxy, migration) |
+| C: NixOS Hardening | 4/4 | 3 done previously, **C3 applied this session** (msp-first-boot requires) |
+| D: GPO Pipeline | 4/4 | All done (cert warning, rollback, flag logging, 951 lines of tests) |
+
+### C3 Fix Details
+Added `requires = [ "msp-auto-provision.service" ];` to `msp-first-boot` in `iso/appliance-image.nix:1065`. This makes it a hard dependency — if provisioning fails, first-boot won't run silently without identity.
+
+Verified: `nix eval --json` confirms requires is set. Python tests: 1037 passed.
+
+## v1.0.74 Overlay Deployment
+
+1. Built overlay: `compliance_agent-1.0.74.tar.gz` (444KB)
+2. Uploaded to VPS: `/opt/mcp-server/agent-packages/` + `/var/www/updates/agent-overlay.tar.gz`
+3. Issued `update_agent` orders for both appliances:
+   - Physical: `overlay-1074-phys` for `physical-appliance-pilot-1aea78`
+   - VM: `overlay-1074-vm` for `test-appliance-lab-b3c40c`
+
+Appliances will pick up the overlay on next checkin (~5 min cycle).
+
+## Changes in v1.0.74 (since v1.0.73)
+
+Includes all code from the 4-track audit plan:
+- GPO rollback mechanism
+- gRPC cert enrollment warnings
+- GPO flag persistence error logging
+- 43 new tests (agent_ca, gpo_deployment, dns_registration, agent_deployment)
+- All audit fixes from Go agent, Central Command, and NixOS tracks
+
+---
+
+## 2026-02-17-session118-go-daemon-deploy.md
+
+# Session 118: Go Daemon — Full Production Deployment
+
+**Date:** 2026-02-17/18
+**Duration:** ~45 minutes
+**Context:** Deploying Go daemon to production, wiring remaining subsystems
+
+## Summary
+
+Completed all remaining Go daemon tasks: L2 executor wiring, order completion POST, backend OrderType enum, Go 1.22 compatibility, NixOS rebuild, and production activation. The Go daemon is now **running in production** on the physical HP T640 appliance.
+
+## What Was Done
+
+### 1. Backend OrderType Enum (sites.py)
+Added 7 missing order types: `nixos_rebuild`, `update_iso`, `diagnostic`, `deploy_sensor`, `remove_sensor`, `update_credentials`, `restart_agent`. Dashboard can now create rebuild orders via API.
+
+### 2. L2 Executor Wiring (daemon.go)
+- Added `winrmExec *winrm.Executor` and `sshExec *sshexec.Executor` to Daemon struct
+- `executeL2Action()` dispatches L2 decisions to WinRM (Windows) or SSH (Linux) based on platform
+- `buildWinRMTarget()` / `buildSSHTarget()` extract credentials from heal request metadata
+- Falls back to L3 escalation if no credentials available
+
+### 3. Order Completion POST (daemon.go)
+Replaced stub `completeOrder()` with real HTTP POST to `/api/orders/{order_id}/complete`:
+- Sends `{success, result, error_message}` JSON payload
+- Uses existing PhoneHomeClient's HTTP client (with TLS, timeout)
+- Bearer token auth from config
+
+### 4. Go 1.22 Compatibility
+- NixOS 24.05 ships Go 1.22, but deps required Go 1.24
+- Downgraded: `pgx/v5` v5.8.0→v5.5.5, `x/crypto` v0.48.0→v0.24.0, `rogpeppe/go-internal` v1.14.1→v1.12.0
+- Regenerated vendor hash: `sha256-UUQ3KKz2l1U77lJ16L/K7Zzo/gkSuwVLrzO/I/f4FUM=`
+
+### 5. NixOS Rebuild & Activation
+- First rebuild failed: `go.mod requires go >= 1.24.0 (running go 1.22.8)`
+- Fixed deps, pushed, rebuilt successfully
+- `touch /var/lib/msp/.use-go-daemon` + `systemctl start appliance-daemon`
+- `nixos-rebuild switch` to persist
+
+### 6. Production Verification
+- Go daemon running since 01:09 UTC, PID 569492
+- **Memory: 6.6MB** (vs Python's 112MB) — **17x reduction**
+- **CPU: 102ms** total after 2 cycles
+- **Checkin cycle: 52ms**
+- L1 engine: 82 rules loaded (38 builtin + 44 synced)
+- CA initialized from /var/lib/msp/ca
+- gRPC server listening on :50051
+- Order completion POST to Central Command working
+
+## Test Count
+- **150 tests** across 10 packages (up from 141)
+
+[truncated...]
+
+---
+
+## 2026-02-18-session119-autodeploy-dc-proxy.md
+
+# Session: 2026-02-18 - Auto-Deploy to AD Workstations + DC Proxy Fallback
+
+**Duration:** ~6 hours
+**Focus Area:** Go appliance daemon — zero-friction agent deployment to AD workstations
+
+---
+
+## What Was Done
+
+### Completed
+- [x] Fixed client portal compliance report SQL bug (commit 65f86f7) — `client_org_sites` table didn't exist, changed to join via `sites.client_org_id` directly
+- [x] Implemented auto-deploy pipeline in `appliance/internal/daemon/autodeploy.go` (~900 lines)
+- [x] AD enumeration → connectivity check → Direct WinRM deploy (5-step pipeline)
+- [x] NTLM auth fix in `winrm/executor.go` (Basic → ClientNTLM)
+- [x] Added WinRM GPO configuration via Default Domain Policy
+- [x] Added concurrency guard (atomic CAS) to prevent overlapping deploy cycles
+- [x] Added fallback chain: Direct WinRM → DC Proxy (Invoke-Command via Kerberos) → retry next cycle
+- [x] Integrated autoDeployer into daemon.go
+- [x] Added GRPCListenAddr() to config.go
+
+### Partially Done
+- [ ] v7 DC proxy + NETLOGON approach — code compiles clean but NOT yet deployed/tested
+
+### Not Started (planned but deferred)
+- [ ] End-to-end test of NETLOGON binary distribution
+- [ ] SPN registration automation
+
+---
+
+## Key Decisions Made
+
+| Decision | Rationale | Impact |
+|----------|-----------|--------|
+| Direct WinRM NTLM first, DC proxy fallback | Simplest path for domain-joined machines; DC proxy covers non-direct cases | Two-stage fallback handles both domain and edge cases |
+| NETLOGON share for binary distribution | Universal AD share, already replicated to all DCs, no extra infra | Agent binary accessible from any domain-joined workstation |
+| Atomic CAS concurrency guard | Prevent overlapping deploy cycles from timer + manual trigger | Thread-safe without mutexes |
+| Negotiate auth instead of strict NTLM | Kerberos preferred when available, NTLM fallback automatic | Covers both domain and workgroup scenarios |
+| GPO-based WinRM config | Ensures future workstations automatically have WinRM enabled | No per-machine setup needed |
+
+---
+
+## Files Modified
+
+| File | Change |
+|------|--------|
+| `appliance/internal/daemon/autodeploy.go` | NEW ~900 lines — full auto-deploy with fallback chain |
+| `appliance/internal/daemon/daemon.go` | Integrated autoDeployer into daemon lifecycle |
+| `appliance/internal/daemon/config.go` | Added GRPCListenAddr() method |
+| `appliance/internal/winrm/executor.go` | Switched from Basic to ClientNTLM auth |
+| `mcp-server/central-command/backend/client_portal.py` | SQL fix — use sites.client_org_id instead of nonexistent client_org_sites table |
+
+[truncated...]
+
+---
+
+## 2026-02-19-WS01-MANUAL-FIX.md
+
+# WS01 Manual Fix — 2 Minutes
+
+WS01 is at the Windows lock screen. WinRM is running but only accepts Kerberos (not NTLM). We need to type 3 commands at the console.
+
+## Steps
+
+### 1. Wake the screen
+- Open the VirtualBox window for **northvalley-ws01** on the iMac
+- Click inside the VM window, press any key or move mouse to wake from lock screen
+- It should auto-logon to the desktop (GPO auto-logon is set). If it asks for a password: `NorthValley2024!`
+
+### 2. Open PowerShell as Admin
+- Right-click the Start button (bottom-left) → **Windows PowerShell (Admin)**
+- Or press `Win+X` then `A`
+
+### 3. Paste these 4 commands (one at a time)
+
+```
+winrm set winrm/config/service @{AllowUnencrypted="true"}
+```
+
+```
+winrm set winrm/config/service/auth @{Basic="true"}
+```
+
+```
+Set-Item WSMan:\localhost\Client\TrustedHosts '*' -Force
+```
+
+```
+Restart-Service WinRM
+```
+
+### 4. Install Guest Additions
+- In VirtualBox menu bar: **Devices → Insert Guest Additions CD image**
+  (it may already be mounted — if so skip this)
+- In the PowerShell window, paste:
+
+```
+D:\VBoxWindowsAdditions.exe /S
+```
+
+- Wait ~60 seconds for it to finish. If it says reboot needed, type:
+
+```
+Restart-Computer -Force
+```
+
+### 5. Done
+
+
+[truncated...]
+
+---
+
+## 2026-02-19-session119-autodeploy-dc-proxy.md
+
+# Session 119: Autodeploy Hardening + WS01 WinRM Auth Battle
+
+**Date:** 2026-02-19
+**Duration:** ~3 hours
+**Branch:** main
+
+## Summary
+
+Continued from session 118. Hardened the Go daemon's autodeploy pipeline with failure tracking, WMI fallback, and GPO startup script creation. Battled WS01 WinRM authentication — got port 5985 open but NTLM auth from non-domain machines rejected. DC→WS01 Kerberos also broken (stale machine trust, last logon Jan 11).
+
+## Completed
+
+1. **False-positive deploy fix** (commit 364866f)
+   - Empty WinRM stdout was treated as success → now checks for expected output
+
+2. **Drift scanner** (commit 364866f)
+   - `driftscan.go`: periodic Windows drift scanning (firewall, Defender, rogue tasks)
+   - Runs on configurable interval alongside deploy cycle
+
+3. **Autodeploy error handling** (commit 38176c2)
+   - Failure tracking: `map[string]int` tracks consecutive failures per host
+   - Escalation: after 3 failures, creates `WIN-DEPLOY-UNREACHABLE` incident via `healIncident()`
+   - 4-hour backoff: skips hosts escalated recently
+   - WMI fallback (Attempt 5): `Invoke-WmiMethod -Class Win32_Process -Name Create` from DC
+   - GPO startup script: auto-creates `Setup-WinRM.ps1` in SYSVOL with `Enable-PSRemoting -Force`
+   - Bumps GPO version (AD + GPT.INI) to force client re-download
+
+4. **GPO auto-logon for lab WS01**
+   - Set `DisableCAD=1`, `AutoAdminLogon=1`, default credentials via GPO registry
+   - WS01 now boots to desktop without Ctrl+Alt+Del
+
+5. **nixos-rebuild on physical appliance**
+   - Deployed 38176c2 to physical appliance
+   - New daemon running with drift scanner + autodeploy hardening
+
+## WS01 WinRM Status (UNRESOLVED)
+
+**Port 5985:** OPEN (confirmed via nc from Mac and appliance)
+**WinRM service:** Responding (HTTP 405 on GET, HTTP 401 on POST = correct)
+**Auth advertised:** `Negotiate`, `Kerberos` only — NO `Basic`
+
+### Why it's stuck:
+- `Enable-PSRemoting -Force` (from GPO startup script) enables Negotiate+Kerberos only
+- Non-domain machines (appliance, Mac) can't do Kerberos → NTLM fallback needed
+- WS01 doesn't advertise Basic or accept NTLM from untrusted sources
+- DC→WS01 PSSession fails with 0x80090322 (Kerberos SPN/trust error, machine last logon Jan 11)
+- DC→WS01 WMI fails with 0x800706BA (RPC server unavailable, port 135 closed)
+- Scheduled tasks via `schtasks /S NVWS01` — untested (DC scripts too large, hit HTTP 400)
+
+### What would fix it:
+
+[truncated...]
+
+---
+
+## 2026-02-20-session120-winrm-recovery-chaos-safety.md
+
+# Session 120: WinRM Recovery + Chaos Lab Safety + VM Rebalance
+
+**Date:** 2026-02-20
+**Duration:** ~1 hour
+**Focus:** Infrastructure recovery, chaos lab hardening, VM resource management
+
+## Problem
+
+All Windows VMs (DC + WS01) had WinRM auth broken. Port 5985 was open but all authentication was rejected. Root cause traced to chaos lab LLM-generated campaign from Feb 17 (`scn_services_stop_winrm` in `campaigns/2026-02-17.json`) which ran:
+
+```powershell
+Stop-Service -Name WinRM -Force; Set-Service -Name WinRM -StartupType Disabled
+```
+
+The v2 execution plan only restores snapshots at campaign START, not end. So the DC was left with WinRM dead after that campaign. Everything cascaded from there.
+
+## What Was Done
+
+### 1. WinRM Recovery (DC + WS01)
+- User ran `Enable-PSRemoting -Force` on both VMs
+- User ran `Set-Item WSMan:\localhost\Service\AllowUnencrypted`, `Auth\Basic`, `Client\TrustedHosts` on both
+- Verified: DC works with `.\Administrator` (NTLM + Basic), WS01 works with `localadmin`
+- Domain accounts on WS01 still fail (stale machine trust from Jan 11)
+
+### 2. Chaos Lab Safety Patches (on iMac 192.168.88.50)
+**`scripts/winrm_attack.py` + `winrm_attack.py`:**
+- Added `is_blocked_command()` safety filter with 6 regex patterns
+- Blocks: Stop-Service WinRM, Set-Service WinRM Disabled, Disable-PSRemoting, Disable-WSMan, Remove-Item WSMan
+- Returns structured error JSON instead of executing
+
+**`scripts/generate_and_plan.py`:**
+- Added to LLM prompt: "NEVER target WinRM, PSRemoting, or WSMan services/config"
+
+**`scripts/generate_and_plan_v2.py`:**
+- Added `CRITICAL EXCLUSION` block before L2-trigger instruction
+
+### 3. VM Management
+- Started `northvalley-linux` and `northvalley-srv01` (were down)
+- Rebalanced RAM: DC 10->6GB, SRV01 6->4GB, Appliance 2->6GB (total 24->22GB)
+- All 5 VMs running
+- User installed VirtualBox Guest Additions on DC + WS01
+
+### 4. VM Appliance Rebuild
+- Appliance was down, started it
+- Inserted nixos_rebuild admin order (12hr window) for static IP config
+- First order failed (appliance was down), inserted fresh one
+
+## Files Changed (on iMac, not in git)
+- `/Users/jrelly/chaos-lab/scripts/winrm_attack.py` — safety filter
+- `/Users/jrelly/chaos-lab/winrm_attack.py` — safety filter (copy)
+
+[truncated...]
+
+---

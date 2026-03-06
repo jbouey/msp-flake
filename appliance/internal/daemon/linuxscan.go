@@ -10,6 +10,7 @@ import (
 
 	"github.com/osiriscare/appliance/internal/evidence"
 	"github.com/osiriscare/appliance/internal/grpcserver"
+	"github.com/osiriscare/appliance/internal/maputil"
 	"github.com/osiriscare/appliance/internal/sshexec"
 )
 
@@ -310,8 +311,8 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 	}
 
 	// Report drifts through healing pipeline
-	for _, f := range allFindings {
-		ds.reportLinuxDrift(f)
+	for i := range allFindings {
+		ds.reportLinuxDrift(&allFindings[i])
 	}
 
 	log.Printf("[linuxscan] Scan complete: targets=%d, drifts_found=%d",
@@ -345,13 +346,13 @@ func (ds *driftScanner) scanLinuxRemote(ctx context.Context, target *sshexec.Tar
 	)
 
 	if !result.Success {
-		stderr, _ := result.Output["stderr"].(string)
+		stderr := maputil.String(result.Output, "stderr")
 		log.Printf("[linuxscan] Remote scan failed for %s (%s): error=%q exit=%d stderr=%q",
 			target.Hostname, label, result.Error, result.ExitCode, stderr)
 		return nil
 	}
 
-	stdout, _ := result.Output["stdout"].(string)
+	stdout := maputil.String(result.Output, "stdout")
 	if stdout == "" {
 		return nil
 	}
@@ -597,7 +598,7 @@ func (ds *driftScanner) parseLinuxFindings(output, hostname string) []driftFindi
 }
 
 // reportLinuxDrift sends a Linux drift finding through the L1→L2→L3 healing pipeline.
-func (ds *driftScanner) reportLinuxDrift(f driftFinding) {
+func (ds *driftScanner) reportLinuxDrift(f *driftFinding) {
 	metadata := map[string]string{
 		"platform": "linux",
 		"source":   "linuxscan",
@@ -619,7 +620,7 @@ func (ds *driftScanner) reportLinuxDrift(f driftFinding) {
 	log.Printf("[linuxscan] DRIFT: %s/%s expected=%s actual=%s hipaa=%s",
 		f.Hostname, f.CheckType, f.Expected, f.Actual, f.HIPAAControl)
 
-	ds.daemon.healIncident(context.Background(), req)
+	ds.daemon.healIncident(context.Background(), &req)
 }
 
 // linuxTarget represents a remote Linux machine to scan.
@@ -637,7 +638,7 @@ type linuxTarget struct {
 func parseLinuxTargets(raw []map[string]interface{}) []linuxTarget {
 	var targets []linuxTarget
 	for _, m := range raw {
-		hostname, _ := m["hostname"].(string)
+		hostname := maputil.String(m, "hostname")
 		if hostname == "" {
 			continue
 		}
@@ -645,17 +646,14 @@ func parseLinuxTargets(raw []map[string]interface{}) []linuxTarget {
 		if p, ok := m["port"].(float64); ok {
 			port = int(p)
 		}
-		username, _ := m["username"].(string)
-		if username == "" {
-			username = "root"
-		}
-		password, _ := m["password"].(string)
-		sudoPassword, _ := m["sudo_password"].(string)
+		username := maputil.StringDefault(m, "username", "root")
+		password := maputil.String(m, "password")
+		sudoPassword := maputil.String(m, "sudo_password")
 		if sudoPassword == "" && password != "" {
 			sudoPassword = password // fallback: use password as sudo password
 		}
-		key, _ := m["private_key"].(string)
-		label, _ := m["label"].(string)
+		key := maputil.String(m, "private_key")
+		label := maputil.String(m, "label")
 		if label == "" {
 			label = "linux"
 		}

@@ -42,7 +42,6 @@ func main() {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	authToken := *flagAuthToken
 	if authToken == "" {
@@ -51,8 +50,10 @@ func main() {
 
 	db, err := checkin.NewDB(ctx, connStr)
 	if err != nil {
+		cancel()
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
+	defer cancel()
 	defer db.Close()
 	log.Println("Connected to PostgreSQL")
 
@@ -92,7 +93,8 @@ func main() {
 
 	log.Printf("Checkin receiver listening on :%d", *flagPort)
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		log.Fatalf("Server failed: %v", err)
+		log.Printf("Server failed: %v", err)
+		os.Exit(1)
 	}
 	log.Println("Server stopped")
 }

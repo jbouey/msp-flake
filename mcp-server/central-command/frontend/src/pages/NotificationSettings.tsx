@@ -6,7 +6,7 @@ import { GlassCard, Spinner, Badge } from '../components/shared';
  * Allows configuring Slack, PagerDuty, Email, Teams, and Webhook settings.
  */
 
-interface NotificationSettings {
+interface NotificationSettingsConfig {
   // Email
   email_enabled: boolean;
   email_recipients: string[];
@@ -46,7 +46,7 @@ interface TestResult {
   message?: string;
 }
 
-const defaultSettings: NotificationSettings = {
+const defaultSettings: NotificationSettingsConfig = {
   email_enabled: true,
   email_recipients: [],
   email_from_name: null,
@@ -225,7 +225,7 @@ const MultiValueInput: React.FC<{
  * Main NotificationSettings page component
  */
 export const NotificationSettings: React.FC = () => {
-  const [settings, setSettings] = useState<NotificationSettings>(defaultSettings);
+  const [settings, setSettings] = useState<NotificationSettingsConfig>(defaultSettings);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -305,7 +305,7 @@ export const NotificationSettings: React.FC = () => {
     }
   };
 
-  const updateSettings = (partial: Partial<NotificationSettings>) => {
+  const updateSettings = (partial: Partial<NotificationSettingsConfig>) => {
     setSettings((prev) => ({ ...prev, ...partial }));
   };
 

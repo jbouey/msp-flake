@@ -6,7 +6,44 @@ import { companionColors, MODULE_DEFS } from './companion-tokens';
 import { Spinner } from '../components/shared';
 import { protectionProfilesApi } from '../utils/api';
 
-function getModuleStatusFromOverview(overview: any): Record<string, { status: string; detail: string }> {
+interface CompanionAlert {
+  id: string;
+  module_key: string;
+  status: string;
+  expected_status: string;
+  target_date: string;
+  description?: string;
+}
+
+interface CompanionNote {
+  id: string;
+  module_key: string;
+  note: string;
+  created_at: string;
+}
+
+interface CompanionActivity {
+  id: string;
+  action: string;
+  module_key?: string;
+  companion_name: string;
+  created_at: string;
+}
+
+interface ClientOverview {
+  sra?: { status: string; risk_score?: number };
+  policies?: { active: number; total: number; review_due: number };
+  training?: { overdue: number; compliant: number; total_employees: number };
+  baas?: { expiring_soon: number; active: number; total: number };
+  ir_plan?: { status: string; breaches?: number };
+  contingency?: { plans: number; all_tested?: boolean };
+  workforce?: { pending_termination: number; active: number };
+  physical?: { gaps: number; assessed: number };
+  officers?: { privacy_officer?: string; security_officer?: string };
+  gap_analysis?: { completion: number; maturity_avg?: number };
+}
+
+function getModuleStatusFromOverview(overview: ClientOverview): Record<string, { status: string; detail: string }> {
   if (!overview) return {};
   const m: Record<string, { status: string; detail: string }> = {};
 
@@ -78,7 +115,7 @@ function getModuleStatusFromOverview(overview: any): Record<string, { status: st
   const hasPrivacy = !!overview.officers?.privacy_officer;
   const hasSecurity = !!overview.officers?.security_officer;
   m.officers = hasPrivacy && hasSecurity
-    ? { status: 'complete', detail: `${overview.officers.privacy_officer} / ${overview.officers.security_officer}` }
+    ? { status: 'complete', detail: `${overview.officers?.privacy_officer} / ${overview.officers?.security_officer}` }
     : hasPrivacy || hasSecurity
     ? { status: 'in_progress', detail: 'One officer designated' }
     : { status: 'not_started', detail: 'No officers designated' };
@@ -120,12 +157,12 @@ export const CompanionClientDetail: React.FC = () => {
   const alerts = alertsData?.alerts || [];
 
   // Map alerts by module_key for the module grid indicators
-  const alertsByModule: Record<string, any[]> = {};
+  const alertsByModule: Record<string, CompanionAlert[]> = {};
   for (const a of alerts) {
     alertsByModule[a.module_key] = alertsByModule[a.module_key] || [];
     alertsByModule[a.module_key].push(a);
   }
-  const activeAlerts = alerts.filter((a: any) => a.status === 'active' || a.status === 'triggered');
+  const activeAlerts = alerts.filter((a: CompanionAlert) => a.status === 'active' || a.status === 'triggered');
 
   return (
     <div className="flex gap-6">
@@ -229,13 +266,13 @@ export const CompanionClientDetail: React.FC = () => {
                 style={{ background: companionColors.cardBg, border: `1px solid ${companionColors.cardBorder}` }}
               >
                 {/* Alert indicator dot */}
-                {alertsByModule[mod.key]?.some((a: any) => a.status === 'triggered') && (
+                {alertsByModule[mod.key]?.some((a: CompanionAlert) => a.status === 'triggered') && (
                   <div className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full" style={{ background: companionColors.actionNeeded }} title="Alert triggered" />
                 )}
-                {alertsByModule[mod.key]?.some((a: any) => a.status === 'active') && !alertsByModule[mod.key]?.some((a: any) => a.status === 'triggered') && (
+                {alertsByModule[mod.key]?.some((a: CompanionAlert) => a.status === 'active') && !alertsByModule[mod.key]?.some((a: CompanionAlert) => a.status === 'triggered') && (
                   <div className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full" style={{ background: companionColors.amber }} title="Alert set" />
                 )}
-                {alertsByModule[mod.key]?.some((a: any) => a.status === 'resolved') && !alertsByModule[mod.key]?.some((a: any) => a.status === 'active' || a.status === 'triggered') && (
+                {alertsByModule[mod.key]?.some((a: CompanionAlert) => a.status === 'resolved') && !alertsByModule[mod.key]?.some((a: CompanionAlert) => a.status === 'active' || a.status === 'triggered') && (
                   <div className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full" style={{ background: companionColors.complete }} title="Alert resolved" />
                 )}
                 <div className="flex items-center justify-between mb-1.5">
@@ -252,7 +289,7 @@ export const CompanionClientDetail: React.FC = () => {
                 <p className="text-xs" style={{ color: companionColors.textSecondary }}>
                   {ms.detail}
                 </p>
-                {alertsByModule[mod.key]?.filter((a: any) => a.status === 'active' || a.status === 'triggered').map((a: any) => (
+                {alertsByModule[mod.key]?.filter((a: CompanionAlert) => a.status === 'active' || a.status === 'triggered').map((a: CompanionAlert) => (
                   <p key={a.id} className="text-xs mt-1" style={{ color: a.status === 'triggered' ? companionColors.actionNeeded : companionColors.amber }}>
                     Due {new Date(a.target_date).toLocaleDateString()} — {a.expected_status.replace('_', ' ')}
                   </p>
@@ -275,7 +312,7 @@ export const CompanionClientDetail: React.FC = () => {
               <p className="text-xs" style={{ color: companionColors.textTertiary }}>No notes yet.</p>
             ) : (
               <div className="space-y-2">
-                {notes.slice(0, 5).map((n: any) => (
+                {notes.slice(0, 5).map((n: CompanionNote) => (
                   <div key={n.id} className="text-xs" style={{ color: companionColors.textSecondary }}>
                     <span className="font-medium capitalize">{n.module_key}</span>: {n.note.slice(0, 80)}{n.note.length > 80 ? '...' : ''}
                     <br />
@@ -299,7 +336,7 @@ export const CompanionClientDetail: React.FC = () => {
               <p className="text-xs" style={{ color: companionColors.textTertiary }}>No activity yet.</p>
             ) : (
               <div className="space-y-2">
-                {activity.slice(0, 5).map((a: any) => (
+                {activity.slice(0, 5).map((a: CompanionActivity) => (
                   <div key={a.id} className="text-xs" style={{ color: companionColors.textSecondary }}>
                     <span className="font-medium">{a.action.replace(/_/g, ' ')}</span>
                     {a.module_key && <span className="capitalize"> ({a.module_key})</span>}
@@ -327,7 +364,7 @@ export const CompanionClientDetail: React.FC = () => {
               Compliance Alerts ({activeAlerts.length})
             </h4>
             <div className="space-y-2">
-              {activeAlerts.map((a: any) => {
+              {activeAlerts.map((a: CompanionAlert) => {
                 const modLabel = MODULE_DEFS.find(m => m.key === a.module_key)?.label || a.module_key;
                 const isTriggered = a.status === 'triggered';
                 return (

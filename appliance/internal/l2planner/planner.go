@@ -2,6 +2,7 @@ package l2planner
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/osiriscare/appliance/internal/l2bridge"
+	"github.com/osiriscare/appliance/internal/maputil"
 )
 
 // PlannerConfig holds configuration for the L2 planner.
@@ -52,7 +54,7 @@ type Planner struct {
 }
 
 // NewPlanner creates a new L2 planner.
-func NewPlanner(cfg PlannerConfig) *Planner {
+func NewPlanner(cfg *PlannerConfig) *Planner {
 	if cfg.APIEndpoint == "" {
 		cfg.APIEndpoint = "https://api.osiriscare.net"
 	}
@@ -61,7 +63,7 @@ func NewPlanner(cfg PlannerConfig) *Planner {
 	}
 
 	p := &Planner{
-		config: cfg,
+		config: *cfg,
 		client: &http.Client{
 			Timeout: cfg.APITimeout,
 		},
@@ -152,7 +154,7 @@ func (p *Planner) Plan(incident *l2bridge.Incident) (*l2bridge.LLMDecision, erro
 
 	// 5. Call Central Command /api/agent/l2/plan
 	start := time.Now()
-	planResp, err := p.callCentralCommand(planReq)
+	planResp, err := p.callCentralCommand(&planReq)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -189,7 +191,7 @@ func (p *Planner) Plan(incident *l2bridge.Incident) (*l2bridge.LLMDecision, erro
 	}
 
 	// 8. Apply local guardrails (defense in depth)
-	script, _ := decision.ActionParams["script"].(string)
+	script := maputil.String(decision.ActionParams, "script")
 	check := p.guardrail.Check(decision.RecommendedAction, script, decision.Confidence)
 	if !check.Allowed {
 		log.Printf("[l2planner] Guardrails blocked: %s (category=%s)", check.Reason, check.Category)
@@ -241,8 +243,14 @@ func (p *Planner) ReportExecution(
 		return
 	}
 
-	inputTokens, _ := decision.ContextUsed["input_tokens"].(int)
-	outputTokens, _ := decision.ContextUsed["output_tokens"].(int)
+	// JSON numbers decode as float64, not int
+	var inputTokens, outputTokens int
+	if v, ok := decision.ContextUsed["input_tokens"].(float64); ok {
+		inputTokens = int(v)
+	}
+	if v, ok := decision.ContextUsed["output_tokens"].(float64); ok {
+		outputTokens = int(v)
+	}
 
 	p.telemetry.ReportExecution(incident, decision, success, execErr, durationMs, inputTokens, outputTokens)
 }
@@ -258,7 +266,7 @@ func (p *Planner) Close() {
 }
 
 // callCentralCommand sends a plan request to Central Command's L2 endpoint.
-func (p *Planner) callCentralCommand(req l2PlanRequest) (*l2PlanResponse, error) {
+func (p *Planner) callCentralCommand(req *l2PlanRequest) (*l2PlanResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -266,7 +274,7 @@ func (p *Planner) callCentralCommand(req l2PlanRequest) (*l2PlanResponse, error)
 
 	url := p.config.APIEndpoint + "/api/agent/l2/plan"
 
-	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -276,7 +284,7 @@ func (p *Planner) callCentralCommand(req l2PlanRequest) (*l2PlanResponse, error)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("Central Command request: %w", err)
+		return nil, fmt.Errorf("central command request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -286,7 +294,7 @@ func (p *Planner) callCentralCommand(req l2PlanRequest) (*l2PlanResponse, error)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Central Command returned %d: %s", resp.StatusCode, truncate(string(respBody), 300))
+		return nil, fmt.Errorf("central command returned %d: %s", resp.StatusCode, truncate(string(respBody), 300))
 	}
 
 	var planResp l2PlanResponse

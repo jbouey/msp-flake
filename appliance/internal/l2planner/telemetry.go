@@ -2,6 +2,7 @@ package l2planner
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -125,7 +126,7 @@ func (r *TelemetryReporter) ReportExecution(
 	}
 
 	url := fmt.Sprintf("%s/api/agent/executions", r.endpoint)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		log.Printf("[l2planner] Telemetry request error: %v", err)
 		return
@@ -196,7 +197,7 @@ func (r *TelemetryReporter) ReportL1Execution(
 	}
 
 	url := fmt.Sprintf("%s/api/agent/executions", r.endpoint)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		log.Printf("[telemetry] L1 request error: %v", err)
 		return

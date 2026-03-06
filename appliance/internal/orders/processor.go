@@ -466,7 +466,7 @@ func (p *Processor) handleRestartAgent(_ context.Context, _ map[string]interface
 	// Use systemd-run to escape ProtectSystem=strict sandbox (NixOS PATH issue).
 	go func() {
 		time.Sleep(5 * time.Second)
-		cmd := exec.Command("systemd-run",
+		cmd := exec.CommandContext(context.Background(), "systemd-run",
 			"--unit=msp-daemon-restart", "--collect",
 			"--property=TimeoutStartSec=30",
 			"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",
@@ -543,7 +543,7 @@ func (p *Processor) handleNixOSRebuild(ctx context.Context, params map[string]in
 	// Use systemd-run to escape ProtectSystem=strict sandbox (NixOS PATH issue).
 	go func() {
 		time.Sleep(10 * time.Second)
-		cmd := exec.Command("systemd-run",
+		cmd := exec.CommandContext(context.Background(), "systemd-run",
 			"--unit=msp-daemon-restart", "--collect",
 			"--property=TimeoutStartSec=30",
 			"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",
@@ -608,7 +608,7 @@ func (p *Processor) handleViewLogs(_ context.Context, params map[string]interfac
 		}
 	}
 
-	cmd := exec.Command("journalctl", "-u", "appliance-daemon", "--no-pager", "-n", fmt.Sprintf("%d", lines))
+	cmd := exec.CommandContext(context.Background(), "journalctl", "-u", "appliance-daemon", "--no-pager", "-n", fmt.Sprintf("%d", lines))
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("journalctl: %w", err)
@@ -650,7 +650,7 @@ func (p *Processor) handleDiagnostic(_ context.Context, params map[string]interf
 		return nil, fmt.Errorf("command %q not in whitelist", command)
 	}
 
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd := exec.CommandContext(context.Background(), args[0], args[1:]...)
 	output, err := cmd.CombinedOutput()
 
 	exitCode := 0
@@ -888,7 +888,7 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 		// Use systemd-run to escape the ProtectSystem=strict sandbox.
 		// NixOS: systemctl may not be in the daemon's PATH; systemd-run
 		// sets an explicit PATH so the restart command can find it.
-		cmd := exec.Command("systemd-run",
+		cmd := exec.CommandContext(context.Background(), "systemd-run",
 			"--unit=msp-daemon-restart-"+unitSuffix, "--collect",
 			"--property=TimeoutStartSec=30",
 			"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",

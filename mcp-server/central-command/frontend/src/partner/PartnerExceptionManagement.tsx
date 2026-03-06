@@ -179,7 +179,7 @@ export function PartnerExceptionManagement({ sites }: { sites: Site[] }) {
   });
 
   const renewMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => api.renewException(id, data),
+    mutationFn: ({ id, data }: { id: string; data: ExceptionRenewRequest }) => api.renewException(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['exceptions'] });
       queryClient.invalidateQueries({ queryKey: ['exception-summary'] });
@@ -308,7 +308,7 @@ export function PartnerExceptionManagement({ sites }: { sites: Site[] }) {
                         <button
                           onClick={() => {
                             const reason = prompt('Renewal reason:');
-                            if (reason) renewMutation.mutate({ id: exc.id, data: { reason } });
+                            if (reason) renewMutation.mutate({ id: exc.id, data: { reason, duration_days: 30 } });
                           }}
                           className="text-blue-600 hover:text-blue-800"
                         >

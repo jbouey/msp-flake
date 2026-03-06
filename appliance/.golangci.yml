@@ -1,0 +1,77 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: vendor
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gocritic
+    - gosec
+    - bodyclose
+    - noctx
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+      exclude-functions:
+        - (io.Closer).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*os.File).Close
+        - (io.ReadCloser).Close
+        - (*net/http.Server).Close
+        - (*database/sql.Tx).Rollback
+        - (*database/sql.Tx).Exec
+        - (*golang.org/x/crypto/ssh.Session).Close
+        - (*golang.org/x/crypto/ssh.Client).Close
+        - (*github.com/masterzen/winrm.Shell).Close
+        - (*github.com/masterzen/winrm.Command).Close
+        - (net.Conn).SetDeadline
+        - (*net/http.Server).Shutdown
+        - (*encoding/json.Encoder).Encode
+        - (net/http.ResponseWriter).Write
+        - os.Remove
+        - os.WriteFile
+        - fmt.Sscanf
+        - io.Copy
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        - sprintfQuotedString  # PowerShell templates need literal quotes, %q breaks them
+        - exitAfterDefer       # main() exit patterns are intentional
+    gosec:
+      excludes:
+        - G104  # unhandled errors (covered by errcheck)
+        - G107  # HTTP URL from variable (fleet connects to known endpoints)
+        - G112  # potential slowloris (internal listener, not public)
+        - G114  # insecure TLS skip verify (self-signed certs in fleet)
+        - G115  # int overflow (safe conversions in our domain)
+        - G117  # field matches secret pattern (struct fields hold credentials by design)
+        - G204  # subprocess with variable (scripted WinRM/SSH commands)
+        - G301  # dir perms >0750 (cert dirs need 0755 for service access)
+        - G304  # file path from variable (config-driven paths)
+        - G306  # file perms >0600 (cert PEM files need 0644)
+        - G704  # assertion without ok check (covered by maputil migration)
+        - G706  # log injection (logging operational data is expected)
+        - G101  # hardcoded credentials (test API keys are not real)
+
+  exclusions:
+    rules:
+      - path: _test\.go$
+        linters: [errcheck, noctx]
+    paths:
+      - vendor
+      - proto
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 10

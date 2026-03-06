@@ -5,6 +5,7 @@ package sshexec
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -244,7 +245,11 @@ func (e *Executor) DetectDistro(ctx context.Context, target *Target) (string, er
 		return "unknown", err
 	}
 
-	distro := strings.TrimSpace(output["stdout"].(string))
+	stdoutVal, ok := output["stdout"].(string)
+	if !ok {
+		return "unknown", nil
+	}
+	distro := strings.TrimSpace(stdoutVal)
 	if distro == "" {
 		distro = "unknown"
 	}
@@ -271,7 +276,7 @@ func (e *Executor) getConnection(target *Target) (*ssh.Client, error) {
 			}
 			log.Printf("[ssh] Stale connection to %s, reconnecting", target.Hostname)
 		}
-		cached.client.Close()
+		_ = cached.client.Close()
 		delete(e.conns, target.Hostname)
 		e.lruRemove(target.Hostname)
 	}
@@ -292,7 +297,8 @@ func (e *Executor) getConnection(target *Target) (*ssh.Client, error) {
 	}
 
 	addr := net.JoinHostPort(target.Hostname, fmt.Sprintf("%d", port))
-	conn, err := net.DialTimeout("tcp", addr, connectTimeout)
+	dialer := net.Dialer{Timeout: connectTimeout}
+	conn, err := dialer.DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
@@ -310,7 +316,7 @@ func (e *Executor) getConnection(target *Target) (*ssh.Client, error) {
 		evictHost := e.connOrder[0]
 		e.connOrder = e.connOrder[1:]
 		if old, ok := e.conns[evictHost]; ok {
-			old.client.Close()
+			_ = old.client.Close()
 			delete(e.conns, evictHost)
 			log.Printf("[ssh] LRU evicted connection for %s (cache full at %d)", evictHost, maxCachedConns)
 		}
@@ -351,7 +357,7 @@ func (e *Executor) InvalidateConnection(hostname string) {
 	defer e.mu.Unlock()
 
 	if cached, ok := e.conns[hostname]; ok {
-		cached.client.Close()
+		_ = cached.client.Close()
 		delete(e.conns, hostname)
 		e.lruRemove(hostname)
 	}
@@ -371,7 +377,7 @@ func (e *Executor) CloseAll() {
 	defer e.mu.Unlock()
 
 	for host, cached := range e.conns {
-		cached.client.Close()
+		_ = cached.client.Close()
 		delete(e.conns, host)
 	}
 	e.connOrder = nil
@@ -392,15 +398,16 @@ func (e *Executor) buildSSHConfig(target *Target) (*ssh.ClientConfig, error) {
 	}
 
 	// Try key auth first, then password
-	if target.PrivateKey != nil && *target.PrivateKey != "" {
+	switch {
+	case target.PrivateKey != nil && *target.PrivateKey != "":
 		signer, err := ssh.ParsePrivateKey([]byte(*target.PrivateKey))
 		if err != nil {
 			return nil, fmt.Errorf("parse private key: %w", err)
 		}
 		config.Auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
-	} else if target.Password != nil && *target.Password != "" {
+	case target.Password != nil && *target.Password != "":
 		config.Auth = []ssh.AuthMethod{ssh.Password(*target.Password)}
-	} else {
+	default:
 		return nil, fmt.Errorf("no auth method for %s (need key or password)", target.Hostname)
 	}
 
@@ -429,7 +436,7 @@ func (e *Executor) tofuHostKeyCallback(hostname string, remote net.Addr, key ssh
 	}
 
 	// Key is known — verify it matches
-	if string(existing.Marshal()) == string(key.Marshal()) {
+	if bytes.Equal(existing.Marshal(), key.Marshal()) {
 		return nil
 	}
 
@@ -490,7 +497,7 @@ func (e *Executor) saveKnownHosts() {
 	buf.WriteString("# SSH known hosts (TOFU — managed by appliance daemon)\n")
 	for host, key := range e.hostKeys {
 		keyBytes := key.Marshal()
-		buf.WriteString(fmt.Sprintf("%s %s %s\n", host, key.Type(), base64.StdEncoding.EncodeToString(keyBytes)))
+		fmt.Fprintf(&buf, "%s %s %s\n", host, key.Type(), base64.StdEncoding.EncodeToString(keyBytes))
 	}
 
 	if err := os.WriteFile(knownHostsPath, []byte(buf.String()), 0o600); err != nil {

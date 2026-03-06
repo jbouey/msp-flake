@@ -10,6 +10,7 @@ package l2planner
 // Files older than 24h are discarded (stale telemetry isn't worth retrying).
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -115,7 +116,7 @@ func (r *TelemetryReporter) DrainQueue() {
 // postTelemetry sends a raw JSON body to the executions endpoint. Returns true on success.
 func (r *TelemetryReporter) postTelemetry(body []byte) bool {
 	url := fmt.Sprintf("%s/api/agent/executions", r.endpoint)
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, strings.NewReader(string(body)))
 	if err != nil {
 		return false
 	}
