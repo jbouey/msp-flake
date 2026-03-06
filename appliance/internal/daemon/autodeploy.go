@@ -464,30 +464,13 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 			}
 			failed++
 		} else {
-			// Post-deploy verification: confirm agent is actually running.
-			// Wait briefly for service to start, then check status.
-			time.Sleep(5 * time.Second)
-			installed, running := ad.verifyAgentPostDeploy(ctx, ws)
-			if running {
-				log.Printf("[autodeploy] Successfully deployed agent to %s (verified running)", hostname)
-				ad.mu.Lock()
-				ad.deployed[hostname] = time.Now()
-				ad.failures[hostname] = 0 // Reset failure counter on success
-				ad.mu.Unlock()
-				deployed++
-			} else if installed {
-				log.Printf("[autodeploy] Agent installed on %s but NOT running — marking as failed", hostname)
-				ad.mu.Lock()
-				ad.failures[hostname]++
-				ad.mu.Unlock()
-				failed++
-			} else {
-				log.Printf("[autodeploy] Post-deploy verification failed for %s — agent not found", hostname)
-				ad.mu.Lock()
-				ad.failures[hostname]++
-				ad.mu.Unlock()
-				failed++
-			}
+			// Deploy succeeded — internal verification already passed in deployAgentDirect/deployAgentViaDC.
+			log.Printf("[autodeploy] Successfully deployed agent to %s", hostname)
+			ad.mu.Lock()
+			ad.deployed[hostname] = time.Now()
+			ad.failures[hostname] = 0
+			ad.mu.Unlock()
+			deployed++
 		}
 	}
 
@@ -595,9 +578,6 @@ func (ad *autoDeployer) dcTarget() *winrm.Target {
 // Probes 5986 (HTTPS) first, then falls back to 5985 (HTTP).
 func (ad *autoDeployer) buildTarget(ws discovery.ADComputer) *winrm.Target {
 	cfg := ad.daemon.config
-	if cfg.DCUsername == nil || cfg.DCPassword == nil {
-		return nil
-	}
 
 	hostname := ""
 	if ws.IPAddress != nil && *ws.IPAddress != "" {
@@ -606,6 +586,20 @@ func (ad *autoDeployer) buildTarget(ws discovery.ADComputer) *winrm.Target {
 		hostname = ws.FQDN
 	} else {
 		hostname = ws.Hostname
+	}
+
+	// Look up per-workstation credentials first (e.g. local_admin, winrm type)
+	username := ""
+	password := ""
+	if wt, ok := ad.daemon.LookupWinTarget(hostname); ok && wt.Role != "domain_admin" {
+		username = wt.Username
+		password = wt.Password
+		log.Printf("[autodeploy] [%s] Using workstation-specific credentials (role=%s, user=%s)", ws.Hostname, wt.Role, username)
+	} else if cfg.DCUsername != nil && cfg.DCPassword != nil {
+		username = *cfg.DCUsername
+		password = *cfg.DCPassword
+	} else {
+		return nil
 	}
 
 	// Probe workstation: prefer HTTPS, fall back to HTTP
@@ -626,8 +620,8 @@ func (ad *autoDeployer) buildTarget(ws discovery.ADComputer) *winrm.Target {
 	return &winrm.Target{
 		Hostname:  hostname,
 		Port:      port,
-		Username:  *cfg.DCUsername,
-		Password:  *cfg.DCPassword,
+		Username:  username,
+		Password:  password,
 		UseSSL:    useSSL,
 		VerifySSL: false,
 	}
@@ -846,18 +840,23 @@ func (ad *autoDeployer) loadAgentBinary() (string, error) {
 }
 
 // deployAgentDirect deploys the agent via direct WinRM to the workstation.
-// This is the fast path — works when the workstation accepts NTLM auth.
+// Uses HTTP download from appliance file server instead of chunked WinRM transfer.
 func (ad *autoDeployer) deployAgentDirect(ctx context.Context, target *winrm.Target, ws discovery.ADComputer) error {
-	agentB64, err := ad.loadAgentBinary()
-	if err != nil {
-		return err
-	}
-
 	grpcAddr := ad.daemon.config.GRPCListenAddr()
 	hostname := ws.Hostname
 
-	// Step 1: Create install directory (0 retries — probe already confirmed WinRM works)
-	log.Printf("[autodeploy] [%s] Direct: Step 1/5 Creating directory", hostname)
+	// Determine appliance IP for download URL (from gRPC listen address)
+	applianceIP := ad.daemon.config.GRPCListenAddr()
+	if idx := strings.LastIndex(applianceIP, ":"); idx >= 0 {
+		applianceIP = applianceIP[:idx]
+	}
+	if applianceIP == "" || applianceIP == "0.0.0.0" {
+		return fmt.Errorf("appliance IP not configured")
+	}
+	downloadURL := fmt.Sprintf("http://%s:8090/agent/%s", applianceIP, agentBinaryName)
+
+	// Step 1: Create install directory
+	log.Printf("[autodeploy] [%s] Direct: Step 1/4 Creating directory", hostname)
 	mkdirResult := ad.daemon.winrmExec.Execute(target,
 		fmt.Sprintf(`New-Item -ItemType Directory -Force -Path "%s" | Out-Null; "OK"`, agentInstallDir),
 		"AGENT-DEPLOY-MKDIR", "autodeploy", 30, 0, 10.0, nil)
@@ -865,26 +864,39 @@ func (ad *autoDeployer) deployAgentDirect(ctx context.Context, target *winrm.Tar
 		return fmt.Errorf("mkdir failed: %s", mkdirResult.Error)
 	}
 
-	// Step 2: Write agent binary (chunked base64)
-	log.Printf("[autodeploy] [%s] Direct: Step 2/5 Writing binary (%d bytes encoded)", hostname, len(agentB64))
-	if err := ad.writeB64ChunksToTarget(target, agentB64, hostname); err != nil {
-		return err
+	// Step 2: Download binary via HTTP from appliance file server
+	log.Printf("[autodeploy] [%s] Direct: Step 2/4 Downloading binary from %s", hostname, downloadURL)
+	dlScript := fmt.Sprintf(`
+$dest = "%s\%s"
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $wc = New-Object System.Net.WebClient
+    $wc.DownloadFile("%s", $dest)
+    $fi = Get-Item $dest
+    @{ Success = $true; Size = $fi.Length; Path = $dest } | ConvertTo-Json -Compress
+} catch {
+    @{ Success = $false; Error = $_.Exception.Message } | ConvertTo-Json -Compress
+}`, agentInstallDir, agentBinaryName, downloadURL)
+	dlResult := ad.daemon.winrmExec.Execute(target,
+		dlScript, "AGENT-DEPLOY-DL", "autodeploy", 120, 0, 10.0, nil)
+	if !dlResult.Success {
+		stderr, _ := dlResult.Output["std_err"].(string)
+		return fmt.Errorf("download failed: err=%s stderr=%s", dlResult.Error, stderr)
 	}
+	stdout, _ := dlResult.Output["std_out"].(string)
+	log.Printf("[autodeploy] [%s] Direct: Download result: %s", hostname, strings.TrimSpace(stdout))
 
-	// Step 3: Write config
-	log.Printf("[autodeploy] [%s] Direct: Step 3/5 Writing config", hostname)
+	// Step 3: Write config + install service
+	log.Printf("[autodeploy] [%s] Direct: Step 3/4 Writing config + installing service", hostname)
 	if err := ad.writeConfigToTarget(target, grpcAddr); err != nil {
 		return err
 	}
-
-	// Step 4: Install service
-	log.Printf("[autodeploy] [%s] Direct: Step 4/5 Installing service", hostname)
 	if err := ad.installServiceOnTarget(target); err != nil {
 		return err
 	}
 
-	// Step 5: Verify
-	log.Printf("[autodeploy] [%s] Direct: Step 5/5 Verifying", hostname)
+	// Step 4: Verify
+	log.Printf("[autodeploy] [%s] Direct: Step 4/4 Verifying", hostname)
 	installed, running := ad.checkAgentStatus(ctx, target)
 	if !installed || !running {
 		return fmt.Errorf("verification failed: installed=%v running=%v", installed, running)
@@ -1278,7 +1290,7 @@ func (ad *autoDeployer) writeB64ChunksToTarget(target *winrm.Target, b64Data str
 		fmt.Sprintf(`New-Item -ItemType Directory -Force -Path "%s" | Out-Null; Remove-Item -Path "%s" -Force -ErrorAction SilentlyContinue`, agentInstallDir, tempB64File),
 		"DEPLOY-PREP-"+label, "autodeploy", 10, 0, 5.0, nil)
 
-	chunkSize := 400000
+	chunkSize := 100000 // Must fit within WinRM max envelope (153600 bytes)
 	for i := 0; i < len(b64Data); i += chunkSize {
 		end := i + chunkSize
 		if end > len(b64Data) {
@@ -1290,7 +1302,8 @@ func (ad *autoDeployer) writeB64ChunksToTarget(target *winrm.Target, b64Data str
 		chunkResult := ad.daemon.winrmExec.Execute(target,
 			appendScript, "DEPLOY-CHUNK-"+label, "autodeploy", 60, 1, 30.0, nil)
 		if !chunkResult.Success {
-			return fmt.Errorf("write chunk %d failed: %s", i/chunkSize, chunkResult.Error)
+			stderr, _ := chunkResult.Output["std_err"].(string)
+			return fmt.Errorf("write chunk %d failed: err=%s stderr=%s", i/chunkSize, chunkResult.Error, stderr)
 		}
 	}
 

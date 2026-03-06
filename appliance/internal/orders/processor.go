@@ -868,8 +868,11 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 
 	// NixOS: /bin/bash doesn't exist, and systemd-run transient units have minimal PATH.
 	// Use /run/current-system/sw/bin/bash and set PATH to include coreutils + systemd.
+	// Use unique unit names (timestamp suffix) to avoid collisions with previous runs —
+	// systemd-run refuses to create a unit if a dead transient with the same name exists.
+	unitSuffix := fmt.Sprintf("%d", time.Now().UnixMilli())
 	installCmd := exec.CommandContext(ctx, "systemd-run",
-		"--unit=msp-daemon-update", "--wait", "--pipe", "--collect",
+		"--unit=msp-daemon-update-"+unitSuffix, "--wait", "--pipe", "--collect",
 		"--property=TimeoutStartSec=30",
 		"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",
 		"/run/current-system/sw/bin/bash", "-c", installScript)
@@ -886,7 +889,7 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 		// NixOS: systemctl may not be in the daemon's PATH; systemd-run
 		// sets an explicit PATH so the restart command can find it.
 		cmd := exec.Command("systemd-run",
-			"--unit=msp-daemon-restart", "--collect",
+			"--unit=msp-daemon-restart-"+unitSuffix, "--collect",
 			"--property=TimeoutStartSec=30",
 			"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",
 			"/run/current-system/sw/bin/bash", "-c",

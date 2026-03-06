@@ -4331,6 +4331,7 @@ async def appliances_checkin(req: ApplianceCheckinRequest, request: Request, db:
                             "username": full_username,
                             "password": password,
                             "use_ssl": use_ssl,
+                            "role": cred.credential_type,
                         })
                 except Exception as e:
                     logger.warning(f"Failed to parse credential: {e}")

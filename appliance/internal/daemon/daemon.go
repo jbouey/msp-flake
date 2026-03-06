@@ -27,13 +27,22 @@ import (
 )
 
 // Version is set at build time.
-var Version = "0.3.14"
+var Version = "0.3.18"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {
 	lastSeen    time.Time
 	count       int           // Number of times seen in the flap window
 	cooldownDur time.Duration // Current cooldown duration (escalates on flap)
+}
+
+// winTarget stores per-workstation Windows credentials from checkin.
+type winTarget struct {
+	Hostname string
+	Username string
+	Password string
+	UseSSL   bool
+	Role     string // "domain_admin", "winrm", "local_admin", etc.
 }
 
 // Daemon is the main appliance daemon that orchestrates all subsystems.
@@ -76,6 +85,10 @@ type Daemon struct {
 	// Linux targets from checkin response
 	linuxTargetsMu sync.RWMutex
 	linuxTargets   []linuxTarget
+
+	// All Windows targets by hostname (for per-workstation credential lookup)
+	winTargetsMu sync.RWMutex
+	winTargets   map[string]winTarget
 
 	// L2 mode: "auto" (execute immediately), "manual" (queue for approval), "disabled" (L1 only)
 	l2ModeMu sync.RWMutex
@@ -125,7 +138,8 @@ func New(cfg *Config) *Daemon {
 		config:    cfg,
 		phoneCli:  NewPhoneHomeClient(cfg),
 		registry:  grpcserver.NewAgentRegistry(),
-		cooldowns: make(map[string]*driftCooldown),
+		cooldowns:  make(map[string]*driftCooldown),
+		winTargets: make(map[string]winTarget),
 	}
 
 	// Initialize WinRM and SSH executors (must be before L1 engine)
@@ -522,8 +536,10 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 // loadWindowsTargets extracts DC/workstation credentials from the checkin response
 // and populates the daemon config so drift scanning and auto-deploy can use WinRM.
 // Prefers the domain_admin role target as DC; falls back to first valid target.
+// Also stores all targets for per-workstation credential lookup.
 func (d *Daemon) loadWindowsTargets(targets []map[string]interface{}) {
 	var dcHost, dcUser, dcPass string
+	allTargets := make(map[string]winTarget, len(targets))
 
 	// Two passes: first look for domain_admin, then fall back to first valid
 	for _, t := range targets {
@@ -531,19 +547,32 @@ func (d *Daemon) loadWindowsTargets(targets []map[string]interface{}) {
 		username, _ := t["username"].(string)
 		password, _ := t["password"].(string)
 		role, _ := t["role"].(string)
+		useSSL, _ := t["use_ssl"].(bool)
 		if hostname == "" || username == "" {
 			continue
 		}
 
+		allTargets[hostname] = winTarget{
+			Hostname: hostname,
+			Username: username,
+			Password: password,
+			UseSSL:   useSSL,
+			Role:     role,
+		}
+
 		if role == "domain_admin" {
 			dcHost, dcUser, dcPass = hostname, username, password
-			break
 		}
 		// Remember first valid as fallback
 		if dcHost == "" {
 			dcHost, dcUser, dcPass = hostname, username, password
 		}
 	}
+
+	// Store all targets for per-workstation lookup
+	d.winTargetsMu.Lock()
+	d.winTargets = allTargets
+	d.winTargetsMu.Unlock()
 
 	if dcHost == "" {
 		return
@@ -558,8 +587,16 @@ func (d *Daemon) loadWindowsTargets(targets []map[string]interface{}) {
 	d.config.DCPassword = &dcPass
 
 	if prev != dcHost {
-		log.Printf("[daemon] Windows credentials loaded: dc=%s user=%s", dcHost, dcUser)
+		log.Printf("[daemon] Windows credentials loaded: dc=%s user=%s targets=%d", dcHost, dcUser, len(allTargets))
 	}
+}
+
+// LookupWinTarget returns workstation-specific credentials if available.
+func (d *Daemon) LookupWinTarget(hostname string) (winTarget, bool) {
+	d.winTargetsMu.RLock()
+	defer d.winTargetsMu.RUnlock()
+	t, ok := d.winTargets[hostname]
+	return t, ok
 }
 
 // processOrders converts raw checkin order maps to Order structs and dispatches them.

@@ -1936,12 +1936,22 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         if checkin.connected_agents:
             try:
                 for agent in checkin.connected_agents:
+                    # Parse ISO timestamp strings to datetime objects for asyncpg
+                    def _parse_ts(s):
+                        if not s:
+                            return datetime.now(timezone.utc)
+                        try:
+                            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+                        except (ValueError, AttributeError):
+                            return datetime.now(timezone.utc)
+                    connected_at_dt = _parse_ts(agent.connected_at)
+                    last_heartbeat_dt = _parse_ts(agent.last_heartbeat)
                     await conn.execute("""
                         INSERT INTO go_agents (
                             agent_id, site_id, hostname, agent_version,
                             capability_tier, status, connected_at, last_heartbeat,
                             updated_at
-                        ) VALUES ($1, $2, $3, $4, $5, 'connected', $6::timestamp, $7::timestamp, NOW())
+                        ) VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, NOW())
                         ON CONFLICT (agent_id) DO UPDATE SET
                             hostname = EXCLUDED.hostname,
                             agent_version = EXCLUDED.agent_version,
@@ -1955,8 +1965,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                         agent.hostname,
                         agent.agent_version,
                         agent.capability_tier,
-                        agent.connected_at,
-                        agent.last_heartbeat,
+                        connected_at_dt,
+                        last_heartbeat_dt,
                     )
                 # Mark agents not in this batch as disconnected
                 active_ids = [a.agent_id for a in checkin.connected_agents]

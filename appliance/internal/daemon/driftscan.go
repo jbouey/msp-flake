@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -166,14 +167,36 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		ds.daemon.deployer.mu.Lock()
 		for hostname := range ds.daemon.deployer.deployed {
 			ws := ds.daemon.probeWinRM(hostname)
+			// Use per-workstation credentials if available.
+			// Try hostname first, then resolved IP (credentials may be stored under IP).
+			wsUser := *cfg.DCUsername
+			wsPass := *cfg.DCPassword
+			connectHost := hostname
+			if wt, ok := ds.daemon.LookupWinTarget(hostname); ok && wt.Role != "domain_admin" {
+				wsUser = wt.Username
+				wsPass = wt.Password
+				connectHost = wt.Hostname // use the IP from credential if available
+			} else {
+				// Resolve hostname to IP and retry lookup
+				if addrs, err := net.LookupHost(hostname); err == nil && len(addrs) > 0 {
+					for _, addr := range addrs {
+						if wt2, ok2 := ds.daemon.LookupWinTarget(addr); ok2 && wt2.Role != "domain_admin" {
+							wsUser = wt2.Username
+							wsPass = wt2.Password
+							connectHost = addr
+							break
+						}
+					}
+				}
+			}
 			targets = append(targets, scanTarget{
 				hostname: hostname,
 				label:    "WS",
 				target: &winrm.Target{
-					Hostname:  hostname,
+					Hostname:  connectHost,
 					Port:      ws.Port,
-					Username:  *cfg.DCUsername,
-					Password:  *cfg.DCPassword,
+					Username:  wsUser,
+					Password:  wsPass,
 					UseSSL:    ws.UseSSL,
 					VerifySSL: false,
 				},

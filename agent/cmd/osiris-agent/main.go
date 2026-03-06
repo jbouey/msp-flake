@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -55,6 +56,20 @@ func main() {
 	if *flagVersion {
 		fmt.Printf("osiris-agent %s (%s, built %s)\n", Version, GitCommit, BuildTime)
 		os.Exit(0)
+	}
+
+	// Set up file logging — Windows services have no console for stderr
+	logPath := filepath.Join(filepath.Dir(os.Args[0]), "agent.log")
+	if logPath == filepath.Join(".", "agent.log") {
+		logPath = `C:\OsirisCare\agent.log`
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
+		// Write to file first (always works), then stderr (for interactive debugging).
+		// File must be first: io.MultiWriter stops at first write error, and
+		// os.Stderr has no valid handle when running as a Windows service.
+		multiWriter := io.MultiWriter(logFile, os.Stderr)
+		log.SetOutput(multiWriter)
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
