@@ -654,8 +654,8 @@ class TestPartnerOAuthSession:
             brand_name="Test MSP Brand",
         )
         conn = FakeConn({
-            "partner_sessions": partner_session_row,
-            "last_used_at": idle_row,
+            "SELECT last_used_at": idle_row,
+            "UPDATE partner_sessions": partner_session_row,
         })
         pool = FakePool(conn)
 

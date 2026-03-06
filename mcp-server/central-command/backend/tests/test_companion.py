@@ -234,18 +234,17 @@ class TestCompanionAuthGating:
         """A readonly user should get 403 from companion endpoints."""
         from fastapi import FastAPI
         from dashboard_api.companion import router as companion_router
-        from dashboard_api.auth import require_companion
+        from dashboard_api.auth import require_auth
 
         app = FastAPI()
         app.include_router(companion_router, prefix="/api")
 
-        # Override require_companion to raise 403
-        from fastapi import HTTPException
+        # Override require_auth (not require_companion) so the real
+        # require_companion logic checks role and rejects readonly.
+        async def _mock_auth():
+            return READONLY_USER
 
-        async def _reject():
-            raise HTTPException(status_code=403, detail="Companion access required")
-
-        app.dependency_overrides[require_companion] = _reject
+        app.dependency_overrides[require_auth] = _mock_auth
 
         conn = _make_overview_conn()
         pool = FakePool(conn)
@@ -261,6 +260,15 @@ class TestCompanionAuthGating:
         """An admin user should be allowed through require_companion."""
         app = _build_app(user_override=ADMIN_USER)
         conn = _make_overview_conn()
+        # list_clients queries client_orgs with extra fields
+        conn._responses["client_orgs"] = [
+            FakeRecord(
+                id=ORG_UUID, name="Test Clinic",
+                primary_email="test@clinic.com", practice_type="dental",
+                provider_count=5, status="active",
+                onboarded_at=datetime.now(timezone.utc), created_at=datetime.now(timezone.utc),
+            ),
+        ]
         pool = FakePool(conn)
 
         with _pool_patches(pool):
@@ -397,10 +405,10 @@ class TestCompanionPolicies:
         )
         conn = FakeConn({
             "client_orgs": _org_record(),
-            "hipaa_policies": policy_row,
+            "COALESCE(MAX(version)": 0,
+            "INSERT INTO hipaa_policies": policy_row,
             "hipaa_officers": [],
             "companion_activity_log": "INSERT 0 1",
-            "COALESCE(MAX(version)": 0,
         })
         pool = FakePool(conn)
 
