@@ -1933,50 +1933,56 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                 logging.warning(f"Failed to register agent public key: {e}")
 
         # === STEP 3.7: Sync connected Go agents to go_agents table ===
+        # Use a savepoint so failures here don't poison the outer transaction
         if checkin.connected_agents:
             try:
-                for agent in checkin.connected_agents:
-                    # Parse ISO timestamp strings to naive datetime objects for asyncpg
-                    # (go_agents columns are 'timestamp without time zone')
-                    def _parse_ts(s):
-                        if not s:
-                            return datetime.utcnow()
-                        try:
-                            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-                            return dt.replace(tzinfo=None)  # strip tz for naive column
-                        except (ValueError, AttributeError):
-                            return datetime.utcnow()
-                    connected_at_dt = _parse_ts(agent.connected_at)
-                    last_heartbeat_dt = _parse_ts(agent.last_heartbeat)
+                async with conn.transaction():
+                    for agent in checkin.connected_agents:
+                        def _parse_ts(s):
+                            if not s:
+                                return datetime.utcnow()
+                            try:
+                                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                                return dt.replace(tzinfo=None)
+                            except (ValueError, AttributeError):
+                                return datetime.utcnow()
+                        connected_at_dt = _parse_ts(agent.connected_at)
+                        last_heartbeat_dt = _parse_ts(agent.last_heartbeat)
+                        # Delete any existing row with same (site_id, hostname) but different agent_id
+                        # This handles agent reinstalls that generate a new agent_id
+                        await conn.execute("""
+                            DELETE FROM go_agents
+                            WHERE site_id = $1 AND hostname = $2 AND agent_id != $3
+                        """, checkin.site_id, agent.hostname, agent.agent_id)
+                        await conn.execute("""
+                            INSERT INTO go_agents (
+                                agent_id, site_id, hostname, agent_version,
+                                capability_tier, status, connected_at, last_heartbeat,
+                                updated_at
+                            ) VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, NOW())
+                            ON CONFLICT (agent_id) DO UPDATE SET
+                                hostname = EXCLUDED.hostname,
+                                agent_version = EXCLUDED.agent_version,
+                                capability_tier = EXCLUDED.capability_tier,
+                                status = 'connected',
+                                last_heartbeat = EXCLUDED.last_heartbeat,
+                                updated_at = NOW()
+                        """,
+                            agent.agent_id,
+                            checkin.site_id,
+                            agent.hostname,
+                            agent.agent_version,
+                            agent.capability_tier,
+                            connected_at_dt,
+                            last_heartbeat_dt,
+                        )
+                    # Mark agents not in this batch as disconnected
+                    active_ids = [a.agent_id for a in checkin.connected_agents]
                     await conn.execute("""
-                        INSERT INTO go_agents (
-                            agent_id, site_id, hostname, agent_version,
-                            capability_tier, status, connected_at, last_heartbeat,
-                            updated_at
-                        ) VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, NOW())
-                        ON CONFLICT (agent_id) DO UPDATE SET
-                            hostname = EXCLUDED.hostname,
-                            agent_version = EXCLUDED.agent_version,
-                            capability_tier = EXCLUDED.capability_tier,
-                            status = 'connected',
-                            last_heartbeat = EXCLUDED.last_heartbeat,
-                            updated_at = NOW()
-                    """,
-                        agent.agent_id,
-                        checkin.site_id,
-                        agent.hostname,
-                        agent.agent_version,
-                        agent.capability_tier,
-                        connected_at_dt,
-                        last_heartbeat_dt,
-                    )
-                # Mark agents not in this batch as disconnected
-                active_ids = [a.agent_id for a in checkin.connected_agents]
-                await conn.execute("""
-                    UPDATE go_agents SET status = 'disconnected', updated_at = NOW()
-                    WHERE site_id = $1 AND status = 'connected'
-                    AND agent_id != ALL($2)
-                """, checkin.site_id, active_ids)
+                        UPDATE go_agents SET status = 'disconnected', updated_at = NOW()
+                        WHERE site_id = $1 AND status = 'connected'
+                        AND agent_id != ALL($2)
+                    """, checkin.site_id, active_ids)
             except Exception as e:
                 import logging
                 logging.warning(f"Failed to sync go_agents: {e}")
