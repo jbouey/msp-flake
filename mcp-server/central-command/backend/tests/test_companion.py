@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone, date
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -156,6 +157,19 @@ class FakeRecord(dict):
             raise AttributeError(name)
 
 
+def _pool_patches(pool):
+    """Patch get_pool everywhere it's imported (called directly, not via Depends)."""
+    async def _get_pool():
+        return pool
+
+    @contextmanager
+    def _patches():
+        with patch("dashboard_api.companion.get_pool", new=_get_pool):
+            yield
+
+    return _patches()
+
+
 def _org_record():
     return FakeRecord(id=ORG_UUID, name="Test Clinic", status="active")
 
@@ -192,7 +206,6 @@ def _build_app(user_override=None):
     from fastapi import FastAPI
     from dashboard_api.companion import router as companion_router
     from dashboard_api.auth import require_companion
-    from dashboard_api.fleet import get_pool
 
     app = FastAPI()
     app.include_router(companion_router, prefix="/api")
@@ -219,27 +232,29 @@ class TestCompanionAuthGating:
     @pytest.mark.asyncio
     async def test_readonly_rejected(self):
         """A readonly user should get 403 from companion endpoints."""
-        app = _build_app(user_override=READONLY_USER)
-        conn = _make_overview_conn()
-        pool = FakePool(conn)
-
-        from dashboard_api.fleet import get_pool
-
-        app.dependency_overrides[get_pool] = lambda: pool
-
-        # require_companion checks role — readonly is rejected before pool is used
+        from fastapi import FastAPI
+        from dashboard_api.companion import router as companion_router
         from dashboard_api.auth import require_companion
 
+        app = FastAPI()
+        app.include_router(companion_router, prefix="/api")
+
+        # Override require_companion to raise 403
+        from fastapi import HTTPException
+
         async def _reject():
-            from fastapi import HTTPException
             raise HTTPException(status_code=403, detail="Companion access required")
 
         app.dependency_overrides[require_companion] = _reject
 
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/companion/clients")
-            assert resp.status_code == 403
+        conn = _make_overview_conn()
+        pool = FakePool(conn)
+
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/companion/clients")
+                assert resp.status_code == 403
 
     @pytest.mark.asyncio
     async def test_admin_allowed(self):
@@ -248,19 +263,13 @@ class TestCompanionAuthGating:
         conn = _make_overview_conn()
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/companion/clients")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert "clients" in data
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/companion/clients")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert "clients" in data
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +284,6 @@ class TestCompanionClients:
         """GET /companion/clients returns client list with overview."""
         app = _build_app()
         conn = _make_overview_conn()
-        # Seed the client_orgs query with a valid org list
         conn._responses["client_orgs"] = [
             FakeRecord(
                 id=ORG_UUID, name="Test Clinic",
@@ -286,20 +294,14 @@ class TestCompanionClients:
         ]
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/companion/clients")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert "clients" in data
-            assert isinstance(data["clients"], list)
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/companion/clients")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert "clients" in data
+                assert isinstance(data["clients"], list)
 
     @pytest.mark.asyncio
     async def test_get_client_overview(self):
@@ -308,42 +310,29 @@ class TestCompanionClients:
         conn = _make_overview_conn()
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(f"/api/companion/clients/{ORG_ID}/overview")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert "sra" in data
-            assert "policies" in data
-            assert "overall_readiness" in data
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(f"/api/companion/clients/{ORG_ID}/overview")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert "sra" in data
+                assert "policies" in data
+                assert "overall_readiness" in data
 
     @pytest.mark.asyncio
     async def test_overview_unknown_org_404(self):
         """GET overview for a nonexistent org returns 404."""
         app = _build_app()
-        # Return None for client_orgs query
         conn = FakeConn({})
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            fake_id = str(uuid.uuid4())
-            resp = await client.get(f"/api/companion/clients/{fake_id}/overview")
-            assert resp.status_code == 404
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                fake_id = str(uuid.uuid4())
+                resp = await client.get(f"/api/companion/clients/{fake_id}/overview")
+                assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -372,23 +361,17 @@ class TestCompanionSRA:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                f"/api/companion/clients/{ORG_ID}/sra",
-                json={"title": "Annual SRA"},
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["title"] == "Annual SRA"
-            assert data["status"] == "in_progress"
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    f"/api/companion/clients/{ORG_ID}/sra",
+                    json={"title": "Annual SRA"},
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["title"] == "Annual SRA"
+                assert data["status"] == "in_progress"
 
 
 # ---------------------------------------------------------------------------
@@ -417,31 +400,25 @@ class TestCompanionPolicies:
             "hipaa_policies": policy_row,
             "hipaa_officers": [],
             "companion_activity_log": "INSERT 0 1",
-            "COALESCE(MAX(version)": 0,  # fetchval for max version
+            "COALESCE(MAX(version)": 0,
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                f"/api/companion/clients/{ORG_ID}/policies",
-                json={
-                    "policy_key": "access_control",
-                    "title": "Access Control Policy",
-                    "content": "Policy content here...",
-                },
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["policy_key"] == "access_control"
-            assert data["version"] == 1
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    f"/api/companion/clients/{ORG_ID}/policies",
+                    json={
+                        "policy_key": "access_control",
+                        "title": "Access Control Policy",
+                        "content": "Policy content here...",
+                    },
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["policy_key"] == "access_control"
+                assert data["version"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -472,32 +449,26 @@ class TestCompanionTraining:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                f"/api/companion/clients/{ORG_ID}/training",
-                json={
-                    "employee_name": "John Doe",
-                    "employee_email": "john@clinic.com",
-                    "employee_role": "nurse",
-                    "training_type": "annual",
-                    "training_topic": "HIPAA Privacy",
-                    "due_date": "2026-12-31",
-                    "status": "completed",
-                    "completed_date": "2026-03-01",
-                },
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["employee_name"] == "John Doe"
-            assert data["status"] == "completed"
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    f"/api/companion/clients/{ORG_ID}/training",
+                    json={
+                        "employee_name": "John Doe",
+                        "employee_email": "john@clinic.com",
+                        "employee_role": "nurse",
+                        "training_type": "annual",
+                        "training_topic": "HIPAA Privacy",
+                        "due_date": "2026-12-31",
+                        "status": "completed",
+                        "completed_date": "2026-03-01",
+                    },
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["employee_name"] == "John Doe"
+                assert data["status"] == "completed"
 
 
 # ---------------------------------------------------------------------------
@@ -529,34 +500,28 @@ class TestCompanionBAAs:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                f"/api/companion/clients/{ORG_ID}/baas",
-                json={
-                    "associate_name": "Cloud Provider Inc.",
-                    "associate_type": "cloud_service",
-                    "contact_name": "Jane Smith",
-                    "contact_email": "jane@cloud.com",
-                    "signed_date": "2026-01-01",
-                    "expiry_date": "2027-01-01",
-                    "auto_renew": True,
-                    "status": "active",
-                    "phi_types": ["ePHI"],
-                    "services_description": "Cloud hosting",
-                },
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["associate_name"] == "Cloud Provider Inc."
-            assert data["status"] == "active"
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    f"/api/companion/clients/{ORG_ID}/baas",
+                    json={
+                        "associate_name": "Cloud Provider Inc.",
+                        "associate_type": "cloud_service",
+                        "contact_name": "Jane Smith",
+                        "contact_email": "jane@cloud.com",
+                        "signed_date": "2026-01-01",
+                        "expiry_date": "2027-01-01",
+                        "auto_renew": True,
+                        "status": "active",
+                        "phi_types": ["ePHI"],
+                        "services_description": "Cloud hosting",
+                    },
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["associate_name"] == "Cloud Provider Inc."
+                assert data["status"] == "active"
 
 
 # ---------------------------------------------------------------------------
@@ -582,19 +547,13 @@ class TestCompanionNotes:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(f"/api/companion/clients/{ORG_ID}/notes/sra")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert "notes" in data
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(f"/api/companion/clients/{ORG_ID}/notes/sra")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert "notes" in data
 
     @pytest.mark.asyncio
     async def test_create_note(self):
@@ -613,23 +572,17 @@ class TestCompanionNotes:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                f"/api/companion/clients/{ORG_ID}/notes/policies",
-                json={"note": "Need to follow up"},
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["note"] == "Need to follow up"
-            assert data["module_key"] == "policies"
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    f"/api/companion/clients/{ORG_ID}/notes/policies",
+                    json={"note": "Need to follow up"},
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["note"] == "Need to follow up"
+                assert data["module_key"] == "policies"
 
 
 # ---------------------------------------------------------------------------
@@ -658,19 +611,13 @@ class TestCompanionAlerts:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(f"/api/companion/clients/{ORG_ID}/alerts")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert "alerts" in data
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(f"/api/companion/clients/{ORG_ID}/alerts")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert "alerts" in data
 
     @pytest.mark.asyncio
     async def test_create_alert(self):
@@ -692,28 +639,22 @@ class TestCompanionAlerts:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                f"/api/companion/clients/{ORG_ID}/alerts",
-                json={
-                    "module_key": "policies",
-                    "expected_status": "complete",
-                    "target_date": "2026-06-30",
-                    "description": "Finalize all policies",
-                },
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["module_key"] == "policies"
-            assert data["expected_status"] == "complete"
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    f"/api/companion/clients/{ORG_ID}/alerts",
+                    json={
+                        "module_key": "policies",
+                        "expected_status": "complete",
+                        "target_date": "2026-06-30",
+                        "description": "Finalize all policies",
+                    },
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["module_key"] == "policies"
+                assert data["expected_status"] == "complete"
 
     @pytest.mark.asyncio
     async def test_create_alert_invalid_module_key(self):
@@ -722,24 +663,18 @@ class TestCompanionAlerts:
         conn = FakeConn({"client_orgs": _org_record()})
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                f"/api/companion/clients/{ORG_ID}/alerts",
-                json={
-                    "module_key": "nonexistent_module",
-                    "expected_status": "complete",
-                    "target_date": "2026-06-30",
-                },
-            )
-            assert resp.status_code == 400
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    f"/api/companion/clients/{ORG_ID}/alerts",
+                    json={
+                        "module_key": "nonexistent_module",
+                        "expected_status": "complete",
+                        "target_date": "2026-06-30",
+                    },
+                )
+                assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_create_alert_invalid_status(self):
@@ -748,24 +683,18 @@ class TestCompanionAlerts:
         conn = FakeConn({"client_orgs": _org_record()})
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                f"/api/companion/clients/{ORG_ID}/alerts",
-                json={
-                    "module_key": "sra",
-                    "expected_status": "bogus_status",
-                    "target_date": "2026-06-30",
-                },
-            )
-            assert resp.status_code == 400
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    f"/api/companion/clients/{ORG_ID}/alerts",
+                    json={
+                        "module_key": "sra",
+                        "expected_status": "bogus_status",
+                        "target_date": "2026-06-30",
+                    },
+                )
+                assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -782,21 +711,15 @@ class TestCompanionDocuments:
         conn = FakeConn({"client_orgs": _org_record()})
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                f"/api/companion/clients/{ORG_ID}/documents/upload",
-                data={"module_key": "invalid_module"},
-                files={"file": ("test.pdf", b"PDF content", "application/pdf")},
-            )
-            assert resp.status_code == 400
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    f"/api/companion/clients/{ORG_ID}/documents/upload",
+                    data={"module_key": "invalid_module"},
+                    files={"file": ("test.pdf", b"PDF content", "application/pdf")},
+                )
+                assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_list_documents(self):
@@ -816,20 +739,14 @@ class TestCompanionDocuments:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(f"/api/companion/clients/{ORG_ID}/documents")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert "documents" in data
-            assert "total" in data
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(f"/api/companion/clients/{ORG_ID}/documents")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert "documents" in data
+                assert "total" in data
 
 
 # ---------------------------------------------------------------------------

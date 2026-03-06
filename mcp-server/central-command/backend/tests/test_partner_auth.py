@@ -177,6 +177,7 @@ def _pool_patches(pool):
     @contextmanager
     def _patches():
         with patch("dashboard_api.partners.get_pool", new=_get_pool), \
+             patch("dashboard_api.partner_auth.get_pool", new=_get_pool), \
              patch("dashboard_api.fleet.get_pool", new=_get_pool):
             yield
 

@@ -111,40 +111,15 @@ class TestPromotePatternEndpoint:
     @pytest.mark.asyncio
     async def test_promote_from_legacy_patterns_table(self):
         """When pattern exists in legacy patterns table, promote it and return new rule."""
-        import main
-        from httpx import AsyncClient, ASGITransport
+        # Import from _routes_impl (routes.py loaded via package __init__)
+        from dashboard_api._routes_impl import promote_pattern as promote_fn
 
         pattern_id = "pat-legacy-001"
         expected_rule_id = "RB-AUTO-SERVICE_RESTART"
 
-        # Mock promote_pattern_in_db to return a rule_id (legacy path succeeds)
-        with patch("dashboard_api.routes.get_db") as mock_get_db, \
-             patch("dashboard_api.db_queries.promote_pattern_in_db", new_callable=AsyncMock,
-                   return_value=expected_rule_id) as mock_promote:
-
-            mock_db = make_mock_db()
-
-            async def fake_get_db():
-                yield mock_db
-
-            mock_get_db.side_effect = fake_get_db
-
-            transport = ASGITransport(app=main.app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.post(
-                    f"/api/dashboard/learning/promote/{pattern_id}",
-                    cookies={"session_token": "fake-token"},
-                )
-
-            # The endpoint requires auth; if we get 401 that's expected in
-            # integration but we are testing the logic, so we patch auth too.
-
-        # Since auth may block us, test the endpoint function directly instead.
-        from dashboard_api.routes import promote_pattern as promote_fn
-
         mock_db = make_mock_db()
 
-        with patch("dashboard_api.routes.promote_pattern_in_db",
+        with patch("dashboard_api.db_queries.promote_pattern_in_db",
                    new_callable=AsyncMock, return_value=expected_rule_id):
             result = await promote_fn(pattern_id=pattern_id, db=mock_db)
 
@@ -155,7 +130,7 @@ class TestPromotePatternEndpoint:
     @pytest.mark.asyncio
     async def test_promote_from_aggregated_pattern_stats(self):
         """When legacy table returns None, fall back to aggregated_pattern_stats."""
-        from dashboard_api.routes import promote_pattern as promote_fn
+        from dashboard_api._routes_impl import promote_pattern as promote_fn
 
         pattern_id = "42"
         mock_db = make_mock_db()
@@ -165,11 +140,7 @@ class TestPromotePatternEndpoint:
             columns=["id", "pattern_signature", "site_id", "recommended_action"],
         )
 
-        call_count = 0
-
         async def mock_execute(query, params=None):
-            nonlocal call_count
-            call_count += 1
             query_str = str(query)
 
             # APS lookup (first db.execute after promote_pattern_in_db returns None)
@@ -188,7 +159,7 @@ class TestPromotePatternEndpoint:
 
         mock_db.execute = AsyncMock(side_effect=mock_execute)
 
-        with patch("dashboard_api.routes.promote_pattern_in_db",
+        with patch("dashboard_api.db_queries.promote_pattern_in_db",
                    new_callable=AsyncMock, return_value=None):
             result = await promote_fn(pattern_id=pattern_id, db=mock_db)
 
@@ -200,7 +171,7 @@ class TestPromotePatternEndpoint:
     @pytest.mark.asyncio
     async def test_pattern_not_found_returns_404(self):
         """When pattern is not in legacy table or APS, raise 404."""
-        from dashboard_api.routes import promote_pattern as promote_fn
+        from dashboard_api._routes_impl import promote_pattern as promote_fn
         from fastapi.exceptions import HTTPException
 
         pattern_id = "999"
@@ -214,7 +185,7 @@ class TestPromotePatternEndpoint:
 
         mock_db.execute = AsyncMock(side_effect=mock_execute)
 
-        with patch("dashboard_api.routes.promote_pattern_in_db",
+        with patch("dashboard_api.db_queries.promote_pattern_in_db",
                    new_callable=AsyncMock, return_value=None):
             with pytest.raises(HTTPException) as exc_info:
                 await promote_fn(pattern_id=pattern_id, db=mock_db)
