@@ -2392,12 +2392,12 @@ async def get_org_evidence_bundle(
                 # Get evidence bundles for this site
                 bundles_result = await db.execute(
                     text("""
-                        SELECT id, check_type, result_status, created_at, sha256_hash
-                        FROM evidence_bundles
+                        SELECT bundle_id, check_type, check_result, checked_at, bundle_hash
+                        FROM compliance_bundles
                         WHERE site_id = :site_id
-                          AND created_at >= :start_dt
-                          AND created_at <= :end_dt
-                        ORDER BY created_at DESC
+                          AND checked_at >= :start_dt
+                          AND checked_at <= :end_dt
+                        ORDER BY checked_at DESC
                     """),
                     {"site_id": site.site_id, "start_dt": start_dt, "end_dt": end_dt}
                 )
@@ -2411,7 +2411,7 @@ async def get_org_evidence_bundle(
                 ]
                 for b in bundles:
                     site_summary.append(
-                        f"- [{b.created_at.isoformat()}] {b.check_type}: {b.result_status} (hash: {b.sha256_hash[:16]}...)"
+                        f"- [{b.checked_at.isoformat()}] {b.check_type}: {b.check_result} (hash: {b.bundle_hash[:16]}...)"
                     )
 
                 zf.writestr(f"{site_dir}summary.txt", "\n".join(site_summary))
