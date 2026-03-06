@@ -497,15 +497,32 @@ func (ad *autoDeployer) deployWithFallback(ctx context.Context, ws discovery.ADC
 	if !knownNeedsProxy {
 		target := ad.buildTarget(ws)
 		if target != nil {
-			// Single probe: try a lightweight command with 0 retries
+			// Probe: check service status AND version + config
+			grpcAddr := ad.daemon.config.GRPCListenAddr()
+			expectedVersion := readVersionFile(filepath.Join(ad.daemon.config.StateDir, "agent"))
+			probeScript := fmt.Sprintf(`
+$svc = Get-Service -Name "%s" -EA SilentlyContinue
+if (-not $svc -or $svc.Status -ne "Running") { "NOT_RUNNING"; exit }
+$cfg = $null
+try { $cfg = Get-Content "%s\config.json" -Raw -EA Stop | ConvertFrom-Json } catch {}
+$ver = $null
+try { $out = & "%s\%s" --version 2>&1; if ($out -match "(\d+\.\d+\.\d+)") { $ver = $matches[1] } } catch {}
+if ($ver -eq "%s" -and $cfg.appliance_addr -eq "%s") { "OK" } else { "STALE|ver=$ver|addr=$($cfg.appliance_addr)" }
+`, agentServiceName, agentInstallDir, agentInstallDir, agentBinaryName, expectedVersion, grpcAddr)
 			probeResult := ad.daemon.winrmExec.Execute(target,
-				fmt.Sprintf(`$svc = Get-Service -Name "%s" -EA SilentlyContinue; if ($svc -and $svc.Status -eq "Running") { "RUNNING" } else { "NOT_RUNNING" }`, agentServiceName),
-				"AGENT-PROBE", "autodeploy", 15, 0, 10.0, nil)
+				probeScript,
+				"AGENT-PROBE", "autodeploy", 20, 0, 10.0, nil)
 
 			if probeResult.Success {
 				stdout, _ := probeResult.Output["std_out"].(string)
-				if strings.TrimSpace(stdout) == "RUNNING" {
-					return nil // Already deployed and running
+				trimmed := strings.TrimSpace(stdout)
+				if trimmed == "OK" {
+					return nil // Already deployed, correct version and config
+				}
+				if trimmed == "NOT_RUNNING" {
+					log.Printf("[autodeploy] [%s] Agent not running, deploying", hostname)
+				} else {
+					log.Printf("[autodeploy] [%s] Agent needs update: %s", hostname, trimmed)
 				}
 				// Direct WinRM works — proceed with full deploy
 				err := ad.deployAgentDirect(ctx, target, ws)

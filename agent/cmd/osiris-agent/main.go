@@ -157,23 +157,22 @@ func runAgent(ctx context.Context) error {
 	if cfg.ApplianceAddr != "" {
 		grpcClient, err = transport.NewGRPCClient(ctx, cfg, Version)
 		if err != nil {
-			log.Printf("Failed to connect to appliance: %v (will retry)", err)
+			log.Printf("Failed to connect to appliance: %v (will retry in background)", err)
 		}
 	}
 	if grpcClient != nil {
 		defer grpcClient.Close()
 	}
 
-	// Register with appliance
+	// Register with appliance (+ reconnect loop if initial connect fails)
 	var regResp *pb.RegisterResponse
 	if grpcClient != nil && grpcClient.IsConnected() {
-		regResp, err = grpcClient.Register(ctx)
-		if err != nil {
-			log.Printf("Failed to register: %v", err)
-		} else {
-			log.Printf("Registered as %s, tier=%d, interval=%ds",
-				regResp.AgentId, regResp.CapabilityTier, regResp.CheckIntervalSeconds)
-		}
+		regResp = tryRegisterAndSetup(ctx, grpcClient, upd)
+	}
+
+	// Background reconnect loop — retries connection if initial connect failed or drops
+	if grpcClient != nil && !grpcClient.IsConnected() {
+		go reconnectLoop(ctx, cfg, grpcClient, upd)
 	}
 
 	// Check interval and enabled checks
@@ -201,7 +200,7 @@ func runAgent(ctx context.Context) error {
 		defer offlineQueue.Close()
 	}
 
-	// Start persistent drift stream
+	// Start persistent drift stream (if already connected)
 	if grpcClient != nil && grpcClient.IsConnected() {
 		if err := grpcClient.StartDriftStream(ctx); err != nil {
 			log.Printf("Failed to start drift stream: %v (will use one-shot mode)", err)
@@ -273,6 +272,66 @@ func runAgent(ctx context.Context) error {
 		case <-ticker.C:
 			runChecks(ctx, checkRegistry, grpcClient, offlineQueue, regResp, flapDetector)
 		}
+	}
+}
+
+// tryRegisterAndSetup attempts registration and returns the response.
+func tryRegisterAndSetup(ctx context.Context, client *transport.GRPCClient, upd *updater.Updater) *pb.RegisterResponse {
+	regResp, err := client.Register(ctx)
+	if err != nil {
+		log.Printf("Failed to register: %v", err)
+		return nil
+	}
+	log.Printf("Registered as %s, tier=%d, interval=%ds",
+		regResp.AgentId, regResp.CapabilityTier, regResp.CheckIntervalSeconds)
+	return regResp
+}
+
+// reconnectLoop retries gRPC connection in the background with exponential backoff.
+func reconnectLoop(ctx context.Context, cfg *config.Config, client *transport.GRPCClient, upd *updater.Updater) {
+	backoff := 30 * time.Second
+	maxBackoff := 5 * time.Minute
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		if client.IsConnected() {
+			return // already connected (maybe via another path)
+		}
+
+		log.Printf("[reconnect] Attempting gRPC reconnect to %s...", cfg.ApplianceAddr)
+		if err := client.Reconnect(ctx); err != nil {
+			log.Printf("[reconnect] Failed: %v (retry in %s)", err, backoff)
+			backoff = backoff * 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+
+		// Connected — register and set up streams
+		regResp := tryRegisterAndSetup(ctx, client, upd)
+		if regResp == nil {
+			log.Printf("[reconnect] Connected but registration failed, will retry")
+			continue
+		}
+
+		// Start drift stream
+		if err := client.StartDriftStream(ctx); err != nil {
+			log.Printf("[reconnect] Drift stream failed: %v", err)
+		} else {
+			log.Println("[reconnect] Drift stream established")
+		}
+
+		// Start heartbeat loop
+		go runHeartbeatLoop(ctx, client, upd)
+
+		log.Println("[reconnect] Successfully reconnected and registered")
+		return
 	}
 }
 
