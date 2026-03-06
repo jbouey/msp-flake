@@ -145,12 +145,15 @@ def _partner_record(**overrides):
     return FakeRecord(**defaults)
 
 
-def _build_partners_app(partner_override=None):
-    """Build a minimal FastAPI app with partners router."""
+def _build_partners_app(partner_override=None, pool=None):
+    """Build a minimal FastAPI app with partners router.
+
+    If pool is provided, patches get_pool at the module level so all
+    direct calls (not just Depends) use the fake pool.
+    """
     from fastapi import FastAPI
     from dashboard_api.partners import router as partners_router
     from dashboard_api.partners import require_partner
-    from dashboard_api.fleet import get_pool
 
     app = FastAPI()
     app.include_router(partners_router)
@@ -162,6 +165,22 @@ def _build_partners_app(partner_override=None):
         app.dependency_overrides[require_partner] = _mock_partner
 
     return app
+
+
+def _pool_patches(pool):
+    """Return a combined patch context for get_pool across all modules."""
+    async def _get_pool():
+        return pool
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _patches():
+        with patch("dashboard_api.partners.get_pool", new=_get_pool), \
+             patch("dashboard_api.fleet.get_pool", new=_get_pool):
+            yield
+
+    return _patches()
 
 
 def _build_partner_auth_app():
@@ -205,26 +224,20 @@ class TestMagicLinkAuth:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
                 "/api/partners/auth/magic",
                 json={"token": magic_token},
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["success"] is True
-            assert "api_key" in data
-            assert data["partner"]["name"] == "Test MSP"
-            assert data["partner"]["slug"] == "test-msp"
-            assert data["user"]["email"] == "tech@testmsp.com"
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["success"] is True
+                assert "api_key" in data
+                assert data["partner"]["name"] == "Test MSP"
+                assert data["partner"]["slug"] == "test-msp"
+                assert data["user"]["email"] == "tech@testmsp.com"
 
     @pytest.mark.asyncio
     async def test_invalid_magic_token(self):
@@ -233,20 +246,14 @@ class TestMagicLinkAuth:
         conn = FakeConn({})  # No matching user
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
                 "/api/partners/auth/magic",
                 json={"token": "bogus-token"},
-            )
-            assert resp.status_code == 401
+                )
+                assert resp.status_code == 401
 
     @pytest.mark.asyncio
     async def test_expired_magic_token(self):
@@ -270,20 +277,14 @@ class TestMagicLinkAuth:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
                 "/api/partners/auth/magic",
                 json={"token": "some-expired-token"},
-            )
-            assert resp.status_code == 401
+                )
+                assert resp.status_code == 401
 
     @pytest.mark.asyncio
     async def test_inactive_partner_403(self):
@@ -307,20 +308,14 @@ class TestMagicLinkAuth:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
                 "/api/partners/auth/magic",
                 json={"token": "some-token"},
-            )
-            assert resp.status_code == 403
+                )
+                assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -352,24 +347,17 @@ class TestPartnerMe:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        # Mock log_partner_activity to avoid DB writes
-        with patch("dashboard_api.partners.log_partner_activity", new_callable=AsyncMock):
-            transport = ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/partners/me")
-                assert resp.status_code == 200
-                data = resp.json()
-                assert data["name"] == "Test MSP"
-                assert data["slug"] == "test-msp"
-                assert data["status"] == "active"
-                assert "provisions" in data
+        with _pool_patches(pool):
+            with patch("dashboard_api.partners.log_partner_activity", new_callable=AsyncMock):
+                transport = ASGITransport(app=app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                    resp = await client.get("/api/partners/me")
+                    assert resp.status_code == 200
+                    data = resp.json()
+                    assert data["name"] == "Test MSP"
+                    assert data["slug"] == "test-msp"
+                    assert data["status"] == "active"
+                    assert "provisions" in data
 
     @pytest.mark.asyncio
     async def test_unauthenticated_partner_401(self):
@@ -378,17 +366,11 @@ class TestPartnerMe:
         conn = FakeConn({})
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/partners/me")
-            assert resp.status_code == 401
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/partners/me")
+                assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -422,29 +404,23 @@ class TestPartnerClaim:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
                 "/api/partners/claim",
                 json={
                     "provision_code": "AABB1122CCDD3344",
                     "mac_address": "AA:BB:CC:DD:EE:FF",
                     "hostname": "nixos-appliance",
                 },
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["status"] == "claimed"
-            assert data["site_id"] == "clinic-001"
-            assert "appliance_id" in data
-            assert data["partner"]["slug"] == "test-msp"
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["status"] == "claimed"
+                assert data["site_id"] == "clinic-001"
+                assert "appliance_id" in data
+                assert data["partner"]["slug"] == "test-msp"
 
     @pytest.mark.asyncio
     async def test_claim_invalid_code_404(self):
@@ -453,23 +429,17 @@ class TestPartnerClaim:
         conn = FakeConn({})
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
                 "/api/partners/claim",
                 json={
                     "provision_code": "NONEXISTENT12345",
                     "mac_address": "AA:BB:CC:DD:EE:FF",
                 },
-            )
-            assert resp.status_code == 404
+                )
+                assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_claim_already_claimed_400(self):
@@ -488,23 +458,17 @@ class TestPartnerClaim:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
                 "/api/partners/claim",
                 json={
                     "provision_code": "AABB1122CCDD3344",
                     "mac_address": "AA:BB:CC:DD:EE:FF",
                 },
-            )
-            assert resp.status_code == 400
+                )
+                assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_claim_expired_code_400(self):
@@ -524,23 +488,17 @@ class TestPartnerClaim:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
                 "/api/partners/claim",
                 json={
                     "provision_code": "AABB1122CCDD3344",
                     "mac_address": "AA:BB:CC:DD:EE:FF",
                 },
-            )
-            assert resp.status_code == 400
+                )
+                assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -568,24 +526,18 @@ class TestCredentialValidation:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        with patch("dashboard_api.partners.log_partner_activity", new_callable=AsyncMock):
-            with patch("dashboard_api.partners.sign_admin_order", return_value=("nonce", "sig" * 21 + "ab", '{"order":"payload"}')):
-                transport = ASGITransport(app=app)
-                async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                    resp = await client.post(
-                        f"/api/partners/me/sites/{SITE_ID}/credentials/{CRED_ID}/validate",
-                    )
-                    assert resp.status_code == 200
-                    data = resp.json()
-                    assert data["validation_status"] == "pending"
-                    assert data["credential_id"] == CRED_ID
+        with _pool_patches(pool):
+            with patch("dashboard_api.partners.log_partner_activity", new_callable=AsyncMock):
+                with patch("dashboard_api.order_signing.sign_admin_order", return_value=("nonce", "sig" * 21 + "ab", '{"order":"payload"}')):
+                    transport = ASGITransport(app=app)
+                    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                        resp = await client.post(
+                            f"/api/partners/me/sites/{SITE_ID}/credentials/{CRED_ID}/validate",
+                        )
+                        assert resp.status_code == 200
+                        data = resp.json()
+                        assert data["validation_status"] == "pending"
+                        assert data["credential_id"] == CRED_ID
 
     @pytest.mark.asyncio
     async def test_validate_credential_not_found_404(self):
@@ -595,20 +547,14 @@ class TestCredentialValidation:
         conn = FakeConn({})  # No matching credential
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            fake_cred_id = str(uuid.uuid4())
-            resp = await client.post(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                fake_cred_id = str(uuid.uuid4())
+                resp = await client.post(
                 f"/api/partners/me/sites/{SITE_ID}/credentials/{fake_cred_id}/validate",
-            )
-            assert resp.status_code == 404
+                )
+                assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_validate_no_appliance_still_succeeds(self):
@@ -625,24 +571,18 @@ class TestCredentialValidation:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        with patch("dashboard_api.partners.log_partner_activity", new_callable=AsyncMock):
-            transport = ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.post(
-                    f"/api/partners/me/sites/{SITE_ID}/credentials/{CRED_ID}/validate",
-                )
-                assert resp.status_code == 200
-                data = resp.json()
-                assert data["validation_status"] == "pending"
-                assert any("No active appliance" in e or "No appliance" in e
-                           for e in data["result"]["errors"])
+        with _pool_patches(pool):
+            with patch("dashboard_api.partners.log_partner_activity", new_callable=AsyncMock):
+                transport = ASGITransport(app=app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                    resp = await client.post(
+                        f"/api/partners/me/sites/{SITE_ID}/credentials/{CRED_ID}/validate",
+                    )
+                    assert resp.status_code == 200
+                    data = resp.json()
+                    assert data["validation_status"] == "pending"
+                    assert any("No active appliance" in e or "No appliance" in e
+                               for e in data["result"]["errors"])
 
 
 # ---------------------------------------------------------------------------
@@ -671,21 +611,14 @@ class TestPartnerOAuthSession:
     async def test_get_me_no_session_401(self):
         """GET /api/partner-auth/me without session cookie returns 401."""
         app = _build_partner_auth_app()
-
-        from dashboard_api.fleet import get_pool
-
         conn = FakeConn({})
         pool = FakePool(conn)
 
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/partner-auth/me")
-            assert resp.status_code == 401
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/partner-auth/me")
+                assert resp.status_code == 401
 
     @pytest.mark.asyncio
     async def test_get_me_invalid_session_401(self):
@@ -695,20 +628,14 @@ class TestPartnerOAuthSession:
         conn = FakeConn({})  # No matching session
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
                 "/api/partner-auth/me",
                 cookies={"osiris_partner_session": "invalid-session-token"},
-            )
-            assert resp.status_code == 401
+                )
+                assert resp.status_code == 401
 
     @pytest.mark.asyncio
     async def test_get_me_valid_session(self):
@@ -731,24 +658,18 @@ class TestPartnerOAuthSession:
         })
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
+        with _pool_patches(pool):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
                 "/api/partner-auth/me",
                 cookies={"osiris_partner_session": "valid-session-token"},
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["name"] == "Test MSP"
-            assert data["slug"] == "test-msp"
-            assert data["auth_provider"] == "microsoft"
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["name"] == "Test MSP"
+                assert data["slug"] == "test-msp"
+                assert data["auth_provider"] == "microsoft"
 
     @pytest.mark.asyncio
     async def test_logout(self):
@@ -757,21 +678,15 @@ class TestPartnerOAuthSession:
         conn = FakeConn({})
         pool = FakePool(conn)
 
-        from dashboard_api.fleet import get_pool
-
-        async def _get_pool():
-            return pool
-
-        app.dependency_overrides[get_pool] = _get_pool
-
-        with patch("dashboard_api.partner_auth.log_partner_activity", new_callable=AsyncMock):
-            transport = ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.post(
-                    "/api/partner-auth/logout",
-                    cookies={"osiris_partner_session": "some-session-token"},
-                )
-                assert resp.status_code == 204
+        with _pool_patches(pool):
+            with patch("dashboard_api.partner_auth.log_partner_activity", new_callable=AsyncMock):
+                transport = ASGITransport(app=app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                    resp = await client.post(
+                        "/api/partner-auth/logout",
+                        cookies={"osiris_partner_session": "some-session-token"},
+                    )
+                    assert resp.status_code == 204
 
     @pytest.mark.asyncio
     async def test_microsoft_login_unconfigured_503(self):

@@ -263,7 +263,7 @@ class TestPromotePatternInDb:
 
         mock_db.execute = AsyncMock(side_effect=mock_execute)
 
-        with patch("dashboard_api.db_queries.broadcast_event", new_callable=AsyncMock) as mock_broadcast:
+        with patch("dashboard_api.websocket_manager.broadcast_event", new_callable=AsyncMock) as mock_broadcast:
             rule_id = await promote_pattern_in_db(mock_db, pattern_id)
 
         # Should return rule_id derived from pattern_signature
@@ -302,7 +302,7 @@ class TestPromotePatternInDb:
 
         mock_db.execute = AsyncMock(side_effect=mock_execute)
 
-        with patch("dashboard_api.db_queries.broadcast_event", new_callable=AsyncMock) as mock_broadcast:
+        with patch("dashboard_api.websocket_manager.broadcast_event", new_callable=AsyncMock) as mock_broadcast:
             rule_id = await promote_pattern_in_db(mock_db, pattern_id)
 
         assert rule_id is None
