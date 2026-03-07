@@ -256,9 +256,9 @@ async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
     """))
     pending_patterns = result.scalar() or 0
 
-    # Recently promoted
+    # Recently promoted (from learning_promotion_candidates, not legacy patterns table)
     result = await db.execute(text(
-        "SELECT COUNT(*) FROM patterns WHERE status = 'promoted' AND promoted_at > NOW() - INTERVAL '30 days'"
+        "SELECT COUNT(*) FROM learning_promotion_candidates WHERE approval_status = 'approved' AND approved_at > NOW() - INTERVAL '30 days'"
     ))
     recently_promoted = result.scalar() or 0
 

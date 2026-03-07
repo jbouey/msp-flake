@@ -727,42 +727,36 @@ async def get_coverage_gaps(db: AsyncSession = Depends(get_db)):
 
 @router.get("/learning/history", response_model=List[PromotionHistory])
 async def get_promotion_history(limit: int = Query(default=20, le=100), db: AsyncSession = Depends(get_db)):
-    """Get recently promoted L2->L1 rules."""
-    # Match execution telemetry by incident_type + target (hostname or site_id)
-    # from pattern_signature format "check_type:check_type:target".
-    # Old approach matched on promoted_to_rule_id but agent records executions
-    # with different runbook IDs (e.g. L1-SVC-DNS-001 vs RB-AUTO-SERVICE_).
+    """Get recently promoted L2->L1 patterns from learning_promotion_candidates."""
     result = await db.execute(text("""
         SELECT
-            p.pattern_id,
-            p.pattern_signature,
-            p.promoted_to_rule_id,
-            p.promoted_at,
+            lpc.id,
+            lpc.pattern_signature,
+            COALESCE(lpc.custom_rule_name, lpc.recommended_action,
+                     'L1-' || LEFT(lpc.id::text, 8)) as rule_id,
+            lpc.approved_at as promoted_at,
             COALESCE(exec_stats.total, 0) as executions_since,
             COALESCE(exec_stats.success_pct, 0) as success_rate
-        FROM patterns p
+        FROM learning_promotion_candidates lpc
         LEFT JOIN LATERAL (
             SELECT
                 COUNT(*) as total,
                 COUNT(*) FILTER (WHERE et.success) * 100.0 / NULLIF(COUNT(*), 0) as success_pct
             FROM execution_telemetry et
-            WHERE et.incident_type = p.incident_type
-            AND et.created_at > p.promoted_at
-            AND (
-                et.hostname = split_part(p.pattern_signature, ':', 3)
-                OR et.site_id = split_part(p.pattern_signature, ':', 3)
-            )
+            WHERE et.incident_type = split_part(lpc.pattern_signature, ':', 1)
+            AND et.created_at > lpc.approved_at
         ) exec_stats ON true
-        WHERE p.status = 'promoted'
-        ORDER BY p.promoted_at DESC
+        WHERE lpc.approval_status = 'approved'
+        AND lpc.approved_at IS NOT NULL
+        ORDER BY lpc.approved_at DESC
         LIMIT :limit
     """), {"limit": limit})
 
     return [
         PromotionHistory(
-            id=row.pattern_id,
+            id=str(row.id),
             pattern_signature=row.pattern_signature,
-            rule_id=row.promoted_to_rule_id or f"L1-{row.pattern_id[:8].upper()}",
+            rule_id=row.rule_id,
             promoted_at=row.promoted_at,
             post_promotion_success_rate=float(row.success_rate or 0),
             executions_since_promotion=int(row.executions_since or 0),
