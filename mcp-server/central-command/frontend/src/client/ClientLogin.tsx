@@ -8,6 +8,8 @@ export const ClientLogin: React.FC = () => {
   const { isAuthenticated, isLoading } = useClient();
 
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginMode, setLoginMode] = useState<'password' | 'magic'>('password');
   const [status, setStatus] = useState<'idle' | 'loading' | 'sent' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -17,7 +19,34 @@ export const ClientLogin: React.FC = () => {
     }
   }, [isAuthenticated, isLoading, navigate]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !password.trim()) return;
+
+    setStatus('loading');
+    setError(null);
+
+    try {
+      const response = await fetch('/api/client/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+      });
+
+      if (response.ok) {
+        window.location.href = '/client/dashboard';
+      } else {
+        const err = await response.json();
+        setError(err.detail || 'Invalid email or password');
+        setStatus('error');
+      }
+    } catch (e) {
+      setError('Failed to connect. Please try again.');
+      setStatus('error');
+    }
+  };
+
+  const handleMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
 
@@ -126,7 +155,7 @@ export const ClientLogin: React.FC = () => {
             Sign In
           </h2>
           <p className="text-slate-600 text-center mb-6">
-            Enter your email to receive a secure login link.
+            Access your HIPAA compliance dashboard.
           </p>
 
           {error && (
@@ -135,44 +164,114 @@ export const ClientLogin: React.FC = () => {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
-                Email Address
-              </label>
-              <input
-                type="email"
-                id="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@yourpractice.com"
-                required
-                className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
-              />
-            </div>
-
+          {/* Login mode tabs */}
+          <div className="flex rounded-lg bg-slate-100 p-1 mb-4">
             <button
-              type="submit"
-              disabled={!email.trim() || status === 'loading'}
-              className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
-              style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
+              type="button"
+              onClick={() => { setLoginMode('password'); setError(null); }}
+              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                loginMode === 'password'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
             >
-              {status === 'loading' ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                'Send Login Link'
-              )}
+              Email &amp; Password
             </button>
-          </form>
-
-          <div className="mt-6 pt-6 border-t border-slate-200">
-            <p className="text-center text-sm text-slate-500">
-              No password required. We'll send you a secure link.
-            </p>
+            <button
+              type="button"
+              onClick={() => { setLoginMode('magic'); setError(null); }}
+              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                loginMode === 'magic'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Magic Link
+            </button>
           </div>
+
+          {loginMode === 'password' ? (
+            <form onSubmit={handlePasswordLogin} className="space-y-4">
+              <div>
+                <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  id="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@yourpractice.com"
+                  required
+                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                />
+              </div>
+              <div>
+                <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  id="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  required
+                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!email.trim() || !password.trim() || status === 'loading'}
+                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
+              >
+                {status === 'loading' ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Signing in...
+                  </>
+                ) : (
+                  'Sign In'
+                )}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleMagicLink} className="space-y-4">
+              <div>
+                <label htmlFor="magicEmail" className="block text-sm font-medium text-slate-700 mb-1">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  id="magicEmail"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@yourpractice.com"
+                  required
+                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!email.trim() || status === 'loading'}
+                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
+              >
+                {status === 'loading' ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  'Send Login Link'
+                )}
+              </button>
+              <p className="text-center text-sm text-slate-500">
+                No password required. We'll send you a secure link.
+              </p>
+            </form>
+          )}
         </div>
 
         {/* Footer */}

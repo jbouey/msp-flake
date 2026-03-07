@@ -100,6 +100,13 @@ class EmailSignupRequest(BaseModel):
     name: str
     email: str
     company: str = ""
+    password: str = ""
+
+
+class EmailLoginRequest(BaseModel):
+    """Email/password login request."""
+    email: str
+    password: str
 
 
 # =============================================================================
@@ -846,9 +853,13 @@ async def email_signup(request: Request, body: EmailSignupRequest):
     email = body.email.strip().lower()
     name = body.name.strip()
     company = body.company.strip() or name
+    password = body.password.strip() if body.password else ""
 
     if not email or not name:
         raise HTTPException(status_code=400, detail="Name and email are required")
+
+    if password and len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
     # Basic email validation
     if "@" not in email or "." not in email.split("@")[-1]:
@@ -890,15 +901,21 @@ async def email_signup(request: Request, body: EmailSignupRequest):
                 slug = test_slug
                 break
 
+        # Hash password if provided
+        from .auth import hash_password
+        pw_hash = hash_password(password) if password else None
+
         # Create partner with pending approval
         row = await conn.fetchrow("""
             INSERT INTO partners (
                 name, slug, contact_email, brand_name,
                 auth_provider, oauth_email,
+                password_hash,
                 status, pending_approval
             ) VALUES (
                 $1, $2, $3, $4,
                 'email', $5,
+                $6,
                 'active', TRUE
             )
             RETURNING id, name, slug
@@ -908,6 +925,7 @@ async def email_signup(request: Request, body: EmailSignupRequest):
             email,
             company,
             email,
+            pw_hash,
         )
 
         logger.info(f"New email-based partner signup: {slug} ({email})")
@@ -934,6 +952,139 @@ async def email_signup(request: Request, body: EmailSignupRequest):
         "status": "pending",
         "message": "Your partner account request has been submitted. You'll receive an email once approved."
     }
+
+
+# =============================================================================
+# EMAIL/PASSWORD LOGIN
+# =============================================================================
+
+@public_router.post("/email-login")
+async def email_login(request: Request, body: EmailLoginRequest):
+    """Authenticate a partner with email and password."""
+    email = body.email.strip().lower()
+    password = body.password
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        partner = await conn.fetchrow("""
+            SELECT id, name, slug, password_hash, status, pending_approval
+            FROM partners
+            WHERE (contact_email = $1 OR oauth_email = $1)
+              AND auth_provider = 'email'
+        """, email)
+
+        if not partner:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+
+        if partner.get("pending_approval"):
+            raise HTTPException(status_code=403, detail="Your account is pending approval")
+
+        if partner["status"] != "active":
+            raise HTTPException(status_code=403, detail="Account is not active")
+
+        if not partner["password_hash"]:
+            raise HTTPException(status_code=401, detail="No password set. Please use API key or contact support.")
+
+        from .auth import verify_password
+        if not verify_password(password, partner["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+
+        # Update last_login_at
+        await conn.execute(
+            "UPDATE partners SET last_login_at = NOW() WHERE id = $1",
+            partner["id"]
+        )
+
+    # Create session (same as OAuth flow)
+    session_token = await create_partner_session(partner["id"], request, pool)
+
+    await log_partner_login(
+        partner_id=str(partner["id"]),
+        provider="email",
+        email=email,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+    )
+
+    response = RedirectResponse(url="/partner/dashboard", status_code=303)
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+        max_age=SESSION_COOKIE_MAX_AGE,
+    )
+    return response
+
+
+@public_router.post("/email-login-api")
+async def email_login_api(request: Request, body: EmailLoginRequest):
+    """Authenticate a partner with email and password (JSON response for SPA)."""
+    email = body.email.strip().lower()
+    password = body.password
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        partner = await conn.fetchrow("""
+            SELECT id, name, slug, password_hash, status, pending_approval
+            FROM partners
+            WHERE (contact_email = $1 OR oauth_email = $1)
+              AND auth_provider = 'email'
+        """, email)
+
+        if not partner:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+
+        if partner.get("pending_approval"):
+            raise HTTPException(status_code=403, detail="Your account is pending approval")
+
+        if partner["status"] != "active":
+            raise HTTPException(status_code=403, detail="Account is not active")
+
+        if not partner["password_hash"]:
+            raise HTTPException(status_code=401, detail="No password set. Please use API key or contact support.")
+
+        from .auth import verify_password
+        if not verify_password(password, partner["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+
+        await conn.execute(
+            "UPDATE partners SET last_login_at = NOW() WHERE id = $1",
+            partner["id"]
+        )
+
+    session_token = await create_partner_session(partner["id"], request, pool)
+
+    await log_partner_login(
+        partner_id=str(partner["id"]),
+        provider="email",
+        email=email,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+    )
+
+    from fastapi.responses import JSONResponse
+    response = JSONResponse({"status": "ok", "partner": {"name": partner["name"], "slug": partner["slug"]}})
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+        max_age=SESSION_COOKIE_MAX_AGE,
+    )
+    return response
 
 
 # =============================================================================

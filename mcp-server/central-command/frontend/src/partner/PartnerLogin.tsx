@@ -28,11 +28,17 @@ export const PartnerLogin: React.FC = () => {
   const [providers, setProviders] = useState<OAuthProviders>({ microsoft: false, google: false });
   const [providersLoading, setProvidersLoading] = useState(true);
 
+  // Email/password login state
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginMode, setLoginMode] = useState<'email' | 'apikey'>('email');
+
   // Email signup state
   const [showEmailSignup, setShowEmailSignup] = useState(false);
   const [signupName, setSignupName] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
   const [signupCompany, setSignupCompany] = useState('');
+  const [signupPassword, setSignupPassword] = useState('');
   const [signupStatus, setSignupStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [signupMessage, setSignupMessage] = useState('');
 
@@ -127,6 +133,34 @@ export const PartnerLogin: React.FC = () => {
     }
   };
 
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginEmail.trim() || !loginPassword.trim()) return;
+
+    setStatus('loading');
+    setError(null);
+
+    try {
+      const response = await fetch('/api/partner-auth/email-login-api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword }),
+      });
+
+      if (response.ok) {
+        // Session cookie is set by the response — reload to pick it up
+        window.location.href = '/partner/dashboard';
+      } else {
+        const err = await response.json();
+        setError(err.detail || 'Login failed');
+        setStatus('error');
+      }
+    } catch (e) {
+      setError('Network error. Please try again.');
+      setStatus('error');
+    }
+  };
+
   const handleOAuthLogin = (provider: 'microsoft' | 'google') => {
     setOauthLoading(provider);
     setError(null);
@@ -149,6 +183,7 @@ export const PartnerLogin: React.FC = () => {
           name: signupName.trim(),
           email: signupEmail.trim(),
           company: signupCompany.trim() || signupName.trim(),
+          password: signupPassword,
         }),
       });
 
@@ -290,37 +325,103 @@ export const PartnerLogin: React.FC = () => {
                   <div className="w-full border-t border-slate-200" />
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-slate-500">Or use API key</span>
+                  <span className="px-2 bg-white text-slate-500">Or sign in manually</span>
                 </div>
               </div>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="apiKey" className="block text-sm font-medium text-slate-700 mb-1">
-                API Key
-              </label>
-              <input
-                type="password"
-                id="apiKey"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Enter your partner API key"
-                required
-                className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition font-mono text-sm"
-              />
-            </div>
-
+          {/* Login mode tabs */}
+          <div className="flex rounded-lg bg-slate-100 p-1 mb-4">
             <button
-              type="submit"
-              disabled={!apiKey.trim()}
-              className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110"
-              style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)', boxShadow: '0 4px 14px rgba(79, 70, 229, 0.35)' }}
+              type="button"
+              onClick={() => setLoginMode('email')}
+              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                loginMode === 'email'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
             >
-              Sign In
+              Email &amp; Password
             </button>
-          </form>
+            <button
+              type="button"
+              onClick={() => setLoginMode('apikey')}
+              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                loginMode === 'apikey'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              API Key
+            </button>
+          </div>
+
+          {loginMode === 'email' ? (
+            <form onSubmit={handleEmailLogin} className="space-y-4">
+              <div>
+                <label htmlFor="loginEmail" className="block text-sm font-medium text-slate-700 mb-1">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  id="loginEmail"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="you@company.com"
+                  required
+                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition text-sm"
+                />
+              </div>
+              <div>
+                <label htmlFor="loginPassword" className="block text-sm font-medium text-slate-700 mb-1">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  id="loginPassword"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  required
+                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition text-sm"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!loginEmail.trim() || !loginPassword.trim()}
+                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110"
+                style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)', boxShadow: '0 4px 14px rgba(79, 70, 229, 0.35)' }}
+              >
+                Sign In
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label htmlFor="apiKey" className="block text-sm font-medium text-slate-700 mb-1">
+                  API Key
+                </label>
+                <input
+                  type="password"
+                  id="apiKey"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Enter your partner API key"
+                  required
+                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition font-mono text-sm"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!apiKey.trim()}
+                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110"
+                style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)', boxShadow: '0 4px 14px rgba(79, 70, 229, 0.35)' }}
+              >
+                Sign In
+              </button>
+            </form>
+          )}
 
           <div className="mt-6 pt-6 border-t border-slate-200">
             {!showEmailSignup ? (
@@ -371,6 +472,14 @@ export const PartnerLogin: React.FC = () => {
                     value={signupCompany}
                     onChange={(e) => setSignupCompany(e.target.value)}
                     placeholder="Company name (optional)"
+                    className="w-full px-3 py-2.5 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition text-sm"
+                  />
+                  <input
+                    type="password"
+                    value={signupPassword}
+                    onChange={(e) => setSignupPassword(e.target.value)}
+                    placeholder="Password (min 8 characters)"
+                    minLength={8}
                     className="w-full px-3 py-2.5 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition text-sm"
                   />
                   {signupStatus === 'error' && (
