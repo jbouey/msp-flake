@@ -54,6 +54,10 @@ const ProtectionProfileView = lazy(() => import('./pages/ProtectionProfiles').th
 const isLandingSite = typeof window !== 'undefined' &&
   (window.location.hostname === 'www.osiriscare.net' || window.location.hostname === 'osiriscare.net');
 
+if (typeof window !== 'undefined' && !isLandingSite) {
+  document.title = 'OsirisCare Dashboard';
+}
+
 // Companion module - lazy loaded with layout
 const CompanionRoutes = lazy(() => import('./companion').then(m => ({
   default: () => {
