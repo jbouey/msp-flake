@@ -164,7 +164,7 @@ class Incident(BaseModel):
     id: str
     site_id: str
     hostname: str
-    check_type: CheckType
+    check_type: str
     severity: Severity
     resolution_level: Optional[ResolutionLevel] = None
     resolved: bool = False
@@ -179,7 +179,7 @@ class IncidentDetail(BaseModel):
     site_id: str
     appliance_id: str
     hostname: str
-    check_type: CheckType
+    check_type: str
     severity: Severity
     drift_data: Dict[str, Any] = {}
     resolution_level: Optional[ResolutionLevel] = None

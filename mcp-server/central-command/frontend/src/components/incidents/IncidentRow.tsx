@@ -102,7 +102,7 @@ export const IncidentRow: React.FC<IncidentRowProps> = memo(({
 
       {/* Check type */}
       <div className="w-24 flex-shrink-0">
-        <p className="text-sm text-label-secondary">{checkLabel} drift</p>
+        <p className="text-sm text-label-secondary">{checkLabel}</p>
         {incident.hipaa_controls.length > 0 && (
           <p className="text-xs text-label-tertiary truncate">
             {incident.hipaa_controls[0]}
