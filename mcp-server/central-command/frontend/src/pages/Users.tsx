@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { GlassCard, Spinner, Badge } from '../components/shared';
-import { usersApi, AdminUser, UserInvite } from '../utils/api';
+import { usersApi, AdminUser, UserInvite, Session, AuditLog, TotpSetup } from '../utils/api';
 
-type TabType = 'users' | 'invites';
+type TabType = 'users' | 'invites' | 'sessions' | 'audit' | 'security';
 
 /**
  * Format date for display
@@ -16,6 +16,22 @@ function formatDate(dateString: string | null): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+/**
+ * Parse user agent string into a readable browser/device string
+ */
+function parseUserAgent(ua: string): string {
+  if (!ua) return 'Unknown';
+  // Try to extract browser
+  if (ua.includes('Firefox/')) return 'Firefox';
+  if (ua.includes('Edg/')) return 'Edge';
+  if (ua.includes('Chrome/') && !ua.includes('Edg/')) return 'Chrome';
+  if (ua.includes('Safari/') && !ua.includes('Chrome/')) return 'Safari';
+  if (ua.includes('curl/')) return 'curl';
+  if (ua.includes('python')) return 'Python';
+  // Fallback: return first 40 chars
+  return ua.length > 40 ? ua.substring(0, 40) + '...' : ua;
 }
 
 /**
@@ -43,6 +59,18 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
     revoked: 'default',
   };
   return <Badge variant={variants[status] || 'default'}>{status}</Badge>;
+};
+
+/**
+ * Action badge for audit logs
+ */
+const ActionBadge: React.FC<{ action: string }> = ({ action }) => {
+  const lower = action.toLowerCase();
+  let variant: 'default' | 'success' | 'warning' | 'error' = 'default';
+  if (lower.includes('login') || lower.includes('create')) variant = 'success';
+  else if (lower.includes('delete') || lower.includes('revoke')) variant = 'error';
+  else if (lower.includes('update') || lower.includes('change') || lower.includes('reset')) variant = 'warning';
+  return <Badge variant={variant}>{action}</Badge>;
 };
 
 /**
@@ -270,17 +298,19 @@ const InviteUserModal: React.FC<{
 const EditUserModal: React.FC<{
   user: AdminUser | null;
   onClose: () => void;
-  onSubmit: (userId: string, data: { role?: string; display_name?: string }) => void;
+  onSubmit: (userId: string, data: { role?: string; display_name?: string; email?: string }) => void;
   isLoading: boolean;
   error: string | null;
 }> = ({ user, onClose, onSubmit, isLoading, error }) => {
   const [role, setRole] = useState<string>(user?.role || 'operator');
   const [displayName, setDisplayName] = useState(user?.display_name || '');
+  const [email, setEmail] = useState(user?.email || '');
 
   useEffect(() => {
     if (user) {
       setRole(user.role);
       setDisplayName(user.display_name || '');
+      setEmail(user.email || '');
     }
   }, [user]);
 
@@ -290,7 +320,8 @@ const EditUserModal: React.FC<{
     e.preventDefault();
     onSubmit(user.id, {
       role: role !== user.role ? role : undefined,
-      display_name: displayName !== user.display_name ? displayName : undefined,
+      display_name: displayName !== (user.display_name || '') ? displayName : undefined,
+      email: email !== (user.email || '') ? email : undefined,
     });
   };
 
@@ -308,6 +339,19 @@ const EditUserModal: React.FC<{
               value={user.username}
               disabled
               className="w-full px-3 py-2 bg-fill-tertiary border border-separator-default rounded-lg text-label-tertiary"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-label-secondary mb-1">
+              Email
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-3 py-2 bg-fill-secondary border border-separator-default rounded-lg text-label-primary focus:outline-none focus:border-accent-primary"
+              placeholder="user@example.com"
             />
           </div>
 
@@ -459,6 +503,603 @@ const ResetPasswordModal: React.FC<{
 };
 
 /**
+ * Change My Password Modal
+ */
+const ChangePasswordModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  isLoading: boolean;
+  error: string | null;
+  onSubmit: (data: { current_password: string; new_password: string; confirm_password: string }) => void;
+}> = ({ isOpen, onClose, isLoading, error, onSubmit }) => {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
+  if (!isOpen) return null;
+
+  const passwordValid = newPassword.length >= 12;
+  const passwordsMatch = newPassword === confirmPassword;
+  const hasUpper = /[A-Z]/.test(newPassword);
+  const hasLower = /[a-z]/.test(newPassword);
+  const hasNumber = /[0-9]/.test(newPassword);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordValid || !passwordsMatch) return;
+    onSubmit({
+      current_password: currentPassword,
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <GlassCard className="w-full max-w-md">
+        <h2 className="text-xl font-semibold mb-4">Change My Password</h2>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-label-secondary mb-1">
+              Current Password *
+            </label>
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="w-full px-3 py-2 bg-fill-secondary border border-separator-default rounded-lg text-label-primary focus:outline-none focus:border-accent-primary"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-label-secondary mb-1">
+              New Password *
+            </label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full px-3 py-2 bg-fill-secondary border border-separator-default rounded-lg text-label-primary focus:outline-none focus:border-accent-primary"
+              placeholder="Minimum 12 characters"
+              required
+            />
+            {newPassword && (
+              <div className="mt-2 space-y-1">
+                <p className={`text-xs ${newPassword.length >= 12 ? 'text-green-400' : 'text-red-400'}`}>
+                  {newPassword.length >= 12 ? '\u2713' : '\u2717'} At least 12 characters ({newPassword.length}/12)
+                </p>
+                <p className={`text-xs ${hasUpper ? 'text-green-400' : 'text-label-tertiary'}`}>
+                  {hasUpper ? '\u2713' : '\u2717'} Uppercase letter
+                </p>
+                <p className={`text-xs ${hasLower ? 'text-green-400' : 'text-label-tertiary'}`}>
+                  {hasLower ? '\u2713' : '\u2717'} Lowercase letter
+                </p>
+                <p className={`text-xs ${hasNumber ? 'text-green-400' : 'text-label-tertiary'}`}>
+                  {hasNumber ? '\u2713' : '\u2717'} Number
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-label-secondary mb-1">
+              Confirm New Password *
+            </label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="w-full px-3 py-2 bg-fill-secondary border border-separator-default rounded-lg text-label-primary focus:outline-none focus:border-accent-primary"
+              required
+            />
+            {confirmPassword && !passwordsMatch && (
+              <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
+            )}
+          </div>
+
+          {error && (
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+              {error}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-label-secondary hover:text-label-primary transition-colors"
+              disabled={isLoading}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-accent-primary text-white rounded-lg hover:bg-accent-primary/90 transition-colors disabled:opacity-50"
+              disabled={isLoading || !passwordValid || !passwordsMatch || !currentPassword}
+            >
+              {isLoading ? <Spinner size="sm" /> : 'Change Password'}
+            </button>
+          </div>
+        </form>
+      </GlassCard>
+    </div>
+  );
+};
+
+/**
+ * Sessions Tab Content
+ */
+const SessionsTab: React.FC = () => {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadSessions = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await usersApi.getSessions();
+      setSessions(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load sessions');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  const handleRevoke = async (sessionId: string) => {
+    if (!confirm('Revoke this session? The user will be logged out.')) return;
+    try {
+      await usersApi.revokeSession(sessionId);
+      loadSessions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to revoke session');
+    }
+  };
+
+  const handleRevokeAll = async () => {
+    if (!confirm('Revoke all other sessions? You will remain logged in.')) return;
+    try {
+      await usersApi.revokeAllSessions();
+      loadSessions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to revoke sessions');
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-32">
+        <Spinner />
+      </div>
+    );
+  }
+
+  return (
+    <GlassCard>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-separator-default">
+        <h3 className="text-sm font-medium text-label-primary">Active Sessions</h3>
+        {sessions.length > 1 && (
+          <button
+            onClick={handleRevokeAll}
+            className="text-xs text-red-500 hover:underline"
+          >
+            Revoke All Other Sessions
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div className="mx-4 mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-separator-default">
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">IP Address</th>
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">Browser / Device</th>
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">Last Active</th>
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">Created</th>
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-separator-default">
+          {sessions.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-4 py-8 text-center text-label-tertiary">
+                No active sessions
+              </td>
+            </tr>
+          ) : (
+            sessions.map(session => (
+              <tr key={session.id} className="hover:bg-fill-tertiary/50 transition-colors">
+                <td className="px-4 py-3 text-sm text-label-primary font-mono">
+                  {session.ip_address || '-'}
+                </td>
+                <td className="px-4 py-3 text-sm text-label-secondary">
+                  {parseUserAgent(session.user_agent)}
+                </td>
+                <td className="px-4 py-3 text-sm text-label-tertiary">
+                  {formatDate(session.last_activity_at)}
+                </td>
+                <td className="px-4 py-3 text-sm text-label-tertiary">
+                  {formatDate(session.created_at)}
+                </td>
+                <td className="px-4 py-3">
+                  {session.is_current ? (
+                    <Badge variant="success">current</Badge>
+                  ) : (
+                    <button
+                      onClick={() => handleRevoke(session.id)}
+                      className="text-xs text-red-500 hover:underline"
+                    >
+                      Revoke
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </GlassCard>
+  );
+};
+
+/**
+ * Audit Log Tab Content
+ */
+const AuditLogTab: React.FC = () => {
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadLogs = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await usersApi.getAuditLogs(100);
+        setLogs(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load audit logs');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadLogs();
+  }, []);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-32">
+        <Spinner />
+      </div>
+    );
+  }
+
+  return (
+    <GlassCard>
+      {error && (
+        <div className="mx-4 mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-separator-default">
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">User</th>
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">Action</th>
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">Target</th>
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">Details</th>
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">IP</th>
+            <th className="px-4 py-3 text-left text-sm font-medium text-label-tertiary">Time</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-separator-default">
+          {logs.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-4 py-8 text-center text-label-tertiary">
+                No audit log entries
+              </td>
+            </tr>
+          ) : (
+            logs.map(log => (
+              <tr key={log.id} className="hover:bg-fill-tertiary/50 transition-colors">
+                <td className="px-4 py-3 text-sm text-label-primary">{log.user}</td>
+                <td className="px-4 py-3"><ActionBadge action={log.action} /></td>
+                <td className="px-4 py-3 text-sm text-label-secondary">{log.target || '-'}</td>
+                <td className="px-4 py-3 text-sm text-label-tertiary max-w-xs truncate">
+                  {log.details && Object.keys(log.details).length > 0
+                    ? JSON.stringify(log.details)
+                    : '-'}
+                </td>
+                <td className="px-4 py-3 text-sm text-label-tertiary font-mono">{log.ip || '-'}</td>
+                <td className="px-4 py-3 text-sm text-label-tertiary">{formatDate(log.timestamp)}</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </GlassCard>
+  );
+};
+
+/**
+ * Security / 2FA Tab Content
+ */
+const SecurityTab: React.FC = () => {
+  const [totpEnabled, setTotpEnabled] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [setupData, setSetupData] = useState<TotpSetup | null>(null);
+  const [verifyCode, setVerifyCode] = useState('');
+  const [verifyPassword, setVerifyPassword] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [disablePassword, setDisablePassword] = useState('');
+  const [showDisable, setShowDisable] = useState(false);
+  const [disabling, setDisabling] = useState(false);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      setIsLoading(true);
+      try {
+        const profile = await usersApi.getProfile();
+        // Check if totp_enabled is in the profile (backend may include it)
+        setTotpEnabled((profile as AdminUser & { totp_enabled?: boolean }).totp_enabled || false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load profile');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadProfile();
+  }, []);
+
+  const handleSetup = async () => {
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const data = await usersApi.setupTotp();
+      setSetupData(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start 2FA setup');
+    }
+  };
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setVerifying(true);
+    setError(null);
+    try {
+      await usersApi.verifyTotp(verifyCode, verifyPassword);
+      setTotpEnabled(true);
+      setSetupData(null);
+      setVerifyCode('');
+      setVerifyPassword('');
+      setSuccessMsg('Two-factor authentication has been enabled.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to verify code');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleDisable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDisabling(true);
+    setError(null);
+    try {
+      await usersApi.disableTotp(disablePassword);
+      setTotpEnabled(false);
+      setShowDisable(false);
+      setDisablePassword('');
+      setSuccessMsg('Two-factor authentication has been disabled.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to disable 2FA');
+    } finally {
+      setDisabling(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-32">
+        <Spinner />
+      </div>
+    );
+  }
+
+  return (
+    <GlassCard className="p-6">
+      <h3 className="text-lg font-semibold text-label-primary mb-4">Two-Factor Authentication</h3>
+
+      {error && (
+        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="mb-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-green-400 text-sm">
+          {successMsg}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3 mb-6">
+        <span className="text-sm text-label-secondary">Status:</span>
+        {totpEnabled ? (
+          <Badge variant="success">Enabled</Badge>
+        ) : (
+          <Badge variant="default">Disabled</Badge>
+        )}
+      </div>
+
+      {/* 2FA not enabled - show setup flow */}
+      {!totpEnabled && !setupData && (
+        <button
+          onClick={handleSetup}
+          className="px-4 py-2 bg-accent-primary text-white rounded-lg hover:bg-accent-primary/90 transition-colors"
+        >
+          Enable 2FA
+        </button>
+      )}
+
+      {/* Setup in progress - show QR + backup codes + verify */}
+      {!totpEnabled && setupData && (
+        <div className="space-y-6">
+          <div>
+            <h4 className="text-sm font-medium text-label-primary mb-2">
+              1. Scan QR Code with your authenticator app
+            </h4>
+            <div className="flex justify-center p-4 bg-white rounded-lg w-fit">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(setupData.qr_uri)}`}
+                alt="TOTP QR Code"
+                width={200}
+                height={200}
+              />
+            </div>
+            <p className="text-xs text-label-tertiary mt-2">
+              Or enter this secret manually: <code className="bg-fill-secondary px-2 py-1 rounded text-label-secondary">{setupData.secret}</code>
+            </p>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-medium text-label-primary mb-2">
+              2. Save your backup codes
+            </h4>
+            <div className="p-3 bg-fill-secondary border border-separator-default rounded-lg">
+              <p className="text-xs text-yellow-400 mb-2">
+                Save these codes in a safe place. Each code can only be used once.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {setupData.backup_codes.map((code, i) => (
+                  <code key={i} className="text-sm text-label-primary bg-fill-tertiary px-2 py-1 rounded text-center">
+                    {code}
+                  </code>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-medium text-label-primary mb-2">
+              3. Enter verification code from your authenticator app
+            </h4>
+            <form onSubmit={handleVerify} className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-label-secondary mb-1">
+                  6-digit code
+                </label>
+                <input
+                  type="text"
+                  value={verifyCode}
+                  onChange={(e) => setVerifyCode(e.target.value)}
+                  className="w-full max-w-xs px-3 py-2 bg-fill-secondary border border-separator-default rounded-lg text-label-primary focus:outline-none focus:border-accent-primary font-mono text-lg tracking-widest"
+                  placeholder="000000"
+                  maxLength={6}
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-label-secondary mb-1">
+                  Current password (to confirm)
+                </label>
+                <input
+                  type="password"
+                  value={verifyPassword}
+                  onChange={(e) => setVerifyPassword(e.target.value)}
+                  className="w-full max-w-xs px-3 py-2 bg-fill-secondary border border-separator-default rounded-lg text-label-primary focus:outline-none focus:border-accent-primary"
+                  required
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-accent-primary text-white rounded-lg hover:bg-accent-primary/90 transition-colors disabled:opacity-50"
+                  disabled={verifying || verifyCode.length < 6 || !verifyPassword}
+                >
+                  {verifying ? <Spinner size="sm" /> : 'Verify & Enable'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSetupData(null)}
+                  className="px-4 py-2 text-label-secondary hover:text-label-primary transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 2FA enabled - show disable option */}
+      {totpEnabled && !showDisable && (
+        <button
+          onClick={() => {
+            setShowDisable(true);
+            setSuccessMsg(null);
+          }}
+          className="px-4 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/30 transition-colors"
+        >
+          Disable 2FA
+        </button>
+      )}
+
+      {totpEnabled && showDisable && (
+        <form onSubmit={handleDisable} className="space-y-3 max-w-sm">
+          <p className="text-sm text-label-secondary">
+            Enter your password to confirm disabling two-factor authentication.
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-label-secondary mb-1">
+              Password
+            </label>
+            <input
+              type="password"
+              value={disablePassword}
+              onChange={(e) => setDisablePassword(e.target.value)}
+              className="w-full px-3 py-2 bg-fill-secondary border border-separator-default rounded-lg text-label-primary focus:outline-none focus:border-accent-primary"
+              required
+            />
+          </div>
+          <div className="flex gap-3">
+            <button
+              type="submit"
+              className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
+              disabled={disabling || !disablePassword}
+            >
+              {disabling ? <Spinner size="sm" /> : 'Confirm Disable'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowDisable(false);
+                setDisablePassword('');
+              }}
+              className="px-4 py-2 text-label-secondary hover:text-label-primary transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </GlassCard>
+  );
+};
+
+/**
  * Users Management Page
  */
 export default function Users() {
@@ -470,6 +1111,7 @@ export default function Users() {
 
   // Modal states
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [resetPasswordUser, setResetPasswordUser] = useState<AdminUser | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
@@ -520,7 +1162,7 @@ export default function Users() {
     }
   };
 
-  const handleEditUser = async (userId: string, data: { role?: string; display_name?: string }) => {
+  const handleEditUser = async (userId: string, data: { role?: string; display_name?: string; email?: string }) => {
     setModalLoading(true);
     setModalError(null);
     try {
@@ -575,6 +1217,20 @@ export default function Users() {
     }
   };
 
+  const handleChangePassword = async (data: { current_password: string; new_password: string; confirm_password: string }) => {
+    setModalLoading(true);
+    setModalError(null);
+    try {
+      await usersApi.changePassword(data);
+      setShowChangePasswordModal(false);
+      alert('Password changed successfully');
+    } catch (err) {
+      setModalError(err instanceof Error ? err.message : 'Failed to change password');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
   const handleResendInvite = async (invite: UserInvite) => {
     try {
       await usersApi.resendInvite(invite.id);
@@ -605,6 +1261,14 @@ export default function Users() {
     );
   }
 
+  const tabs: { key: TabType; label: string }[] = [
+    { key: 'users', label: `Users (${users.length})` },
+    { key: 'invites', label: `Pending Invites (${invites.length})` },
+    { key: 'sessions', label: 'Sessions' },
+    { key: 'audit', label: 'Audit Log' },
+    { key: 'security', label: 'Security / 2FA' },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -615,15 +1279,29 @@ export default function Users() {
             Manage admin users and role-based access control
           </p>
         </div>
-        <button
-          onClick={() => setShowInviteModal(true)}
-          className="px-4 py-2 bg-accent-primary text-white rounded-lg hover:bg-accent-primary/90 transition-colors flex items-center gap-2"
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          Invite User
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              setShowChangePasswordModal(true);
+              setModalError(null);
+            }}
+            className="px-4 py-2 bg-fill-secondary text-label-primary border border-separator-default rounded-lg hover:bg-fill-tertiary transition-colors flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+            Change My Password
+          </button>
+          <button
+            onClick={() => setShowInviteModal(true)}
+            className="px-4 py-2 bg-accent-primary text-white rounded-lg hover:bg-accent-primary/90 transition-colors flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Invite User
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -658,31 +1336,24 @@ export default function Users() {
 
       {/* Tabs */}
       <div className="flex gap-1 bg-fill-secondary p-1 rounded-lg w-fit">
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            activeTab === 'users'
-              ? 'bg-accent-primary text-white'
-              : 'text-label-secondary hover:text-label-primary'
-          }`}
-        >
-          Users ({users.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('invites')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            activeTab === 'invites'
-              ? 'bg-accent-primary text-white'
-              : 'text-label-secondary hover:text-label-primary'
-          }`}
-        >
-          Pending Invites ({invites.length})
-        </button>
+        {tabs.map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              activeTab === tab.key
+                ? 'bg-accent-primary text-white'
+                : 'text-label-secondary hover:text-label-primary'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* Table */}
-      <GlassCard>
-        {activeTab === 'users' ? (
+      {/* Tab Content */}
+      {activeTab === 'users' && (
+        <GlassCard>
           <table className="w-full">
             <thead>
               <tr className="border-b border-separator-default">
@@ -708,7 +1379,11 @@ export default function Users() {
               ))}
             </tbody>
           </table>
-        ) : (
+        </GlassCard>
+      )}
+
+      {activeTab === 'invites' && (
+        <GlassCard>
           <table className="w-full">
             <thead>
               <tr className="border-b border-separator-default">
@@ -739,8 +1414,12 @@ export default function Users() {
               )}
             </tbody>
           </table>
-        )}
-      </GlassCard>
+        </GlassCard>
+      )}
+
+      {activeTab === 'sessions' && <SessionsTab />}
+      {activeTab === 'audit' && <AuditLogTab />}
+      {activeTab === 'security' && <SecurityTab />}
 
       {/* Modals */}
       <InviteUserModal
@@ -772,6 +1451,17 @@ export default function Users() {
           setModalError(null);
         }}
         onSubmit={handleResetPassword}
+        isLoading={modalLoading}
+        error={modalError}
+      />
+
+      <ChangePasswordModal
+        isOpen={showChangePasswordModal}
+        onClose={() => {
+          setShowChangePasswordModal(false);
+          setModalError(null);
+        }}
+        onSubmit={handleChangePassword}
         isLoading={modalLoading}
         error={modalError}
       />

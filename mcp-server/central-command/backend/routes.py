@@ -2227,7 +2227,57 @@ async def login(
         )
         return LoginResponse(success=True, user=result)
     else:
+        # Check if MFA is required (password was correct but 2FA needed)
+        if isinstance(result, dict) and result.get("status") == "mfa_required":
+            return LoginResponse(
+                success=False,
+                error="mfa_required",
+                user={"mfa_token": result["mfa_token"]},
+            )
         return LoginResponse(success=False, error=result.get("error", "Authentication failed"))
+
+
+class VerifyTOTPRequest(BaseModel):
+    mfa_token: str
+    totp_code: str
+
+
+@auth_router.post("/verify-totp")
+async def verify_totp_login(
+    body: VerifyTOTPRequest,
+    http_request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
+    """Complete login after TOTP verification.
+
+    Accepts the short-lived MFA pending token + TOTP code,
+    verifies both, then creates the full session.
+    """
+    ip_address = http_request.client.host if http_request.client else None
+    user_agent = http_request.headers.get("user-agent")
+
+    success, token, result = await auth_module.complete_mfa_login(
+        db,
+        body.mfa_token,
+        body.totp_code,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
+    if success:
+        response.set_cookie(
+            key="session_token",
+            value=token,
+            httponly=True,
+            secure=True,
+            samesite="strict",
+            max_age=86400,
+            path="/",
+        )
+        return LoginResponse(success=True, user=result)
+    else:
+        return LoginResponse(success=False, error=result.get("error", "TOTP verification failed"))
 
 
 @auth_router.post("/logout")

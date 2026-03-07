@@ -817,6 +817,31 @@ export interface InviteValidation {
   error?: string;
 }
 
+export interface Session {
+  id: string;
+  ip_address: string;
+  user_agent: string;
+  created_at: string;
+  last_activity_at: string | null;
+  is_current: boolean;
+}
+
+export interface TotpSetup {
+  secret: string;
+  qr_uri: string;
+  backup_codes: string[];
+}
+
+export interface AuditLog {
+  id: string;
+  user: string;
+  action: string;
+  target: string;
+  details: Record<string, unknown>;
+  ip: string;
+  timestamp: string;
+}
+
 export const usersApi = {
   // Get all users (admin only)
   getUsers: () => fetchSitesApi<AdminUser[]>('/users'),
@@ -844,7 +869,7 @@ export const usersApi = {
     }),
 
   // Update user (admin only)
-  updateUser: (userId: string, data: { role?: string; status?: string; display_name?: string }) =>
+  updateUser: (userId: string, data: { role?: string; status?: string; display_name?: string; email?: string }) =>
     fetchSitesApi<AdminUser>(`/users/${userId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -895,6 +920,30 @@ export const usersApi = {
     }
     return response.json();
   },
+
+  // Sessions
+  getSessions: () => fetchSitesApi<Session[]>('/users/me/sessions'),
+  revokeSession: (sessionId: string) =>
+    fetchSitesApi<{ status: string }>(`/users/me/sessions/${sessionId}`, { method: 'DELETE' }),
+  revokeAllSessions: () =>
+    fetchSitesApi<{ status: string }>('/users/me/sessions', { method: 'DELETE' }),
+
+  // TOTP 2FA
+  setupTotp: () => fetchSitesApi<TotpSetup>('/users/me/totp/setup', { method: 'POST' }),
+  verifyTotp: (code: string, password: string) =>
+    fetchSitesApi<{ status: string }>('/users/me/totp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ code, password }),
+    }),
+  disableTotp: (password: string) =>
+    fetchSitesApi<{ status: string }>('/users/me/totp', {
+      method: 'DELETE',
+      body: JSON.stringify({ password }),
+    }),
+
+  // Audit logs
+  getAuditLogs: (limit?: number) =>
+    fetchSitesApi<AuditLog[]>(`/auth/audit-logs?limit=${limit || 100}`),
 };
 
 // =============================================================================

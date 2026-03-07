@@ -71,6 +71,10 @@ PKCE_VERIFIER_LENGTH = 64
 # State token TTL (seconds)
 STATE_TOKEN_TTL = 600  # 10 minutes
 
+# MFA pending tokens for partner login: {token: {"partner_id": ..., "expires": datetime, ...}}
+_partner_mfa_pending: Dict[str, dict] = {}
+MFA_PENDING_TTL_MINUTES = 5
+
 
 # =============================================================================
 # ROUTERS
@@ -1014,6 +1018,31 @@ async def email_login(request: Request, body: EmailLoginRequest):
         if not verify_password(password, partner["password_hash"]):
             raise _generic_error
 
+        # Check if MFA is enabled
+        mfa_row = await conn.fetchrow(
+            "SELECT mfa_enabled FROM partners WHERE id = $1", partner["id"]
+        )
+        if mfa_row and mfa_row["mfa_enabled"]:
+            # Issue MFA pending token
+            mfa_token = secrets.token_urlsafe(32)
+            now = datetime.now(timezone.utc)
+            # Clean expired tokens
+            expired = [k for k, v in _partner_mfa_pending.items() if v["expires"] < now]
+            for k in expired:
+                _partner_mfa_pending.pop(k, None)
+            _partner_mfa_pending[mfa_token] = {
+                "partner_id": str(partner["id"]),
+                "partner_name": partner["name"],
+                "partner_slug": partner["slug"],
+                "email": email,
+                "expires": now + timedelta(minutes=MFA_PENDING_TTL_MINUTES),
+                "redirect": "/partner/dashboard",
+            }
+            return RedirectResponse(
+                url=f"/partner/login?mfa_required=true&mfa_token={mfa_token}",
+                status_code=303,
+            )
+
         # Update last_login_at
         await conn.execute(
             "UPDATE partners SET last_login_at = NOW() WHERE id = $1",
@@ -1078,6 +1107,30 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
         from .auth import verify_password
         if not verify_password(password, partner["password_hash"]):
             raise _generic_error
+
+        # Check if MFA is enabled
+        mfa_row = await conn.fetchrow(
+            "SELECT mfa_enabled FROM partners WHERE id = $1", partner["id"]
+        )
+        if mfa_row and mfa_row["mfa_enabled"]:
+            # Issue MFA pending token
+            mfa_token = secrets.token_urlsafe(32)
+            now = datetime.now(timezone.utc)
+            expired = [k for k, v in _partner_mfa_pending.items() if v["expires"] < now]
+            for k in expired:
+                _partner_mfa_pending.pop(k, None)
+            _partner_mfa_pending[mfa_token] = {
+                "partner_id": str(partner["id"]),
+                "partner_name": partner["name"],
+                "partner_slug": partner["slug"],
+                "email": email,
+                "expires": now + timedelta(minutes=MFA_PENDING_TTL_MINUTES),
+            }
+            from fastapi.responses import JSONResponse
+            return JSONResponse({
+                "status": "mfa_required",
+                "mfa_token": mfa_token,
+            })
 
         await conn.execute(
             "UPDATE partners SET last_login_at = NOW() WHERE id = $1",
@@ -1280,3 +1333,231 @@ async def update_oauth_config(request: Request, user: Dict = Depends(require_adm
         )
 
     return {"status": "updated"}
+
+
+# =============================================================================
+# PARTNER TOTP VERIFY (Public - completes MFA login)
+# =============================================================================
+
+class PartnerVerifyTOTPRequest(BaseModel):
+    mfa_token: str
+    totp_code: str
+
+
+@public_router.post("/verify-totp")
+async def partner_verify_totp(request: Request, body: PartnerVerifyTOTPRequest):
+    """Complete partner login after TOTP verification."""
+    from .totp import verify_totp, verify_backup_code
+
+    now = datetime.now(timezone.utc)
+    # Clean expired tokens
+    expired = [k for k, v in _partner_mfa_pending.items() if v["expires"] < now]
+    for k in expired:
+        _partner_mfa_pending.pop(k, None)
+
+    pending = _partner_mfa_pending.pop(body.mfa_token, None)
+    if not pending or pending["expires"] < now:
+        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+
+    partner_id = pending["partner_id"]
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT mfa_secret, mfa_backup_codes FROM partners WHERE id = $1",
+            partner_id
+        )
+        if not row or not row["mfa_secret"]:
+            raise HTTPException(status_code=400, detail="MFA not configured")
+
+        mfa_secret = row["mfa_secret"]
+        backup_codes_json = row["mfa_backup_codes"]
+
+        # Try TOTP first, then backup code
+        code_valid = verify_totp(mfa_secret, body.totp_code)
+        if not code_valid and backup_codes_json:
+            code_valid, updated_codes = verify_backup_code(body.totp_code, backup_codes_json)
+            if code_valid:
+                await conn.execute(
+                    "UPDATE partners SET mfa_backup_codes = $1 WHERE id = $2",
+                    updated_codes, partner_id
+                )
+
+        if not code_valid:
+            raise HTTPException(status_code=401, detail="Invalid TOTP code")
+
+        await conn.execute(
+            "UPDATE partners SET last_login_at = NOW() WHERE id = $1",
+            partner_id
+        )
+
+    session_token = await create_partner_session(partner_id, request, pool)
+
+    await log_partner_login(
+        partner_id=partner_id,
+        provider="email",
+        email=pending.get("email", ""),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+    )
+
+    from fastapi.responses import JSONResponse
+    response = JSONResponse({
+        "status": "ok",
+        "partner": {
+            "name": pending.get("partner_name", ""),
+            "slug": pending.get("partner_slug", ""),
+        }
+    })
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+        max_age=SESSION_COOKIE_MAX_AGE,
+    )
+    return response
+
+
+# =============================================================================
+# PARTNER TOTP MANAGEMENT (Requires partner session)
+# =============================================================================
+
+class PartnerTOTPVerifyRequest(BaseModel):
+    code: str
+    password: str
+
+
+class PartnerTOTPDisableRequest(BaseModel):
+    password: str
+
+
+async def _require_partner_session(
+    request: Request,
+    osiris_partner_session: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME)
+):
+    """Dependency: require valid partner session for TOTP management."""
+    if not osiris_partner_session:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    pool = await get_pool()
+    partner = await get_partner_from_session(osiris_partner_session, pool)
+    if not partner:
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+    return dict(partner)
+
+
+@session_router.post("/me/totp/setup")
+async def partner_totp_setup(partner: dict = Depends(_require_partner_session)):
+    """Generate TOTP secret and backup codes for partner 2FA setup."""
+    from .totp import generate_totp_secret, get_totp_uri, generate_backup_codes
+
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT mfa_enabled, contact_email, oauth_email FROM partners WHERE id = $1",
+            partner_id
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Partner not found")
+        if row["mfa_enabled"]:
+            raise HTTPException(status_code=400, detail="2FA is already enabled")
+
+        email = row["contact_email"] or row["oauth_email"] or partner.get("slug", "partner")
+
+        secret = generate_totp_secret()
+        uri = get_totp_uri(secret, email)
+        backup_codes = generate_backup_codes()
+
+        # Store secret temporarily (not enabled until verified)
+        await conn.execute(
+            "UPDATE partners SET mfa_secret = $1 WHERE id = $2",
+            secret, partner_id
+        )
+
+    return {"secret": secret, "uri": uri, "backup_codes": backup_codes}
+
+
+@session_router.post("/me/totp/verify")
+async def partner_totp_verify(
+    body: PartnerTOTPVerifyRequest,
+    partner: dict = Depends(_require_partner_session),
+):
+    """Verify TOTP code to enable partner 2FA."""
+    from .totp import verify_totp, generate_backup_codes, hash_backup_code
+    from .auth import verify_password
+    import json as _json
+
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT password_hash, mfa_secret, mfa_enabled FROM partners WHERE id = $1",
+            partner_id
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Partner not found")
+
+        if row["mfa_enabled"]:
+            raise HTTPException(status_code=400, detail="2FA is already enabled")
+        if not row["mfa_secret"]:
+            raise HTTPException(status_code=400, detail="Run setup first")
+        if not row["password_hash"]:
+            raise HTTPException(status_code=400, detail="Password not set")
+
+        if not verify_password(body.password, row["password_hash"]):
+            raise HTTPException(status_code=400, detail="Invalid password")
+
+        if not verify_totp(row["mfa_secret"], body.code):
+            raise HTTPException(status_code=400, detail="Invalid TOTP code")
+
+        # Generate and hash backup codes
+        backup_codes = generate_backup_codes()
+        hashed_codes = [hash_backup_code(c) for c in backup_codes]
+        backup_codes_json = _json.dumps(hashed_codes)
+
+        await conn.execute("""
+            UPDATE partners
+            SET mfa_enabled = TRUE, mfa_backup_codes = $1
+            WHERE id = $2
+        """, backup_codes_json, partner_id)
+
+    return {"status": "enabled", "backup_codes": backup_codes}
+
+
+@session_router.delete("/me/totp")
+async def partner_totp_disable(
+    body: PartnerTOTPDisableRequest,
+    partner: dict = Depends(_require_partner_session),
+):
+    """Disable partner 2FA. Requires password."""
+    from .auth import verify_password
+
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT password_hash, mfa_enabled FROM partners WHERE id = $1",
+            partner_id
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Partner not found")
+        if not row["password_hash"]:
+            raise HTTPException(status_code=400, detail="Password not set")
+        if not verify_password(body.password, row["password_hash"]):
+            raise HTTPException(status_code=400, detail="Invalid password")
+        if not row["mfa_enabled"]:
+            raise HTTPException(status_code=400, detail="2FA is not enabled")
+
+        await conn.execute("""
+            UPDATE partners
+            SET mfa_enabled = FALSE, mfa_secret = NULL, mfa_backup_codes = NULL
+            WHERE id = $1
+        """, partner_id)
+
+    return {"status": "disabled"}

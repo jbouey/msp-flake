@@ -57,6 +57,10 @@ SESSION_DURATION_DAYS = 7
 SESSION_COOKIE_MAX_AGE = SESSION_DURATION_DAYS * 24 * 60 * 60
 SESSION_IDLE_TIMEOUT_MINUTES = 15  # HIPAA §164.312(a)(2)(iii) automatic logoff
 
+# MFA pending tokens for client login: {token: {"user_id": ..., "expires": datetime, ...}}
+_client_mfa_pending: dict = {}
+MFA_PENDING_TTL_MINUTES = 5
+
 # Magic link configuration
 MAGIC_LINK_EXPIRY_MINUTES = 60
 
@@ -381,9 +385,30 @@ async def login_with_password(request: Request, body: PasswordLogin):
         if not verify_password(body.password, user["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
+        # Check if MFA is enabled
+        mfa_row = await conn.fetchrow(
+            "SELECT mfa_enabled FROM client_users WHERE id = $1", user["id"]
+        )
+        if mfa_row and mfa_row["mfa_enabled"]:
+            mfa_token = secrets.token_urlsafe(32)
+            now = datetime.now(timezone.utc)
+            # Clean expired tokens
+            expired = [k for k, v in _client_mfa_pending.items() if v["expires"] < now]
+            for k in expired:
+                _client_mfa_pending.pop(k, None)
+            _client_mfa_pending[mfa_token] = {
+                "user_id": str(user["id"]),
+                "email": email,
+                "expires": now + timedelta(minutes=MFA_PENDING_TTL_MINUTES),
+            }
+            return Response(
+                content='{"status": "mfa_required", "mfa_token": "' + mfa_token + '"}',
+                media_type="application/json"
+            )
+
         # Create session
         session_token = generate_token()
-        token_hash = hash_token(session_token)
+        token_hash_val = hash_token(session_token)
         expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DURATION_DAYS)
 
         ip_address = request.client.host if request.client else None
@@ -392,7 +417,7 @@ async def login_with_password(request: Request, body: PasswordLogin):
         await conn.execute("""
             INSERT INTO client_sessions (user_id, token_hash, user_agent, ip_address, expires_at)
             VALUES ($1, $2, $3, $4, $5)
-        """, user["id"], token_hash, user_agent, ip_address, expires_at)
+        """, user["id"], token_hash_val, user_agent, ip_address, expires_at)
 
         await conn.execute("""
             UPDATE client_users SET last_login_at = NOW() WHERE id = $1
@@ -2280,3 +2305,214 @@ async def stripe_webhook(
             """, invoice.customer)
 
     return {"status": "ok"}
+
+
+# =============================================================================
+# CLIENT TOTP VERIFY (Public - completes MFA login)
+# =============================================================================
+
+class ClientVerifyTOTPRequest(BaseModel):
+    mfa_token: str
+    totp_code: str
+
+
+@public_router.post("/verify-totp")
+async def client_verify_totp(request: Request, body: ClientVerifyTOTPRequest):
+    """Complete client login after TOTP verification."""
+    from .totp import verify_totp, verify_backup_code
+
+    now = datetime.now(timezone.utc)
+    # Clean expired tokens
+    expired = [k for k, v in _client_mfa_pending.items() if v["expires"] < now]
+    for k in expired:
+        _client_mfa_pending.pop(k, None)
+
+    pending = _client_mfa_pending.pop(body.mfa_token, None)
+    if not pending or pending["expires"] < now:
+        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+
+    user_id = pending["user_id"]
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT mfa_secret, mfa_backup_codes FROM client_users WHERE id = $1",
+            user_id
+        )
+        if not row or not row["mfa_secret"]:
+            raise HTTPException(status_code=400, detail="MFA not configured")
+
+        mfa_secret = row["mfa_secret"]
+        backup_codes_json = row["mfa_backup_codes"]
+
+        # Try TOTP first, then backup code
+        code_valid = verify_totp(mfa_secret, body.totp_code)
+        if not code_valid and backup_codes_json:
+            code_valid, updated_codes = verify_backup_code(body.totp_code, backup_codes_json)
+            if code_valid:
+                await conn.execute(
+                    "UPDATE client_users SET mfa_backup_codes = $1 WHERE id = $2",
+                    updated_codes, user_id
+                )
+
+        if not code_valid:
+            raise HTTPException(status_code=401, detail="Invalid TOTP code")
+
+        # Create session
+        session_token = generate_token()
+        token_hash_val = hash_token(session_token)
+        expires_at = now + timedelta(days=SESSION_DURATION_DAYS)
+
+        ip_address = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent", "")[:500]
+
+        await conn.execute("""
+            INSERT INTO client_sessions (user_id, token_hash, user_agent, ip_address, expires_at)
+            VALUES ($1, $2, $3, $4, $5)
+        """, user_id, token_hash_val, user_agent, ip_address, expires_at)
+
+        await conn.execute("""
+            UPDATE client_users SET last_login_at = NOW() WHERE id = $1
+        """, user_id)
+
+    response = Response(
+        content='{"status": "authenticated"}',
+        media_type="application/json"
+    )
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=SESSION_COOKIE_MAX_AGE,
+        path="/"
+    )
+    return response
+
+
+# =============================================================================
+# CLIENT TOTP MANAGEMENT (Requires client session)
+# =============================================================================
+
+class ClientTOTPVerifyRequest(BaseModel):
+    code: str
+    password: str
+
+
+class ClientTOTPDisableRequest(BaseModel):
+    password: str
+
+
+@auth_router.post("/totp/setup")
+async def client_totp_setup(user: dict = Depends(require_client_user)):
+    """Generate TOTP secret and backup codes for client 2FA setup."""
+    from .totp import generate_totp_secret, get_totp_uri, generate_backup_codes
+
+    pool = await get_pool()
+    user_id = str(user["user_id"])
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT mfa_enabled, email FROM client_users WHERE id = $1",
+            user_id
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        if row["mfa_enabled"]:
+            raise HTTPException(status_code=400, detail="2FA is already enabled")
+
+        email = row["email"] or "user"
+        secret = generate_totp_secret()
+        uri = get_totp_uri(secret, email)
+        backup_codes = generate_backup_codes()
+
+        # Store secret temporarily (not enabled until verified)
+        await conn.execute(
+            "UPDATE client_users SET mfa_secret = $1 WHERE id = $2",
+            secret, user_id
+        )
+
+    return {"secret": secret, "uri": uri, "backup_codes": backup_codes}
+
+
+@auth_router.post("/totp/verify")
+async def client_totp_verify(
+    body: ClientTOTPVerifyRequest,
+    user: dict = Depends(require_client_user),
+):
+    """Verify TOTP code to enable client 2FA."""
+    from .totp import verify_totp, generate_backup_codes, hash_backup_code
+    from .auth import verify_password
+    import json as _json
+
+    pool = await get_pool()
+    user_id = str(user["user_id"])
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT password_hash, mfa_secret, mfa_enabled FROM client_users WHERE id = $1",
+            user_id
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if row["mfa_enabled"]:
+            raise HTTPException(status_code=400, detail="2FA is already enabled")
+        if not row["mfa_secret"]:
+            raise HTTPException(status_code=400, detail="Run setup first")
+        if not row["password_hash"]:
+            raise HTTPException(status_code=400, detail="Password not set")
+
+        if not verify_password(body.password, row["password_hash"]):
+            raise HTTPException(status_code=400, detail="Invalid password")
+
+        if not verify_totp(row["mfa_secret"], body.code):
+            raise HTTPException(status_code=400, detail="Invalid TOTP code")
+
+        # Generate and hash backup codes
+        backup_codes = generate_backup_codes()
+        hashed_codes = [hash_backup_code(c) for c in backup_codes]
+        backup_codes_json = _json.dumps(hashed_codes)
+
+        await conn.execute("""
+            UPDATE client_users
+            SET mfa_enabled = TRUE, mfa_backup_codes = $1
+            WHERE id = $2
+        """, backup_codes_json, user_id)
+
+    return {"status": "enabled", "backup_codes": backup_codes}
+
+
+@auth_router.delete("/totp")
+async def client_totp_disable(
+    body: ClientTOTPDisableRequest,
+    user: dict = Depends(require_client_user),
+):
+    """Disable client 2FA. Requires password."""
+    from .auth import verify_password
+
+    pool = await get_pool()
+    user_id = str(user["user_id"])
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT password_hash, mfa_enabled FROM client_users WHERE id = $1",
+            user_id
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        if not row["password_hash"]:
+            raise HTTPException(status_code=400, detail="Password not set")
+        if not verify_password(body.password, row["password_hash"]):
+            raise HTTPException(status_code=400, detail="Invalid password")
+        if not row["mfa_enabled"]:
+            raise HTTPException(status_code=400, detail="2FA is not enabled")
+
+        await conn.execute("""
+            UPDATE client_users
+            SET mfa_enabled = FALSE, mfa_secret = NULL, mfa_backup_codes = NULL
+            WHERE id = $1
+        """, user_id)
+
+    return {"status": "disabled"}

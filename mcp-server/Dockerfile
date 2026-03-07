@@ -38,6 +38,7 @@ RUN pip install --no-cache-dir \
     sendgrid \
     bcrypt \
     minio \
+    pyotp \
     opentimestamps-client
 
 # Copy application code

@@ -51,11 +51,12 @@ from dashboard_api.runbook_config import router as runbook_config_router
 from dashboard_api.users import router as users_router
 from dashboard_api.integrations.api import router as integrations_router, public_router as integrations_public_router
 from dashboard_api.frameworks import router as frameworks_router
+from dashboard_api.compliance_frameworks import partner_router as compliance_partner_router
 from dashboard_api.fleet_updates import router as fleet_updates_router
 from dashboard_api.device_sync import device_sync_router
 from dashboard_api.email_alerts import create_notification_with_email
 from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
-from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router
+from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router, session_router as partner_session_router
 from dashboard_api.billing import router as billing_router
 from dashboard_api.exceptions_api import router as exceptions_router
 from dashboard_api.appliance_delegation import router as appliance_delegation_router
@@ -64,6 +65,7 @@ from dashboard_api.client_portal import public_router as client_auth_router, aut
 from dashboard_api.hipaa_modules import router as hipaa_modules_router
 from dashboard_api.companion import router as companion_router
 from dashboard_api.protection_profiles import router as protection_profiles_router
+from dashboard_api.notifications import router as notifications_router
 from dashboard_api.cve_watch import router as cve_watch_router, cve_sync_loop
 from dashboard_api.framework_sync import router as framework_sync_router, framework_sync_loop
 from dashboard_api.websocket_manager import ws_manager
@@ -1033,6 +1035,7 @@ app.include_router(oauth_public_router, prefix="/api/auth")  # OAuth login publi
 app.include_router(oauth_router, prefix="/api/auth")  # OAuth authenticated endpoints
 app.include_router(oauth_admin_router, prefix="/api")  # OAuth admin endpoints
 app.include_router(partner_auth_router, prefix="/api")  # Partner OAuth login endpoints
+app.include_router(partner_session_router, prefix="/api/partner-auth")  # Partner TOTP management (session-auth)
 app.include_router(partner_admin_router, prefix="/api")  # Partner admin endpoints (pending, oauth-config)
 app.include_router(billing_router)  # Stripe billing for partners
 app.include_router(exceptions_router)  # Compliance exceptions management
@@ -1047,6 +1050,8 @@ app.include_router(companion_router, prefix="/api")  # Compliance Companion port
 app.include_router(org_credentials_router)  # Organization-level shared credentials
 app.include_router(protection_profiles_router, prefix="/api")  # Application Protection Profiles
 app.include_router(billing_webhook_router, prefix="/api")  # Stripe webhooks
+app.include_router(notifications_router)  # Partner notifications + L3 escalation tickets
+app.include_router(compliance_partner_router)  # Partner compliance defaults + site compliance
 
 # WebSocket endpoint for real-time event push
 @app.websocket("/ws/events")

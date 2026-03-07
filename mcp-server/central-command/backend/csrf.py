@@ -100,11 +100,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/partners/auth/",   # Partner login/logout (magic link)
         "/api/partner-auth/email-login",  # Partner email/password login (no session yet)
         "/api/partner-auth/email-signup", # Partner signup (no session yet)
+        "/api/partner-auth/verify-totp",  # Partner TOTP verification (MFA pending)
+        "/api/partner-auth/me/totp/",     # Partner TOTP management (session-auth)
         "/api/partner-auth/microsoft",    # OAuth initiation
         "/api/partner-auth/google",       # OAuth initiation
         "/api/partner-auth/callback",     # OAuth callback
         "/api/partner-auth/providers",    # Provider list (GET-like)
-        "/api/client/auth/",     # Client login/magic-link endpoints only
+        "/api/client/auth/",     # Client login/magic-link/TOTP endpoints
+        "/api/client/totp/",     # Client TOTP management
         "/api/companion/auth/",  # Companion login endpoints only
         "/api/portal/auth/",     # Portal magic link validation
         "/api/portal/sites/",    # Portal access request (public)

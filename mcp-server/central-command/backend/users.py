@@ -86,6 +86,7 @@ class UserUpdateRequest(BaseModel):
     role: Optional[Literal["admin", "operator", "readonly", "companion"]] = None
     status: Optional[Literal["active", "disabled"]] = None
     display_name: Optional[str] = None
+    email: Optional[str] = None
 
 
 class PasswordChangeRequest(BaseModel):
@@ -194,6 +195,20 @@ async def update_user(
     if update.display_name is not None:
         updates.append("display_name = :display_name")
         params["display_name"] = update.display_name
+    if update.email is not None:
+        # Validate email format
+        import re
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', update.email):
+            raise HTTPException(status_code=400, detail="Invalid email format")
+        # Check uniqueness
+        email_check = await db.execute(
+            text("SELECT id FROM admin_users WHERE email = :email AND id != :uid"),
+            {"email": update.email, "uid": user_id}
+        )
+        if email_check.fetchone():
+            raise HTTPException(status_code=400, detail="Email already in use by another user")
+        updates.append("email = :email")
+        params["email"] = update.email
 
     if updates:
         updates.append("updated_at = :now")
@@ -775,3 +790,296 @@ async def change_my_password(
     await db.commit()
 
     return {"status": "password_changed"}
+
+
+# =============================================================================
+# 2FA / TOTP ENDPOINTS (Self-service)
+# =============================================================================
+
+class TOTPSetupResponse(BaseModel):
+    secret: str
+    uri: str
+    backup_codes: list[str]
+
+
+class TOTPVerifyRequest(BaseModel):
+    code: str
+    password: str
+
+
+class TOTPDisableRequest(BaseModel):
+    password: str
+
+
+@router.post("/me/totp/setup", response_model=TOTPSetupResponse)
+async def totp_setup(
+    current_user: dict = Depends(require_auth),
+    db=Depends(get_db)
+):
+    """Generate TOTP secret and backup codes for 2FA setup.
+
+    Returns the secret, QR URI, and backup codes. User must verify
+    with a code from their authenticator app before 2FA is enabled.
+    """
+    from .totp import generate_totp_secret, get_totp_uri, generate_backup_codes
+
+    # Check if already enabled
+    result = await db.execute(
+        text("SELECT mfa_enabled, email FROM admin_users WHERE id = :id"),
+        {"id": current_user["id"]}
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    if row[0]:
+        raise HTTPException(status_code=400, detail="2FA is already enabled")
+
+    email = row[1] or current_user.get("username", "admin")
+
+    # Generate secret and backup codes
+    secret = generate_totp_secret()
+    uri = get_totp_uri(secret, email)
+    backup_codes = generate_backup_codes()
+
+    # Store secret temporarily (not enabled yet — user must verify)
+    await db.execute(
+        text("UPDATE admin_users SET mfa_secret = :secret WHERE id = :id"),
+        {"secret": secret, "id": current_user["id"]}
+    )
+    await db.commit()
+
+    return TOTPSetupResponse(
+        secret=secret,
+        uri=uri,
+        backup_codes=backup_codes,
+    )
+
+
+@router.post("/me/totp/verify")
+async def totp_verify(
+    body: TOTPVerifyRequest,
+    request: Request,
+    current_user: dict = Depends(require_auth),
+    db=Depends(get_db)
+):
+    """Verify TOTP code to enable 2FA.
+
+    Requires the user's current password and a valid TOTP code
+    from their authenticator app.
+    """
+    from .totp import verify_totp, generate_backup_codes, hash_backup_code
+    import json
+
+    # Verify current password
+    result = await db.execute(
+        text("SELECT password_hash, mfa_secret, mfa_enabled FROM admin_users WHERE id = :id"),
+        {"id": current_user["id"]}
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    password_hash, mfa_secret, mfa_enabled = row
+
+    if not verify_password(body.password, password_hash):
+        raise HTTPException(status_code=400, detail="Invalid password")
+
+    if mfa_enabled:
+        raise HTTPException(status_code=400, detail="2FA is already enabled")
+
+    if not mfa_secret:
+        raise HTTPException(status_code=400, detail="Run setup first")
+
+    # Verify the TOTP code
+    if not verify_totp(mfa_secret, body.code):
+        raise HTTPException(status_code=400, detail="Invalid TOTP code")
+
+    # Generate and hash backup codes
+    backup_codes = generate_backup_codes()
+    hashed_codes = [hash_backup_code(c) for c in backup_codes]
+    backup_codes_json = json.dumps(hashed_codes)
+
+    # Enable 2FA
+    await db.execute(
+        text("""
+            UPDATE admin_users
+            SET mfa_enabled = TRUE, mfa_backup_codes = :codes, updated_at = :now
+            WHERE id = :id
+        """),
+        {
+            "codes": backup_codes_json,
+            "now": datetime.now(timezone.utc),
+            "id": current_user["id"],
+        }
+    )
+
+    await _log_audit(
+        db, current_user["id"], current_user["username"],
+        "TOTP_ENABLED", f"user:{current_user['id']}",
+        None,
+        request.client.host if request.client else None
+    )
+    await db.commit()
+
+    return {"status": "enabled", "backup_codes": backup_codes}
+
+
+@router.delete("/me/totp")
+async def totp_disable(
+    body: TOTPDisableRequest,
+    request: Request,
+    current_user: dict = Depends(require_auth),
+    db=Depends(get_db)
+):
+    """Disable 2FA. Requires current password."""
+    # Verify current password
+    result = await db.execute(
+        text("SELECT password_hash, mfa_enabled FROM admin_users WHERE id = :id"),
+        {"id": current_user["id"]}
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not verify_password(body.password, row[0]):
+        raise HTTPException(status_code=400, detail="Invalid password")
+
+    if not row[1]:
+        raise HTTPException(status_code=400, detail="2FA is not enabled")
+
+    # Disable 2FA
+    await db.execute(
+        text("""
+            UPDATE admin_users
+            SET mfa_enabled = FALSE, mfa_secret = NULL, mfa_backup_codes = NULL, updated_at = :now
+            WHERE id = :id
+        """),
+        {"now": datetime.now(timezone.utc), "id": current_user["id"]}
+    )
+
+    await _log_audit(
+        db, current_user["id"], current_user["username"],
+        "TOTP_DISABLED", f"user:{current_user['id']}",
+        None,
+        request.client.host if request.client else None
+    )
+    await db.commit()
+
+    return {"status": "disabled"}
+
+
+# =============================================================================
+# SESSION MANAGEMENT ENDPOINTS (Self-service)
+# =============================================================================
+
+@router.get("/me/sessions")
+async def list_my_sessions(
+    request: Request,
+    current_user: dict = Depends(require_auth),
+    db=Depends(get_db)
+):
+    """List active sessions for the current user."""
+    # Get current session's token hash for is_current detection
+    token = request.cookies.get("session_token")
+    if not token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    current_token_hash = hash_token(token) if token else None
+
+    result = await db.execute(
+        text("""
+            SELECT id, ip_address, user_agent, created_at, last_activity_at, token_hash
+            FROM admin_sessions
+            WHERE user_id = :uid AND expires_at > :now
+            ORDER BY last_activity_at DESC NULLS LAST
+        """),
+        {"uid": current_user["id"], "now": datetime.now(timezone.utc)}
+    )
+
+    sessions = []
+    for row in result.fetchall():
+        sessions.append({
+            "id": str(row[0]),
+            "ip_address": row[1],
+            "user_agent": row[2],
+            "created_at": row[3].isoformat() if row[3] else None,
+            "last_activity_at": row[4].isoformat() if row[4] else None,
+            "is_current": row[5] == current_token_hash if current_token_hash else False,
+        })
+
+    return sessions
+
+
+@router.delete("/me/sessions/{session_id}")
+async def revoke_session(
+    session_id: str,
+    request: Request,
+    current_user: dict = Depends(require_auth),
+    db=Depends(get_db)
+):
+    """Revoke a specific session."""
+    # Verify session belongs to current user
+    result = await db.execute(
+        text("SELECT id FROM admin_sessions WHERE id = :sid AND user_id = :uid"),
+        {"sid": session_id, "uid": current_user["id"]}
+    )
+    if not result.fetchone():
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await db.execute(
+        text("DELETE FROM admin_sessions WHERE id = :sid AND user_id = :uid"),
+        {"sid": session_id, "uid": current_user["id"]}
+    )
+
+    await _log_audit(
+        db, current_user["id"], current_user["username"],
+        "SESSION_REVOKED", f"session:{session_id}",
+        None,
+        request.client.host if request.client else None
+    )
+    await db.commit()
+
+    return {"status": "revoked", "session_id": session_id}
+
+
+@router.delete("/me/sessions")
+async def revoke_all_sessions(
+    request: Request,
+    current_user: dict = Depends(require_auth),
+    db=Depends(get_db)
+):
+    """Revoke all sessions except the current one."""
+    # Get current session's token hash
+    token = request.cookies.get("session_token")
+    if not token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    current_token_hash = hash_token(token) if token else None
+
+    if current_token_hash:
+        result = await db.execute(
+            text("""
+                DELETE FROM admin_sessions
+                WHERE user_id = :uid AND token_hash != :current_hash
+            """),
+            {"uid": current_user["id"], "current_hash": current_token_hash}
+        )
+    else:
+        result = await db.execute(
+            text("DELETE FROM admin_sessions WHERE user_id = :uid"),
+            {"uid": current_user["id"]}
+        )
+
+    count = result.rowcount
+
+    await _log_audit(
+        db, current_user["id"], current_user["username"],
+        "ALL_SESSIONS_REVOKED", f"user:{current_user['id']}",
+        {"revoked_count": count},
+        request.client.host if request.client else None
+    )
+    await db.commit()
+
+    return {"status": "revoked", "count": count}

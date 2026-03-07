@@ -19,6 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
+# MFA pending tokens: {token: {"user_id": ..., "username": ..., "expires": datetime}}
+_mfa_pending_tokens: Dict[str, Dict[str, Any]] = {}
+MFA_PENDING_TTL_MINUTES = 5
+
 # Configuration
 SESSION_DURATION_HOURS = 24
 SESSION_IDLE_TIMEOUT_MINUTES = 15  # HIPAA §164.312(a)(2)(iii) automatic logoff
@@ -260,7 +264,41 @@ async def authenticate_user(
         await _log_audit(db, user_id, username, "LOGIN_FAILED", "auth", {"reason": "invalid_password", "attempts": new_attempts}, ip_address)
         return False, None, {"error": "Invalid username or password"}
 
-    # Success - create session
+    # Check if MFA is enabled
+    mfa_result = await db.execute(
+        text("SELECT mfa_enabled FROM admin_users WHERE id = :id"),
+        {"id": user_id}
+    )
+    mfa_row = mfa_result.fetchone()
+    if mfa_row and mfa_row[0]:
+        # MFA required — issue a short-lived pending token instead of a session
+        mfa_token = secrets.token_urlsafe(32)
+
+        # Clean up expired pending tokens
+        now = datetime.now(timezone.utc)
+        expired_keys = [k for k, v in _mfa_pending_tokens.items() if v["expires"] < now]
+        for k in expired_keys:
+            _mfa_pending_tokens.pop(k, None)
+
+        _mfa_pending_tokens[mfa_token] = {
+            "user_id": str(user_id),
+            "username": username,
+            "display_name": display_name,
+            "role": role,
+            "ip_address": ip_address,
+            "user_agent": user_agent,
+            "expires": now + timedelta(minutes=MFA_PENDING_TTL_MINUTES),
+        }
+
+        await _log_audit(db, user_id, username, "LOGIN_MFA_PENDING", "auth", None, ip_address)
+        await db.commit()
+
+        return False, None, {
+            "status": "mfa_required",
+            "mfa_token": mfa_token,
+        }
+
+    # Success - create session (no MFA)
     session_token = generate_session_token()
     token_hash = hash_token(session_token)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=SESSION_DURATION_HOURS)
@@ -296,6 +334,107 @@ async def authenticate_user(
         "username": username,
         "displayName": display_name,
         "role": role,
+    }
+
+
+async def complete_mfa_login(
+    db: AsyncSession,
+    mfa_token: str,
+    totp_code: str,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+    """Complete login after TOTP verification.
+
+    Args:
+        db: Database session
+        mfa_token: The short-lived MFA pending token
+        totp_code: 6-digit TOTP code or 8-char backup code
+
+    Returns:
+        (success, session_token, user_data) or (False, None, error_dict)
+    """
+    from .totp import verify_totp, verify_backup_code
+
+    # Clean up expired tokens
+    now = datetime.now(timezone.utc)
+    expired_keys = [k for k, v in _mfa_pending_tokens.items() if v["expires"] < now]
+    for k in expired_keys:
+        _mfa_pending_tokens.pop(k, None)
+
+    pending = _mfa_pending_tokens.pop(mfa_token, None)
+    if not pending:
+        return False, None, {"error": "Invalid or expired MFA token"}
+
+    if pending["expires"] < now:
+        return False, None, {"error": "MFA token has expired"}
+
+    user_id = pending["user_id"]
+    username = pending["username"]
+
+    # Get MFA secret and backup codes
+    result = await db.execute(
+        text("SELECT mfa_secret, mfa_backup_codes FROM admin_users WHERE id = :id"),
+        {"id": user_id}
+    )
+    row = result.fetchone()
+    if not row or not row[0]:
+        return False, None, {"error": "MFA not configured"}
+
+    mfa_secret, backup_codes_json = row
+
+    # Try TOTP first, then backup code
+    code_valid = verify_totp(mfa_secret, totp_code)
+    if not code_valid and backup_codes_json:
+        code_valid, updated_codes = verify_backup_code(totp_code, backup_codes_json)
+        if code_valid:
+            # Update backup codes (remove used one)
+            await db.execute(
+                text("UPDATE admin_users SET mfa_backup_codes = :codes WHERE id = :id"),
+                {"codes": updated_codes, "id": user_id}
+            )
+
+    if not code_valid:
+        await _log_audit(db, user_id, username, "MFA_VERIFY_FAILED", "auth", None, ip_address)
+        await db.commit()
+        return False, None, {"error": "Invalid TOTP code"}
+
+    # Create session
+    session_token = generate_session_token()
+    token_hash = hash_token(session_token)
+    expires_at = now + timedelta(hours=SESSION_DURATION_HOURS)
+
+    await db.execute(
+        text("""
+            INSERT INTO admin_sessions (user_id, token_hash, ip_address, user_agent, expires_at)
+            VALUES (:user_id, :token_hash, :ip, :ua, :expires)
+        """),
+        {
+            "user_id": user_id,
+            "token_hash": token_hash,
+            "ip": ip_address or pending.get("ip_address"),
+            "ua": user_agent or pending.get("user_agent"),
+            "expires": expires_at,
+        }
+    )
+
+    # Reset failed attempts and update last login
+    await db.execute(
+        text("""
+            UPDATE admin_users
+            SET failed_login_attempts = 0, locked_until = NULL, last_login = :now
+            WHERE id = :id
+        """),
+        {"now": now, "id": user_id}
+    )
+    await db.commit()
+
+    await _log_audit(db, user_id, username, "LOGIN_SUCCESS_MFA", "auth", None, ip_address)
+
+    return True, session_token, {
+        "username": username,
+        "displayName": pending["display_name"],
+        "role": pending["role"],
     }
 
 
