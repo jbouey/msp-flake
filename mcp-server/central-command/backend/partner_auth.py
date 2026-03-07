@@ -267,7 +267,7 @@ Name: {partner_name}
 Email: {partner_email}
 
 Please review and approve/reject at:
-https://dashboard.osiriscare.net/admin/partners/pending
+https://dashboard.osiriscare.net/partners
 
 This signup was created at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}."""
 

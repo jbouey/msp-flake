@@ -854,9 +854,31 @@ export const Partners: React.FC = () => {
     }
   };
 
-  const handleCopyApiKey = async (_partnerId: string) => {
-    // In a real implementation, this would call an API to regenerate the key
-    alert('API key regeneration not yet implemented. Contact engineering to reset partner API keys.');
+  const handleCopyApiKey = async (partnerId: string) => {
+    if (!confirm('Are you sure you want to regenerate this partner\'s API key? The old key will stop working immediately.')) {
+      return;
+    }
+    const token = getToken();
+    if (!token) return;
+    try {
+      const response = await fetch(`/api/partners/${partnerId}/regenerate-key`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.api_key) {
+          await navigator.clipboard.writeText(data.api_key).catch(() => {});
+          alert(`New API Key (copied to clipboard):\n\n${data.api_key}\n\nSave this now — it cannot be retrieved later.`);
+        }
+      } else {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        alert(`Failed to regenerate API key: ${error.detail || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Failed to regenerate API key:', error);
+      alert('Failed to regenerate API key');
+    }
   };
 
   // Filter partners

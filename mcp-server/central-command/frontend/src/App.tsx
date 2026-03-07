@@ -306,6 +306,7 @@ const AppLayout: React.FC = () => {
               <Route path="/notification-settings" element={<NotificationSettings />} />
               <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/partners" element={<Partners />} />
+              <Route path="/admin/partners/pending" element={<Navigate to="/partners" replace />} />
               <Route path="/users" element={<Users />} />
               <Route path="/runbooks" element={<Runbooks />} />
               <Route path="/runbook-config" element={<RunbookConfig />} />
