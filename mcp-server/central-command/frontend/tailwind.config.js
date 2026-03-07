@@ -54,6 +54,12 @@ export default {
           healthy: '#34C759',
           neutral: '#8E8E93',
         },
+        // Healing tier colors
+        level: {
+          l1: '#34C759',    // Green — deterministic
+          l2: '#FF9500',    // Orange — LLM-assisted
+          l3: '#FF3B30',    // Red — human escalation
+        },
         // Accent colors
         accent: {
           primary: '#007AFF',

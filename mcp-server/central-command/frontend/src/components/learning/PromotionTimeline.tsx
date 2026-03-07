@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { GlassCard } from '../shared';
 import type { PromotionHistory } from '../../types';
 
@@ -7,10 +7,21 @@ interface PromotionTimelineProps {
   isLoading?: boolean;
 }
 
+type TimeFilter = '7d' | '30d' | 'all';
+
 export const PromotionTimeline: React.FC<PromotionTimelineProps> = ({
   history,
   isLoading = false,
 }) => {
+  const [filter, setFilter] = useState<TimeFilter>('30d');
+
+  const filtered = useMemo(() => {
+    if (filter === 'all') return history;
+    const days = filter === '7d' ? 7 : 30;
+    const cutoff = Date.now() - days * 86400000;
+    return history.filter((h) => new Date(h.promoted_at).getTime() > cutoff);
+  }, [history, filter]);
+
   const formatDate = (dateStr: string): string => {
     const date = new Date(dateStr);
     return date.toLocaleDateString(undefined, {
@@ -22,24 +33,24 @@ export const PromotionTimeline: React.FC<PromotionTimelineProps> = ({
   };
 
   const getSuccessColor = (rate: number): string => {
-    if (rate >= 95) return 'bg-health-healthy';
-    if (rate >= 80) return 'bg-health-warning';
-    return 'bg-health-critical';
+    if (rate >= 80) return 'text-health-healthy';
+    if (rate >= 50) return 'text-health-warning';
+    return 'text-health-critical';
+  };
+
+  const getSuccessBg = (rate: number): string => {
+    if (rate >= 80) return 'bg-health-healthy/10';
+    if (rate >= 50) return 'bg-health-warning/10';
+    return 'bg-health-critical/10';
   };
 
   if (isLoading) {
     return (
       <GlassCard>
         <h2 className="text-lg font-semibold mb-4">Recently Promoted</h2>
-        <div className="space-y-4">
+        <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="flex gap-4 animate-pulse">
-              <div className="w-3 h-3 bg-separator-light rounded-full mt-1.5" />
-              <div className="flex-1">
-                <div className="h-4 bg-separator-light rounded w-1/2 mb-2" />
-                <div className="h-3 bg-separator-light rounded w-1/3" />
-              </div>
-            </div>
+            <div key={i} className="animate-pulse rounded-ios-sm bg-separator-light/40 h-16" />
           ))}
         </div>
       </GlassCard>
@@ -59,64 +70,70 @@ export const PromotionTimeline: React.FC<PromotionTimelineProps> = ({
 
   return (
     <GlassCard>
-      <h2 className="text-lg font-semibold mb-4">Recently Promoted</h2>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-lg font-semibold">Recently Promoted</h2>
+          <p className="text-xs text-label-tertiary mt-0.5">
+            {filtered.length} promotion{filtered.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+        <div className="flex gap-1 bg-fill-quaternary rounded-ios-sm p-0.5">
+          {(['7d', '30d', 'all'] as TimeFilter[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-3 py-1 text-xs font-medium rounded-ios-sm transition-colors ${
+                filter === f
+                  ? 'bg-background-secondary text-label-primary shadow-sm'
+                  : 'text-label-tertiary hover:text-label-secondary'
+              }`}
+            >
+              {f === 'all' ? 'All' : f}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      <div className="relative">
-        {/* Timeline line */}
-        <div className="absolute left-1.5 top-2 bottom-2 w-px bg-separator-light" />
-
-        {/* Timeline items */}
-        <div className="space-y-4">
-          {history.map((item, index) => (
-            <div key={item.id} className="flex gap-4 relative">
-              {/* Timeline dot */}
-              <div
-                className={`w-3 h-3 rounded-full flex-shrink-0 mt-1.5 ${
-                  index === 0 ? 'bg-accent-primary' : 'bg-separator-light'
-                }`}
-              />
-
-              {/* Content */}
+      {filtered.length === 0 ? (
+        <p className="text-label-tertiary text-sm text-center py-6">
+          No promotions in this time period.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((item) => (
+            <div
+              key={item.id}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-ios-sm bg-fill-quaternary hover:bg-fill-tertiary transition-colors"
+            >
+              {/* Pattern signature */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="font-mono text-sm font-medium text-label-primary truncate">
-                      {item.pattern_signature}
-                    </p>
-                    <p className="text-xs text-label-tertiary mt-0.5">
-                      {formatDate(item.promoted_at)}
-                    </p>
-                  </div>
+                <p className="font-mono text-sm font-medium text-label-primary break-all leading-snug">
+                  {item.pattern_signature}
+                </p>
+                <p className="text-xs text-label-tertiary mt-1">
+                  {formatDate(item.promoted_at)}
+                </p>
+              </div>
 
-                  {/* Stats badge */}
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="px-2 py-0.5 text-xs font-medium bg-level-l1 text-white rounded">
-                      {item.rule_id}
-                    </span>
-                  </div>
+              {/* Stats */}
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <div className={`px-2 py-1 rounded-ios-sm text-center ${getSuccessBg(item.post_promotion_success_rate)}`}>
+                  <p className={`text-sm font-semibold ${getSuccessColor(item.post_promotion_success_rate)}`}>
+                    {item.post_promotion_success_rate.toFixed(0)}%
+                  </p>
+                  <p className="text-[10px] text-label-tertiary leading-tight">
+                    {item.executions_since_promotion} exec
+                  </p>
                 </div>
 
-                {/* Post-promotion stats */}
-                <div className="flex items-center gap-3 mt-2 text-xs">
-                  <div className="flex items-center gap-1">
-                    <span
-                      className={`w-2 h-2 rounded-full ${getSuccessColor(
-                        item.post_promotion_success_rate
-                      )}`}
-                    />
-                    <span className="text-label-tertiary">
-                      {item.post_promotion_success_rate.toFixed(1)}% success
-                    </span>
-                  </div>
-                  <div className="text-label-tertiary">
-                    {item.executions_since_promotion} executions
-                  </div>
-                </div>
+                <span className="px-2 py-1 text-[10px] font-mono font-medium bg-level-l1 text-white rounded-ios-sm max-w-[120px] truncate" title={item.rule_id}>
+                  {item.rule_id}
+                </span>
               </div>
             </div>
           ))}
         </div>
-      </div>
+      )}
     </GlassCard>
   );
 };
