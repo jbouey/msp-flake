@@ -28,6 +28,14 @@ export const PartnerLogin: React.FC = () => {
   const [providers, setProviders] = useState<OAuthProviders>({ microsoft: false, google: false });
   const [providersLoading, setProvidersLoading] = useState(true);
 
+  // Email signup state
+  const [showEmailSignup, setShowEmailSignup] = useState(false);
+  const [signupName, setSignupName] = useState('');
+  const [signupEmail, setSignupEmail] = useState('');
+  const [signupCompany, setSignupCompany] = useState('');
+  const [signupStatus, setSignupStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [signupMessage, setSignupMessage] = useState('');
+
   // Check for magic link token in URL
   const magicToken = searchParams.get('token');
   const oauthError = searchParams.get('error');
@@ -124,6 +132,39 @@ export const PartnerLogin: React.FC = () => {
     setError(null);
     // Redirect to OAuth endpoint
     window.location.href = `/api/partner-auth/${provider}`;
+  };
+
+  const handleEmailSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!signupName.trim() || !signupEmail.trim()) return;
+
+    setSignupStatus('loading');
+    setError(null);
+
+    try {
+      const response = await fetch('/api/partner-auth/email-signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: signupName.trim(),
+          email: signupEmail.trim(),
+          company: signupCompany.trim() || signupName.trim(),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setSignupStatus('success');
+        setSignupMessage(data.message);
+      } else {
+        setSignupStatus('error');
+        setSignupMessage(data.detail || 'Signup failed');
+      }
+    } catch (err) {
+      setSignupStatus('error');
+      setSignupMessage('Network error. Please try again.');
+    }
   };
 
   const hasOAuthProviders = providers.microsoft || providers.google;
@@ -282,12 +323,77 @@ export const PartnerLogin: React.FC = () => {
           </form>
 
           <div className="mt-6 pt-6 border-t border-slate-200">
-            <p className="text-center text-sm text-slate-500">
-              Don't have an API key?{' '}
-              <a href="mailto:partners@osiriscare.net" className="text-indigo-600 hover:underline">
-                Contact us
-              </a>
-            </p>
+            {!showEmailSignup ? (
+              <p className="text-center text-sm text-slate-500">
+                New partner?{' '}
+                <button
+                  type="button"
+                  onClick={() => setShowEmailSignup(true)}
+                  className="text-indigo-600 hover:underline font-medium"
+                >
+                  Request a partner account
+                </button>
+              </p>
+            ) : signupStatus === 'success' ? (
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
+                <div className="flex items-start gap-3">
+                  <svg className="w-5 h-5 text-emerald-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <p className="text-emerald-800 font-medium">Request Submitted</p>
+                    <p className="text-emerald-700 text-sm mt-1">{signupMessage}</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <h3 className="text-sm font-semibold text-slate-700 mb-3 text-center">Request Partner Account</h3>
+                <form onSubmit={handleEmailSignup} className="space-y-3">
+                  <input
+                    type="text"
+                    value={signupName}
+                    onChange={(e) => setSignupName(e.target.value)}
+                    placeholder="Your name"
+                    required
+                    className="w-full px-3 py-2.5 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition text-sm"
+                  />
+                  <input
+                    type="email"
+                    value={signupEmail}
+                    onChange={(e) => setSignupEmail(e.target.value)}
+                    placeholder="Business email"
+                    required
+                    className="w-full px-3 py-2.5 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition text-sm"
+                  />
+                  <input
+                    type="text"
+                    value={signupCompany}
+                    onChange={(e) => setSignupCompany(e.target.value)}
+                    placeholder="Company name (optional)"
+                    className="w-full px-3 py-2.5 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition text-sm"
+                  />
+                  {signupStatus === 'error' && (
+                    <p className="text-red-600 text-sm">{signupMessage}</p>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={signupStatus === 'loading' || !signupName.trim() || !signupEmail.trim()}
+                    className="w-full py-2.5 text-white font-medium rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
+                    style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)' }}
+                  >
+                    {signupStatus === 'loading' ? 'Submitting...' : 'Request Account'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowEmailSignup(false); setSignupStatus('idle'); }}
+                    className="w-full text-center text-sm text-slate-500 hover:text-slate-700"
+                  >
+                    Back to login
+                  </button>
+                </form>
+              </div>
+            )}
           </div>
         </div>
 

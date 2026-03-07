@@ -95,6 +95,13 @@ class OAuthState(BaseModel):
     created_at: str
 
 
+class EmailSignupRequest(BaseModel):
+    """Email-based partner signup request."""
+    name: str
+    email: str
+    company: str = ""
+
+
 # =============================================================================
 # PKCE HELPERS
 # =============================================================================
@@ -822,6 +829,110 @@ async def get_oauth_providers():
             "microsoft": bool(MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET),
             "google": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
         }
+    }
+
+
+# =============================================================================
+# EMAIL-BASED PARTNER SIGNUP
+# =============================================================================
+
+@public_router.post("/email-signup")
+async def email_signup(request: Request, body: EmailSignupRequest):
+    """Register a new partner via email (no OAuth required).
+
+    Creates a partner with pending_approval=True and notifies admins.
+    Works for any email provider (privateemail, ProtonMail, custom domains, etc.)
+    """
+    email = body.email.strip().lower()
+    name = body.name.strip()
+    company = body.company.strip() or name
+
+    if not email or not name:
+        raise HTTPException(status_code=400, detail="Name and email are required")
+
+    # Basic email validation
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Check if partner already exists with this email
+        existing = await conn.fetchrow("""
+            SELECT id, pending_approval, status FROM partners
+            WHERE contact_email = $1 OR oauth_email = $1
+        """, email)
+
+        if existing:
+            if existing["pending_approval"]:
+                # Already registered, still pending
+                return {
+                    "status": "pending",
+                    "message": "Your signup request is already pending approval. You'll receive an email once approved."
+                }
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail="An account with this email already exists. Please sign in with your API key or contact support."
+                )
+
+        # Generate slug from company name or email
+        slug_base = company.lower().replace(" ", "-").replace(".", "-")[:50]
+        import re
+        slug_base = re.sub(r'[^a-z0-9-]', '', slug_base) or email.split("@")[0]
+
+        # Ensure slug uniqueness
+        slug = slug_base
+        for i in range(100):
+            test_slug = slug if i == 0 else f"{slug}-{i}"
+            exists = await conn.fetchval("SELECT 1 FROM partners WHERE slug = $1", test_slug)
+            if not exists:
+                slug = test_slug
+                break
+
+        # Create partner with pending approval
+        row = await conn.fetchrow("""
+            INSERT INTO partners (
+                name, slug, contact_email, brand_name,
+                auth_provider, oauth_email,
+                status, pending_approval
+            ) VALUES (
+                $1, $2, $3, $4,
+                'email', $5,
+                'active', TRUE
+            )
+            RETURNING id, name, slug
+        """,
+            company,
+            slug,
+            email,
+            company,
+            email,
+        )
+
+        logger.info(f"New email-based partner signup: {slug} ({email})")
+
+    # Send admin notification
+    await send_partner_approval_notification(
+        partner_name=company,
+        partner_email=email,
+        pool=pool
+    )
+
+    # Audit log
+    await log_partner_activity(
+        partner_id=str(row["id"]),
+        event_type=PartnerEventType.OAUTH_LOGIN_STARTED,  # Reuse existing event type for signup
+        event_data={"provider": "email", "email": email, "company": company},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
+    return {
+        "status": "pending",
+        "message": "Your partner account request has been submitted. You'll receive an email once approved."
     }
 
 
