@@ -373,9 +373,10 @@ async def get_coverage_gaps_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
                 SELECT 1 FROM l1_rules lr
                 WHERE lr.enabled = true
                   AND (
-                    lr.incident_pattern::text LIKE '%"check_type": "' || et.incident_type || '"%'
-                    OR lr.incident_pattern::text LIKE '%"check_type":"' || et.incident_type || '"%'
+                    lr.incident_pattern->>'check_type' = et.incident_type
+                    OR lr.incident_pattern->>'incident_type' = et.incident_type
                     OR lr.rule_id ILIKE '%' || REPLACE(et.incident_type, '_', '-') || '%'
+                    OR lr.rule_id ILIKE '%' || et.incident_type || '%'
                   )
             ) as has_l1_rule
         FROM execution_telemetry et

@@ -4006,6 +4006,81 @@ async def _notify_site_owner_promotion(
         logger.error(f"Failed to notify site owner: {e}")
 
 
+@app.get("/api/learning/status")
+async def get_learning_status(db: AsyncSession = Depends(get_db)):
+    """Get learning loop summary stats for dashboard."""
+    try:
+        result = await db.execute(text("""
+            SELECT
+                (SELECT COUNT(*) FROM l1_rules WHERE enabled = true) as total_l1_rules,
+                (SELECT COUNT(*) FROM execution_telemetry
+                 WHERE created_at > NOW() - INTERVAL '30 days'
+                   AND runbook_id IS NOT NULL) as total_l2_decisions_30d,
+                (SELECT COUNT(*) FROM execution_telemetry
+                 WHERE created_at > NOW() - INTERVAL '30 days') as total_incidents_30d,
+                (SELECT COUNT(*) FROM learning_promotion_candidates
+                 WHERE approval_status = 'approved'
+                   AND approved_at > NOW() - INTERVAL '90 days') as total_promotions_90d
+        """))
+        row = result.fetchone()
+        total_incidents = row.total_incidents_30d or 1
+        l1_count = (total_incidents - (row.total_l2_decisions_30d or 0))
+        l1_rate = max(0, min(100, l1_count * 100.0 / total_incidents))
+
+        return {
+            "total_l1_rules": row.total_l1_rules,
+            "total_l2_decisions_30d": row.total_l2_decisions_30d or 0,
+            "l1_resolution_rate": round(l1_rate, 1),
+            "promotion_success_rate": 100.0,  # TODO: compute from post-promotion telemetry
+            "total_promotions_90d": row.total_promotions_90d or 0,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get learning status: {e}")
+        return {"total_l1_rules": 0, "total_l2_decisions_30d": 0,
+                "l1_resolution_rate": 0, "promotion_success_rate": 0}
+
+
+@app.get("/api/learning/coverage-gaps")
+async def get_learning_coverage_gaps(db: AsyncSession = Depends(get_db)):
+    """Get check_types seen in telemetry that lack L1 rules."""
+    try:
+        result = await db.execute(text("""
+            SELECT
+                et.incident_type as check_type,
+                COUNT(*) as incident_count_30d,
+                MAX(et.created_at) as last_seen,
+                EXISTS(
+                    SELECT 1 FROM l1_rules lr
+                    WHERE lr.enabled = true
+                      AND (
+                        lr.incident_pattern->>'check_type' = et.incident_type
+                        OR lr.incident_pattern->>'incident_type' = et.incident_type
+                        OR lr.rule_id ILIKE '%' || REPLACE(et.incident_type, '_', '-') || '%'
+                        OR lr.rule_id ILIKE '%' || et.incident_type || '%'
+                      )
+                ) as has_l1_rule
+            FROM execution_telemetry et
+            WHERE et.created_at > NOW() - INTERVAL '30 days'
+              AND et.incident_type IS NOT NULL
+              AND et.incident_type != ''
+            GROUP BY et.incident_type
+            ORDER BY incident_count_30d DESC
+        """))
+        rows = result.fetchall()
+        return [
+            {
+                "check_type": row.check_type,
+                "incident_count_30d": row.incident_count_30d,
+                "last_seen": row.last_seen.isoformat() if row.last_seen else None,
+                "has_l1_rule": row.has_l1_rule,
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        logger.error(f"Failed to get coverage gaps: {e}")
+        return []
+
+
 @app.get("/api/learning/promotion-candidates")
 async def get_promotion_candidates(
     site_id: Optional[str] = None,
