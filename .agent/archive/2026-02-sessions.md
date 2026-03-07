@@ -1653,3 +1653,270 @@ The v2 execution plan only restores snapshots at campaign START, not end. So the
 [truncated...]
 
 ---
+
+## 2026-02-21-session-122-HIPAA administrative compliance modules — 10 gap-closing integrations.md
+
+# Session 122 - Hipaa Administrative Compliance Modules — 10 Gap Closing Integrations
+
+**Date:** 2026-02-21
+**Started:** 02:45
+**Previous Session:** 121
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-02-21-session-122-hipaa-compliance-modules.md
+
+# Session 122: HIPAA Administrative Compliance Modules
+
+**Date:** 2026-02-21
+**Duration:** ~45 min
+**Focus:** Implement 10 HIPAA gap-closing integrations for client portal
+
+## What Was Done
+
+Implemented complete HIPAA administrative compliance documentation system for the client portal, covering the "paper" side of HIPAA that auditors require alongside existing automated technical controls.
+
+### Backend (3 new files)
+
+1. **Migration 048** (`backend/migrations/048_hipaa_modules.sql`)
+   - 12 tables: `hipaa_sra_assessments`, `hipaa_sra_responses`, `hipaa_policies`, `hipaa_training_records`, `hipaa_baas`, `hipaa_ir_plans`, `hipaa_breach_log`, `hipaa_contingency_plans`, `hipaa_workforce_access`, `hipaa_physical_safeguards`, `hipaa_officers`, `hipaa_gap_responses`
+   - 11 indexes for org-scoped queries
+   - Migration run successfully on VPS database
+
+2. **Templates** (`backend/hipaa_templates.py`)
+   - 40 SRA questions across administrative/physical/technical safeguards
+   - 8 HIPAA policy templates with `{{ORG_NAME}}`, `{{SECURITY_OFFICER}}` placeholders
+   - IR plan template with response procedures and breach notification guidance
+   - 19 physical safeguard checklist items
+   - 27 gap analysis questions across 4 sections
+
+3. **Router** (`backend/hipaa_modules.py`)
+   - ~30 FastAPI endpoints on `APIRouter(prefix="/client/compliance")`
+   - Uses existing `require_client_user` auth dependency
+   - Overview endpoint aggregates all 10 modules into composite readiness score
+   - Full CRUD for: SRA, policies, training, BAAs, breaches, contingency, workforce
+   - Upsert patterns for: physical safeguards, officers, gap analysis
+
+### Frontend (12 new files)
+
+1. **Hub page** (`ClientCompliance.tsx`) — readiness score ring + 10 module cards with status badges + tab navigation
+2. **SRAWizard.tsx** — multi-step wizard (admin→physical→technical→summary→remediation) with risk scoring
+3. **PolicyLibrary.tsx** — template-based creation, inline editor, approval workflow
+4. **TrainingTracker.tsx** — CRUD table with overdue detection
+5. **BAATracker.tsx** — BAA inventory with PHI type tags + expiry alerts
+6. **IncidentResponsePlan.tsx** — IR plan editor + breach log
+7. **ContingencyPlan.tsx** — DR/BCP manager with RTO/RPO tracking
+8. **WorkforceAccess.tsx** — access lifecycle table with termination workflow
+9. **PhysicalSafeguards.tsx** — checklist with compliance status dropdowns
+10. **OfficerDesignation.tsx** — privacy + security officer form
+11. **GapWizard.tsx** — questionnaire with CMM maturity scoring + gap report
+12. **compliance/index.ts** — barrel exports
+
+### Wiring (4 modified files)
+
+- `App.tsx` — added `ClientCompliance` to lazy import + `/client/compliance` route
+- `client/index.ts` — added `ClientCompliance` export
+
+[truncated...]
+
+---
+
+## 2026-02-21-session-123-native-go-l2-planner-phi-scrubbing.md
+
+# Session 123: Native Go L2 LLM Planner + PHI Scrubbing
+**Date:** 2026-02-21
+**Duration:** ~4 hours (across 2 context windows)
+
+## Summary
+Built the complete native Go L2 LLM planner with PHI scrubbing, guardrails, budget tracking, and telemetry. Refactored architecture mid-session to centralize Anthropic API key on Central Command (VPS) instead of storing on every appliance device. Deployed and verified end-to-end on production VPS.
+
+## What Was Done
+
+### Phase 1: PHI Scrubber + Guardrails
+- `appliance/internal/l2planner/phi_scrubber.go` — 12 regex categories (SSN, MRN, patient ID, phone, email, credit card, DOB, address, ZIP, account number, insurance ID, Medicare). IPs intentionally excluded per HIPAA Safe Harbor (infrastructure data). Hash suffix for correlation.
+- `appliance/internal/l2planner/guardrails.go` — Dangerous pattern detection (rm -rf, mkfs, chmod 777, curl|bash, DROP TABLE, reverse shells). Allowed actions allowlist. Auto-escalation on low confidence or blocked commands.
+
+### Phase 2: Budget + Prompt + Telemetry
+- `appliance/internal/l2planner/budget.go` — $10/day spend limit, 60 calls/hr rate limit, 3 concurrent semaphore. Haiku 4.5 pricing model.
+- `appliance/internal/l2planner/prompt.go` — Simplified to `truncate()` helper after Central Command refactor.
+- `appliance/internal/l2planner/telemetry.go` — POST execution outcomes to `/api/agent/executions` for data flywheel.
+
+### Phase 3: Core Planner
+- `appliance/internal/l2planner/planner.go` — Orchestrates PHI scrub → POST to Central Command → guardrails → return decision. Uses appliance's existing API key + endpoint (same as checkins).
+
+### Phase 4: Daemon Integration
+- `daemon.go` — 6 edits: import, struct field (`l2Planner`), init, L2 readiness check, healIncident flow, shutdown.
+- `config.go` — Removed LLM-specific config fields (API key, model, provider). Kept budget/rate/concurrency controls.
+
+### Phase 5: Central Command Endpoint
+- `main.py` — Added `POST /api/agent/l2/plan` with `L2PlanRequest` Pydantic model. Wraps existing `l2_planner.py` `analyze_incident()` + `record_l2_decision()`.
+- Fixed import: `backend.l2_planner` → `dashboard_api.l2_planner` (Docker deployment path).
+
+## Architecture Decision
+**Key decision:** Anthropic API key lives ONLY on Central Command (VPS), not on appliance devices.
+- Appliance PHI-scrubs data on-device before it leaves the network
+- Appliance applies guardrails locally after receiving the decision
+- Central Command holds the LLM key and calls Anthropic API
+- Prevents key sprawl across customer sites
+
+## Test Results
+- 49 unit tests across l2planner package — all passing
+- 12 daemon tests — all passing
+- Live VPS test: `POST /api/agent/l2/plan` returned real LLM decision (configure_firewall, confidence 0.95, claude-sonnet-4, 7s latency)
+
+## Commits
+- `9e1f8e6` — feat: native Go L2 LLM planner + PHI scrubbing + guardrails
+- `6801929` — refactor: L2 planner calls Central Command instead of Anthropic directly
+- `7d9f69f` — fix: L2 plan endpoint import — use dashboard_api path matching Docker layout
+
+## Files Created (12)
+- `appliance/internal/l2planner/phi_scrubber.go` + `_test.go`
+- `appliance/internal/l2planner/guardrails.go` + `_test.go`
+- `appliance/internal/l2planner/budget.go` + `_test.go`
+
+[truncated...]
+
+---
+
+## 2026-02-21-session-124-dashboard-audit-7-bug-fix-deploy.md
+
+# Session 124 - Dashboard Audit: 7-Bug Fix + Deploy
+
+**Date:** 2026-02-21
+**Started:** 19:55
+**Previous Session:** 123
+
+---
+
+## Goals
+
+- [x] Audit and fix 7 live dashboard issues reported by user
+- [x] Deploy fixes via CI/CD (push to main)
+- [x] Restart appliance-daemon on physical appliance
+- [x] Fix WS01 machine trust (reboot after DC-side password reset)
+
+---
+
+## Progress
+
+### Completed
+
+1. **Incidents page 500 crash** — `Severity(i["severity"])` threw `ValueError` on unknown/null DB values. Added `_safe_severity()` and `_safe_resolution_level()` wrappers in routes.py with try/except fallback.
+
+2. **Portal 0% compliance score** — Controls with no data counted as "passing" (inflating pass count while actual score was 0%). Changed to skip no-data controls. Added `LIMIT 500` to `get_control_results_for_site` query (was fetching 128K+ rows unbounded).
+
+3. **Magic link emails not delivered** — Portal used SendGrid (not configured), ignoring available SMTP credentials. Added SMTP fallback in portal.py using SMTP_HOST/SMTP_USER/SMTP_PASSWORD env vars.
+
+4. **No real-time streaming** — Evidence submissions didn't broadcast WebSocket events; checkin events didn't invalidate workstation caches. Added `broadcast_event("compliance_drift", ...)` in evidence_chain.py. Updated useWebSocket.ts to invalidate `workstations`, `goAgents`, and `site` caches.
+
+5. **Email nested details rendering** — `_build_details_section` silently skipped dict/list values. Now renders as formatted JSON in `<pre>` blocks. Fixed `datetime.utcnow()` deprecation.
+
+6. **Portal scope_summary** — Showed "All checks passing" for unmonitored controls. Now shows "No data yet" when `pass_rate is None`.
+
+7. **Infrastructure** — User restarted `appliance-daemon` on physical appliance (pkill + systemctl start). User rebooted WS01 to re-negotiate machine trust after DC-side `Reset-ComputerMachinePassword`.
+
+### Commit
+
+`3bad2e1` — fix: incidents crash, portal 0% score, email delivery, live streaming
+Deployed via CI/CD (GitHub Actions run 22267455140, 53s)
+
+### Blocked
+
+None.
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+[truncated...]
+
+---
+
+## 2026-02-21-session121-compliance-pipeline-fixes.md
+
+# Session 121 - Compliance Pipeline + Systemic Fixes
+
+**Date:** 2026-02-21
+**Previous Session:** 120
+
+---
+
+## Summary
+
+Completed the end-to-end compliance evidence pipeline and fixed three systemic issues that caused cascading failures during deployment.
+
+### What Was Done
+
+1. **Evidence pipeline live** - Physical appliance Go daemon (v0.2.0) now submits signed compliance bundles after drift scans. First real bundle: CB-2026-02-21, 7 checks, 6/7 pass (firewall disabled on 192.168.88.250), Ed25519 signed, chain position 128090.
+
+2. **VM appliance 401 fix** - Root cause: Go checkin-receiver validated single static auth token. VM appliance had a different per-site API key. Fix: added per-site key validation from `appliance_provisioning` table. Deployed new checkin-receiver binary to VPS. Both appliances now checking in.
+
+3. **Appliance ID format normalization** - `provisioning.py` created IDs without MAC colons (`843A5B91B661`), but Go/Python checkin used colons (`84:3A:5B:91:B6:61`). Fixed provisioning to use colons. Migrated 35 existing admin_orders rows.
+
+4. **Nix version bump** - Updated Go daemon from 0.1.0 to 0.2.1 in both `appliance-image.nix` and `appliance-disk-image.nix`. Documented rebuild command for deployed appliances.
+
+5. **Compliance packet endpoint working** - Returns real HIPAA compliance data: 56.4% compliance, 15 controls, evidence chain IDs.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `appliance/internal/evidence/signer.go` | NEW - Ed25519 key management |
+| `appliance/internal/evidence/submitter.go` | NEW - Compliance bundle builder + HTTP submit |
+| `appliance/internal/evidence/signer_test.go` | NEW - 3 tests |
+| `appliance/internal/evidence/submitter_test.go` | NEW - 4 tests |
+| `appliance/internal/daemon/daemon.go` | Add evidence submitter init |
+| `appliance/internal/daemon/driftscan.go` | Call BuildAndSubmit after scan |
+| `appliance/internal/daemon/phonehome.go` | Send agent public key |
+| `appliance/internal/daemon/config.go` | SigningKeyPath() helper |
+| `appliance/internal/checkin/handler.go` | Per-site API key auth |
+| `appliance/internal/checkin/db.go` | ValidateAPIKey() method |
+| `appliance/internal/orders/processor.go` | Absolute path for nixos-rebuild |
+| `mcp-server/central-command/backend/provisioning.py` | Normalize MAC in appliance_id |
+| `mcp-server/central-command/backend/sites.py` | Legacy compat comment |
+| `mcp-server/central-command/backend/evidence_chain.py` | Fix compliance_packet import |
+| `mcp-server/central-command/backend/compliance_packet.py` | Moved from mcp-server/ |
+| `mcp-server/central-command/backend/db_queries.py` | Add check types to CATEGORY_CHECKS |
+| `iso/appliance-disk-image.nix` | Version 0.1.0 -> 0.2.1 |
+| `iso/appliance-image.nix` | Version 0.1.0 -> 0.2.1 |
+| `flake.nix` | Document rebuild command |
+
+### Commits
+
+- `060dc7f` feat: end-to-end compliance pipeline
+
+[truncated...]
+
+---

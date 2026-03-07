@@ -485,6 +485,27 @@ async def resolve_ticket(
             WHERE id = $1
         """, ticket_id, resolution.resolved_by, resolution.resolution_notes)
 
+        # Notify the client org that the L3 ticket was resolved
+        try:
+            client_org_id = await conn.fetchval("""
+                SELECT s.client_org_id FROM sites s
+                WHERE s.id = $1
+            """, ticket['site_id'])
+
+            if client_org_id:
+                await conn.execute("""
+                    INSERT INTO client_notifications (
+                        client_org_id, type, severity, title, message
+                    ) VALUES ($1, 'escalation_resolved', 'info', $2, $3)
+                """,
+                    client_org_id,
+                    f"Issue Resolved: {ticket['title']}",
+                    f"Your support team resolved the escalated issue: {ticket['title']}. "
+                    f"Resolution: {resolution.resolution_notes}"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to notify client for resolved ticket {ticket_id}: {e}")
+
     logger.info(f"Ticket {ticket_id} resolved by {resolution.resolved_by}")
     return {"status": "resolved", "ticket_id": ticket_id}
 
