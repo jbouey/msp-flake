@@ -1278,6 +1278,25 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, raw_reque
                 raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
 
         # Post-completion hooks for specific order types
+        # Healing order → resolve incident on success, escalate on failure
+        if result['order_type'] == 'healing':
+            try:
+                if request.success:
+                    await conn.execute("""
+                        UPDATE incidents SET resolved_at = NOW(), status = 'resolved'
+                        WHERE order_id = (SELECT id FROM orders WHERE order_id = $1)
+                        AND status IN ('resolving', 'escalated') AND resolved_at IS NULL
+                    """, order_id)
+                else:
+                    await conn.execute("""
+                        UPDATE incidents SET status = 'escalated', resolution_tier = 'L3'
+                        WHERE order_id = (SELECT id FROM orders WHERE order_id = $1)
+                        AND status = 'resolving'
+                    """, order_id)
+            except Exception as e:
+                import logging
+                logging.warning(f"Failed to update incident for healing order {order_id}: {e}")
+
         if result['order_type'] == 'validate_credential' and 'credential_id' in result_data:
             cred_status = 'valid' if result_data.get('can_connect') else 'invalid'
             try:

@@ -440,6 +440,19 @@ func (d *Daemon) executeHealingOrder(ctx context.Context, params map[string]inte
 
 	d.healJournal.FinishHealing(orderID, true, "")
 	log.Printf("[healing-order] %s on %s SUCCEEDED", runbookID, hostname)
+
+	// Resolve the incident on the backend (belt-and-suspenders with order completion hook)
+	if d.incidents != nil && checkType != "" {
+		tier := "L2" // healing orders are typically L2
+		if _, ok := params["resolution_tier"]; ok {
+			if t, ok2 := params["resolution_tier"].(string); ok2 && t != "" {
+				tier = t
+			}
+		}
+		d.wg.Add(1)
+		go func() { defer d.wg.Done(); d.incidents.ReportHealed(hostname, checkType, tier, runbookID) }()
+	}
+
 	result["status"] = "healed"
 	result["runbook_id"] = runbookID
 	result["hostname"] = hostname
