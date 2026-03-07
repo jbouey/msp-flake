@@ -1,4 +1,5 @@
 import React from 'react';
+import { CHECK_TYPE_LABELS } from '../../types';
 
 interface Incident {
   incident_id: string;
@@ -23,9 +24,7 @@ export const IncidentList: React.FC<IncidentListProps> = ({ incidents }) => {
   };
 
   const formatType = (type: string) => {
-    return type
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, c => c.toUpperCase());
+    return CHECK_TYPE_LABELS[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   };
 
   const formatDuration = (seconds?: number) => {

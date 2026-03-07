@@ -156,7 +156,7 @@ async def get_incidents_from_db(
         "id": row.id,
         "site_id": row.site_id,
         "hostname": "",  # Not stored in this schema
-        "check_type": row.check_type or "backup",
+        "check_type": row.check_type or row.incident_type or "unknown",
         "severity": row.severity,
         "resolution_level": row.resolution_tier,
         "resolved": row.status == "resolved",

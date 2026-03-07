@@ -11,14 +11,8 @@
 export type HealthStatus = 'critical' | 'warning' | 'healthy';
 export type ResolutionLevel = 'L1' | 'L2' | 'L3';
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
-export type CheckType =
-  // Core compliance checks
-  | 'patching' | 'antivirus' | 'backup' | 'logging' | 'firewall' | 'encryption' | 'network'
-  // Extended monitoring checks
-  | 'ntp_sync' | 'certificate_expiry' | 'database_corruption' | 'memory_pressure'
-  | 'windows_defender' | 'disk_space' | 'service_health' | 'prohibited_port'
-  // Workstation checks
-  | 'workstation' | 'bitlocker' | 'defender' | 'patches' | 'screen_lock';
+// CheckType is a free-form string — Go daemon sends 40+ types, not a fixed enum
+export type CheckType = string;
 export type CheckinStatus = 'pending' | 'connected' | 'failed';
 
 export type OnboardingStage =
@@ -132,7 +126,7 @@ export interface Incident {
   id: number;
   site_id: string;
   hostname: string;
-  check_type: CheckType;
+  check_type: string;
   severity: Severity;
   resolution_level?: ResolutionLevel;
   resolved: boolean;
@@ -777,12 +771,34 @@ export const CHECK_TYPE_LABELS: Record<string, string> = {
   net_expected_service: 'Expected Svc',
   net_host_reachability: 'Host Reach',
   net_dns_resolution: 'DNS Resolve',
-  // Legacy check types (old Python agent)
+  // Additional Windows checks (Go daemon scanner)
+  wmi_event_persistence: 'WMI Persist',
+  registry_run_persistence: 'Registry Run',
+  defender_cloud_protection: 'Cloud AV',
+  spooler_service: 'Print Spooler',
+  // Deploy / special
+  'WIN-DEPLOY-UNREACHABLE': 'Deploy Fail',
+  // Legacy / alternate check types
   windows_audit_policy: 'Audit Policy',
   audit_policy: 'Audit Policy',
   service_wuauserv: 'Win Update',
   critical_services: 'Services',
   nixos_generation: 'NixOS Gen',
+  winrm: 'WinRM',
+  security_audit: 'Security Audit',
+  service_status: 'Service Status',
+  bitlocker: 'BitLocker',
+  screen_lock: 'Screen Lock',
+  // App protection profile incidents
+  service_stopped: 'Service Down',
+  port_closed: 'Port Closed',
+  registry_drift: 'Registry Drift',
+  scheduled_task_disabled: 'Task Disabled',
+  config_file_changed: 'Config Changed',
+  tcp_connectivity_lost: 'TCP Lost',
+  iis_binding_drift: 'IIS Binding',
+  odbc_dsn_drift: 'ODBC Drift',
+  process_unhealthy: 'Process Down',
 };
 
 // =============================================================================

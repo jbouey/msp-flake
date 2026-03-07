@@ -1,24 +1,10 @@
 import React, { useState } from 'react';
 import { GlassCard } from '../shared';
 import { useIncidentBreakdown } from '../../hooks';
+import { CHECK_TYPE_LABELS } from '../../types';
 import { colors } from '../../tokens/style-tokens';
 
 type Window = '24h' | '7d' | '30d';
-
-function formatTypeName(raw: string): string {
-  // Convert snake_case/kebab incident types to readable labels
-  return raw
-    .replace(/_/g, ' ')
-    .replace(/-/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-    .replace(/Ssh/g, 'SSH')
-    .replace(/Dns/g, 'DNS')
-    .replace(/Smb/g, 'SMB')
-    .replace(/Rdp/g, 'RDP')
-    .replace(/Gpo/g, 'GPO')
-    .replace(/Av /g, 'AV ')
-    .replace(/Hipaa/g, 'HIPAA');
-}
 
 export const TopIncidentTypes: React.FC<{
   siteId?: string;
@@ -66,7 +52,7 @@ export const TopIncidentTypes: React.FC<{
               <div key={t.incident_type} className="group">
                 <div className="flex items-center justify-between mb-0.5">
                   <span className="text-[11px] text-label-secondary font-medium truncate max-w-[180px]">
-                    {formatTypeName(t.incident_type)}
+                    {CHECK_TYPE_LABELS[t.incident_type] || t.incident_type}
                   </span>
                   <div className="flex items-center gap-1.5">
                     {t.l1 > 0 && <span className="text-[9px] font-semibold tabular-nums px-1 py-0 rounded" style={{ color: colors.levels.l1, backgroundColor: `${colors.levels.l1}12` }}>{t.l1}</span>}

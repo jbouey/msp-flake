@@ -49,7 +49,6 @@ from .models import (
     ClientStats,
     CommandRequest,
     CommandResponse,
-    CheckType,
     Severity,
     ResolutionLevel,
     HealthStatus,
@@ -81,13 +80,6 @@ from . import auth as auth_module
 
 
 # ---- Safe enum converters (prevent crashes on unknown DB values) ----
-
-def _safe_check_type(ct: str) -> CheckType:
-    """Safely convert check type, defaulting to BACKUP for unknown types."""
-    try:
-        return CheckType(ct)
-    except (ValueError, KeyError):
-        return CheckType.BACKUP
 
 
 def _safe_severity(sev) -> Severity:
