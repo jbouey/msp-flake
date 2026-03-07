@@ -33,6 +33,13 @@ export const PartnerLogin: React.FC = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginMode, setLoginMode] = useState<'email' | 'apikey'>('email');
 
+  // MFA state
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaToken, setMfaToken] = useState('');
+  const [totpCode, setTotpCode] = useState('');
+  const [mfaError, setMfaError] = useState<string | null>(null);
+  const [mfaLoading, setMfaLoading] = useState(false);
+
   // Email signup state
   const [showEmailSignup, setShowEmailSignup] = useState(false);
   const [signupName, setSignupName] = useState('');
@@ -148,6 +155,13 @@ export const PartnerLogin: React.FC = () => {
       });
 
       if (response.ok) {
+        const data = await response.json();
+        if (data.status === 'mfa_required' && data.mfa_token) {
+          setMfaRequired(true);
+          setMfaToken(data.mfa_token);
+          setStatus('idle');
+          return;
+        }
         // Session cookie is set by the response — reload to pick it up
         window.location.href = '/partner/dashboard';
       } else {
@@ -158,6 +172,33 @@ export const PartnerLogin: React.FC = () => {
     } catch (e) {
       setError('Network error. Please try again.');
       setStatus('error');
+    }
+  };
+
+  const handleTotpVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!totpCode.trim()) return;
+
+    setMfaLoading(true);
+    setMfaError(null);
+
+    try {
+      const response = await fetch('/api/partner-auth/verify-totp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfa_token: mfaToken, totp_code: totpCode.trim() }),
+      });
+
+      if (response.ok) {
+        window.location.href = '/partner/dashboard';
+      } else {
+        setMfaError('Invalid code. Please try again.');
+        setTotpCode('');
+        setMfaLoading(false);
+      }
+    } catch (e) {
+      setMfaError('Network error. Please try again.');
+      setMfaLoading(false);
     }
   };
 
@@ -203,6 +244,104 @@ export const PartnerLogin: React.FC = () => {
   };
 
   const hasOAuthProviders = providers.microsoft || providers.google;
+
+  if (mfaRequired) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-900 to-indigo-900 flex items-center justify-center p-6 relative overflow-hidden animate-fade-in">
+        <div className="absolute top-1/4 -left-32 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl" />
+        <div className="max-w-md w-full relative z-10">
+          <div className="text-center mb-8">
+            <div
+              className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg"
+              style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)', boxShadow: '0 4px 20px rgba(79, 70, 229, 0.4)' }}
+            >
+              <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <h1 className="text-3xl font-bold text-white tracking-tight">Two-Factor Authentication</h1>
+            <p className="text-indigo-200/80 mt-2">One more step to verify your identity</p>
+          </div>
+
+          <div className="p-8" style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.5)' }}>
+            <h2 className="text-xl font-semibold text-slate-900 mb-2 text-center">
+              Enter Verification Code
+            </h2>
+            <p className="text-slate-600 text-center mb-6">
+              Enter the 6-digit code from your authenticator app.
+            </p>
+
+            {mfaError && (
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-red-700 text-sm">{mfaError}</p>
+              </div>
+            )}
+
+            <form onSubmit={handleTotpVerify} className="space-y-4">
+              <div>
+                <label htmlFor="totpCode" className="block text-sm font-medium text-slate-700 mb-1">
+                  Verification Code
+                </label>
+                <input
+                  type="text"
+                  id="totpCode"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value.replace(/[^0-9a-zA-Z]/g, ''))}
+                  placeholder="000000"
+                  inputMode="numeric"
+                  maxLength={8}
+                  autoComplete="one-time-code"
+                  autoFocus
+                  required
+                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition text-center text-2xl font-mono tracking-[0.3em]"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!totpCode.trim() || mfaLoading}
+                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)', boxShadow: '0 4px 14px rgba(79, 70, 229, 0.35)' }}
+              >
+                {mfaLoading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  'Verify'
+                )}
+              </button>
+            </form>
+
+            <p className="text-center text-sm text-slate-500 mt-4">
+              Or use a backup code
+            </p>
+
+            <div className="mt-4 pt-4 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setMfaRequired(false);
+                  setMfaToken('');
+                  setTotpCode('');
+                  setMfaError(null);
+                  setStatus('idle');
+                }}
+                className="w-full text-center text-sm text-indigo-600 hover:text-indigo-800 font-medium"
+              >
+                Back to login
+              </button>
+            </div>
+          </div>
+
+          <p className="mt-8 text-center text-sm text-indigo-300/60">
+            Powered by OsirisCare HIPAA Compliance Platform
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading || status === 'loading') {
     return (

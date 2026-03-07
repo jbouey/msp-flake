@@ -443,6 +443,12 @@ export const ClientSettings: React.FC = () => {
           >
             Password
           </button>
+          <button
+            onClick={() => navigate('/client/security')}
+            className="pb-2 px-1 font-medium text-slate-500 hover:text-teal-600"
+          >
+            Security (2FA)
+          </button>
           {user?.role === 'owner' && (
             <button
               onClick={() => setActiveTab('transfer')}

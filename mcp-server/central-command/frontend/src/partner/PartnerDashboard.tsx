@@ -6,6 +6,7 @@ import { PartnerBilling } from './PartnerBilling';
 import { PartnerComplianceSettings } from './PartnerComplianceSettings';
 import { PartnerExceptionManagement } from './PartnerExceptionManagement';
 import { PartnerLearning } from './PartnerLearning';
+import { PartnerEscalations } from './PartnerEscalations';
 
 interface Site {
   site_id: string;
@@ -35,7 +36,7 @@ export const PartnerDashboard: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { partner, apiKey, isAuthenticated, isLoading, logout } = usePartner();
 
-  const [activeTab, setActiveTab] = useState<'sites' | 'provisions' | 'billing' | 'compliance' | 'exceptions' | 'learning'>('sites');
+  const [activeTab, setActiveTab] = useState<'sites' | 'provisions' | 'billing' | 'compliance' | 'exceptions' | 'escalations' | 'learning'>('sites');
 
   // Handle billing redirect from Stripe
   useEffect(() => {
@@ -335,6 +336,16 @@ export const PartnerDashboard: React.FC = () => {
             Exceptions
           </button>
           <button
+            onClick={() => setActiveTab('escalations')}
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+              activeTab === 'escalations'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
+            }`}
+          >
+            Escalations
+          </button>
+          <button
             onClick={() => setActiveTab('learning')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'learning'
@@ -343,6 +354,12 @@ export const PartnerDashboard: React.FC = () => {
             }`}
           >
             Learning
+          </button>
+          <button
+            onClick={() => navigate('/partner/security')}
+            className="px-4 py-3 font-medium transition border-b-2 -mb-px border-transparent text-slate-500 hover:text-indigo-600"
+          >
+            Security
           </button>
         </div>
       </div>
@@ -622,6 +639,10 @@ export const PartnerDashboard: React.FC = () => {
           <PartnerExceptionManagement
             sites={sites.map(s => ({ id: s.site_id, name: s.clinic_name }))}
           />
+        )}
+
+        {activeTab === 'escalations' && (
+          <PartnerEscalations />
         )}
 
         {activeTab === 'learning' && (
