@@ -243,7 +243,7 @@ export interface CoverageGap {
 }
 
 export interface PromotionHistory {
-  id: number;
+  id: string;
   pattern_signature: string;
   rule_id: string;
   promoted_at: string;

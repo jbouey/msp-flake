@@ -4167,6 +4167,50 @@ async def review_promotion_candidate(
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@app.get("/api/learning/history")
+async def get_learning_history(limit: int = 20, db: AsyncSession = Depends(get_db)):
+    """Get recently promoted L2->L1 patterns for the dashboard timeline."""
+    try:
+        result = await db.execute(text("""
+            SELECT
+                lpc.id,
+                lpc.pattern_signature,
+                COALESCE(lpc.custom_rule_name, lpc.recommended_action, 'L1-' || LEFT(lpc.id::text, 8)) as rule_id,
+                lpc.approved_at as promoted_at,
+                COALESCE(exec_stats.total, 0) as executions_since,
+                COALESCE(exec_stats.success_pct, 0) as success_rate
+            FROM learning_promotion_candidates lpc
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE et.success) * 100.0 / NULLIF(COUNT(*), 0) as success_pct
+                FROM execution_telemetry et
+                WHERE et.incident_type = split_part(lpc.pattern_signature, ':', 1)
+                AND et.created_at > lpc.approved_at
+            ) exec_stats ON true
+            WHERE lpc.approval_status = 'approved'
+            AND lpc.approved_at IS NOT NULL
+            ORDER BY lpc.approved_at DESC
+            LIMIT :limit
+        """), {"limit": limit})
+
+        rows = result.fetchall()
+        return [
+            {
+                "id": str(row.id),
+                "pattern_signature": row.pattern_signature,
+                "rule_id": row.rule_id,
+                "promoted_at": row.promoted_at.isoformat() if row.promoted_at else None,
+                "post_promotion_success_rate": float(row.success_rate or 0),
+                "executions_since_promotion": int(row.executions_since or 0),
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        logger.error(f"Failed to get learning history: {e}")
+        return []
+
+
 @app.get("/api/learning/approved-promotions")
 async def get_approved_promotions(
     site_id: str,
