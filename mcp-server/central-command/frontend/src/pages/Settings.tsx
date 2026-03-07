@@ -17,6 +17,9 @@ interface SystemSettings {
   update_window_end: string;
   rollout_percentage: number;
 
+  // Healing
+  default_healing_tier: string;
+
   // Data Retention
   telemetry_retention_days: number;
   incident_retention_days: number;
@@ -26,6 +29,28 @@ interface SystemSettings {
   email_notifications_enabled: boolean;
   slack_notifications_enabled: boolean;
   escalation_timeout_minutes: number;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_from: string;
+  smtp_username: string;
+  smtp_password: string;
+  smtp_tls: boolean;
+
+  // Learning Loop
+  promotion_min_success_rate: number;
+  promotion_min_executions: number;
+  auto_promote_enabled: boolean;
+
+  // Branding
+  company_name: string;
+  logo_url: string;
+  support_email: string;
+
+  // Evidence
+  minio_endpoint: string;
+  minio_bucket: string;
+  ots_calendar_url: string;
+  evidence_retention_days: number;
 
   // API
   api_rate_limit: number;
@@ -41,12 +66,29 @@ const defaultSettings: SystemSettings = {
   update_window_start: '02:00',
   update_window_end: '06:00',
   rollout_percentage: 5,
+  default_healing_tier: 'standard',
   telemetry_retention_days: 90,
   incident_retention_days: 365,
   audit_log_retention_days: 730,
   email_notifications_enabled: true,
   slack_notifications_enabled: false,
   escalation_timeout_minutes: 60,
+  smtp_host: '',
+  smtp_port: 587,
+  smtp_from: '',
+  smtp_username: '',
+  smtp_password: '',
+  smtp_tls: true,
+  promotion_min_success_rate: 80,
+  promotion_min_executions: 5,
+  auto_promote_enabled: false,
+  company_name: 'OsirisCare',
+  logo_url: '',
+  support_email: '',
+  minio_endpoint: '',
+  minio_bucket: 'evidence-worm-v2',
+  ots_calendar_url: 'https://alice.btc.calendar.opentimestamps.org',
+  evidence_retention_days: 2555,
   api_rate_limit: 100,
   webhook_timeout_seconds: 30,
 };
@@ -166,6 +208,29 @@ const NumberSetting: React.FC<{
       />
       {suffix && <span className="text-sm text-label-tertiary">{suffix}</span>}
     </div>
+  </div>
+);
+
+const TextSetting: React.FC<{
+  label: string;
+  description?: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  type?: string;
+}> = ({ label, description, value, onChange, placeholder, type = 'text' }) => (
+  <div className="flex items-center justify-between py-2">
+    <div className="min-w-0 mr-4">
+      <span className="text-sm font-medium text-label-primary">{label}</span>
+      {description && <p className="text-xs text-label-tertiary mt-0.5">{description}</p>}
+    </div>
+    <input
+      type={type}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-64 px-3 py-1.5 text-sm rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-accent-primary focus:ring-1 focus:ring-accent-primary"
+    />
   </div>
 );
 
@@ -385,6 +450,52 @@ export const Settings: React.FC = () => {
           max={100}
           suffix="%"
         />
+        <SelectSetting
+          label="Default Healing Tier"
+          description="Applied to new sites unless overridden"
+          value={settings.default_healing_tier}
+          onChange={(v) => updateSetting('default_healing_tier', v)}
+          options={[
+            { value: 'standard', label: 'Standard (21 core rules)' },
+            { value: 'full_coverage', label: 'Full Coverage (all L1 rules)' },
+            { value: 'monitor_only', label: 'Monitor Only (no auto-healing)' },
+          ]}
+        />
+      </SettingSection>
+
+      {/* Learning Loop Settings */}
+      <SettingSection
+        title="Learning Loop"
+        description="Control when L2 patterns are eligible for L1 promotion"
+        icon={
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        }
+      >
+        <NumberSetting
+          label="Minimum Success Rate"
+          description="Pattern must exceed this rate to be promotable"
+          value={settings.promotion_min_success_rate}
+          onChange={(v) => updateSetting('promotion_min_success_rate', v)}
+          min={50}
+          max={100}
+          suffix="%"
+        />
+        <NumberSetting
+          label="Minimum Executions"
+          description="Pattern must have this many executions before promotion"
+          value={settings.promotion_min_executions}
+          onChange={(v) => updateSetting('promotion_min_executions', v)}
+          min={1}
+          max={100}
+        />
+        <ToggleSetting
+          label="Auto-Promote"
+          description="Automatically promote patterns that meet thresholds (skip manual review)"
+          checked={settings.auto_promote_enabled}
+          onChange={(v) => updateSetting('auto_promote_enabled', v)}
+        />
       </SettingSection>
 
       {/* Data Retention Settings */}
@@ -456,6 +567,122 @@ export const Settings: React.FC = () => {
           min={5}
           max={1440}
           suffix="minutes"
+        />
+        <div className="border-t border-separator-light pt-4 mt-4">
+          <p className="text-xs font-medium text-label-tertiary uppercase tracking-wide mb-3">SMTP Configuration</p>
+          <TextSetting
+            label="SMTP Host"
+            value={settings.smtp_host}
+            onChange={(v) => updateSetting('smtp_host', v)}
+            placeholder="smtp.gmail.com"
+          />
+          <NumberSetting
+            label="SMTP Port"
+            value={settings.smtp_port}
+            onChange={(v) => updateSetting('smtp_port', v)}
+            min={25}
+            max={2525}
+          />
+          <TextSetting
+            label="From Address"
+            value={settings.smtp_from}
+            onChange={(v) => updateSetting('smtp_from', v)}
+            placeholder="alerts@yourcompany.com"
+          />
+          <TextSetting
+            label="Username"
+            value={settings.smtp_username}
+            onChange={(v) => updateSetting('smtp_username', v)}
+            placeholder="SMTP username"
+          />
+          <TextSetting
+            label="Password"
+            value={settings.smtp_password}
+            onChange={(v) => updateSetting('smtp_password', v)}
+            placeholder="••••••••"
+            type="password"
+          />
+          <ToggleSetting
+            label="Use TLS"
+            description="Encrypt SMTP connection (STARTTLS)"
+            checked={settings.smtp_tls}
+            onChange={(v) => updateSetting('smtp_tls', v)}
+          />
+        </div>
+      </SettingSection>
+
+      {/* Branding */}
+      <SettingSection
+        title="Branding"
+        description="White-label settings for partner portal"
+        icon={
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+          </svg>
+        }
+      >
+        <TextSetting
+          label="Company Name"
+          description="Displayed in portal header and emails"
+          value={settings.company_name}
+          onChange={(v) => updateSetting('company_name', v)}
+          placeholder="Your Company"
+        />
+        <TextSetting
+          label="Logo URL"
+          description="Square logo for portal and reports (PNG/SVG)"
+          value={settings.logo_url}
+          onChange={(v) => updateSetting('logo_url', v)}
+          placeholder="https://example.com/logo.png"
+        />
+        <TextSetting
+          label="Support Email"
+          description="Shown in client portal and escalation emails"
+          value={settings.support_email}
+          onChange={(v) => updateSetting('support_email', v)}
+          placeholder="support@yourcompany.com"
+        />
+      </SettingSection>
+
+      {/* Evidence & WORM */}
+      <SettingSection
+        title="Evidence Storage"
+        description="WORM-compliant evidence chain and timestamping"
+        icon={
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+        }
+      >
+        <TextSetting
+          label="MinIO Endpoint"
+          description="S3-compatible object storage endpoint"
+          value={settings.minio_endpoint}
+          onChange={(v) => updateSetting('minio_endpoint', v)}
+          placeholder="minio:9000"
+        />
+        <TextSetting
+          label="WORM Bucket"
+          description="Object-locked bucket for evidence bundles"
+          value={settings.minio_bucket}
+          onChange={(v) => updateSetting('minio_bucket', v)}
+          placeholder="evidence-worm-v2"
+        />
+        <TextSetting
+          label="OTS Calendar URL"
+          description="OpenTimestamps calendar for Bitcoin anchoring"
+          value={settings.ots_calendar_url}
+          onChange={(v) => updateSetting('ots_calendar_url', v)}
+          placeholder="https://alice.btc.calendar.opentimestamps.org"
+        />
+        <NumberSetting
+          label="Evidence Retention"
+          description="HIPAA minimum: 6 years (2190 days)"
+          value={settings.evidence_retention_days}
+          onChange={(v) => updateSetting('evidence_retention_days', v)}
+          min={2190}
+          max={3650}
+          suffix="days"
         />
       </SettingSection>
 
