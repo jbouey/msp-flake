@@ -97,10 +97,17 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/webhook/",
         "/api/oauth/",           # OAuth callbacks don't have CSRF
         "/api/agent/",           # Agent sync endpoints use API-key auth
-        "/api/partners/auth/",   # Partner login/logout
-        "/api/client/",          # Client portal — separate session cookie auth
-        "/api/companion/",       # Companion portal — separate session cookie auth
-        "/api/portal/",          # Portal uses magic links, not cookies
+        "/api/partners/auth/",   # Partner login/logout (magic link)
+        "/api/partner-auth/email-login",  # Partner email/password login (no session yet)
+        "/api/partner-auth/email-signup", # Partner signup (no session yet)
+        "/api/partner-auth/microsoft",    # OAuth initiation
+        "/api/partner-auth/google",       # OAuth initiation
+        "/api/partner-auth/callback",     # OAuth callback
+        "/api/partner-auth/providers",    # Provider list (GET-like)
+        "/api/client/auth/",     # Client login/magic-link endpoints only
+        "/api/companion/auth/",  # Companion login endpoints only
+        "/api/portal/auth/",     # Portal magic link validation
+        "/api/portal/sites/",    # Portal access request (public)
         "/api/fleet/",           # Fleet updates - admin auth protected
         "/api/orders/",          # Order acknowledgement from appliances
         "/api/evidence/",        # Evidence chain - appliance submissions + admin ops

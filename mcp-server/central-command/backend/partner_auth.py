@@ -128,8 +128,13 @@ def generate_state_token() -> str:
 
 
 def hash_session_token(token: str) -> str:
-    """Hash a session token for storage."""
-    return hashlib.sha256(token.encode()).hexdigest()
+    """Hash a session token for storage using HMAC-SHA256."""
+    import hmac
+    secret = os.getenv("SESSION_TOKEN_SECRET", "")
+    if not secret:
+        logger.warning("SESSION_TOKEN_SECRET not set — falling back to plain SHA-256 for partner sessions")
+        return hashlib.sha256(token.encode()).hexdigest()
+    return hmac.new(secret.encode(), token.encode(), hashlib.sha256).hexdigest()
 
 
 # =============================================================================
@@ -432,9 +437,20 @@ async def upsert_partner_from_oauth(
 # MICROSOFT OAUTH ENDPOINTS
 # =============================================================================
 
+def _sanitize_redirect(redirect_after: str) -> str:
+    """Ensure redirect_after is a safe relative path (prevent open redirect)."""
+    if not redirect_after or "://" in redirect_after or redirect_after.startswith("//"):
+        return "/partner/dashboard"
+    if not redirect_after.startswith("/"):
+        return "/partner/dashboard"
+    return redirect_after
+
+
 @public_router.get("/microsoft")
 async def microsoft_login(request: Request, redirect_after: str = "/partner/dashboard"):
     """Initiate Microsoft OAuth flow for partner login."""
+    redirect_after = _sanitize_redirect(redirect_after)
+
     if not MICROSOFT_CLIENT_ID or not MICROSOFT_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Microsoft OAuth not configured")
 
@@ -487,6 +503,8 @@ async def microsoft_login(request: Request, redirect_after: str = "/partner/dash
 @public_router.get("/google")
 async def google_login(request: Request, redirect_after: str = "/partner/dashboard"):
     """Initiate Google OAuth flow for partner login."""
+    redirect_after = _sanitize_redirect(redirect_after)
+
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Google OAuth not configured")
 
@@ -858,8 +876,11 @@ async def email_signup(request: Request, body: EmailSignupRequest):
     if not email or not name:
         raise HTTPException(status_code=400, detail="Name and email are required")
 
-    if password and len(password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if password:
+        from .auth import validate_password_complexity
+        is_valid, error_msg = validate_password_complexity(password)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
 
     # Basic email validation
     if "@" not in email or "." not in email.split("@")[-1]:
@@ -977,21 +998,21 @@ async def email_login(request: Request, body: EmailLoginRequest):
               AND auth_provider = 'email'
         """, email)
 
+        # Uniform error for all failure cases (prevent email enumeration)
+        _generic_error = HTTPException(status_code=401, detail="Invalid email or password")
+
         if not partner:
-            raise HTTPException(status_code=401, detail="Invalid email or password")
+            raise _generic_error
 
-        if partner.get("pending_approval"):
-            raise HTTPException(status_code=403, detail="Your account is pending approval")
-
-        if partner["status"] != "active":
-            raise HTTPException(status_code=403, detail="Account is not active")
+        if partner.get("pending_approval") or partner["status"] != "active":
+            raise _generic_error
 
         if not partner["password_hash"]:
-            raise HTTPException(status_code=401, detail="No password set. Please use API key or contact support.")
+            raise _generic_error
 
         from .auth import verify_password
         if not verify_password(password, partner["password_hash"]):
-            raise HTTPException(status_code=401, detail="Invalid email or password")
+            raise _generic_error
 
         # Update last_login_at
         await conn.execute(
@@ -1042,21 +1063,21 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
               AND auth_provider = 'email'
         """, email)
 
+        # Uniform error for all failure cases (prevent email enumeration)
+        _generic_error = HTTPException(status_code=401, detail="Invalid email or password")
+
         if not partner:
-            raise HTTPException(status_code=401, detail="Invalid email or password")
+            raise _generic_error
 
-        if partner.get("pending_approval"):
-            raise HTTPException(status_code=403, detail="Your account is pending approval")
-
-        if partner["status"] != "active":
-            raise HTTPException(status_code=403, detail="Account is not active")
+        if partner.get("pending_approval") or partner["status"] != "active":
+            raise _generic_error
 
         if not partner["password_hash"]:
-            raise HTTPException(status_code=401, detail="No password set. Please use API key or contact support.")
+            raise _generic_error
 
         from .auth import verify_password
         if not verify_password(password, partner["password_hash"]):
-            raise HTTPException(status_code=401, detail="Invalid email or password")
+            raise _generic_error
 
         await conn.execute(
             "UPDATE partners SET last_login_at = NOW() WHERE id = $1",

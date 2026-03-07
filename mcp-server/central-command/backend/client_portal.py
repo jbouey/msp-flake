@@ -53,7 +53,7 @@ BASE_URL = os.getenv("BASE_URL", "https://dashboard.osiriscare.net")
 
 # Session configuration
 SESSION_COOKIE_NAME = "osiris_client_session"
-SESSION_DURATION_DAYS = 30
+SESSION_DURATION_DAYS = 7
 SESSION_COOKIE_MAX_AGE = SESSION_DURATION_DAYS * 24 * 60 * 60
 SESSION_IDLE_TIMEOUT_MINUTES = 15  # HIPAA §164.312(a)(2)(iii) automatic logoff
 
@@ -129,8 +129,13 @@ class UserRoleUpdate(BaseModel):
 # =============================================================================
 
 def hash_token(token: str) -> str:
-    """Hash a token for secure storage."""
-    return hashlib.sha256(token.encode()).hexdigest()
+    """Hash a token for secure storage using HMAC-SHA256."""
+    import hmac
+    secret = os.getenv("SESSION_TOKEN_SECRET", "")
+    if not secret:
+        logger.warning("SESSION_TOKEN_SECRET not set — falling back to plain SHA-256 for client sessions")
+        return hashlib.sha256(token.encode()).hexdigest()
+    return hmac.new(secret.encode(), token.encode(), hashlib.sha256).hexdigest()
 
 
 def generate_token() -> str:
@@ -245,14 +250,15 @@ async def request_magic_link(request: MagicLinkRequest):
 
         # Generate magic token
         magic_token = generate_token()
+        magic_token_hash = hash_token(magic_token)
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=MAGIC_LINK_EXPIRY_MINUTES)
 
-        # Store token
+        # Store hashed token (never store plaintext)
         await conn.execute("""
             UPDATE client_users
             SET magic_token = $1, magic_token_expires_at = $2
             WHERE id = $3
-        """, magic_token, expires_at, user["id"])
+        """, magic_token_hash, expires_at, user["id"])
 
     # Send email
     magic_link = f"{BASE_URL}/client/verify?token={magic_token}"
@@ -291,6 +297,8 @@ async def validate_magic_link(request: Request, body: MagicLinkValidate):
 
     async with pool.acquire() as conn:
         # Find and validate token (single-use: delete on fetch)
+        # Token is hashed before comparison (stored hashed since migration 071)
+        token_lookup = hash_token(body.token)
         user = await conn.fetchrow("""
             UPDATE client_users
             SET magic_token = NULL,
@@ -301,7 +309,7 @@ async def validate_magic_link(request: Request, body: MagicLinkValidate):
               AND magic_token_expires_at > NOW()
               AND is_active = true
             RETURNING id, email, name, role, client_org_id
-        """, body.token)
+        """, token_lookup)
 
         if not user:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -368,16 +376,10 @@ async def login_with_password(request: Request, body: PasswordLogin):
                 detail="Password not set. Please use magic link to login."
             )
 
-        # Verify password
-        try:
-            import bcrypt
-            if not bcrypt.checkpw(body.password.encode(), user["password_hash"].encode()):
-                raise HTTPException(status_code=401, detail="Invalid credentials")
-        except ImportError:
-            # Fallback to HMAC comparison if bcrypt not available
-            expected = hashlib.sha256(body.password.encode()).hexdigest()
-            if user["password_hash"] != expected:
-                raise HTTPException(status_code=401, detail="Invalid credentials")
+        # Verify password (bcrypt with constant-time comparison)
+        from .auth import verify_password
+        if not verify_password(body.password, user["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
 
         # Create session
         session_token = generate_token()
@@ -1386,15 +1388,14 @@ async def update_user_role(
 @auth_router.put("/password")
 async def set_password(body: PasswordSet, user: dict = Depends(require_client_user)):
     """Set or update user password."""
-    pool = await get_pool()
+    from .auth import validate_password_complexity, hash_password
 
-    # Hash password
-    try:
-        import bcrypt
-        password_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
-    except ImportError:
-        # Fallback
-        password_hash = hashlib.sha256(body.password.encode()).hexdigest()
+    is_valid, error_msg = validate_password_complexity(body.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    password_hash = hash_password(body.password)
+    pool = await get_pool()
 
     async with pool.acquire() as conn:
         await conn.execute("""

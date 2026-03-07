@@ -142,6 +142,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/auth/login",
         "/api/partners/auth/magic",
         "/api/users/invite/accept",
+        "/api/partner-auth/email-login",
+        "/api/partner-auth/email-login-api",
+        "/api/client/auth/login",
+        "/api/client/auth/request-magic-link",
     }
 
     def __init__(self, app, rate_limiter: RateLimiter = None, agent_rate_limiter: RateLimiter = None):

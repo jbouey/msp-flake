@@ -478,8 +478,8 @@ export const PartnerLogin: React.FC = () => {
                     type="password"
                     value={signupPassword}
                     onChange={(e) => setSignupPassword(e.target.value)}
-                    placeholder="Password (min 8 characters)"
-                    minLength={8}
+                    placeholder="Password (min 12 chars, upper/lower/digit/special)"
+                    minLength={12}
                     className="w-full px-3 py-2.5 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition text-sm"
                   />
                   {signupStatus === 'error' && (
