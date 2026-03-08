@@ -96,7 +96,7 @@ export const IncidentFeed: React.FC<IncidentFeedProps> = ({
               key={incident.id}
               incident={incident}
               compact={compact}
-              onClick={() => console.log('View incident', incident.id)}
+              onClick={() => navigate('/incidents')}
             />
           ))}
         </div>
