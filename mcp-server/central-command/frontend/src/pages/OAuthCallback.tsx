@@ -18,7 +18,11 @@ export const OAuthCallback: React.FC = () => {
 
   useEffect(() => {
     const token = searchParams.get('token');
-    const returnUrl = searchParams.get('return_url') || '/';
+    // Validate return_url to prevent open redirect attacks
+    const rawReturnUrl = searchParams.get('return_url') || '/';
+    const returnUrl = (rawReturnUrl.startsWith('/') && !rawReturnUrl.startsWith('//'))
+      ? rawReturnUrl
+      : '/';
 
     if (token) {
       // Store the token

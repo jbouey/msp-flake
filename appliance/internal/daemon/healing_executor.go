@@ -449,8 +449,7 @@ func (d *Daemon) executeHealingOrder(ctx context.Context, params map[string]inte
 				tier = t
 			}
 		}
-		d.wg.Add(1)
-		go func() { defer d.wg.Done(); d.incidents.ReportHealed(hostname, checkType, tier, runbookID) }()
+		d.safeGo("reportHealedOrder", func() { d.incidents.ReportHealed(hostname, checkType, tier, runbookID) })
 	}
 
 	result["status"] = "healed"

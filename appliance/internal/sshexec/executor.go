@@ -196,8 +196,10 @@ func (e *Executor) executeOnce(ctx context.Context, target *Target, script strin
 	timeoutDur := time.Duration(timeout) * time.Second
 	select {
 	case <-ctx.Done():
+		session.Close() // Kill orphaned goroutine
 		return nil, -1, fmt.Errorf("context cancelled")
 	case <-time.After(timeoutDur):
+		session.Close() // Kill orphaned goroutine
 		return nil, -1, fmt.Errorf("execution timed out after %ds", timeout)
 	case err := <-done:
 		exitCode := 0

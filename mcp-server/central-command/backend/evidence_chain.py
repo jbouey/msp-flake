@@ -15,6 +15,7 @@ HIPAA Controls:
 import os
 import json
 import hashlib
+import hmac
 import base64
 import logging
 from datetime import datetime, timezone, timedelta
@@ -1456,7 +1457,7 @@ async def verify_evidence(
     # Verify chain hash
     chain_data = f"{bundle.bundle_hash}:{bundle.prev_hash or 'genesis'}:{bundle.chain_position}"
     expected_chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
-    chain_valid = (bundle.chain_hash == expected_chain_hash)
+    chain_valid = hmac.compare_digest(bundle.chain_hash or "", expected_chain_hash)
 
     # Verify bundle hash against content
     hash_content = json.dumps({
@@ -1466,7 +1467,7 @@ async def verify_evidence(
         "summary": bundle.summary if isinstance(bundle.summary, dict) else json.loads(bundle.summary) if bundle.summary else {}
     }, sort_keys=True)
     computed_hash = hashlib.sha256(hash_content.encode()).hexdigest()
-    hash_valid = (bundle.bundle_hash == computed_hash)
+    hash_valid = hmac.compare_digest(bundle.bundle_hash or "", computed_hash)
 
     # Verify Ed25519 signature (HIPAA §164.312(c)(1) - Integrity Controls)
     signature_valid = None  # None means signature not present
@@ -1567,15 +1568,15 @@ async def verify_chain_integrity(
         chain_data = f"{bundle.bundle_hash}:{bundle.prev_hash}:{bundle.chain_position}"
         expected_chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
 
-        hash_ok = (bundle.chain_hash == expected_chain_hash)
+        hash_ok = hmac.compare_digest(bundle.chain_hash or "", expected_chain_hash)
 
         # Verify prev_hash links to previous bundle's bundle_hash
         link_ok = True
         if i == 0:
-            link_ok = (bundle.prev_hash == GENESIS_HASH) and (bundle.chain_position == 1)
+            link_ok = hmac.compare_digest(bundle.prev_hash or "", GENESIS_HASH) and (bundle.chain_position == 1)
         else:
             prev_bundle = bundles[i - 1]
-            link_ok = (bundle.prev_hash == prev_bundle.bundle_hash)
+            link_ok = hmac.compare_digest(bundle.prev_hash or "", prev_bundle.bundle_hash or "")
 
         if hash_ok and link_ok:
             verified += 1

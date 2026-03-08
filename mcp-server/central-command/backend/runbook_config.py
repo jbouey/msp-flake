@@ -550,7 +550,7 @@ async def list_runbook_executions(
     site_id: Optional[str] = Query(None),
     runbook_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    limit: int = Query(50, le=200),
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db)
 ):
     """List runbook execution history with filters."""

@@ -132,7 +132,7 @@ async def get_db():
 
 @router.get("/fleet")
 async def get_fleet_overview(
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(auth_module.require_auth),
@@ -479,7 +479,7 @@ async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)
 @router.get("/incidents", response_model=List[Incident])
 async def get_incidents(
     site_id: Optional[str] = None,
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     level: Optional[str] = None,
     resolved: Optional[bool] = None,
@@ -559,7 +559,7 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
 @router.get("/events")
 async def get_events(
     site_id: Optional[str] = None,
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
@@ -637,7 +637,7 @@ async def get_runbook_detail(runbook_id: str, db: AsyncSession = Depends(get_db)
 @router.get("/runbooks/{runbook_id}/executions", response_model=List[RunbookExecution])
 async def get_runbook_executions(
     runbook_id: str,
-    limit: int = Query(default=20, le=100),
+    limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
@@ -718,7 +718,7 @@ async def get_coverage_gaps(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/learning/history", response_model=List[PromotionHistory])
-async def get_promotion_history(limit: int = Query(default=20, le=100), db: AsyncSession = Depends(get_db)):
+async def get_promotion_history(limit: int = Query(default=20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
     """Get recently promoted L2->L1 patterns from learning_promotion_candidates."""
     result = await db.execute(text("""
         SELECT
@@ -1980,7 +1980,7 @@ async def get_notifications(
     site_id: Optional[str] = None,
     severity: Optional[str] = None,
     unread_only: bool = False,
-    limit: int = Query(50, le=200),
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db)
 ):
     """Get notifications with optional filters."""
@@ -2340,7 +2340,7 @@ async def get_current_user(
 
 @auth_router.get("/audit-logs")
 async def get_audit_logs(
-    limit: int = Query(100, le=500),
+    limit: int = Query(100, ge=1, le=500),
     _user: dict = Depends(auth_module.require_admin),
     db: AsyncSession = Depends(get_db)
 ):

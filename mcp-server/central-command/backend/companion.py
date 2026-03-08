@@ -1396,7 +1396,7 @@ async def companion_alert_check_loop():
 @router.get("/activity")
 async def list_all_activity(
     user: dict = Depends(require_companion),
-    limit: int = Query(100, le=500),
+    limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     org_id: Optional[str] = None,
 ):
@@ -1426,7 +1426,7 @@ async def list_all_activity(
 async def list_client_activity(
     org_id: str,
     user: dict = Depends(require_companion),
-    limit: int = Query(50, le=200),
+    limit: int = Query(50, ge=1, le=200),
 ):
     pool = await get_pool()
     await _verify_org(pool, _uid(org_id))

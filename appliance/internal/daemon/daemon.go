@@ -125,6 +125,21 @@ type Daemon struct {
 	discoveryResults map[string]interface{}
 }
 
+// safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
+// If the goroutine panics, the panic is logged instead of crashing the daemon.
+func (d *Daemon) safeGo(name string, f func()) {
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[daemon] PANIC in goroutine %q: %v", name, r)
+			}
+		}()
+		f()
+	}()
+}
+
 // isSubscriptionActive returns true if healing should be allowed.
 // Active and trialing subscriptions allow healing; all other states suppress it.
 func (d *Daemon) isSubscriptionActive() bool {
@@ -306,11 +321,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Start HTTP file server for agent binary distribution.
 	// Domain controllers download the agent binary via Invoke-WebRequest
 	// instead of slow WinRM chunk uploads.
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
+	d.safeGo("serveAgentFiles", func() {
 		d.serveAgentFiles(ctx)
-	}()
+	})
 
 	// Start gRPC server — auto-generate TLS certs from CA if available
 	grpcCfg := grpcserver.Config{
@@ -332,20 +345,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	d.grpcSrv = grpcserver.NewServer(grpcCfg, d.registry, d.agentCA, d)
 
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
+	d.safeGo("grpcServer", func() {
 		if err := d.grpcSrv.Serve(); err != nil {
 			log.Printf("[daemon] gRPC server error: %v", err)
 		}
-	}()
+	})
 
 	// Drain heal channel (process incidents from gRPC drift events)
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
+	d.safeGo("processHealRequests", func() {
 		d.processHealRequests(ctx)
-	}()
+	})
 
 	// Initial checkin
 	d.runCheckin(ctx)
@@ -844,8 +853,7 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 	// Report incident to Central Command dashboard (async, fire-and-forget)
 	platform := maputil.StringDefault(data, "platform", "windows")
 	if d.incidents != nil {
-		d.wg.Add(1)
-		go func() { defer d.wg.Done(); d.incidents.ReportDriftIncident(req.Hostname, req.CheckType, req.Expected, req.Actual, req.HIPAAControl, severity, platform) }()
+		d.safeGo("reportDriftIncident", func() { d.incidents.ReportDriftIncident(req.Hostname, req.CheckType, req.Expected, req.Actual, req.HIPAAControl, severity, platform) })
 	}
 
 	// L1: Deterministic matching
@@ -871,21 +879,18 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 				req.Hostname, req.CheckType, match.Rule.ID, result.DurationMs)
 
 			if d.telemetry != nil {
-				d.wg.Add(1)
-				go func() { defer d.wg.Done(); d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, true, "", result.DurationMs) }()
+				d.safeGo("telemetryL1", func() { d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, true, "", result.DurationMs) })
 			}
 
 			if d.incidents != nil {
-				d.wg.Add(1)
-				go func() { defer d.wg.Done(); d.incidents.ReportHealed(req.Hostname, req.CheckType, "L1", match.Rule.ID) }()
+				d.safeGo("reportHealed", func() { d.incidents.ReportHealed(req.Hostname, req.CheckType, "L1", match.Rule.ID) })
 			}
 
 			// GPO firewall fix: when firewall drift is healed, also fix the
 			// domain GPO to prevent GPO from turning firewall back off.
 			// Zero-friction: runs automatically without operator intervention.
 			if req.CheckType == "firewall_status" {
-				d.wg.Add(1)
-				go func() { defer d.wg.Done(); d.fixFirewallGPO(req.Hostname) }()
+				d.safeGo("fixFirewallGPO", func() { d.fixFirewallGPO(req.Hostname) })
 			}
 		} else {
 			d.healJournal.FinishHealing(incidentID, false, result.Error)
@@ -893,8 +898,7 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 				req.Hostname, req.CheckType, result.Error)
 
 			if d.telemetry != nil {
-				d.wg.Add(1)
-				go func() { defer d.wg.Done(); d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, false, result.Error, result.DurationMs) }()
+				d.safeGo("telemetryL1Fail", func() { d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, false, result.Error, result.DurationMs) })
 			}
 		}
 		return
@@ -958,9 +962,8 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 			l2Success, l2Err := d.executeL2Action(ctx, decision, req, incidentID)
 			d.healJournal.FinishHealing(incidentID, l2Success, l2Err)
 			// Report telemetry for data flywheel (async) with actual success/failure
-			d.wg.Add(1)
 			dur := time.Since(l2Start).Milliseconds()
-			go func() { defer d.wg.Done(); d.l2Planner.ReportExecution(incident, decision, l2Success, l2Err, dur) }()
+			d.safeGo("telemetryL2", func() { d.l2Planner.ReportExecution(incident, decision, l2Success, l2Err, dur) })
 			return
 		}
 
