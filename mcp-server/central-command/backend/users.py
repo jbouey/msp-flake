@@ -220,7 +220,7 @@ async def list_all_accounts(
     if not account_type or account_type == "client":
         result = await db.execute(text("""
             SELECT cu.id, cu.email, cu.name, cu.role, cu.is_active,
-                   cu.last_login_at, cu.created_at, cu.mfa_enabled,
+                   cu.last_login_at, cu.created_at,
                    co.name as org_name
             FROM client_users cu
             LEFT JOIN client_orgs co ON co.id = cu.client_org_id
@@ -234,10 +234,10 @@ async def list_all_accounts(
                 "role": row[3] or "client",
                 "status": "active" if row[4] else "disabled",
                 "account_type": "client",
-                "org": row[8] or "Unknown Org",
+                "org": row[7] or "Unknown Org",
                 "last_login": row[5].isoformat() if row[5] else None,
                 "created_at": row[6].isoformat() if row[6] else None,
-                "mfa_enabled": bool(row[7]),
+                "mfa_enabled": False,
             })
 
     # Search filter
