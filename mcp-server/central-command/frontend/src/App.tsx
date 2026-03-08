@@ -63,7 +63,7 @@ if (typeof window !== 'undefined' && !isLandingSite) {
 // Companion module - lazy loaded with layout
 const CompanionRoutes = lazy(() => import('./companion').then(m => ({
   default: () => {
-    const { CompanionLayout, CompanionClientList, CompanionClientDetail, CompanionModuleWork, CompanionStats, CompanionActivityLog } = m;
+    const { CompanionLayout, CompanionClientList, CompanionClientDetail, CompanionModuleWork, CompanionStats, CompanionActivityLog, CompanionSettings } = m;
     return (
       <Routes>
         <Route element={<CompanionLayout />}>
@@ -72,6 +72,7 @@ const CompanionRoutes = lazy(() => import('./companion').then(m => ({
           <Route path="clients/:orgId/:moduleKey" element={<CompanionModuleWork />} />
           <Route path="stats" element={<CompanionStats />} />
           <Route path="activity" element={<CompanionActivityLog />} />
+          <Route path="settings" element={<CompanionSettings />} />
         </Route>
       </Routes>
     );

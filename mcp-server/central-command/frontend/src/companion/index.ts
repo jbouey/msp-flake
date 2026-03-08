@@ -5,3 +5,4 @@ export { CompanionModuleWork } from './CompanionModuleWork';
 export { CompanionStats } from './CompanionStats';
 export { CompanionActivityLog } from './CompanionActivityLog';
 export { CompanionNotes } from './CompanionNotes';
+export { CompanionSettings } from './CompanionSettings';

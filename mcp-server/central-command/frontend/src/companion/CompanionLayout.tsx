@@ -8,6 +8,7 @@ const navItems = [
   { path: '/companion', label: 'Clients', exact: true },
   { path: '/companion/stats', label: 'Progress' },
   { path: '/companion/activity', label: 'Activity' },
+  { path: '/companion/settings', label: 'Settings' },
 ];
 
 export const CompanionLayout: React.FC = () => {
@@ -32,6 +33,8 @@ export const CompanionLayout: React.FC = () => {
     breadcrumbs.push({ label: 'Progress', path: '/companion/stats' });
   } else if (pathParts[0] === 'activity') {
     breadcrumbs.push({ label: 'Activity', path: '/companion/activity' });
+  } else if (pathParts[0] === 'settings') {
+    breadcrumbs.push({ label: 'Settings', path: '/companion/settings' });
   }
 
   return (

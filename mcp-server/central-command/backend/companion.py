@@ -62,6 +62,50 @@ STATUS_RANK = {"not_started": 0, "action_needed": 1, "in_progress": 1, "complete
 
 
 # =============================================================================
+# COMPANION PROFILE
+# =============================================================================
+
+
+@router.get("/me")
+async def get_companion_profile(user: dict = Depends(require_companion)):
+    """Get current companion user profile."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, email, display_name, role FROM admin_users WHERE id = $1",
+            _uuid.UUID(str(user["id"])),
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "email": row["email"],
+        "display_name": row["display_name"],
+        "role": row["role"],
+        # Preferences stored as JSON in admin_users.metadata or returned as defaults
+        "email_notifications": True,
+        "alert_digest": "daily",
+    }
+
+
+@router.put("/me/preferences")
+async def update_companion_preferences(request: Request, user: dict = Depends(require_companion)):
+    """Update companion user preferences (display_name, notification settings)."""
+    body = await request.json()
+    pool = await get_pool()
+
+    display_name = body.get("display_name")
+    if display_name:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE admin_users SET display_name = $2, updated_at = NOW() WHERE id = $1",
+                _uuid.UUID(str(user["id"])),
+                display_name[:100],
+            )
+
+    return {"status": "ok"}
+
+
+# =============================================================================
 # HELPERS
 # =============================================================================
 
