@@ -213,7 +213,7 @@ const HealthDot: React.FC<{ status: HealthStatus }> = ({ status }) => {
 export const Sidebar: React.FC<SidebarProps> = ({
   clients,
   onClientSelect,
-  selectedClient,
+  selectedClient: _selectedClient,
   user,
   onLogout,
   isOpen = false,
@@ -263,35 +263,70 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Clients Section */}
+      {/* Fleet Health Summary */}
       <div className="px-4 pt-4 pb-3 border-b border-separator-light">
-        <h2 className="text-[10px] font-semibold text-label-tertiary uppercase tracking-wider mb-2 px-1">
-          Clients
+        <h2 className="text-[10px] font-semibold text-label-tertiary uppercase tracking-wider mb-2.5 px-1">
+          Fleet Status
         </h2>
-        <div className="space-y-0.5 max-h-48 overflow-y-auto">
-          {clients.map((client) => (
-            <button
-              key={client.site_id}
-              onClick={() => onClientSelect?.(client.site_id)}
-              className={`
-                w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-ios-sm text-left
-                transition-colors duration-150
-                ${selectedClient === client.site_id
-                  ? 'bg-accent-tint text-accent-primary'
-                  : 'text-label-primary hover:bg-fill-quaternary'
-                }
-              `}
-            >
-              <HealthDot status={client.health.status} />
-              <span className="text-sm truncate">{client.name}</span>
-            </button>
-          ))}
-          {clients.length === 0 && (
-            <p className="text-sm text-label-tertiary px-2.5 py-1.5">
-              No clients yet
-            </p>
-          )}
-        </div>
+        {(() => {
+          const online = clients.filter(c => c.health.status === 'healthy').length;
+          const warning = clients.filter(c => c.health.status === 'warning').length;
+          const offline = clients.filter(c => c.health.status === 'critical').length;
+          const needsAttention = clients.filter(c => c.health.status !== 'healthy');
+          return (
+            <>
+              <button
+                onClick={() => onClientSelect?.('')}
+                className="w-full flex items-center gap-3 px-2.5 py-2 rounded-ios-sm hover:bg-fill-quaternary transition-colors text-left"
+              >
+                <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                  {online > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="status-dot status-dot-healthy status-dot-online" />
+                      <span className="text-sm font-medium text-health-healthy tabular-nums">{online}</span>
+                    </span>
+                  )}
+                  {warning > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="status-dot status-dot-warning" />
+                      <span className="text-sm font-medium text-health-warning tabular-nums">{warning}</span>
+                    </span>
+                  )}
+                  {offline > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="status-dot status-dot-critical" />
+                      <span className="text-sm font-medium text-health-critical tabular-nums">{offline}</span>
+                    </span>
+                  )}
+                  {clients.length === 0 && (
+                    <span className="text-sm text-label-tertiary">No sites</span>
+                  )}
+                </div>
+                <span className="text-xs text-label-tertiary">{clients.length} sites</span>
+              </button>
+              {/* Show sites that need attention (max 3) */}
+              {needsAttention.length > 0 && (
+                <div className="mt-1.5 space-y-0.5">
+                  {needsAttention.slice(0, 3).map(client => (
+                    <button
+                      key={client.site_id}
+                      onClick={() => onClientSelect?.(client.site_id)}
+                      className="w-full flex items-center gap-2 px-2.5 py-1 rounded-ios-sm text-left hover:bg-fill-quaternary transition-colors"
+                    >
+                      <HealthDot status={client.health.status} />
+                      <span className="text-xs text-label-secondary truncate">{client.name}</span>
+                    </button>
+                  ))}
+                  {needsAttention.length > 3 && (
+                    <p className="text-[10px] text-label-tertiary px-2.5 py-0.5">
+                      +{needsAttention.length - 3} more need attention
+                    </p>
+                  )}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {/* Navigation */}
