@@ -133,7 +133,7 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
             base = provision['client_name'] or claim.hostname or claim.mac_address
             base = base.lower().replace(' ', '-').replace(':', '-').replace('.', '-')
             base = ''.join(c for c in base if c.isalnum() or c == '-')[:40]
-            site_id = f"{base}-{secrets.token_hex(3)}"
+            site_id = f"{base}-{secrets.token_hex(6)}"
 
         # Generate appliance_id with colon-separated MAC (matches Go checkin canonical format)
         mac_normalized = normalize_mac(claim.mac_address)
@@ -190,6 +190,16 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
             claim.hostname
         )
 
+        # Generate API key for appliance authentication
+        import hashlib
+        raw_api_key = secrets.token_urlsafe(32)
+        api_key_hash = hashlib.sha256(raw_api_key.encode()).hexdigest()
+        await conn.execute("""
+            INSERT INTO api_keys (site_id, key_hash, key_prefix, description, active, created_at)
+            VALUES ($1, $2, $3, 'Auto-generated during provisioning', true, NOW())
+            ON CONFLICT DO NOTHING
+        """, site_id, api_key_hash, raw_api_key[:8])
+
         # Mark provision as claimed
         await conn.execute("""
             UPDATE appliance_provisions
@@ -228,6 +238,7 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
             site_id=site_id,
             appliance_id=appliance_id,
             api_endpoint=API_BASE_URL,
+            api_key=raw_api_key,
             partner={
                 "slug": partner['slug'],
                 "brand_name": partner['brand_name'],
@@ -304,15 +315,18 @@ async def update_provision_status(status: ProvisionStatusRequest):
         if result == "UPDATE 0":
             raise HTTPException(status_code=404, detail="Appliance not found")
 
-        # If moving to active, update site onboarding stage
+        # If moving to active, update site onboarding stage + timestamp
         if status.status == "active":
             await conn.execute("""
                 UPDATE sites
                 SET onboarding_stage = 'connectivity',
-                    status = 'active'
+                    status = 'active',
+                    connectivity_at = NOW()
                 WHERE site_id = (
                     SELECT site_id FROM site_appliances WHERE appliance_id = $1
                 )
+                AND (onboarding_stage IN ('provisioning', 'received', 'shipped')
+                     OR onboarding_stage IS NULL)
             """, status.appliance_id)
 
     return {

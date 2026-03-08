@@ -1306,9 +1306,42 @@ async def create_prospect(prospect: ProspectCreate, db: AsyncSession = Depends(g
 
 @router.patch("/onboarding/{client_id}/stage")
 async def advance_stage(client_id: str, request: StageAdvance, db: AsyncSession = Depends(get_db)):
-    """Move client to next stage."""
+    """Move client to next stage with transition validation."""
     now = datetime.now(timezone.utc)
     stage_val = request.new_stage.value
+
+    # Allowed forward transitions (each stage can advance to the next, or skip max 1)
+    STAGE_ORDER = [
+        'lead', 'discovery', 'proposal', 'contract', 'intake', 'creds',
+        'shipped', 'received', 'connectivity', 'scanning', 'baseline',
+        'compliant', 'active',
+    ]
+
+    # Get current stage
+    current = await db.execute(
+        text("SELECT onboarding_stage FROM sites WHERE site_id = :client_id"),
+        {"client_id": client_id}
+    )
+    current_row = current.fetchone()
+    if not current_row:
+        raise HTTPException(status_code=404, detail=f"Site {client_id} not found")
+
+    current_stage = current_row.onboarding_stage or 'lead'
+
+    # Validate transition: allow forward movement (skip up to 2 stages) or backward by 1
+    if current_stage in STAGE_ORDER and stage_val in STAGE_ORDER:
+        current_idx = STAGE_ORDER.index(current_stage)
+        new_idx = STAGE_ORDER.index(stage_val)
+        if new_idx > current_idx + 3:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot skip from '{current_stage}' to '{stage_val}'. Max 3 stages forward."
+            )
+        if new_idx < current_idx - 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot go back from '{current_stage}' to '{stage_val}'. Max 1 stage backward."
+            )
 
     await db.execute(text("""
         UPDATE sites

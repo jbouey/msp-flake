@@ -406,6 +406,21 @@ async def trigger_discovery(profile_id: str = Path(...)):
             if tmpl and tmpl["discovery_hints"]:
                 hints = tmpl["discovery_hints"]
 
+        # Verify credentials exist before discovery (discovery will fail without them)
+        has_creds = await conn.fetchval("""
+            SELECT EXISTS(
+                SELECT 1 FROM site_credentials
+                WHERE site_id = $1
+                AND credential_type IN ('winrm', 'domain_admin', 'local_admin')
+            )
+        """, profile["site_id"])
+        if not has_creds:
+            raise HTTPException(
+                400,
+                "No Windows credentials configured for this site. "
+                "Add domain_admin or local_admin credentials before running discovery."
+            )
+
         # Find appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM site_appliances

@@ -1980,6 +1980,12 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                 WHERE appliance_id = ANY($1)
             """, merge_from_ids)
 
+        # Fetch previous last_checkin for credential freshness comparison
+        last_checkin_time = await conn.fetchval(
+            "SELECT last_checkin FROM site_appliances WHERE appliance_id = $1",
+            canonical_id
+        )
+
         # === STEP 3: Upsert the canonical appliance entry ===
         await conn.execute("""
             INSERT INTO site_appliances (
@@ -2227,9 +2233,24 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
             logging.warning(f"Failed to fetch fleet orders: {e}")
 
         # === STEP 5: Get windows targets (conditional credential delivery) ===
-        # Only send credentials if appliance doesn't have fresh local copies
+        # Always check credential freshness — if creds were updated since last checkin,
+        # force delivery even if appliance thinks it has local copies
+        creds_updated_at = None
+        try:
+            creds_updated_at = await conn.fetchval("""
+                SELECT MAX(COALESCE(updated_at, created_at))
+                FROM site_credentials WHERE site_id = $1
+            """, checkin.site_id)
+        except Exception:
+            pass  # Table may not have updated_at column yet
+
+        # Send credentials if: appliance has none OR creds were updated after last checkin
+        should_send_creds = not checkin.has_local_credentials
+        if creds_updated_at and last_checkin_time:
+            should_send_creds = should_send_creds or (creds_updated_at > last_checkin_time)
+
         windows_targets = []
-        if not checkin.has_local_credentials:
+        if should_send_creds:
             try:
                 creds = await conn.fetch("""
                     SELECT credential_name, credential_type, encrypted_data
@@ -2271,7 +2292,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
 
         # === STEP 5b: Get linux targets (SSH credentials) ===
         linux_targets = []
-        if not checkin.has_local_credentials:
+        if should_send_creds:
             try:
                 ssh_creds = await conn.fetch("""
                     SELECT credential_name, encrypted_data
