@@ -973,6 +973,8 @@ export const Partners: React.FC = () => {
   }, [search, debouncedSearch]);
 
   const fetchPartners = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
     setIsLoading(true);
     try {
       const params = new URLSearchParams({
@@ -984,7 +986,7 @@ export const Partners: React.FC = () => {
       if (statusFilter) params.set('status', statusFilter);
       if (debouncedSearch) params.set('search', debouncedSearch);
       const response = await fetch(`/api/partners?${params}`, {
-        credentials: 'same-origin',
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (response.ok) {
         const data = await response.json();
