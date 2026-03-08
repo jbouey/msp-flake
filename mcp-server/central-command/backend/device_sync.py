@@ -685,6 +685,9 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
 
 async def _update_workstation_summary(conn: asyncpg.Connection, site_id: str):
     """Update the site_workstation_summaries table from current workstation data."""
+    import hashlib
+    import uuid as _uuid
+
     stats = await conn.fetchrow("""
         SELECT
             COUNT(*) as total,
@@ -702,13 +705,19 @@ async def _update_workstation_summary(conn: asyncpg.Connection, site_id: str):
     total = stats['total']
     compliance_rate = (stats['compliant'] / total * 100) if total > 0 else 0
 
+    # Generate a deterministic bundle_id and evidence_hash for the summary
+    bundle_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"ws-summary-{site_id}"))
+    evidence_hash = hashlib.sha256(
+        f"{site_id}:{total}:{stats['compliant']}:{stats['drifted']}".encode()
+    ).hexdigest()
+
     await conn.execute("""
         INSERT INTO site_workstation_summaries (
-            site_id, total_workstations, online_workstations,
+            site_id, bundle_id, total_workstations, online_workstations,
             compliant_workstations, drifted_workstations,
             error_workstations, unknown_workstations,
-            overall_compliance_rate, last_scan
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            overall_compliance_rate, check_compliance, evidence_hash, last_scan
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}'::jsonb, $10, NOW())
         ON CONFLICT (site_id) DO UPDATE SET
             total_workstations = EXCLUDED.total_workstations,
             online_workstations = EXCLUDED.online_workstations,
@@ -717,9 +726,12 @@ async def _update_workstation_summary(conn: asyncpg.Connection, site_id: str):
             error_workstations = EXCLUDED.error_workstations,
             unknown_workstations = EXCLUDED.unknown_workstations,
             overall_compliance_rate = EXCLUDED.overall_compliance_rate,
-            last_scan = EXCLUDED.last_scan
+            evidence_hash = EXCLUDED.evidence_hash,
+            last_scan = EXCLUDED.last_scan,
+            updated_at = NOW()
     """,
         site_id,
+        bundle_id,
         stats['total'],
         stats['online'],
         stats['compliant'],
@@ -727,4 +739,5 @@ async def _update_workstation_summary(conn: asyncpg.Connection, site_id: str):
         stats['error'],
         stats['unknown'],
         compliance_rate,
+        evidence_hash,
     )
