@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 
-const getToken = (): string | null => localStorage.getItem('auth_token');
+// Read CSRF token from cookie for state-changing requests
+function getCsrfToken(): string {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
 
 interface Partner {
   id: string;
@@ -289,12 +293,10 @@ const PartnerDetailView: React.FC<{
   const [activityLoading, setActivityLoading] = useState(false);
 
   const fetchDetail = useCallback(async () => {
-    const token = getToken();
-    if (!token) return;
     setIsLoading(true);
     try {
       const res = await fetch(`/api/partners/${partnerId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (res.ok) {
         const data = await res.json();
@@ -315,12 +317,10 @@ const PartnerDetailView: React.FC<{
   }, [partnerId]);
 
   const fetchActivity = useCallback(async () => {
-    const token = getToken();
-    if (!token) return;
     setActivityLoading(true);
     try {
       const res = await fetch(`/api/partners/${partnerId}/activity?limit=100`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (res.ok) {
         const data = await res.json();
@@ -337,13 +337,12 @@ const PartnerDetailView: React.FC<{
   useEffect(() => { if (activeTab === 'activity') fetchActivity(); }, [activeTab, fetchActivity]);
 
   const handleSave = async () => {
-    const token = getToken();
-    if (!token) return;
     setIsSaving(true);
     try {
       const res = await fetch(`/api/partners/${partnerId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
           name: editName, contact_email: editEmail, contact_phone: editPhone || null,
           brand_name: editBrandName, primary_color: editColor,
@@ -367,12 +366,11 @@ const PartnerDetailView: React.FC<{
 
   const handleDelete = async () => {
     if (!confirm(`Delete partner "${detail?.brand_name}"? Sites will be unlinked but not deleted.`)) return;
-    const token = getToken();
-    if (!token) return;
     try {
       const res = await fetch(`/api/partners/${partnerId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-Token': getCsrfToken() },
       });
       if (res.ok) {
         onRefreshList();
@@ -388,12 +386,11 @@ const PartnerDetailView: React.FC<{
 
   const handleRegenKey = async () => {
     if (!confirm('Regenerate API key? The old key will stop working immediately.')) return;
-    const token = getToken();
-    if (!token) return;
     try {
       const res = await fetch(`/api/partners/${partnerId}/regenerate-key`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-Token': getCsrfToken() },
       });
       if (res.ok) {
         const data = await res.json();
@@ -774,15 +771,13 @@ const PartnerActivityLog: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
 
   const fetchActivity = useCallback(async () => {
-    const token = getToken();
-    if (!token) return;
     setIsLoading(true);
     try {
       const params = new URLSearchParams({ limit: '200' });
       if (filterCategory !== 'all') params.set('event_category', filterCategory);
       if (filterPartner !== 'all') params.set('partner_id', filterPartner);
       const res = await fetch(`/api/partners/activity/all?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (res.ok) {
         const data = await res.json();
@@ -973,8 +968,6 @@ export const Partners: React.FC = () => {
   }, [search, debouncedSearch]);
 
   const fetchPartners = useCallback(async () => {
-    const token = getToken();
-    if (!token) return;
     setIsLoading(true);
     try {
       const params = new URLSearchParams({
@@ -986,7 +979,7 @@ export const Partners: React.FC = () => {
       if (statusFilter) params.set('status', statusFilter);
       if (debouncedSearch) params.set('search', debouncedSearch);
       const response = await fetch(`/api/partners?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (response.ok) {
         const data = await response.json();
@@ -1008,12 +1001,9 @@ export const Partners: React.FC = () => {
     fetchOAuthConfig();
   }, []);
 
-  const fetchPendingPartners = async () => {
-    const token = getToken();
-    if (!token) return;
-    try {
+  const fetchPendingPartners = async () => {    try {
       const response = await fetch('/api/admin/partners/pending', {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (response.ok) {
         const data = await response.json();
@@ -1024,12 +1014,9 @@ export const Partners: React.FC = () => {
     }
   };
 
-  const fetchOAuthConfig = async () => {
-    const token = getToken();
-    if (!token) return;
-    try {
+  const fetchOAuthConfig = async () => {    try {
       const response = await fetch('/api/admin/partners/oauth-config', {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (response.ok) {
         const data = await response.json();
@@ -1043,14 +1030,13 @@ export const Partners: React.FC = () => {
   };
 
   const saveOAuthConfig = async () => {
-    const token = getToken();
-    if (!token) return;
     setSavingOAuth(true);
     try {
       const domains = oauthDomains.split(',').map(d => d.trim().toLowerCase()).filter(d => d);
       const response = await fetch('/api/admin/partners/oauth-config', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
           allowed_domains: domains, require_approval: oauthRequireApproval,
           allow_consumer_gmail: oauthConfig?.allow_consumer_gmail ?? true,
@@ -1071,14 +1057,11 @@ export const Partners: React.FC = () => {
     }
   };
 
-  const handleApprovePartner = async (partnerId: string) => {
-    const token = getToken();
-    if (!token) return;
-    setProcessingApproval(partnerId);
+  const handleApprovePartner = async (partnerId: string) => {    setProcessingApproval(partnerId);
     try {
       const response = await fetch(`/api/admin/partners/approve/${partnerId}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (response.ok) {
         fetchPendingPartners();
@@ -1095,14 +1078,11 @@ export const Partners: React.FC = () => {
   };
 
   const handleRejectPartner = async (partnerId: string) => {
-    if (!confirm('Are you sure you want to reject this partner signup? This will delete their account.')) return;
-    const token = getToken();
-    if (!token) return;
-    setProcessingApproval(partnerId);
+    if (!confirm('Are you sure you want to reject this partner signup? This will delete their account.')) return;    setProcessingApproval(partnerId);
     try {
       const response = await fetch(`/api/admin/partners/reject/${partnerId}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (response.ok) {
         fetchPendingPartners();
@@ -1123,10 +1103,10 @@ export const Partners: React.FC = () => {
   }) => {
     setIsCreating(true);
     try {
-      const token = getToken();
       const response = await fetch('/api/partners', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify(data),
       });
       if (response.ok) {

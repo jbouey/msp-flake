@@ -919,7 +919,7 @@ export const SiteDetail: React.FC = () => {
     if (!siteId) return;
     try {
       await updateHealingTier.mutateAsync({ siteId, healingTier: tier });
-      showToast(`Healing tier updated to ${tier === 'full_coverage' ? 'Full Coverage (21 rules)' : 'Standard (4 rules)'}`, 'success');
+      showToast(`Healing tier updated to ${tier === 'full_coverage' ? 'Full Coverage' : 'Standard'}`, 'success');
     } catch (error) {
       showToast(`Failed to update healing tier: ${error}`, 'error');
     }
@@ -1121,8 +1121,8 @@ export const SiteDetail: React.FC = () => {
                     disabled={updateHealingTier.isPending}
                     className="px-2 py-1 text-sm rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:outline-none focus:ring-2 focus:ring-accent-primary disabled:opacity-50"
                   >
-                    <option value="standard">Standard (4 rules)</option>
-                    <option value="full_coverage">Full Coverage (21 rules)</option>
+                    <option value="standard">Standard</option>
+                    <option value="full_coverage">Full Coverage</option>
                   </select>
                   {updateHealingTier.isPending && (
                     <Spinner size="sm" />
