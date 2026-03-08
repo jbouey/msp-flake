@@ -284,28 +284,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span className="flex items-center gap-2">
                       <span className="status-dot status-dot-healthy status-dot-online" />
                       <span className="text-xs font-medium text-health-healthy tabular-nums">{online}</span>
-                      <span className="text-xs text-label-secondary">Online</span>
+                      <span className="text-xs text-label-primary">Online</span>
                     </span>
                   )}
                   {warning > 0 && (
                     <span className="flex items-center gap-2">
                       <span className="status-dot status-dot-warning" />
                       <span className="text-xs font-medium text-health-warning tabular-nums">{warning}</span>
-                      <span className="text-xs text-label-secondary">Warning</span>
+                      <span className="text-xs text-label-primary">Warning</span>
                     </span>
                   )}
                   {offline > 0 && (
                     <span className="flex items-center gap-2">
                       <span className="status-dot status-dot-critical" />
                       <span className="text-xs font-medium text-health-critical tabular-nums">{offline}</span>
-                      <span className="text-xs text-label-secondary">Offline</span>
+                      <span className="text-xs text-label-primary">Offline</span>
                     </span>
                   )}
                   {clients.length === 0 && (
                     <span className="text-xs text-label-tertiary">No sites connected</span>
                   )}
                 </div>
-                <span className="text-[10px] text-label-tertiary mt-1.5 block">{clients.length} total sites</span>
+                <span className="text-[10px] text-label-secondary mt-1.5 block">{clients.length} total sites</span>
               </button>
               {/* Show sites that need attention (max 3) */}
               {needsAttention.length > 0 && (
