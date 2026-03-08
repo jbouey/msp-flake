@@ -1436,7 +1436,7 @@ async def get_fleet_posture(db: AsyncSession = Depends(get_db)):
                     s.clinic_name,
                     COUNT(DISTINCT sa.id) as appliance_count,
                     COUNT(DISTINCT sa.id) FILTER (
-                        WHERE sa.last_checkin > NOW() - INTERVAL '5 minutes'
+                        WHERE sa.last_checkin > NOW() - INTERVAL '15 minutes'
                     ) as online_count,
                     MAX(sa.last_checkin) as last_checkin
                 FROM sites s

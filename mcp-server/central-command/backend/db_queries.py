@@ -405,7 +405,7 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
     appliance_row = await db.execute(text("""
         SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online
+            COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '15 minutes') as online
         FROM site_appliances
     """))
     appliance_row = appliance_row.fetchone()

@@ -2261,14 +2261,14 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         windows_targets = []
         if should_send_creds:
             try:
-                creds = await conn.fetch("""
-                    SELECT credential_name, credential_type, encrypted_data,
-                           username, domain, password_encrypted, name
-                    FROM site_credentials
-                    WHERE site_id = $1
-                    AND credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
-                    ORDER BY CASE WHEN credential_type = 'domain_admin' THEN 0 ELSE 1 END, created_at DESC
-                """, checkin.site_id)
+                async with conn.transaction():
+                    creds = await conn.fetch("""
+                        SELECT credential_name, credential_type, encrypted_data
+                        FROM site_credentials
+                        WHERE site_id = $1
+                        AND credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
+                        ORDER BY CASE WHEN credential_type = 'domain_admin' THEN 0 ELSE 1 END, created_at DESC
+                    """, checkin.site_id)
 
                 for cred in creds:
                     cred_type = cred.get('credential_type', 'winrm')
@@ -2277,29 +2277,20 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                     password = ''
                     use_ssl = False
 
-                    # Two credential formats:
-                    # 1. Admin portal: JSON blob in encrypted_data (host, username, password)
-                    # 2. Partner portal: separate columns (username, domain, password_encrypted via Fernet)
+                    # Credentials stored as JSON blob in encrypted_data
                     if cred['encrypted_data']:
                         try:
-                            cred_data = json.loads(cred['encrypted_data'])
+                            raw = cred['encrypted_data']
+                            # encrypted_data is bytea — decode if needed
+                            if isinstance(raw, (bytes, bytearray)):
+                                raw = raw.decode('utf-8')
+                            cred_data = json.loads(raw)
                             hostname = cred_data.get('host') or cred_data.get('target_host')
                             username = cred_data.get('username', '')
                             password = cred_data.get('password', '')
                             use_ssl = cred_data.get('use_ssl', False)
-                        except (json.JSONDecodeError, TypeError) as e:
+                        except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as e:
                             logger.warning(f"Checkin {checkin.site_id}: malformed credential JSON for {cred.get('credential_name', '?')}: {e}")
-                            continue
-                    elif cred.get('username') and cred.get('password_encrypted'):
-                        # Partner-format credentials: decrypt Fernet password
-                        try:
-                            from .oauth_login import decrypt_secret
-                            username = cred['username']
-                            password = decrypt_secret(cred['password_encrypted'])
-                            # Partner creds use credential_name as hostname hint
-                            hostname = cred.get('name') or cred.get('credential_name')
-                        except Exception as e:
-                            logger.warning(f"Checkin {checkin.site_id}: failed to decrypt partner credential {cred.get('name', '?')}: {e}")
                             continue
                     else:
                         continue  # No usable credential data
@@ -2319,18 +2310,22 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         linux_targets = []
         if should_send_creds:
             try:
-                ssh_creds = await conn.fetch("""
-                    SELECT credential_name, encrypted_data
-                    FROM site_credentials
-                    WHERE site_id = $1
-                    AND credential_type IN ('ssh_password', 'ssh_key')
-                    ORDER BY created_at DESC
-                """, checkin.site_id)
+                async with conn.transaction():
+                    ssh_creds = await conn.fetch("""
+                        SELECT credential_name, encrypted_data
+                        FROM site_credentials
+                        WHERE site_id = $1
+                        AND credential_type IN ('ssh_password', 'ssh_key')
+                        ORDER BY created_at DESC
+                    """, checkin.site_id)
 
                 for cred in ssh_creds:
                     if cred['encrypted_data']:
                         try:
-                            cred_data = json.loads(cred['encrypted_data'])
+                            raw = cred['encrypted_data']
+                            if isinstance(raw, (bytes, bytearray)):
+                                raw = raw.decode('utf-8')
+                            cred_data = json.loads(raw)
                             hostname = cred_data.get('host') or cred_data.get('target_host')
                             target_entry = {
                                 "hostname": hostname,
@@ -2358,22 +2353,20 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         # === STEP 6: Get enabled runbooks (runbook config pull) ===
         enabled_runbooks = []
         try:
-            # Get all runbooks with effective enabled status
-            # Hierarchy: appliance override > site config > default (enabled)
-            runbook_rows = await conn.fetch("""
-                SELECT
-                    r.runbook_id,
-                    COALESCE(
-                        arc.enabled,           -- Appliance override takes priority
-                        src.enabled,           -- Site config second
-                        true                   -- Default is enabled
-                    ) as enabled
-                FROM runbooks r
-                LEFT JOIN site_runbook_config src ON src.runbook_id = r.runbook_id AND src.site_id = $1
-                LEFT JOIN appliance_runbook_config arc ON arc.runbook_id = r.runbook_id AND arc.appliance_id = $2
-                ORDER BY r.runbook_id
-            """, checkin.site_id, canonical_id)
-
+            async with conn.transaction():
+                runbook_rows = await conn.fetch("""
+                    SELECT
+                        r.runbook_id,
+                        COALESCE(
+                            arc.enabled,
+                            src.enabled,
+                            true
+                        ) as enabled
+                    FROM runbooks r
+                    LEFT JOIN site_runbook_config src ON src.runbook_id = r.runbook_id AND src.site_id = $1
+                    LEFT JOIN appliance_runbook_config arc ON arc.runbook_id = r.runbook_id AND arc.appliance_id = $2
+                    ORDER BY r.runbook_id
+                """, checkin.site_id, canonical_id)
             enabled_runbooks = [row['runbook_id'] for row in runbook_rows if row['enabled']]
         except Exception as e:
             logger.warning(f"Checkin {checkin.site_id}: runbook lookup failed: {e}")
@@ -2382,23 +2375,23 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         trigger_enumeration = False
         trigger_immediate_scan = False
         try:
-            appliance = await conn.fetchrow("""
-                SELECT trigger_enumeration, trigger_immediate_scan
-                FROM site_appliances
-                WHERE appliance_id = $1
-            """, canonical_id)
-            
-            if appliance:
-                trigger_enumeration = appliance.get('trigger_enumeration', False)
-                trigger_immediate_scan = appliance.get('trigger_immediate_scan', False)
-                
-                # Clear trigger flags after sending
-                if trigger_enumeration or trigger_immediate_scan:
-                    await conn.execute("""
-                        UPDATE site_appliances 
-                        SET trigger_enumeration = false, trigger_immediate_scan = false
-                        WHERE appliance_id = $1
-                    """, canonical_id)
+            async with conn.transaction():
+                appliance = await conn.fetchrow("""
+                    SELECT trigger_enumeration, trigger_immediate_scan
+                    FROM site_appliances
+                    WHERE appliance_id = $1
+                """, canonical_id)
+
+                if appliance:
+                    trigger_enumeration = appliance.get('trigger_enumeration', False)
+                    trigger_immediate_scan = appliance.get('trigger_immediate_scan', False)
+
+                    if trigger_enumeration or trigger_immediate_scan:
+                        await conn.execute("""
+                            UPDATE site_appliances
+                            SET trigger_enumeration = false, trigger_immediate_scan = false
+                            WHERE appliance_id = $1
+                        """, canonical_id)
         except Exception as e:
             logger.warning(f"Checkin {checkin.site_id}: trigger flags lookup failed: {e}")
 
