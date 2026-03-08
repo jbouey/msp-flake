@@ -2345,6 +2345,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                                 target_entry["private_key"] = cred_data['private_key']
                             if cred_data.get('distro'):
                                 target_entry["distro"] = cred_data['distro']
+                            if cred_data.get('label'):
+                                target_entry["label"] = cred_data['label']
                             if hostname:
                                 linux_targets.append(target_entry)
                         except json.JSONDecodeError as e:

@@ -319,11 +319,67 @@ async def get_site_devices(
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(query, *params)
+
+        # Fetch agent coverage data for this site
+        agents = await conn.fetch(
+            "SELECT hostname, ip_address, status, last_heartbeat, agent_version FROM go_agents WHERE site_id = $1",
+            site_id,
+        )
+        agent_by_host = {}
+        agent_by_ip = {}
+        for a in agents:
+            if a["hostname"]:
+                agent_by_host[a["hostname"].upper()] = dict(a)
+            if a["ip_address"]:
+                agent_by_ip[a["ip_address"]] = dict(a)
+
+        # Fetch credential coverage (what protocols we can reach)
+        creds = await conn.fetch(
+            "SELECT credential_name, credential_type, encrypted_data FROM site_credentials WHERE site_id = $1",
+            site_id,
+        )
+        cred_hosts: dict = {}  # ip/host -> list of credential types
+        for c in creds:
+            raw = c["encrypted_data"]
+            if raw:
+                try:
+                    if isinstance(raw, (bytes, bytearray)):
+                        raw = raw.decode("utf-8")
+                    cd = json.loads(raw)
+                    host = cd.get("host") or cd.get("target_host")
+                    if host:
+                        cred_hosts.setdefault(host, []).append(c["credential_type"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
         devices = []
         for row in rows:
             d = dict(row)
             mac = d.get("mac_address")
             d["manufacturer_hint"] = get_manufacturer_hint(mac) if mac else {"manufacturer": None, "device_class": None, "confidence": None}
+
+            # Determine agent coverage
+            hostname = (d.get("hostname") or "").upper()
+            ip = d.get("ip_address") or ""
+            agent = agent_by_host.get(hostname) or agent_by_ip.get(ip)
+            cred_types = cred_hosts.get(ip, [])
+
+            coverage = {"level": "none", "methods": [], "agent_version": None, "agent_status": None}
+            if agent:
+                coverage["level"] = "agent"
+                coverage["methods"].append("agent")
+                coverage["agent_version"] = agent.get("agent_version")
+                coverage["agent_status"] = agent.get("status")
+            if any(ct in ("winrm", "domain_admin", "domain_member", "local_admin") for ct in cred_types):
+                coverage["methods"].append("winrm")
+                if coverage["level"] == "none":
+                    coverage["level"] = "remote"
+            if any(ct in ("ssh_key", "ssh_password") for ct in cred_types):
+                coverage["methods"].append("ssh")
+                if coverage["level"] == "none":
+                    coverage["level"] = "remote"
+
+            d["agent_coverage"] = coverage
             devices.append(d)
         return devices
 
@@ -487,12 +543,24 @@ async def get_site_device_summary(site_id: str) -> dict:
 
     Returns counts by type, compliance status, and medical device stats.
     """
+    pool = await get_pool()
     counts = await get_site_device_counts(site_id)
 
     total = counts["total"]
     compliant = counts["compliant"]
     drifted = counts["drifted"]
     scanned = compliant + drifted  # Only devices that have been checked
+
+    # Coverage stats
+    async with pool.acquire() as conn:
+        agent_count = await conn.fetchval(
+            "SELECT COUNT(DISTINCT hostname) FROM go_agents WHERE site_id = $1",
+            site_id,
+        ) or 0
+        cred_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM site_credentials WHERE site_id = $1",
+            site_id,
+        ) or 0
 
     return {
         "site_id": site_id,
@@ -512,6 +580,10 @@ async def get_site_device_summary(site_id: str) -> dict:
         "medical_devices": {
             "total": counts["medical"],
             "excluded_by_default": True,
+        },
+        "coverage": {
+            "agents_enrolled": agent_count,
+            "credentials_configured": cred_count,
         },
     }
 

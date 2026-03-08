@@ -108,6 +108,16 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
           </div>
           <div className="text-sm text-label-secondary">Medical</div>
         </div>
+
+        {/* Agent Coverage */}
+        {summary.coverage && (
+          <div className="text-center">
+            <div className="text-3xl font-bold text-emerald-400">
+              {summary.coverage.agents_enrolled}
+            </div>
+            <div className="text-sm text-label-secondary">Agents</div>
+          </div>
+        )}
       </div>
 
       {/* Device type breakdown */}
@@ -146,6 +156,38 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
         </div>
       )}
     </GlassCard>
+  );
+};
+
+/**
+ * Agent coverage badge
+ */
+const coverageConfig: Record<string, { label: string; color: string; bg: string }> = {
+  agent: { label: 'Agent', color: 'text-emerald-400', bg: 'bg-emerald-500/15 border-emerald-500/30' },
+  remote: { label: 'Remote', color: 'text-blue-400', bg: 'bg-blue-500/15 border-blue-500/30' },
+  none: { label: 'Unmanaged', color: 'text-slate-500', bg: 'bg-slate-500/10 border-slate-500/20' },
+};
+
+const CoverageBadge: React.FC<{ coverage: DiscoveredDevice['agent_coverage'] }> = ({ coverage }) => {
+  const level = coverage?.level || 'none';
+  const config = coverageConfig[level] || coverageConfig.none;
+  const methods = coverage?.methods || [];
+
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      <span
+        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-medium ${config.bg} ${config.color}`}
+        title={methods.length > 0 ? `Coverage: ${methods.join(', ')}` : 'No agent or remote management configured'}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${level === 'agent' ? 'bg-emerald-400' : level === 'remote' ? 'bg-blue-400' : 'bg-slate-500'}`} />
+        {config.label}
+      </span>
+      {methods.length > 1 && (
+        <span className="text-[10px] text-label-tertiary ml-2">
+          {methods.filter(m => m !== 'agent').join(' + ')}
+        </span>
+      )}
+    </div>
   );
 };
 
@@ -268,6 +310,9 @@ const DeviceRow: React.FC<{
             {device.compliance_status}
           </span>
         </td>
+        <td className="px-4 py-3">
+          <CoverageBadge coverage={device.agent_coverage} />
+        </td>
         <td className="px-4 py-3 text-label-secondary text-sm">
           {formatRelativeTime(device.last_seen_at)}
         </td>
@@ -286,7 +331,7 @@ const DeviceRow: React.FC<{
       {/* Expanded details */}
       {expanded && (
         <tr>
-          <td colSpan={8} className="px-4 py-4 bg-glass-bg/20">
+          <td colSpan={9} className="px-4 py-4 bg-glass-bg/20">
             {/* Basic metadata */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div>
@@ -320,6 +365,17 @@ const DeviceRow: React.FC<{
                 <span className="text-label-tertiary">Scan Policy:</span>
                 <div className="text-label-primary font-medium">{device.scan_policy}</div>
               </div>
+              {device.agent_coverage && device.agent_coverage.level === 'agent' && (
+                <div>
+                  <span className="text-label-tertiary">Agent Version:</span>
+                  <div className="text-label-primary font-medium">
+                    {device.agent_coverage.agent_version || 'Unknown'}
+                    <span className={`ml-2 text-xs ${device.agent_coverage.agent_status === 'connected' ? 'text-health-healthy' : 'text-health-warning'}`}>
+                      ({device.agent_coverage.agent_status || 'unknown'})
+                    </span>
+                  </div>
+                </div>
+              )}
               <div>
                 <span className="text-label-tertiary">Last Scan:</span>
                 <div className="text-label-primary font-medium">{formatRelativeTime(device.last_scan_at)}</div>
@@ -512,6 +568,7 @@ const DeviceTable: React.FC<{
               <th className="px-4 py-3 text-left text-sm font-medium text-label-secondary">Type</th>
               <th className="px-4 py-3 text-left text-sm font-medium text-label-secondary">OS</th>
               <th className="px-4 py-3 text-left text-sm font-medium text-label-secondary">Status</th>
+              <th className="px-4 py-3 text-left text-sm font-medium text-label-secondary">Coverage</th>
               <th className="px-4 py-3 text-left text-sm font-medium text-label-secondary">Last Seen</th>
               <th className="px-4 py-3 text-right text-sm font-medium text-label-secondary"></th>
             </tr>
@@ -519,7 +576,7 @@ const DeviceTable: React.FC<{
           <tbody>
             {devices.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-label-tertiary">
+                <td colSpan={9} className="px-4 py-8 text-center text-label-tertiary">
                   No devices discovered yet. Devices will appear after the network scanner runs.
                 </td>
               </tr>

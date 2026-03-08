@@ -1499,6 +1499,12 @@ export interface DiscoveredDevice {
     device_class: string | null;
     confidence: string | null;
   } | null;
+  agent_coverage: {
+    level: 'agent' | 'remote' | 'none';
+    methods: string[];
+    agent_version: string | null;
+    agent_status: string | null;
+  } | null;
 }
 
 export interface DeviceCounts {
@@ -1542,6 +1548,10 @@ export interface SiteDeviceSummary {
   medical_devices: {
     total: number;
     excluded_by_default: boolean;
+  };
+  coverage?: {
+    agents_enrolled: number;
+    credentials_configured: number;
   };
 }
 
