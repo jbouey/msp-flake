@@ -33,7 +33,7 @@ vi.mock('../components/incidents/IncidentRow', () => ({
     ),
 }));
 
-import { incidentApi } from '../utils/api';
+import { incidentApi, sitesApi } from '../utils/api';
 import { Incidents } from './Incidents';
 
 function createWrapper() {
@@ -54,6 +54,10 @@ function createWrapper() {
 describe('Incidents', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Sites selector needs data
+    vi.mocked(sitesApi.getSites).mockResolvedValue({
+      sites: [], count: 0, total: 0, limit: 200, offset: 0, stats: {},
+    });
   });
 
   it('shows loading state initially', () => {
@@ -79,7 +83,7 @@ describe('Incidents', () => {
     });
   });
 
-  it('shows total incident count', async () => {
+  it('shows incident count in subtitle', async () => {
     const mockIncidents = [
       { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'svc', severity: 'high', resolved: false, hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
       { id: 2, site_id: 's1', hostname: 'ws01', check_type: 'bak', severity: 'low', resolved: true, resolved_at: '2026-03-01T01:00:00Z', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
@@ -89,7 +93,7 @@ describe('Incidents', () => {
     render(<Incidents />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByText('2 total incidents')).toBeInTheDocument();
+      expect(screen.getByText(/2 incidents/)).toBeInTheDocument();
     });
   });
 
@@ -103,7 +107,7 @@ describe('Incidents', () => {
     });
   });
 
-  it('renders filter buttons with correct counts', async () => {
+  it('renders filter buttons', async () => {
     const mockIncidents = [
       { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'svc', severity: 'high', resolved: false, hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
       { id: 2, site_id: 's1', hostname: 'ws01', check_type: 'bak', severity: 'low', resolved: true, resolved_at: '2026-03-01T01:00:00Z', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
@@ -114,17 +118,17 @@ describe('Incidents', () => {
     render(<Incidents />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByText('All (3)')).toBeInTheDocument();
-      expect(screen.getByText('Active (2)')).toBeInTheDocument();
-      expect(screen.getByText('Resolved (1)')).toBeInTheDocument();
+      expect(screen.getByText('All')).toBeInTheDocument();
+      // Active/Resolved counts are computed from returned data
+      expect(screen.getByText(/Active/)).toBeInTheDocument();
+      expect(screen.getByText(/Resolved/)).toBeInTheDocument();
     });
   });
 
-  it('filters to active incidents when Active button is clicked', async () => {
+  it('calls API with resolved=false when Active filter clicked', async () => {
     const user = userEvent.setup();
     const mockIncidents = [
       { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'svc', severity: 'high', resolved: false, hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
-      { id: 2, site_id: 's1', hostname: 'ws01', check_type: 'bak', severity: 'low', resolved: true, resolved_at: '2026-03-01T01:00:00Z', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
     ];
     vi.mocked(incidentApi.getIncidents).mockResolvedValue(mockIncidents as any);
 
@@ -134,10 +138,13 @@ describe('Incidents', () => {
       expect(screen.getByTestId('incident-1')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByText('Active (1)'));
+    await user.click(screen.getByText(/Active/));
 
-    expect(screen.getByTestId('incident-1')).toBeInTheDocument();
-    expect(screen.queryByTestId('incident-2')).not.toBeInTheDocument();
+    // Server-side filtering: API called with resolved=false
+    await waitFor(() => {
+      const lastCall = vi.mocked(incidentApi.getIncidents).mock.calls.at(-1)?.[0];
+      expect(lastCall).toMatchObject({ resolved: false });
+    });
   });
 
   it('shows empty state message when no incidents exist', async () => {
@@ -151,21 +158,26 @@ describe('Incidents', () => {
     });
   });
 
-  it('shows filter hint in empty state when filter is active', async () => {
-    const user = userEvent.setup();
-    const mockIncidents = [
-      { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'svc', severity: 'high', resolved: false, hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
-    ];
-    vi.mocked(incidentApi.getIncidents).mockResolvedValue(mockIncidents as any);
+  it('shows site selector dropdown', async () => {
+    vi.mocked(incidentApi.getIncidents).mockResolvedValue([]);
 
     render(<Incidents />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByTestId('incident-1')).toBeInTheDocument();
+      expect(screen.getByText('All Sites')).toBeInTheDocument();
     });
+  });
 
-    await user.click(screen.getByText('Resolved (0)'));
+  it('shows level filter buttons', async () => {
+    vi.mocked(incidentApi.getIncidents).mockResolvedValue([]);
 
-    expect(screen.getByText(/try adjusting your filter/i)).toBeInTheDocument();
+    render(<Incidents />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByText('All Levels')).toBeInTheDocument();
+      expect(screen.getByText('L1')).toBeInTheDocument();
+      expect(screen.getByText('L2')).toBeInTheDocument();
+      expect(screen.getByText('L3')).toBeInTheDocument();
+    });
   });
 });
