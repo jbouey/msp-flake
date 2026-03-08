@@ -983,6 +983,15 @@ async def submit_evidence(
             bundle.agent_signature
         )
 
+    # Map evidence to all enabled framework controls
+    if bundle.checks:
+        background_tasks.add_task(
+            map_evidence_to_frameworks,
+            site_id,
+            bundle.bundle_id,
+            bundle.checks,
+        )
+
     # Populate workstation tables when workstation evidence arrives
     if bundle.check_type == "workstation" and bundle.checks:
         background_tasks.add_task(
@@ -1137,6 +1146,90 @@ async def upload_to_worm_background(
 
     except Exception as e:
         logger.error(f"WORM upload failed for {bundle_id}: {e}")
+
+
+async def map_evidence_to_frameworks(
+    site_id: str, bundle_id: str, checks: List[Dict[str, Any]]
+):
+    """Map evidence bundle checks to all enabled framework controls.
+
+    Populates evidence_framework_mappings table and refreshes compliance_scores.
+    Called as a background task after evidence submission.
+    """
+    from .framework_mapper import get_controls_for_check_with_hipaa_map
+
+    try:
+        pool = None
+        try:
+            from .fleet import get_pool
+            pool = await get_pool()
+        except Exception:
+            logger.debug("framework mapping: pool unavailable, skipping")
+            return
+
+        async with pool.acquire() as conn:
+            # Get enabled frameworks for this site
+            row = await conn.fetchrow(
+                "SELECT enabled_frameworks FROM appliance_framework_configs WHERE site_id = $1",
+                site_id,
+            )
+            if not row:
+                # Try by appliance_id pattern (site_id is embedded in appliance_id)
+                row = await conn.fetchrow(
+                    "SELECT enabled_frameworks FROM appliance_framework_configs WHERE appliance_id LIKE $1",
+                    f"{site_id}%",
+                )
+            if not row or not row["enabled_frameworks"]:
+                # Default to hipaa if no config exists
+                enabled = ["hipaa"]
+            else:
+                enabled = list(row["enabled_frameworks"])
+
+            # Map each check to framework controls
+            mappings_inserted = 0
+            for check in checks:
+                check_type = check.get("check") or check.get("check_type")
+                if not check_type:
+                    continue
+
+                controls = get_controls_for_check_with_hipaa_map(check_type, enabled)
+                for ctrl in controls:
+                    try:
+                        await conn.execute(
+                            """
+                            INSERT INTO evidence_framework_mappings
+                                (bundle_id, framework, control_id)
+                            VALUES ($1, $2, $3)
+                            ON CONFLICT (bundle_id, framework, control_id) DO NOTHING
+                            """,
+                            bundle_id,
+                            ctrl["framework"],
+                            ctrl["control_id"],
+                        )
+                        mappings_inserted += 1
+                    except Exception:
+                        pass  # Ignore individual insert failures
+
+            # Refresh compliance scores for each enabled framework
+            for framework in enabled:
+                try:
+                    await conn.execute(
+                        "SELECT refresh_compliance_score($1, $2)",
+                        site_id,
+                        framework,
+                    )
+                except Exception as e:
+                    # Function may not exist yet or site has no appliance config
+                    logger.debug(f"Score refresh failed for {site_id}/{framework}: {e}")
+
+            if mappings_inserted > 0:
+                logger.info(
+                    f"Framework mapping: site={site_id} bundle={bundle_id[:8]} "
+                    f"mappings={mappings_inserted} frameworks={enabled}"
+                )
+
+    except Exception as e:
+        logger.warning(f"Framework mapping failed for {site_id}: {e}")
 
 
 async def populate_workstation_tables(site_id: str, checks: List[Dict[str, Any]]):
@@ -2269,10 +2362,11 @@ async def generate_compliance_packet(
     site_id: str,
     month: Optional[int] = None,
     year: Optional[int] = None,
+    framework: str = "hipaa",
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Generate a monthly HIPAA compliance packet from real evidence data.
+    Generate a monthly compliance packet from real evidence data.
 
     Queries compliance_bundles for the given site and period, computes
     compliance score, control posture, and returns the packet as JSON
@@ -2282,6 +2376,7 @@ async def generate_compliance_packet(
         site_id: Site identifier
         month: Month (1-12), defaults to current month
         year: Year, defaults to current year
+        framework: Framework to generate packet for (hipaa, soc2, pci_dss, nist_csf, cis)
     """
     now = datetime.now(timezone.utc)
     if month is None:
@@ -2311,6 +2406,7 @@ async def generate_compliance_packet(
             month=month,
             year=year,
             db=db,
+            framework=framework,
         )
         result = await packet.generate_packet()
 

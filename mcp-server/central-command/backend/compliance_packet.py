@@ -130,7 +130,12 @@ CHECK_TYPE_HIPAA_MAP = {
 
 
 class CompliancePacket:
-    """Generate monthly HIPAA compliance packet from real evidence data."""
+    """Generate compliance packet from real evidence data.
+
+    Supports multiple frameworks via control_mappings.yaml. When framework
+    is specified, check_types map to that framework's controls. Defaults
+    to HIPAA for backward compatibility.
+    """
 
     def __init__(
         self,
@@ -140,12 +145,14 @@ class CompliancePacket:
         db: AsyncSession,
         baseline_version: str = "1.0",
         output_dir: Optional[Path] = None,
+        framework: str = "hipaa",
     ):
         self.site_id = site_id
         self.month = month
         self.year = year
         self.db = db
         self.baseline_version = baseline_version
+        self.framework = framework
         self.output_dir = output_dir or Path("/tmp/compliance-packets")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -155,6 +162,16 @@ class CompliancePacket:
             self._period_end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
         else:
             self._period_end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+
+    def _resolve_control(self, check_type: str) -> str:
+        """Resolve a check_type to a control_id for the current framework."""
+        from .framework_mapper import resolve_control_id
+        return resolve_control_id(check_type, self.framework)
+
+    def _resolve_description(self, check_type: str) -> str:
+        """Resolve a check_type to a control description for the current framework."""
+        from .framework_mapper import resolve_control_description
+        return resolve_control_description(check_type, self.framework)
 
     async def generate_packet(self) -> Dict[str, Any]:
         """Generate compliance packet from real evidence data.
@@ -166,10 +183,19 @@ class CompliancePacket:
         # Get site name
         site_name = await self._get_site_name()
 
+        # Framework display labels
+        _fw_labels = {
+            "hipaa": "HIPAA", "soc2": "SOC 2", "pci_dss": "PCI DSS",
+            "nist_csf": "NIST CSF", "cis": "CIS Controls", "sox": "SOX",
+            "gdpr": "GDPR", "cmmc": "CMMC", "nist_800_171": "NIST 800-171",
+            "iso_27001": "ISO 27001",
+        }
+
         # Query real data
         data = {
             "client_id": self.site_id,
             "client_name": site_name,
+            "framework_label": _fw_labels.get(self.framework, self.framework.upper()),
             "month": self._period_start.strftime("%B"),
             "year": self.year,
             "baseline_version": self.baseline_version,
@@ -274,15 +300,12 @@ class CompliancePacket:
         if not rows:
             return 0.0
 
-        # Group pass rates by HIPAA control
+        # Group pass rates by framework control
         control_rates: Dict[str, List[float]] = {}
         for row in rows:
-            hipaa = CHECK_TYPE_HIPAA_MAP.get(row.check_type, {
-                "control": "164.308(a)(1)",
-            })
-            control = hipaa["control"]
+            control_id = self._resolve_control(row.check_type)
             rate = row.pass_count * 100.0 / row.total if row.total > 0 else 0.0
-            control_rates.setdefault(control, []).append(rate)
+            control_rates.setdefault(control_id, []).append(rate)
 
         # Average rates within each control, then average across controls
         control_scores = [
@@ -440,19 +463,16 @@ class CompliancePacket:
             {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
         )
 
-        # Consolidate by HIPAA control code
+        # Consolidate by framework control code
         control_agg: Dict[str, Dict] = {}
         for row in result.fetchall():
-            hipaa = CHECK_TYPE_HIPAA_MAP.get(row.check_type, {
-                "control": "164.308(a)(1)",
-                "description": row.check_type.replace("_", " ").title(),
-            })
-            key = hipaa["control"]
+            key = self._resolve_control(row.check_type)
+            desc = self._resolve_description(row.check_type)
 
             if key not in control_agg:
                 control_agg[key] = {
                     "control": key,
-                    "description": hipaa["description"],
+                    "description": desc,
                     "total": 0,
                     "pass_count": 0,
                     "last_checked": None,
@@ -793,10 +813,11 @@ class CompliancePacket:
 
     def _render_markdown(self, data: Dict) -> str:
         """Render compliance packet markdown from real data."""
-        template = Template("""# Monthly HIPAA Compliance Packet
+        template = Template("""# Monthly {{ framework_label }} Compliance Packet
 
 **Site:** {{ client_name }}
 **Site ID:** {{ client_id }}
+**Framework:** {{ framework_label }}
 **Period:** {{ month }} {{ year }}
 **Baseline:** NixOS-HIPAA v{{ baseline_version }}
 **Generated:** {{ generated_timestamp }}
