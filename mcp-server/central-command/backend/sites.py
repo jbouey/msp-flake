@@ -515,7 +515,7 @@ async def list_sites(
     search: Optional[str] = Query(None, min_length=1, max_length=200),
     sort_by: str = Query("clinic_name", regex="^(clinic_name|site_id|last_checkin|tier|onboarding_stage|appliance_count|org_name)$"),
     sort_dir: str = Query("asc", regex="^(asc|desc)$"),
-    limit: int = Query(25, ge=1, le=100),
+    limit: int = Query(25, ge=1, le=500),
     offset: int = Query(0, ge=0),
     user: dict = Depends(require_auth),
 ):

@@ -608,9 +608,18 @@ export type OrderType =
   | 'run_drift'
   | 'sync_rules'
   | 'restart_agent'
-  | 'view_logs'
-  | 'collect_evidence'
-  | 'update_agent';
+  | 'collect_logs'
+  | 'update_agent'
+  | 'reboot'
+  | 'nixos_rebuild'
+  | 'diagnostic'
+  | 'run_runbook'
+  | 'restart_service'
+  | 'run_command'
+  | 'update_iso'
+  | 'deploy_sensor'
+  | 'remove_sensor'
+  | 'update_credentials';
 
 export type OrderStatus =
   | 'pending'
