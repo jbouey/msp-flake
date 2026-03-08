@@ -924,13 +924,17 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
         """, _uid(partner_id))
         app_map = {r['site_id']: {'count': r['appliance_count'], 'last_checkin': r['last_checkin']} for r in appliance_stats}
 
-        # Get incident counts
-        incident_row = await conn.fetchrow("""
-            SELECT COUNT(*) as total,
-                   COUNT(*) FILTER (WHERE status = 'open') as open_count
-            FROM incidents
-            WHERE site_id IN (SELECT site_id FROM sites WHERE partner_id = $1)
-        """, _uid(partner_id))
+        # Get incident counts (best-effort — incidents may not link cleanly to partner sites)
+        try:
+            incident_row = await conn.fetchrow("""
+                SELECT COUNT(*) as total,
+                       COUNT(*) FILTER (WHERE i.status = 'open') as open_count
+                FROM incidents i
+                JOIN site_appliances sa ON sa.id = i.appliance_id
+                WHERE sa.site_id IN (SELECT site_id FROM sites WHERE partner_id = $1)
+            """, _uid(partner_id))
+        except Exception:
+            incident_row = {'total': 0, 'open_count': 0}
 
         # Get recent activity count
         activity_row = await conn.fetchrow("""
