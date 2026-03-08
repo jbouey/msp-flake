@@ -43,24 +43,39 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
   const [loading, setLoading] = useState(true);
   const [expandedTemplates, setExpandedTemplates] = useState<Set<string>>(new Set());
   const [templateContents, setTemplateContents] = useState<Record<string, string>>({});
+  const [templateLoading, setTemplateLoading] = useState<Set<string>>(new Set());
+  const [templateErrors, setTemplateErrors] = useState<Record<string, string>>({});
 
   useEffect(() => { fetchPolicies(); fetchTemplates(); }, []);
 
+  const [error, setError] = useState<string | null>(null);
+
   const fetchPolicies = async () => {
-    const res = await fetch(`${apiBase}/policies`, { credentials: 'include' });
-    if (res.ok) {
-      const data = await res.json();
-      setPolicies(data.policies || []);
-      setTemplates(data.available_templates || []);
+    try {
+      const res = await fetch(`${apiBase}/policies`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setPolicies(data.policies || []);
+        setTemplates(data.available_templates || []);
+      } else if (res.status !== 401) {
+        setError('Failed to load policies');
+      }
+    } catch {
+      setError('Unable to load policies — check your connection');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const fetchTemplates = async () => {
-    const res = await fetch(`${apiBase}/policies/templates`, { credentials: 'include' });
-    if (res.ok) {
-      const data = await res.json();
-      setTemplateInfo(data.templates || []);
+    try {
+      const res = await fetch(`${apiBase}/policies/templates`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setTemplateInfo(data.templates || []);
+      }
+    } catch {
+      // Template metadata is non-critical — policies still work without previews
     }
   };
 
@@ -68,64 +83,96 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
     const next = new Set(expandedTemplates);
     if (next.has(key)) {
       next.delete(key);
-    } else {
-      next.add(key);
-      if (!templateContents[key]) {
+      setExpandedTemplates(next);
+      return;
+    }
+    next.add(key);
+    setExpandedTemplates(next);
+
+    if (!templateContents[key]) {
+      setTemplateLoading(prev => new Set(prev).add(key));
+      setTemplateErrors(prev => { const n = { ...prev }; delete n[key]; return n; });
+      try {
         const res = await fetch(`${apiBase}/policies/templates/${key}`, { credentials: 'include' });
         if (res.ok) {
           const data = await res.json();
           setTemplateContents(prev => ({ ...prev, [key]: data.content }));
+        } else {
+          const err = await res.json().catch(() => ({ detail: 'Failed to load template' }));
+          setTemplateErrors(prev => ({ ...prev, [key]: err.detail || `Error ${res.status}` }));
         }
+      } catch {
+        setTemplateErrors(prev => ({ ...prev, [key]: 'Network error — check your connection' }));
+      } finally {
+        setTemplateLoading(prev => { const n = new Set(prev); n.delete(key); return n; });
       }
     }
-    setExpandedTemplates(next);
   };
 
-  const downloadTemplate = async (key: string) => {
-    const res = await fetch(`${apiBase}/policies/templates/${key}`, { credentials: 'include' });
-    if (res.ok) {
-      const data = await res.json();
-      const blob = new Blob([data.content], { type: 'text/markdown' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${data.title.replace(/\s+/g, '_')}.md`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
+  const downloadTemplate = (key: string) => {
+    // Opens the formatted HTML template in a new tab — user can print/save as PDF
+    window.open(`${apiBase}/policies/templates/${key}/html`, '_blank');
   };
 
   const createFromTemplate = async (key: string) => {
-    const res = await fetch(`${apiBase}/policies`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ policy_key: key }),
-    });
-    if (res.ok) {
-      await fetchPolicies();
+    setError(null);
+    try {
+      const res = await fetch(`${apiBase}/policies`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy_key: key }),
+      });
+      if (res.ok) {
+        await fetchPolicies();
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Failed to adopt template' }));
+        setError(err.detail || 'Failed to adopt template');
+      }
+    } catch {
+      setError('Failed to adopt template — check your connection');
     }
   };
 
   const savePolicy = async () => {
     if (!selected) return;
-    await fetch(`${apiBase}/policies/${selected.id}`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: editContent }),
-    });
-    setEditing(false);
-    await fetchPolicies();
+    setError(null);
+    try {
+      const res = await fetch(`${apiBase}/policies/${selected.id}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: editContent }),
+      });
+      if (res.ok) {
+        setEditing(false);
+        await fetchPolicies();
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Failed to save policy' }));
+        setError(err.detail || 'Failed to save policy');
+      }
+    } catch {
+      setError('Failed to save policy — check your connection');
+    }
   };
 
   const approvePolicy = async (id: string) => {
-    await fetch(`${apiBase}/policies/${id}/approve`, {
-      method: 'POST',
-      credentials: 'include',
-    });
-    await fetchPolicies();
-    setSelected(null);
+    setError(null);
+    try {
+      const res = await fetch(`${apiBase}/policies/${id}/approve`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        await fetchPolicies();
+        setSelected(null);
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Failed to approve policy' }));
+        setError(err.detail || 'Failed to approve policy');
+      }
+    } catch {
+      setError('Failed to approve policy — check your connection');
+    }
   };
 
   const usedKeys = new Set(policies.map(p => p.policy_key));
@@ -140,6 +187,12 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
         <button onClick={() => { setSelected(null); setEditing(false); }} className="mb-4 text-sm text-slate-500 hover:text-teal-600">
           &larr; Back to policies
         </button>
+        {error && (
+          <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center justify-between">
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 ml-2">&times;</button>
+          </div>
+        )}
         <div className="bg-white rounded-2xl border border-slate-100 p-8">
           <div className="flex items-center justify-between mb-6">
             <div>
@@ -202,6 +255,13 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold text-slate-900">Policy Library</h2>
       </div>
+      {error && (
+        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 ml-2">&times;</button>
+        </div>
+      )}
+
       <div className="mb-6 px-6 py-5 bg-teal-50/60 rounded-2xl border border-teal-100">
         <p className="text-sm font-medium text-teal-900 mb-1">What is this?</p>
         <p className="text-sm text-teal-800 leading-relaxed">Your written HIPAA policies document how your practice protects patient information. Auditors will ask to see these. They cover topics like who can access records, how data is encrypted, and what happens when someone leaves the organization.</p>
@@ -282,7 +342,7 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
                         onClick={() => downloadTemplate(key)}
                         className="px-3 py-1.5 text-xs border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50"
                       >
-                        Download
+                        Download PDF
                       </button>
                       <button
                         onClick={() => createFromTemplate(key)}
@@ -292,9 +352,20 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
                       </button>
                     </div>
                   </div>
-                  {expanded && fullContent && (
+                  {expanded && (
                     <div className="mt-4 border-t border-slate-100 pt-4">
-                      <pre className="whitespace-pre-wrap text-xs text-slate-600 font-mono leading-relaxed bg-slate-50 p-4 rounded-xl max-h-96 overflow-y-auto">{fullContent}</pre>
+                      {templateLoading.has(key) ? (
+                        <div className="flex items-center gap-2 py-4 justify-center">
+                          <div className="w-4 h-4 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
+                          <span className="text-sm text-slate-400">Loading template...</span>
+                        </div>
+                      ) : templateErrors[key] ? (
+                        <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600">
+                          {templateErrors[key]}
+                        </div>
+                      ) : fullContent ? (
+                        <pre className="whitespace-pre-wrap text-xs text-slate-600 font-mono leading-relaxed bg-slate-50 p-4 rounded-xl max-h-96 overflow-y-auto">{fullContent}</pre>
+                      ) : null}
                     </div>
                   )}
                 </div>

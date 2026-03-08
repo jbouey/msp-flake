@@ -573,7 +573,10 @@ async def get_policy_template(template_key: str, user: dict = Depends(require_cl
     pool = await get_pool()
     async with pool.acquire() as conn:
         org = await conn.fetchrow("SELECT name FROM client_orgs WHERE id = $1", user["org_id"])
-        officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", user["org_id"])
+        try:
+            officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", user["org_id"])
+        except Exception:
+            officers = []
     officer_map = {r["role_type"]: r["name"] for r in officers}
 
     content = template["content"]
@@ -588,6 +591,163 @@ async def get_policy_template(template_key: str, user: dict = Depends(require_cl
         "hipaa_references": template["hipaa_references"],
         "content": content,
     }
+
+
+@router.get("/policies/templates/{template_key}/html")
+async def get_policy_template_html(template_key: str, user: dict = Depends(require_client_user)):
+    """Return a print-ready HTML document with fillable entry boxes for the given policy template."""
+    from starlette.responses import HTMLResponse
+
+    template = POLICY_TEMPLATES.get(template_key)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        org = await conn.fetchrow("SELECT name FROM client_orgs WHERE id = $1", user["org_id"])
+        try:
+            officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", user["org_id"])
+        except Exception:
+            officers = []
+    officer_map = {r["role_type"]: r["name"] for r in officers}
+
+    org_name = org["name"] if org else "[Your Organization]"
+    sec_officer = officer_map.get("security_officer", "")
+    priv_officer = officer_map.get("privacy_officer", "")
+    eff_date = date.today().isoformat()
+    title = template["title"]
+    refs = ", ".join(template["hipaa_references"])
+
+    # Convert markdown content to structured HTML
+    content = template["content"]
+    content = content.replace("{{ORG_NAME}}", org_name)
+    content = content.replace("{{EFFECTIVE_DATE}}", eff_date)
+    content = content.replace("{{SECURITY_OFFICER}}", sec_officer or "[Not Designated]")
+    content = content.replace("{{PRIVACY_OFFICER}}", priv_officer or "[Not Designated]")
+
+    # Convert markdown to HTML lines
+    import re
+    html_body = []
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            html_body.append("")
+            continue
+        if stripped.startswith("### "):
+            html_body.append(f'<h3>{stripped[4:]}</h3>')
+        elif stripped.startswith("## "):
+            html_body.append(f'<h2>{stripped[3:]}</h2>')
+        elif stripped.startswith("# "):
+            html_body.append(f'<h1>{stripped[2:]}</h1>')
+        elif stripped.startswith("- "):
+            html_body.append(f'<li>{stripped[2:]}</li>')
+        elif stripped.startswith("**") and stripped.endswith("**"):
+            html_body.append(f'<p><strong>{stripped[2:-2]}</strong></p>')
+        else:
+            # Bold inline
+            formatted = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', stripped)
+            html_body.append(f'<p>{formatted}</p>')
+
+    body_html = "\n".join(html_body)
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{title} — {org_name}</title>
+<style>
+  @media print {{
+    body {{ margin: 0.75in 1in; }}
+    .no-print {{ display: none; }}
+    input[type="text"], textarea {{ border: none !important; border-bottom: 1px solid #333 !important; background: none !important; }}
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 11pt; line-height: 1.6; max-width: 8in; margin: 0.5in auto; color: #1a1a1a; }}
+  h1 {{ font-size: 18pt; color: #0d7377; margin-bottom: 0.3em; border-bottom: 2px solid #0d7377; padding-bottom: 0.3em; }}
+  h2 {{ font-size: 14pt; color: #1a1a1a; margin-top: 1.5em; margin-bottom: 0.5em; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.2em; }}
+  h3 {{ font-size: 12pt; color: #374151; margin-top: 1em; margin-bottom: 0.3em; }}
+  p {{ margin: 0.4em 0; }}
+  li {{ margin: 0.3em 0 0.3em 1.5em; list-style-type: disc; }}
+  .header-block {{ background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 8px; padding: 16px 20px; margin-bottom: 1.5em; }}
+  .header-block p {{ margin: 0.2em 0; font-size: 10pt; }}
+  .field-row {{ display: flex; align-items: center; gap: 8px; margin: 6px 0; }}
+  .field-label {{ font-weight: 600; font-size: 10pt; color: #374151; white-space: nowrap; min-width: 140px; }}
+  .field-input {{ flex: 1; border: 1px solid #d1d5db; border-radius: 4px; padding: 4px 8px; font-size: 10pt; background: #fafafa; }}
+  .field-input:focus {{ outline: none; border-color: #0d7377; background: #fff; }}
+  textarea.field-input {{ min-height: 60px; resize: vertical; }}
+  .sign-block {{ margin-top: 2em; padding-top: 1.5em; border-top: 2px solid #e5e7eb; }}
+  .sig-line {{ border-bottom: 1px solid #374151; width: 300px; height: 40px; margin: 8px 0 4px 0; }}
+  .ref-badge {{ display: inline-block; background: #eff6ff; color: #2563eb; font-size: 9pt; padding: 2px 8px; border-radius: 12px; margin-right: 4px; }}
+  .instructions {{ background: #f0fdf4; border-left: 3px solid #0d7377; padding: 12px 16px; margin-top: 2em; font-size: 10pt; border-radius: 0 6px 6px 0; }}
+  .print-btn {{ display: inline-block; margin: 1em 0; padding: 10px 24px; background: #0d7377; color: white; border: none; border-radius: 6px; font-size: 11pt; cursor: pointer; }}
+  .print-btn:hover {{ background: #0a5c5f; }}
+</style>
+</head>
+<body>
+
+<div class="no-print" style="text-align:center; margin-bottom: 1em;">
+  <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+</div>
+
+<div class="header-block">
+  <p><strong>Organization:</strong> {org_name}</p>
+  <p><strong>Effective Date:</strong> {eff_date}</p>
+  <p><strong>Security Officer:</strong> {sec_officer or '<em>Not yet designated</em>'}</p>
+  <p><strong>HIPAA References:</strong> {' '.join(f'<span class="ref-badge">{r}</span>' for r in template["hipaa_references"])}</p>
+</div>
+
+{body_html}
+
+<div class="sign-block">
+  <h3>Customization Notes</h3>
+  <p style="font-size:10pt; color:#6b7280; margin-bottom:12px;">Fill in the fields below to tailor this policy to your organization's specific procedures. These notes become part of your compliance documentation.</p>
+
+  <div class="field-row">
+    <span class="field-label">Specific Systems:</span>
+    <input type="text" class="field-input" placeholder="e.g., eClinicalWorks, Athenahealth, network share \\\\server\\PHI">
+  </div>
+  <div class="field-row">
+    <span class="field-label">Responsible Staff:</span>
+    <input type="text" class="field-input" placeholder="e.g., Dr. Smith (Security Officer), Jane Doe (IT Admin)">
+  </div>
+  <div class="field-row">
+    <span class="field-label">Review Frequency:</span>
+    <input type="text" class="field-input" placeholder="e.g., Annually, Quarterly, After each incident">
+  </div>
+  <div class="field-row">
+    <span class="field-label">Last Reviewed:</span>
+    <input type="text" class="field-input" placeholder="Date of last policy review">
+  </div>
+  <div class="field-row" style="align-items:start;">
+    <span class="field-label" style="padding-top:6px;">Additional Notes:</span>
+    <textarea class="field-input" placeholder="Any practice-specific procedures, exceptions, or modifications to this policy..."></textarea>
+  </div>
+
+  <div style="margin-top: 2em;">
+    <h3>Approval</h3>
+    <div class="field-row">
+      <span class="field-label">Approved By:</span>
+      <input type="text" class="field-input" placeholder="Name and title">
+    </div>
+    <div class="field-row">
+      <span class="field-label">Date:</span>
+      <input type="text" class="field-input" style="max-width:200px;" placeholder="MM/DD/YYYY">
+    </div>
+    <p style="margin-top: 1em;"><strong>Signature:</strong></p>
+    <div class="sig-line"></div>
+  </div>
+</div>
+
+<div class="instructions">
+  <strong>Instructions:</strong> Review and customize this policy for your practice. Fill in the fields above,
+  then print or save as PDF using your browser's print function (Ctrl+P / Cmd+P).
+  Upload the completed document to your OsirisCare compliance portal under Policy Library &rarr; Supporting Documents.
+</div>
+
+</body>
+</html>"""
+
+    return HTMLResponse(content=html)
 
 
 @router.post("/policies/{policy_id}/approve")
@@ -1118,15 +1278,12 @@ ALLOWED_MODULE_KEYS = {"policies", "baas", "training", "ir_plan", "contingency",
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
-    "image/png", "image/jpeg", "image/jpg",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "text/csv", "text/plain",
 }
 
 MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
+MAX_DOCS_PER_MODULE = 3
 
 DOCUMENTS_BUCKET = "hipaa-documents"
 
@@ -1154,14 +1311,24 @@ async def upload_document(
     description: str = Form(None),
     user: dict = Depends(require_client_user),
 ):
-    """Upload a compliance document (PDF, image, office doc)."""
+    """Upload a compliance document (PDF or Word)."""
     if module_key not in ALLOWED_MODULE_KEYS:
         raise HTTPException(status_code=400, detail=f"Invalid module_key. Must be one of: {', '.join(sorted(ALLOWED_MODULE_KEYS))}")
+
+    # Validate document count limit
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        doc_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM hipaa_documents WHERE org_id = $1 AND module_key = $2 AND deleted_at IS NULL",
+            str(user["org_id"]), module_key,
+        )
+    if doc_count >= MAX_DOCS_PER_MODULE:
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_DOCS_PER_MODULE} documents allowed per section. Remove an existing document first.")
 
     # Validate mime type
     content_type = file.content_type or "application/octet-stream"
     if content_type not in ALLOWED_MIME_TYPES:
-        raise HTTPException(status_code=400, detail=f"File type '{content_type}' not allowed. Accepted: PDF, PNG, JPG, DOC, DOCX, XLS, XLSX, CSV, TXT")
+        raise HTTPException(status_code=400, detail="Only PDF and Word documents (.pdf, .docx) are accepted.")
 
     # Read file and validate size
     file_bytes = await file.read()
