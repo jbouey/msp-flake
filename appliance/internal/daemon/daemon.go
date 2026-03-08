@@ -127,6 +127,10 @@ type Daemon struct {
 	// Pending app discovery results to send in next checkin
 	discoveryMu      sync.Mutex
 	discoveryResults map[string]interface{}
+
+	// Drift check types disabled by site config (received from checkin response)
+	disabledChecks   map[string]bool
+	disabledChecksMu sync.RWMutex
 }
 
 // safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
@@ -158,8 +162,9 @@ func New(cfg *Config) *Daemon {
 		config:    cfg,
 		phoneCli:  NewPhoneHomeClient(cfg),
 		registry:  grpcserver.NewAgentRegistryPersistent(cfg.StateDir),
-		cooldowns:  make(map[string]*driftCooldown),
-		winTargets: make(map[string]winTarget),
+		cooldowns:      make(map[string]*driftCooldown),
+		winTargets:     make(map[string]winTarget),
+		disabledChecks: make(map[string]bool),
 	}
 
 	// Initialize WinRM and SSH executors (must be before L1 engine)
@@ -582,6 +587,26 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		}
 		d.subscriptionStatus = resp.SubscriptionStatus
 		d.subscriptionMu.Unlock()
+	}
+
+	// Update disabled drift checks from site config
+	if len(resp.DisabledChecks) > 0 {
+		newMap := make(map[string]bool, len(resp.DisabledChecks))
+		for _, ct := range resp.DisabledChecks {
+			newMap[ct] = true
+		}
+		d.disabledChecksMu.Lock()
+		d.disabledChecks = newMap
+		d.disabledChecksMu.Unlock()
+		log.Printf("[daemon] Disabled drift checks updated: %v", resp.DisabledChecks)
+	} else {
+		// Clear any previously disabled checks if server sends empty list
+		d.disabledChecksMu.Lock()
+		if len(d.disabledChecks) > 0 {
+			d.disabledChecks = make(map[string]bool)
+			log.Printf("[daemon] Disabled drift checks cleared")
+		}
+		d.disabledChecksMu.Unlock()
 	}
 
 	// Process pending orders via order processor

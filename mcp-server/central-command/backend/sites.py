@@ -2373,6 +2373,28 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         except Exception as e:
             logger.warning(f"Checkin {checkin.site_id}: runbook lookup failed: {e}")
 
+        # === STEP 6b: Get drift scan config (disabled check types) ===
+        disabled_checks = []
+        try:
+            async with conn.transaction():
+                # Site-specific overrides take precedence over defaults
+                drift_rows = await conn.fetch("""
+                    SELECT check_type, enabled FROM site_drift_config
+                    WHERE site_id = $1
+                """, checkin.site_id)
+
+                if drift_rows:
+                    disabled_checks = [r['check_type'] for r in drift_rows if not r['enabled']]
+                else:
+                    # Fall back to defaults
+                    default_rows = await conn.fetch("""
+                        SELECT check_type, enabled FROM site_drift_config
+                        WHERE site_id = '__defaults__'
+                    """)
+                    disabled_checks = [r['check_type'] for r in default_rows if not r['enabled']]
+        except Exception as e:
+            logger.warning(f"Checkin {checkin.site_id}: drift config lookup failed: {e}")
+
         # === STEP 7: Check for enumeration/scan triggers (zero-friction deployment) ===
         trigger_enumeration = False
         trigger_immediate_scan = False
@@ -2450,6 +2472,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         "linux_targets": linux_targets,
         "encrypted_credentials": encrypted_credentials,
         "enabled_runbooks": enabled_runbooks,
+        "disabled_checks": disabled_checks,
         "trigger_enumeration": trigger_enumeration,
         "trigger_immediate_scan": trigger_immediate_scan,
     }

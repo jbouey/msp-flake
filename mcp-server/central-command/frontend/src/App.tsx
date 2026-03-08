@@ -50,6 +50,7 @@ const Organizations = lazy(() => import('./pages/Organizations').then(m => ({ de
 const OrgDashboard = lazy(() => import('./pages/OrgDashboard').then(m => ({ default: m.OrgDashboard })));
 const ProtectionProfiles = lazy(() => import('./pages/ProtectionProfiles').then(m => ({ default: m.ProtectionProfiles })));
 const ProtectionProfileView = lazy(() => import('./pages/ProtectionProfiles').then(m => ({ default: m.ProtectionProfileView })));
+const DriftConfig = lazy(() => import('./pages/DriftConfig'));
 
 // Detect if serving from marketing domain (www.osiriscare.net or osiriscare.net)
 const isLandingSite = typeof window !== 'undefined' &&
@@ -302,6 +303,7 @@ const AppLayout: React.FC = () => {
               <Route path="/sites/:siteId/devices" element={<SiteDevices />} />
               <Route path="/sites/:siteId/protection" element={<ProtectionProfiles />} />
               <Route path="/sites/:siteId/protection/:profileId" element={<ProtectionProfileView />} />
+              <Route path="/sites/:siteId/drift-config" element={<DriftConfig />} />
               <Route path="/sites/:siteId/integrations" element={<Integrations />} />
               <Route path="/sites/:siteId/integrations/setup" element={<IntegrationSetup />} />
               <Route path="/sites/:siteId/integrations/:integrationId" element={<IntegrationResources />} />

@@ -67,6 +67,13 @@ func newDriftScanner(d *Daemon) *driftScanner {
 	return &driftScanner{daemon: d}
 }
 
+// isCheckDisabled returns true if the given check type has been disabled in site drift config.
+func (ds *driftScanner) isCheckDisabled(checkType string) bool {
+	ds.daemon.disabledChecksMu.RLock()
+	defer ds.daemon.disabledChecksMu.RUnlock()
+	return ds.daemon.disabledChecks[checkType]
+}
+
 // ForceScan runs both Windows and Linux drift scans immediately,
 // bypassing the interval check. Called from run_drift fleet order handler.
 func (ds *driftScanner) ForceScan(ctx context.Context) map[string]interface{} {
@@ -918,6 +925,17 @@ func (ds *driftScanner) evaluateWindowsFindings(state *windowsScanState, t scanT
 			Severity:     "medium",
 			Details:      map[string]string{"note": "PrintNightmare attack surface"},
 		})
+	}
+
+	// Filter out disabled checks
+	if len(findings) > 0 {
+		filtered := findings[:0]
+		for _, f := range findings {
+			if !ds.isCheckDisabled(f.CheckType) {
+				filtered = append(filtered, f)
+			}
+		}
+		findings = filtered
 	}
 
 	if len(findings) > 0 {

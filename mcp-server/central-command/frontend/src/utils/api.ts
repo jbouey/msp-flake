@@ -822,6 +822,33 @@ export interface SiteRunbookConfig {
   modified_at: string | null;
 }
 
+// =============================================================================
+// DRIFT CONFIG API (per-site drift check toggles)
+// =============================================================================
+
+export interface DriftCheckConfig {
+  check_type: string;
+  enabled: boolean;
+  platform: 'windows' | 'linux' | 'macos';
+  notes: string;
+}
+
+export interface DriftConfigResponse {
+  site_id: string;
+  checks: DriftCheckConfig[];
+}
+
+export const driftConfigApi = {
+  getConfig: (siteId: string) =>
+    fetchApi<DriftConfigResponse>(`/sites/${siteId}/drift-config`),
+
+  updateConfig: (siteId: string, checks: Array<{ check_type: string; enabled: boolean }>) =>
+    fetchApi<{ status: string; site_id: string; updated: number }>(`/sites/${siteId}/drift-config`, {
+      method: 'PUT',
+      body: JSON.stringify({ checks }),
+    }),
+};
+
 export const runbookConfigApi = {
   // Get all runbooks in the catalog
   getRunbooks: () => fetchSitesApi<RunbookCatalogItem[]>('/runbooks'),

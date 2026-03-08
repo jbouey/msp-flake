@@ -448,6 +448,17 @@ func (ds *driftScanner) parseMacOSFindings(output, hostname string) []driftFindi
 		})
 	}
 
+	// Filter out disabled checks
+	if len(findings) > 0 {
+		filtered := findings[:0]
+		for _, f := range findings {
+			if !ds.isCheckDisabled(f.CheckType) {
+				filtered = append(filtered, f)
+			}
+		}
+		findings = filtered
+	}
+
 	if len(findings) > 0 {
 		log.Printf("[macosscan] %s: %d drift findings", hostname, len(findings))
 	}

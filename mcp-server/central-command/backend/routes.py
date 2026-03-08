@@ -2770,3 +2770,81 @@ async def unassign_site_from_org(
     """), {"org_id": org_id, "site_id": site_id})
     await db.commit()
     return {"status": "unassigned", "site_id": site_id}
+
+
+# =============================================================================
+# DRIFT CONFIG ENDPOINTS
+# =============================================================================
+
+def _check_platform(check_type: str) -> str:
+    """Derive platform from check_type prefix."""
+    if check_type.startswith("macos_"):
+        return "macos"
+    elif check_type.startswith("linux_"):
+        return "linux"
+    return "windows"
+
+
+@router.get("/sites/{site_id}/drift-config")
+async def get_drift_config(
+    site_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Get drift scan configuration for a site, falling back to defaults."""
+    from .fleet import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT check_type, enabled, notes FROM site_drift_config
+            WHERE site_id = $1
+            ORDER BY check_type
+        """, site_id)
+
+        if not rows:
+            # Fall back to defaults
+            rows = await conn.fetch("""
+                SELECT check_type, enabled, notes FROM site_drift_config
+                WHERE site_id = '__defaults__'
+                ORDER BY check_type
+            """)
+
+    checks = [
+        {
+            "check_type": r["check_type"],
+            "enabled": r["enabled"],
+            "platform": _check_platform(r["check_type"]),
+            "notes": r["notes"] or "",
+        }
+        for r in rows
+    ]
+    return {"site_id": site_id, "checks": checks}
+
+
+class DriftCheckItem(BaseModel):
+    check_type: str
+    enabled: bool
+
+
+class DriftConfigUpdate(BaseModel):
+    checks: List[DriftCheckItem]
+
+
+@router.put("/sites/{site_id}/drift-config")
+async def update_drift_config(
+    site_id: str,
+    body: DriftConfigUpdate,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Upsert drift scan configuration for a site."""
+    from .fleet import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for item in body.checks:
+                await conn.execute("""
+                    INSERT INTO site_drift_config (site_id, check_type, enabled, modified_by, modified_at)
+                    VALUES ($1, $2, $3, $4, NOW())
+                    ON CONFLICT (site_id, check_type)
+                    DO UPDATE SET enabled = $3, modified_by = $4, modified_at = NOW()
+                """, site_id, item.check_type, item.enabled, user.get("username", "admin"))
+    return {"status": "ok", "site_id": site_id, "updated": len(body.checks)}

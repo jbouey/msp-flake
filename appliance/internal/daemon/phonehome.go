@@ -122,6 +122,7 @@ type CheckinResponse struct {
 	TriggerImmediateScan bool                     `json:"trigger_immediate_scan"`
 	L2Mode               string                   `json:"l2_mode"`
 	SubscriptionStatus   string                   `json:"subscription_status"`
+	DisabledChecks       []string                 `json:"disabled_checks"`
 	EncryptedCredentials map[string]interface{}   `json:"encrypted_credentials,omitempty"`
 }
 
