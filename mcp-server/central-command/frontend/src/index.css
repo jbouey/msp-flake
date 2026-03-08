@@ -388,22 +388,21 @@
   background: rgba(0, 122, 255, 0.2);
 }
 
-/* Staggered list animation */
+/* Staggered list animation — items always visible, animate in from slight offset */
 .stagger-list > * {
-  opacity: 0;
-  animation: stagger-in 0.4s ease-out forwards;
+  animation: stagger-in 0.35s ease-out both;
 }
 .stagger-list > *:nth-child(1) { animation-delay: 0ms; }
-.stagger-list > *:nth-child(2) { animation-delay: 50ms; }
-.stagger-list > *:nth-child(3) { animation-delay: 100ms; }
-.stagger-list > *:nth-child(4) { animation-delay: 150ms; }
-.stagger-list > *:nth-child(5) { animation-delay: 200ms; }
-.stagger-list > *:nth-child(6) { animation-delay: 250ms; }
-.stagger-list > *:nth-child(7) { animation-delay: 300ms; }
-.stagger-list > *:nth-child(8) { animation-delay: 350ms; }
-.stagger-list > *:nth-child(9) { animation-delay: 400ms; }
-.stagger-list > *:nth-child(10) { animation-delay: 450ms; }
-.stagger-list > *:nth-child(n+11) { animation-delay: 500ms; }
+.stagger-list > *:nth-child(2) { animation-delay: 40ms; }
+.stagger-list > *:nth-child(3) { animation-delay: 80ms; }
+.stagger-list > *:nth-child(4) { animation-delay: 120ms; }
+.stagger-list > *:nth-child(5) { animation-delay: 160ms; }
+.stagger-list > *:nth-child(6) { animation-delay: 200ms; }
+.stagger-list > *:nth-child(7) { animation-delay: 240ms; }
+.stagger-list > *:nth-child(8) { animation-delay: 280ms; }
+.stagger-list > *:nth-child(9) { animation-delay: 320ms; }
+.stagger-list > *:nth-child(10) { animation-delay: 360ms; }
+.stagger-list > *:nth-child(n+11) { animation-delay: 400ms; }
 
 /* Live pulse for online indicators */
 @keyframes live-pulse {
