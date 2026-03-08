@@ -155,7 +155,7 @@ async def log_partner_activity(
                     actor_ip, actor_user_agent,
                     request_path, request_method,
                     success, error_message
-                ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12)
+                ) VALUES ($1::uuid, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12)
                 RETURNING id
                 """,
                 partner_id,

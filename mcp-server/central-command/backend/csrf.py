@@ -111,6 +111,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/companion/auth/",  # Companion login endpoints only
         "/api/portal/auth/",     # Portal magic link validation
         "/api/portal/sites/",    # Portal access request (public)
+        "/api/admin/",           # Admin endpoints - Bearer auth protected
         "/api/fleet/",           # Fleet updates - admin auth protected
         "/api/orders/",          # Order acknowledgement from appliances
         "/api/evidence/",        # Evidence chain - appliance submissions + admin ops

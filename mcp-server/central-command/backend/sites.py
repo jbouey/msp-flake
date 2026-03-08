@@ -10,7 +10,7 @@ import logging
 import uuid as _uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from pydantic import BaseModel
 from enum import Enum
 
@@ -144,6 +144,7 @@ class SiteUpdate(BaseModel):
     onboarding_stage: Optional[str] = None
     notes: Optional[str] = None
     healing_tier: Optional[HealingTier] = None
+    partner_id: Optional[str] = None  # UUID string or "null" to unlink
 
 
 class OrderCreate(BaseModel):
@@ -220,6 +221,14 @@ async def update_site(site_id: str, update: SiteUpdate, user: dict = Depends(req
         updates.append(f"healing_tier = ${param_num}")
         values.append(update.healing_tier.value)
         param_num += 1
+
+    if update.partner_id is not None:
+        if update.partner_id == "null" or update.partner_id == "":
+            updates.append(f"partner_id = NULL")
+        else:
+            updates.append(f"partner_id = ${param_num}::uuid")
+            values.append(update.partner_id)
+            param_num += 1
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -501,14 +510,21 @@ def calculate_live_status(last_checkin):
 
 
 @router.get("")
-async def list_sites(status: Optional[str] = None, user: dict = Depends(require_auth)):
-    """List all sites with aggregated appliance data. Requires authentication."""
+async def list_sites(
+    status: Optional[str] = None,
+    search: Optional[str] = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query("clinic_name", regex="^(clinic_name|site_id|last_checkin|tier|onboarding_stage|appliance_count|org_name)$"),
+    sort_dir: str = Query("asc", regex="^(asc|desc)$"),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(require_auth),
+):
+    """List all sites with aggregated appliance data, server-side pagination/search/sort."""
     pool = await get_pool()
-    
+
     async with pool.acquire() as conn:
-        # Build query with optional org scope filter
         org_scope = user.get("org_scope")
-        query = """
+        base_query = """
             SELECT
                 sa.site_id,
                 COUNT(*) as appliance_count,
@@ -525,27 +541,41 @@ async def list_sites(status: Optional[str] = None, user: dict = Depends(require_
             LEFT JOIN sites s ON s.site_id = sa.site_id
             LEFT JOIN client_orgs co ON co.id = s.client_org_id
         """
+        where_clauses = []
         args = []
+        arg_idx = 1
+
         if org_scope is not None:
-            query += " WHERE s.client_org_id = ANY($1::uuid[])"
+            where_clauses.append(f"s.client_org_id = ANY(${arg_idx}::uuid[])")
             args.append(org_scope)
-        query += """
+            arg_idx += 1
+
+        if search:
+            where_clauses.append(f"(s.clinic_name ILIKE ${arg_idx} OR sa.site_id ILIKE ${arg_idx} OR co.name ILIKE ${arg_idx})")
+            args.append(f"%{search}%")
+            arg_idx += 1
+
+        if where_clauses:
+            base_query += " WHERE " + " AND ".join(where_clauses)
+
+        base_query += """
             GROUP BY sa.site_id, s.clinic_name, s.tier, s.onboarding_stage,
                      s.client_org_id, co.name
-            ORDER BY co.name NULLS LAST, sa.site_id
         """
-        rows = await conn.fetch(query, *args)
+        rows = await conn.fetch(base_query, *args)
 
-        sites = []
+        # Build site objects and compute live_status in Python (depends on time calc)
+        all_sites = []
+        status_counts = {"online": 0, "stale": 0, "offline": 0, "pending": 0}
         for row in rows:
             last_checkin = row['last_checkin']
             live_status = calculate_live_status(last_checkin)
+            status_counts[live_status] = status_counts.get(live_status, 0) + 1
 
             # Filter by status if provided
             if status and live_status != status:
                 continue
 
-            # Determine overall status from appliance statuses
             statuses = row['statuses'] or []
             if 'online' in statuses:
                 overall_status = 'online'
@@ -554,10 +584,9 @@ async def list_sites(status: Optional[str] = None, user: dict = Depends(require_
             else:
                 overall_status = 'offline'
 
-            # Use clinic_name from sites table, fall back to derived name
             clinic_name = row['clinic_name'] or row['site_id'].replace('-', ' ').title()
 
-            sites.append({
+            all_sites.append({
                 'site_id': row['site_id'],
                 'clinic_name': clinic_name,
                 'contact_name': None,
@@ -574,7 +603,26 @@ async def list_sites(status: Optional[str] = None, user: dict = Depends(require_
                 'org_name': row['org_name'],
             })
 
-        return {'sites': sites, 'count': len(sites)}
+        # Sort
+        reverse = sort_dir == 'desc'
+        def sort_key(s):
+            val = s.get(sort_by)
+            if val is None:
+                return '' if isinstance(s.get('clinic_name'), str) else 0
+            return val
+        all_sites.sort(key=sort_key, reverse=reverse)
+
+        total = len(all_sites)
+        paginated = all_sites[offset:offset + limit]
+
+        return {
+            'sites': paginated,
+            'count': len(paginated),
+            'total': total,
+            'limit': limit,
+            'offset': offset,
+            'stats': status_counts,
+        }
 
 
 @router.get("/{site_id}")
@@ -953,6 +1001,50 @@ async def delete_appliance(site_id: str, appliance_id: str, user: dict = Depends
             'appliance_id': appliance_id,
             'site_id': site_id
         }
+
+
+class ApplianceMoveRequest(BaseModel):
+    """Request to move an appliance to a different site."""
+    target_site_id: str
+
+
+@router.post("/{site_id}/appliances/{appliance_id}/move")
+async def move_appliance(
+    site_id: str,
+    appliance_id: str,
+    body: ApplianceMoveRequest,
+    user: dict = Depends(require_operator),
+):
+    """Move an appliance from one site to another. Requires operator or admin access."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Verify appliance exists in source site
+        existing = await conn.fetchrow(
+            "SELECT appliance_id FROM site_appliances WHERE appliance_id = $1 AND site_id = $2",
+            appliance_id, site_id,
+        )
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Appliance {appliance_id} not found in site {site_id}")
+
+        # Update the site_id
+        await conn.execute(
+            "UPDATE site_appliances SET site_id = $1 WHERE appliance_id = $2",
+            body.target_site_id, appliance_id,
+        )
+
+        # Also update the appliances table if it has a site_id column
+        await conn.execute(
+            "UPDATE appliances SET site_id = $1 WHERE appliance_id = $2",
+            body.target_site_id, appliance_id,
+        )
+
+    return {
+        "status": "moved",
+        "appliance_id": appliance_id,
+        "from_site_id": site_id,
+        "to_site_id": body.target_site_id,
+    }
 
 
 class L2ModeUpdate(BaseModel):

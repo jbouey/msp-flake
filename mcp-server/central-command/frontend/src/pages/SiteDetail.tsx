@@ -86,8 +86,9 @@ const ApplianceCard: React.FC<{
   onCreateOrder: (applianceId: string, orderType: OrderType, parameters?: Record<string, unknown>) => void;
   onDelete: (applianceId: string) => void;
   onUpdateL2Mode: (applianceId: string, mode: string) => void;
+  onMove?: (applianceId: string) => void;
   isLoading?: boolean;
-}> = ({ appliance, latestVersion, onCreateOrder, onDelete, onUpdateL2Mode, isLoading }) => {
+}> = ({ appliance, latestVersion, onCreateOrder, onDelete, onUpdateL2Mode, onMove, isLoading }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
 
@@ -117,6 +118,11 @@ const ApplianceCard: React.FC<{
       icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>,
       onClick: () => setShowUpdateModal(true),
     },
+    ...(onMove ? [{
+      label: 'Move to Site',
+      icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>,
+      onClick: () => onMove(appliance.appliance_id),
+    }] : []),
     {
       label: 'Delete Appliance',
       icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
@@ -606,6 +612,194 @@ const EvidenceChainStatus: React.FC<{ siteId: string }> = ({ siteId }) => {
 };
 
 /**
+ * Edit Site Modal
+ */
+const EditSiteModal: React.FC<{
+  site: SiteDetailType;
+  onClose: () => void;
+  onSaved: () => void;
+  showToast: (msg: string, type: 'success' | 'error') => void;
+}> = ({ site, onClose, onSaved, showToast }) => {
+  const [clinicName, setClinicName] = useState(site.clinic_name || '');
+  const [contactName, setContactName] = useState(site.contact_name || '');
+  const [contactEmail, setContactEmail] = useState(site.contact_email || '');
+  const [contactPhone, setContactPhone] = useState(site.contact_phone || '');
+  const [tier, setTier] = useState(site.tier || 'mid');
+  const [stage, setStage] = useState(site.onboarding_stage || 'active');
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSave = async () => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) return;
+    setIsSaving(true);
+    try {
+      const res = await fetch(`/api/sites/${site.site_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          clinic_name: clinicName,
+          contact_name: contactName || null,
+          contact_email: contactEmail || null,
+          contact_phone: contactPhone || null,
+          tier,
+          onboarding_stage: stage,
+        }),
+      });
+      if (res.ok) {
+        showToast('Site updated', 'success');
+        onSaved();
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        showToast(`Failed: ${err.detail}`, 'error');
+      }
+    } catch {
+      showToast('Failed to update site', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="w-full max-w-lg" onClick={e => e.stopPropagation()}>
+      <GlassCard>
+        <h2 className="text-xl font-semibold mb-4">Edit Site</h2>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs text-label-tertiary uppercase mb-1">Clinic Name</label>
+            <input type="text" value={clinicName} onChange={e => setClinicName(e.target.value)}
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light focus:border-accent-primary focus:outline-none text-sm" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-label-tertiary uppercase mb-1">Contact Name</label>
+              <input type="text" value={contactName} onChange={e => setContactName(e.target.value)}
+                className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light focus:border-accent-primary focus:outline-none text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-label-tertiary uppercase mb-1">Contact Email</label>
+              <input type="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)}
+                className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light focus:border-accent-primary focus:outline-none text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs text-label-tertiary uppercase mb-1">Phone</label>
+              <input type="text" value={contactPhone} onChange={e => setContactPhone(e.target.value)}
+                className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light focus:border-accent-primary focus:outline-none text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-label-tertiary uppercase mb-1">Tier</label>
+              <select value={tier} onChange={e => setTier(e.target.value)}
+                className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light focus:border-accent-primary focus:outline-none text-sm">
+                <option value="small">Small</option>
+                <option value="mid">Mid</option>
+                <option value="large">Large</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-label-tertiary uppercase mb-1">Stage</label>
+              <select value={stage} onChange={e => setStage(e.target.value)}
+                className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light focus:border-accent-primary focus:outline-none text-sm">
+                <option value="provisioning">Provisioning</option>
+                <option value="connectivity">Connectivity</option>
+                <option value="scanning">Scanning</option>
+                <option value="active">Active</option>
+              </select>
+            </div>
+          </div>
+          <div className="border-t border-separator-light pt-3">
+            <p className="text-xs text-label-tertiary mb-1">Site ID</p>
+            <p className="text-sm font-mono text-label-secondary">{site.site_id}</p>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button onClick={onClose}
+              className="flex-1 px-4 py-2 rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary transition-colors text-sm">Cancel</button>
+            <button onClick={handleSave} disabled={isSaving || !clinicName}
+              className="flex-1 px-4 py-2 rounded-ios bg-accent-primary text-white hover:bg-accent-primary/90 transition-colors disabled:opacity-50 text-sm">
+              {isSaving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      </GlassCard>
+      </div>
+    </div>
+  );
+};
+
+
+/**
+ * Move Appliance Modal
+ */
+const MoveApplianceModal: React.FC<{
+  applianceId: string;
+  currentSiteId: string;
+  onClose: () => void;
+  onMove: (applianceId: string, targetSiteId: string) => void;
+}> = ({ applianceId, currentSiteId, onClose, onMove }) => {
+  const [targetSiteId, setTargetSiteId] = useState('');
+  const [sites, setSites] = useState<Array<{ site_id: string; clinic_name: string }>>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  React.useEffect(() => {
+    const fetchSites = async () => {
+      try {
+        const token = localStorage.getItem('auth_token');
+        const res = await fetch('/api/sites', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSites((data.sites || []).filter((s: { site_id: string }) => s.site_id !== currentSiteId));
+        }
+      } catch {
+        // ignore
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchSites();
+  }, [currentSiteId]);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="w-full max-w-md" onClick={e => e.stopPropagation()}>
+      <GlassCard>
+        <h2 className="text-xl font-semibold mb-4">Move Appliance</h2>
+        <p className="text-sm text-label-secondary mb-4">
+          Move <span className="font-mono text-xs">{applianceId.slice(0, 30)}...</span> to a different site.
+        </p>
+        {isLoading ? (
+          <div className="flex justify-center py-8"><Spinner size="md" /></div>
+        ) : sites.length === 0 ? (
+          <p className="text-label-tertiary text-center py-8">No other sites available.</p>
+        ) : (
+          <div className="space-y-3">
+            <select value={targetSiteId} onChange={e => setTargetSiteId(e.target.value)}
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light focus:border-accent-primary focus:outline-none text-sm">
+              <option value="">Select target site...</option>
+              {sites.map(s => (
+                <option key={s.site_id} value={s.site_id}>{s.clinic_name} ({s.site_id.slice(0, 20)})</option>
+              ))}
+            </select>
+            <div className="flex gap-3 pt-2">
+              <button onClick={onClose}
+                className="flex-1 px-4 py-2 rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary transition-colors text-sm">Cancel</button>
+              <button onClick={() => onMove(applianceId, targetSiteId)} disabled={!targetSiteId}
+                className="flex-1 px-4 py-2 rounded-ios bg-accent-primary text-white hover:bg-accent-primary/90 transition-colors disabled:opacity-50 text-sm">
+                Move Appliance
+              </button>
+            </div>
+          </div>
+        )}
+      </GlassCard>
+      </div>
+    </div>
+  );
+};
+
+
+/**
  * Site detail page
  */
 export const SiteDetail: React.FC = () => {
@@ -616,6 +810,8 @@ export const SiteDetail: React.FC = () => {
   const [showPortalLinkModal, setShowPortalLinkModal] = useState(false);
   const [portalLink, setPortalLink] = useState<{ url: string; token: string } | null>(null);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
+  const [showEditSiteModal, setShowEditSiteModal] = useState(false);
+  const [showMoveApplianceModal, setShowMoveApplianceModal] = useState<string | null>(null);
 
   const { data: site, isLoading, error } = useSite(siteId || null);
   const { data: fleetStats } = useQuery<FleetStats>({
@@ -749,6 +945,30 @@ export const SiteDetail: React.FC = () => {
     );
   }
 
+  // Handle moving an appliance to a different site
+  const handleMoveAppliance = async (applianceId: string, targetSiteId: string) => {
+    if (!siteId) return;
+    try {
+      const token = localStorage.getItem('auth_token');
+      const res = await fetch(`/api/sites/${siteId}/appliances/${applianceId}/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ target_site_id: targetSiteId }),
+      });
+      if (res.ok) {
+        showToast('Appliance moved successfully', 'success');
+        setShowMoveApplianceModal(null);
+        // Refresh page
+        window.location.reload();
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        showToast(`Failed to move appliance: ${err.detail}`, 'error');
+      }
+    } catch {
+      showToast('Failed to move appliance', 'error');
+    }
+  };
+
   const handleAddCredential = async (data: Parameters<typeof addCredential.mutate>[0]['data']) => {
     try {
       await addCredential.mutateAsync({ siteId: site.site_id, data });
@@ -781,16 +1001,27 @@ export const SiteDetail: React.FC = () => {
             </div>
             <p className="text-label-tertiary text-sm mt-0.5">{site.site_id}</p>
           </div>
-          <button
-            onClick={handleGeneratePortalLink}
-            disabled={isGeneratingLink}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-accent-primary hover:bg-accent-tint rounded-ios-sm transition-colors disabled:opacity-50 whitespace-nowrap"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-            </svg>
-            {isGeneratingLink ? 'Generating...' : 'Portal Link'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowEditSiteModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-label-secondary hover:bg-fill-secondary rounded-ios-sm transition-colors whitespace-nowrap"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Edit Site
+            </button>
+            <button
+              onClick={handleGeneratePortalLink}
+              disabled={isGeneratingLink}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-accent-primary hover:bg-accent-tint rounded-ios-sm transition-colors disabled:opacity-50 whitespace-nowrap"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+              {isGeneratingLink ? 'Generating...' : 'Portal Link'}
+            </button>
+          </div>
         </div>
 
         {/* Row 2: Navigation pills */}
@@ -935,6 +1166,7 @@ export const SiteDetail: React.FC = () => {
                     onCreateOrder={handleCreateOrder}
                     onDelete={handleDeleteAppliance}
                     onUpdateL2Mode={handleUpdateL2Mode}
+                    onMove={(id) => setShowMoveApplianceModal(id)}
                     isLoading={isOrderLoading}
                   />
                 ))}
@@ -1091,6 +1323,26 @@ export const SiteDetail: React.FC = () => {
             </div>
           </GlassCard>
         </div>
+      )}
+
+      {/* Edit Site Modal */}
+      {showEditSiteModal && site && (
+        <EditSiteModal
+          site={site}
+          onClose={() => setShowEditSiteModal(false)}
+          onSaved={() => { setShowEditSiteModal(false); window.location.reload(); }}
+          showToast={showToast}
+        />
+      )}
+
+      {/* Move Appliance Modal */}
+      {showMoveApplianceModal && siteId && (
+        <MoveApplianceModal
+          applianceId={showMoveApplianceModal}
+          currentSiteId={siteId}
+          onClose={() => setShowMoveApplianceModal(null)}
+          onMove={handleMoveAppliance}
+        />
       )}
 
       {/* Toast Notification */}

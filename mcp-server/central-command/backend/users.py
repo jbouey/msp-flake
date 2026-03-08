@@ -13,7 +13,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Literal
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
 
@@ -154,6 +154,129 @@ async def list_users(
         ))
 
     return users
+
+
+@router.get("/all-accounts")
+async def list_all_accounts(
+    search: Optional[str] = Query(None, min_length=1, max_length=200),
+    account_type: Optional[str] = Query(None, regex="^(admin|partner|client)$"),
+    sort_by: str = Query("name", regex="^(name|email|type|status|created_at|last_login|org)$"),
+    sort_dir: str = Query("asc", regex="^(asc|desc)$"),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(require_admin),
+    db=Depends(get_db),
+):
+    """List all accounts across admin, partner, and client users."""
+    accounts = []
+
+    # Admin users
+    if not account_type or account_type == "admin":
+        result = await db.execute(text("""
+            SELECT id, username, email, display_name, role, status, last_login, created_at
+            FROM admin_users
+        """))
+        for row in result.fetchall():
+            accounts.append({
+                "id": str(row[0]),
+                "name": row[3] or row[1],
+                "username": row[1],
+                "email": row[2],
+                "role": row[4],
+                "status": row[5] or "active",
+                "account_type": "admin",
+                "org": "System",
+                "last_login": row[6].isoformat() if row[6] else None,
+                "created_at": row[7].isoformat() if row[7] else None,
+                "mfa_enabled": False,
+            })
+
+    # Partner users
+    if not account_type or account_type == "partner":
+        result = await db.execute(text("""
+            SELECT pu.id, pu.email, pu.display_name, pu.role, pu.is_active,
+                   pu.last_login_at, pu.created_at, pu.mfa_enabled,
+                   p.name as partner_name
+            FROM partner_users pu
+            LEFT JOIN partners p ON p.id = pu.partner_id
+        """))
+        for row in result.fetchall():
+            accounts.append({
+                "id": str(row[0]),
+                "name": row[2] or row[1].split("@")[0],
+                "username": row[1],
+                "email": row[1],
+                "role": row[3] or "partner",
+                "status": "active" if row[4] else "disabled",
+                "account_type": "partner",
+                "org": row[8] or "Unknown Partner",
+                "last_login": row[5].isoformat() if row[5] else None,
+                "created_at": row[6].isoformat() if row[6] else None,
+                "mfa_enabled": bool(row[7]),
+            })
+
+    # Client users
+    if not account_type or account_type == "client":
+        result = await db.execute(text("""
+            SELECT cu.id, cu.email, cu.display_name, cu.role, cu.is_active,
+                   cu.last_login_at, cu.created_at, cu.mfa_enabled,
+                   co.name as org_name
+            FROM client_users cu
+            LEFT JOIN client_orgs co ON co.id = cu.client_org_id
+        """))
+        for row in result.fetchall():
+            accounts.append({
+                "id": str(row[0]),
+                "name": row[2] or row[1].split("@")[0],
+                "username": row[1],
+                "email": row[1],
+                "role": row[3] or "client",
+                "status": "active" if row[4] else "disabled",
+                "account_type": "client",
+                "org": row[8] or "Unknown Org",
+                "last_login": row[5].isoformat() if row[5] else None,
+                "created_at": row[6].isoformat() if row[6] else None,
+                "mfa_enabled": bool(row[7]),
+            })
+
+    # Search filter
+    if search:
+        s = search.lower()
+        accounts = [a for a in accounts if
+                    s in (a["name"] or "").lower() or
+                    s in (a["email"] or "").lower() or
+                    s in (a["org"] or "").lower() or
+                    s in (a["username"] or "").lower()]
+
+    # Stats (before pagination)
+    stats = {
+        "total": len(accounts),
+        "admin": sum(1 for a in accounts if a["account_type"] == "admin"),
+        "partner": sum(1 for a in accounts if a["account_type"] == "partner"),
+        "client": sum(1 for a in accounts if a["account_type"] == "client"),
+        "active": sum(1 for a in accounts if a["status"] == "active"),
+        "mfa_enabled": sum(1 for a in accounts if a["mfa_enabled"]),
+    }
+
+    # Sort
+    reverse = sort_dir == "desc"
+    sort_map = {"name": "name", "email": "email", "type": "account_type",
+                "status": "status", "created_at": "created_at",
+                "last_login": "last_login", "org": "org"}
+    key = sort_map.get(sort_by, "name")
+    accounts.sort(key=lambda a: (a.get(key) or ""), reverse=reverse)
+
+    total = len(accounts)
+    paginated = accounts[offset:offset + limit]
+
+    return {
+        "accounts": paginated,
+        "count": len(paginated),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "stats": stats,
+    }
 
 
 @router.put("/{user_id}", response_model=UserResponse)

@@ -274,11 +274,25 @@ export function useOnboardingMetrics() {
 /**
  * Hook for fetching all sites with live status
  */
-export function useSites(status?: string) {
+export function useSites(params?: {
+  status?: string;
+  search?: string;
+  sort_by?: string;
+  sort_dir?: string;
+  limit?: number;
+  offset?: number;
+}) {
   const defaults = useQueryDefaults();
-  return useQuery<{ sites: Site[]; count: number }>({
-    queryKey: ['sites', status],
-    queryFn: () => sitesApi.getSites(status),
+  return useQuery<{
+    sites: Site[];
+    count: number;
+    total: number;
+    limit: number;
+    offset: number;
+    stats: Record<string, number>;
+  }>({
+    queryKey: ['sites', params],
+    queryFn: () => sitesApi.getSites(params),
     ...defaults,
   });
 }

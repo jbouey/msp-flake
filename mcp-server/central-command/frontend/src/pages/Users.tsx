@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { GlassCard, Spinner, Badge } from '../components/shared';
-import { usersApi, AdminUser, UserInvite, Session, AuditLog, TotpSetup } from '../utils/api';
+import { usersApi, AdminUser, UserInvite, Session, AuditLog, TotpSetup, UnifiedAccount } from '../utils/api';
 
-type TabType = 'users' | 'invites' | 'sessions' | 'audit' | 'security';
+type TabType = 'accounts' | 'users' | 'invites' | 'sessions' | 'audit' | 'security';
 
 /**
  * Format date for display
@@ -1099,11 +1099,233 @@ const SecurityTab: React.FC = () => {
   );
 };
 
+// ============================================================================
+// All Accounts Tab (unified admin + partner + client users)
+// ============================================================================
+const AccountTypeBadge: React.FC<{ type: string }> = ({ type }) => {
+  const variants: Record<string, 'default' | 'success' | 'warning' | 'error'> = {
+    admin: 'error',
+    partner: 'warning',
+    client: 'success',
+  };
+  return <Badge variant={variants[type] || 'default'}>{type}</Badge>;
+};
+
+const AllAccountsTab: React.FC = () => {
+  const [accounts, setAccounts] = useState<UnifiedAccount[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined);
+  const [sortBy, setSortBy] = useState('name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [stats, setStats] = useState<Record<string, number>>({});
+  const limit = 25;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const fetchAccounts = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const data = await usersApi.getAllAccounts({
+        search: debouncedSearch || undefined,
+        account_type: typeFilter,
+        sort_by: sortBy,
+        sort_dir: sortDir,
+        limit,
+        offset: page * limit,
+      });
+      setAccounts(data.accounts);
+      setTotal(data.total);
+      if (data.stats) setStats(data.stats);
+    } catch (err) {
+      console.error('Failed to fetch accounts:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [debouncedSearch, typeFilter, sortBy, sortDir, page]);
+
+  useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+
+  const totalPages = Math.ceil(total / limit);
+
+  const handleSort = (col: string) => {
+    if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(col); setSortDir('asc'); }
+    setPage(0);
+  };
+
+  const SortIcon: React.FC<{ col: string }> = ({ col }) => {
+    if (sortBy !== col) return <span className="text-label-quaternary ml-1">↕</span>;
+    return <span className="text-accent-primary ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>;
+  };
+
+  const thClass = "px-4 py-3 text-left text-sm font-medium text-label-tertiary cursor-pointer select-none hover:text-label-primary";
+
+  return (
+    <div className="space-y-4">
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        <GlassCard className="p-3 text-center">
+          <p className="text-xl font-bold text-label-primary">{stats.total || 0}</p>
+          <p className="text-xs text-label-tertiary">Total</p>
+        </GlassCard>
+        <GlassCard className="p-3 text-center">
+          <p className="text-xl font-bold text-red-400">{stats.admin || 0}</p>
+          <p className="text-xs text-label-tertiary">Admin</p>
+        </GlassCard>
+        <GlassCard className="p-3 text-center">
+          <p className="text-xl font-bold text-yellow-400">{stats.partner || 0}</p>
+          <p className="text-xs text-label-tertiary">Partner</p>
+        </GlassCard>
+        <GlassCard className="p-3 text-center">
+          <p className="text-xl font-bold text-green-400">{stats.client || 0}</p>
+          <p className="text-xs text-label-tertiary">Client</p>
+        </GlassCard>
+        <GlassCard className="p-3 text-center">
+          <p className="text-xl font-bold text-health-healthy">{stats.active || 0}</p>
+          <p className="text-xs text-label-tertiary">Active</p>
+        </GlassCard>
+        <GlassCard className="p-3 text-center">
+          <p className="text-xl font-bold text-accent-primary">{stats.mfa_enabled || 0}</p>
+          <p className="text-xs text-label-tertiary">MFA On</p>
+        </GlassCard>
+      </div>
+
+      {/* Search + Filter */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="relative flex-1 max-w-md">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search all accounts..."
+            className="w-full pl-10 pr-3 py-2 text-sm border border-separator-light rounded-ios bg-fill-primary focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+          />
+        </div>
+        <div className="flex gap-1">
+          {[
+            { value: undefined, label: 'All' },
+            { value: 'admin', label: 'Admin' },
+            { value: 'partner', label: 'Partner' },
+            { value: 'client', label: 'Client' },
+          ].map(option => (
+            <button key={option.value || 'all'} onClick={() => { setTypeFilter(option.value); setPage(0); }}
+              className={`px-3 py-1.5 text-sm rounded-ios-sm transition-colors ${
+                typeFilter === option.value ? 'bg-accent-primary text-white' : 'bg-separator-light text-label-secondary hover:bg-separator-light/80'
+              }`}>
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Table */}
+      <GlassCard padding="none">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12"><Spinner size="lg" /></div>
+        ) : accounts.length === 0 ? (
+          <div className="text-center py-12 text-label-tertiary">
+            {debouncedSearch ? 'No accounts match your search.' : 'No accounts found.'}
+          </div>
+        ) : (
+          <>
+            <table className="w-full">
+              <thead className="border-b border-separator-default bg-fill-secondary">
+                <tr>
+                  <th className={thClass} onClick={() => handleSort('name')}>Name<SortIcon col="name" /></th>
+                  <th className={thClass} onClick={() => handleSort('email')}>Email<SortIcon col="email" /></th>
+                  <th className={thClass} onClick={() => handleSort('type')}>Type<SortIcon col="type" /></th>
+                  <th className={thClass} onClick={() => handleSort('org')}>Organization<SortIcon col="org" /></th>
+                  <th className={thClass}>Role</th>
+                  <th className={thClass} onClick={() => handleSort('status')}>Status<SortIcon col="status" /></th>
+                  <th className={thClass}>MFA</th>
+                  <th className={thClass} onClick={() => handleSort('last_login')}>Last Login<SortIcon col="last_login" /></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-separator-default">
+                {accounts.map(acct => (
+                  <tr key={`${acct.account_type}-${acct.id}`} className="hover:bg-fill-tertiary/50 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm ${
+                          acct.account_type === 'admin' ? 'bg-red-500' : acct.account_type === 'partner' ? 'bg-yellow-500' : 'bg-green-500'
+                        }`}>
+                          {(acct.name || '?').charAt(0).toUpperCase()}
+                        </div>
+                        <span className="font-medium text-label-primary">{acct.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-label-secondary">{acct.email}</td>
+                    <td className="px-4 py-3"><AccountTypeBadge type={acct.account_type} /></td>
+                    <td className="px-4 py-3 text-sm text-label-secondary">{acct.org}</td>
+                    <td className="px-4 py-3"><RoleBadge role={acct.role} /></td>
+                    <td className="px-4 py-3"><StatusBadge status={acct.status} /></td>
+                    <td className="px-4 py-3">
+                      {acct.mfa_enabled ? (
+                        <span className="text-health-healthy text-sm">Enabled</span>
+                      ) : (
+                        <span className="text-label-quaternary text-sm">Off</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-label-tertiary">{acct.last_login ? formatDate(acct.last_login) : 'Never'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 border-t border-separator-light bg-fill-secondary">
+                <p className="text-sm text-label-tertiary">
+                  Showing {page * limit + 1}–{Math.min((page + 1) * limit, total)} of {total}
+                </p>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setPage(0)} disabled={page === 0}
+                    className="px-2 py-1 text-sm rounded hover:bg-fill-tertiary disabled:opacity-30 disabled:cursor-not-allowed text-label-secondary">««</button>
+                  <button onClick={() => setPage(p => p - 1)} disabled={page === 0}
+                    className="px-2 py-1 text-sm rounded hover:bg-fill-tertiary disabled:opacity-30 disabled:cursor-not-allowed text-label-secondary">«</button>
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let p: number;
+                    if (totalPages <= 5) p = i;
+                    else if (page < 3) p = i;
+                    else if (page > totalPages - 4) p = totalPages - 5 + i;
+                    else p = page - 2 + i;
+                    return (
+                      <button key={p} onClick={() => setPage(p)}
+                        className={`px-3 py-1 text-sm rounded ${p === page ? 'bg-accent-primary text-white' : 'hover:bg-fill-tertiary text-label-secondary'}`}>
+                        {p + 1}
+                      </button>
+                    );
+                  })}
+                  <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1}
+                    className="px-2 py-1 text-sm rounded hover:bg-fill-tertiary disabled:opacity-30 disabled:cursor-not-allowed text-label-secondary">»</button>
+                  <button onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1}
+                    className="px-2 py-1 text-sm rounded hover:bg-fill-tertiary disabled:opacity-30 disabled:cursor-not-allowed text-label-secondary">»»</button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </GlassCard>
+    </div>
+  );
+};
+
 /**
  * Users Management Page
  */
 export default function Users() {
-  const [activeTab, setActiveTab] = useState<TabType>('users');
+  const [activeTab, setActiveTab] = useState<TabType>('accounts');
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [invites, setInvites] = useState<UserInvite[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -1262,8 +1484,9 @@ export default function Users() {
   }
 
   const tabs: { key: TabType; label: string }[] = [
-    { key: 'users', label: `Users (${users.length})` },
-    { key: 'invites', label: `Pending Invites (${invites.length})` },
+    { key: 'accounts', label: 'All Accounts' },
+    { key: 'users', label: `Admin Users (${users.length})` },
+    { key: 'invites', label: `Invites (${invites.length})` },
     { key: 'sessions', label: 'Sessions' },
     { key: 'audit', label: 'Audit Log' },
     { key: 'security', label: 'Security / 2FA' },
@@ -1352,6 +1575,8 @@ export default function Users() {
       </div>
 
       {/* Tab Content */}
+      {activeTab === 'accounts' && <AllAccountsTab />}
+
       {activeTab === 'users' && (
         <GlassCard>
           <table className="w-full">

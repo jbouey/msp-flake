@@ -743,52 +743,115 @@ async def create_partner(request: Request, partner: PartnerCreate, admin: dict =
 
 
 @router.get("")
-async def list_partners(status: Optional[str] = None, admin: dict = Depends(require_admin)):
-    """List all partners (admin only)."""
+async def list_partners(
+    status: Optional[str] = None,
+    search: Optional[str] = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query("name", regex="^(name|created_at|status|site_count|revenue_share_percent)$"),
+    sort_dir: str = Query("asc", regex="^(asc|desc)$"),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    admin: dict = Depends(require_admin),
+):
+    """List partners with pagination, search, and sorting (admin only)."""
     pool = await get_pool()
 
     async with pool.acquire() as conn:
-        if status:
-            rows = await conn.fetch("""
-                SELECT id, name, slug, contact_email, brand_name,
-                       revenue_share_percent, status, created_at
-                FROM partners
-                WHERE status = $1
-                ORDER BY name
-            """, status)
-        else:
-            rows = await conn.fetch("""
-                SELECT id, name, slug, contact_email, brand_name,
-                       revenue_share_percent, status, created_at
-                FROM partners
-                ORDER BY name
-            """)
+        # Build WHERE clause
+        conditions = []
+        params: list = []
+        idx = 1
 
-        # Get site counts per partner
-        site_counts = await conn.fetch("""
-            SELECT partner_id, COUNT(*) as count
-            FROM sites
-            WHERE partner_id IS NOT NULL
-            GROUP BY partner_id
+        if status:
+            conditions.append(f"p.status = ${idx}")
+            params.append(status)
+            idx += 1
+
+        if search:
+            conditions.append(
+                f"(p.name ILIKE ${idx} OR p.slug ILIKE ${idx} OR p.contact_email ILIKE ${idx} OR p.brand_name ILIKE ${idx})"
+            )
+            params.append(f"%{search}%")
+            idx += 1
+
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        # Sort mapping (site_count is computed, needs special handling)
+        sort_col = {
+            "name": "p.name",
+            "created_at": "p.created_at",
+            "status": "p.status",
+            "revenue_share_percent": "p.revenue_share_percent",
+            "site_count": "site_count",
+        }.get(sort_by, "p.name")
+        order = f"{sort_col} {'DESC' if sort_dir == 'desc' else 'ASC'}"
+
+        # Get total count for pagination
+        total_row = await conn.fetchrow(
+            f"SELECT COUNT(*) as total FROM partners p {where}", *params
+        )
+        total_count = total_row['total'] if total_row else 0
+
+        # Get aggregate stats (all partners, ignoring filters)
+        stats_row = await conn.fetchrow("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'active') as active,
+                COUNT(*) FILTER (WHERE status = 'suspended') as suspended,
+                COUNT(*) FILTER (WHERE status = 'inactive') as inactive
+            FROM partners
         """)
-        count_map = {str(r['partner_id']): r['count'] for r in site_counts}
+
+        total_sites_row = await conn.fetchrow(
+            "SELECT COUNT(*) as total FROM sites WHERE partner_id IS NOT NULL"
+        )
+
+        # Fetch page with site counts joined
+        params_page = list(params)
+        params_page.extend([limit, offset])
+        rows = await conn.fetch(f"""
+            SELECT p.id, p.name, p.slug, p.contact_email, p.brand_name,
+                   p.revenue_share_percent, p.status, p.created_at,
+                   COALESCE(sc.cnt, 0) as site_count
+            FROM partners p
+            LEFT JOIN (
+                SELECT partner_id, COUNT(*) as cnt
+                FROM sites
+                WHERE partner_id IS NOT NULL
+                GROUP BY partner_id
+            ) sc ON sc.partner_id = p.id
+            {where}
+            ORDER BY {order}
+            LIMIT ${idx} OFFSET ${idx + 1}
+        """, *params_page)
 
         partners = []
         for row in rows:
-            partner_id = str(row['id'])
             partners.append({
-                'id': partner_id,
+                'id': str(row['id']),
                 'name': row['name'],
                 'slug': row['slug'],
                 'contact_email': row['contact_email'],
                 'brand_name': row['brand_name'],
                 'revenue_share_percent': row['revenue_share_percent'],
                 'status': row['status'],
-                'site_count': count_map.get(partner_id, 0),
+                'site_count': row['site_count'],
                 'created_at': row['created_at'].isoformat(),
             })
 
-        return {'partners': partners, 'count': len(partners)}
+        return {
+            'partners': partners,
+            'count': len(partners),
+            'total': total_count,
+            'limit': limit,
+            'offset': offset,
+            'stats': {
+                'total': stats_row['total'] if stats_row else 0,
+                'active': stats_row['active'] if stats_row else 0,
+                'suspended': stats_row['suspended'] if stats_row else 0,
+                'inactive': stats_row['inactive'] if stats_row else 0,
+                'total_sites': total_sites_row['total'] if total_sites_row else 0,
+            },
+        }
 
 
 @router.get("/activity/all")
@@ -850,6 +913,33 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
             ORDER BY email
         """, _uid(partner_id))
 
+        # Get appliance stats per site
+        appliance_stats = await conn.fetch("""
+            SELECT sa.site_id, COUNT(*) as appliance_count,
+                   MAX(sa.last_checkin) as last_checkin
+            FROM site_appliances sa
+            JOIN sites s ON s.site_id = sa.site_id
+            WHERE s.partner_id = $1
+            GROUP BY sa.site_id
+        """, _uid(partner_id))
+        app_map = {r['site_id']: {'count': r['appliance_count'], 'last_checkin': r['last_checkin']} for r in appliance_stats}
+
+        # Get incident counts
+        incident_row = await conn.fetchrow("""
+            SELECT COUNT(*) as total,
+                   COUNT(*) FILTER (WHERE status = 'open') as open_count
+            FROM incidents
+            WHERE site_id IN (SELECT site_id FROM sites WHERE partner_id = $1)
+        """, _uid(partner_id))
+
+        # Get recent activity count
+        activity_row = await conn.fetchrow("""
+            SELECT COUNT(*) as total,
+                   COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as recent
+            FROM partner_activity_log
+            WHERE partner_id = $1
+        """, _uid(partner_id))
+
         return {
             'id': str(row['id']),
             'name': row['name'],
@@ -869,6 +959,8 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
                     'clinic_name': s['clinic_name'],
                     'status': s['status'],
                     'tier': s['tier'],
+                    'appliance_count': app_map.get(s['site_id'], {}).get('count', 0),
+                    'last_checkin': app_map.get(s['site_id'], {}).get('last_checkin', None).isoformat() if app_map.get(s['site_id'], {}).get('last_checkin') else None,
                 }
                 for s in sites
             ],
@@ -883,6 +975,15 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
                 }
                 for u in users
             ],
+            'stats': {
+                'total_sites': len(sites),
+                'total_users': len(users),
+                'total_appliances': sum(a['count'] for a in app_map.values()),
+                'total_incidents': incident_row['total'] if incident_row else 0,
+                'open_incidents': incident_row['open_count'] if incident_row else 0,
+                'total_activity': activity_row['total'] if activity_row else 0,
+                'recent_activity': activity_row['recent'] if activity_row else 0,
+            },
         }
 
 
@@ -1011,6 +1112,49 @@ async def regenerate_api_key(request: Request, partner_id: str, admin: dict = De
         "api_key": api_key,
         "message": "Save this API key - it cannot be retrieved later"
     }
+
+
+@router.delete("/{partner_id}")
+async def delete_partner(request: Request, partner_id: str, admin: dict = Depends(require_admin)):
+    """Delete a partner (admin only). Cascades to sessions, provisions, etc."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Get partner info for audit log before deleting
+        partner = await conn.fetchrow(
+            "SELECT id, name, slug FROM partners WHERE id = $1",
+            _uid(partner_id),
+        )
+        if not partner:
+            raise HTTPException(status_code=404, detail="Partner not found")
+
+        # Unlink sites (set partner_id to NULL rather than deleting sites)
+        await conn.execute(
+            "UPDATE sites SET partner_id = NULL WHERE partner_id = $1",
+            _uid(partner_id),
+        )
+
+        # Delete the partner (cascades to sessions, provisions, etc.)
+        await conn.execute("DELETE FROM partners WHERE id = $1", _uid(partner_id))
+
+    await log_partner_activity(
+        partner_id=str(partner_id),
+        event_type=PartnerEventType.PARTNER_UPDATED,
+        target_type="partner",
+        target_id=str(partner_id),
+        event_data={
+            "action": "deleted",
+            "partner_name": partner["name"],
+            "partner_slug": partner["slug"],
+            "admin_user": admin.get("sub", "unknown"),
+        },
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
+    return {"status": "deleted", "id": str(partner_id), "name": partner["name"]}
 
 
 @router.get("/{partner_id}/activity")

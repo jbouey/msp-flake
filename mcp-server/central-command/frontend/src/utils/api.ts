@@ -460,9 +460,30 @@ async function fetchSitesApi<T>(endpoint: string, options?: FetchApiOptions): Pr
 }
 
 export const sitesApi = {
-  getSites: (status?: string) => {
-    const query = status ? `?status=${status}` : '';
-    return fetchSitesApi<{ sites: Site[]; count: number }>(`/sites${query}`);
+  getSites: (params?: {
+    status?: string;
+    search?: string;
+    sort_by?: string;
+    sort_dir?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.status) query.set('status', params.status);
+    if (params?.search) query.set('search', params.search);
+    if (params?.sort_by) query.set('sort_by', params.sort_by);
+    if (params?.sort_dir) query.set('sort_dir', params.sort_dir);
+    if (params?.limit) query.set('limit', String(params.limit));
+    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    return fetchSitesApi<{
+      sites: Site[];
+      count: number;
+      total: number;
+      limit: number;
+      offset: number;
+      stats: Record<string, number>;
+    }>(`/sites${qs ? `?${qs}` : ''}`);
   },
 
   getSite: (siteId: string) => fetchSitesApi<SiteDetail>(`/sites/${siteId}`),
@@ -842,9 +863,50 @@ export interface AuditLog {
   timestamp: string;
 }
 
+export interface UnifiedAccount {
+  id: string;
+  name: string;
+  username: string;
+  email: string;
+  role: string;
+  status: string;
+  account_type: 'admin' | 'partner' | 'client';
+  org: string;
+  last_login: string | null;
+  created_at: string | null;
+  mfa_enabled: boolean;
+}
+
 export const usersApi = {
   // Get all users (admin only)
   getUsers: () => fetchSitesApi<AdminUser[]>('/users'),
+
+  // Get all accounts (admin, partner, client) with pagination
+  getAllAccounts: (params?: {
+    search?: string;
+    account_type?: string;
+    sort_by?: string;
+    sort_dir?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.search) query.set('search', params.search);
+    if (params?.account_type) query.set('account_type', params.account_type);
+    if (params?.sort_by) query.set('sort_by', params.sort_by);
+    if (params?.sort_dir) query.set('sort_dir', params.sort_dir);
+    if (params?.limit) query.set('limit', String(params.limit));
+    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    return fetchSitesApi<{
+      accounts: UnifiedAccount[];
+      count: number;
+      total: number;
+      limit: number;
+      offset: number;
+      stats: Record<string, number>;
+    }>(`/users/all-accounts${qs ? `?${qs}` : ''}`);
+  },
 
   // Get pending invites (admin only)
   getInvites: () => fetchSitesApi<UserInvite[]>('/users/invites'),

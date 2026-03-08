@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { useSites, useCreateSite } from '../hooks';
@@ -220,11 +220,36 @@ export const Sites: React.FC = () => {
   const [showNewSiteModal, setShowNewSiteModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [groupByOrg, setGroupByOrg] = useState(false);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [sortBy, setSortBy] = useState('clinic_name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [page, setPage] = useState(0);
+  const limit = 25;
 
-  const { data, isLoading } = useSites(statusFilter);
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const { data, isLoading } = useSites({
+    status: statusFilter,
+    search: debouncedSearch || undefined,
+    sort_by: sortBy,
+    sort_dir: sortDir,
+    limit,
+    offset: page * limit,
+  });
   const createSite = useCreateSite();
 
   const sites = data?.sites || [];
+  const total = data?.total || 0;
+  const totalPages = Math.ceil(total / limit);
+  const serverStats = data?.stats || {};
 
   // Group sites by org when toggled
   const orgGroups = useMemo(() => {
@@ -244,19 +269,32 @@ export const Sites: React.FC = () => {
     return Object.values(groups).sort((a, b) => a.orgName.localeCompare(b.orgName));
   }, [sites, groupByOrg]);
 
-  // Count by status
   const statusCounts = {
-    all: sites.length,
-    online: sites.filter(s => s.live_status === 'online').length,
-    offline: sites.filter(s => s.live_status === 'offline').length,
-    pending: sites.filter(s => s.live_status === 'pending').length,
+    all: (serverStats.online || 0) + (serverStats.stale || 0) + (serverStats.offline || 0) + (serverStats.pending || 0),
+    online: serverStats.online || 0,
+    offline: serverStats.offline || 0,
+    pending: serverStats.pending || 0,
   };
 
-  // Count unique orgs
   const orgCount = useMemo(() => {
     const orgIds = new Set(sites.map(s => s.client_org_id).filter(Boolean));
     return orgIds.size;
   }, [sites]);
+
+  const handleSort = (col: string) => {
+    if (sortBy === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(col);
+      setSortDir('asc');
+    }
+    setPage(0);
+  };
+
+  const SortIcon: React.FC<{ col: string }> = ({ col }) => {
+    if (sortBy !== col) return <span className="text-label-quaternary ml-1">↕</span>;
+    return <span className="text-accent-primary ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>;
+  };
 
   const handleCreateSite = async (siteData: Parameters<typeof createSite.mutate>[0]) => {
     try {
@@ -268,30 +306,31 @@ export const Sites: React.FC = () => {
     }
   };
 
+  const thClass = "px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider";
+  const thSortClass = `${thClass} cursor-pointer select-none hover:text-label-primary`;
+
   const tableHeaders = (
     <tr>
-      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-        Site
+      <th className={thSortClass} onClick={() => handleSort('clinic_name')}>
+        Site<SortIcon col="clinic_name" />
       </th>
       {!groupByOrg && (
-        <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-          Organization
+        <th className={thSortClass} onClick={() => handleSort('org_name')}>
+          Organization<SortIcon col="org_name" />
         </th>
       )}
-      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-        Status
+      <th className={thClass}>Status</th>
+      <th className={thSortClass} onClick={() => handleSort('last_checkin')}>
+        Last Checkin<SortIcon col="last_checkin" />
       </th>
-      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-        Last Checkin
+      <th className={thSortClass} onClick={() => handleSort('onboarding_stage')}>
+        Stage<SortIcon col="onboarding_stage" />
       </th>
-      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-        Stage
+      <th className={thSortClass} onClick={() => handleSort('appliance_count')}>
+        Appliances<SortIcon col="appliance_count" />
       </th>
-      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-        Appliances
-      </th>
-      <th className="px-4 py-3 text-left text-xs font-semibold text-label-secondary uppercase tracking-wider">
-        Tier
+      <th className={thSortClass} onClick={() => handleSort('tier')}>
+        Tier<SortIcon col="tier" />
       </th>
     </tr>
   );
@@ -303,7 +342,7 @@ export const Sites: React.FC = () => {
         <div>
           <h1 className="text-2xl font-semibold text-label-primary tracking-tight">Sites</h1>
           <p className="text-label-tertiary text-sm mt-1">
-            {sites.length} site{sites.length !== 1 ? 's' : ''} across {orgCount} organization{orgCount !== 1 ? 's' : ''}
+            {statusCounts.all} site{statusCounts.all !== 1 ? 's' : ''} across {orgCount} organization{orgCount !== 1 ? 's' : ''}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -346,30 +385,39 @@ export const Sites: React.FC = () => {
         </GlassCard>
       </div>
 
-      {/* Filter tabs + Group toggle */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-label-tertiary">Filter:</span>
-          <div className="flex gap-1">
-            {[
-              { value: undefined, label: 'All' },
-              { value: 'online', label: 'Online' },
-              { value: 'offline', label: 'Offline' },
-              { value: 'pending', label: 'Pending' },
-            ].map((option) => (
-              <button
-                key={option.value || 'all'}
-                onClick={() => setStatusFilter(option.value)}
-                className={`px-3 py-1.5 text-sm rounded-ios-sm transition-colors ${
-                  statusFilter === option.value
-                    ? 'bg-accent-primary text-white'
-                    : 'bg-separator-light text-label-secondary hover:bg-separator-light/80'
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+      {/* Search + Filter + Group toggle */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="relative flex-1 max-w-md">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search sites..."
+            className="w-full pl-10 pr-3 py-2 text-sm border border-separator-light rounded-ios bg-fill-primary focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+          />
+        </div>
+        <div className="flex gap-1">
+          {[
+            { value: undefined, label: 'All' },
+            { value: 'online', label: 'Online' },
+            { value: 'offline', label: 'Offline' },
+            { value: 'pending', label: 'Pending' },
+          ].map((option) => (
+            <button
+              key={option.value || 'all'}
+              onClick={() => { setStatusFilter(option.value); setPage(0); }}
+              className={`px-3 py-1.5 text-sm rounded-ios-sm transition-colors ${
+                statusFilter === option.value
+                  ? 'bg-accent-primary text-white'
+                  : 'bg-separator-light text-label-secondary hover:bg-separator-light/80'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
         <button
           onClick={() => setGroupByOrg(!groupByOrg)}
@@ -446,21 +494,61 @@ export const Sites: React.FC = () => {
           </div>
         ) : (
           /* Flat list view */
-          <table className="w-full">
-            <thead className="bg-fill-quaternary border-b border-separator-light">
-              {tableHeaders}
-            </thead>
-            <tbody className="divide-y divide-separator-light">
-              {sites.map((site) => (
-                <SiteRow
-                  key={site.site_id}
-                  site={site}
-                  onClick={() => navigate(`/sites/${site.site_id}`)}
-                  showOrg
-                />
-              ))}
-            </tbody>
-          </table>
+          <>
+            <table className="w-full">
+              <thead className="bg-fill-quaternary border-b border-separator-light">
+                {tableHeaders}
+              </thead>
+              <tbody className="divide-y divide-separator-light">
+                {sites.map((site) => (
+                  <SiteRow
+                    key={site.site_id}
+                    site={site}
+                    onClick={() => navigate(`/sites/${site.site_id}`)}
+                    showOrg
+                  />
+                ))}
+              </tbody>
+            </table>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 border-t border-separator-light bg-fill-secondary">
+                <p className="text-sm text-label-tertiary">
+                  Showing {page * limit + 1}–{Math.min((page + 1) * limit, total)} of {total}
+                </p>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setPage(0)} disabled={page === 0}
+                    className="px-2 py-1 text-sm rounded hover:bg-fill-tertiary disabled:opacity-30 disabled:cursor-not-allowed text-label-secondary">
+                    ««
+                  </button>
+                  <button onClick={() => setPage(p => p - 1)} disabled={page === 0}
+                    className="px-2 py-1 text-sm rounded hover:bg-fill-tertiary disabled:opacity-30 disabled:cursor-not-allowed text-label-secondary">
+                    «
+                  </button>
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let p: number;
+                    if (totalPages <= 5) p = i;
+                    else if (page < 3) p = i;
+                    else if (page > totalPages - 4) p = totalPages - 5 + i;
+                    else p = page - 2 + i;
+                    return (
+                      <button key={p} onClick={() => setPage(p)}
+                        className={`px-3 py-1 text-sm rounded ${p === page ? 'bg-accent-primary text-white' : 'hover:bg-fill-tertiary text-label-secondary'}`}>
+                        {p + 1}
+                      </button>
+                    );
+                  })}
+                  <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1}
+                    className="px-2 py-1 text-sm rounded hover:bg-fill-tertiary disabled:opacity-30 disabled:cursor-not-allowed text-label-secondary">
+                    »
+                  </button>
+                  <button onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1}
+                    className="px-2 py-1 text-sm rounded hover:bg-fill-tertiary disabled:opacity-30 disabled:cursor-not-allowed text-label-secondary">
+                    »»
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </GlassCard>
 
