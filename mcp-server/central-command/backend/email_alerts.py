@@ -321,18 +321,27 @@ def send_critical_alert(
         msg.attach(MIMEText(text_content, "plain"))
         msg.attach(MIMEText(html_content, "html"))
 
-        # Send email
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls(context=context)
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM, ALERT_EMAIL, msg.as_string())
-
-        logger.info(f"Critical alert email sent: {title}")
-        return True
+        # Send email with retry
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+                    server.starttls(context=context)
+                    server.login(SMTP_USER, SMTP_PASSWORD)
+                    server.sendmail(SMTP_FROM, ALERT_EMAIL, msg.as_string())
+                logger.info(f"Critical alert email sent: {title}")
+                return True
+            except (smtplib.SMTPException, OSError) as smtp_err:
+                if attempt < max_retries - 1:
+                    logger.warning(f"SMTP attempt {attempt + 1}/{max_retries} failed: {smtp_err}")
+                    import time as _time
+                    _time.sleep(2 ** attempt)  # 1s, 2s backoff
+                else:
+                    raise
 
     except Exception as e:
-        logger.error(f"Failed to send critical alert email: {e}")
+        logger.error(f"Failed to send critical alert email after {max_retries} attempts: {e}")
         return False
 
 
@@ -535,15 +544,24 @@ https://dashboard.osiriscare.net/companion
         msg.attach(MIMEText(text_content, "plain"))
         msg.attach(MIMEText(html_content, "html"))
 
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls(context=context)
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM, to_email, msg.as_string())
-
-        logger.info(f"Companion alert email sent to {to_email}: {module_label} / {org_name}")
-        return True
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+                    server.starttls(context=context)
+                    server.login(SMTP_USER, SMTP_PASSWORD)
+                    server.sendmail(SMTP_FROM, to_email, msg.as_string())
+                logger.info(f"Companion alert email sent to {to_email}: {module_label} / {org_name}")
+                return True
+            except (smtplib.SMTPException, OSError) as smtp_err:
+                if attempt < max_retries - 1:
+                    logger.warning(f"SMTP attempt {attempt + 1}/{max_retries} failed: {smtp_err}")
+                    import time as _time
+                    _time.sleep(2 ** attempt)
+                else:
+                    raise
 
     except Exception as e:
-        logger.error(f"Failed to send companion alert email: {e}")
+        logger.error(f"Failed to send companion alert email after retries: {e}")
         return False

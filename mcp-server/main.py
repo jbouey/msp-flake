@@ -896,59 +896,55 @@ async def lifespan(app: FastAPI):
                 rate_limit=f"{RATE_LIMIT_REQUESTS}/{RATE_LIMIT_WINDOW}s",
                 order_ttl=ORDER_TTL_SECONDS)
 
-    # Start periodic OTS proof upgrade task
-    ots_upgrade_task = asyncio.create_task(_ots_upgrade_loop())
+    # Supervised background task registry — auto-restarts on crash
+    _bg_tasks: dict = {}
+    _bg_shutdown = asyncio.Event()
 
-    # Start one-time OTS expired proof resubmission drain
-    ots_resubmit_task = asyncio.create_task(_ots_resubmit_expired_loop())
+    async def _supervised(name: str, coro_fn, *args, restart=True):
+        """Run a coroutine with auto-restart on unexpected exit."""
+        while not _bg_shutdown.is_set():
+            try:
+                logger.info(f"bg_task_started", task=name)
+                await coro_fn(*args)
+                logger.info(f"bg_task_completed", task=name)
+                break  # Clean exit
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"bg_task_crashed", task=name, error=str(e))
+                if not restart or _bg_shutdown.is_set():
+                    break
+                await asyncio.sleep(30)  # Back off before restart
 
-    # Start periodic CVE Watch sync task
-    cve_watch_task = asyncio.create_task(cve_sync_loop())
-
-    # Start weekly framework sync task
-    framework_sync_task = asyncio.create_task(framework_sync_loop())
-
-    # Start flywheel promotion scanner (every 30 min)
-    flywheel_task = asyncio.create_task(_flywheel_promotion_loop())
-
-    # Start companion compliance alert check (every 6h)
     from dashboard_api.companion import companion_alert_check_loop
-    companion_alert_task = asyncio.create_task(companion_alert_check_loop())
+
+    task_defs = [
+        ("ots_upgrade", _ots_upgrade_loop),
+        ("ots_resubmit", _ots_resubmit_expired_loop),
+        ("cve_watch", cve_sync_loop),
+        ("framework_sync", framework_sync_loop),
+        ("flywheel", _flywheel_promotion_loop),
+        ("companion_alerts", companion_alert_check_loop),
+    ]
+
+    for name, fn in task_defs:
+        _bg_tasks[name] = asyncio.create_task(_supervised(name, fn))
+
+    # Store task registry on app for health endpoint
+    app.state.bg_tasks = _bg_tasks
 
     yield
 
     # Shutdown
     logger.info("Shutting down MCP Server...")
-    ots_upgrade_task.cancel()
-    ots_resubmit_task.cancel()
-    cve_watch_task.cancel()
-    framework_sync_task.cancel()
-    flywheel_task.cancel()
-    companion_alert_task.cancel()
-    try:
-        await asyncio.wait_for(asyncio.shield(ots_upgrade_task), timeout=10)
-    except (asyncio.CancelledError, asyncio.TimeoutError):
-        pass
-    try:
-        await asyncio.wait_for(asyncio.shield(ots_resubmit_task), timeout=5)
-    except (asyncio.CancelledError, asyncio.TimeoutError):
-        pass
-    try:
-        await asyncio.wait_for(asyncio.shield(cve_watch_task), timeout=5)
-    except (asyncio.CancelledError, asyncio.TimeoutError):
-        pass
-    try:
-        await asyncio.wait_for(asyncio.shield(framework_sync_task), timeout=5)
-    except (asyncio.CancelledError, asyncio.TimeoutError):
-        pass
-    try:
-        await asyncio.wait_for(asyncio.shield(flywheel_task), timeout=5)
-    except (asyncio.CancelledError, asyncio.TimeoutError):
-        pass
-    try:
-        await asyncio.wait_for(asyncio.shield(companion_alert_task), timeout=5)
-    except (asyncio.CancelledError, asyncio.TimeoutError):
-        pass
+    _bg_shutdown.set()
+    for name, task in _bg_tasks.items():
+        task.cancel()
+    for name, task in _bg_tasks.items():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=10)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
     if redis_client:
         await redis_client.close()
     await engine.dispose()
@@ -1130,6 +1126,24 @@ async def health():
 
     checks["timestamp"] = datetime.now(timezone.utc).isoformat()
     checks["runbooks_loaded"] = len(RUNBOOKS)
+
+    # Background task health
+    bg_tasks = getattr(app.state, 'bg_tasks', {})
+    task_status = {}
+    for name, task in bg_tasks.items():
+        if task.done():
+            exc = task.exception() if not task.cancelled() else None
+            task_status[name] = f"crashed: {exc}" if exc else "completed"
+        else:
+            task_status[name] = "running"
+    checks["background_tasks"] = task_status
+
+    crashed_tasks = [n for n, s in task_status.items() if "crashed" in s]
+    if crashed_tasks:
+        checks["status"] = "degraded"
+
+    if not all([redis_result[1], db_result[1], minio_result[1]]):
+        checks["status"] = "degraded"
 
     status_code = 200 if checks["status"] == "ok" else 503
     return JSONResponse(content=checks, status_code=status_code)

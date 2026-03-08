@@ -80,6 +80,10 @@ class RateLimiter:
         # Clean up old entries periodically
         if now % 60 < 1:  # Every ~minute
             self._cleanup_old_entries(self._minute_windows, 60)
+            # Prune stale burst tracker entries (older than 5 seconds)
+            stale = [k for k, (ts, _) in self._burst_tracker.items() if now - ts > 5]
+            for k in stale:
+                del self._burst_tracker[k]
         if now % 3600 < 1:  # Every ~hour
             self._cleanup_old_entries(self._hour_windows, 3600)
 
