@@ -287,10 +287,13 @@ func tryRegisterAndSetup(ctx context.Context, client *transport.GRPCClient, upd 
 	return regResp
 }
 
-// reconnectLoop retries gRPC connection in the background with exponential backoff.
+// reconnectLoop watches the gRPC connection and retries with exponential backoff.
+// It runs for the lifetime of the agent — if the connection drops after success,
+// it re-enters the retry cycle.
 func reconnectLoop(ctx context.Context, cfg *config.Config, client *transport.GRPCClient, upd *updater.Updater) {
 	backoff := 30 * time.Second
 	maxBackoff := 5 * time.Minute
+	monitorInterval := 30 * time.Second
 
 	for {
 		select {
@@ -300,7 +303,14 @@ func reconnectLoop(ctx context.Context, cfg *config.Config, client *transport.GR
 		}
 
 		if client.IsConnected() {
-			return // already connected (maybe via another path)
+			// Connection is healthy — monitor for drops
+			backoff = 30 * time.Second // reset backoff
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(monitorInterval):
+				continue // re-check IsConnected on next iteration
+			}
 		}
 
 		log.Printf("[reconnect] Attempting gRPC reconnect to %s...", cfg.ApplianceAddr)
@@ -331,7 +341,7 @@ func reconnectLoop(ctx context.Context, cfg *config.Config, client *transport.GR
 		go runHeartbeatLoop(ctx, client, upd)
 
 		log.Println("[reconnect] Successfully reconnected and registered")
-		return
+		backoff = 30 * time.Second // reset for next disconnect
 	}
 }
 

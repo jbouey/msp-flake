@@ -67,7 +67,8 @@ func NewGRPCClient(ctx context.Context, cfg *config.Config, version string) (*GR
 	}
 
 	if err := client.connect(ctx); err != nil {
-		return nil, err
+		// Return the client even on failure so reconnectLoop can retry
+		return client, err
 	}
 
 	return client, nil
