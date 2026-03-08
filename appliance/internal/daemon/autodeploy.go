@@ -242,6 +242,16 @@ netsh advfirewall firewall add rule name="SMB" dir=in action=allow protocol=tcp 
 Restart-Service WinRM -Force
 Add-Content $logFile "$ts - WinRM configured"
 
+# Part 1.5: Configure Windows Defender exclusions for OsirisCare
+try {
+    Add-MpPreference -ExclusionPath "C:\OsirisCare" -Force -EA SilentlyContinue
+    Add-MpPreference -ExclusionProcess "osiris-agent.exe" -Force -EA SilentlyContinue
+    Add-MpPreference -ExclusionProcess "OsirisCareAgent" -Force -EA SilentlyContinue
+    Add-Content $logFile "$ts - Defender exclusions configured"
+} catch {
+    Add-Content $logFile "$ts - Defender exclusion failed: $_"
+}
+
 # Part 2: Deploy OsirisCare Agent from NETLOGON
 $agentDir = "C:\OsirisCare"
 $agentExe = "$agentDir\osiris-agent.exe"

@@ -309,8 +309,7 @@ try {
         $_.TaskPath -ne '\' -or
         ($_.TaskPath -eq '\' -and $_.TaskName -notmatch '^(MicrosoftEdge|GoogleUpdate|OneDrive|User_Feed)')
     } | ForEach-Object {
-        if ($_.TaskName -ne 'OsirisCareAgent' -and
-            $_.TaskName -notmatch '^(CreateExplorerShellUnelevatedTask|klnagent)') {
+        if ($_.TaskName -notmatch '^(OsirisCareAgent|OsirisCare|ForceTimeSync|CreateExplorerShellUnelevatedTask|klnagent)') {
             $rogueTasks += @{
                 Name = $_.TaskName
                 Path = $_.TaskPath
@@ -447,8 +446,7 @@ foreach ($p in $runPaths) {
     $props = Get-ItemProperty -Path $p -EA SilentlyContinue
     if ($props) {
         $props.PSObject.Properties | Where-Object {
-            $_.Name -notmatch '^(PS|SecurityHealth|Windows Defender|VMware|VBox)' -and
-            $_.Name -ne 'OsirisCareAgent'
+            $_.Name -notmatch '^(PS|SecurityHealth|Windows Defender|VMware|VBox|OsirisCare)'
         } | ForEach-Object {
             $val = $_.Value.ToString()
             $runKeys += @{ Name=$_.Name; Value=$val.Substring(0, [Math]::Min(200, $val.Length)); Path=$p }
