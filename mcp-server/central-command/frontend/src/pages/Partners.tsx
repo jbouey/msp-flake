@@ -964,25 +964,15 @@ export const Partners: React.FC = () => {
 
   // Debounce search input
   useEffect(() => {
+    if (search === debouncedSearch) return;
     const timer = setTimeout(() => {
       setDebouncedSearch(search);
       setPage(0);
     }, 300);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, debouncedSearch]);
 
-  useEffect(() => {
-    fetchPartners();
-  }, [debouncedSearch, statusFilter, sortBy, sortDir, page]);
-
-  useEffect(() => {
-    fetchPendingPartners();
-    fetchOAuthConfig();
-  }, []);
-
-  const fetchPartners = async () => {
-    const token = getToken();
-    if (!token) return;
+  const fetchPartners = useCallback(async () => {
     setIsLoading(true);
     try {
       const params = new URLSearchParams({
@@ -994,7 +984,7 @@ export const Partners: React.FC = () => {
       if (statusFilter) params.set('status', statusFilter);
       if (debouncedSearch) params.set('search', debouncedSearch);
       const response = await fetch(`/api/partners?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (response.ok) {
         const data = await response.json();
@@ -1007,7 +997,14 @@ export const Partners: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [debouncedSearch, statusFilter, sortBy, sortDir, page]);
+
+  useEffect(() => { fetchPartners(); }, [fetchPartners]);
+
+  useEffect(() => {
+    fetchPendingPartners();
+    fetchOAuthConfig();
+  }, []);
 
   const fetchPendingPartners = async () => {
     const token = getToken();
