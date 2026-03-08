@@ -1436,5 +1436,174 @@
     ],
     "severity": "high",
     "timeout_seconds": 120
+  },
+  "MAC-FV-001": {
+    "id": "MAC-FV-001",
+    "name": "FileVault Encryption",
+    "platform": "linux",
+    "detect_script": "fdesetup status 2>/dev/null | grep -q 'FileVault is On' && echo 'COMPLIANT:filevault_on' || echo 'NON_COMPLIANT:filevault_off'",
+    "remediate_script": "sudo fdesetup enable -user \"$(whoami)\" -defer /var/db/FileVaultDeferred.plist 2>/dev/null; echo 'REMEDIATED:filevault_deferred_enable'",
+    "verify_script": "fdesetup status 2>/dev/null | grep -q 'FileVault is On' && echo 'VERIFIED:filevault_on' || echo 'VERIFY_FAILED:filevault_still_off'",
+    "hipaa_controls": [
+      "164.312(a)(2)(iv)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 60
+  },
+  "MAC-GK-001": {
+    "id": "MAC-GK-001",
+    "name": "Gatekeeper Enabled",
+    "platform": "linux",
+    "detect_script": "spctl --status 2>&1 | grep -q 'assessments enabled' && echo 'COMPLIANT:gatekeeper_on' || echo 'NON_COMPLIANT:gatekeeper_off'",
+    "remediate_script": "sudo spctl --master-enable && echo 'REMEDIATED:gatekeeper_enabled'",
+    "verify_script": "spctl --status 2>&1 | grep -q 'assessments enabled' && echo 'VERIFIED:gatekeeper_on' || echo 'VERIFY_FAILED:gatekeeper_still_off'",
+    "hipaa_controls": [
+      "164.308(a)(5)(ii)(B)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 30
+  },
+  "MAC-SIP-001": {
+    "id": "MAC-SIP-001",
+    "name": "System Integrity Protection",
+    "platform": "linux",
+    "detect_script": "csrutil status 2>/dev/null | grep -q 'enabled' && echo 'COMPLIANT:sip_enabled' || echo 'NON_COMPLIANT:sip_disabled'",
+    "remediate_script": "echo 'ESCALATE:SIP_disabled_requires_recovery_mode_boot \u2014 cannot fix remotely'",
+    "verify_script": "csrutil status 2>/dev/null | grep -q 'enabled' && echo 'VERIFIED:sip_enabled' || echo 'VERIFY_FAILED:sip_disabled_needs_recovery_mode'",
+    "hipaa_controls": [
+      "164.312(c)(1)"
+    ],
+    "severity": "critical",
+    "timeout_seconds": 15
+  },
+  "MAC-FW-001": {
+    "id": "MAC-FW-001",
+    "name": "macOS Firewall",
+    "platform": "linux",
+    "detect_script": "/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null | grep -q 'enabled' && echo 'COMPLIANT:firewall_on' || echo 'NON_COMPLIANT:firewall_off'",
+    "remediate_script": "sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on && sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on && echo 'REMEDIATED:firewall_and_stealth_enabled'",
+    "verify_script": "/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null | grep -q 'enabled' && echo 'VERIFIED:firewall_on' || echo 'VERIFY_FAILED:firewall_still_off'",
+    "hipaa_controls": [
+      "164.312(e)(1)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 30
+  },
+  "MAC-UPD-001": {
+    "id": "MAC-UPD-001",
+    "name": "macOS Auto-Updates",
+    "platform": "linux",
+    "detect_script": "defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled 2>/dev/null | grep -q 1 && echo 'COMPLIANT:auto_update_on' || echo 'NON_COMPLIANT:auto_update_off'",
+    "remediate_script": "sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool true && sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool true && sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true && echo 'REMEDIATED:auto_updates_enabled'",
+    "verify_script": "defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled 2>/dev/null | grep -q 1 && echo 'VERIFIED:auto_update_on' || echo 'VERIFY_FAILED:auto_update_still_off'",
+    "hipaa_controls": [
+      "164.308(a)(5)(ii)(B)"
+    ],
+    "severity": "medium",
+    "timeout_seconds": 30
+  },
+  "MAC-SCR-001": {
+    "id": "MAC-SCR-001",
+    "name": "macOS Screen Lock",
+    "platform": "linux",
+    "detect_script": "defaults read com.apple.screensaver askForPassword 2>/dev/null | grep -q 1 && echo 'COMPLIANT:screen_lock_on' || echo 'NON_COMPLIANT:screen_lock_off'",
+    "remediate_script": "sudo defaults -currentHost write com.apple.screensaver idleTime -int 900 && sudo defaults write com.apple.screensaver askForPassword -int 1 && sudo defaults write com.apple.screensaver askForPasswordDelay -int 5 && echo 'REMEDIATED:screen_lock_configured'",
+    "verify_script": "defaults read com.apple.screensaver askForPassword 2>/dev/null | grep -q 1 && echo 'VERIFIED:screen_lock_on' || echo 'VERIFY_FAILED:screen_lock_still_off'",
+    "hipaa_controls": [
+      "164.312(a)(1)"
+    ],
+    "severity": "medium",
+    "timeout_seconds": 30
+  },
+  "MAC-SSH-001": {
+    "id": "MAC-SSH-001",
+    "name": "macOS Remote Login",
+    "platform": "linux",
+    "detect_script": "grep -q '^PermitRootLogin no' /etc/ssh/sshd_config 2>/dev/null && grep -q '^PasswordAuthentication no' /etc/ssh/sshd_config 2>/dev/null && echo 'COMPLIANT:ssh_hardened' || echo 'NON_COMPLIANT:ssh_not_hardened'",
+    "remediate_script": "sudo sed -i.bak 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && sudo sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && echo 'REMEDIATED:ssh_hardened'",
+    "verify_script": "grep -q '^PermitRootLogin no' /etc/ssh/sshd_config 2>/dev/null && echo 'VERIFIED:ssh_hardened' || echo 'VERIFY_FAILED:ssh_not_hardened'",
+    "hipaa_controls": [
+      "164.312(d)"
+    ],
+    "severity": "medium",
+    "timeout_seconds": 30
+  },
+  "MAC-SMB-001": {
+    "id": "MAC-SMB-001",
+    "name": "macOS File Sharing",
+    "platform": "linux",
+    "detect_script": "sudo launchctl list 2>/dev/null | grep -q smbd && echo 'NON_COMPLIANT:smb_running' || echo 'COMPLIANT:smb_off'",
+    "remediate_script": "sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist 2>/dev/null; echo 'REMEDIATED:smb_disabled'",
+    "verify_script": "sudo launchctl list 2>/dev/null | grep -q smbd && echo 'VERIFY_FAILED:smb_still_running' || echo 'VERIFIED:smb_off'",
+    "hipaa_controls": [
+      "164.312(e)(1)"
+    ],
+    "severity": "medium",
+    "timeout_seconds": 30
+  },
+  "MAC-TM-001": {
+    "id": "MAC-TM-001",
+    "name": "Time Machine Backup",
+    "platform": "linux",
+    "detect_script": "tmutil status 2>/dev/null | grep -q 'Running = 1\\|Percent' && echo 'COMPLIANT:tm_active' || (tmutil latestbackup 2>/dev/null | grep -q '/' && echo 'COMPLIANT:tm_has_backup' || echo 'NON_COMPLIANT:tm_not_configured')",
+    "remediate_script": "sudo tmutil enable 2>/dev/null; echo 'REMEDIATED:tm_enabled_needs_destination'",
+    "verify_script": "tmutil destinationinfo 2>/dev/null | grep -q 'Name' && echo 'VERIFIED:tm_configured' || echo 'VERIFY_FAILED:tm_no_destination'",
+    "hipaa_controls": [
+      "164.308(a)(7)(ii)(A)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 30
+  },
+  "MAC-NTP-001": {
+    "id": "MAC-NTP-001",
+    "name": "macOS NTP Sync",
+    "platform": "linux",
+    "detect_script": "sudo systemsetup -getusingnetworktime 2>/dev/null | grep -q 'On' && echo 'COMPLIANT:ntp_on' || echo 'NON_COMPLIANT:ntp_off'",
+    "remediate_script": "sudo systemsetup -setusingnetworktime on && echo 'REMEDIATED:ntp_enabled'",
+    "verify_script": "sudo systemsetup -getusingnetworktime 2>/dev/null | grep -q 'On' && echo 'VERIFIED:ntp_on' || echo 'VERIFY_FAILED:ntp_still_off'",
+    "hipaa_controls": [
+      "164.312(b)"
+    ],
+    "severity": "medium",
+    "timeout_seconds": 30
+  },
+  "MAC-ADM-001": {
+    "id": "MAC-ADM-001",
+    "name": "macOS Admin Users",
+    "platform": "linux",
+    "detect_script": "ADMIN_COUNT=$(dscl . -read /Groups/admin GroupMembership 2>/dev/null | tr ' ' '\\n' | grep -v GroupMembership | wc -l | tr -d ' '); [ \"$ADMIN_COUNT\" -le 3 ] && echo \"COMPLIANT:admin_count_$ADMIN_COUNT\" || echo \"NON_COMPLIANT:excessive_admins_$ADMIN_COUNT\"",
+    "remediate_script": "echo 'ESCALATE:excessive_admin_users \u2014 manual review required to determine which accounts to demote'",
+    "verify_script": "ADMIN_COUNT=$(dscl . -read /Groups/admin GroupMembership 2>/dev/null | tr ' ' '\\n' | grep -v GroupMembership | wc -l | tr -d ' '); [ \"$ADMIN_COUNT\" -le 3 ] && echo \"VERIFIED:admin_count_$ADMIN_COUNT\" || echo \"VERIFY_FAILED:still_excessive_$ADMIN_COUNT\"",
+    "hipaa_controls": [
+      "164.312(a)(1)"
+    ],
+    "severity": "high",
+    "timeout_seconds": 30
+  },
+  "MAC-DISK-001": {
+    "id": "MAC-DISK-001",
+    "name": "macOS Disk Space",
+    "platform": "linux",
+    "detect_script": "USAGE=$(df / | tail -1 | awk '{print $5}' | tr -d '%'); [ \"$USAGE\" -lt 90 ] && echo \"COMPLIANT:disk_${USAGE}pct\" || echo \"NON_COMPLIANT:disk_${USAGE}pct\"",
+    "remediate_script": "sudo rm -rf /Library/Caches/* /System/Library/Caches/* 2>/dev/null; sudo find /var/log -name '*.log.*' -mtime +30 -delete 2>/dev/null; echo 'REMEDIATED:caches_and_old_logs_cleared'",
+    "verify_script": "USAGE=$(df / | tail -1 | awk '{print $5}' | tr -d '%'); [ \"$USAGE\" -lt 90 ] && echo \"VERIFIED:disk_${USAGE}pct\" || echo \"VERIFY_FAILED:disk_still_${USAGE}pct\"",
+    "hipaa_controls": [
+      "164.310(d)(2)(iv)"
+    ],
+    "severity": "medium",
+    "timeout_seconds": 60
+  },
+  "ESC-MAC-SIP": {
+    "id": "ESC-MAC-SIP",
+    "name": "Escalate: SIP Disabled",
+    "platform": "linux",
+    "detect_script": "csrutil status 2>/dev/null | grep -q 'enabled' && echo 'COMPLIANT:sip_enabled' || echo 'NON_COMPLIANT:sip_disabled'",
+    "remediate_script": "echo 'ESCALATE:SIP_disabled \u2014 requires Recovery Mode boot (Cmd+R) to re-enable. Escalate to on-site technician.'",
+    "verify_script": "csrutil status 2>/dev/null | grep -q 'enabled' && echo 'VERIFIED:sip_enabled' || echo 'VERIFY_FAILED:sip_still_disabled'",
+    "hipaa_controls": [
+      "164.312(c)(1)"
+    ],
+    "severity": "critical",
+    "timeout_seconds": 15
   }
 }

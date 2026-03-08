@@ -219,8 +219,38 @@ func (d *Daemon) buildHealingWinRMTarget(hostID string) *winrm.Target {
 	}
 }
 
-// buildHealingSSHTarget creates an SSH target for Linux healing.
+// buildHealingSSHTarget creates an SSH target for Linux/macOS healing.
+// Looks up credentials from linuxTargets first, falls back to root@22.
 func (d *Daemon) buildHealingSSHTarget(hostID string) *sshexec.Target {
+	d.linuxTargetsMu.RLock()
+	defer d.linuxTargetsMu.RUnlock()
+	for _, lt := range d.linuxTargets {
+		if lt.Hostname == hostID {
+			port := lt.Port
+			if port == 0 {
+				port = 22
+			}
+			user := lt.Username
+			if user == "" {
+				user = "root"
+			}
+			t := &sshexec.Target{
+				Hostname: lt.Hostname,
+				Port:     port,
+				Username: user,
+			}
+			if lt.Password != "" {
+				pw := lt.Password
+				t.Password = &pw
+			}
+			if lt.PrivateKey != "" {
+				pk := lt.PrivateKey
+				t.PrivateKey = &pk
+			}
+			return t
+		}
+	}
+	// Fallback for unknown hosts
 	return &sshexec.Target{
 		Hostname: hostID,
 		Port:     22,
@@ -384,6 +414,8 @@ func (d *Daemon) executeHealingOrder(ctx context.Context, params map[string]inte
 			platform = "windows"
 		case len(runbookID) > 4 && (runbookID[:4] == "RB-L" || runbookID[:4] == "LIN-"):
 			platform = "linux"
+		case len(runbookID) > 4 && (runbookID[:4] == "MAC-" || runbookID[:8] == "ESC-MAC-"):
+			platform = "linux" // macOS uses SSH execution (same as linux)
 		default:
 			platform = "windows" // default for HIPAA compliance targets
 		}
