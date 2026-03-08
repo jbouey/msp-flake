@@ -142,7 +142,8 @@ describe('Incidents', () => {
 
     // Server-side filtering: API called with resolved=false
     await waitFor(() => {
-      const lastCall = vi.mocked(incidentApi.getIncidents).mock.calls.at(-1)?.[0];
+      const calls = vi.mocked(incidentApi.getIncidents).mock.calls;
+      const lastCall = calls[calls.length - 1]?.[0];
       expect(lastCall).toMatchObject({ resolved: false });
     });
   });
