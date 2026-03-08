@@ -264,7 +264,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Fleet Health Summary */}
-      <div className="px-4 pt-4 pb-3 border-b border-separator-light">
+      <div className="px-4 pt-4 pb-3">
         <h2 className="text-[10px] font-semibold text-label-tertiary uppercase tracking-wider mb-2.5 px-1">
           Fleet Status
         </h2>
@@ -277,32 +277,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <>
               <button
                 onClick={() => onClientSelect?.('')}
-                className="w-full flex items-center gap-3 px-2.5 py-2 rounded-ios-sm hover:bg-fill-quaternary transition-colors text-left"
+                className="w-full px-2.5 py-2 rounded-ios-sm hover:bg-fill-quaternary transition-colors text-left"
               >
-                <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                <div className="flex flex-col gap-1.5">
                   {online > 0 && (
-                    <span className="flex items-center gap-1.5">
+                    <span className="flex items-center gap-2">
                       <span className="status-dot status-dot-healthy status-dot-online" />
-                      <span className="text-sm font-medium text-health-healthy tabular-nums">{online}</span>
+                      <span className="text-xs font-medium text-health-healthy tabular-nums">{online}</span>
+                      <span className="text-xs text-label-secondary">Online</span>
                     </span>
                   )}
                   {warning > 0 && (
-                    <span className="flex items-center gap-1.5">
+                    <span className="flex items-center gap-2">
                       <span className="status-dot status-dot-warning" />
-                      <span className="text-sm font-medium text-health-warning tabular-nums">{warning}</span>
+                      <span className="text-xs font-medium text-health-warning tabular-nums">{warning}</span>
+                      <span className="text-xs text-label-secondary">Warning</span>
                     </span>
                   )}
                   {offline > 0 && (
-                    <span className="flex items-center gap-1.5">
+                    <span className="flex items-center gap-2">
                       <span className="status-dot status-dot-critical" />
-                      <span className="text-sm font-medium text-health-critical tabular-nums">{offline}</span>
+                      <span className="text-xs font-medium text-health-critical tabular-nums">{offline}</span>
+                      <span className="text-xs text-label-secondary">Offline</span>
                     </span>
                   )}
                   {clients.length === 0 && (
-                    <span className="text-sm text-label-tertiary">No sites</span>
+                    <span className="text-xs text-label-tertiary">No sites connected</span>
                   )}
                 </div>
-                <span className="text-xs text-label-tertiary">{clients.length} sites</span>
+                <span className="text-[10px] text-label-tertiary mt-1.5 block">{clients.length} total sites</span>
               </button>
               {/* Show sites that need attention (max 3) */}
               {needsAttention.length > 0 && (
@@ -330,7 +333,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 pt-4 pb-2 overflow-y-auto">
+      <nav className="flex-1 px-3 pt-3 pb-2 overflow-y-auto border-t border-separator-medium">
         <h2 className="text-[10px] font-semibold text-label-tertiary uppercase tracking-wider mb-2 px-2">
           Navigation
         </h2>
