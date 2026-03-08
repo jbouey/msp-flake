@@ -499,7 +499,7 @@ export const Sites: React.FC = () => {
               <thead className="bg-fill-quaternary border-b border-separator-light">
                 {tableHeaders}
               </thead>
-              <tbody className="divide-y divide-separator-light">
+              <tbody className="divide-y divide-separator-light stagger-list">
                 {sites.map((site) => (
                   <SiteRow
                     key={site.site_id}

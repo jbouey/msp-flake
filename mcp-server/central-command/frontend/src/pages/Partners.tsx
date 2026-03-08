@@ -1401,7 +1401,7 @@ export const Partners: React.FC = () => {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-separator-light">
+                <tbody className="divide-y divide-separator-light stagger-list">
                   {partners.map(partner => (
                     <PartnerRow key={partner.id} partner={partner} onClick={() => setSelectedPartnerId(partner.id)} />
                   ))}

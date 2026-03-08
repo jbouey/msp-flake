@@ -203,7 +203,7 @@ const navItems: NavItem[] = [
 const statusDotClass: Record<HealthStatus, string> = {
   critical: 'status-dot status-dot-critical',
   warning: 'status-dot status-dot-warning',
-  healthy: 'status-dot status-dot-healthy',
+  healthy: 'status-dot status-dot-healthy status-dot-online',
 };
 
 const HealthDot: React.FC<{ status: HealthStatus }> = ({ status }) => {

@@ -75,6 +75,7 @@ export default {
       },
       fontFamily: {
         sans: [
+          '"Plus Jakarta Sans"',
           '-apple-system',
           'BlinkMacSystemFont',
           '"SF Pro Display"',
@@ -82,6 +83,7 @@ export default {
           'system-ui',
           'sans-serif',
         ],
+        display: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
         mono: ['"SF Mono"', 'Menlo', 'Monaco', 'monospace'],
       },
       fontSize: {
@@ -138,6 +140,23 @@ export default {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.6' },
         },
+        'stagger-in': {
+          '0%': { opacity: '0', transform: 'translateY(8px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        'slide-up': {
+          '0%': { opacity: '0', transform: 'translateY(16px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        'gauge-fill': {
+          '0%': { strokeDasharray: '0 251.2' },
+          '100%': {},
+        },
+        'count-up': {
+          '0%': { opacity: '0', transform: 'scale(0.8)' },
+          '50%': { transform: 'scale(1.05)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
       },
       animation: {
         'shimmer': 'shimmer 2s ease-in-out infinite',
@@ -145,6 +164,10 @@ export default {
         'slide-in-right': 'slide-in-right 0.2s ease-out',
         'scale-in': 'scale-in 0.2s ease-out',
         'pulse-soft': 'pulse-soft 2s ease-in-out infinite',
+        'stagger-in': 'stagger-in 0.4s ease-out forwards',
+        'slide-up': 'slide-up 0.5s ease-out forwards',
+        'gauge-fill': 'gauge-fill 1s ease-out forwards',
+        'count-up': 'count-up 0.6s ease-out forwards',
       },
     },
   },

@@ -8,6 +8,7 @@ import { CommandBar } from './components/command';
 import { ErrorBoundary, Spinner, OsirisCareLeaf, IdleTimeoutWarning } from './components/shared';
 import { useFleet, useRefreshFleet, useCommandPalette, useWebSocket, WebSocketContext, useIdleTimeout, useTheme } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ToastProvider } from './components/shared/Toast';
 
 // Critical pages - loaded immediately
 import { Dashboard, Login, Sites } from './pages';
@@ -287,8 +288,9 @@ const AppLayout: React.FC = () => {
           onMenuToggle={() => setSidebarOpen(true)}
         />
 
-        <main className="p-6">
+        <main className="p-6 content-atmosphere">
           <Suspense fallback={<PageLoader />}>
+            <div className="page-transition-enter">
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/sites" element={<Sites />} />
@@ -326,6 +328,7 @@ const AppLayout: React.FC = () => {
               <Route path="/client/:siteId" element={<ClientDetail />} />
               <Route path="/reports" element={<ComingSoon title="Reports" />} />
             </Routes>
+            </div>
           </Suspense>
         </main>
       </div>
@@ -382,6 +385,7 @@ const App: React.FC = () => {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
+          <ToastProvider>
           <BrowserRouter>
             <Suspense fallback={<PageLoader />}>
               <Routes>
@@ -410,6 +414,7 @@ const App: React.FC = () => {
               </Routes>
             </Suspense>
           </BrowserRouter>
+          </ToastProvider>
         </AuthProvider>
       </QueryClientProvider>
     </ErrorBoundary>

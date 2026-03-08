@@ -153,7 +153,7 @@ export const Incidents: React.FC = () => {
         )}
 
         {!isLoading && !error && incidents.length > 0 && (
-          <div className="space-y-2">
+          <div className="space-y-2 stagger-list">
             {incidents.map((incident: Incident) => (
               <IncidentRow
                 key={incident.id}
