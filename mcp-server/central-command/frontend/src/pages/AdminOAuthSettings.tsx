@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
+function getCsrfToken(): string {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
 interface ProviderConfig {
   client_id: string | null;
   tenant_id: string | null;
@@ -31,7 +36,6 @@ interface PendingUser {
   oauth_email: string | null;
 }
 
-const getToken = (): string | null => localStorage.getItem('auth_token');
 
 export const AdminOAuthSettings: React.FC = () => {
   const { user } = useAuth();
@@ -57,13 +61,11 @@ export const AdminOAuthSettings: React.FC = () => {
 
   // Fetch OAuth config and pending users
   const fetchData = async () => {
-    const token = getToken();
-    if (!token) return;
 
     try {
       const [configRes, pendingRes] = await Promise.all([
-        fetch('/api/admin/oauth/config', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/api/admin/oauth/pending', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/admin/oauth/config', { credentials: 'same-origin' }),
+        fetch('/api/admin/oauth/pending', { credentials: 'same-origin' }),
       ]);
 
       if (configRes.ok) {
@@ -104,9 +106,6 @@ export const AdminOAuthSettings: React.FC = () => {
   const handleSaveProvider = async () => {
     if (!editingProvider) return;
 
-    const token = getToken();
-    if (!token) return;
-
     setSaving(editingProvider);
     setError(null);
 
@@ -135,10 +134,8 @@ export const AdminOAuthSettings: React.FC = () => {
 
       const response = await fetch(`/api/admin/oauth/config/${editingProvider}`, {
         method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify(payload),
       });
 
@@ -158,13 +155,11 @@ export const AdminOAuthSettings: React.FC = () => {
   };
 
   const handleApproveUser = async (userId: string) => {
-    const token = getToken();
-    if (!token) return;
 
     try {
       const response = await fetch(`/api/admin/oauth/approve/${userId}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
 
       if (response.ok) {
@@ -182,13 +177,10 @@ export const AdminOAuthSettings: React.FC = () => {
   const handleRejectUser = async (userId: string) => {
     if (!confirm('Are you sure you want to reject and delete this user?')) return;
 
-    const token = getToken();
-    if (!token) return;
-
     try {
       const response = await fetch(`/api/admin/oauth/reject/${userId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
 
       if (response.ok) {

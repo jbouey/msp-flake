@@ -116,7 +116,13 @@ async function _fetchWithBase<T>(
         throw new ApiError(401, 'Session expired');
       }
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
+      const detail = error.detail;
+      const message = typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ')
+          : `HTTP ${response.status}`;
+      throw new ApiError(response.status, message);
     }
 
     const etag = response.headers.get('etag');
@@ -989,7 +995,13 @@ export const usersApi = {
     });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
+      const detail = error.detail;
+      const message = typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ')
+          : `HTTP ${response.status}`;
+      throw new ApiError(response.status, message);
     }
     return response.json();
   },

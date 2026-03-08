@@ -8,6 +8,11 @@ import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, 
 import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
 import { fleetUpdatesApi, type FleetStats } from '../utils/api';
 
+function getCsrfToken(): string {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
 /**
  * Format relative time
  */
@@ -561,9 +566,8 @@ const EvidenceChainStatus: React.FC<{ siteId: string }> = ({ siteId }) => {
   }>({
     queryKey: ['evidence-signing-status', siteId],
     queryFn: async () => {
-      const token = localStorage.getItem('auth_token');
       const res = await fetch(`/api/evidence/sites/${siteId}/signing-status`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'same-origin',
       });
       if (!res.ok) return null;
       return res.json();
@@ -629,13 +633,12 @@ const EditSiteModal: React.FC<{
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async () => {
-    const token = localStorage.getItem('auth_token');
-    if (!token) return;
     setIsSaving(true);
     try {
       const res = await fetch(`/api/sites/${site.site_id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
           clinic_name: clinicName,
           contact_name: contactName || null,
@@ -744,9 +747,8 @@ const MoveApplianceModal: React.FC<{
   React.useEffect(() => {
     const fetchSites = async () => {
       try {
-        const token = localStorage.getItem('auth_token');
         const res = await fetch('/api/sites', {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'same-origin',
         });
         if (res.ok) {
           const data = await res.json();
@@ -852,7 +854,7 @@ export const SiteDetail: React.FC = () => {
       setPortalLink({ url: data.portal_url, token: data.token });
       setShowPortalLinkModal(true);
     } catch (error) {
-      showToast(`Failed to generate portal link: ${error}`, 'error');
+      showToast(`Failed to generate portal link: ${error instanceof Error ? error.message : String(error)}`, 'error');
     } finally {
       setIsGeneratingLink(false);
     }
@@ -865,7 +867,7 @@ export const SiteDetail: React.FC = () => {
       await createOrder.mutateAsync({ siteId, applianceId, orderType, parameters });
       showToast(`Order "${orderType}" sent to appliance`, 'success');
     } catch (error) {
-      showToast(`Failed to create order: ${error}`, 'error');
+      showToast(`Failed to create order: ${error instanceof Error ? error.message : String(error)}`, 'error');
     }
   };
 
@@ -876,7 +878,7 @@ export const SiteDetail: React.FC = () => {
       const result = await broadcastOrder.mutateAsync({ siteId, orderType });
       showToast(`Order "${orderType}" broadcast to ${result.length} appliances`, 'success');
     } catch (error) {
-      showToast(`Failed to broadcast order: ${error}`, 'error');
+      showToast(`Failed to broadcast order: ${error instanceof Error ? error.message : String(error)}`, 'error');
     }
   };
 
@@ -887,7 +889,7 @@ export const SiteDetail: React.FC = () => {
       await deleteAppliance.mutateAsync({ siteId, applianceId });
       showToast('Appliance deleted', 'success');
     } catch (error) {
-      showToast(`Failed to delete appliance: ${error}`, 'error');
+      showToast(`Failed to delete appliance: ${error instanceof Error ? error.message : String(error)}`, 'error');
     }
   };
 
@@ -898,7 +900,7 @@ export const SiteDetail: React.FC = () => {
       const result = await clearStale.mutateAsync({ siteId, staleHours: 24 });
       showToast(`Cleared ${result.deleted_count} stale appliances`, 'success');
     } catch (error) {
-      showToast(`Failed to clear stale appliances: ${error}`, 'error');
+      showToast(`Failed to clear stale appliances: ${error instanceof Error ? error.message : String(error)}`, 'error');
     }
   };
 
@@ -910,7 +912,7 @@ export const SiteDetail: React.FC = () => {
       const labels: Record<string, string> = { auto: 'Auto', manual: 'Manual', disabled: 'Disabled' };
       showToast(`L2 healing set to ${labels[l2Mode] || l2Mode}`, 'success');
     } catch (error) {
-      showToast(`Failed to update L2 mode: ${error}`, 'error');
+      showToast(`Failed to update L2 mode: ${error instanceof Error ? error.message : String(error)}`, 'error');
     }
   };
 
@@ -921,7 +923,7 @@ export const SiteDetail: React.FC = () => {
       await updateHealingTier.mutateAsync({ siteId, healingTier: tier });
       showToast(`Healing tier updated to ${tier === 'full_coverage' ? 'Full Coverage' : 'Standard'}`, 'success');
     } catch (error) {
-      showToast(`Failed to update healing tier: ${error}`, 'error');
+      showToast(`Failed to update healing tier: ${error instanceof Error ? error.message : String(error)}`, 'error');
     }
   };
 
@@ -949,10 +951,10 @@ export const SiteDetail: React.FC = () => {
   const handleMoveAppliance = async (applianceId: string, targetSiteId: string) => {
     if (!siteId) return;
     try {
-      const token = localStorage.getItem('auth_token');
       const res = await fetch(`/api/sites/${siteId}/appliances/${applianceId}/move`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({ target_site_id: targetSiteId }),
       });
       if (res.ok) {

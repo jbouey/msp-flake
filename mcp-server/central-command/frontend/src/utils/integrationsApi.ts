@@ -11,25 +11,14 @@ class ApiError extends Error {
   }
 }
 
-// Get auth token from localStorage
-function getAuthToken(): string | null {
-  return localStorage.getItem('auth_token');
-}
-
 async function fetchIntegrationsApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
-  const token = getAuthToken();
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
   const response = await fetch(url, {
     ...options,
+    credentials: 'same-origin',
     headers: {
       ...headers,
       ...(options?.headers as Record<string, string>),
