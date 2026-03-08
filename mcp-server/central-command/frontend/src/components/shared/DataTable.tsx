@@ -63,8 +63,8 @@ export function DataTable<T>({
     return [...data].sort((a, b) => {
       const aVal = (a as Record<string, unknown>)[sortKey];
       const bVal = (b as Record<string, unknown>)[sortKey];
-      if (aVal == null) return 1;
-      if (bVal == null) return -1;
+      if (aVal === null || aVal === undefined) return 1;
+      if (bVal === null || bVal === undefined) return -1;
       const cmp = String(aVal).localeCompare(String(bVal), undefined, { numeric: true });
       return sortDir === 'desc' ? -cmp : cmp;
     });
