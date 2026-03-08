@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { GlassCard, Spinner } from '../components/shared';
+import { useTheme } from '../hooks';
+import type { ThemeMode } from '../hooks';
+
+// Read CSRF token from cookie for state-changing requests
+function getCsrfToken(): string {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
 
 interface SystemSettings {
   // Display
@@ -256,6 +264,7 @@ const TimeSetting: React.FC<{
 
 export const Settings: React.FC = () => {
   const { user } = useAuth();
+  const { theme, setTheme } = useTheme();
   const [settings, setSettings] = useState<SystemSettings>(defaultSettings);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -268,9 +277,8 @@ export const Settings: React.FC = () => {
 
   const loadSettings = async () => {
     try {
-      const token = localStorage.getItem('auth_token');
       const response = await fetch('/api/dashboard/admin/settings', {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (response.ok) {
         const data = await response.json();
@@ -287,12 +295,12 @@ export const Settings: React.FC = () => {
     setIsSaving(true);
     setSaveMessage(null);
     try {
-      const token = localStorage.getItem('auth_token');
       const response = await fetch('/api/dashboard/admin/settings', {
         method: 'PUT',
+        credentials: 'same-origin',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
+          'X-CSRF-Token': getCsrfToken(),
         },
         body: JSON.stringify(settings),
       });
@@ -385,6 +393,17 @@ export const Settings: React.FC = () => {
           value={settings.date_format}
           onChange={(v) => updateSetting('date_format', v)}
           options={dateFormats}
+        />
+        <SelectSetting
+          label="Theme"
+          description="Choose light, dark, or follow your system"
+          value={theme}
+          onChange={(v) => setTheme(v as ThemeMode)}
+          options={[
+            { value: 'system', label: 'System' },
+            { value: 'light', label: 'Light' },
+            { value: 'dark', label: 'Dark' },
+          ]}
         />
       </SettingSection>
 
@@ -739,10 +758,10 @@ export const Settings: React.FC = () => {
               onClick={async () => {
                 if (!confirm('Permanently delete old telemetry data? This cannot be undone.')) return;
                 try {
-                  const token = localStorage.getItem('auth_token');
                   const res = await fetch('/api/dashboard/admin/settings/purge-telemetry', {
                     method: 'POST',
-                    headers: { Authorization: `Bearer ${token}` },
+                    credentials: 'same-origin',
+                    headers: { 'X-CSRF-Token': getCsrfToken() },
                   });
                   const data = await res.json();
                   if (res.ok) {
@@ -768,10 +787,10 @@ export const Settings: React.FC = () => {
               onClick={async () => {
                 if (!confirm('Reset ALL learning data? This will delete all patterns and auto-promoted L1 rules. This cannot be undone.')) return;
                 try {
-                  const token = localStorage.getItem('auth_token');
                   const res = await fetch('/api/dashboard/admin/settings/reset-learning', {
                     method: 'POST',
-                    headers: { Authorization: `Bearer ${token}` },
+                    credentials: 'same-origin',
+                    headers: { 'X-CSRF-Token': getCsrfToken() },
                   });
                   const data = await res.json();
                   if (res.ok) {

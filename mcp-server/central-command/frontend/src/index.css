@@ -2,6 +2,86 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme CSS variables — light (default) */
+:root {
+  --bg-primary: #F2F2F7;
+  --bg-secondary: #FFFFFF;
+  --bg-tertiary: rgba(255, 255, 255, 0.72);
+  --label-primary: #1C1C1E;
+  --label-secondary: rgba(60, 60, 67, 0.6);
+  --label-tertiary: #8E8E93;
+  --fill-primary: rgba(0, 100, 220, 0.12);
+  --fill-secondary: rgba(0, 100, 220, 0.08);
+  --fill-tertiary: rgba(0, 100, 220, 0.06);
+  --fill-quaternary: rgba(0, 100, 220, 0.04);
+  --separator-light: rgba(60, 60, 67, 0.1);
+  --separator-medium: rgba(60, 60, 67, 0.18);
+
+  /* Glass surfaces */
+  --glass-bg: rgba(255, 255, 255, 0.92);
+  --glass-border: rgba(255, 255, 255, 0.18);
+  --glass-sidebar-bg: rgba(255, 255, 255, 0.97);
+  --glass-sidebar-border: rgba(60, 60, 67, 0.08);
+  --glass-header-bg: rgba(255, 255, 255, 0.97);
+  --glass-header-border: rgba(60, 60, 67, 0.08);
+
+  /* Shadows */
+  --card-shadow: 0 0.5px 0 rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.04), 0 4px 24px rgba(0, 0, 0, 0.06);
+  --card-shadow-hover: 0 0.5px 0 rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.08), 0 8px 32px rgba(0, 0, 0, 0.1);
+
+  /* Scrollbar */
+  --scrollbar-thumb: rgba(60, 60, 67, 0.15);
+  --scrollbar-thumb-hover: rgba(60, 60, 67, 0.25);
+
+  /* Secondary button */
+  --btn-secondary-bg: rgba(120, 120, 128, 0.12);
+  --btn-secondary-hover: rgba(120, 120, 128, 0.18);
+  --btn-secondary-active: rgba(120, 120, 128, 0.24);
+
+  /* Nav hover */
+  --nav-hover: rgba(120, 120, 128, 0.08);
+}
+
+/* Theme CSS variables — dark (iOS-style pure black) */
+.dark {
+  --bg-primary: #000000;
+  --bg-secondary: #1C1C1E;
+  --bg-tertiary: rgba(28, 28, 30, 0.72);
+  --label-primary: #FFFFFF;
+  --label-secondary: rgba(235, 235, 245, 0.6);
+  --label-tertiary: #98989D;
+  --fill-primary: rgba(0, 122, 255, 0.18);
+  --fill-secondary: rgba(0, 122, 255, 0.12);
+  --fill-tertiary: rgba(0, 122, 255, 0.08);
+  --fill-quaternary: rgba(0, 122, 255, 0.06);
+  --separator-light: rgba(84, 84, 88, 0.65);
+  --separator-medium: rgba(84, 84, 88, 0.8);
+
+  /* Glass surfaces */
+  --glass-bg: rgba(28, 28, 30, 0.85);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-sidebar-bg: rgba(28, 28, 30, 0.97);
+  --glass-sidebar-border: rgba(255, 255, 255, 0.06);
+  --glass-header-bg: rgba(28, 28, 30, 0.97);
+  --glass-header-border: rgba(255, 255, 255, 0.06);
+
+  /* Shadows */
+  --card-shadow: 0 0.5px 0 rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.3), 0 4px 24px rgba(0, 0, 0, 0.4);
+  --card-shadow-hover: 0 0.5px 0 rgba(0, 0, 0, 0.2), 0 4px 12px rgba(0, 0, 0, 0.4), 0 8px 32px rgba(0, 0, 0, 0.5);
+
+  /* Scrollbar */
+  --scrollbar-thumb: rgba(235, 235, 245, 0.2);
+  --scrollbar-thumb-hover: rgba(235, 235, 245, 0.35);
+
+  /* Secondary button */
+  --btn-secondary-bg: rgba(120, 120, 128, 0.24);
+  --btn-secondary-hover: rgba(120, 120, 128, 0.32);
+  --btn-secondary-active: rgba(120, 120, 128, 0.4);
+
+  /* Nav hover */
+  --nav-hover: rgba(120, 120, 128, 0.16);
+}
+
 /* iOS-inspired base styles */
 @layer base {
   html {
@@ -31,34 +111,28 @@
 /* Glass morphism utilities */
 @layer components {
   .glass {
-    background: rgba(255, 255, 255, 0.92);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
   }
 
   .glass-card {
     @apply glass rounded-ios-lg;
-    box-shadow:
-      0 0.5px 0 rgba(0, 0, 0, 0.04),
-      0 2px 8px rgba(0, 0, 0, 0.04),
-      0 4px 24px rgba(0, 0, 0, 0.06);
+    box-shadow: var(--card-shadow);
     transition: box-shadow 0.25s ease, transform 0.25s ease;
   }
 
   .glass-card:hover {
-    box-shadow:
-      0 0.5px 0 rgba(0, 0, 0, 0.04),
-      0 4px 12px rgba(0, 0, 0, 0.08),
-      0 8px 32px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--card-shadow-hover);
   }
 
   .glass-sidebar {
-    background: rgba(255, 255, 255, 0.97);
-    border-right: 1px solid rgba(60, 60, 67, 0.08);
+    background: var(--glass-sidebar-bg);
+    border-right: 1px solid var(--glass-sidebar-border);
   }
 
   .glass-header {
-    background: rgba(255, 255, 255, 0.97);
-    border-bottom: 1px solid rgba(60, 60, 67, 0.08);
+    background: var(--glass-header-bg);
+    border-bottom: 1px solid var(--glass-header-border);
   }
 }
 
@@ -96,27 +170,33 @@
   }
 
   .badge-critical {
-    @apply badge bg-red-100 text-health-critical;
+    @apply badge text-health-critical;
+    background: rgba(255, 59, 48, 0.12);
   }
 
   .badge-warning {
-    @apply badge bg-orange-100 text-health-warning;
+    @apply badge text-health-warning;
+    background: rgba(255, 149, 0, 0.12);
   }
 
   .badge-healthy {
-    @apply badge bg-green-100 text-health-healthy;
+    @apply badge text-health-healthy;
+    background: rgba(52, 199, 89, 0.12);
   }
 
   .badge-l1 {
-    @apply badge bg-blue-100 text-ios-blue;
+    @apply badge text-ios-blue;
+    background: rgba(0, 122, 255, 0.12);
   }
 
   .badge-l2 {
-    @apply badge bg-purple-100 text-ios-purple;
+    @apply badge text-ios-purple;
+    background: rgba(88, 86, 214, 0.12);
   }
 
   .badge-l3 {
-    @apply badge bg-orange-100 text-ios-orange;
+    @apply badge text-ios-orange;
+    background: rgba(255, 149, 0, 0.12);
   }
 }
 
@@ -143,15 +223,15 @@
 
   .btn-secondary {
     @apply btn text-label-primary;
-    background: rgba(120, 120, 128, 0.12);
+    background: var(--btn-secondary-bg);
   }
 
   .btn-secondary:hover {
-    background: rgba(120, 120, 128, 0.18);
+    background: var(--btn-secondary-hover);
   }
 
   .btn-secondary:active {
-    background: rgba(120, 120, 128, 0.24);
+    background: var(--btn-secondary-active);
     transform: scale(0.98);
   }
 
@@ -178,7 +258,7 @@
   }
 
   .nav-item:hover {
-    background: rgba(120, 120, 128, 0.08);
+    background: var(--nav-hover);
   }
 
   .nav-item-active {
@@ -266,12 +346,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(60, 60, 67, 0.15);
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(60, 60, 67, 0.25);
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* Selection */

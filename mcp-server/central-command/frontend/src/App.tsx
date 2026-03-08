@@ -6,7 +6,7 @@ import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
 import { ErrorBoundary, Spinner, OsirisCareLeaf, IdleTimeoutWarning } from './components/shared';
-import { useFleet, useRefreshFleet, useCommandPalette, useWebSocket, WebSocketContext, useIdleTimeout } from './hooks';
+import { useFleet, useRefreshFleet, useCommandPalette, useWebSocket, WebSocketContext, useIdleTimeout, useTheme } from './hooks';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 // Critical pages - loaded immediately
@@ -198,6 +198,9 @@ const AppLayout: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [commandBarOpen, setCommandBarOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Apply theme class to <html> on mount
+  useTheme();
 
   // Fetch fleet data for sidebar
   const { data: clients = [], dataUpdatedAt } = useFleet();

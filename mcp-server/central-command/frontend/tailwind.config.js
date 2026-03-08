@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -28,24 +29,24 @@ export default {
           pink: '#FF2D55',
           gray: '#8E8E93',
         },
-        // Background colors
+        // Background colors (theme-adaptive via CSS vars)
         background: {
-          primary: '#F2F2F7',
-          secondary: '#FFFFFF',
-          tertiary: 'rgba(255, 255, 255, 0.72)',
+          primary: 'var(--bg-primary)',
+          secondary: 'var(--bg-secondary)',
+          tertiary: 'var(--bg-tertiary)',
         },
-        // Fill colors (blue-tinted grouped content backgrounds)
+        // Fill colors (theme-adaptive via CSS vars)
         fill: {
-          primary: 'rgba(0, 100, 220, 0.12)',
-          secondary: 'rgba(0, 100, 220, 0.08)',
-          tertiary: 'rgba(0, 100, 220, 0.06)',
-          quaternary: 'rgba(0, 100, 220, 0.04)',
+          primary: 'var(--fill-primary)',
+          secondary: 'var(--fill-secondary)',
+          tertiary: 'var(--fill-tertiary)',
+          quaternary: 'var(--fill-quaternary)',
         },
-        // Text colors
+        // Text colors (theme-adaptive via CSS vars)
         label: {
-          primary: '#1C1C1E',
-          secondary: 'rgba(60, 60, 67, 0.6)',
-          tertiary: '#8E8E93',
+          primary: 'var(--label-primary)',
+          secondary: 'var(--label-secondary)',
+          tertiary: 'var(--label-tertiary)',
         },
         // Health status colors
         health: {
@@ -66,10 +67,10 @@ export default {
           secondary: '#5856D6',
           tint: 'rgba(0, 122, 255, 0.1)',
         },
-        // Border colors
+        // Border colors (theme-adaptive via CSS vars)
         separator: {
-          light: 'rgba(60, 60, 67, 0.1)',
-          medium: 'rgba(60, 60, 67, 0.18)',
+          light: 'var(--separator-light)',
+          medium: 'var(--separator-medium)',
         },
       },
       fontFamily: {

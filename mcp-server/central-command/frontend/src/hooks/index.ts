@@ -98,3 +98,5 @@ export {
 
 export { useDeploymentStatus } from './useDeployment';
 export { useIdleTimeout } from './useIdleTimeout';
+export { useTheme } from './useTheme';
+export type { ThemeMode } from './useTheme';
