@@ -1,0 +1,423 @@
+"""MAC OUI (Organizationally Unique Identifier) lookup for device type hinting.
+
+Maps the first 3 octets of a MAC address to a manufacturer and inferred device class.
+This is a hint, NOT a certainty — MACs can be spoofed, virtualized, or randomized.
+
+Device classes: server, workstation, network, printer, phone, iot, virtual, unknown
+"""
+
+from typing import Optional, Tuple
+
+# OUI prefix (uppercase, colon-separated first 3 octets) -> (manufacturer, device_class)
+# Sources: IEEE OUI registry, common vendor assignments
+# Device class is a best guess based on what the vendor primarily makes.
+_OUI_TABLE: dict[str, tuple[str, str]] = {
+    # Apple
+    "00:03:93": ("Apple", "workstation"), "00:05:02": ("Apple", "workstation"),
+    "00:0A:27": ("Apple", "workstation"), "00:0A:95": ("Apple", "workstation"),
+    "00:0D:93": ("Apple", "workstation"), "00:10:FA": ("Apple", "workstation"),
+    "00:11:24": ("Apple", "workstation"), "00:14:51": ("Apple", "workstation"),
+    "00:16:CB": ("Apple", "workstation"), "00:17:F2": ("Apple", "workstation"),
+    "00:19:E3": ("Apple", "workstation"), "00:1B:63": ("Apple", "workstation"),
+    "00:1C:B3": ("Apple", "workstation"), "00:1D:4F": ("Apple", "workstation"),
+    "00:1E:52": ("Apple", "workstation"), "00:1E:C2": ("Apple", "workstation"),
+    "00:1F:5B": ("Apple", "workstation"), "00:1F:F3": ("Apple", "workstation"),
+    "00:21:E9": ("Apple", "workstation"), "00:22:41": ("Apple", "workstation"),
+    "00:23:12": ("Apple", "workstation"), "00:23:32": ("Apple", "workstation"),
+    "00:23:6C": ("Apple", "workstation"), "00:23:DF": ("Apple", "workstation"),
+    "00:24:36": ("Apple", "workstation"), "00:25:00": ("Apple", "workstation"),
+    "00:25:4B": ("Apple", "workstation"), "00:25:BC": ("Apple", "workstation"),
+    "00:26:08": ("Apple", "workstation"), "00:26:4A": ("Apple", "workstation"),
+    "00:26:B0": ("Apple", "workstation"), "00:26:BB": ("Apple", "workstation"),
+    "00:50:E4": ("Apple", "workstation"), "00:61:71": ("Apple", "workstation"),
+    "00:88:65": ("Apple", "workstation"), "00:B3:62": ("Apple", "workstation"),
+    "00:C6:10": ("Apple", "workstation"), "00:CD:FE": ("Apple", "workstation"),
+    "00:DB:70": ("Apple", "workstation"), "00:F4:B9": ("Apple", "workstation"),
+    "00:F7:6F": ("Apple", "workstation"),
+    "04:0C:CE": ("Apple", "workstation"), "04:15:52": ("Apple", "workstation"),
+    "04:26:65": ("Apple", "workstation"), "04:48:9A": ("Apple", "workstation"),
+    "04:52:F3": ("Apple", "workstation"), "04:54:53": ("Apple", "workstation"),
+    "04:D3:CF": ("Apple", "workstation"), "04:DB:56": ("Apple", "workstation"),
+    "04:F1:3E": ("Apple", "workstation"), "04:F7:E4": ("Apple", "workstation"),
+    "08:66:98": ("Apple", "workstation"), "08:6D:41": ("Apple", "workstation"),
+    "10:40:F3": ("Apple", "workstation"), "10:DD:B1": ("Apple", "workstation"),
+    "14:99:E2": ("Apple", "workstation"), "18:AF:61": ("Apple", "workstation"),
+    "18:E7:F4": ("Apple", "workstation"), "1C:36:BB": ("Apple", "workstation"),
+    "20:78:F0": ("Apple", "workstation"), "24:A0:74": ("Apple", "workstation"),
+    "28:6A:BA": ("Apple", "workstation"), "28:CF:E9": ("Apple", "workstation"),
+    "2C:BE:EB": ("Apple", "workstation"), "30:35:AD": ("Apple", "workstation"),
+    "34:08:BC": ("Apple", "workstation"), "38:C9:86": ("Apple", "workstation"),
+    "3C:07:54": ("Apple", "workstation"), "3C:22:FB": ("Apple", "workstation"),
+    "40:33:1A": ("Apple", "workstation"), "40:A6:D9": ("Apple", "workstation"),
+    "44:2A:60": ("Apple", "workstation"), "48:D7:05": ("Apple", "workstation"),
+    "4C:32:75": ("Apple", "workstation"), "4C:57:CA": ("Apple", "workstation"),
+    "50:32:37": ("Apple", "workstation"), "54:26:96": ("Apple", "workstation"),
+    "58:55:CA": ("Apple", "workstation"), "5C:F7:E6": ("Apple", "workstation"),
+    "60:03:08": ("Apple", "workstation"), "64:20:0C": ("Apple", "workstation"),
+    "68:5B:35": ("Apple", "workstation"), "6C:40:08": ("Apple", "workstation"),
+    "70:11:24": ("Apple", "workstation"), "70:56:81": ("Apple", "workstation"),
+    "70:DE:E2": ("Apple", "workstation"), "74:E1:B6": ("Apple", "workstation"),
+    "78:31:C1": ("Apple", "workstation"), "78:7E:61": ("Apple", "workstation"),
+    "7C:04:D0": ("Apple", "workstation"), "7C:D1:C3": ("Apple", "workstation"),
+    "80:49:71": ("Apple", "workstation"), "80:E6:50": ("Apple", "workstation"),
+    "84:38:35": ("Apple", "workstation"), "84:78:8B": ("Apple", "workstation"),
+    "84:85:06": ("Apple", "workstation"), "84:FC:FE": ("Apple", "workstation"),
+    "88:66:A5": ("Apple", "workstation"), "88:C6:63": ("Apple", "workstation"),
+    "8C:29:37": ("Apple", "workstation"), "8C:85:90": ("Apple", "workstation"),
+    "90:8D:6C": ("Apple", "workstation"), "90:B0:ED": ("Apple", "workstation"),
+    "98:01:A7": ("Apple", "workstation"), "98:FE:94": ("Apple", "workstation"),
+    "9C:20:7B": ("Apple", "workstation"), "9C:F4:8E": ("Apple", "workstation"),
+    "A0:99:9B": ("Apple", "workstation"), "A4:5E:60": ("Apple", "workstation"),
+    "A4:83:E7": ("Apple", "workstation"), "A8:20:66": ("Apple", "workstation"),
+    "A8:5C:2C": ("Apple", "workstation"), "A8:88:08": ("Apple", "workstation"),
+    "AC:29:3A": ("Apple", "workstation"), "AC:BC:32": ("Apple", "workstation"),
+    "B0:34:95": ("Apple", "workstation"), "B0:65:BD": ("Apple", "workstation"),
+    "B4:18:D1": ("Apple", "workstation"), "B8:17:C2": ("Apple", "workstation"),
+    "B8:41:A4": ("Apple", "workstation"), "B8:78:2E": ("Apple", "workstation"),
+    "B8:C1:11": ("Apple", "workstation"), "B8:E8:56": ("Apple", "workstation"),
+    "B8:F6:B1": ("Apple", "workstation"), "BC:52:B7": ("Apple", "workstation"),
+    "C0:63:94": ("Apple", "workstation"), "C4:2A:D0": ("Apple", "workstation"),
+    "C8:2A:14": ("Apple", "workstation"), "C8:69:CD": ("Apple", "workstation"),
+    "C8:B5:B7": ("Apple", "workstation"), "CC:08:8D": ("Apple", "workstation"),
+    "D0:03:4B": ("Apple", "workstation"), "D0:25:98": ("Apple", "workstation"),
+    "D0:81:7A": ("Apple", "workstation"), "D4:61:9D": ("Apple", "workstation"),
+    "D4:F4:6F": ("Apple", "workstation"), "D8:30:62": ("Apple", "workstation"),
+    "DC:2B:2A": ("Apple", "workstation"), "DC:A4:CA": ("Apple", "workstation"),
+    "E0:5F:45": ("Apple", "workstation"), "E0:B5:2D": ("Apple", "workstation"),
+    "E0:C7:67": ("Apple", "workstation"), "E4:25:E7": ("Apple", "workstation"),
+    "E4:CE:8F": ("Apple", "workstation"), "E8:06:88": ("Apple", "workstation"),
+    "E8:80:2E": ("Apple", "workstation"), "F0:18:98": ("Apple", "workstation"),
+    "F0:99:BF": ("Apple", "workstation"), "F0:B4:79": ("Apple", "workstation"),
+    "F0:D1:A9": ("Apple", "workstation"), "F4:5C:89": ("Apple", "workstation"),
+    "F8:1E:DF": ("Apple", "workstation"), "F8:27:93": ("Apple", "workstation"),
+    "FC:25:3F": ("Apple", "workstation"), "FC:E9:98": ("Apple", "workstation"),
+    # Dell
+    "00:06:5B": ("Dell", "workstation"), "00:08:74": ("Dell", "workstation"),
+    "00:0B:DB": ("Dell", "workstation"), "00:0D:56": ("Dell", "workstation"),
+    "00:0F:1F": ("Dell", "workstation"), "00:11:43": ("Dell", "workstation"),
+    "00:12:3F": ("Dell", "workstation"), "00:13:72": ("Dell", "workstation"),
+    "00:14:22": ("Dell", "workstation"), "00:15:C5": ("Dell", "workstation"),
+    "00:18:8B": ("Dell", "workstation"), "00:19:B9": ("Dell", "workstation"),
+    "00:1A:A0": ("Dell", "workstation"), "00:1C:23": ("Dell", "workstation"),
+    "00:1D:09": ("Dell", "workstation"), "00:1E:4F": ("Dell", "workstation"),
+    "00:1E:C9": ("Dell", "workstation"), "00:21:70": ("Dell", "workstation"),
+    "00:21:9B": ("Dell", "workstation"), "00:22:19": ("Dell", "workstation"),
+    "00:24:E8": ("Dell", "workstation"), "00:25:64": ("Dell", "workstation"),
+    "00:26:B9": ("Dell", "workstation"), "10:98:36": ("Dell", "workstation"),
+    "14:18:77": ("Dell", "workstation"), "14:B3:1F": ("Dell", "workstation"),
+    "14:FE:B5": ("Dell", "workstation"), "18:03:73": ("Dell", "workstation"),
+    "18:66:DA": ("Dell", "workstation"), "18:A9:9B": ("Dell", "workstation"),
+    "18:DB:F2": ("Dell", "workstation"), "1C:40:24": ("Dell", "workstation"),
+    "20:47:47": ("Dell", "workstation"), "24:6E:96": ("Dell", "workstation"),
+    "24:B6:FD": ("Dell", "workstation"), "28:F1:0E": ("Dell", "workstation"),
+    "34:17:EB": ("Dell", "workstation"), "34:E6:D7": ("Dell", "workstation"),
+    "44:A8:42": ("Dell", "workstation"), "48:4D:7E": ("Dell", "workstation"),
+    "4C:76:25": ("Dell", "workstation"), "50:9A:4C": ("Dell", "workstation"),
+    "54:BF:64": ("Dell", "workstation"), "5C:26:0A": ("Dell", "workstation"),
+    "74:86:7A": ("Dell", "workstation"), "74:E6:E2": ("Dell", "workstation"),
+    "78:2B:CB": ("Dell", "workstation"), "80:18:44": ("Dell", "workstation"),
+    "84:2B:2B": ("Dell", "workstation"), "84:7B:EB": ("Dell", "workstation"),
+    "90:B1:1C": ("Dell", "workstation"), "98:90:96": ("Dell", "workstation"),
+    "A4:1F:72": ("Dell", "workstation"), "A4:BA:DB": ("Dell", "workstation"),
+    "B0:83:FE": ("Dell", "workstation"), "B4:E1:0F": ("Dell", "workstation"),
+    "B8:AC:6F": ("Dell", "workstation"), "B8:CA:3A": ("Dell", "workstation"),
+    "BC:30:5B": ("Dell", "workstation"), "C8:1F:66": ("Dell", "workstation"),
+    "D0:43:1E": ("Dell", "workstation"), "D0:67:E5": ("Dell", "workstation"),
+    "D4:81:D7": ("Dell", "workstation"), "D4:BE:D9": ("Dell", "workstation"),
+    "E4:F0:04": ("Dell", "workstation"), "F0:1F:AF": ("Dell", "workstation"),
+    "F4:8E:38": ("Dell", "workstation"), "F8:BC:12": ("Dell", "workstation"),
+    "F8:CA:B8": ("Dell", "workstation"), "F8:DB:88": ("Dell", "workstation"),
+    # HP / HPE
+    "00:01:E6": ("HP", "workstation"), "00:02:A5": ("HP", "workstation"),
+    "00:08:02": ("HP", "server"), "00:0B:CD": ("HP", "workstation"),
+    "00:0D:9D": ("HP", "workstation"), "00:0E:7F": ("HP", "workstation"),
+    "00:0F:20": ("HP", "workstation"), "00:10:83": ("HP", "workstation"),
+    "00:11:0A": ("HP", "workstation"), "00:11:85": ("HP", "workstation"),
+    "00:12:79": ("HP", "workstation"), "00:13:21": ("HP", "workstation"),
+    "00:14:38": ("HP", "workstation"), "00:15:60": ("HP", "workstation"),
+    "00:17:08": ("HP", "workstation"), "00:17:A4": ("HP", "workstation"),
+    "00:18:FE": ("HP", "workstation"), "00:1A:4B": ("HP", "workstation"),
+    "00:1B:78": ("HP", "workstation"), "00:1C:C4": ("HP", "workstation"),
+    "00:1E:0B": ("HP", "workstation"), "00:1F:29": ("HP", "workstation"),
+    "00:21:5A": ("HP", "workstation"), "00:22:64": ("HP", "workstation"),
+    "00:23:7D": ("HP", "workstation"), "00:24:81": ("HP", "workstation"),
+    "00:25:B3": ("HP", "workstation"), "00:26:55": ("HP", "workstation"),
+    "00:30:6E": ("HP", "server"), "00:30:C1": ("HP", "server"),
+    "10:1F:74": ("HP", "workstation"), "10:60:4B": ("HP", "workstation"),
+    "14:02:EC": ("HP", "workstation"), "14:58:D0": ("HP", "workstation"),
+    "18:60:24": ("HP", "workstation"), "1C:C1:DE": ("HP", "workstation"),
+    "24:BE:05": ("HP", "workstation"), "28:80:23": ("HP", "workstation"),
+    "28:92:4A": ("HP", "workstation"), "2C:27:D7": ("HP", "workstation"),
+    "2C:41:38": ("HP", "workstation"), "2C:44:FD": ("HP", "workstation"),
+    "2C:59:E5": ("HP", "workstation"), "30:E1:71": ("HP", "workstation"),
+    "30:E1:71": ("HP", "workstation"), "38:63:BB": ("HP", "workstation"),
+    "3C:52:82": ("HP", "workstation"), "3C:D9:2B": ("HP", "workstation"),
+    "40:B0:34": ("HP", "workstation"), "48:0F:CF": ("HP", "workstation"),
+    "4C:39:09": ("HP", "workstation"), "50:65:F3": ("HP", "workstation"),
+    "58:20:B1": ("HP", "workstation"), "5C:B9:01": ("HP", "workstation"),
+    "64:51:06": ("HP", "workstation"), "68:B5:99": ("HP", "workstation"),
+    "6C:C2:17": ("HP", "workstation"), "70:5A:0F": ("HP", "workstation"),
+    "74:46:A0": ("HP", "workstation"), "80:CE:62": ("HP", "workstation"),
+    "84:34:97": ("HP", "workstation"), "8C:DC:D4": ("HP", "workstation"),
+    "94:57:A5": ("HP", "workstation"), "98:E7:F4": ("HP", "workstation"),
+    "9C:B6:D0": ("HP", "workstation"), "A0:1D:48": ("HP", "workstation"),
+    "A0:D3:C1": ("HP", "workstation"), "A4:5D:36": ("HP", "workstation"),
+    "AC:16:2D": ("HP", "workstation"), "B0:5A:DA": ("HP", "workstation"),
+    "B4:B5:2F": ("HP", "workstation"), "B4:B6:76": ("HP", "workstation"),
+    "C0:91:34": ("HP", "workstation"), "C4:34:6B": ("HP", "workstation"),
+    "C8:CB:B8": ("HP", "workstation"), "D0:BF:9C": ("HP", "workstation"),
+    "D4:C9:EF": ("HP", "workstation"), "D8:9E:F3": ("HP", "workstation"),
+    "E4:11:5B": ("HP", "workstation"), "E8:F7:24": ("HP", "workstation"),
+    "EC:B1:D7": ("HP", "workstation"), "F0:92:1C": ("HP", "workstation"),
+    "F4:39:09": ("HP", "workstation"), "FC:15:B4": ("HP", "workstation"),
+    # Lenovo
+    "00:06:1B": ("Lenovo", "workstation"), "00:09:6B": ("Lenovo", "workstation"),
+    "00:0A:E4": ("Lenovo", "workstation"), "00:12:FE": ("Lenovo", "workstation"),
+    "00:1A:6B": ("Lenovo", "workstation"), "00:21:CC": ("Lenovo", "workstation"),
+    "00:22:4D": ("Lenovo", "workstation"), "00:24:7E": ("Lenovo", "workstation"),
+    "00:26:2D": ("Lenovo", "workstation"), "08:D4:0C": ("Lenovo", "workstation"),
+    "10:4F:58": ("Lenovo", "workstation"), "14:4F:8A": ("Lenovo", "workstation"),
+    "28:D2:44": ("Lenovo", "workstation"), "30:F7:72": ("Lenovo", "workstation"),
+    "40:B0:76": ("Lenovo", "workstation"), "50:7B:9D": ("Lenovo", "workstation"),
+    "54:EE:75": ("Lenovo", "workstation"), "5C:BA:37": ("Lenovo", "workstation"),
+    "60:D8:19": ("Lenovo", "workstation"), "70:F1:A1": ("Lenovo", "workstation"),
+    "74:E5:0B": ("Lenovo", "workstation"), "7C:7A:91": ("Lenovo", "workstation"),
+    "8C:16:45": ("Lenovo", "workstation"), "98:FA:9B": ("Lenovo", "workstation"),
+    "E8:2A:44": ("Lenovo", "workstation"), "F0:76:1C": ("Lenovo", "workstation"),
+    # VMware / Virtual
+    "00:05:69": ("VMware", "virtual"), "00:0C:29": ("VMware", "virtual"),
+    "00:1C:14": ("VMware", "virtual"), "00:50:56": ("VMware", "virtual"),
+    # Microsoft Hyper-V
+    "00:15:5D": ("Microsoft Hyper-V", "virtual"),
+    # VirtualBox
+    "08:00:27": ("VirtualBox", "virtual"),
+    # Parallels
+    "00:1C:42": ("Parallels", "virtual"),
+    # QEMU/KVM
+    "52:54:00": ("QEMU/KVM", "virtual"),
+    # Cisco
+    "00:00:0C": ("Cisco", "network"), "00:01:42": ("Cisco", "network"),
+    "00:01:43": ("Cisco", "network"), "00:01:63": ("Cisco", "network"),
+    "00:01:64": ("Cisco", "network"), "00:01:96": ("Cisco", "network"),
+    "00:01:97": ("Cisco", "network"), "00:02:17": ("Cisco", "network"),
+    "00:02:3D": ("Cisco", "network"), "00:02:4A": ("Cisco", "network"),
+    "00:02:4B": ("Cisco", "network"), "00:02:B9": ("Cisco", "network"),
+    "00:02:BA": ("Cisco", "network"), "00:02:FC": ("Cisco", "network"),
+    "00:02:FD": ("Cisco", "network"), "00:03:31": ("Cisco", "network"),
+    "00:03:32": ("Cisco", "network"), "00:03:6B": ("Cisco", "network"),
+    "00:03:6C": ("Cisco", "network"), "00:03:9F": ("Cisco", "network"),
+    "00:03:A0": ("Cisco", "network"), "00:03:E3": ("Cisco", "network"),
+    "00:03:FD": ("Cisco", "network"), "00:03:FE": ("Cisco", "network"),
+    "00:04:27": ("Cisco", "network"), "00:04:28": ("Cisco", "network"),
+    "00:04:4D": ("Cisco", "network"), "00:04:9A": ("Cisco", "network"),
+    "00:04:9B": ("Cisco", "network"), "00:04:C0": ("Cisco", "network"),
+    "00:04:DD": ("Cisco", "network"), "00:04:DE": ("Cisco", "network"),
+    "00:05:31": ("Cisco", "network"), "00:05:32": ("Cisco", "network"),
+    "00:05:5E": ("Cisco", "network"), "00:05:5F": ("Cisco", "network"),
+    "00:05:73": ("Cisco", "network"), "00:05:74": ("Cisco", "network"),
+    "00:05:9B": ("Cisco", "network"), "00:05:DC": ("Cisco", "network"),
+    "00:05:DD": ("Cisco", "network"), "00:06:28": ("Cisco", "network"),
+    "00:06:29": ("Cisco", "network"), "00:06:52": ("Cisco", "network"),
+    "00:06:53": ("Cisco", "network"), "00:06:7C": ("Cisco", "network"),
+    "00:06:C1": ("Cisco", "network"), "00:06:D6": ("Cisco", "network"),
+    "00:06:D7": ("Cisco", "network"), "00:06:F6": ("Cisco", "network"),
+    "00:07:0D": ("Cisco", "network"), "00:07:0E": ("Cisco", "network"),
+    "00:07:4F": ("Cisco", "network"), "00:07:50": ("Cisco", "network"),
+    "00:07:7D": ("Cisco", "network"), "00:07:85": ("Cisco", "network"),
+    "00:07:B3": ("Cisco", "network"), "00:07:B4": ("Cisco", "network"),
+    "00:07:EB": ("Cisco", "network"), "00:07:EC": ("Cisco", "network"),
+    "00:08:20": ("Cisco", "network"), "00:08:21": ("Cisco", "network"),
+    "00:08:2F": ("Cisco", "network"), "00:08:30": ("Cisco", "network"),
+    "00:08:31": ("Cisco", "network"), "00:08:7C": ("Cisco", "network"),
+    "00:08:A3": ("Cisco", "network"), "00:08:A4": ("Cisco", "network"),
+    "00:08:E2": ("Cisco", "network"), "00:08:E3": ("Cisco", "network"),
+    "00:09:12": ("Cisco", "network"), "00:09:44": ("Cisco", "network"),
+    "00:09:7B": ("Cisco", "network"), "00:09:7C": ("Cisco", "network"),
+    "00:09:B7": ("Cisco", "network"), "00:09:E8": ("Cisco", "network"),
+    "00:09:E9": ("Cisco", "network"), "00:0A:41": ("Cisco", "network"),
+    "00:0A:42": ("Cisco", "network"), "00:0A:8A": ("Cisco", "network"),
+    "00:0A:B7": ("Cisco", "network"), "00:0A:B8": ("Cisco", "network"),
+    "00:0A:F3": ("Cisco", "network"), "00:0A:F4": ("Cisco", "network"),
+    "00:0B:45": ("Cisco", "network"), "00:0B:46": ("Cisco", "network"),
+    "00:0B:85": ("Cisco", "network"), "00:0B:BE": ("Cisco", "network"),
+    "00:0B:BF": ("Cisco", "network"), "00:0B:FC": ("Cisco", "network"),
+    "00:0B:FD": ("Cisco", "network"), "00:0C:30": ("Cisco", "network"),
+    "00:0C:31": ("Cisco", "network"), "00:0C:85": ("Cisco", "network"),
+    "00:0C:86": ("Cisco", "network"), "00:0C:CE": ("Cisco", "network"),
+    "00:0C:CF": ("Cisco", "network"),
+    # Cisco Meraki
+    "00:18:0A": ("Cisco Meraki", "network"), "AC:17:02": ("Cisco Meraki", "network"),
+    "E8:ED:F3": ("Cisco Meraki", "network"), "34:56:FE": ("Cisco Meraki", "network"),
+    "88:15:44": ("Cisco Meraki", "network"), "0C:8D:DB": ("Cisco Meraki", "network"),
+    # Ubiquiti
+    "00:27:22": ("Ubiquiti", "network"), "04:18:D6": ("Ubiquiti", "network"),
+    "18:E8:29": ("Ubiquiti", "network"), "24:5A:4C": ("Ubiquiti", "network"),
+    "44:D9:E7": ("Ubiquiti", "network"), "68:72:51": ("Ubiquiti", "network"),
+    "74:83:C2": ("Ubiquiti", "network"), "78:8A:20": ("Ubiquiti", "network"),
+    "80:2A:A8": ("Ubiquiti", "network"), "B4:FB:E4": ("Ubiquiti", "network"),
+    "DC:9F:DB": ("Ubiquiti", "network"), "E0:63:DA": ("Ubiquiti", "network"),
+    "F0:9F:C2": ("Ubiquiti", "network"), "FC:EC:DA": ("Ubiquiti", "network"),
+    # Juniper
+    "00:05:85": ("Juniper", "network"), "00:10:DB": ("Juniper", "network"),
+    "00:12:1E": ("Juniper", "network"), "00:14:F6": ("Juniper", "network"),
+    "00:17:CB": ("Juniper", "network"), "00:19:E2": ("Juniper", "network"),
+    "00:1B:C0": ("Juniper", "network"), "00:1D:B5": ("Juniper", "network"),
+    "00:1F:12": ("Juniper", "network"), "00:21:59": ("Juniper", "network"),
+    "00:22:83": ("Juniper", "network"), "00:23:9C": ("Juniper", "network"),
+    "00:24:DC": ("Juniper", "network"), "00:26:88": ("Juniper", "network"),
+    # Aruba / HP Networking
+    "00:0B:86": ("Aruba", "network"), "00:1A:1E": ("Aruba", "network"),
+    "00:24:6C": ("Aruba", "network"), "04:BD:88": ("Aruba", "network"),
+    "18:64:72": ("Aruba", "network"), "20:4C:03": ("Aruba", "network"),
+    "24:DE:C6": ("Aruba", "network"), "40:E3:D6": ("Aruba", "network"),
+    "6C:F3:7F": ("Aruba", "network"), "94:B4:0F": ("Aruba", "network"),
+    "D8:C7:C8": ("Aruba", "network"),
+    # Fortinet
+    "00:09:0F": ("Fortinet", "network"), "08:5B:0E": ("Fortinet", "network"),
+    "70:4C:A5": ("Fortinet", "network"), "90:6C:AC": ("Fortinet", "network"),
+    # SonicWall
+    "00:06:B1": ("SonicWall", "network"), "00:40:10": ("SonicWall", "network"),
+    "C0:EA:E4": ("SonicWall", "network"),
+    # MikroTik
+    "00:0C:42": ("MikroTik", "network"), "08:55:31": ("MikroTik", "network"),
+    "18:FD:74": ("MikroTik", "network"), "2C:C8:1B": ("MikroTik", "network"),
+    "48:8F:5A": ("MikroTik", "network"), "4C:5E:0C": ("MikroTik", "network"),
+    "64:D1:54": ("MikroTik", "network"), "6C:3B:6B": ("MikroTik", "network"),
+    "74:4D:28": ("MikroTik", "network"), "B8:69:F4": ("MikroTik", "network"),
+    "CC:2D:E0": ("MikroTik", "network"), "D4:01:C3": ("MikroTik", "network"),
+    "E4:8D:8C": ("MikroTik", "network"),
+    # Printers
+    "00:00:48": ("Seiko Epson", "printer"), "00:00:74": ("Ricoh", "printer"),
+    "00:00:AA": ("Xerox", "printer"), "00:00:F0": ("Samsung", "printer"),
+    "00:15:99": ("Samsung", "printer"), "00:1B:A9": ("Brother", "printer"),
+    "00:1E:8F": ("Canon", "printer"), "00:80:77": ("Brother", "printer"),
+    "00:80:87": ("Oki", "printer"), "00:80:91": ("Kyocera", "printer"),
+    "08:3E:8E": ("HP", "printer"), "10:5F:49": ("HP", "printer"),
+    "30:CD:A7": ("HP", "printer"), "38:2C:4A": ("Samsung", "printer"),
+    "40:B8:9A": ("HP", "printer"), "40:B0:34": ("HP", "printer"),
+    "48:A4:72": ("HP", "printer"), "60:0B:03": ("Kyocera", "printer"),
+    "64:51:06": ("HP", "printer"), "78:AC:C0": ("HP", "printer"),
+    "80:CE:62": ("HP", "printer"), "88:51:FB": ("HP", "printer"),
+    "9C:AD:97": ("HP", "printer"), "A0:D3:C1": ("HP", "printer"),
+    "A4:5D:36": ("HP", "printer"), "A8:5B:F7": ("Lexmark", "printer"),
+    "B4:99:BA": ("HP", "printer"), "C4:34:6B": ("HP", "printer"),
+    "CC:3D:82": ("HP", "printer"), "EC:B1:D7": ("HP", "printer"),
+    # Note: HP has overlap between printers and workstations — the OUI alone can't distinguish.
+    # The device_type from nmap/discovery should take precedence.
+    # Phones / Mobile
+    "00:1A:8A": ("Samsung", "phone"), "3C:E0:72": ("Apple", "phone"),
+    "58:B0:35": ("Apple", "phone"), "7C:04:D0": ("Apple", "phone"),
+    "A4:77:33": ("Google", "phone"), "94:65:2D": ("OnePlus", "phone"),
+    # IoT / Embedded
+    "00:04:A3": ("Microchip", "iot"), "00:1E:C0": ("Microchip", "iot"),
+    "18:FE:34": ("Espressif", "iot"), "24:0A:C4": ("Espressif", "iot"),
+    "24:6F:28": ("Espressif", "iot"), "30:AE:A4": ("Espressif", "iot"),
+    "3C:61:05": ("Espressif", "iot"), "3C:71:BF": ("Espressif", "iot"),
+    "48:3F:DA": ("Espressif", "iot"), "4C:11:AE": ("Espressif", "iot"),
+    "5C:CF:7F": ("Espressif", "iot"), "60:01:94": ("Espressif", "iot"),
+    "68:C6:3A": ("Espressif", "iot"), "84:0D:8E": ("Espressif", "iot"),
+    "84:CC:A8": ("Espressif", "iot"), "8C:AA:B5": ("Espressif", "iot"),
+    "A0:20:A6": ("Espressif", "iot"), "A4:7B:9D": ("Espressif", "iot"),
+    "A4:CF:12": ("Espressif", "iot"), "AC:67:B2": ("Espressif", "iot"),
+    "B4:E6:2D": ("Espressif", "iot"), "BC:DD:C2": ("Espressif", "iot"),
+    "C4:4F:33": ("Espressif", "iot"), "C8:C9:A3": ("Espressif", "iot"),
+    "CC:50:E3": ("Espressif", "iot"), "D8:A0:1D": ("Espressif", "iot"),
+    "DC:4F:22": ("Espressif", "iot"), "EC:FA:BC": ("Espressif", "iot"),
+    "B8:27:EB": ("Raspberry Pi", "iot"), "DC:A6:32": ("Raspberry Pi", "iot"),
+    "E4:5F:01": ("Raspberry Pi", "iot"),
+    # Intel NICs (servers & workstations — can't distinguish, default workstation)
+    "00:1B:21": ("Intel", "workstation"), "00:1E:67": ("Intel", "workstation"),
+    "00:22:FA": ("Intel", "workstation"), "00:24:D7": ("Intel", "workstation"),
+    "3C:97:0E": ("Intel", "workstation"), "48:21:0B": ("Intel", "workstation"),
+    "50:E5:49": ("Intel", "workstation"), "68:05:CA": ("Intel", "workstation"),
+    "78:2B:CB": ("Intel", "workstation"), "80:86:F2": ("Intel", "workstation"),
+    "8C:EC:4B": ("Intel", "workstation"), "A4:4C:C8": ("Intel", "workstation"),
+    "B4:96:91": ("Intel", "workstation"), "F4:6D:04": ("Intel", "workstation"),
+    # Realtek (common in off-brand PCs)
+    "00:0C:E7": ("Realtek", "workstation"), "00:E0:4C": ("Realtek", "workstation"),
+    "52:54:00": ("QEMU/KVM", "virtual"), "00:20:18": ("Realtek", "workstation"),
+    # TP-Link
+    "00:27:19": ("TP-Link", "network"), "14:CC:20": ("TP-Link", "network"),
+    "14:CF:92": ("TP-Link", "network"), "18:D6:C7": ("TP-Link", "network"),
+    "30:B5:C2": ("TP-Link", "network"), "50:C7:BF": ("TP-Link", "network"),
+    "54:C8:0F": ("TP-Link", "network"), "60:E3:27": ("TP-Link", "network"),
+    "64:56:01": ("TP-Link", "network"), "74:DA:88": ("TP-Link", "network"),
+    "98:DA:C4": ("TP-Link", "network"), "A0:F3:C1": ("TP-Link", "network"),
+    "B0:4E:26": ("TP-Link", "network"), "B0:BE:76": ("TP-Link", "network"),
+    "C0:25:E9": ("TP-Link", "network"), "C0:E3:FB": ("TP-Link", "network"),
+    "D4:6E:0E": ("TP-Link", "network"), "D8:07:B6": ("TP-Link", "network"),
+    "E8:48:B8": ("TP-Link", "network"), "EC:08:6B": ("TP-Link", "network"),
+    "F4:F2:6D": ("TP-Link", "network"),
+    # Netgear
+    "00:09:5B": ("Netgear", "network"), "00:0F:B5": ("Netgear", "network"),
+    "00:14:6C": ("Netgear", "network"), "00:18:4D": ("Netgear", "network"),
+    "00:1B:2F": ("Netgear", "network"), "00:1E:2A": ("Netgear", "network"),
+    "00:1F:33": ("Netgear", "network"), "00:22:3F": ("Netgear", "network"),
+    "00:24:B2": ("Netgear", "network"), "00:26:F2": ("Netgear", "network"),
+    "08:02:8E": ("Netgear", "network"), "10:0D:7F": ("Netgear", "network"),
+    "20:0C:C8": ("Netgear", "network"), "20:4E:7F": ("Netgear", "network"),
+    "28:80:88": ("Netgear", "network"), "2C:B0:5D": ("Netgear", "network"),
+    "30:46:9A": ("Netgear", "network"), "38:94:ED": ("Netgear", "network"),
+    "44:94:FC": ("Netgear", "network"), "4C:60:DE": ("Netgear", "network"),
+    "6C:B0:CE": ("Netgear", "network"), "84:1B:5E": ("Netgear", "network"),
+    "9C:3D:CF": ("Netgear", "network"), "A0:04:60": ("Netgear", "network"),
+    "A0:21:B7": ("Netgear", "network"), "A0:63:91": ("Netgear", "network"),
+    "B0:39:56": ("Netgear", "network"), "B0:7F:B9": ("Netgear", "network"),
+    "C0:3F:0E": ("Netgear", "network"), "C4:3D:C7": ("Netgear", "network"),
+    "C4:6E:1F": ("Netgear", "network"), "CC:40:D0": ("Netgear", "network"),
+    "D8:EB:97": ("Netgear", "network"), "E0:46:9A": ("Netgear", "network"),
+    "E0:91:F5": ("Netgear", "network"), "F8:73:94": ("Netgear", "network"),
+    # Synology (NAS)
+    "00:11:32": ("Synology", "server"),
+    # QNAP (NAS)
+    "00:08:9B": ("QNAP", "server"), "24:5E:BE": ("QNAP", "server"),
+    # APC / Schneider (UPS)
+    "00:C0:B7": ("APC/Schneider", "iot"), "00:20:85": ("APC/Schneider", "iot"),
+}
+
+
+def normalize_mac_for_oui(mac: str) -> str:
+    """Normalize MAC to uppercase colon-separated for OUI lookup."""
+    clean = mac.upper().replace("-", "").replace(":", "").replace(".", "")
+    if len(clean) < 6:
+        return ""
+    # Format first 3 octets as XX:XX:XX
+    return f"{clean[0:2]}:{clean[2:4]}:{clean[4:6]}"
+
+
+def lookup_oui(mac: str) -> Optional[Tuple[str, str]]:
+    """Look up manufacturer and device class from MAC address.
+
+    Returns (manufacturer, device_class) or None if not found.
+    Device classes: server, workstation, network, printer, phone, iot, virtual, unknown
+    """
+    prefix = normalize_mac_for_oui(mac)
+    if not prefix:
+        return None
+    return _OUI_TABLE.get(prefix)
+
+
+def get_manufacturer_hint(mac: str) -> dict:
+    """Get a manufacturer hint dict for a MAC address.
+
+    Returns:
+        {
+            "manufacturer": "Apple" | "Dell" | ... | null,
+            "device_class": "workstation" | "network" | ... | null,
+            "confidence": "oui_match" | null
+        }
+
+    The 'confidence' field signals this is a hint, not a certainty.
+    """
+    result = lookup_oui(mac)
+    if result:
+        return {
+            "manufacturer": result[0],
+            "device_class": result[1],
+            "confidence": "oui_match",
+        }
+    return {
+        "manufacturer": None,
+        "device_class": None,
+        "confidence": None,
+    }
