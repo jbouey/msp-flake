@@ -305,14 +305,23 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 			target.SudoPassword = &lt.SudoPassword
 		}
 
-		findings := ds.scanLinuxRemote(ctx, target, lt.Label)
+		var findings []driftFinding
+		if lt.Label == "macos" {
+			findings = ds.scanMacOSRemote(ctx, target, lt.Label)
+		} else {
+			findings = ds.scanLinuxRemote(ctx, target, lt.Label)
+		}
 		allFindings = append(allFindings, findings...)
 		scannedHosts = append(scannedHosts, lt.Hostname)
 	}
 
 	// Report drifts through healing pipeline
 	for i := range allFindings {
-		ds.reportLinuxDrift(&allFindings[i])
+		if strings.HasPrefix(allFindings[i].CheckType, "macos_") {
+			ds.reportMacOSDrift(&allFindings[i])
+		} else {
+			ds.reportLinuxDrift(&allFindings[i])
+		}
 	}
 
 	log.Printf("[linuxscan] Scan complete: targets=%d, drifts_found=%d",
