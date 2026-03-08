@@ -200,16 +200,21 @@ type Processor struct {
 	// Nonce replay protection: tracks used nonces to prevent replay attacks
 	nonceMu    sync.Mutex
 	usedNonces map[string]time.Time // nonce → first-seen timestamp
+
+	// Order idempotency: tracks recently executed order IDs to skip duplicates
+	executedMu     sync.Mutex
+	executedOrders map[string]time.Time // order_id → execution timestamp
 }
 
 // NewProcessor creates a new order processor.
 func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p := &Processor{
-		handlers:   make(map[string]HandlerFunc),
-		onComplete: onComplete,
-		stateDir:   stateDir,
-		verifier:   crypto.NewOrderVerifier(""),
-		usedNonces: make(map[string]time.Time),
+		handlers:       make(map[string]HandlerFunc),
+		onComplete:     onComplete,
+		stateDir:       stateDir,
+		verifier:       crypto.NewOrderVerifier(""),
+		usedNonces:     make(map[string]time.Time),
+		executedOrders: make(map[string]time.Time),
 	}
 
 	// Load persisted nonces from previous sessions
@@ -266,6 +271,12 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 
 	log.Printf("[orders] Processing order %s: %s", order.OrderID, order.OrderType)
 
+	// Idempotency check: skip orders already executed in the last hour
+	if p.alreadyExecuted(order.OrderID) {
+		log.Printf("[orders] Skipping duplicate order %s (already executed recently)", order.OrderID)
+		return &OrderResult{OrderID: order.OrderID, Success: true, Result: map[string]interface{}{"status": "already_executed"}}
+	}
+
 	// Verify Ed25519 signature before executing any order.
 	// Orders without a signature are rejected when we have a server public key.
 	if err := p.verifySignature(order); err != nil {
@@ -306,6 +317,7 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 	}
 
 	log.Printf("[orders] Order %s completed successfully", order.OrderID)
+	p.recordExecuted(order.OrderID)
 	p.complete(ctx, order.OrderID, true, result, "")
 	return &OrderResult{OrderID: order.OrderID, Success: true, Result: result}
 }
@@ -936,6 +948,38 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 		"sha256":      actualHex,
 		"message":     "Daemon binary installed, restart scheduled in 10s",
 	}, nil
+}
+
+// --- Order idempotency ---
+
+const executedOrderMaxAge = 1 * time.Hour
+
+// alreadyExecuted checks if an order was executed within the last hour.
+func (p *Processor) alreadyExecuted(orderID string) bool {
+	p.executedMu.Lock()
+	defer p.executedMu.Unlock()
+
+	ts, exists := p.executedOrders[orderID]
+	if !exists {
+		return false
+	}
+	return time.Since(ts) < executedOrderMaxAge
+}
+
+// recordExecuted marks an order as executed and cleans up stale entries.
+func (p *Processor) recordExecuted(orderID string) {
+	p.executedMu.Lock()
+	defer p.executedMu.Unlock()
+
+	p.executedOrders[orderID] = time.Now()
+
+	// Evict entries older than 1 hour
+	cutoff := time.Now().Add(-executedOrderMaxAge)
+	for id, ts := range p.executedOrders {
+		if ts.Before(cutoff) {
+			delete(p.executedOrders, id)
+		}
+	}
 }
 
 // --- Nonce replay protection ---

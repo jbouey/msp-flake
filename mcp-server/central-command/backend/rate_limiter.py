@@ -152,6 +152,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/client/auth/login",
         "/api/client/auth/verify-totp",
         "/api/client/auth/request-magic-link",
+        "/api/client/auth/validate-magic-link",
         "/api/auth/verify-totp",
     }
 

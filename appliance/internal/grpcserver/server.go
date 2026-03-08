@@ -77,6 +77,8 @@ func (s *Server) Serve() error {
 		return fmt.Errorf("listen on port %d: %w", s.config.Port, err)
 	}
 
+	const maxMsgSize = 4 * 1024 * 1024 // 4MB
+
 	opts := []grpc.ServerOption{
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    30 * time.Second,
@@ -87,6 +89,8 @@ func (s *Server) Serve() error {
 			PermitWithoutStream: true,
 		}),
 		grpc.MaxConcurrentStreams(100),
+		grpc.MaxRecvMsgSize(maxMsgSize),
+		grpc.MaxSendMsgSize(maxMsgSize),
 	}
 
 	// Load TLS credentials
