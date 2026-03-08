@@ -37,7 +37,7 @@ export const PatternCard: React.FC<PatternCardProps> = memo(({
   return (
     <GlassCard padding="md" className="relative">
       {isPromoting && (
-        <div className="absolute inset-0 bg-white/50 rounded-ios-lg flex items-center justify-center z-10">
+        <div className="absolute inset-0 bg-fill-secondary rounded-ios-lg flex items-center justify-center z-10">
           <div className="w-6 h-6 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />
         </div>
       )}

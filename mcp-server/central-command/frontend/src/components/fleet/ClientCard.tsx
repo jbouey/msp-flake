@@ -51,7 +51,7 @@ export const ClientCardCompact: React.FC<ClientCardProps & { selected?: boolean;
         transition-all duration-150
         ${selected
           ? 'bg-accent-tint border border-accent-primary'
-          : 'bg-white/50 hover:bg-white/80 border border-transparent'
+          : 'bg-fill-secondary hover:bg-fill-primary border border-transparent'
         }
       `}
     >

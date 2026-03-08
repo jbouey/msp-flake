@@ -33,7 +33,7 @@ const CustomTooltip: React.FC<{
   if (!active || !payload?.length) return null;
   const entry = payload[0];
   return (
-    <div className="bg-white/95 backdrop-blur-xl rounded-ios-md border border-separator-light px-3 py-2 shadow-lg">
+    <div className="bg-background-secondary/90 backdrop-blur-xl rounded-ios-md border border-separator-light px-3 py-2 shadow-lg">
       <div className="flex items-center gap-1.5 text-xs">
         <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: entry.payload.color }} />
         <span className="font-medium text-label-primary">{entry.name}</span>
@@ -80,7 +80,7 @@ export const ResolutionBreakdown: React.FC<{
               onClick={() => setWindow(w)}
               className={`px-2 py-0.5 text-[10px] font-medium rounded-md transition-all ${
                 window === w
-                  ? 'bg-white text-label-primary shadow-sm'
+                  ? 'bg-background-secondary text-label-primary shadow-sm'
                   : 'text-label-tertiary hover:text-label-secondary'
               }`}
             >

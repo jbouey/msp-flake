@@ -25,7 +25,7 @@ const SeverityBadge: React.FC<{ severity: string }> = ({ severity }) => {
     critical: 'bg-health-critical/10 text-health-critical',
     high: 'bg-orange-100 text-orange-700',
     medium: 'bg-yellow-100 text-yellow-700',
-    low: 'bg-slate-100 text-slate-600',
+    low: 'bg-fill-secondary text-label-secondary',
   };
   return (
     <span className={`px-2 py-0.5 text-xs rounded-full ${colors[severity] || colors.medium}`}>
@@ -49,7 +49,7 @@ const Toggle: React.FC<{
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-accent-primary focus:ring-offset-2 ${
-        checked ? 'bg-health-healthy' : 'bg-slate-300'
+        checked ? 'bg-health-healthy' : 'bg-fill-primary'
       } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
     >
       <span
@@ -87,7 +87,7 @@ const RunbookRow: React.FC<{
         </div>
       </td>
       <td className="py-3 px-4">
-        <span className={`px-2 py-1 text-xs rounded-full ${CATEGORY_COLORS[runbook.category] || 'bg-slate-100 text-slate-700'}`}>
+        <span className={`px-2 py-1 text-xs rounded-full ${CATEGORY_COLORS[runbook.category] || 'bg-fill-secondary text-label-primary'}`}>
           {runbook.category.replace(/_/g, ' ')}
         </span>
       </td>
@@ -273,7 +273,7 @@ export const RunbookConfig: React.FC = () => {
                 placeholder="Search runbooks..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-white/50 border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 bg-fill-secondary border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent"
               />
             </div>
 
@@ -283,7 +283,7 @@ export const RunbookConfig: React.FC = () => {
                 onClick={() => setFilterCategory('all')}
                 className={`px-3 py-1.5 text-sm rounded-ios-sm transition-colors ${
                   filterCategory === 'all'
-                    ? 'bg-white shadow-sm text-label-primary font-medium'
+                    ? 'bg-background-secondary shadow-sm text-label-primary font-medium'
                     : 'text-label-secondary hover:text-label-primary'
                 }`}
               >
@@ -295,7 +295,7 @@ export const RunbookConfig: React.FC = () => {
                   onClick={() => setFilterCategory(cat)}
                   className={`px-3 py-1.5 text-sm rounded-ios-sm transition-colors ${
                     filterCategory === cat
-                      ? 'bg-white shadow-sm text-label-primary font-medium'
+                      ? 'bg-background-secondary shadow-sm text-label-primary font-medium'
                       : 'text-label-secondary hover:text-label-primary'
                   }`}
                 >
@@ -377,7 +377,7 @@ export const RunbookConfig: React.FC = () => {
                 <span>Enabled - Runbook will auto-execute when triggered</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-slate-300" />
+                <span className="w-3 h-3 rounded-full bg-fill-primary" />
                 <span>Disabled - Runbook skipped, drift still detected</span>
               </div>
               <div className="flex items-center gap-2">

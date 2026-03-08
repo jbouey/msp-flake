@@ -90,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
               <span className="text-xs text-label-tertiary hidden sm:inline">Search</span>
-              <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium text-label-tertiary bg-white/60 rounded border border-separator-light">
+              <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium text-label-tertiary bg-fill-secondary rounded border border-separator-light">
                 <span className="text-[11px]">&#8984;</span>K
               </kbd>
             </button>

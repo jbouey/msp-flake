@@ -80,18 +80,18 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({
   };
 
   // Theme-aware classes
-  const cardBg = portalMode ? 'bg-white' : 'bg-slate-800 border border-slate-700';
-  const labelColor = portalMode ? 'text-slate-700' : 'text-slate-300';
+  const cardBg = portalMode ? 'bg-background-secondary' : 'bg-background-secondary border border-separator-light';
+  const labelColor = portalMode ? 'text-label-primary' : 'text-label-secondary';
   const inputBg = portalMode
-    ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-blue-500'
-    : 'bg-slate-700 border-slate-600 text-white focus:border-blue-400';
-  const titleColor = portalMode ? 'text-slate-900' : 'text-white';
+    ? 'bg-fill-tertiary border-separator-medium text-label-primary focus:border-blue-500'
+    : 'bg-fill-secondary border-separator-light text-label-primary focus:border-blue-400';
+  const titleColor = portalMode ? 'text-label-primary' : 'text-label-primary';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className={`w-full max-w-lg rounded-2xl shadow-xl ${cardBg} p-6 max-h-[90vh] overflow-y-auto`}>
         <h2 className={`text-lg font-semibold ${titleColor} mb-4`}>Join Device</h2>
-        <p className={`text-sm ${portalMode ? 'text-slate-500' : 'text-slate-400'} mb-6`}>
+        <p className={`text-sm ${portalMode ? 'text-label-tertiary' : 'text-label-tertiary'} mb-6`}>
           Register a standalone device for SSH-based compliance monitoring. The appliance will begin scanning on its next check-in.
         </p>
 
@@ -181,8 +181,8 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({
                   authMethod === 'password'
                     ? 'bg-blue-600 text-white'
                     : portalMode
-                      ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                      ? 'bg-fill-secondary text-label-secondary hover:bg-fill-primary'
+                      : 'bg-fill-secondary text-label-tertiary hover:bg-fill-primary'
                 }`}
               >
                 Password
@@ -194,8 +194,8 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({
                   authMethod === 'key'
                     ? 'bg-blue-600 text-white'
                     : portalMode
-                      ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                      ? 'bg-fill-secondary text-label-secondary hover:bg-fill-primary'
+                      : 'bg-fill-secondary text-label-tertiary hover:bg-fill-primary'
                 }`}
               >
                 SSH Key
@@ -243,8 +243,8 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({
               onClick={onClose}
               className={`px-4 py-2 text-sm rounded-lg transition ${
                 portalMode
-                  ? 'text-slate-600 hover:bg-slate-100'
-                  : 'text-slate-400 hover:bg-slate-700'
+                  ? 'text-label-secondary hover:bg-fill-secondary'
+                  : 'text-label-tertiary hover:bg-fill-secondary'
               }`}
             >
               Cancel

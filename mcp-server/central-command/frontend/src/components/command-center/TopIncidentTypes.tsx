@@ -27,7 +27,7 @@ export const TopIncidentTypes: React.FC<{
               onClick={() => setWindow(w)}
               className={`px-2 py-0.5 text-[10px] font-medium rounded-md transition-all ${
                 window === w
-                  ? 'bg-white text-label-primary shadow-sm'
+                  ? 'bg-background-secondary text-label-primary shadow-sm'
                   : 'text-label-tertiary hover:text-label-secondary'
               }`}
             >

@@ -20,7 +20,7 @@ const getActionColor = (action: string): string => {
     case 'LOGIN_SUCCESS':
       return 'text-health-healthy bg-green-50';
     case 'LOGOUT':
-      return 'text-label-secondary bg-slate-100';
+      return 'text-label-secondary bg-fill-secondary';
     case 'CREATE':
     case 'UPDATE':
       return 'text-ios-blue bg-blue-50';
@@ -31,9 +31,9 @@ const getActionColor = (action: string): string => {
     case 'EXECUTE':
       return 'text-ios-purple bg-purple-50';
     case 'VIEW':
-      return 'text-label-tertiary bg-slate-50';
+      return 'text-label-tertiary bg-fill-tertiary';
     default:
-      return 'text-label-secondary bg-slate-100';
+      return 'text-label-secondary bg-fill-secondary';
   }
 };
 
@@ -154,7 +154,7 @@ export const AuditLogs: React.FC = () => {
             placeholder="Search logs..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-white/50 border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+            className="w-full pl-10 pr-4 py-2 bg-fill-secondary border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent"
           />
         </div>
 
@@ -162,7 +162,7 @@ export const AuditLogs: React.FC = () => {
         <select
           value={filterAction}
           onChange={(e) => setFilterAction(e.target.value)}
-          className="px-4 py-2 bg-white/50 border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary"
+          className="px-4 py-2 bg-fill-secondary border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary"
         >
           <option value="all">All Actions</option>
           {actions.map((action) => (
@@ -176,7 +176,7 @@ export const AuditLogs: React.FC = () => {
         <select
           value={filterUser}
           onChange={(e) => setFilterUser(e.target.value)}
-          className="px-4 py-2 bg-white/50 border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary"
+          className="px-4 py-2 bg-fill-secondary border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary"
         >
           <option value="all">All Users</option>
           {users.map((u) => (

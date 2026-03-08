@@ -95,7 +95,7 @@ export const Runbooks: React.FC = () => {
             placeholder="Search runbooks, HIPAA controls..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-white/50 border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent"
+            className="w-full pl-10 pr-4 py-2 bg-fill-secondary border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent"
           />
         </div>
 
@@ -107,7 +107,7 @@ export const Runbooks: React.FC = () => {
               onClick={() => setFilterLevel(level)}
               className={`px-3 py-1.5 text-sm rounded-ios-sm transition-colors ${
                 filterLevel === level
-                  ? 'bg-white shadow-sm text-label-primary font-medium'
+                  ? 'bg-background-secondary shadow-sm text-label-primary font-medium'
                   : 'text-label-secondary hover:text-label-primary'
               }`}
             >

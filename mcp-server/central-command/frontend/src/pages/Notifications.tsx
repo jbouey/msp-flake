@@ -43,7 +43,7 @@ const AttentionCard: React.FC<{
   return (
     <button
       onClick={onClick}
-      className="w-full p-4 rounded-ios border border-separator-light bg-white/60 hover:bg-white/80 text-left transition-all"
+      className="w-full p-4 rounded-ios border border-separator-light bg-fill-secondary hover:bg-fill-tertiary text-left transition-all"
     >
       <div className="flex items-start gap-3">
         <span className={`flex-shrink-0 px-2 py-0.5 text-[10px] font-bold rounded-full ${meta.color}`}>
@@ -117,7 +117,7 @@ const PatternCard: React.FC<{ pattern: PatternGroup }> = ({ pattern }) => {
     'text-label-secondary';
 
   return (
-    <div className="p-4 rounded-ios border border-separator-light bg-white/60">
+    <div className="p-4 rounded-ios border border-separator-light bg-fill-secondary">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
@@ -166,8 +166,8 @@ const NotificationCard: React.FC<{
     <div
       className={`p-3.5 rounded-ios border transition-all ${
         notification.is_read
-          ? 'bg-white/40 border-separator-light'
-          : 'bg-white/70 border-accent-primary/20 shadow-sm'
+          ? 'bg-fill-secondary border-separator-light'
+          : 'bg-fill-secondary border-accent-primary/20 shadow-sm'
       }`}
     >
       <div className="flex items-start gap-3">
@@ -263,7 +263,7 @@ export const Notifications: React.FC = () => {
             className={`
               flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-md transition-all
               ${tab === t.id
-                ? 'bg-white text-label-primary shadow-sm'
+                ? 'bg-background-secondary text-label-primary shadow-sm'
                 : 'text-label-tertiary hover:text-label-secondary'
               }
             `}

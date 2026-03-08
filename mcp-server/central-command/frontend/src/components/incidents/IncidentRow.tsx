@@ -71,7 +71,7 @@ export const IncidentRow: React.FC<IncidentRowProps> = memo(({
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-4 p-4 bg-white/50 hover:bg-white/80 rounded-ios-md transition-colors text-left border border-separator-light"
+      className="w-full flex items-center gap-4 p-4 bg-fill-secondary hover:bg-fill-primary rounded-ios-md transition-colors text-left border border-separator-light"
     >
       {/* Status indicator */}
       <span

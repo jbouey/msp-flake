@@ -15,7 +15,7 @@ export const IdleTimeoutWarning: React.FC<IdleTimeoutWarningProps> = ({
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm mx-4">
+      <div className="bg-background-secondary rounded-lg shadow-xl p-6 max-w-sm mx-4">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
             <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -23,11 +23,11 @@ export const IdleTimeoutWarning: React.FC<IdleTimeoutWarningProps> = ({
             </svg>
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">Session Expiring</h3>
-            <p className="text-sm text-slate-500">Due to inactivity</p>
+            <h3 className="text-lg font-semibold text-label-primary">Session Expiring</h3>
+            <p className="text-sm text-label-tertiary">Due to inactivity</p>
           </div>
         </div>
-        <p className="text-slate-700 mb-4">
+        <p className="text-label-primary mb-4">
           Your session will expire in <span className="font-mono font-bold text-amber-600">{timeStr}</span> due to inactivity. Click below to stay signed in.
         </p>
         <button

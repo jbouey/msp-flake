@@ -215,7 +215,7 @@ export const CommandBar: React.FC<CommandBarProps> = ({ isOpen, onClose }) => {
       />
 
       {/* Command palette */}
-      <div className="relative w-full max-w-xl bg-white rounded-ios-lg shadow-2xl overflow-hidden">
+      <div className="relative w-full max-w-xl bg-background-secondary rounded-ios-lg shadow-2xl overflow-hidden">
         {/* Input */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-separator-light">
           <svg className="w-5 h-5 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -353,17 +353,17 @@ export const CommandBar: React.FC<CommandBarProps> = ({ isOpen, onClose }) => {
         <div className="px-4 py-2 border-t border-separator-light bg-separator-light/30 flex items-center justify-between text-xs text-label-tertiary">
           <div className="flex items-center gap-4">
             <span className="flex items-center gap-1">
-              <kbd className="px-1 py-0.5 bg-white rounded shadow-sm">↑</kbd>
-              <kbd className="px-1 py-0.5 bg-white rounded shadow-sm">↓</kbd>
+              <kbd className="px-1 py-0.5 bg-background-secondary rounded shadow-sm">↑</kbd>
+              <kbd className="px-1 py-0.5 bg-background-secondary rounded shadow-sm">↓</kbd>
               Navigate
             </span>
             <span className="flex items-center gap-1">
-              <kbd className="px-1 py-0.5 bg-white rounded shadow-sm">Enter</kbd>
+              <kbd className="px-1 py-0.5 bg-background-secondary rounded shadow-sm">Enter</kbd>
               Select
             </span>
           </div>
           <span>
-            Tip: Start with <code className="px-1 bg-white rounded">/</code> for commands
+            Tip: Start with <code className="px-1 bg-background-secondary rounded">/</code> for commands
           </span>
         </div>
       </div>
