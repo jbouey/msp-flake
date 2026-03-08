@@ -11,7 +11,7 @@ import uuid as _uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Depends, Request, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from enum import Enum
 
 from .fleet import get_pool
@@ -1480,7 +1480,7 @@ class ApplianceCheckin(BaseModel):
     site_id: str
     hostname: str
     mac_address: str
-    ip_addresses: list = []
+    ip_addresses: list = Field(default=[], max_length=100)
     uptime_seconds: Optional[int] = None
     agent_version: Optional[str] = None
     nixos_version: Optional[str] = None

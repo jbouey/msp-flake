@@ -89,7 +89,10 @@ async def get_cve_summary():
 
     watched = config["watched_cpes"] if config else []
     if isinstance(watched, str):
-        watched = json.loads(watched)
+        try:
+            watched = json.loads(watched)
+        except (json.JSONDecodeError, TypeError):
+            watched = []
 
     return {
         "total_cves": total_cves,
@@ -281,7 +284,10 @@ async def get_config():
 
     cpes = config["watched_cpes"] or []
     if isinstance(cpes, str):
-        cpes = json.loads(cpes)
+        try:
+            cpes = json.loads(cpes)
+        except (json.JSONDecodeError, TypeError):
+            cpes = []
 
     return {
         "watched_cpes": cpes,
@@ -368,7 +374,10 @@ async def _sync_nvd_cves(pool):
     watched_cpes = config["watched_cpes"] or []
     # Handle JSONB returned as string (double-encoded) vs native list
     if isinstance(watched_cpes, str):
-        watched_cpes = json.loads(watched_cpes)
+        try:
+            watched_cpes = json.loads(watched_cpes)
+        except (json.JSONDecodeError, TypeError):
+            watched_cpes = []
     api_key = config.get("nvd_api_key")
     last_sync = config["last_sync_at"]
     min_severity = config["min_severity"] or "medium"
@@ -606,7 +615,10 @@ async def _match_cves_to_fleet(pool) -> int:
         affected_cpes = cve["affected_cpes"] or []
         # Handle JSONB returned as string (asyncpg without json codec init)
         if isinstance(affected_cpes, str):
-            affected_cpes = json.loads(affected_cpes)
+            try:
+                affected_cpes = json.loads(affected_cpes)
+            except (json.JSONDecodeError, TypeError):
+                affected_cpes = []
         for appliance in appliances:
             if _cpe_matches_appliance(affected_cpes, appliance):
                 try:

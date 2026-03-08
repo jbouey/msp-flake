@@ -532,11 +532,35 @@ async def stripe_webhook(request: Request):
 
     pool = await get_pool()
 
+    # Replay protection: deduplicate by Stripe event ID
+    event_id = event.id
+    async with pool.acquire() as conn:
+        # Create dedup table if not exists (idempotent)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                processed_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        # Check if already processed
+        existing = await conn.fetchval(
+            "SELECT 1 FROM stripe_webhook_events WHERE event_id = $1", event_id
+        )
+        if existing:
+            logger.info(f"Stripe webhook {event_id} already processed, skipping")
+            return {"status": "already_processed"}
+        # Record event before processing (prevent concurrent duplicates)
+        await conn.execute(
+            "INSERT INTO stripe_webhook_events (event_id, event_type) VALUES ($1, $2)",
+            event_id, event.type
+        )
+
     # Handle the event
     event_type = event.type
     data = event.data.object
 
-    logger.info(f"Received Stripe webhook: {event_type}")
+    logger.info(f"Received Stripe webhook: {event_type} ({event_id})")
 
     if event_type == "checkout.session.completed":
         # New subscription created via checkout
