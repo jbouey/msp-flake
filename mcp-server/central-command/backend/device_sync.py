@@ -256,9 +256,9 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
     # Auto-populate workstations table from discovered workstation/server devices
     try:
         async with pool.acquire() as link_conn:
-            await _link_devices_to_workstations(link_conn, site_id)
+            await _link_devices_to_workstations(link_conn, report.site_id)
     except Exception as e:
-        logger.warning(f"Device→workstation linkage failed for {site_id}: {e}")
+        logger.warning(f"Device→workstation linkage failed for {report.site_id}: {e}")
 
     status = "success"
     message = f"Synced {devices_created} new, {devices_updated} updated"
