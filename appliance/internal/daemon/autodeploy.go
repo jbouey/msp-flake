@@ -148,7 +148,21 @@ $Result = @{ Changed = $false; Computers = @(); StartupScript = $false }
 try {
     Import-Module GroupPolicy -ErrorAction Stop
     Import-Module ActiveDirectory -ErrorAction SilentlyContinue
+    # Discover GPO: prefer "Default Domain Policy", fall back to first linked GPO
     $GPOName = "Default Domain Policy"
+    try {
+        $null = Get-GPO -Name $GPOName -ErrorAction Stop
+    } catch {
+        # Default Domain Policy not found by name — try GUID, then first linked GPO
+        try {
+            $GPOName = (Get-GPO -Guid "31B2F340-016D-11D2-945F-00C04FB984F9" -ErrorAction Stop).DisplayName
+        } catch {
+            $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name
+            $linked = (Get-GPInheritance -Target "DC=$($domain.Replace('.',',DC='))").GpoLinks
+            if ($linked.Count -gt 0) { $GPOName = $linked[0].DisplayName }
+            else { throw "No GPOs found linked to domain root" }
+        }
+    }
     $BasePath = "HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service"
 
     # --- Part 1: Registry-based GPO settings ---

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
@@ -408,6 +409,42 @@ func (c *GRPCClient) SendHeartbeat(ctx context.Context) (*pb.HeartbeatResponse, 
 	}
 
 	return resp, nil
+}
+
+// CertNeedsRenewal checks if the agent cert expires within 30 days.
+// Returns true if cert should be renewed.
+func (c *GRPCClient) CertNeedsRenewal() bool {
+	certPEM, err := os.ReadFile(c.config.CertFile)
+	if err != nil {
+		return false // no cert = will be enrolled fresh
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return true
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return true
+	}
+	// Renew if less than 30 days remain
+	return time.Until(cert.NotAfter) < 30*24*time.Hour
+}
+
+// RenewCerts triggers re-enrollment by setting needsCerts and re-registering.
+// This closes the current connection and reconnects with new certs.
+func (c *GRPCClient) RenewCerts(ctx context.Context) error {
+	log.Println("[gRPC] Certificate renewal triggered — re-enrolling")
+	c.mu.Lock()
+	c.needsCerts = true
+	c.mu.Unlock()
+
+	// Re-register will detect needsCerts and request new certs from server
+	_, err := c.Register(ctx)
+	if err != nil {
+		return fmt.Errorf("cert renewal failed: %w", err)
+	}
+	log.Println("[gRPC] Certificate renewal complete")
+	return nil
 }
 
 // SendHealingResult sends a healing result to the appliance

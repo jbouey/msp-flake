@@ -423,6 +423,16 @@ func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient, upd *up
 			} else {
 				streamRetryCount = 0
 			}
+
+			// Certificate renewal check (every ~1 hour, piggyback on heartbeat)
+			if streamRetryCount == 0 && client.CertNeedsRenewal() {
+				log.Println("[heartbeat] Certificate expiring soon, triggering renewal")
+				go func() {
+					if err := client.RenewCerts(ctx); err != nil {
+						log.Printf("[heartbeat] Cert renewal failed: %v", err)
+					}
+				}()
+			}
 		}
 	}
 }

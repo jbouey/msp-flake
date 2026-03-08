@@ -37,8 +37,8 @@ async def _cache_get(key: str):
         data = await r.get(key)
         if data:
             return json.loads(data)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Redis cache GET failed for {key}: {e}")
     return None
 
 
@@ -49,8 +49,8 @@ async def _cache_set(key: str, value, ttl_seconds: int = 60):
         return
     try:
         await r.setex(key, ttl_seconds, json.dumps(value, default=str))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Redis cache SET failed for {key}: {e}")
 
 
 async def get_fleet_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
@@ -513,8 +513,8 @@ async def promote_pattern_in_db(db: AsyncSession, pattern_id: str) -> Optional[s
             "runbook_id": pattern.runbook_id,
             "pattern_signature": pattern.pattern_signature,
         })
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Pattern promotion broadcast failed: {e}")
 
     return rule_id
 

@@ -333,8 +333,8 @@ def extract_calendar_url_from_proof(proof_bytes: bytes) -> Optional[str]:
             # Clean up any trailing garbage
             if 'opentimestamps.org' in url:
                 return url.split('\x00')[0].strip()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"OTS URL extraction failed: {e}")
     return None
 
 
@@ -824,8 +824,8 @@ async def submit_evidence(
                     WHERE site_id = :site_id
                 """), {"site_id": site_id})
                 await db.commit()
-            except Exception:
-                pass  # Don't fail the response over tracking
+            except Exception as e:
+                logger.warning(f"Evidence rejection tracking failed for site {site_id}: {e}")
 
             detail = "Evidence signature verification failed."
             if key_match is False:
@@ -1002,8 +1002,8 @@ async def submit_evidence(
             "bundle_id": bundle.bundle_id,
             "chain_position": chain_position,
         })
-    except Exception:
-        pass  # Don't fail evidence submission if broadcast fails
+    except Exception as e:
+        logger.debug(f"Evidence broadcast failed: {e}")
 
     return EvidenceSubmitResponse(
         bundle_id=bundle.bundle_id,

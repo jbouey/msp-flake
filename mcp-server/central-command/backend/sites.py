@@ -70,13 +70,15 @@ async def require_appliance_auth(request: Request) -> str:
         if not has_api_keys:
             # No API keys configured for this site yet — allow if site exists
             # (graceful migration for appliances provisioned before API keys)
+            # NOTE: This fallback should be removed once all appliances have API keys
             site_exists = await conn.fetchval(
                 "SELECT EXISTS(SELECT 1 FROM sites WHERE site_id = $1)",
                 site_id
             )
             if site_exists:
                 logger.warning(
-                    f"Appliance auth fallback: site={site_id} has no API keys, allowing checkin"
+                    f"Appliance auth fallback: site={site_id} has no API keys, allowing checkin. "
+                    "This fallback will be removed in a future release."
                 )
                 return site_id
 
@@ -174,7 +176,7 @@ def parse_parameters(params):
     if isinstance(params, str):
         try:
             return json.loads(params)
-        except:
+        except (json.JSONDecodeError, TypeError):
             return {}
     return {}
 
@@ -427,8 +429,8 @@ async def get_pending_orders(site_id: str, appliance_id: str):
                 UPDATE orders SET status = 'expired'
                 WHERE status = 'pending' AND expires_at < NOW()
             """)
-        except Exception:
-            pass  # Non-critical: expiration is best-effort
+        except Exception as e:
+            logger.warning(f"Order expiration cleanup failed: {e}")
 
         # Get admin orders
         rows = await conn.fetch("""
@@ -1749,7 +1751,7 @@ async def get_deployment_status(site_id: str, user: dict = Depends(require_auth)
             if isinstance(domain_data, str):
                 try:
                     domain_data = json.loads(domain_data)
-                except:
+                except (json.JSONDecodeError, TypeError):
                     domain_data = {}
             domain_name = domain_data.get('domain_name') if domain_data else None
             
@@ -2262,10 +2264,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                                     "use_ssl": use_ssl,
                                     "role": cred_type,
                                 })
-                        except json.JSONDecodeError:
-                            pass
-            except Exception:
-                pass  # Don't fail checkin if credentials lookup fails
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Checkin {checkin.site_id}: malformed Windows credential JSON for {cred.get('credential_name', '?')}: {e}")
+            except Exception as e:
+                logger.error(f"Checkin {checkin.site_id}: Windows credentials lookup failed: {e}")
 
         # === STEP 5b: Get linux targets (SSH credentials) ===
         linux_targets = []
@@ -2302,10 +2304,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                                 target_entry["distro"] = cred_data['distro']
                             if hostname:
                                 linux_targets.append(target_entry)
-                        except json.JSONDecodeError:
-                            pass
-            except Exception:
-                pass  # Don't fail checkin if SSH credentials lookup fails
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Checkin {checkin.site_id}: malformed SSH credential JSON for {cred.get('credential_name', '?')}: {e}")
+            except Exception as e:
+                logger.error(f"Checkin {checkin.site_id}: SSH credentials lookup failed: {e}")
 
         # === STEP 6: Get enabled runbooks (runbook config pull) ===
         enabled_runbooks = []
@@ -2327,8 +2329,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
             """, checkin.site_id, canonical_id)
 
             enabled_runbooks = [row['runbook_id'] for row in runbook_rows if row['enabled']]
-        except Exception:
-            pass  # Don't fail checkin if runbook lookup fails (table may not exist yet)
+        except Exception as e:
+            logger.warning(f"Checkin {checkin.site_id}: runbook lookup failed: {e}")
 
         # === STEP 7: Check for enumeration/scan triggers (zero-friction deployment) ===
         trigger_enumeration = False
@@ -2351,8 +2353,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                         SET trigger_enumeration = false, trigger_immediate_scan = false
                         WHERE appliance_id = $1
                     """, canonical_id)
-        except Exception:
-            pass  # Don't fail checkin if trigger lookup fails
+        except Exception as e:
+            logger.warning(f"Checkin {checkin.site_id}: trigger flags lookup failed: {e}")
 
     # Broadcast checkin event to connected dashboard clients
     try:
@@ -2366,16 +2368,16 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
             "ip_addresses": checkin.ip_addresses,
             "uptime_seconds": checkin.uptime_seconds,
         })
-    except Exception:
-        pass  # Don't fail checkin if broadcast fails
+    except Exception as e:
+        logger.debug(f"Checkin {checkin.site_id}: broadcast failed: {e}")
 
     # Get server public key for order signature verification
     server_public_key = None
     try:
         from main import get_public_key_hex
         server_public_key = get_public_key_hex()
-    except Exception:
-        pass  # Key may not be initialized yet
+    except Exception as e:
+        logger.warning(f"Checkin: server public key not available: {e}")
 
     return {
         "status": "ok",
@@ -2488,7 +2490,7 @@ async def get_site_workstations(site_id: str, user: dict = Depends(require_auth)
             if isinstance(check_compliance, str):
                 try:
                     check_compliance = json.loads(check_compliance)
-                except:
+                except (json.JSONDecodeError, TypeError):
                     check_compliance = {}
 
             summary = {
@@ -2534,14 +2536,14 @@ async def get_site_workstations(site_id: str, user: dict = Depends(require_auth)
                     if isinstance(details, str):
                         try:
                             details = json.loads(details)
-                        except:
+                        except (json.JSONDecodeError, TypeError):
                             details = {}
 
                     hipaa = check['hipaa_controls']
                     if isinstance(hipaa, str):
                         try:
                             hipaa = json.loads(hipaa)
-                        except:
+                        except (json.JSONDecodeError, TypeError):
                             hipaa = []
 
                     checks[check['check_type']] = {
@@ -2735,14 +2737,14 @@ async def get_workstation(site_id: str, workstation_id: str, user: dict = Depend
                 if isinstance(details, str):
                     try:
                         details = json.loads(details)
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         details = {}
 
                 hipaa = check['hipaa_controls']
                 if isinstance(hipaa, str):
                     try:
                         hipaa = json.loads(hipaa)
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         hipaa = []
 
                 checks[check['check_type']] = {
@@ -3051,14 +3053,14 @@ async def get_site_go_agents(site_id: str, user: dict = Depends(require_auth)):
             if isinstance(agents_by_tier, str):
                 try:
                     agents_by_tier = json.loads(agents_by_tier)
-                except:
+                except (json.JSONDecodeError, TypeError):
                     agents_by_tier = {}
 
             agents_by_version = summary_row['agents_by_version']
             if isinstance(agents_by_version, str):
                 try:
                     agents_by_version = json.loads(agents_by_version)
-                except:
+                except (json.JSONDecodeError, TypeError):
                     agents_by_version = {}
 
             summary = {
@@ -3106,7 +3108,7 @@ async def get_site_go_agents(site_id: str, user: dict = Depends(require_auth)):
                     if isinstance(details, str):
                         try:
                             details = json.loads(details)
-                        except:
+                        except (json.JSONDecodeError, TypeError):
                             details = {}
 
                     checks.append({
@@ -3176,14 +3178,14 @@ async def get_go_agent_summary(site_id: str, user: dict = Depends(require_auth))
         if isinstance(agents_by_tier, str):
             try:
                 agents_by_tier = json.loads(agents_by_tier)
-            except:
+            except (json.JSONDecodeError, TypeError):
                 agents_by_tier = {}
 
         agents_by_version = summary_row['agents_by_version']
         if isinstance(agents_by_version, str):
             try:
                 agents_by_version = json.loads(agents_by_version)
-            except:
+            except (json.JSONDecodeError, TypeError):
                 agents_by_version = {}
 
         return {
@@ -3237,7 +3239,7 @@ async def get_go_agent(site_id: str, agent_id: str, user: dict = Depends(require
                 if isinstance(details, str):
                     try:
                         details = json.loads(details)
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         details = {}
 
                 checks.append({

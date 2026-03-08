@@ -47,7 +47,7 @@ async def get_pool() -> asyncpg.Pool:
         # Strip SQLAlchemy async driver suffix for raw asyncpg
         if "+asyncpg" in database_url:
             database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
-        _pool = await asyncpg.create_pool(database_url, min_size=2, max_size=10)
+        _pool = await asyncpg.create_pool(database_url, min_size=5, max_size=50)
     return _pool
 
 
