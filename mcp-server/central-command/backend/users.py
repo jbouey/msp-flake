@@ -194,31 +194,32 @@ async def list_all_accounts(
     # Partner users
     if not account_type or account_type == "partner":
         result = await db.execute(text("""
-            SELECT pu.id, pu.email, pu.display_name, pu.role, pu.is_active,
-                   pu.last_login_at, pu.created_at, pu.mfa_enabled,
+            SELECT pu.id, pu.email, pu.name, pu.role, pu.status,
+                   pu.last_login_at, pu.created_at,
                    p.name as partner_name
             FROM partner_users pu
             LEFT JOIN partners p ON p.id = pu.partner_id
         """))
         for row in result.fetchall():
+            pu_status = row[4] or "active"
             accounts.append({
                 "id": str(row[0]),
                 "name": row[2] or row[1].split("@")[0],
                 "username": row[1],
                 "email": row[1],
                 "role": row[3] or "partner",
-                "status": "active" if row[4] else "disabled",
+                "status": pu_status if pu_status in ("active", "disabled") else "active",
                 "account_type": "partner",
-                "org": row[8] or "Unknown Partner",
+                "org": row[7] or "Unknown Partner",
                 "last_login": row[5].isoformat() if row[5] else None,
                 "created_at": row[6].isoformat() if row[6] else None,
-                "mfa_enabled": bool(row[7]),
+                "mfa_enabled": False,
             })
 
     # Client users
     if not account_type or account_type == "client":
         result = await db.execute(text("""
-            SELECT cu.id, cu.email, cu.display_name, cu.role, cu.is_active,
+            SELECT cu.id, cu.email, cu.name, cu.role, cu.is_active,
                    cu.last_login_at, cu.created_at, cu.mfa_enabled,
                    co.name as org_name
             FROM client_users cu

@@ -511,7 +511,7 @@ def calculate_live_status(last_checkin):
 
 @router.get("")
 async def list_sites(
-    status: Optional[str] = None,
+    status: Optional[str] = Query(None, regex="^(online|offline|stale|pending)$"),
     search: Optional[str] = Query(None, min_length=1, max_length=200),
     sort_by: str = Query("clinic_name", regex="^(clinic_name|site_id|last_checkin|tier|onboarding_stage|appliance_count|org_name)$"),
     sort_dir: str = Query("asc", regex="^(asc|desc)$"),
