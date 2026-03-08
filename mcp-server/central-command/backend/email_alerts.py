@@ -565,3 +565,85 @@ https://dashboard.osiriscare.net/companion
     except Exception as e:
         logger.error(f"Failed to send companion alert email after retries: {e}")
         return False
+
+
+async def send_sra_overdue_email(
+    to_email: str,
+    user_name: str,
+    org_name: str,
+    overdue_items: list[dict],
+) -> bool:
+    """Send SRA remediation overdue reminder email.
+
+    overdue_items: list of {"question_key": str, "plan": str, "due": str}
+    """
+    if not is_email_configured():
+        logger.warning("[sra-email] SMTP not configured, skipping overdue reminder")
+        return False
+
+    count = len(overdue_items)
+    subject = f"[OsirisCare] {count} SRA remediation item{'s' if count != 1 else ''} overdue for {org_name}"
+
+    items_html = ""
+    items_text = ""
+    for item in overdue_items[:20]:  # cap at 20
+        items_html += f"""
+        <tr>
+          <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;">{item['question_key']}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;">{item['plan'][:120]}{'...' if len(item['plan']) > 120 else ''}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#dc2626;">{item['due']}</td>
+        </tr>"""
+        items_text += f"  - {item['question_key']}: {item['plan'][:80]} (due: {item['due']})\n"
+
+    html = f"""
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+      <div style="background:#0d9488;padding:20px;border-radius:8px 8px 0 0;">
+        <h1 style="color:white;margin:0;font-size:20px;">SRA Remediation Overdue</h1>
+      </div>
+      <div style="padding:20px;background:#f9fafb;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;">
+        <p>Hi {user_name},</p>
+        <p>The following SRA remediation items for <strong>{org_name}</strong> are past their due date:</p>
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+          <thead>
+            <tr style="background:#f3f4f6;">
+              <th style="padding:8px 12px;text-align:left;font-size:13px;">Item</th>
+              <th style="padding:8px 12px;text-align:left;font-size:13px;">Plan</th>
+              <th style="padding:8px 12px;text-align:left;font-size:13px;">Due Date</th>
+            </tr>
+          </thead>
+          <tbody>{items_html}</tbody>
+        </table>
+        {f'<p style="color:#6b7280;font-size:13px;">...and {count - 20} more items</p>' if count > 20 else ''}
+        <p>Please update the remediation plans in your Security Risk Assessment or mark them as completed.</p>
+        <p style="color:#6b7280;font-size:13px;">This is an automated reminder from OsirisCare compliance monitoring.</p>
+      </div>
+    </div>"""
+
+    text = f"""SRA Remediation Overdue - {org_name}
+
+Hi {user_name},
+
+The following SRA remediation items are past their due date:
+
+{items_text}
+Please update the remediation plans in your Security Risk Assessment or mark them as completed.
+"""
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg.attach(MIMEText(text, "plain"))
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            server.starttls(context=context)
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+        logger.info(f"[sra-email] Sent overdue reminder to {to_email} ({count} items)")
+        return True
+    except Exception as e:
+        logger.error(f"[sra-email] Failed to send: {e}")
+        return False

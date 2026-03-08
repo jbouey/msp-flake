@@ -1386,6 +1386,69 @@ async def companion_alert_check_loop():
         except Exception as e:
             logger.error(f"[alerts] Background loop error: {e}")
 
+        # --- SRA remediation overdue check ---
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                overdue = await conn.fetch("""
+                    SELECT r.id, r.question_key, r.remediation_plan, r.remediation_due,
+                           r.remediation_status, r.assessment_id,
+                           a.org_id, a.created_by,
+                           co.name as org_name
+                    FROM hipaa_sra_responses r
+                    JOIN hipaa_sra_assessments a ON a.id = r.assessment_id
+                    JOIN client_orgs co ON co.id = a.org_id
+                    WHERE r.remediation_due < CURRENT_DATE
+                      AND r.remediation_status = 'open'
+                      AND r.remediation_plan IS NOT NULL
+                      AND r.remediation_plan != ''
+                """)
+
+            if overdue:
+                logger.info(f"[sra] Found {len(overdue)} overdue remediation items")
+                from .email_alerts import send_sra_overdue_email
+
+                # Group by org + created_by for batch notifications
+                by_user: dict = {}
+                for item in overdue:
+                    key = (str(item["org_id"]), str(item["created_by"]) if item["created_by"] else None)
+                    by_user.setdefault(key, []).append(item)
+
+                for (org_id, user_id), items in by_user.items():
+                    if not user_id:
+                        continue
+                    try:
+                        async with pool.acquire() as conn:
+                            user = await conn.fetchrow(
+                                "SELECT email, name FROM client_users WHERE id = $1",
+                                _uuid.UUID(user_id),
+                            )
+                        if user and user["email"]:
+                            await send_sra_overdue_email(
+                                to_email=user["email"],
+                                user_name=user["name"] or "User",
+                                org_name=items[0]["org_name"],
+                                overdue_items=[{
+                                    "question_key": i["question_key"],
+                                    "plan": i["remediation_plan"],
+                                    "due": str(i["remediation_due"]),
+                                } for i in items],
+                            )
+                            logger.info(f"[sra] Sent overdue reminder to {user['email']} for {len(items)} items")
+
+                            # Mark as notified so we don't re-send every 6h
+                            async with pool.acquire() as conn:
+                                await conn.execute("""
+                                    UPDATE hipaa_sra_responses
+                                    SET remediation_status = 'overdue'
+                                    WHERE id = ANY($1::uuid[])
+                                """, [i["id"] for i in items])
+                    except Exception as e:
+                        logger.error(f"[sra] Failed to notify user {user_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"[sra] Overdue check error: {e}")
+
         await asyncio.sleep(6 * 3600)  # 6 hours
 
 

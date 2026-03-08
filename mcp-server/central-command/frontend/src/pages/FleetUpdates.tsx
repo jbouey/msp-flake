@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GlassCard } from '../components/shared';
-import { fleetUpdatesApi, type FleetRelease, type FleetRollout, type FleetStats } from '../utils/api';
+import { fleetUpdatesApi, type FleetRelease, type FleetRollout, type FleetStats, type FleetOrder } from '../utils/api';
 
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const colors: Record<string, string> = {
+    active: 'bg-accent-primary text-white',
     in_progress: 'bg-accent-primary text-white',
     paused: 'bg-health-warning text-white',
     completed: 'bg-health-healthy text-white',
     failed: 'bg-health-critical text-white',
     cancelled: 'bg-fill-tertiary text-label-secondary',
+    expired: 'bg-fill-tertiary text-label-tertiary',
     pending: 'bg-fill-secondary text-label-primary',
   };
 
@@ -44,6 +46,29 @@ const ProgressBar: React.FC<{ progress: FleetRollout['progress'] }> = ({ progres
   );
 };
 
+function formatRelativeTime(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
+const ORDER_TYPE_LABELS: Record<string, string> = {
+  update_daemon: 'Daemon Update',
+  nixos_rebuild: 'NixOS Rebuild',
+  sync_rules: 'Rule Sync',
+  run_command: 'Run Command',
+  update_iso: 'ISO Update',
+  diagnostic: 'Diagnostic',
+  validate_credential: 'Credential Check',
+};
+
 export const FleetUpdates: React.FC = () => {
   const queryClient = useQueryClient();
   const [showCreateRelease, setShowCreateRelease] = useState(false);
@@ -65,6 +90,14 @@ export const FleetUpdates: React.FC = () => {
     staleTime: 30_000,
   });
 
+  // Fetch fleet orders (primary deployment mechanism)
+  const { data: fleetOrders = [], isLoading: ordersLoading } = useQuery<FleetOrder[]>({
+    queryKey: ['fleet-orders'],
+    queryFn: () => fleetUpdatesApi.getOrders(undefined, 30),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+
   // Fetch releases
   const { data: releases = [], isLoading: releasesLoading } = useQuery<FleetRelease[]>({
     queryKey: ['fleet-releases'],
@@ -73,12 +106,21 @@ export const FleetUpdates: React.FC = () => {
     staleTime: 30_000,
   });
 
-  // Fetch rollouts (poll faster for active rollout progress)
-  const { data: rollouts = [], isLoading: rolloutsLoading } = useQuery<FleetRollout[]>({
+  // Fetch rollouts
+  const { data: rollouts = [] } = useQuery<FleetRollout[]>({
     queryKey: ['fleet-rollouts'],
     queryFn: () => fleetUpdatesApi.getRollouts(),
     refetchInterval: 30_000,
     staleTime: 15_000,
+  });
+
+  // Cancel fleet order mutation
+  const cancelOrderMutation = useMutation({
+    mutationFn: (orderId: string) => fleetUpdatesApi.cancelOrder(orderId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fleet-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['fleet-stats'] });
+    },
   });
 
   // Create release mutation
@@ -151,16 +193,14 @@ export const FleetUpdates: React.FC = () => {
     },
   });
 
+  const activeOrders = fleetOrders.filter(o => o.status === 'active');
+  const recentOrders = fleetOrders.filter(o => o.status !== 'active');
+  const fo30d = stats?.fleet_orders_30d;
+
   return (
     <div className="space-y-6">
       {/* Stats Overview */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <GlassCard className="p-4">
-          <div className="text-sm text-label-tertiary">Latest Release</div>
-          <div className="text-2xl font-bold text-accent-primary mt-1">
-            {stats?.releases.latest_version || 'None'}
-          </div>
-        </GlassCard>
         <GlassCard className="p-4">
           <div className="text-sm text-label-tertiary">Deployed Version</div>
           <div className="text-2xl font-bold text-health-healthy mt-1">
@@ -171,114 +211,258 @@ export const FleetUpdates: React.FC = () => {
           </div>
         </GlassCard>
         <GlassCard className="p-4">
+          <div className="text-sm text-label-tertiary">Active Orders</div>
+          <div className="text-2xl font-bold text-accent-primary mt-1">
+            {activeOrders.length}
+          </div>
+          <div className="text-xs text-label-tertiary mt-0.5">
+            pending delivery
+          </div>
+        </GlassCard>
+        <GlassCard className="p-4">
+          <div className="text-sm text-label-tertiary">Orders (30d)</div>
+          <div className="text-2xl font-bold text-label-primary mt-1">
+            {fo30d?.total || 0}
+          </div>
+          <div className="text-xs text-label-tertiary mt-0.5">
+            {fo30d?.completed || 0} completed, {fo30d?.expired || 0} expired
+          </div>
+        </GlassCard>
+        <GlassCard className="p-4">
           <div className="text-sm text-label-tertiary">Active Rollouts</div>
           <div className="text-2xl font-bold text-health-warning mt-1">
             {stats?.rollouts.in_progress || 0}
           </div>
         </GlassCard>
         <GlassCard className="p-4">
-          <div className="text-sm text-label-tertiary">30-Day Success Rate</div>
-          <div className="text-2xl font-bold text-health-healthy mt-1">
-            {stats?.appliance_updates_30d.success_rate || 0}%
-          </div>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <div className="text-sm text-label-tertiary">Updates (30d)</div>
-          <div className="text-2xl font-bold text-label-primary mt-1">
-            {stats?.appliance_updates_30d.total || 0}
+          <div className="text-sm text-label-tertiary">Latest Release</div>
+          <div className="text-2xl font-bold text-accent-primary mt-1">
+            {stats?.releases.latest_version || 'None'}
           </div>
         </GlassCard>
       </div>
 
-      {/* Active Rollouts */}
+      {/* Active Fleet Orders */}
       <GlassCard>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-label-primary">Active Rollouts</h2>
+        <div className="flex items-center justify-between p-4 border-b border-separator">
+          <h2 className="text-lg font-semibold text-label-primary">Active Fleet Orders</h2>
+          <div className="text-sm text-label-tertiary">
+            {activeOrders.length} active
+          </div>
         </div>
 
-        {rolloutsLoading && (
+        {ordersLoading && (
           <div className="text-center py-8">
             <div className="w-8 h-8 border-2 border-accent-primary border-t-transparent rounded-full animate-spin mx-auto" />
           </div>
         )}
 
-        {!rolloutsLoading && rollouts.filter(r => r.status === 'in_progress' || r.status === 'paused').length === 0 && (
+        {!ordersLoading && activeOrders.length === 0 && (
           <div className="text-center py-8 text-label-tertiary">
-            No active rollouts
+            No active fleet orders
           </div>
         )}
 
-        {!rolloutsLoading && rollouts.filter(r => r.status === 'in_progress' || r.status === 'paused').map((rollout) => (
-          <div key={rollout.id} className="border border-separator rounded-ios-lg p-4 mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <span className="font-medium text-label-primary">{rollout.name || rollout.version}</span>
-                <span className="ml-2"><StatusBadge status={rollout.status} /></span>
-              </div>
-              <div className="flex gap-2">
-                {rollout.status === 'in_progress' && (
-                  <>
-                    <button
-                      onClick={() => pauseRolloutMutation.mutate(rollout.id)}
-                      className="px-3 py-1 text-sm bg-health-warning text-white rounded-ios-md hover:opacity-90"
-                    >
-                      Pause
-                    </button>
-                    <button
-                      onClick={() => advanceRolloutMutation.mutate(rollout.id)}
-                      className="px-3 py-1 text-sm bg-accent-primary text-white rounded-ios-md hover:opacity-90"
-                      disabled={rollout.current_stage >= rollout.stages.length - 1}
-                    >
-                      Advance Stage
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm('Cancel this rollout? Pending appliances will not be updated.')) {
-                          cancelRolloutMutation.mutate(rollout.id);
-                        }
-                      }}
-                      className="px-3 py-1 text-sm bg-health-critical text-white rounded-ios-md hover:opacity-90"
-                    >
-                      Cancel
-                    </button>
-                  </>
-                )}
-                {rollout.status === 'paused' && (
-                  <>
-                    <button
-                      onClick={() => resumeRolloutMutation.mutate(rollout.id)}
-                      className="px-3 py-1 text-sm bg-health-healthy text-white rounded-ios-md hover:opacity-90"
-                    >
-                      Resume
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm('Cancel this rollout? Pending appliances will not be updated.')) {
-                          cancelRolloutMutation.mutate(rollout.id);
-                        }
-                      }}
-                      className="px-3 py-1 text-sm bg-health-critical text-white rounded-ios-md hover:opacity-90"
-                    >
-                      Cancel
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            <div className="text-sm text-label-secondary mb-2">
-              Stage {rollout.current_stage + 1} of {rollout.stages.length} ({rollout.stages[rollout.current_stage]?.percent}%)
-            </div>
-
-            <ProgressBar progress={rollout.progress} />
+        {!ordersLoading && activeOrders.length > 0 && (
+          <div className="divide-y divide-separator">
+            {activeOrders.map((order) => {
+              const params = order.parameters as Record<string, string>;
+              return (
+                <div key={order.id} className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <StatusBadge status={order.status} />
+                      <span className="font-medium text-label-primary">
+                        {ORDER_TYPE_LABELS[order.order_type] || order.order_type}
+                      </span>
+                      {params.version && (
+                        <span className="text-sm text-accent-primary font-mono">v{params.version}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right text-sm">
+                        <div className="text-label-secondary">
+                          {order.completed}/{order.fleet_size} delivered
+                        </div>
+                        <div className="text-label-tertiary text-xs">
+                          expires {formatRelativeTime(order.expires_at)}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => cancelOrderMutation.mutate(order.id)}
+                        disabled={cancelOrderMutation.isPending}
+                        className="px-3 py-1 text-xs bg-health-critical text-white rounded-ios-md hover:opacity-90 disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                  {/* Progress bar */}
+                  <div className="mt-3">
+                    <div className="flex h-2 rounded-full overflow-hidden bg-fill-tertiary">
+                      <div
+                        className="bg-health-healthy"
+                        style={{ width: `${order.fleet_size > 0 ? (order.completed / order.fleet_size) * 100 : 0}%` }}
+                      />
+                      {order.failed > 0 && (
+                        <div
+                          className="bg-health-critical"
+                          style={{ width: `${(order.failed / order.fleet_size) * 100}%` }}
+                        />
+                      )}
+                    </div>
+                    <div className="flex gap-4 text-xs text-label-tertiary mt-1">
+                      <span>{order.completed} completed</span>
+                      {order.failed > 0 && <span className="text-health-critical">{order.failed} failed</span>}
+                      {order.skipped > 0 && <span>{order.skipped} skipped</span>}
+                      {order.created_by && <span>by {order.created_by}</span>}
+                      <span>{formatRelativeTime(order.created_at)}</span>
+                    </div>
+                  </div>
+                  {/* Parameters */}
+                  {Object.keys(params).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {Object.entries(params).map(([k, v]) => (
+                        <span key={k} className="text-xs px-2 py-0.5 rounded bg-fill-secondary text-label-secondary font-mono">
+                          {k}: {typeof v === 'string' && v.length > 40 ? v.slice(0, 40) + '...' : String(v)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        ))}
+        )}
       </GlassCard>
+
+      {/* Recent Fleet Orders */}
+      <GlassCard>
+        <div className="flex items-center justify-between p-4 border-b border-separator">
+          <h2 className="text-lg font-semibold text-label-primary">Order History</h2>
+        </div>
+
+        {recentOrders.length === 0 && !ordersLoading && (
+          <div className="text-center py-8 text-label-tertiary">
+            No order history yet
+          </div>
+        )}
+
+        {recentOrders.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="text-left text-sm text-label-tertiary border-b border-separator">
+                  <th className="px-4 py-2 font-medium">Type</th>
+                  <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 font-medium">Version</th>
+                  <th className="px-4 py-2 font-medium">Delivered</th>
+                  <th className="px-4 py-2 font-medium">Created</th>
+                  <th className="px-4 py-2 font-medium">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentOrders.slice(0, 20).map((order) => {
+                  const params = order.parameters as Record<string, string>;
+                  return (
+                    <tr key={order.id} className="border-b border-separator last:border-0">
+                      <td className="px-4 py-3 font-medium text-label-primary">
+                        {ORDER_TYPE_LABELS[order.order_type] || order.order_type}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={order.status} />
+                      </td>
+                      <td className="px-4 py-3 text-label-secondary font-mono text-sm">
+                        {params.version || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-label-secondary text-sm">
+                        {order.completed}/{order.fleet_size}
+                        {order.failed > 0 && <span className="text-health-critical ml-1">({order.failed} failed)</span>}
+                      </td>
+                      <td className="px-4 py-3 text-label-tertiary text-sm">
+                        {formatRelativeTime(order.created_at)}
+                      </td>
+                      <td className="px-4 py-3 text-label-tertiary text-sm">
+                        {order.created_by || '-'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </GlassCard>
+
+      {/* Active Rollouts (ISO release system) */}
+      {rollouts.filter(r => r.status === 'in_progress' || r.status === 'paused').length > 0 && (
+        <GlassCard>
+          <div className="flex items-center justify-between p-4 border-b border-separator">
+            <h2 className="text-lg font-semibold text-label-primary">Active ISO Rollouts</h2>
+          </div>
+
+          {rollouts.filter(r => r.status === 'in_progress' || r.status === 'paused').map((rollout) => (
+            <div key={rollout.id} className="p-4 border-b border-separator last:border-0">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <span className="font-medium text-label-primary">{rollout.name || rollout.version}</span>
+                  <span className="ml-2"><StatusBadge status={rollout.status} /></span>
+                </div>
+                <div className="flex gap-2">
+                  {rollout.status === 'in_progress' && (
+                    <>
+                      <button
+                        onClick={() => pauseRolloutMutation.mutate(rollout.id)}
+                        className="px-3 py-1 text-sm bg-health-warning text-white rounded-ios-md hover:opacity-90"
+                      >
+                        Pause
+                      </button>
+                      <button
+                        onClick={() => advanceRolloutMutation.mutate(rollout.id)}
+                        className="px-3 py-1 text-sm bg-accent-primary text-white rounded-ios-md hover:opacity-90"
+                        disabled={rollout.current_stage >= rollout.stages.length - 1}
+                      >
+                        Advance Stage
+                      </button>
+                      <button
+                        onClick={() => cancelRolloutMutation.mutate(rollout.id)}
+                        className="px-3 py-1 text-sm bg-health-critical text-white rounded-ios-md hover:opacity-90"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                  {rollout.status === 'paused' && (
+                    <>
+                      <button
+                        onClick={() => resumeRolloutMutation.mutate(rollout.id)}
+                        className="px-3 py-1 text-sm bg-health-healthy text-white rounded-ios-md hover:opacity-90"
+                      >
+                        Resume
+                      </button>
+                      <button
+                        onClick={() => cancelRolloutMutation.mutate(rollout.id)}
+                        className="px-3 py-1 text-sm bg-health-critical text-white rounded-ios-md hover:opacity-90"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="text-sm text-label-secondary mb-2">
+                Stage {rollout.current_stage + 1} of {rollout.stages.length} ({rollout.stages[rollout.current_stage]?.percent}%)
+              </div>
+              <ProgressBar progress={rollout.progress} />
+            </div>
+          ))}
+        </GlassCard>
+      )}
 
       {/* Releases */}
       <GlassCard>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-label-primary">Releases</h2>
+        <div className="flex items-center justify-between p-4 border-b border-separator">
+          <h2 className="text-lg font-semibold text-label-primary">ISO Releases</h2>
           <button
             onClick={() => setShowCreateRelease(true)}
             className="px-4 py-2 bg-accent-primary text-white rounded-ios-md hover:opacity-90 flex items-center gap-2"
@@ -307,18 +491,18 @@ export const FleetUpdates: React.FC = () => {
             <table className="w-full">
               <thead>
                 <tr className="text-left text-sm text-label-tertiary border-b border-separator">
-                  <th className="pb-2 font-medium">Version</th>
-                  <th className="pb-2 font-medium">Agent</th>
-                  <th className="pb-2 font-medium">Size</th>
-                  <th className="pb-2 font-medium">Created</th>
-                  <th className="pb-2 font-medium">Status</th>
-                  <th className="pb-2 font-medium">Actions</th>
+                  <th className="px-4 pb-2 font-medium">Version</th>
+                  <th className="px-4 pb-2 font-medium">Agent</th>
+                  <th className="px-4 pb-2 font-medium">Size</th>
+                  <th className="px-4 pb-2 font-medium">Created</th>
+                  <th className="px-4 pb-2 font-medium">Status</th>
+                  <th className="px-4 pb-2 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {releases.map((release) => (
                   <tr key={release.id} className="border-b border-separator last:border-0">
-                    <td className="py-3">
+                    <td className="px-4 py-3">
                       <span className="font-medium text-label-primary">{release.version}</span>
                       {release.is_latest && (
                         <span className="ml-2 px-2 py-0.5 text-xs bg-health-healthy text-white rounded-full">
@@ -326,21 +510,21 @@ export const FleetUpdates: React.FC = () => {
                         </span>
                       )}
                     </td>
-                    <td className="py-3 text-label-secondary">{release.agent_version || '-'}</td>
-                    <td className="py-3 text-label-secondary">
+                    <td className="px-4 py-3 text-label-secondary">{release.agent_version || '-'}</td>
+                    <td className="px-4 py-3 text-label-secondary">
                       {release.size_bytes ? `${(release.size_bytes / 1024 / 1024 / 1024).toFixed(1)} GB` : '-'}
                     </td>
-                    <td className="py-3 text-label-secondary">
+                    <td className="px-4 py-3 text-label-secondary">
                       {new Date(release.created_at).toLocaleDateString()}
                     </td>
-                    <td className="py-3">
+                    <td className="px-4 py-3">
                       {release.is_active ? (
                         <span className="text-health-healthy">Active</span>
                       ) : (
                         <span className="text-label-tertiary">Inactive</span>
                       )}
                     </td>
-                    <td className="py-3">
+                    <td className="px-4 py-3">
                       <div className="flex gap-2">
                         {!release.is_latest && release.is_active && (
                           <button
@@ -362,7 +546,7 @@ export const FleetUpdates: React.FC = () => {
                         {!release.is_latest && (
                           <button
                             onClick={() => {
-                              if (confirm(`Deactivate release ${release.version}? It will no longer be available for rollouts.`)) {
+                              if (confirm(`Deactivate release ${release.version}?`)) {
                                 deleteReleaseMutation.mutate(release.version);
                               }
                             }}
@@ -381,36 +565,34 @@ export const FleetUpdates: React.FC = () => {
         )}
       </GlassCard>
 
-      {/* Recent Rollouts History */}
-      <GlassCard>
-        <h2 className="text-lg font-semibold text-label-primary mb-4">Rollout History</h2>
+      {/* Rollout History */}
+      {rollouts.filter(r => r.status !== 'in_progress' && r.status !== 'paused').length > 0 && (
+        <GlassCard>
+          <div className="p-4 border-b border-separator">
+            <h2 className="text-lg font-semibold text-label-primary">ISO Rollout History</h2>
+          </div>
 
-        {rollouts.filter(r => r.status !== 'in_progress' && r.status !== 'paused').slice(0, 10).map((rollout) => (
-          <div key={rollout.id} className="flex items-center justify-between py-3 border-b border-separator last:border-0">
-            <div>
-              <span className="font-medium text-label-primary">{rollout.name || rollout.version}</span>
-              <span className="ml-2"><StatusBadge status={rollout.status} /></span>
-              <div className="text-sm text-label-tertiary">
-                {rollout.completed_at ? new Date(rollout.completed_at).toLocaleString() : '-'}
+          {rollouts.filter(r => r.status !== 'in_progress' && r.status !== 'paused').slice(0, 10).map((rollout) => (
+            <div key={rollout.id} className="flex items-center justify-between px-4 py-3 border-b border-separator last:border-0">
+              <div>
+                <span className="font-medium text-label-primary">{rollout.name || rollout.version}</span>
+                <span className="ml-2"><StatusBadge status={rollout.status} /></span>
+                <div className="text-sm text-label-tertiary">
+                  {rollout.completed_at ? new Date(rollout.completed_at).toLocaleString() : '-'}
+                </div>
               </div>
+              {rollout.progress && (
+                <div className="text-right text-sm">
+                  <div className="text-health-healthy">{rollout.progress.succeeded} succeeded</div>
+                  {rollout.progress.failed > 0 && (
+                    <div className="text-health-critical">{rollout.progress.failed} failed</div>
+                  )}
+                </div>
+              )}
             </div>
-            {rollout.progress && (
-              <div className="text-right text-sm">
-                <div className="text-health-healthy">{rollout.progress.succeeded} succeeded</div>
-                {rollout.progress.failed > 0 && (
-                  <div className="text-health-critical">{rollout.progress.failed} failed</div>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {rollouts.filter(r => r.status !== 'in_progress' && r.status !== 'paused').length === 0 && (
-          <div className="text-center py-8 text-label-tertiary">
-            No rollout history yet
-          </div>
-        )}
-      </GlassCard>
+          ))}
+        </GlassCard>
+      )}
 
       {/* Create Release Modal */}
       {showCreateRelease && (
@@ -429,7 +611,6 @@ export const FleetUpdates: React.FC = () => {
                   className="w-full px-3 py-2 rounded-ios-md bg-fill-secondary text-label-primary border border-separator focus:border-accent-primary focus:outline-none"
                 />
               </div>
-
               <div>
                 <label className="block text-sm text-label-secondary mb-1">ISO URL</label>
                 <input
@@ -440,7 +621,6 @@ export const FleetUpdates: React.FC = () => {
                   className="w-full px-3 py-2 rounded-ios-md bg-fill-secondary text-label-primary border border-separator focus:border-accent-primary focus:outline-none"
                 />
               </div>
-
               <div>
                 <label className="block text-sm text-label-secondary mb-1">SHA256 Checksum</label>
                 <input
@@ -451,7 +631,6 @@ export const FleetUpdates: React.FC = () => {
                   className="w-full px-3 py-2 rounded-ios-md bg-fill-secondary text-label-primary border border-separator focus:border-accent-primary focus:outline-none"
                 />
               </div>
-
               <div>
                 <label className="block text-sm text-label-secondary mb-1">Agent Version</label>
                 <input
@@ -462,7 +641,6 @@ export const FleetUpdates: React.FC = () => {
                   className="w-full px-3 py-2 rounded-ios-md bg-fill-secondary text-label-primary border border-separator focus:border-accent-primary focus:outline-none"
                 />
               </div>
-
               <div>
                 <label className="block text-sm text-label-secondary mb-1">Release Notes</label>
                 <textarea

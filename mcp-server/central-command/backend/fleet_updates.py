@@ -976,6 +976,20 @@ async def get_fleet_update_stats():
             """
         )
 
+        # Fleet orders stats (the primary deployment mechanism)
+        fleet_order_stats = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'active') as active,
+                COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
+                COUNT(*) FILTER (WHERE status = 'expired') as expired
+            FROM fleet_orders
+            WHERE created_at > NOW() - INTERVAL '30 days'
+            """
+        )
+
         return {
             "releases": {
                 "total": releases["total"],
@@ -998,6 +1012,13 @@ async def get_fleet_update_stats():
                 "failed": appliance_updates["failed"],
                 "rolled_back": appliance_updates["rolled_back"],
                 "success_rate": round(100 * appliance_updates["succeeded"] / appliance_updates["total"], 1) if appliance_updates["total"] > 0 else 0,
+            },
+            "fleet_orders_30d": {
+                "total": fleet_order_stats["total"],
+                "active": fleet_order_stats["active"],
+                "completed": fleet_order_stats["completed"],
+                "cancelled": fleet_order_stats["cancelled"],
+                "expired": fleet_order_stats["expired"],
             },
         }
 

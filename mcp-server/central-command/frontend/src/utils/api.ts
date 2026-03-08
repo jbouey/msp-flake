@@ -1369,6 +1369,28 @@ export interface FleetStats {
     rolled_back: number;
     success_rate: number;
   };
+  fleet_orders_30d?: {
+    total: number;
+    active: number;
+    completed: number;
+    cancelled: number;
+    expired: number;
+  };
+}
+
+export interface FleetOrder {
+  id: string;
+  order_type: string;
+  parameters: Record<string, unknown>;
+  skip_version: string | null;
+  status: string;
+  created_at: string;
+  expires_at: string;
+  created_by: string | null;
+  fleet_size: number;
+  completed: number;
+  failed: number;
+  skipped: number;
 }
 
 export const fleetUpdatesApi = {
@@ -1433,6 +1455,15 @@ export const fleetUpdatesApi = {
   deleteRelease: (version: string) =>
     fetchSitesApi<{ status: string }>(`/fleet/releases/${version}`, {
       method: 'DELETE',
+    }),
+
+  // Fleet orders (primary deployment mechanism)
+  getOrders: (status?: string, limit = 20) =>
+    fetchSitesApi<FleetOrder[]>(`/fleet/orders${status ? `?status=${status}&limit=${limit}` : `?limit=${limit}`}`),
+
+  cancelOrder: (orderId: string) =>
+    fetchSitesApi<{ status: string }>(`/fleet/orders/${orderId}/cancel`, {
+      method: 'POST',
     }),
 };
 
