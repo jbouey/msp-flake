@@ -13,6 +13,7 @@ import asyncpg
 from fastapi import APIRouter, HTTPException, Query
 
 from .fleet import get_pool
+from .oui_lookup import get_manufacturer_hint
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +319,13 @@ async def get_site_devices(
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(query, *params)
-        return [dict(row) for row in rows]
+        devices = []
+        for row in rows:
+            d = dict(row)
+            mac = d.get("mac_address")
+            d["manufacturer_hint"] = get_manufacturer_hint(mac) if mac else {"manufacturer": None, "device_class": None, "confidence": None}
+            devices.append(d)
+        return devices
 
 
 async def get_site_device_counts(site_id: str) -> dict:

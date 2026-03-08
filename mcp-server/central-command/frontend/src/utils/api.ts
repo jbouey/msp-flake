@@ -1463,6 +1463,11 @@ export interface DiscoveredDevice {
   sync_updated_at: string;
   appliance_hostname: string;
   site_id: string;
+  manufacturer_hint: {
+    manufacturer: string | null;
+    device_class: string | null;
+    confidence: string | null;
+  } | null;
 }
 
 export interface DeviceCounts {

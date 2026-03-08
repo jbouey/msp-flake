@@ -1,14 +1,14 @@
 {
-  "session": 157,
-  "updated": "2026-03-07T18:39:39.464247Z",
+  "session": 162,
+  "updated": "2026-03-08T20:00:00.000000Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "go_daemon_v0.3.18_live_agent_enrolled",
-    "vm_appliance": "go_daemon_v0.3.18_live",
+    "physical_appliance": "go_daemon_v0.3.19_live_agent_enrolled",
+    "vm_appliance": "go_daemon_v0.3.19_live",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_37_eligible_2_l2_patterns_promoted_flywheel_aggregation_bridge_deployed",
@@ -16,10 +16,13 @@
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "fleet_wide_orders_live_update_daemon_e2e_verified_v0.3.18",
+    "fleet_updates": "fleet_wide_orders_live_update_daemon_e2e_verified_v0.3.19",
     "app_protection_profiles": "feature_complete_migration_070_applied_13_endpoints_6_runbooks",
     "portal_auth": "email_password_login_all_portals_totp_2fa_all_portals_security_hardened",
-    "admin_user_management": "sessions_audit_log_2fa_email_edit_change_password_complete"
+    "admin_user_management": "sessions_audit_log_2fa_email_edit_change_password_complete",
+    "drift_config": "per_site_toggles_47_checks_admin_partner_client_portals_compliance_score_exclusion",
+    "macos_scanning": "13_active_checks_filevault_gatekeeper_sip_firewall_autoupdates_screenlk_ntp",
+    "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api"
   },
   "current_blocker": "None. VM appliance stale (iMac host offline).",
   "architecture_decision": {
@@ -178,35 +181,37 @@
     }
   ],
   "completed_this_session": [
-    "Email/password login for partner + client portals",
-    "Security audit: 4 critical, 7 high, 3 medium fixes",
-    "TOTP 2FA for admin, partner, and client portals",
-    "Admin user management: sessions, audit log, 2FA, email edit, change password"
+    "macOS drift scanning (13 active HIPAA checks)",
+    "Per-site drift config with admin/partner/client UI",
+    "Compliance score excludes disabled checks",
+    "SRA remediation save CSRF fix",
+    "MAC OUI device type hints in device inventory",
+    "Daemon v0.3.19 deployed via fleet order"
   ],
   "recent_commits": [
     {
-      "hash": "47e39ec",
-      "message": "feat: TOTP 2FA for all portals + admin user management enhancements"
+      "hash": "a28422e",
+      "message": "feat: drift config in partner + client portals, exclude disabled checks from compliance score"
     },
     {
-      "hash": "ce89837",
-      "message": "security: harden partner + client portal auth (audit fixes)"
+      "hash": "1517c0f",
+      "message": "fix: SRA remediation save broken by CSRF + add save confirmation"
     },
     {
-      "hash": "cbf20aa",
-      "message": "feat: email/password login for partner + client portals"
+      "hash": "1c4ff8f",
+      "message": "feat: per-site drift scan configuration with UI toggles"
     },
     {
-      "hash": "a7868c5",
-      "message": "feat: email-based partner signup \u2014 zero friction for non-OAuth providers"
+      "hash": "2949a50",
+      "message": "feat: add macOS drift scanning (14 HIPAA security checks via SSH)"
     },
     {
-      "hash": "6265f1a",
-      "message": "fix: wire up API key regeneration + fix pending partner approval URL"
+      "hash": "1b443c2",
+      "message": "feat: fix org API paths + add site assignment to organizations"
     },
     {
-      "hash": "74ffaba",
-      "message": "fix: incidents stuck in resolving \u2014 healing completion never resolved them"
+      "hash": "e7dd8d3",
+      "message": "fix: incident detail API passes UUID string instead of NaN"
     }
   ],
   "key_findings": {

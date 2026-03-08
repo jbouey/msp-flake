@@ -243,12 +243,22 @@ const DeviceRow: React.FC<{
           {device.ip_address}
         </td>
         <td className="px-4 py-3 text-label-secondary font-mono text-sm">
-          {device.mac_address || '-'}
+          <div>{device.mac_address || '-'}</div>
+          {device.manufacturer_hint?.manufacturer && (
+            <div className="text-xs italic text-label-tertiary mt-0.5" title="Inferred from MAC address (OUI)">
+              {device.manufacturer_hint.manufacturer}
+            </div>
+          )}
         </td>
         <td className="px-4 py-3">
           <span className={`${typeConfig.color} text-sm`}>
             {typeConfig.label}
           </span>
+          {device.manufacturer_hint?.device_class && device.device_type === 'unknown' && (
+            <div className="text-xs italic text-label-tertiary mt-0.5" title="Suggested type from MAC OUI lookup — not confirmed">
+              hint: {device.manufacturer_hint.device_class}
+            </div>
+          )}
         </td>
         <td className="px-4 py-3 text-label-secondary text-sm">
           {device.os_name || '-'}
@@ -295,6 +305,17 @@ const DeviceRow: React.FC<{
                 <span className="text-label-tertiary">Appliance:</span>
                 <div className="text-label-primary font-medium">{device.appliance_hostname}</div>
               </div>
+              {device.manufacturer_hint?.manufacturer && (
+                <div>
+                  <span className="text-label-tertiary">Manufacturer:</span>
+                  <div className="text-label-primary font-medium italic" title="Inferred from MAC address OUI — not guaranteed">
+                    {device.manufacturer_hint.manufacturer}
+                    {device.manufacturer_hint.device_class && (
+                      <span className="text-label-tertiary ml-1">({device.manufacturer_hint.device_class})</span>
+                    )}
+                  </div>
+                </div>
+              )}
               <div>
                 <span className="text-label-tertiary">Scan Policy:</span>
                 <div className="text-label-primary font-medium">{device.scan_policy}</div>
