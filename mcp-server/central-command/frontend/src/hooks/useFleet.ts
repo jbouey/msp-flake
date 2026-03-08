@@ -74,6 +74,7 @@ export function useClient(siteId: string | null) {
 export function useIncidents(params?: {
   site_id?: string;
   limit?: number;
+  offset?: number;
   level?: string;
   resolved?: boolean;
 }) {

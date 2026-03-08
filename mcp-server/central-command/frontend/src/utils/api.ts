@@ -171,12 +171,14 @@ export const incidentApi = {
   getIncidents: (params?: {
     site_id?: string;
     limit?: number;
+    offset?: number;
     level?: string;
     resolved?: boolean;
   }) => {
     const searchParams = new URLSearchParams();
     if (params?.site_id) searchParams.set('site_id', params.site_id);
     if (params?.limit) searchParams.set('limit', String(params.limit));
+    if (params?.offset !== undefined) searchParams.set('offset', String(params.offset));
     if (params?.level) searchParams.set('level', params.level);
     if (params?.resolved !== undefined) searchParams.set('resolved', String(params.resolved));
 
