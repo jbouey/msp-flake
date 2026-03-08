@@ -126,6 +126,21 @@ CHECK_TYPE_HIPAA_MAP = {
     "linux_boot": {"control": "164.310(d)(1)", "description": "Device and Media Controls (boot)"},
     "linux_integrity": {"control": "164.312(c)(1)", "description": "Integrity Controls"},
     "workstation": {"control": "164.312(a)(1)", "description": "Access Control (workstation)"},
+    # =========================================================================
+    # Go daemon: macOS scanner (submitter.go macosCheckTypes)
+    # =========================================================================
+    "macos_filevault": {"control": "164.312(a)(2)(iv)", "description": "Encryption and Decryption (FileVault)"},
+    "macos_gatekeeper": {"control": "164.308(a)(5)(ii)(B)", "description": "Protection from Malicious Software (Gatekeeper)"},
+    "macos_sip": {"control": "164.312(c)(1)", "description": "Integrity Controls (SIP)"},
+    "macos_firewall": {"control": "164.312(e)(1)", "description": "Transmission Security (macOS Firewall)"},
+    "macos_auto_update": {"control": "164.308(a)(5)(ii)(B)", "description": "Security Updates (macOS)"},
+    "macos_screen_lock": {"control": "164.312(a)(1)", "description": "Access Control (Screen Lock)"},
+    "macos_remote_login": {"control": "164.312(d)", "description": "Person or Entity Authentication (SSH)"},
+    "macos_file_sharing": {"control": "164.312(e)(1)", "description": "Transmission Security (SMB Sharing)"},
+    "macos_time_machine": {"control": "164.308(a)(7)(ii)(A)", "description": "Data Backup Plan (Time Machine)"},
+    "macos_ntp_sync": {"control": "164.312(b)", "description": "Audit Controls (NTP)"},
+    "macos_admin_users": {"control": "164.312(a)(1)", "description": "Access Control (Admin Users)"},
+    "macos_disk_space": {"control": "164.310(d)(2)(iv)", "description": "Data Backup and Storage (Disk)"},
 }
 
 
