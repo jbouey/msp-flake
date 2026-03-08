@@ -106,9 +106,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/partner-auth/google",       # OAuth initiation
         "/api/partner-auth/callback",     # OAuth callback
         "/api/partner-auth/providers",    # Provider list (GET-like)
-        "/api/client/auth/",     # Client login/magic-link/TOTP endpoints
-        "/api/client/totp/",     # Client TOTP management
-        "/api/companion/auth/",  # Companion login endpoints only
+        "/api/client/",          # Client portal — session-auth protected
+        "/api/companion/",       # Companion portal — session-auth protected
         "/api/portal/auth/",     # Portal magic link validation
         "/api/portal/sites/",    # Portal access request (public)
         "/api/admin/",           # Admin endpoints - Bearer auth protected

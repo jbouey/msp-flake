@@ -54,11 +54,25 @@ interface SRAWizardProps {
   apiBase?: string;
 }
 
+// Read CSRF token from cookie for state-changing requests
+function getCsrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const token = getCsrfToken();
+  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) h['X-CSRF-Token'] = token;
+  return h;
+}
+
 export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/compliance' }) => {
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [activeAssessment, setActiveAssessment] = useState<Assessment | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [responses, setResponses] = useState<Record<string, SRAResponse>>({});
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
   const [step, setStep] = useState(0); // 0=list, 1-3=categories, 4=summary, 5=remediation
   const [saving, setSaving] = useState(false);
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
@@ -92,7 +106,7 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
     const res = await fetch(`${apiBase}/sra`, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: csrfHeaders(),
       body: JSON.stringify({ title: 'Annual Security Risk Assessment' }),
     });
     if (res.ok) {
@@ -124,6 +138,7 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
   const saveProgress = async () => {
     if (!activeAssessment) return;
     setSaving(true);
+    setSaveStatus('idle');
     const batch = Object.values(responses).map(r => ({
       question_key: r.question_key,
       response: r.response,
@@ -132,13 +147,27 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
       remediation_due: r.remediation_due,
       notes: r.notes,
     }));
-    await fetch(`${apiBase}/sra/${activeAssessment.id}/responses`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ responses: batch }),
-    });
-    setSaving(false);
+    try {
+      const res = await fetch(`${apiBase}/sra/${activeAssessment.id}/responses`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: csrfHeaders(),
+        body: JSON.stringify({ responses: batch }),
+      });
+      if (res.ok) {
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 3000);
+      } else {
+        const errText = await res.text().catch(() => res.statusText);
+        console.error('Save failed:', res.status, errText);
+        setSaveStatus('error');
+      }
+    } catch (err) {
+      console.error('Save error:', err);
+      setSaveStatus('error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const completeAssessment = async () => {
@@ -147,6 +176,7 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
     const res = await fetch(`${apiBase}/sra/${activeAssessment.id}/complete`, {
       method: 'POST',
       credentials: 'include',
+      headers: csrfHeaders(),
     });
     if (res.ok) {
       const data = await res.json();
@@ -364,9 +394,20 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
                   </div>
                 );
               })}
-              <button onClick={saveProgress} disabled={saving} className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 text-sm disabled:opacity-50">
-                {saving ? 'Saving...' : 'Save Remediation Plan'}
-              </button>
+              <div className="flex items-center gap-3">
+                <button onClick={saveProgress} disabled={saving} className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 text-sm disabled:opacity-50">
+                  {saving ? 'Saving...' : 'Save Remediation Plan'}
+                </button>
+                {saveStatus === 'saved' && (
+                  <span className="text-sm text-green-600 font-medium flex items-center gap-1">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                    Saved successfully
+                  </span>
+                )}
+                {saveStatus === 'error' && (
+                  <span className="text-sm text-red-600 font-medium">Save failed — please try again</span>
+                )}
+              </div>
             </div>
           )}
         </div>
