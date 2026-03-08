@@ -192,7 +192,7 @@ export const incidentApi = {
     return fetchApi<Incident[]>(`/incidents${query ? `?${query}` : ''}`);
   },
 
-  getIncident: (id: number) => fetchApi<IncidentDetail>(`/incidents/${id}`),
+  getIncident: (id: string) => fetchApi<IncidentDetail>(`/incidents/${id}`),
 
   getEvents: (params?: {
     site_id?: string;

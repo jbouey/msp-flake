@@ -15,7 +15,7 @@ const IncidentDetailPanel: React.FC<{ incidentId: string; onClose: () => void }>
 
   useEffect(() => {
     setLoading(true);
-    incidentApi.getIncident(Number(incidentId))
+    incidentApi.getIncident(incidentId)
       .then(setDetail)
       .catch(() => setDetail(null))
       .finally(() => setLoading(false));
