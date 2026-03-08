@@ -153,7 +153,7 @@ func New(cfg *Config) *Daemon {
 	d := &Daemon{
 		config:    cfg,
 		phoneCli:  NewPhoneHomeClient(cfg),
-		registry:  grpcserver.NewAgentRegistry(),
+		registry:  grpcserver.NewAgentRegistryPersistent(cfg.StateDir),
 		cooldowns:  make(map[string]*driftCooldown),
 		winTargets: make(map[string]winTarget),
 	}

@@ -1618,6 +1618,142 @@ async def delete_credential(
     return {'status': 'deleted', 'credential_id': credential_id}
 
 
+@router.get("/me/onboarding")
+async def get_partner_onboarding(request: Request, partner=Depends(require_partner)):
+    """Get onboarding pipeline for partner's sites (excludes active/compliant)."""
+    from datetime import timezone
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT s.site_id, s.clinic_name, s.contact_name, s.contact_email,
+                   s.onboarding_stage, s.notes, s.blockers, s.created_at,
+                   s.lead_at, s.discovery_at, s.proposal_at, s.contract_at,
+                   s.intake_at, s.creds_at, s.shipped_at, s.received_at,
+                   s.connectivity_at, s.scanning_at, s.baseline_at, s.active_at,
+                   COUNT(sa.id) as appliance_count,
+                   MAX(sa.last_checkin) as last_checkin,
+                   (SELECT COUNT(*) FROM site_credentials sc WHERE sc.site_id = s.id) as credential_count
+            FROM sites s
+            LEFT JOIN site_appliances sa ON s.site_id = sa.site_id
+            WHERE s.partner_id = $1
+            GROUP BY s.site_id, s.clinic_name, s.contact_name, s.contact_email,
+                     s.onboarding_stage, s.notes, s.blockers, s.created_at,
+                     s.lead_at, s.discovery_at, s.proposal_at, s.contract_at,
+                     s.intake_at, s.creds_at, s.shipped_at, s.received_at,
+                     s.connectivity_at, s.scanning_at, s.baseline_at, s.active_at
+            ORDER BY s.created_at DESC
+        """, partner['id'])
+
+        stage_progress = {
+            'lead': 10, 'discovery': 20, 'proposal': 30, 'contract': 40,
+            'intake': 50, 'creds': 60, 'shipped': 70, 'received': 80,
+            'connectivity': 85, 'scanning': 90, 'baseline': 95,
+            'compliant': 100, 'active': 100,
+        }
+        stage_col_map = {
+            'lead': 'lead_at', 'discovery': 'discovery_at', 'proposal': 'proposal_at',
+            'contract': 'contract_at', 'intake': 'intake_at', 'creds': 'creds_at',
+            'shipped': 'shipped_at', 'received': 'received_at', 'connectivity': 'connectivity_at',
+            'scanning': 'scanning_at', 'baseline': 'baseline_at', 'active': 'active_at',
+        }
+
+        from datetime import datetime
+        now = datetime.now(timezone.utc)
+        pipeline = []
+        for row in rows:
+            stage = row['onboarding_stage'] or 'lead'
+            ts_col = stage_col_map.get(stage)
+            stage_entered = row[ts_col] if ts_col and row.get(ts_col) else row['created_at']
+            days_in_stage = (now - stage_entered).days if stage_entered else 0
+
+            # Auto-detect blockers
+            blockers = []
+            if row['blockers']:
+                try:
+                    blockers = json.loads(row['blockers']) if isinstance(row['blockers'], str) else row['blockers']
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Add system-detected blockers
+            if stage in ('creds', 'intake') and row['credential_count'] == 0:
+                blockers.append("No credentials configured")
+            if stage in ('connectivity', 'scanning') and row['appliance_count'] == 0:
+                blockers.append("No appliance connected")
+            if stage in ('received', 'shipped') and row['last_checkin'] is None:
+                blockers.append("Appliance has not checked in yet")
+
+            pipeline.append({
+                'site_id': row['site_id'],
+                'clinic_name': row['clinic_name'],
+                'contact_name': row['contact_name'],
+                'contact_email': row['contact_email'],
+                'stage': stage,
+                'progress_percent': stage_progress.get(stage, 0),
+                'days_in_stage': days_in_stage,
+                'stage_entered_at': stage_entered.isoformat() if stage_entered else None,
+                'blockers': blockers,
+                'notes': row['notes'],
+                'appliance_count': row['appliance_count'],
+                'credential_count': row['credential_count'],
+                'last_checkin': row['last_checkin'].isoformat() if row['last_checkin'] else None,
+                'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+            })
+
+    # Split into active pipeline vs completed
+    in_progress = [s for s in pipeline if s['stage'] not in ('active', 'compliant')]
+    completed = [s for s in pipeline if s['stage'] in ('active', 'compliant')]
+
+    return {
+        'pipeline': in_progress,
+        'completed': completed,
+        'total': len(pipeline),
+        'in_progress_count': len(in_progress),
+        'completed_count': len(completed),
+    }
+
+
+@router.post("/me/sites/{site_id}/trigger-checkin")
+async def trigger_site_checkin(
+    request: Request,
+    site_id: str,
+    partner=Depends(require_partner)
+):
+    """Request immediate checkin from site's appliance (creates force_checkin order)."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Verify site belongs to partner
+        site = await conn.fetchrow(
+            "SELECT id FROM sites WHERE site_id = $1 AND partner_id = $2",
+            site_id, partner['id']
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Find appliance
+        appliance = await conn.fetchrow("""
+            SELECT appliance_id FROM site_appliances
+            WHERE site_id = $1 ORDER BY last_checkin DESC NULLS LAST LIMIT 1
+        """, site_id)
+        if not appliance:
+            raise HTTPException(status_code=400, detail="No appliance connected to this site")
+
+        # Create force_checkin order
+        import uuid
+        from datetime import timedelta
+        order_id = str(uuid.uuid4())
+        now_ts = datetime.now(timezone.utc)
+        exp = now_ts + timedelta(hours=1)
+
+        await conn.execute("""
+            INSERT INTO admin_orders (id, appliance_id, order_type, parameters, status, expires_at, created_at)
+            VALUES ($1, $2, 'force_checkin', '{}'::jsonb, 'pending', $3, $4)
+        """, uuid.UUID(order_id), appliance['appliance_id'], exp, now_ts)
+
+    return {'status': 'queued', 'order_id': order_id, 'message': 'Checkin request queued for next poll cycle.'}
+
+
 @router.get("/me/sites/{site_id}/assets")
 async def list_site_assets(
     site_id: str,

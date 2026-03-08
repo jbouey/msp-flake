@@ -2,6 +2,10 @@
 package grpcserver
 
 import (
+	"encoding/json"
+	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,14 +27,23 @@ type AgentState struct {
 }
 
 // AgentRegistry tracks connected Go agents with command queue support.
+// Agent IDs and hostnames are persisted to disk so they survive daemon restarts.
 type AgentRegistry struct {
 	mu            sync.RWMutex
 	agents        map[string]*AgentState    // agent_id -> state
 	hostnameIndex map[string]string         // hostname_lower -> agent_id
 	configVersion int
+	persistPath   string // Path to JSON file for agent ID persistence
 }
 
-// NewAgentRegistry creates a new registry.
+// persistedAgent is the on-disk representation of a known agent.
+type persistedAgent struct {
+	AgentID  string `json:"agent_id"`
+	Hostname string `json:"hostname"`
+}
+
+// NewAgentRegistry creates a new registry. If stateDir is non-empty,
+// known agent IDs are loaded from disk and persisted on changes.
 func NewAgentRegistry() *AgentRegistry {
 	return &AgentRegistry{
 		agents:        make(map[string]*AgentState),
@@ -39,16 +52,78 @@ func NewAgentRegistry() *AgentRegistry {
 	}
 }
 
-// Register adds or updates an agent in the registry.
+// NewAgentRegistryPersistent creates a registry that persists known agents to stateDir.
+func NewAgentRegistryPersistent(stateDir string) *AgentRegistry {
+	r := &AgentRegistry{
+		agents:        make(map[string]*AgentState),
+		hostnameIndex: make(map[string]string),
+		configVersion: 1,
+		persistPath:   filepath.Join(stateDir, "agent_registry.json"),
+	}
+	r.loadFromDisk()
+	return r
+}
+
+// loadFromDisk loads known agent IDs from the persist file.
+// Agents are marked as disconnected (zero LastHeartbeat) until they reconnect.
+func (r *AgentRegistry) loadFromDisk() {
+	if r.persistPath == "" {
+		return
+	}
+	data, err := os.ReadFile(r.persistPath)
+	if err != nil {
+		return // File doesn't exist yet — first boot
+	}
+	var agents []persistedAgent
+	if err := json.Unmarshal(data, &agents); err != nil {
+		log.Printf("[registry] Failed to parse %s: %v", r.persistPath, err)
+		return
+	}
+	for _, a := range agents {
+		state := &AgentState{
+			AgentID:       a.AgentID,
+			Hostname:      a.Hostname,
+			hostnameLower: toLower(a.Hostname),
+		}
+		r.agents[a.AgentID] = state
+		r.hostnameIndex[state.hostnameLower] = a.AgentID
+	}
+	log.Printf("[registry] Loaded %d known agents from disk", len(agents))
+}
+
+// saveToDisk persists current agent IDs to disk. Called under write lock.
+func (r *AgentRegistry) saveToDisk() {
+	if r.persistPath == "" {
+		return
+	}
+	agents := make([]persistedAgent, 0, len(r.agents))
+	for _, a := range r.agents {
+		agents = append(agents, persistedAgent{
+			AgentID:  a.AgentID,
+			Hostname: a.Hostname,
+		})
+	}
+	data, err := json.MarshalIndent(agents, "", "  ")
+	if err != nil {
+		log.Printf("[registry] Failed to marshal agents: %v", err)
+		return
+	}
+	if err := os.WriteFile(r.persistPath, data, 0600); err != nil {
+		log.Printf("[registry] Failed to write %s: %v", r.persistPath, err)
+	}
+}
+
+// Register adds or updates an agent in the registry and persists to disk.
 func (r *AgentRegistry) Register(state *AgentState) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.agents[state.AgentID] = state
 	r.hostnameIndex[state.hostnameLower] = state.AgentID
+	r.saveToDisk()
 }
 
-// Unregister removes an agent from the registry.
+// Unregister removes an agent from the registry and persists to disk.
 func (r *AgentRegistry) Unregister(agentID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -56,6 +131,7 @@ func (r *AgentRegistry) Unregister(agentID string) {
 	if agent, ok := r.agents[agentID]; ok {
 		delete(r.hostnameIndex, agent.hostnameLower)
 		delete(r.agents, agentID)
+		r.saveToDisk()
 	}
 }
 

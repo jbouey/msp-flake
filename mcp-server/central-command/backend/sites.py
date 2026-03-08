@@ -2253,7 +2253,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         if should_send_creds:
             try:
                 creds = await conn.fetch("""
-                    SELECT credential_name, credential_type, encrypted_data
+                    SELECT credential_name, credential_type, encrypted_data,
+                           username, domain, password_encrypted, name
                     FROM site_credentials
                     WHERE site_id = $1
                     AND credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
@@ -2261,32 +2262,47 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                 """, checkin.site_id)
 
                 for cred in creds:
+                    cred_type = cred.get('credential_type', 'winrm')
+                    hostname = None
+                    username = ''
+                    password = ''
+                    use_ssl = False
+
+                    # Two credential formats:
+                    # 1. Admin portal: JSON blob in encrypted_data (host, username, password)
+                    # 2. Partner portal: separate columns (username, domain, password_encrypted via Fernet)
                     if cred['encrypted_data']:
                         try:
                             cred_data = json.loads(cred['encrypted_data'])
-                            cred_type = cred.get('credential_type', 'winrm')
-                            # Transform credentials to expected format
                             hostname = cred_data.get('host') or cred_data.get('target_host')
                             username = cred_data.get('username', '')
                             password = cred_data.get('password', '')
-                            domain = cred_data.get('domain', '')
                             use_ssl = cred_data.get('use_ssl', False)
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.warning(f"Checkin {checkin.site_id}: malformed credential JSON for {cred.get('credential_name', '?')}: {e}")
+                            continue
+                    elif cred.get('username') and cred.get('password_encrypted'):
+                        # Partner-format credentials: decrypt Fernet password
+                        try:
+                            from .oauth_login import decrypt_secret
+                            username = cred['username']
+                            password = decrypt_secret(cred['password_encrypted'])
+                            # Partner creds use credential_name as hostname hint
+                            hostname = cred.get('name') or cred.get('credential_name')
+                        except Exception as e:
+                            logger.warning(f"Checkin {checkin.site_id}: failed to decrypt partner credential {cred.get('name', '?')}: {e}")
+                            continue
+                    else:
+                        continue  # No usable credential data
 
-                            # Send username without domain prefix — Basic auth
-                            # over HTTP rejects domain\user format on many DCs.
-                            # The Go daemon handles domain context separately.
-                            full_username = username
-
-                            if hostname:
-                                windows_targets.append({
-                                    "hostname": hostname,
-                                    "username": full_username,
-                                    "password": password,
-                                    "use_ssl": use_ssl,
-                                    "role": cred_type,
-                                })
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Checkin {checkin.site_id}: malformed Windows credential JSON for {cred.get('credential_name', '?')}: {e}")
+                    if hostname:
+                        windows_targets.append({
+                            "hostname": hostname,
+                            "username": username,
+                            "password": password,
+                            "use_ssl": use_ssl,
+                            "role": cred_type,
+                        })
             except Exception as e:
                 logger.error(f"Checkin {checkin.site_id}: Windows credentials lookup failed: {e}")
 
