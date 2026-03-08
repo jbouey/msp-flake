@@ -18,7 +18,7 @@
   --separator-medium: rgba(60, 60, 67, 0.18);
 
   /* Glass surfaces — real translucency */
-  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-bg: rgba(255, 255, 255, 0.78);
   --glass-border: rgba(255, 255, 255, 0.3);
   --glass-sidebar-bg: rgba(255, 255, 255, 0.8);
   --glass-sidebar-border: rgba(60, 60, 67, 0.1);
@@ -95,10 +95,10 @@
 /* Content area atmospheric background — gives glass something to blur */
 .content-atmosphere {
   background:
-    radial-gradient(ellipse 80% 60% at 10% 0%, rgba(20, 168, 158, 0.16) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 80% at 90% 20%, rgba(60, 188, 180, 0.10) 0%, transparent 60%),
-    radial-gradient(ellipse 70% 50% at 50% 90%, rgba(88, 86, 214, 0.05) 0%, transparent 60%),
-    radial-gradient(ellipse 40% 40% at 75% 60%, rgba(60, 188, 180, 0.06) 0%, transparent 50%);
+    radial-gradient(ellipse 80% 60% at 10% 0%, rgba(20, 168, 158, 0.05) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 80% at 90% 20%, rgba(60, 188, 180, 0.04) 0%, transparent 60%),
+    radial-gradient(ellipse 70% 50% at 50% 90%, rgba(88, 86, 214, 0.03) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 40% at 75% 60%, rgba(60, 188, 180, 0.03) 0%, transparent 50%);
 }
 .dark .content-atmosphere {
   background:
