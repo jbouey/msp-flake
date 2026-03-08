@@ -7,6 +7,7 @@ import { PartnerComplianceSettings } from './PartnerComplianceSettings';
 import { PartnerExceptionManagement } from './PartnerExceptionManagement';
 import { PartnerLearning } from './PartnerLearning';
 import { PartnerEscalations } from './PartnerEscalations';
+import { PartnerDriftConfig } from './PartnerDriftConfig';
 import { PartnerOnboarding } from './PartnerOnboarding';
 
 interface Site {
@@ -53,6 +54,7 @@ export const PartnerDashboard: React.FC = () => {
   const [newClientName, setNewClientName] = useState('');
   const [creating, setCreating] = useState(false);
   const [qrProvision, setQrProvision] = useState<Provision | null>(null);
+  const [driftConfigSite, setDriftConfigSite] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -377,7 +379,15 @@ export const PartnerDashboard: React.FC = () => {
 
       {/* Content */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        {activeTab === 'sites' && (
+        {activeTab === 'sites' && driftConfigSite && (
+          <PartnerDriftConfig
+            siteId={driftConfigSite.id}
+            siteName={driftConfigSite.name}
+            onBack={() => setDriftConfigSite(null)}
+          />
+        )}
+
+        {activeTab === 'sites' && !driftConfigSite && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             {sites.length === 0 ? (
               <div className="p-12 text-center">
@@ -409,6 +419,7 @@ export const PartnerDashboard: React.FC = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Tier</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Appliances</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Last Check-in</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
@@ -428,6 +439,14 @@ export const PartnerDashboard: React.FC = () => {
                       <td className="px-6 py-4 text-sm text-slate-600 capitalize">{site.tier}</td>
                       <td className="px-6 py-4 text-sm text-slate-600">{site.appliance_count}</td>
                       <td className="px-6 py-4 text-sm text-slate-600">{formatTime(site.last_checkin)}</td>
+                      <td className="px-6 py-4 text-right">
+                        <button
+                          onClick={() => setDriftConfigSite({ id: site.site_id, name: site.clinic_name })}
+                          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium transition"
+                        >
+                          Security Checks
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

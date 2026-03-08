@@ -10,3 +10,4 @@ export { ClientSecurity } from './ClientSecurity';
 export { ClientHelp } from './ClientHelp';
 export { ClientHealingLogs } from './ClientHealingLogs';
 export { ClientCompliance } from './ClientCompliance';
+export { ClientDriftConfig } from './ClientDriftConfig';

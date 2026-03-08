@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { OsirisCareLeaf } from '../components/shared';
+import { ClientDriftConfig } from './ClientDriftConfig';
 
 interface Site {
   site_id: string;
@@ -52,6 +53,7 @@ export const ClientDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [driftConfigSite, setDriftConfigSite] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -238,6 +240,14 @@ export const ClientDashboard: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {driftConfigSite ? (
+          <ClientDriftConfig
+            siteId={driftConfigSite.id}
+            siteName={driftConfigSite.name}
+            onBack={() => setDriftConfigSite(null)}
+          />
+        ) : (
+        <>
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           {/* Compliance Score */}
@@ -356,6 +366,12 @@ export const ClientDashboard: React.FC = () => {
                     <span className={`px-3 py-1 text-xs font-medium rounded-full ${site.tier === 'essential' ? 'bg-blue-100 text-blue-700' : site.tier === 'professional' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700'}`}>
                       {site.tier || 'Standard'}
                     </span>
+                    <button
+                      onClick={() => setDriftConfigSite({ id: site.site_id, name: site.clinic_name })}
+                      className="text-xs text-teal-600 hover:text-teal-700 font-medium"
+                    >
+                      Security Checks
+                    </button>
                     <Link
                       to="/client/evidence"
                       className="text-xs text-teal-600 hover:text-teal-700 font-medium"
@@ -474,6 +490,8 @@ export const ClientDashboard: React.FC = () => {
             </div>
           </Link>
         </div>
+        </>
+        )}
       </main>
 
       {/* Footer */}

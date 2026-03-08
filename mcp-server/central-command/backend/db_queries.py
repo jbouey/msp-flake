@@ -424,22 +424,44 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
     """))
     inc_row = inc_row.fetchone()
 
-    comp_row = await db.execute(text("""
-        WITH expanded AS (
-            SELECT c->>'status' as check_status
-            FROM compliance_bundles cb,
-                 jsonb_array_elements(cb.checks) as c
-            WHERE cb.created_at > NOW() - INTERVAL '24 hours'
-              AND jsonb_array_length(cb.checks) > 0
-        )
-        SELECT
-            COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) as passed,
-            COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total
-        FROM expanded
-    """))
-    comp_row = comp_row.fetchone()
+    # Fetch disabled drift checks per site for compliance score filtering
+    global_disabled_by_site: Dict[str, set] = {}
+    global_default_disabled: set = set()
+    try:
+        dc_result = await db.execute(text(
+            "SELECT site_id, check_type FROM site_drift_config WHERE enabled = false"
+        ))
+        dc_rows = dc_result.fetchall()
+        for r in dc_rows:
+            global_disabled_by_site.setdefault(r.site_id, set()).add(r.check_type)
+        global_default_disabled = global_disabled_by_site.get('__defaults__', set())
+    except Exception:
+        pass  # If table doesn't exist yet, skip
 
-    compliance_score = round((comp_row.passed or 0) / max(comp_row.total or 1, 1) * 100, 1)
+    comp_result = await db.execute(text("""
+        SELECT cb.site_id, c->>'check' as check_type, c->>'status' as check_status
+        FROM compliance_bundles cb,
+             jsonb_array_elements(cb.checks) as c
+        WHERE cb.created_at > NOW() - INTERVAL '24 hours'
+          AND jsonb_array_length(cb.checks) > 0
+    """))
+    comp_rows = comp_result.fetchall()
+
+    comp_passed = 0
+    comp_total = 0
+    for cr in comp_rows:
+        ct = cr.check_type or ""
+        site_disabled = global_disabled_by_site.get(cr.site_id, global_default_disabled)
+        if ct in site_disabled:
+            continue
+        status = (cr.check_status or "").lower()
+        if status in ("pass", "compliant"):
+            comp_passed += 1
+            comp_total += 1
+        elif status in ("fail", "non_compliant", "warning"):
+            comp_total += 1
+
+    compliance_score = round(comp_passed / max(comp_total, 1) * 100, 1)
 
     # Calculate connectivity score from appliance checkins
     total_appliances = appliance_row.total or 0
@@ -532,6 +554,22 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
     
     Scoring: compliant/pass=100, warning=50, non_compliant/fail=0
     """
+    # Fetch disabled drift checks for this site
+    disabled_checks = set()
+    try:
+        dc_result = await db.execute(text(
+            "SELECT check_type FROM site_drift_config WHERE site_id = :site_id AND enabled = false"
+        ), {"site_id": site_id})
+        dc_rows = dc_result.fetchall()
+        if not dc_rows:
+            dc_result = await db.execute(text(
+                "SELECT check_type FROM site_drift_config WHERE site_id = '__defaults__' AND enabled = false"
+            ))
+            dc_rows = dc_result.fetchall()
+        disabled_checks = {r.check_type for r in dc_rows}
+    except Exception:
+        pass  # If table doesn't exist yet, skip
+
     # Get the latest compliance bundle for this site
     result = await db.execute(text("""
         SELECT checks, summary, checked_at
@@ -565,6 +603,8 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
         checks = bundle.checks or []
         for check in checks:
             check_type = check.get("check", "")
+            if check_type in disabled_checks:
+                continue
             status = check.get("status", "").lower()
 
             # Map status to score
@@ -640,6 +680,20 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
     if cached is not None:
         return cached
 
+    # Fetch all disabled drift checks in one query
+    disabled_by_site: Dict[str, set] = {}
+    default_disabled: set = set()
+    try:
+        dc_result = await db.execute(text(
+            "SELECT site_id, check_type FROM site_drift_config WHERE enabled = false"
+        ))
+        dc_rows = dc_result.fetchall()
+        for r in dc_rows:
+            disabled_by_site.setdefault(r.site_id, set()).add(r.check_type)
+        default_disabled = disabled_by_site.get('__defaults__', set())
+    except Exception:
+        pass  # If table doesn't exist yet, skip
+
     result = await db.execute(text("""
         SELECT site_id, checks FROM (
             SELECT site_id, checks,
@@ -661,6 +715,7 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
     # Score each site
     scores = {}
     for site_id, bundles_checks in site_bundles.items():
+        site_disabled = disabled_by_site.get(site_id, default_disabled)
         category_scores = {cat: [] for cat in CATEGORY_CHECKS}
 
         for checks in bundles_checks:
@@ -668,6 +723,8 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
                 continue
             for check in checks:
                 check_type = check.get("check", "")
+                if check_type in site_disabled:
+                    continue
                 status = check.get("status", "").lower()
 
                 if status in ("compliant", "pass"):

@@ -708,6 +708,58 @@ async def get_site_history(
 
 
 # =============================================================================
+# DRIFT CONFIG ENDPOINTS
+# =============================================================================
+
+@auth_router.get("/sites/{site_id}/drift-config")
+async def get_client_drift_config(site_id: str, user: dict = Depends(require_client_user)):
+    """Get drift scan configuration for a client's site."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        owner = await conn.fetchval(
+            "SELECT client_org_id FROM sites WHERE site_id = $1", site_id)
+        if str(owner) != str(user["org_id"]):
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        rows = await conn.fetch(
+            "SELECT check_type, enabled, notes FROM site_drift_config WHERE site_id = $1 ORDER BY check_type",
+            site_id)
+        if not rows:
+            rows = await conn.fetch(
+                "SELECT check_type, enabled, notes FROM site_drift_config WHERE site_id = '__defaults__' ORDER BY check_type")
+
+        def _platform(ct):
+            if ct.startswith("macos_"): return "macos"
+            if ct.startswith("linux_"): return "linux"
+            return "windows"
+
+        checks = [{"check_type": r["check_type"], "enabled": r["enabled"], "platform": _platform(r["check_type"]), "notes": r["notes"] or ""} for r in rows]
+    return {"site_id": site_id, "checks": checks}
+
+
+@auth_router.put("/sites/{site_id}/drift-config")
+async def update_client_drift_config(site_id: str, body: dict, user: dict = Depends(require_client_user)):
+    """Update drift scan configuration for a client's site."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        owner = await conn.fetchval(
+            "SELECT client_org_id FROM sites WHERE site_id = $1", site_id)
+        if str(owner) != str(user["org_id"]):
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        checks = body.get("checks", [])
+        async with conn.transaction():
+            for item in checks:
+                await conn.execute("""
+                    INSERT INTO site_drift_config (site_id, check_type, enabled, modified_by, modified_at)
+                    VALUES ($1, $2, $3, $4, NOW())
+                    ON CONFLICT (site_id, check_type)
+                    DO UPDATE SET enabled = $3, modified_by = $4, modified_at = NOW()
+                """, site_id, item["check_type"], item["enabled"], f"client:{user.get('email', user['id'])}")
+    return {"status": "ok", "site_id": site_id, "updated": len(checks)}
+
+
+# =============================================================================
 # EVIDENCE ENDPOINTS
 # =============================================================================
 
