@@ -2696,3 +2696,77 @@ async def get_organization_detail(org_id: str, db: AsyncSession = Depends(get_db
         "site_count": len(sites),
         "sites": sites,
     }
+
+
+@router.get("/organizations/{org_id}/available-sites")
+async def get_available_sites(
+    org_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Get sites not yet assigned to this org (or any org)."""
+    result = await db.execute(text("""
+        SELECT s.site_id, s.clinic_name, s.tier,
+               sa.last_checkin, sa.status
+        FROM sites s
+        LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+        WHERE s.client_org_id IS NULL OR s.client_org_id != :org_id
+        ORDER BY s.clinic_name
+    """), {"org_id": org_id})
+    rows = result.fetchall()
+    return {"sites": [
+        {
+            "site_id": r.site_id,
+            "clinic_name": r.clinic_name or r.site_id,
+            "tier": r.tier,
+            "last_checkin": r.last_checkin.isoformat() if r.last_checkin else None,
+            "status": r.status,
+        }
+        for r in rows
+    ]}
+
+
+@router.post("/organizations/{org_id}/sites")
+async def assign_site_to_org(
+    org_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Assign an existing site to an organization."""
+    body = await request.json()
+    site_id = body.get("site_id", "").strip()
+    if not site_id:
+        raise HTTPException(status_code=400, detail="site_id is required")
+
+    # Verify org exists
+    org = await db.execute(text("SELECT id FROM client_orgs WHERE id = :org_id"), {"org_id": org_id})
+    if not org.fetchone():
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Verify site exists
+    site = await db.execute(text("SELECT site_id FROM sites WHERE site_id = :site_id"), {"site_id": site_id})
+    if not site.fetchone():
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    await db.execute(text("""
+        UPDATE sites SET client_org_id = :org_id WHERE site_id = :site_id
+    """), {"org_id": org_id, "site_id": site_id})
+    await db.commit()
+    return {"status": "assigned", "site_id": site_id, "org_id": org_id}
+
+
+@router.delete("/organizations/{org_id}/sites/{site_id}")
+async def unassign_site_from_org(
+    org_id: str,
+    site_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Remove a site from an organization."""
+    await db.execute(text("""
+        UPDATE sites SET client_org_id = NULL
+        WHERE site_id = :site_id AND client_org_id = :org_id
+    """), {"org_id": org_id, "site_id": site_id})
+    await db.commit()
+    return {"status": "unassigned", "site_id": site_id}

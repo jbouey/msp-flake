@@ -47,6 +47,75 @@ const ComplianceBar: React.FC<{ site: OrgSite }> = ({ site }) => {
   );
 };
 
+const AddSitePanel: React.FC<{ orgId: string }> = ({ orgId }) => {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+
+  const { data: availData, isLoading } = useQuery({
+    queryKey: ['available-sites', orgId],
+    queryFn: () => organizationsApi.getAvailableSites(orgId),
+    enabled: open,
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: (siteId: string) => organizationsApi.assignSite(orgId, siteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['organization', orgId] });
+      queryClient.invalidateQueries({ queryKey: ['available-sites', orgId] });
+    },
+  });
+
+  const availableSites = availData?.sites || [];
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="px-3 py-1.5 rounded-ios bg-accent-primary text-white text-sm hover:bg-accent-primary/90 transition-colors flex items-center gap-1"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+        </svg>
+        Add Site
+      </button>
+    );
+  }
+
+  return (
+    <div className="p-4 bg-fill-quaternary rounded-ios space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-label-primary">Add Existing Site</h3>
+        <button onClick={() => setOpen(false)} className="text-xs text-label-tertiary hover:text-label-primary">
+          Close
+        </button>
+      </div>
+      {isLoading ? (
+        <Spinner size="sm" />
+      ) : availableSites.length === 0 ? (
+        <p className="text-sm text-label-tertiary">All sites are already assigned to organizations.</p>
+      ) : (
+        <div className="space-y-2 max-h-48 overflow-y-auto">
+          {availableSites.map((site) => (
+            <div key={site.site_id} className="flex items-center justify-between p-2 rounded-ios bg-fill-secondary">
+              <div>
+                <p className="text-sm font-medium text-label-primary">{site.clinic_name}</p>
+                <p className="text-xs text-label-tertiary">{site.site_id}</p>
+              </div>
+              <button
+                onClick={() => assignMutation.mutate(site.site_id)}
+                disabled={assignMutation.isPending}
+                className="px-3 py-1 rounded-ios bg-accent-primary text-white text-xs hover:bg-accent-primary/90 disabled:opacity-50"
+              >
+                {assignMutation.isPending ? '...' : 'Assign'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const OrgDashboard: React.FC = () => {
   const { orgId } = useParams<{ orgId: string }>();
   const navigate = useNavigate();
@@ -168,8 +237,9 @@ export const OrgDashboard: React.FC = () => {
 
       {/* Sites detail table */}
       <GlassCard padding="none">
-        <div className="px-4 py-3 border-b border-separator-light">
+        <div className="px-4 py-3 border-b border-separator-light flex items-center justify-between">
           <h2 className="text-lg font-semibold text-label-primary">Sites</h2>
+          <AddSitePanel orgId={orgId!} />
         </div>
         <table className="w-full">
           <thead className="bg-fill-quaternary border-b border-separator-light">

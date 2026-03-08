@@ -577,10 +577,10 @@ export interface OrgCredential {
 
 export const organizationsApi = {
   getOrganizations: () =>
-    fetchApi<{ organizations: Organization[]; count: number }>('/dashboard/organizations'),
+    fetchApi<{ organizations: Organization[]; count: number }>('/organizations'),
 
   getOrganization: (orgId: string) =>
-    fetchApi<OrganizationDetail>(`/dashboard/organizations/${orgId}`),
+    fetchApi<OrganizationDetail>(`/organizations/${orgId}`),
 
   createOrganization: (data: {
     name: string;
@@ -589,7 +589,7 @@ export const organizationsApi = {
     practice_type?: string;
     provider_count?: number;
   }) =>
-    fetchApi<{ status: string; id: string; name: string }>('/dashboard/organizations', {
+    fetchApi<{ status: string; id: string; name: string }>('/organizations', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
@@ -613,6 +613,22 @@ export const organizationsApi = {
 
   deleteCredential: (orgId: string, credentialId: string) =>
     fetchSitesApi<{ status: string }>(`/organizations/${orgId}/credentials/${credentialId}`, {
+      method: 'DELETE',
+    }),
+
+  getAvailableSites: (orgId: string) =>
+    fetchApi<{ sites: Array<{ site_id: string; clinic_name: string; tier: string; last_checkin: string | null; status: string }> }>(
+      `/organizations/${orgId}/available-sites`
+    ),
+
+  assignSite: (orgId: string, siteId: string) =>
+    fetchApi<{ status: string; site_id: string }>(`/organizations/${orgId}/sites`, {
+      method: 'POST',
+      body: JSON.stringify({ site_id: siteId }),
+    }),
+
+  unassignSite: (orgId: string, siteId: string) =>
+    fetchApi<{ status: string }>(`/organizations/${orgId}/sites/${siteId}`, {
       method: 'DELETE',
     }),
 };
