@@ -332,9 +332,8 @@ export const ClientDashboard: React.FC = () => {
           ) : (
             <div className="divide-y divide-slate-200">
               {dashboard?.sites.map((site) => (
-                <Link
+                <div
                   key={site.site_id}
-                  to={`/client/sites/${site.site_id}`}
                   className="flex items-center justify-between p-6 hover:bg-teal-50/50 transition"
                 >
                   <div className="flex items-center gap-4">
@@ -357,11 +356,14 @@ export const ClientDashboard: React.FC = () => {
                     <span className={`px-3 py-1 text-xs font-medium rounded-full ${site.tier === 'essential' ? 'bg-blue-100 text-blue-700' : site.tier === 'professional' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700'}`}>
                       {site.tier || 'Standard'}
                     </span>
-                    <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
+                    <Link
+                      to="/client/evidence"
+                      className="text-xs text-teal-600 hover:text-teal-700 font-medium"
+                    >
+                      View Evidence
+                    </Link>
                   </div>
-                </Link>
+                </div>
               ))}
             </div>
           )}

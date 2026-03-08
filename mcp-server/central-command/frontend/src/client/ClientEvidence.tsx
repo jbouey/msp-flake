@@ -22,6 +22,7 @@ export const ClientEvidence: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [offset, setOffset] = useState(0);
   const [filter, setFilter] = useState<string>('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const limit = 50;
 
   useEffect(() => {
@@ -150,7 +151,8 @@ export const ClientEvidence: React.FC = () => {
               </thead>
               <tbody className="bg-white divide-y divide-slate-200">
                 {evidence.map((bundle) => (
-                  <tr key={bundle.id} className="hover:bg-teal-50/50">
+                  <React.Fragment key={bundle.id}>
+                  <tr className="hover:bg-teal-50/50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <p className="text-sm font-medium text-slate-900">{bundle.clinic_name}</p>
                       <p className="text-xs text-slate-500">{bundle.site_id}</p>
@@ -163,8 +165,8 @@ export const ClientEvidence: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Link
-                          to={`/client/evidence/${bundle.id}`}
+                        <button
+                          onClick={() => setExpandedId(expandedId === bundle.id ? null : bundle.id)}
                           className="p-2 text-slate-500 hover:text-teal-600 rounded hover:bg-teal-50"
                           title="View Details"
                         >
@@ -172,7 +174,7 @@ export const ClientEvidence: React.FC = () => {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                           </svg>
-                        </Link>
+                        </button>
                         <button
                           onClick={() => handleDownload(bundle.id)}
                           className="p-2 text-slate-500 hover:text-teal-600 rounded hover:bg-teal-50"
@@ -185,6 +187,42 @@ export const ClientEvidence: React.FC = () => {
                       </div>
                     </td>
                   </tr>
+                  {expandedId === bundle.id && (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-4 bg-slate-50 border-b border-slate-200">
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <span className="text-slate-500">Evidence Hash:</span>
+                              <p className="font-mono text-xs text-slate-700 mt-1 break-all">{bundle.bundle_hash}</p>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">Check Type:</span>
+                              <p className="font-medium text-slate-900 mt-1">{bundle.check_type}</p>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">HIPAA Control:</span>
+                              <p className="font-medium text-slate-900 mt-1">{bundle.hipaa_control || 'N/A'}</p>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">Checked At:</span>
+                              <p className="font-medium text-slate-900 mt-1">{new Date(bundle.checked_at).toLocaleString()}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
+                            <span className="text-xs text-slate-500">This evidence bundle is cryptographically hashed for audit integrity.</span>
+                            <button
+                              onClick={() => handleDownload(bundle.id)}
+                              className="ml-auto text-xs text-teal-600 hover:text-teal-700 font-medium"
+                            >
+                              Download for Auditor
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>

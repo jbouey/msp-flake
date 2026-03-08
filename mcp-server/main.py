@@ -169,10 +169,23 @@ redis_client: Optional[redis.Redis] = None
 
 signing_key: Optional[SigningKey] = None
 verify_key: Optional[VerifyKey] = None
+previous_signing_key: Optional[SigningKey] = None
+previous_verify_key: Optional[VerifyKey] = None
 
 def load_or_create_signing_key():
-    global signing_key, verify_key
-    
+    global signing_key, verify_key, previous_signing_key, previous_verify_key
+
+    # Load previous key if exists (for rotation support)
+    prev_path = SIGNING_KEY_FILE.with_suffix('.key.previous')
+    if prev_path.exists():
+        try:
+            prev_hex = prev_path.read_text().strip()
+            previous_signing_key = SigningKey(prev_hex, encoder=HexEncoder)
+            previous_verify_key = previous_signing_key.verify_key
+            logger.info("Loaded previous signing key for verification")
+        except Exception as e:
+            logger.warning(f"Failed to load previous signing key: {e}")
+
     if SIGNING_KEY_FILE.exists():
         # Load existing key
         key_hex = SIGNING_KEY_FILE.read_text().strip()
@@ -185,7 +198,7 @@ def load_or_create_signing_key():
         SIGNING_KEY_FILE.write_text(signing_key.encode(encoder=HexEncoder).decode())
         SIGNING_KEY_FILE.chmod(0o600)
         logger.info("Generated new signing key", path=str(SIGNING_KEY_FILE))
-    
+
     verify_key = signing_key.verify_key
 
 def sign_data(data: str) -> str:
@@ -196,6 +209,13 @@ def sign_data(data: str) -> str:
 def get_public_key_hex() -> str:
     """Get hex-encoded public key."""
     return verify_key.encode(encoder=HexEncoder).decode()
+
+def get_all_public_keys_hex() -> list[str]:
+    """Return all valid public keys (current + previous) for multi-key verification."""
+    keys = [get_public_key_hex()]
+    if previous_verify_key:
+        keys.append(previous_verify_key.encode(encoder=HexEncoder).decode())
+    return keys
 
 # ============================================================================
 # MinIO Setup
@@ -918,6 +938,25 @@ async def lifespan(app: FastAPI):
 
     from dashboard_api.companion import companion_alert_check_loop
 
+    async def expire_fleet_orders_loop():
+        """Background task to mark expired fleet orders."""
+        while True:
+            try:
+                from dashboard_api.fleet import get_pool
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    updated = await conn.execute("""
+                        UPDATE fleet_orders SET status = 'expired'
+                        WHERE status = 'active' AND expires_at < NOW()
+                    """)
+                    if updated and 'UPDATE' in updated:
+                        count = int(updated.split()[-1])
+                        if count > 0:
+                            logger.info(f"Expired {count} fleet orders")
+            except Exception as e:
+                logger.warning(f"Fleet order expiry check failed: {e}")
+            await asyncio.sleep(300)  # Every 5 minutes
+
     task_defs = [
         ("ots_upgrade", _ots_upgrade_loop),
         ("ots_resubmit", _ots_resubmit_expired_loop),
@@ -925,6 +964,7 @@ async def lifespan(app: FastAPI):
         ("framework_sync", framework_sync_loop),
         ("flywheel", _flywheel_promotion_loop),
         ("companion_alerts", companion_alert_check_loop),
+        ("fleet_order_expiry", expire_fleet_orders_loop),
     ]
 
     for name, fn in task_defs:

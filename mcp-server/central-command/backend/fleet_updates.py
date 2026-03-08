@@ -1126,6 +1126,154 @@ async def cancel_fleet_order(order_id: str):
     return {"status": "ok", "message": "Fleet order cancelled"}
 
 
+@router.get("/orders/{order_id}/delivery")
+async def get_fleet_order_delivery(order_id: str):
+    """Get delivery status for a fleet order across all appliances."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        order = await conn.fetchrow(
+            "SELECT order_type, status, created_at, expires_at FROM fleet_orders WHERE id = $1",
+            UUID(order_id),
+        )
+        if not order:
+            raise HTTPException(status_code=404, detail="Fleet order not found")
+
+        completions = await conn.fetch("""
+            SELECT fc.appliance_id, fc.completed_at, fc.status,
+                   sa.hostname, s.clinic_name
+            FROM fleet_order_completions fc
+            LEFT JOIN site_appliances sa ON sa.appliance_id = fc.appliance_id
+            LEFT JOIN sites s ON s.site_id = sa.site_id
+            WHERE fc.fleet_order_id = $1
+            ORDER BY fc.completed_at DESC
+        """, UUID(order_id))
+
+        total_appliances = await conn.fetchval(
+            "SELECT COUNT(*) FROM site_appliances WHERE last_checkin > NOW() - INTERVAL '24 hours'"
+        )
+
+        return {
+            "order_id": order_id,
+            "order_type": order["order_type"],
+            "status": order["status"],
+            "created_at": order["created_at"].isoformat() if order["created_at"] else None,
+            "expires_at": order["expires_at"].isoformat() if order["expires_at"] else None,
+            "total_target_appliances": total_appliances,
+            "delivered_count": len(completions),
+            "success_count": sum(1 for c in completions if c["status"] == "completed"),
+            "failure_count": sum(1 for c in completions if c["status"] == "failed"),
+            "completions": [
+                {
+                    "appliance_id": c["appliance_id"],
+                    "hostname": c.get("hostname"),
+                    "clinic_name": c.get("clinic_name"),
+                    "completed_at": c["completed_at"].isoformat() if c["completed_at"] else None,
+                    "status": c["status"],
+                }
+                for c in completions
+            ],
+        }
+
+
+@router.get("/orders/dead-letter")
+async def get_dead_letter_orders(limit: int = Query(default=50, ge=1)):
+    """Get expired or failed fleet orders that didn't reach all appliances."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        dead_orders = await conn.fetch("""
+            SELECT fo.id, fo.order_type, fo.parameters, fo.status,
+                   fo.created_at, fo.expires_at, fo.created_by,
+                   COUNT(fc.appliance_id) as delivered_count,
+                   (SELECT COUNT(*) FROM site_appliances
+                    WHERE last_checkin > fo.created_at) as target_count
+            FROM fleet_orders fo
+            LEFT JOIN fleet_order_completions fc ON fc.fleet_order_id = fo.id
+            WHERE fo.expires_at < NOW()
+            AND fo.status IN ('active', 'expired')
+            GROUP BY fo.id
+            HAVING COUNT(fc.appliance_id) < (
+                SELECT COUNT(*) FROM site_appliances
+                WHERE last_checkin > fo.created_at
+            )
+            ORDER BY fo.expires_at DESC
+            LIMIT $1
+        """, limit)
+
+        return {
+            "dead_letter_orders": [
+                {
+                    "order_id": str(o["id"]),
+                    "order_type": o["order_type"],
+                    "parameters": o["parameters"] if isinstance(o["parameters"], dict) else json.loads(o["parameters"] or "{}"),
+                    "status": o["status"],
+                    "created_at": o["created_at"].isoformat() if o["created_at"] else None,
+                    "expires_at": o["expires_at"].isoformat() if o["expires_at"] else None,
+                    "created_by": o.get("created_by"),
+                    "delivered_count": o["delivered_count"],
+                    "target_count": o["target_count"],
+                    "undelivered_count": o["target_count"] - o["delivered_count"],
+                }
+                for o in dead_orders
+            ],
+        }
+
+
+@router.post("/orders/{order_id}/retry")
+async def retry_fleet_order(order_id: str, user: dict = Depends(require_admin)):
+    """Re-activate an expired fleet order by extending its expiry."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        order = await conn.fetchrow("SELECT * FROM fleet_orders WHERE id = $1", UUID(order_id))
+        if not order:
+            raise HTTPException(status_code=404, detail="Fleet order not found")
+
+        new_expiry = datetime.now(timezone.utc) + timedelta(hours=24)
+        await conn.execute(
+            "UPDATE fleet_orders SET status = 'active', expires_at = $1 WHERE id = $2",
+            new_expiry, UUID(order_id),
+        )
+
+        return {
+            "status": "reactivated",
+            "order_id": order_id,
+            "new_expires_at": new_expiry.isoformat(),
+        }
+
+
+@router.post("/rotate-signing-key")
+async def rotate_signing_key(user: dict = Depends(require_admin)):
+    """Rotate the Ed25519 signing key. Previous key is kept for verification."""
+    import shutil
+    from main import (
+        SIGNING_KEY_FILE, signing_key as _sk, verify_key as _vk,
+        get_public_key_hex, get_all_public_keys_hex,
+    )
+    import main as main_module
+
+    # Move current key to previous
+    prev_path = SIGNING_KEY_FILE.with_suffix('.key.previous')
+    shutil.copy2(SIGNING_KEY_FILE, prev_path)
+
+    # Generate new key
+    from nacl.signing import SigningKey as _SigningKey
+    from nacl.encoding import HexEncoder as _HexEncoder
+
+    main_module.previous_signing_key = main_module.signing_key
+    main_module.previous_verify_key = main_module.verify_key
+    main_module.signing_key = _SigningKey.generate()
+    main_module.verify_key = main_module.signing_key.verify_key
+    SIGNING_KEY_FILE.write_text(main_module.signing_key.encode(encoder=_HexEncoder).decode())
+
+    logger.info(f"Signing key rotated by {user.get('username') or user.get('email')}")
+
+    return {
+        "status": "rotated",
+        "new_public_key": get_public_key_hex(),
+        "previous_public_key": main_module.previous_verify_key.encode(encoder=_HexEncoder).decode()
+            if main_module.previous_verify_key else None,
+    }
+
+
 async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version: str = None):
     """Called during checkin to get fleet orders this appliance should execute.
 

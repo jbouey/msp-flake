@@ -1,13 +1,163 @@
 import React, { useState, useEffect } from 'react';
-import { GlassCard, Spinner } from '../components/shared';
+import { GlassCard, Spinner, LevelBadge } from '../components/shared';
 import { IncidentRow } from '../components/incidents/IncidentRow';
 import { useIncidents, useSites } from '../hooks';
-import type { Incident } from '../types';
+import { incidentApi } from '../utils/api';
+import type { Incident, IncidentDetail } from '../types';
+import { CHECK_TYPE_LABELS } from '../types';
+
+/**
+ * Expanded incident detail panel
+ */
+const IncidentDetailPanel: React.FC<{ incidentId: string; onClose: () => void }> = ({ incidentId, onClose }) => {
+  const [detail, setDetail] = useState<IncidentDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    incidentApi.getIncident(Number(incidentId))
+      .then(setDetail)
+      .catch(() => setDetail(null))
+      .finally(() => setLoading(false));
+  }, [incidentId]);
+
+  if (loading) {
+    return (
+      <div className="p-6 border-t border-separator-light bg-fill-primary rounded-b-ios-md">
+        <div className="flex items-center gap-2 text-label-tertiary">
+          <Spinner size="sm" /> Loading incident details...
+        </div>
+      </div>
+    );
+  }
+
+  if (!detail) {
+    return (
+      <div className="p-6 border-t border-separator-light bg-fill-primary rounded-b-ios-md">
+        <p className="text-label-tertiary">Failed to load incident details.</p>
+      </div>
+    );
+  }
+
+  const checkLabel = CHECK_TYPE_LABELS[detail.check_type] || detail.check_type;
+  const driftData = detail.drift_data || {};
+  const hasDriftInfo = Object.keys(driftData).length > 0;
+
+  return (
+    <div className="p-6 border-t border-separator-light bg-fill-primary rounded-b-ios-md space-y-4">
+      {/* Header with close */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-label-primary">{checkLabel}</h3>
+        <button onClick={onClose} className="text-label-tertiary hover:text-label-primary text-sm">
+          Close
+        </button>
+      </div>
+
+      {/* Key info grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+        <div>
+          <span className="text-label-tertiary">Hostname:</span>
+          <div className="text-label-primary font-medium">{detail.hostname || 'Unknown'}</div>
+        </div>
+        <div>
+          <span className="text-label-tertiary">Site:</span>
+          <div className="text-label-primary font-medium">{detail.site_id}</div>
+        </div>
+        <div>
+          <span className="text-label-tertiary">Severity:</span>
+          <div className="text-label-primary font-medium capitalize">{detail.severity}</div>
+        </div>
+        <div>
+          <span className="text-label-tertiary">Resolution:</span>
+          <div>{detail.resolution_level ? <LevelBadge level={detail.resolution_level} showLabel /> : <span className="text-health-warning">Pending</span>}</div>
+        </div>
+      </div>
+
+      {/* HIPAA Controls */}
+      {detail.hipaa_controls.length > 0 && (
+        <div>
+          <span className="text-xs text-label-tertiary">HIPAA Controls:</span>
+          <div className="flex flex-wrap gap-1 mt-1">
+            {detail.hipaa_controls.map(ctrl => (
+              <span key={ctrl} className="px-2 py-0.5 bg-accent-primary/10 text-accent-primary rounded text-xs font-mono">{ctrl}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Drift details */}
+      {hasDriftInfo && (
+        <div className="rounded-lg bg-glass-bg/30 p-4">
+          <h4 className="text-xs font-medium text-label-tertiary uppercase mb-2">Drift Details</h4>
+          <div className="space-y-2 text-sm">
+            {'message' in driftData && driftData.message !== undefined && driftData.message !== null && (
+              <p className="text-label-primary">{String(driftData.message)}</p>
+            )}
+            {'expected' in driftData && driftData.expected !== undefined && driftData.expected !== null && (
+              <div className="flex gap-2">
+                <span className="text-label-tertiary">Expected:</span>
+                <span className="text-health-healthy font-mono text-xs">{String(driftData.expected)}</span>
+              </div>
+            )}
+            {'actual' in driftData && driftData.actual !== undefined && driftData.actual !== null && (
+              <div className="flex gap-2">
+                <span className="text-label-tertiary">Actual:</span>
+                <span className="text-health-critical font-mono text-xs">{String(driftData.actual)}</span>
+              </div>
+            )}
+            {'platform' in driftData && driftData.platform !== undefined && driftData.platform !== null && (
+              <div className="flex gap-2">
+                <span className="text-label-tertiary">Platform:</span>
+                <span className="text-label-primary">{String(driftData.platform)}</span>
+              </div>
+            )}
+            {'source' in driftData && driftData.source !== undefined && driftData.source !== null && (
+              <div className="flex gap-2">
+                <span className="text-label-tertiary">Source:</span>
+                <span className="text-label-primary">{String(driftData.source)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Healing/Runbook info */}
+      {(detail.runbook_executed || detail.execution_log) && (
+        <div className="rounded-lg bg-health-healthy/5 border border-health-healthy/20 p-4">
+          <h4 className="text-xs font-medium text-label-tertiary uppercase mb-2">Auto-Healing</h4>
+          {detail.runbook_executed && (
+            <div className="text-sm">
+              <span className="text-label-tertiary">Runbook:</span>{' '}
+              <span className="text-label-primary font-mono">{detail.runbook_executed}</span>
+            </div>
+          )}
+          {detail.execution_log && (
+            <pre className="mt-2 text-xs text-label-secondary bg-glass-bg/50 rounded p-2 overflow-x-auto max-h-32">
+              {detail.execution_log}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Status and timestamps */}
+      <div className="flex items-center gap-4 text-xs text-label-tertiary pt-2 border-t border-separator-light">
+        <span>Created: {new Date(detail.created_at).toLocaleString()}</span>
+        {detail.resolved_at && (
+          <span>Resolved: {new Date(detail.resolved_at).toLocaleString()}</span>
+        )}
+        <span className={detail.resolved ? 'text-health-healthy font-medium' : 'text-health-warning font-medium'}>
+          {detail.resolved ? 'Resolved' : 'Active'}
+        </span>
+      </div>
+    </div>
+  );
+};
 
 export const Incidents: React.FC = () => {
   const [filter, setFilter] = useState<'all' | 'active' | 'resolved'>('all');
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [selectedLevel, setSelectedLevel] = useState<string>('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const limit = 50;
 
@@ -155,12 +305,19 @@ export const Incidents: React.FC = () => {
         {!isLoading && !error && incidents.length > 0 && (
           <div className="space-y-2 stagger-list">
             {incidents.map((incident: Incident) => (
-              <IncidentRow
-                key={incident.id}
-                incident={incident}
-                compact={false}
-                onClick={() => console.log('View incident', incident.id)}
-              />
+              <div key={incident.id}>
+                <IncidentRow
+                  incident={incident}
+                  compact={false}
+                  onClick={() => setExpandedId(expandedId === String(incident.id) ? null : String(incident.id))}
+                />
+                {expandedId === String(incident.id) && (
+                  <IncidentDetailPanel
+                    incidentId={String(incident.id)}
+                    onClose={() => setExpandedId(null)}
+                  />
+                )}
+              </div>
             ))}
           </div>
         )}

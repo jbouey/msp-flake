@@ -1488,6 +1488,7 @@ class ApplianceCheckin(BaseModel):
     agent_public_key: Optional[str] = None  # Ed25519 public key hex for evidence signing
     connected_agents: Optional[list[ConnectedAgentInfo]] = None  # Go agents on this appliance
     discovery_results: Optional[Dict[str, Any]] = None  # App protection profile discovery results
+    encryption_public_key: str = ""  # X25519 public key hex for credential envelope encryption
 
 
 def normalize_mac(mac: str) -> str:
@@ -2121,6 +2122,14 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                 import logging
                 logging.warning(f"Failed to sync go_agents: {e}")
 
+        # === STEP 3.7b: Link discovered devices → workstations table ===
+        try:
+            from .device_sync import _link_devices_to_workstations
+            await _link_devices_to_workstations(conn, checkin.site_id)
+        except Exception as e:
+            import logging
+            logging.debug(f"Device→workstation linkage during checkin: {e}")
+
         # === STEP 3.8: Handle app protection discovery results ===
         if checkin.discovery_results and checkin.discovery_results.get("profile_id"):
             try:
@@ -2408,23 +2417,43 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
     except Exception as e:
         logger.debug(f"Checkin {checkin.site_id}: broadcast failed: {e}")
 
-    # Get server public key for order signature verification
+    # Get server public key(s) for order signature verification
     server_public_key = None
+    server_public_keys = []
     try:
-        from main import get_public_key_hex
+        from main import get_public_key_hex, get_all_public_keys_hex
         server_public_key = get_public_key_hex()
+        server_public_keys = get_all_public_keys_hex()
     except Exception as e:
         logger.warning(f"Checkin: server public key not available: {e}")
+
+    # Envelope-encrypt credentials if appliance supports it
+    encrypted_credentials = None
+    if checkin.encryption_public_key and (windows_targets or linux_targets):
+        try:
+            from .credential_envelope import encrypt_credentials
+            encrypted_credentials = encrypt_credentials(
+                checkin.encryption_public_key,
+                windows_targets,
+                linux_targets,
+            )
+            # Clear plaintext — daemon will decrypt from envelope
+            windows_targets = []
+            linux_targets = []
+        except Exception as e:
+            logger.warning(f"Checkin {checkin.site_id}: credential envelope encryption failed, falling back to plaintext: {e}")
 
     return {
         "status": "ok",
         "appliance_id": canonical_id,
         "server_time": now.isoformat(),
         "server_public_key": server_public_key,
+        "server_public_keys": server_public_keys,
         "merged_duplicates": len(merge_from_ids),
         "pending_orders": pending_orders,
         "windows_targets": windows_targets,
         "linux_targets": linux_targets,
+        "encrypted_credentials": encrypted_credentials,
         "enabled_runbooks": enabled_runbooks,
         "trigger_enumeration": trigger_enumeration,
         "trigger_immediate_scan": trigger_immediate_scan,

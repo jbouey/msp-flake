@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { AddDeviceModal } from '../components/shared/AddDeviceModal';
 import { useSiteDevices, useSiteDeviceSummary } from '../hooks';
 import type { DiscoveredDevice, SiteDeviceSummary as DeviceSummaryType } from '../utils/api';
+import { CHECK_TYPE_LABELS } from '../types';
 
 /**
  * Format relative time
@@ -149,15 +150,77 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
 };
 
 /**
+ * Compliance check status colors
+ */
+const checkStatusColors: Record<string, string> = {
+  pass: 'text-health-healthy',
+  warn: 'text-health-warning',
+  fail: 'text-health-critical',
+};
+
+interface ComplianceDetail {
+  device_id: number;
+  hostname: string;
+  ip_address: string;
+  compliance_status: string;
+  checks: Array<{
+    check_type: string;
+    hipaa_control: string;
+    status: string;
+    details: Record<string, unknown>;
+    checked_at: string;
+  }>;
+  total_checks: number;
+  passed: number;
+  warned: number;
+  failed: number;
+}
+
+/**
  * Single device row
  */
 const DeviceRow: React.FC<{
   device: DiscoveredDevice;
+  siteId: string;
   expanded: boolean;
   onToggle: () => void;
-}> = ({ device, expanded, onToggle }) => {
+}> = ({ device, siteId, expanded, onToggle }) => {
   const typeConfig = deviceTypeConfig[device.device_type] || deviceTypeConfig.unknown;
   const complianceColor = complianceColors[device.compliance_status] || complianceColors.unknown;
+  const [complianceData, setComplianceData] = useState<ComplianceDetail | null>(null);
+  const [complianceLoading, setComplianceLoading] = useState(false);
+  const [incidents, setIncidents] = useState<Array<{ id: string; check_type: string; severity: string; resolved: boolean; created_at: string }>>([]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    let cancelled = false;
+
+    // Fetch compliance details
+    setComplianceLoading(true);
+    fetch(`/api/devices/sites/${siteId}/device/${device.id}/compliance`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (!cancelled) setComplianceData(data); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setComplianceLoading(false); });
+
+    // Fetch incidents for this device's hostname/IP
+    const hostname = device.hostname || device.ip_address;
+    fetch(`/api/dashboard/incidents?site_id=${siteId}&limit=10`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        if (cancelled) return;
+        // Filter incidents matching this device by hostname or IP
+        const matching = (data || []).filter((inc: { hostname: string }) =>
+          inc.hostname === hostname ||
+          inc.hostname === device.ip_address ||
+          inc.hostname === device.hostname
+        );
+        setIncidents(matching);
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [expanded, siteId, device.id, device.hostname, device.ip_address]);
 
   return (
     <>
@@ -214,6 +277,7 @@ const DeviceRow: React.FC<{
       {expanded && (
         <tr>
           <td colSpan={8} className="px-4 py-4 bg-glass-bg/20">
+            {/* Basic metadata */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div>
                 <span className="text-label-tertiary">OS Version:</span>
@@ -248,6 +312,87 @@ const DeviceRow: React.FC<{
                 </div>
               )}
             </div>
+
+            {/* Compliance Checks */}
+            <div className="mt-4 pt-4 border-t border-glass-border">
+              <h4 className="text-sm font-medium text-label-primary mb-3">Compliance Checks</h4>
+              {complianceLoading ? (
+                <div className="flex items-center gap-2 text-label-tertiary text-sm">
+                  <Spinner size="sm" /> Loading checks...
+                </div>
+              ) : complianceData && complianceData.checks.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex gap-4 text-xs text-label-tertiary mb-2">
+                    <span className="text-health-healthy">{complianceData.passed} passed</span>
+                    <span className="text-health-warning">{complianceData.warned} warnings</span>
+                    <span className="text-health-critical">{complianceData.failed} failed</span>
+                  </div>
+                  <div className="grid gap-1">
+                    {complianceData.checks.map((check, i) => (
+                      <div key={i} className="flex items-center gap-3 px-3 py-2 rounded bg-glass-bg/30 text-sm">
+                        <span className={`font-medium ${checkStatusColors[check.status] || 'text-label-secondary'}`}>
+                          {check.status === 'pass' ? 'PASS' : check.status === 'warn' ? 'WARN' : 'FAIL'}
+                        </span>
+                        <span className="text-label-primary flex-1">
+                          {CHECK_TYPE_LABELS[check.check_type] || check.check_type}
+                        </span>
+                        <span className="text-label-tertiary text-xs font-mono">
+                          {check.hipaa_control}
+                        </span>
+                        <span className="text-label-tertiary text-xs">
+                          {formatRelativeTime(check.checked_at)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-label-tertiary">No compliance checks recorded for this device.</p>
+              )}
+            </div>
+
+            {/* Related Incidents */}
+            {incidents.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-glass-border">
+                <h4 className="text-sm font-medium text-label-primary mb-3">
+                  Related Incidents ({incidents.length})
+                </h4>
+                <div className="grid gap-1">
+                  {incidents.map((inc) => (
+                    <Link
+                      key={inc.id}
+                      to={`/incidents?highlight=${inc.id}`}
+                      className="flex items-center gap-3 px-3 py-2 rounded bg-glass-bg/30 text-sm hover:bg-glass-bg/50 transition-colors"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${inc.resolved ? 'bg-health-healthy' : 'bg-health-warning animate-pulse'}`} />
+                      <span className="text-label-primary flex-1">
+                        {CHECK_TYPE_LABELS[inc.check_type] || inc.check_type}
+                      </span>
+                      <span className={`text-xs ${inc.resolved ? 'text-health-healthy' : 'text-health-warning'}`}>
+                        {inc.resolved ? 'Resolved' : 'Active'}
+                      </span>
+                      <span className="text-label-tertiary text-xs">
+                        {formatRelativeTime(inc.created_at)}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Drifted device call-to-action */}
+            {device.compliance_status === 'drifted' && incidents.length === 0 && (
+              <div className="mt-4 p-3 rounded-lg bg-health-warning/10 border border-health-warning/30">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-health-warning font-medium">Drift Detected</span>
+                  <span className="text-label-secondary">
+                    — This device has compliance drift but no matching incidents found. The drift may have been detected by the network scanner but not yet reported as an incident.
+                  </span>
+                </div>
+              </div>
+            )}
+
             {device.medical_device && (
               <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
                 <div className="flex items-start gap-2">
@@ -279,7 +424,7 @@ const DeviceTable: React.FC<{
   siteId: string;
   onFilterChange: (filter: { type?: string; status?: string; includeMedical: boolean }) => void;
   filter: { type?: string; status?: string; includeMedical: boolean };
-}> = ({ devices, filter, onFilterChange }) => {
+}> = ({ devices, siteId, filter, onFilterChange }) => {
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   return (
@@ -362,6 +507,7 @@ const DeviceTable: React.FC<{
                 <DeviceRow
                   key={device.id}
                   device={device}
+                  siteId={siteId}
                   expanded={expandedId === device.id}
                   onToggle={() => setExpandedId(expandedId === device.id ? null : device.id)}
                 />

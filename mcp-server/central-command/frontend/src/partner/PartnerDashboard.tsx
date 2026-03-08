@@ -7,6 +7,7 @@ import { PartnerComplianceSettings } from './PartnerComplianceSettings';
 import { PartnerExceptionManagement } from './PartnerExceptionManagement';
 import { PartnerLearning } from './PartnerLearning';
 import { PartnerEscalations } from './PartnerEscalations';
+import { PartnerOnboarding } from './PartnerOnboarding';
 
 interface Site {
   site_id: string;
@@ -36,7 +37,7 @@ export const PartnerDashboard: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { partner, apiKey, isAuthenticated, isLoading, logout } = usePartner();
 
-  const [activeTab, setActiveTab] = useState<'sites' | 'provisions' | 'billing' | 'compliance' | 'exceptions' | 'escalations' | 'learning'>('sites');
+  const [activeTab, setActiveTab] = useState<'sites' | 'onboarding' | 'provisions' | 'billing' | 'compliance' | 'exceptions' | 'escalations' | 'learning'>('sites');
 
   // Handle billing redirect from Stripe
   useEffect(() => {
@@ -296,6 +297,16 @@ export const PartnerDashboard: React.FC = () => {
             Sites ({sites.length})
           </button>
           <button
+            onClick={() => setActiveTab('onboarding')}
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+              activeTab === 'onboarding'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
+            }`}
+          >
+            Onboarding
+          </button>
+          <button
             onClick={() => setActiveTab('provisions')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
               activeTab === 'provisions'
@@ -423,6 +434,10 @@ export const PartnerDashboard: React.FC = () => {
               </table>
             )}
           </div>
+        )}
+
+        {activeTab === 'onboarding' && (
+          <PartnerOnboarding />
         )}
 
         {activeTab === 'provisions' && (

@@ -253,6 +253,13 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
             appliance_db_id,
         )
 
+    # Auto-populate workstations table from discovered workstation/server devices
+    try:
+        async with pool.acquire() as link_conn:
+            await _link_devices_to_workstations(link_conn, site_id)
+    except Exception as e:
+        logger.warning(f"Device→workstation linkage failed for {site_id}: {e}")
+
     status = "success"
     message = f"Synced {devices_created} new, {devices_updated} updated"
     if errors:
@@ -599,3 +606,125 @@ async def get_device_compliance_details(site_id: str, device_id: int) -> dict:
         "warned": sum(1 for c in checks if c["status"] == "warn"),
         "failed": sum(1 for c in checks if c["status"] == "fail"),
     }
+
+
+# =============================================================================
+# DEVICE → WORKSTATION LINKAGE
+# =============================================================================
+
+async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
+    """Auto-populate the workstations table from discovered_devices.
+
+    When the network scanner discovers devices typed as 'workstation' or 'server',
+    upsert them into the workstations table so the Workstations tab shows data.
+    Compliance status is derived from the discovered_devices compliance_status.
+    """
+    devices = await conn.fetch("""
+        SELECT d.id, d.hostname, d.ip_address, d.mac_address,
+               d.os_name, d.os_version, d.compliance_status,
+               d.last_seen_at, d.device_type
+        FROM discovered_devices d
+        JOIN appliances a ON d.appliance_id = a.id
+        WHERE a.site_id = $1
+        AND d.device_type IN ('workstation', 'server')
+        AND d.ip_address IS NOT NULL
+    """, site_id)
+
+    if not devices:
+        return
+
+    upserted = 0
+    for dev in devices:
+        hostname = dev['hostname'] or dev['ip_address']
+        if not hostname:
+            continue
+
+        status = dev['compliance_status'] or 'unknown'
+        # last_seen within 30 min = online
+        online = False
+        if dev['last_seen_at']:
+            ts = dev['last_seen_at']
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - ts).total_seconds()
+            online = age < 1800
+
+        await conn.execute("""
+            INSERT INTO workstations (
+                site_id, hostname, ip_address, mac_address,
+                os_name, os_version, online, last_seen,
+                compliance_status, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            ON CONFLICT (site_id, hostname) DO UPDATE SET
+                ip_address = COALESCE(EXCLUDED.ip_address, workstations.ip_address),
+                mac_address = COALESCE(EXCLUDED.mac_address, workstations.mac_address),
+                os_name = COALESCE(EXCLUDED.os_name, workstations.os_name),
+                os_version = COALESCE(EXCLUDED.os_version, workstations.os_version),
+                online = EXCLUDED.online,
+                last_seen = COALESCE(EXCLUDED.last_seen, workstations.last_seen),
+                compliance_status = EXCLUDED.compliance_status,
+                updated_at = NOW()
+        """,
+            site_id,
+            hostname,
+            dev['ip_address'],
+            dev['mac_address'],
+            dev['os_name'],
+            dev['os_version'],
+            online,
+            dev['last_seen_at'],
+            status,
+        )
+        upserted += 1
+
+    if upserted > 0:
+        await _update_workstation_summary(conn, site_id)
+
+    logger.info(f"Linked {upserted} discovered devices → workstations for site {site_id}")
+
+
+async def _update_workstation_summary(conn: asyncpg.Connection, site_id: str):
+    """Update the site_workstation_summaries table from current workstation data."""
+    stats = await conn.fetchrow("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE online = true) as online,
+            COUNT(*) FILTER (WHERE compliance_status = 'compliant') as compliant,
+            COUNT(*) FILTER (WHERE compliance_status = 'drifted') as drifted,
+            COUNT(*) FILTER (WHERE compliance_status = 'error') as error,
+            COUNT(*) FILTER (WHERE compliance_status = 'unknown') as unknown
+        FROM workstations WHERE site_id = $1
+    """, site_id)
+
+    if not stats or stats['total'] == 0:
+        return
+
+    total = stats['total']
+    compliance_rate = (stats['compliant'] / total * 100) if total > 0 else 0
+
+    await conn.execute("""
+        INSERT INTO site_workstation_summaries (
+            site_id, total_workstations, online_workstations,
+            compliant_workstations, drifted_workstations,
+            error_workstations, unknown_workstations,
+            overall_compliance_rate, last_scan
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+        ON CONFLICT (site_id) DO UPDATE SET
+            total_workstations = EXCLUDED.total_workstations,
+            online_workstations = EXCLUDED.online_workstations,
+            compliant_workstations = EXCLUDED.compliant_workstations,
+            drifted_workstations = EXCLUDED.drifted_workstations,
+            error_workstations = EXCLUDED.error_workstations,
+            unknown_workstations = EXCLUDED.unknown_workstations,
+            overall_compliance_rate = EXCLUDED.overall_compliance_rate,
+            last_scan = EXCLUDED.last_scan
+    """,
+        site_id,
+        stats['total'],
+        stats['online'],
+        stats['compliant'],
+        stats['drifted'],
+        stats['error'],
+        stats['unknown'],
+        compliance_rate,
+    )

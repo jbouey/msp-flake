@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/osiriscare/appliance/internal/ca"
+	"github.com/osiriscare/appliance/internal/crypto"
 	"github.com/osiriscare/appliance/internal/evidence"
 	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/healing"
@@ -59,6 +60,9 @@ type Daemon struct {
 	orderProc *orders.Processor
 	winrmExec *winrm.Executor
 	sshExec   *sshexec.Executor
+
+	// Credential envelope encryption keypair (X25519)
+	envelopeKP *crypto.EnvelopeKeypair
 
 	// Auto-deploy: spread agent to discovered workstations
 	deployer *autoDeployer
@@ -197,6 +201,15 @@ func New(cfg *Config) *Daemon {
 		d.telemetry.EnableQueue(cfg.StateDir)
 		d.incidents = newIncidentReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
 		log.Printf("[daemon] Telemetry + incident reporters initialized (endpoint=%s)", cfg.APIEndpoint)
+	}
+
+	// Initialize credential envelope encryption keypair (X25519)
+	envelopeKP, err := crypto.LoadOrCreateKeypair(cfg.StateDir)
+	if err != nil {
+		log.Printf("[daemon] WARNING: credential envelope encryption disabled: %v", err)
+	} else {
+		d.envelopeKP = envelopeKP
+		log.Printf("[daemon] Credential envelope encryption enabled (pubkey=%s...)", d.envelopeKP.PublicKeyHex()[:16])
 	}
 
 	// Initialize healing journal for crash-safe execution tracking
@@ -471,6 +484,11 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	}
 	d.discoveryMu.Unlock()
 
+	// Include encryption public key for credential envelope encryption
+	if d.envelopeKP != nil {
+		req.EncryptionPublicKey = d.envelopeKP.PublicKeyHex()
+	}
+
 	resp, err := d.phoneCli.Checkin(ctx, &req)
 	if err != nil {
 		log.Printf("[daemon] Checkin failed (%s): %v", classifyConnectivityError(err), err)
@@ -489,14 +507,46 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		d.orderProc.SetApplianceID(resp.ApplianceID)
 	}
 
-	// Store server public key for order + rules signature verification
+	// Store server public key(s) for order + rules signature verification.
+	// When server_public_keys is provided (key rotation support), the first key is
+	// current and the rest are previous keys still valid during the rotation window.
 	if resp.ServerPublicKey != "" {
-		if err := d.orderProc.SetServerPublicKey(resp.ServerPublicKey); err != nil {
-			log.Printf("[daemon] Failed to set server public key on order processor: %v", err)
+		if len(resp.ServerPublicKeys) > 1 {
+			// Multi-key rotation: first key is current, rest are previous
+			if err := d.orderProc.SetPublicKeys(resp.ServerPublicKeys[0], resp.ServerPublicKeys[1:]); err != nil {
+				log.Printf("[daemon] Failed to set public keys on order processor: %v", err)
+			}
+		} else {
+			if err := d.orderProc.SetServerPublicKey(resp.ServerPublicKey); err != nil {
+				log.Printf("[daemon] Failed to set server public key on order processor: %v", err)
+			}
 		}
 		if d.l1Engine != nil {
 			if err := d.l1Engine.SetServerPublicKey(resp.ServerPublicKey); err != nil {
 				log.Printf("[daemon] Failed to set server public key on L1 engine: %v", err)
+			}
+		}
+	}
+
+	// Decrypt envelope-encrypted credentials if present
+	if d.envelopeKP != nil && resp.EncryptedCredentials != nil {
+		encJSON, _ := json.Marshal(resp.EncryptedCredentials)
+		var enc crypto.EncryptedCredentials
+		if err := json.Unmarshal(encJSON, &enc); err == nil && enc.Ciphertext != "" {
+			plaintext, err := d.envelopeKP.DecryptCredentials(&enc)
+			if err != nil {
+				log.Printf("[daemon] SECURITY: credential envelope decryption failed: %v", err)
+			} else {
+				var creds struct {
+					WindowsTargets []map[string]interface{} `json:"windows_targets"`
+					LinuxTargets   []map[string]interface{} `json:"linux_targets"`
+				}
+				if err := json.Unmarshal(plaintext, &creds); err == nil {
+					resp.WindowsTargets = creds.WindowsTargets
+					resp.LinuxTargets = creds.LinuxTargets
+					log.Printf("[daemon] Decrypted credential envelope (win=%d, linux=%d)",
+						len(creds.WindowsTargets), len(creds.LinuxTargets))
+				}
 			}
 		}
 	}

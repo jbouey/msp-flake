@@ -582,6 +582,18 @@ export const organizationsApi = {
   getOrganization: (orgId: string) =>
     fetchApi<OrganizationDetail>(`/dashboard/organizations/${orgId}`),
 
+  createOrganization: (data: {
+    name: string;
+    primary_email: string;
+    primary_phone?: string;
+    practice_type?: string;
+    provider_count?: number;
+  }) =>
+    fetchApi<{ status: string; id: string; name: string }>('/dashboard/organizations', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   getCredentials: (orgId: string) =>
     fetchSitesApi<{ credentials: OrgCredential[]; count: number }>(`/organizations/${orgId}/credentials`),
 

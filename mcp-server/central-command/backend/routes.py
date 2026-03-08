@@ -2578,6 +2578,41 @@ async def list_organizations(
     return {"organizations": orgs, "count": len(orgs)}
 
 
+@router.post("/organizations")
+async def create_organization(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Create a new client organization."""
+    body = await request.json()
+    name = body.get("name", "").strip()
+    email = body.get("primary_email", "").strip()
+    if not name or not email:
+        raise HTTPException(status_code=400, detail="Name and primary_email are required")
+
+    result = await db.execute(text("""
+        INSERT INTO client_orgs (name, primary_email, primary_phone, practice_type, provider_count, status)
+        VALUES (:name, :email, :phone, :practice_type, :provider_count, 'active')
+        RETURNING id, name, primary_email, created_at
+    """), {
+        "name": name,
+        "email": email,
+        "phone": body.get("primary_phone", ""),
+        "practice_type": body.get("practice_type", ""),
+        "provider_count": body.get("provider_count", 1),
+    })
+    row = result.fetchone()
+    await db.commit()
+    return {
+        "status": "created",
+        "id": str(row.id),
+        "name": row.name,
+        "primary_email": row.primary_email,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
 @router.get("/organizations/{org_id}")
 async def get_organization_detail(org_id: str, db: AsyncSession = Depends(get_db)):
     """Get organization detail with nested site list."""

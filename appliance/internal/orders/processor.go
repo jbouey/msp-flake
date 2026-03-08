@@ -256,6 +256,12 @@ func (p *Processor) SetServerPublicKey(hexKey string) error {
 	return p.verifier.SetPublicKey(hexKey)
 }
 
+// SetPublicKeys sets current and previous public keys for key rotation support.
+// Orders signed with either key will be accepted during the rotation window.
+func (p *Processor) SetPublicKeys(currentHex string, previousHexes []string) error {
+	return p.verifier.SetPublicKeys(currentHex, previousHexes)
+}
+
 // SetApplianceID sets this appliance's identity for host-scoped order verification.
 // Orders signed with a target_appliance_id that doesn't match will be rejected.
 func (p *Processor) SetApplianceID(id string) {

@@ -18,10 +18,14 @@ import (
 )
 
 // OrderVerifier verifies Ed25519 signatures on orders from Central Command.
+// Supports key rotation: holds both current and previous public keys so that
+// orders signed with either key are accepted during a rotation window.
 type OrderVerifier struct {
-	mu        sync.RWMutex
-	publicKey ed25519.PublicKey
-	keyHex    string
+	mu          sync.RWMutex
+	publicKey   ed25519.PublicKey
+	keyHex      string
+	previousKey ed25519.PublicKey // Previous key for rotation support
+	prevKeyHex  string
 }
 
 // NewOrderVerifier creates a verifier. If publicKeyHex is empty, verification
@@ -54,6 +58,31 @@ func (v *OrderVerifier) SetPublicKey(hexKey string) error {
 	return nil
 }
 
+// SetPublicKeys sets the current public key and optionally previous keys for rotation support.
+// The first element of previousHexes (if any, and different from currentHex) is stored as the
+// previous key. Orders signed with either key will be accepted.
+func (v *OrderVerifier) SetPublicKeys(currentHex string, previousHexes []string) error {
+	// Set current key via existing method
+	if err := v.SetPublicKey(currentHex); err != nil {
+		return err
+	}
+
+	// Set previous key if provided and different from current
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.previousKey = nil
+	v.prevKeyHex = ""
+	if len(previousHexes) > 0 && previousHexes[0] != currentHex {
+		prevBytes, err := hex.DecodeString(previousHexes[0])
+		if err == nil && len(prevBytes) == ed25519.PublicKeySize {
+			v.previousKey = ed25519.PublicKey(prevBytes)
+			v.prevKeyHex = previousHexes[0]
+			log.Printf("[crypto] Previous key set for rotation support: %s...", previousHexes[0][:16])
+		}
+	}
+	return nil
+}
+
 // HasKey returns true if a public key has been set.
 func (v *OrderVerifier) HasKey() bool {
 	v.mu.RLock()
@@ -74,6 +103,7 @@ func (v *OrderVerifier) PublicKeyHex() string {
 func (v *OrderVerifier) VerifyOrder(signedPayload, signatureHex string) error {
 	v.mu.RLock()
 	pk := v.publicKey
+	prevPK := v.previousKey
 	v.mu.RUnlock()
 
 	if pk == nil {
@@ -96,11 +126,22 @@ func (v *OrderVerifier) VerifyOrder(signedPayload, signatureHex string) error {
 			len(sig), len(signatureHex), ed25519.SignatureSize)
 	}
 
-	if !ed25519.Verify(pk, []byte(signedPayload), sig) {
-		return fmt.Errorf("Ed25519 signature verification failed")
+	// Try current key first
+	if ed25519.Verify(pk, []byte(signedPayload), sig) {
+		return nil
 	}
 
-	return nil
+	// Try previous key (rotation window)
+	if prevPK != nil && ed25519.Verify(prevPK, []byte(signedPayload), sig) {
+		log.Printf("[crypto] Order verified with PREVIOUS key (rotation in progress)")
+		return nil
+	}
+
+	keyCount := 1
+	if prevPK != nil {
+		keyCount = 2
+	}
+	return fmt.Errorf("Ed25519 signature verification failed (tried %d keys)", keyCount)
 }
 
 // VerifyRulesBundle verifies the signature on a rules sync response.

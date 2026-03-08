@@ -3,7 +3,10 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -23,17 +27,54 @@ type PhoneHomeClient struct {
 }
 
 // NewPhoneHomeClient creates a new client for Central Command checkin.
+// Uses Trust-On-First-Use (TOFU) certificate pinning: on the first successful
+// TLS connection the server's leaf certificate SHA-256 fingerprint is saved to
+// {StateDir}/server_cert_pin.hex. Subsequent connections verify the fingerprint
+// matches, protecting against MITM even if a CA is compromised.
 func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
+	pinPath := filepath.Join(cfg.StateDir, "server_cert_pin.hex")
+
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+				if len(rawCerts) == 0 {
+					return fmt.Errorf("no certificates presented")
+				}
+				fingerprint := sha256.Sum256(rawCerts[0])
+				fpHex := hex.EncodeToString(fingerprint[:])
+
+				pinData, err := os.ReadFile(pinPath)
+				if err != nil {
+					// First connection: save pin (TOFU)
+					if mkErr := os.MkdirAll(filepath.Dir(pinPath), 0700); mkErr != nil {
+						log.Printf("[tls-pin] WARNING: could not create pin directory: %v", mkErr)
+					}
+					if wErr := os.WriteFile(pinPath, []byte(fpHex), 0600); wErr != nil {
+						log.Printf("[tls-pin] WARNING: could not save pin file: %v", wErr)
+					}
+					log.Printf("[tls-pin] TOFU: pinned server certificate fingerprint: %s...", fpHex[:16])
+					return nil
+				}
+
+				savedFP := strings.TrimSpace(string(pinData))
+				if savedFP != fpHex {
+					return fmt.Errorf("TLS certificate fingerprint mismatch! Expected %s..., got %s... — possible MITM attack",
+						savedFP[:16], fpHex[:16])
+				}
+				return nil
+			},
+		},
+		MaxIdleConns:        5,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+
 	return &PhoneHomeClient{
 		config: cfg,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
-				MaxIdleConns:        5,
-				IdleConnTimeout:     90 * time.Second,
-				TLSHandshakeTimeout: 10 * time.Second,
-			},
+			Timeout:   30 * time.Second,
+			Transport: transport,
 		},
 	}
 }
@@ -51,6 +92,7 @@ type CheckinRequest struct {
 	AgentPublicKey      string           `json:"agent_public_key,omitempty"`
 	ConnectedAgents     []ConnectedAgent        `json:"connected_agents,omitempty"`
 	DiscoveryResults    map[string]interface{}   `json:"discovery_results,omitempty"`
+	EncryptionPublicKey string                   `json:"encryption_public_key,omitempty"`
 }
 
 // ConnectedAgent represents a Go agent connected to this appliance via gRPC.
@@ -70,6 +112,7 @@ type CheckinResponse struct {
 	ApplianceID          string                   `json:"appliance_id"`
 	ServerTime           string                   `json:"server_time"`
 	ServerPublicKey      string                   `json:"server_public_key"`
+	ServerPublicKeys     []string                 `json:"server_public_keys,omitempty"`
 	MergedDuplicates     int                      `json:"merged_duplicates"`
 	PendingOrders        []map[string]interface{}  `json:"pending_orders"`
 	WindowsTargets       []map[string]interface{}  `json:"windows_targets"`
@@ -79,6 +122,7 @@ type CheckinResponse struct {
 	TriggerImmediateScan bool                     `json:"trigger_immediate_scan"`
 	L2Mode               string                   `json:"l2_mode"`
 	SubscriptionStatus   string                   `json:"subscription_status"`
+	EncryptedCredentials map[string]interface{}   `json:"encrypted_credentials,omitempty"`
 }
 
 // Checkin sends a phone-home checkin to Central Command.
@@ -262,7 +306,5 @@ func getNixOSVersion() string {
 	return "unknown"
 }
 
-func init() {
-	// Suppress unused import warning
-	_ = log.Println
-}
+// Ensure x509 import is referenced (used by VerifyPeerCertificate callback signature).
+var _ *x509.Certificate

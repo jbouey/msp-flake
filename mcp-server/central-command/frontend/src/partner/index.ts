@@ -3,3 +3,4 @@ export { PartnerLogin } from './PartnerLogin';
 export { PartnerDashboard } from './PartnerDashboard';
 export { PartnerLearning } from './PartnerLearning';
 export { PartnerSecurity } from './PartnerSecurity';
+export { PartnerOnboarding } from './PartnerOnboarding';
