@@ -63,9 +63,9 @@ export default {
         },
         // Accent colors
         accent: {
-          primary: '#007AFF',
+          primary: 'var(--accent-primary)',
           secondary: '#5856D6',
-          tint: 'rgba(0, 122, 255, 0.1)',
+          tint: 'rgba(20, 168, 158, 0.1)',
         },
         // Border colors (theme-adaptive via CSS vars)
         separator: {

@@ -10,10 +10,10 @@
   --label-primary: #1C1C1E;
   --label-secondary: rgba(60, 60, 67, 0.6);
   --label-tertiary: #8E8E93;
-  --fill-primary: rgba(0, 100, 220, 0.12);
-  --fill-secondary: rgba(0, 100, 220, 0.08);
-  --fill-tertiary: rgba(0, 100, 220, 0.06);
-  --fill-quaternary: rgba(0, 100, 220, 0.04);
+  --fill-primary: rgba(20, 168, 158, 0.12);
+  --fill-secondary: rgba(20, 168, 158, 0.08);
+  --fill-tertiary: rgba(20, 168, 158, 0.06);
+  --fill-quaternary: rgba(20, 168, 158, 0.04);
   --separator-light: rgba(60, 60, 67, 0.1);
   --separator-medium: rgba(60, 60, 67, 0.18);
 
@@ -41,8 +41,10 @@
   /* Nav hover */
   --nav-hover: rgba(120, 120, 128, 0.08);
 
-  /* Accent */
-  --accent-primary: #007AFF;
+  /* Accent — OsirisCare brand teal */
+  --accent-primary: #14A89E;
+  --accent-primary-hover: #0E9189;
+  --accent-glow: rgba(60, 188, 180, 0.25);
 }
 
 /* Theme CSS variables — dark (iOS-style pure black) */
@@ -53,10 +55,10 @@
   --label-primary: #FFFFFF;
   --label-secondary: rgba(235, 235, 245, 0.6);
   --label-tertiary: #98989D;
-  --fill-primary: rgba(0, 122, 255, 0.18);
-  --fill-secondary: rgba(0, 122, 255, 0.12);
-  --fill-tertiary: rgba(0, 122, 255, 0.08);
-  --fill-quaternary: rgba(0, 122, 255, 0.06);
+  --fill-primary: rgba(60, 188, 180, 0.18);
+  --fill-secondary: rgba(60, 188, 180, 0.12);
+  --fill-tertiary: rgba(60, 188, 180, 0.08);
+  --fill-quaternary: rgba(60, 188, 180, 0.06);
   --separator-light: rgba(84, 84, 88, 0.65);
   --separator-medium: rgba(84, 84, 88, 0.8);
 
@@ -84,17 +86,19 @@
   /* Nav hover */
   --nav-hover: rgba(120, 120, 128, 0.16);
 
-  /* Accent */
-  --accent-primary: #0A84FF;
+  /* Accent — OsirisCare brand teal (brighter for dark) */
+  --accent-primary: #3CBCB4;
+  --accent-primary-hover: #4DCCC4;
+  --accent-glow: rgba(60, 188, 180, 0.35);
 }
 
 /* Content area atmospheric background — gives glass something to blur */
 .content-atmosphere {
   background:
-    radial-gradient(ellipse 80% 60% at 10% 0%, rgba(60, 188, 180, 0.12) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 80% at 90% 20%, rgba(0, 122, 255, 0.08) 0%, transparent 60%),
-    radial-gradient(ellipse 70% 50% at 50% 90%, rgba(88, 86, 214, 0.06) 0%, transparent 60%),
-    radial-gradient(ellipse 40% 40% at 75% 60%, rgba(255, 149, 0, 0.04) 0%, transparent 50%);
+    radial-gradient(ellipse 80% 60% at 10% 0%, rgba(20, 168, 158, 0.16) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 80% at 90% 20%, rgba(60, 188, 180, 0.10) 0%, transparent 60%),
+    radial-gradient(ellipse 70% 50% at 50% 90%, rgba(88, 86, 214, 0.05) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 40% at 75% 60%, rgba(60, 188, 180, 0.06) 0%, transparent 50%);
 }
 .dark .content-atmosphere {
   background:
@@ -242,7 +246,7 @@
 
   .btn-primary:hover {
     filter: brightness(1.05);
-    box-shadow: 0 2px 12px rgba(0, 122, 255, 0.3);
+    box-shadow: 0 2px 12px rgba(60, 188, 180, 0.35);
   }
 
   .btn-primary:active {
@@ -302,7 +306,7 @@
     bottom: 6px;
     width: 3px;
     border-radius: 2px;
-    background: var(--accent-primary, #007AFF);
+    background: var(--accent-primary, #14A89E);
   }
 }
 
@@ -445,7 +449,7 @@
 .toast-success { border-left: 3px solid #34C759; }
 .toast-error { border-left: 3px solid #FF3B30; }
 .toast-warning { border-left: 3px solid #FF9500; }
-.toast-info { border-left: 3px solid #007AFF; }
+.toast-info { border-left: 3px solid var(--accent-primary, #14A89E); }
 
 @keyframes fade-out {
   to { opacity: 0; transform: translateX(20px); }
@@ -465,7 +469,7 @@
   outline: none;
 }
 .form-input:focus {
-  border-color: var(--accent-primary, #007AFF);
+  border-color: var(--accent-primary, #14A89E);
   box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
 }
 .form-input::placeholder {

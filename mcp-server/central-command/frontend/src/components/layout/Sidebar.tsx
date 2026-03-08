@@ -366,7 +366,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div
             className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
             style={{
-              background: 'linear-gradient(135deg, #007AFF 0%, #5856D6 100%)',
+              background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)',
             }}
           >
             <span className="text-white text-xs font-semibold">{userInitials}</span>

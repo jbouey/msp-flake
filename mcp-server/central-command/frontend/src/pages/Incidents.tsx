@@ -51,7 +51,7 @@ export const Incidents: React.FC = () => {
                 onClick={() => setFilter('all')}
                 className={`px-3 py-1.5 text-sm font-medium rounded-ios-sm transition-colors ${
                   filter === 'all'
-                    ? 'bg-accent-primary text-white shadow-glow-blue'
+                    ? 'bg-accent-primary text-white shadow-glow-teal'
                     : 'bg-fill-tertiary text-label-secondary hover:bg-fill-secondary'
                 }`}
               >

@@ -35,16 +35,16 @@ export const colors = {
 
   // Resolution levels
   levels: {
-    l1: '#007AFF',                // iOS blue - Deterministic
+    l1: '#14A89E',                // OsirisCare teal - Deterministic
     l2: '#5856D6',                // iOS purple - LLM
     l3: '#FF9500',                // iOS orange - Human
   },
 
   // Accents
   accent: {
-    primary: '#007AFF',           // iOS blue
+    primary: '#14A89E',           // OsirisCare teal
     secondary: '#5856D6',         // iOS purple
-    tint: 'rgba(0, 122, 255, 0.1)',
+    tint: 'rgba(20, 168, 158, 0.1)',
   },
 
   // iOS System Colors

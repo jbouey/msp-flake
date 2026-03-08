@@ -19,7 +19,7 @@ interface StatCardProps {
   className?: string;
 }
 
-function MiniSparkline({ data, color = '#007AFF' }: { data: SparklinePoint[]; color?: string }) {
+function MiniSparkline({ data, color = '#14A89E' }: { data: SparklinePoint[]; color?: string }) {
   if (!data || data.length < 2) return null;
   const max = Math.max(...data.map(d => d.value));
   const min = Math.min(...data.map(d => d.value));
@@ -100,7 +100,7 @@ export const StatCard: React.FC<StatCardProps> = ({ label, value, icon, trend, s
             </span>
           )}
         </div>
-        {sparkline && <MiniSparkline data={sparkline} color={color || '#007AFF'} />}
+        {sparkline && <MiniSparkline data={sparkline} color={color || '#14A89E'} />}
       </div>
     </div>
   );

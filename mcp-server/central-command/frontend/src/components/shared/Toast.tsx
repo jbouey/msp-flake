@@ -43,8 +43,8 @@ const ICONS: Record<ToastType, React.ReactNode> = {
   ),
   info: (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z" fill="#007AFF" fillOpacity="0.15"/>
-      <path d="M8 7v4M8 5h.01" stroke="#007AFF" strokeWidth="1.5" strokeLinecap="round"/>
+      <path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z" fill="#14A89E" fillOpacity="0.15"/>
+      <path d="M8 7v4M8 5h.01" stroke="#14A89E" strokeWidth="1.5" strokeLinecap="round"/>
     </svg>
   ),
 };
