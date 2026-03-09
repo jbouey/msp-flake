@@ -1445,7 +1445,7 @@ async def get_fleet_posture(db: AsyncSession = Depends(get_db)):
             ),
             site_incidents AS (
                 SELECT
-                    i.site_id,
+                    a.site_id,
                     COUNT(*) FILTER (
                         WHERE i.reported_at > NOW() - INTERVAL '24 hours'
                     ) as incidents_24h,
@@ -1465,8 +1465,9 @@ async def get_fleet_posture(db: AsyncSession = Depends(get_db)):
                         WHERE i.resolution_tier = 'L3' AND i.reported_at > NOW() - INTERVAL '24 hours'
                     ) as l3_24h
                 FROM incidents i
+                JOIN appliances a ON a.id = i.appliance_id
                 WHERE i.reported_at > NOW() - INTERVAL '30 days'
-                GROUP BY i.site_id
+                GROUP BY a.site_id
             ),
             site_compliance AS (
                 SELECT
@@ -1564,7 +1565,8 @@ async def get_incident_trends(
             interval = "30 days"
             trunc = "date_trunc('day', i.reported_at)"
 
-        site_filter = "AND i.site_id = :site_id" if site_id else ""
+        site_join = "JOIN appliances a ON a.id = i.appliance_id" if site_id else ""
+        site_filter = "AND a.site_id = :site_id" if site_id else ""
         params = {"site_id": site_id} if site_id else {}
 
         result = await db.execute(text(f"""
@@ -1576,6 +1578,7 @@ async def get_incident_trends(
                 COUNT(*) FILTER (WHERE i.status != 'resolved') as unresolved,
                 COUNT(*) as total
             FROM incidents i
+            {site_join}
             WHERE i.reported_at > NOW() - INTERVAL '{interval}'
             {site_filter}
             GROUP BY bucket
@@ -1615,7 +1618,8 @@ async def get_incident_breakdown(
         else:
             interval = "30 days"
 
-        site_filter = "AND i.site_id = :site_id" if site_id else ""
+        site_join = "JOIN appliances a ON a.id = i.appliance_id" if site_id else ""
+        site_filter = "AND a.site_id = :site_id" if site_id else ""
         params = {"site_id": site_id} if site_id else {}
 
         # Tier counts
@@ -1628,6 +1632,7 @@ async def get_incident_breakdown(
                 COUNT(*) FILTER (WHERE i.status != 'resolved') as unresolved,
                 COUNT(*) as total
             FROM incidents i
+            {site_join}
             WHERE i.reported_at > NOW() - INTERVAL '{interval}'
             {site_filter}
         """), params)
@@ -1642,6 +1647,7 @@ async def get_incident_breakdown(
                 COUNT(*) FILTER (WHERE i.resolution_tier = 'L2') as l2,
                 COUNT(*) FILTER (WHERE i.resolution_tier = 'L3') as l3
             FROM incidents i
+            {site_join}
             WHERE i.reported_at > NOW() - INTERVAL '{interval}'
             {site_filter}
             GROUP BY COALESCE(i.incident_type, i.check_type, 'unknown')
@@ -1657,6 +1663,7 @@ async def get_incident_breakdown(
                 ROUND(AVG(EXTRACT(EPOCH FROM (i.resolved_at - i.reported_at)) / 60)::numeric, 1) as avg_minutes,
                 COUNT(*) as resolved_count
             FROM incidents i
+            {site_join}
             WHERE i.reported_at > NOW() - INTERVAL '{interval}'
             AND i.status = 'resolved'
             AND i.resolved_at IS NOT NULL
@@ -1701,10 +1708,11 @@ async def get_attention_required(db: AsyncSession = Depends(get_db)):
         # L3 escalations (unresolved)
         l3_result = await db.execute(text("""
             SELECT
-                i.id, i.site_id, i.incident_type, i.check_type, i.severity,
+                i.id, a.site_id, i.incident_type, i.check_type, i.severity,
                 i.reported_at, s.clinic_name
             FROM incidents i
-            LEFT JOIN sites s ON s.site_id = i.site_id
+            JOIN appliances a ON a.id = i.appliance_id
+            LEFT JOIN sites s ON s.site_id = a.site_id
             WHERE i.resolution_tier = 'L3'
             AND i.status != 'resolved'
             ORDER BY i.reported_at DESC
@@ -1715,14 +1723,15 @@ async def get_attention_required(db: AsyncSession = Depends(get_db)):
         # Repeat offenders: same check_type, same site, 3+ incidents in 24h (healing not sticking)
         repeat_result = await db.execute(text("""
             SELECT
-                i.site_id, i.check_type, COUNT(*) as occurrences,
+                a.site_id, i.check_type, COUNT(*) as occurrences,
                 MAX(i.reported_at) as latest,
                 s.clinic_name
             FROM incidents i
-            LEFT JOIN sites s ON s.site_id = i.site_id
+            JOIN appliances a ON a.id = i.appliance_id
+            LEFT JOIN sites s ON s.site_id = a.site_id
             WHERE i.reported_at > NOW() - INTERVAL '24 hours'
             AND i.resolution_tier = 'L1'
-            GROUP BY i.site_id, i.check_type, s.clinic_name
+            GROUP BY a.site_id, i.check_type, s.clinic_name
             HAVING COUNT(*) >= 3
             ORDER BY COUNT(*) DESC
             LIMIT 20
