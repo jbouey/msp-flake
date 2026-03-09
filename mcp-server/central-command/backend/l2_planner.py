@@ -162,6 +162,55 @@ AVAILABLE_RUNBOOKS = {
     },
 }
 
+# --- Dynamic runbook cache (loaded from DB) ---
+_dynamic_runbooks: Dict[str, Dict[str, Any]] = {}
+_dynamic_runbooks_loaded_at: Optional[datetime] = None
+_DYNAMIC_RUNBOOK_TTL_SECONDS = 300  # Refresh every 5 minutes
+
+
+async def _load_dynamic_runbooks() -> Dict[str, Dict[str, Any]]:
+    """Load runbooks from DB and merge with static AVAILABLE_RUNBOOKS."""
+    global _dynamic_runbooks, _dynamic_runbooks_loaded_at
+
+    now = datetime.now(timezone.utc)
+    if _dynamic_runbooks_loaded_at and (now - _dynamic_runbooks_loaded_at).total_seconds() < _DYNAMIC_RUNBOOK_TTL_SECONDS:
+        return {**AVAILABLE_RUNBOOKS, **_dynamic_runbooks}
+
+    try:
+        from .fleet import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT runbook_id, name, description, category
+                FROM runbooks
+                WHERE runbook_id NOT LIKE 'ESC-%'
+                ORDER BY runbook_id
+            """)
+            new_dynamic = {}
+            for row in rows:
+                rb_id = row['runbook_id']
+                if rb_id not in AVAILABLE_RUNBOOKS:
+                    new_dynamic[rb_id] = {
+                        "name": row['name'] or rb_id,
+                        "description": row['description'] or f"Runbook {rb_id}",
+                        "triggers": [],
+                        "hipaa_controls": [],
+                        "is_disruptive": False,
+                    }
+            _dynamic_runbooks = new_dynamic
+            _dynamic_runbooks_loaded_at = now
+            logger.debug("Loaded dynamic runbooks", count=len(new_dynamic),
+                         total=len(AVAILABLE_RUNBOOKS) + len(new_dynamic))
+    except Exception as e:
+        logger.warning(f"Failed to load dynamic runbooks: {e}")
+
+    return {**AVAILABLE_RUNBOOKS, **_dynamic_runbooks}
+
+
+def _get_all_runbooks_sync() -> Dict[str, Dict[str, Any]]:
+    """Get all known runbooks (static + cached dynamic)."""
+    return {**AVAILABLE_RUNBOOKS, **_dynamic_runbooks}
+
 
 @dataclass
 class L2Decision:
@@ -183,11 +232,13 @@ def generate_pattern_signature(incident_type: str, check_type: str, runbook_id: 
     return hashlib.sha256(pattern_str.encode()).hexdigest()[:16]
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(all_runbooks: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
     """Build the system prompt for L2 analysis."""
+    runbooks = all_runbooks or _get_all_runbooks_sync()
     runbook_list = "\n".join([
-        f"- {rb_id}: {rb['name']} - {rb['description']} (Triggers: {', '.join(rb['triggers'])})"
-        for rb_id, rb in AVAILABLE_RUNBOOKS.items()
+        f"- {rb_id}: {rb['name']} - {rb['description']}"
+        + (f" (Triggers: {', '.join(rb['triggers'])})" if rb.get('triggers') else "")
+        for rb_id, rb in runbooks.items()
     ])
 
     return f"""You are an expert IT operations analyst for a HIPAA-compliant healthcare MSP.
@@ -407,7 +458,10 @@ async def analyze_incident(
 
     _daily_l2_calls += 1
 
-    system_prompt = build_system_prompt()
+    # Load all runbooks (static + DB-backed)
+    all_runbooks = await _load_dynamic_runbooks()
+
+    system_prompt = build_system_prompt(all_runbooks)
     user_prompt = build_incident_prompt(
         incident_type, severity, check_type, details, pre_state, hipaa_controls
     )
@@ -462,8 +516,8 @@ async def analyze_incident(
         runbook_id = parsed.get("runbook_id")
         confidence = float(parsed.get("confidence", 0.5))
 
-        # Validate runbook_id
-        if runbook_id and runbook_id not in AVAILABLE_RUNBOOKS:
+        # Validate runbook_id against all known runbooks (static + DB)
+        if runbook_id and runbook_id not in all_runbooks:
             logger.warning("L2 recommended unknown runbook", runbook_id=runbook_id)
             runbook_id = None
             confidence = 0.0
