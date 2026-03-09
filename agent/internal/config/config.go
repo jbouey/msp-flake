@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // Config holds all agent configuration
@@ -30,10 +31,16 @@ type Config struct {
 
 // Load loads configuration from file and command line overrides
 func Load(configFile, applianceAddr string) (*Config, error) {
-	// Default data directory
-	dataDir := os.Getenv("PROGRAMDATA")
-	if dataDir == "" {
-		dataDir = "C:\\ProgramData"
+	// Default data directory (platform-aware)
+	var dataDir string
+	switch runtime.GOOS {
+	case "darwin":
+		dataDir = "/Library/Application Support"
+	default:
+		dataDir = os.Getenv("PROGRAMDATA")
+		if dataDir == "" {
+			dataDir = "C:\\ProgramData"
+		}
 	}
 
 	cfg := &Config{

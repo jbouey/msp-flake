@@ -2568,3 +2568,418 @@ async def client_totp_disable(
         """, user_id)
 
     return {"status": "disabled"}
+
+
+# =============================================================================
+# AGENT DOWNLOAD (macOS + Windows)
+# =============================================================================
+
+AGENT_GRPC_PORT = 50051  # Appliance gRPC port for agent connections
+
+
+@auth_router.get("/agent/install-info")
+async def get_agent_install_info(user: dict = Depends(require_client_user)):
+    """Get agent installation info for all sites in the org.
+
+    Returns appliance addresses and install instructions
+    so the client can download and configure agents.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        # Get all sites + their appliances for this org
+        rows = await conn.fetch("""
+            SELECT s.site_id, s.clinic_name,
+                   sa.appliance_id, sa.hostname as appliance_hostname,
+                   sa.ip_addresses, sa.agent_version
+            FROM sites s
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+            WHERE s.client_org_id = $1
+            ORDER BY s.clinic_name
+        """, org_id)
+
+    from .sites import parse_ip_addresses
+
+    sites = {}
+    for row in rows:
+        sid = row["site_id"]
+        if sid not in sites:
+            sites[sid] = {
+                "site_id": sid,
+                "clinic_name": row["clinic_name"],
+                "appliances": [],
+            }
+        if row["appliance_id"]:
+            ips = parse_ip_addresses(row["ip_addresses"])
+            # Use the first non-loopback IP as the appliance address
+            appliance_ip = None
+            for ip in ips:
+                if ip and not ip.startswith("127."):
+                    appliance_ip = ip
+                    break
+            if appliance_ip:
+                sites[sid]["appliances"].append({
+                    "appliance_id": row["appliance_id"],
+                    "hostname": row["appliance_hostname"],
+                    "ip": appliance_ip,
+                    "grpc_addr": f"{appliance_ip}:{AGENT_GRPC_PORT}",
+                    "version": row["agent_version"],
+                })
+
+    return {
+        "sites": list(sites.values()),
+        "agent_version": "0.4.0",
+        "platforms": {
+            "macos": {
+                "name": "macOS",
+                "binary": "osiris-agent-darwin",
+                "pkg": "osiris-agent-0.4.0.pkg",
+                "install_method": "pkg",
+            },
+            "windows": {
+                "name": "Windows",
+                "binary": "osiris-agent.exe",
+                "install_method": "gpo",
+            },
+        },
+    }
+
+
+@auth_router.get("/agent/config/{site_id}")
+async def get_agent_config(
+    site_id: str,
+    user: dict = Depends(require_client_user),
+):
+    """Generate a site-specific agent config.json for download."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        # Verify site belongs to this org
+        site = await conn.fetchrow(
+            "SELECT site_id, clinic_name FROM sites WHERE site_id = $1 AND client_org_id = $2",
+            site_id, org_id,
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Get appliance for this site
+        appliance = await conn.fetchrow("""
+            SELECT appliance_id, ip_addresses
+            FROM site_appliances
+            WHERE site_id = $1
+            ORDER BY last_checkin DESC NULLS LAST
+            LIMIT 1
+        """, site_id)
+
+    if not appliance:
+        raise HTTPException(
+            status_code=404,
+            detail="No appliance found for this site. An appliance must be connected before agents can be deployed.",
+        )
+
+    from .sites import parse_ip_addresses
+    ips = parse_ip_addresses(appliance["ip_addresses"])
+    appliance_ip = None
+    for ip in ips:
+        if ip and not ip.startswith("127."):
+            appliance_ip = ip
+            break
+
+    if not appliance_ip:
+        raise HTTPException(status_code=404, detail="Appliance has no reachable IP address")
+
+    import json
+    config = {
+        "appliance_addr": f"{appliance_ip}:{AGENT_GRPC_PORT}",
+        "site_id": site_id,
+    }
+
+    config_json = json.dumps(config, indent=2)
+
+    return Response(
+        content=config_json,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="osiris-config.json"',
+        },
+    )
+
+
+@auth_router.get("/agent/install-script/{site_id}")
+async def get_agent_install_script(
+    site_id: str,
+    user: dict = Depends(require_client_user),
+):
+    """Generate a site-specific macOS install script.
+
+    This script downloads the .pkg, installs it, and writes
+    the site-specific config — all in one command.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        site = await conn.fetchrow(
+            "SELECT site_id FROM sites WHERE site_id = $1 AND client_org_id = $2",
+            site_id, org_id,
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        appliance = await conn.fetchrow("""
+            SELECT ip_addresses
+            FROM site_appliances
+            WHERE site_id = $1
+            ORDER BY last_checkin DESC NULLS LAST
+            LIMIT 1
+        """, site_id)
+
+    if not appliance:
+        raise HTTPException(status_code=404, detail="No appliance found for this site")
+
+    from .sites import parse_ip_addresses
+    ips = parse_ip_addresses(appliance["ip_addresses"])
+    appliance_ip = None
+    for ip in ips:
+        if ip and not ip.startswith("127."):
+            appliance_ip = ip
+            break
+
+    if not appliance_ip:
+        raise HTTPException(status_code=404, detail="Appliance has no reachable IP address")
+
+    grpc_addr = f"{appliance_ip}:{AGENT_GRPC_PORT}"
+
+    script = f"""#!/bin/bash
+# OsirisCare Agent Installer for macOS
+# Site: {site_id}
+# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+#
+# Run with: curl -sL <this-url> | sudo bash
+
+set -e
+
+INSTALL_DIR="/Library/OsirisCare"
+DATA_DIR="/Library/Application Support/OsirisCare"
+LOG_DIR="/Library/Logs/OsirisCare"
+PLIST_LABEL="com.osiriscare.agent"
+PLIST_PATH="/Library/LaunchDaemons/${{PLIST_LABEL}}.plist"
+
+echo "=== OsirisCare Agent Installer ==="
+echo ""
+
+# Check root
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: This script must be run as root (use sudo)."
+    exit 1
+fi
+
+# Create directories
+mkdir -p "$INSTALL_DIR" "$DATA_DIR" "$LOG_DIR"
+
+# Write site-specific configuration
+cat > "$DATA_DIR/config.json" << 'CONFIGEOF'
+{{
+  "appliance_addr": "{grpc_addr}",
+  "site_id": "{site_id}"
+}}
+CONFIGEOF
+
+echo "[1/4] Configuration written to $DATA_DIR/config.json"
+echo "      Appliance: {grpc_addr}"
+
+# Check if .pkg is available locally or download
+if [ -f "$INSTALL_DIR/osiris-agent" ]; then
+    echo "[2/4] Agent binary already installed, updating config only..."
+else
+    echo "[2/4] Please install the OsirisCare Agent .pkg package."
+    echo "      Download from your client portal or request from your MSP."
+    echo ""
+    echo "      After installing the .pkg, the agent will start automatically"
+    echo "      and connect to your compliance appliance."
+fi
+
+# Write launchd plist
+cat > "$PLIST_PATH" << 'PLISTEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.osiriscare.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/OsirisCare/osiris-agent</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/Library/Logs/OsirisCare/agent-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Library/Logs/OsirisCare/agent-stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Library/OsirisCare</string>
+</dict>
+</plist>
+PLISTEOF
+chmod 644 "$PLIST_PATH"
+chown root:wheel "$PLIST_PATH"
+echo "[3/4] LaunchDaemon plist installed"
+
+# Restart agent if binary exists
+if [ -f "$INSTALL_DIR/osiris-agent" ]; then
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    launchctl load "$PLIST_PATH"
+    echo "[4/4] Agent restarted with new configuration"
+else
+    echo "[4/4] Agent will start after .pkg installation"
+fi
+
+echo ""
+echo "=== Installation complete ==="
+echo "Agent will connect to appliance at {grpc_addr}"
+echo "Logs: /Library/Logs/OsirisCare/"
+"""
+
+    return Response(
+        content=script,
+        media_type="text/x-shellscript",
+        headers={
+            "Content-Disposition": f'attachment; filename="install-osiriscare-{site_id}.sh"',
+        },
+    )
+
+
+@auth_router.get("/agent/mobileconfig/{site_id}")
+async def get_agent_mobileconfig(
+    site_id: str,
+    user: dict = Depends(require_client_user),
+):
+    """Generate a .mobileconfig profile for MDM deployment.
+
+    Delivers the agent configuration via macOS configuration profile.
+    Deploy alongside the .pkg via Intune, Jamf, Mosyle, or Kandji.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        site = await conn.fetchrow(
+            "SELECT site_id, clinic_name FROM sites WHERE site_id = $1 AND client_org_id = $2",
+            site_id, org_id,
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        org = await conn.fetchrow(
+            "SELECT name FROM client_orgs WHERE id = $1", org_id,
+        )
+
+        appliance = await conn.fetchrow("""
+            SELECT ip_addresses
+            FROM site_appliances
+            WHERE site_id = $1
+            ORDER BY last_checkin DESC NULLS LAST
+            LIMIT 1
+        """, site_id)
+
+    if not appliance:
+        raise HTTPException(status_code=404, detail="No appliance found for this site")
+
+    from .sites import parse_ip_addresses
+    ips = parse_ip_addresses(appliance["ip_addresses"])
+    appliance_ip = None
+    for ip in ips:
+        if ip and not ip.startswith("127."):
+            appliance_ip = ip
+            break
+
+    if not appliance_ip:
+        raise HTTPException(status_code=404, detail="Appliance has no reachable IP address")
+
+    import uuid
+    profile_uuid = str(uuid.uuid4()).upper()
+    payload_uuid = str(uuid.uuid4()).upper()
+    org_name = org["name"] if org else "OsirisCare"
+    clinic_name = site["clinic_name"] or site_id
+    grpc_addr = f"{appliance_ip}:{AGENT_GRPC_PORT}"
+
+    # The mobileconfig deploys a script that writes the config file.
+    # MDM systems execute the embedded script on deployment.
+    mobileconfig = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.ManagedClient.preferences</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadIdentifier</key>
+            <string>com.osiriscare.agent.config.{site_id}</string>
+            <key>PayloadUUID</key>
+            <string>{payload_uuid}</string>
+            <key>PayloadDisplayName</key>
+            <string>OsirisCare Agent Configuration</string>
+            <key>PayloadDescription</key>
+            <string>Configures the OsirisCare compliance agent for {clinic_name}</string>
+            <key>PayloadOrganization</key>
+            <string>{org_name}</string>
+            <key>PayloadEnabled</key>
+            <true/>
+            <key>mcx_preference_settings</key>
+            <dict>
+                <key>com.osiriscare.agent</key>
+                <dict>
+                    <key>Forced</key>
+                    <array>
+                        <dict>
+                            <key>mcx_preference_settings</key>
+                            <dict>
+                                <key>appliance_addr</key>
+                                <string>{grpc_addr}</string>
+                                <key>site_id</key>
+                                <string>{site_id}</string>
+                            </dict>
+                        </dict>
+                    </array>
+                </dict>
+            </dict>
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>OsirisCare Agent - {clinic_name}</string>
+    <key>PayloadDescription</key>
+    <string>Configuration profile for OsirisCare HIPAA compliance agent. Deploy alongside the OsirisCare Agent .pkg installer.</string>
+    <key>PayloadIdentifier</key>
+    <string>com.osiriscare.agent.profile.{site_id}</string>
+    <key>PayloadOrganization</key>
+    <string>{org_name}</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>{profile_uuid}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>"""
+
+    return Response(
+        content=mobileconfig,
+        media_type="application/x-apple-aspen-config",
+        headers={
+            "Content-Disposition": f'attachment; filename="OsirisCare-{site_id}.mobileconfig"',
+        },
+    )

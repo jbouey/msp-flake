@@ -13,6 +13,20 @@ interface Site {
   last_evidence: string | null;
 }
 
+interface AgentInstallInfo {
+  sites: Array<{
+    site_id: string;
+    clinic_name: string;
+    appliances: Array<{
+      appliance_id: string;
+      hostname: string;
+      ip: string;
+      grpc_addr: string;
+    }>;
+  }>;
+  agent_version: string;
+}
+
 interface KPIs {
   compliance_score: number;
   total_checks: number;
@@ -54,6 +68,9 @@ export const ClientDashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showNotifications, setShowNotifications] = useState(false);
   const [driftConfigSite, setDriftConfigSite] = useState<{ id: string; name: string } | null>(null);
+  const [agentInfo, setAgentInfo] = useState<AgentInstallInfo | null>(null);
+  const [agentSiteExpanded, setAgentSiteExpanded] = useState<string | null>(null);
+  const [downloadingConfig, setDownloadingConfig] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -65,6 +82,7 @@ export const ClientDashboard: React.FC = () => {
     if (isAuthenticated) {
       fetchDashboard();
       fetchNotifications();
+      fetchAgentInfo();
     }
   }, [isAuthenticated]);
 
@@ -99,6 +117,80 @@ export const ClientDashboard: React.FC = () => {
       }
     } catch (e) {
       console.error('Failed to fetch notifications:', e);
+    }
+  };
+
+  const fetchAgentInfo = async () => {
+    try {
+      const response = await fetch('/api/client/agent/install-info', {
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setAgentInfo(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch agent info:', e);
+    }
+  };
+
+  const downloadConfig = async (siteId: string) => {
+    setDownloadingConfig(siteId);
+    try {
+      const response = await fetch(`/api/client/agent/config/${siteId}`, {
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'osiris-config.json';
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      console.error('Config download failed:', e);
+    } finally {
+      setDownloadingConfig(null);
+    }
+  };
+
+  const downloadInstallScript = async (siteId: string) => {
+    try {
+      const response = await fetch(`/api/client/agent/install-script/${siteId}`, {
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `install-osiriscare-${siteId}.sh`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      console.error('Script download failed:', e);
+    }
+  };
+
+  const downloadMobileConfig = async (siteId: string) => {
+    try {
+      const response = await fetch(`/api/client/agent/mobileconfig/${siteId}`, {
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `OsirisCare-${siteId}.mobileconfig`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      console.error('Mobileconfig download failed:', e);
     }
   };
 
@@ -324,6 +416,193 @@ export const ClientDashboard: React.FC = () => {
             </p>
           </div>
         </div>
+
+        {/* Protect Your Devices — Agent Downloads */}
+        {agentInfo && agentInfo.sites.length > 0 && (
+        <div className="mb-8 rounded-2xl overflow-hidden border-2 border-teal-200" style={{ background: 'linear-gradient(135deg, rgba(20,168,158,0.06) 0%, rgba(60,188,180,0.03) 100%)' }}>
+          <div className="p-6 sm:p-8">
+            <div className="flex items-start justify-between gap-6 flex-wrap">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60,188,180,0.35)' }}>
+                  <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900">Protect Your Devices</h2>
+                  <p className="text-slate-600 mt-1">
+                    Install the OsirisCare agent on your Mac and Windows workstations for real-time HIPAA compliance monitoring.
+                  </p>
+                </div>
+              </div>
+              <span className="px-3 py-1 bg-teal-100 text-teal-700 text-xs font-semibold rounded-full whitespace-nowrap">
+                Agent v{agentInfo.agent_version}
+              </span>
+            </div>
+
+            {/* Platform cards */}
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* macOS Card */}
+              <div className="bg-white rounded-xl border border-slate-200 p-5">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 bg-slate-900 rounded-lg flex items-center justify-center">
+                    <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-slate-900">macOS Agent</h3>
+                    <p className="text-xs text-slate-500">Universal (Intel + Apple Silicon)</p>
+                  </div>
+                </div>
+                <p className="text-sm text-slate-600 mb-4">
+                  12 compliance checks: FileVault, Gatekeeper, SIP, Firewall, Updates, Screen Lock, and more. Auto-heals 6 common issues.
+                </p>
+                <div className="text-xs text-slate-500 mb-4 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Works with Jamf, Intune, Mosyle, Kandji, or manual install
+                </div>
+              </div>
+
+              {/* Windows Card */}
+              <div className="bg-white rounded-xl border border-slate-200 p-5">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
+                    <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M3 12V6.75l8-1.25V12H3zm0 .5h8v6.5l-8-1.25V12.5zM11.5 12V5.25L21 3.5V12h-9.5zm0 .5H21v8.5l-9.5-1.75V12.5z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Windows Agent</h3>
+                    <p className="text-xs text-slate-500">Windows 10/11 (64-bit)</p>
+                  </div>
+                </div>
+                <p className="text-sm text-slate-600 mb-4">
+                  8 compliance checks: BitLocker, Defender, Patches, Firewall, Screen Lock, WinRM, and more. Auto-deployed via GPO on domain networks.
+                </p>
+                <div className="text-xs text-slate-500 mb-4 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Auto-deploys via Active Directory GPO when available
+                </div>
+              </div>
+            </div>
+
+            {/* Per-site download section */}
+            <div className="mt-6">
+              <h3 className="text-sm font-semibold text-slate-700 mb-3">Download for your sites</h3>
+              <div className="space-y-3">
+                {agentInfo.sites.map((site) => (
+                  <div key={site.site_id} className="bg-white rounded-xl border border-slate-200">
+                    <button
+                      onClick={() => setAgentSiteExpanded(agentSiteExpanded === site.site_id ? null : site.site_id)}
+                      className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition rounded-xl"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-2.5 h-2.5 rounded-full ${site.appliances.length > 0 ? 'bg-green-500' : 'bg-amber-400'}`} />
+                        <div className="text-left">
+                          <p className="font-medium text-slate-900">{site.clinic_name}</p>
+                          <p className="text-xs text-slate-500">
+                            {site.appliances.length > 0
+                              ? `Appliance: ${site.appliances[0].ip}`
+                              : 'No appliance connected'}
+                          </p>
+                        </div>
+                      </div>
+                      <svg className={`w-5 h-5 text-slate-400 transition-transform ${agentSiteExpanded === site.site_id ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {agentSiteExpanded === site.site_id && (
+                      <div className="border-t border-slate-200 p-4">
+                        {site.appliances.length === 0 ? (
+                          <div className="text-center py-4">
+                            <p className="text-sm text-amber-600 font-medium">No appliance connected to this site yet.</p>
+                            <p className="text-xs text-slate-500 mt-1">Contact your MSP to set up an appliance before deploying agents.</p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                            <button
+                              onClick={() => downloadConfig(site.site_id)}
+                              disabled={downloadingConfig === site.site_id}
+                              className="flex items-center gap-2 px-4 py-3 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition text-sm font-medium disabled:opacity-50"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                              </svg>
+                              {downloadingConfig === site.site_id ? 'Downloading...' : 'Config File'}
+                            </button>
+
+                            <button
+                              onClick={() => downloadInstallScript(site.site_id)}
+                              className="flex items-center gap-2 px-4 py-3 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition text-sm font-medium"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                              Install Script
+                            </button>
+
+                            <button
+                              onClick={() => downloadMobileConfig(site.site_id)}
+                              className="flex items-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-sm font-medium"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                              </svg>
+                              MDM Profile
+                            </button>
+
+                            <a
+                              href={`/api/client/agent/config/${site.site_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 px-4 py-3 bg-white text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 transition text-sm font-medium"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              View Config
+                            </a>
+                          </div>
+                        )}
+
+                        {site.appliances.length > 0 && (
+                          <div className="mt-4 p-3 bg-slate-50 rounded-lg">
+                            <p className="text-xs font-medium text-slate-700 mb-2">Quick Install (macOS)</p>
+                            <div className="flex items-center gap-2">
+                              <code className="flex-1 text-xs bg-slate-900 text-green-400 p-2 rounded font-mono overflow-x-auto">
+                                curl -sL {window.location.origin}/api/client/agent/install-script/{site.site_id} | sudo bash
+                              </code>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(
+                                    `curl -sL ${window.location.origin}/api/client/agent/install-script/${site.site_id} | sudo bash`
+                                  );
+                                }}
+                                className="p-2 text-slate-500 hover:text-teal-600 rounded"
+                                title="Copy to clipboard"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        )}
 
         {/* Sites List */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100">

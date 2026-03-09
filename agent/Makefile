@@ -1,11 +1,11 @@
-.PHONY: all proto build-linux build-windows clean test fmt vet
+.PHONY: all proto build-linux build-windows build-darwin clean test fmt vet
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.3.0")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)"
 
-all: fmt vet build-linux build-windows
+all: fmt vet build-linux build-windows build-darwin
 
 # Generate protobuf code (requires protoc and plugins)
 proto:
@@ -27,6 +27,20 @@ build-windows:
 build-windows-nocgo:
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
 		go build $(LDFLAGS) -o bin/osiris-agent-nocgo.exe ./cmd/osiris-agent
+
+# Build for macOS (universal binary: amd64 + arm64)
+build-darwin:
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 \
+		go build $(LDFLAGS) -o bin/osiris-agent-darwin-amd64 ./cmd/osiris-agent
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+		go build $(LDFLAGS) -o bin/osiris-agent-darwin-arm64 ./cmd/osiris-agent
+	lipo -create -output bin/osiris-agent-darwin \
+		bin/osiris-agent-darwin-amd64 bin/osiris-agent-darwin-arm64 2>/dev/null \
+		|| cp bin/osiris-agent-darwin-arm64 bin/osiris-agent-darwin
+
+# Build macOS .pkg installer
+build-pkg: build-darwin
+	packaging/macos/build-pkg.sh $(VERSION)
 
 # Build via Nix (reproducible)
 nix-build:
@@ -80,9 +94,11 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all            Build for Linux and Windows"
+	@echo "  all            Build for Linux, Windows, and macOS"
 	@echo "  build-linux    Build for Linux amd64"
 	@echo "  build-windows  Build for Windows amd64 (requires mingw-w64)"
+	@echo "  build-darwin   Build universal macOS binary (amd64 + arm64)"
+	@echo "  build-pkg      Build macOS .pkg installer"
 	@echo "  test           Run tests"
 	@echo "  test-cover     Run tests with coverage report"
 	@echo "  fmt            Format code"

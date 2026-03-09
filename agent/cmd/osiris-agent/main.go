@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -61,7 +62,12 @@ func main() {
 	// Set up file logging — Windows services have no console for stderr
 	logPath := filepath.Join(filepath.Dir(os.Args[0]), "agent.log")
 	if logPath == filepath.Join(".", "agent.log") {
-		logPath = `C:\OsirisCare\agent.log`
+		switch runtime.GOOS {
+		case "darwin":
+			logPath = "/Library/OsirisCare/agent.log"
+		default:
+			logPath = `C:\OsirisCare\agent.log`
+		}
 	}
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
@@ -120,7 +126,12 @@ func runAgent(ctx context.Context) error {
 	// Self-update: check if previous update needs confirmation or rollback
 	installDir := filepath.Dir(os.Args[0])
 	if installDir == "." || installDir == "" {
-		installDir = `C:\OsirisCare`
+		switch runtime.GOOS {
+		case "darwin":
+			installDir = "/Library/OsirisCare"
+		default:
+			installDir = `C:\OsirisCare`
+		}
 	}
 	upd := updater.New(cfg.DataDir, installDir, Version, "OsirisCareAgent")
 	upd.CheckRollbackNeeded()
@@ -177,7 +188,7 @@ func runAgent(ctx context.Context) error {
 
 	// Check interval and enabled checks
 	checkInterval := 300
-	enabledChecks := []string{"bitlocker", "defender", "patches", "firewall", "screenlock", "rmm_detection"}
+	enabledChecks := checks.DefaultEnabledChecks()
 
 	if regResp != nil {
 		if regResp.CheckIntervalSeconds > 0 {
@@ -565,14 +576,7 @@ func runDryRun() {
 
 	ctx := context.Background()
 
-	registry := checks.NewRegistry([]string{
-		"bitlocker",
-		"defender",
-		"patches",
-		"firewall",
-		"screenlock",
-		"rmm_detection",
-	})
+	registry := checks.NewRegistry(checks.DefaultEnabledChecks())
 
 	results := registry.RunAll(ctx)
 

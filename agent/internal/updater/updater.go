@@ -22,9 +22,18 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 )
+
+// binaryName returns the agent binary name for the current platform.
+func binaryName() string {
+	if runtime.GOOS == "windows" {
+		return "osiris-agent.exe"
+	}
+	return "osiris-agent"
+}
 
 // UpdateMarker is written before restarting to track update state.
 type UpdateMarker struct {
@@ -101,7 +110,7 @@ func (u *Updater) CheckAndUpdate(ctx context.Context, updateVersion, updateURL, 
 	log.Printf("[updater] Starting update: v%s → v%s from %s", u.currentVersion, updateVersion, updateURL)
 
 	// Download to temp file
-	newPath := filepath.Join(u.installDir, "osiris-agent.exe.new")
+	newPath := filepath.Join(u.installDir, binaryName()+".new")
 	if err := u.downloadBinary(ctx, updateURL, newPath); err != nil {
 		u.recordFailure()
 		return fmt.Errorf("download failed: %w", err)
@@ -153,7 +162,7 @@ func (u *Updater) CheckRollbackNeeded() {
 		return
 	}
 
-	bakPath := filepath.Join(u.installDir, "osiris-agent.exe.bak")
+	bakPath := filepath.Join(u.installDir, binaryName()+".bak")
 
 	if u.currentVersion == marker.NewVersion {
 		// Update succeeded — clean up
@@ -168,8 +177,8 @@ func (u *Updater) CheckRollbackNeeded() {
 		log.Printf("[updater] ROLLBACK: v%s failed, reverting to v%s",
 			marker.NewVersion, marker.PreviousVersion)
 
-		currentPath := filepath.Join(u.installDir, "osiris-agent.exe")
-		failedPath := filepath.Join(u.installDir, "osiris-agent.exe.failed")
+		currentPath := filepath.Join(u.installDir, binaryName())
+		failedPath := filepath.Join(u.installDir, binaryName()+".failed")
 
 		// Move broken new binary aside
 		os.Rename(currentPath, failedPath)
@@ -193,9 +202,9 @@ func (u *Updater) CheckRollbackNeeded() {
 
 // applyUpdate renames the binaries and triggers a service restart.
 func (u *Updater) applyUpdate(newVersion, sha256hex string) error {
-	currentPath := filepath.Join(u.installDir, "osiris-agent.exe")
-	bakPath := filepath.Join(u.installDir, "osiris-agent.exe.bak")
-	newPath := filepath.Join(u.installDir, "osiris-agent.exe.new")
+	currentPath := filepath.Join(u.installDir, binaryName())
+	bakPath := filepath.Join(u.installDir, binaryName()+".bak")
+	newPath := filepath.Join(u.installDir, binaryName()+".new")
 
 	// Remove old backup if it exists
 	os.Remove(bakPath)

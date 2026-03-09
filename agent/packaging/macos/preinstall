@@ -1,0 +1,11 @@
+#!/bin/bash
+# OsirisCare Agent preinstall script
+# Stops the agent if it's already running (upgrade case).
+
+PLIST_DST="/Library/LaunchDaemons/com.osiriscare.agent.plist"
+
+if [ -f "${PLIST_DST}" ]; then
+    launchctl unload "${PLIST_DST}" 2>/dev/null || true
+fi
+
+exit 0

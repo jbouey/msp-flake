@@ -1,0 +1,33 @@
+#!/bin/bash
+# OsirisCare Agent postinstall script
+# Runs after the .pkg payload is extracted to disk.
+
+set -e
+
+INSTALL_DIR="/Library/OsirisCare"
+LOG_DIR="/Library/Logs/OsirisCare"
+DATA_DIR="/Library/Application Support/OsirisCare"
+PLIST_SRC="${INSTALL_DIR}/com.osiriscare.agent.plist"
+PLIST_DST="/Library/LaunchDaemons/com.osiriscare.agent.plist"
+
+# Create directories
+mkdir -p "${LOG_DIR}"
+mkdir -p "${DATA_DIR}"
+
+# Set permissions
+chmod 755 "${INSTALL_DIR}/osiris-agent"
+chown root:wheel "${INSTALL_DIR}/osiris-agent"
+
+# Install launchd plist
+cp "${PLIST_SRC}" "${PLIST_DST}"
+chmod 644 "${PLIST_DST}"
+chown root:wheel "${PLIST_DST}"
+
+# Unload if already running (upgrade case)
+launchctl unload "${PLIST_DST}" 2>/dev/null || true
+
+# Load and start the agent
+launchctl load "${PLIST_DST}"
+
+echo "OsirisCare Agent installed and started."
+exit 0

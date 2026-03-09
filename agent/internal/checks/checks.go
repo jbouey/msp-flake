@@ -32,22 +32,15 @@ type Registry struct {
 	mu      sync.RWMutex
 }
 
-// NewRegistry creates a registry with specified enabled checks
+// NewRegistry creates a registry with specified enabled checks.
+// Platform-specific checks are registered via registerPlatformChecks (build tags).
 func NewRegistry(enabled []string) *Registry {
 	r := &Registry{
 		checks:  make(map[string]Check),
 		enabled: enabled,
 	}
 
-	// Register all available checks
-	r.Register(&BitLockerCheck{})
-	r.Register(&DefenderCheck{})
-	r.Register(&PatchesCheck{})
-	r.Register(&FirewallCheck{})
-	r.Register(&ScreenLockCheck{})
-	r.Register(&RMMCheck{})
-	r.Register(&WinRMCheck{})
-	r.Register(&DNSCheck{})
+	registerPlatformChecks(r)
 
 	return r
 }
