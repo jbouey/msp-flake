@@ -1382,11 +1382,55 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, raw_reque
                         AND status IN ('resolving', 'escalated') AND resolved_at IS NULL
                     """, order_id)
                 else:
-                    await conn.execute("""
-                        UPDATE incidents SET status = 'escalated', resolution_tier = 'L3'
-                        WHERE order_id = (SELECT id FROM orders WHERE order_id = $1)
-                        AND status = 'resolving'
-                    """, order_id)
+                    # L1 healing failed — try L2 LLM planner before escalating to L3
+                    l2_handled = False
+                    try:
+                        from .l2_planner import analyze_incident as l2_analyze, is_l2_available
+                        if is_l2_available():
+                            # Get incident details for L2 analysis
+                            inc_row = await conn.fetchrow("""
+                                SELECT i.id, i.incident_type, i.severity, i.check_type, i.details,
+                                       i.pre_state, i.hipaa_controls, i.appliance_id
+                                FROM incidents i
+                                WHERE i.order_id = (SELECT id FROM orders WHERE order_id = $1)
+                                AND i.status = 'resolving'
+                            """, order_id)
+                            if inc_row:
+                                details = {}
+                                pre_state = {}
+                                try:
+                                    if inc_row['details']:
+                                        details = json.loads(inc_row['details']) if isinstance(inc_row['details'], str) else inc_row['details']
+                                    if inc_row['pre_state']:
+                                        pre_state = json.loads(inc_row['pre_state']) if isinstance(inc_row['pre_state'], str) else inc_row['pre_state']
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
+
+                                decision = await l2_analyze(
+                                    incident_type=inc_row['incident_type'],
+                                    severity=inc_row['severity'] or 'medium',
+                                    check_type=inc_row['check_type'] or inc_row['incident_type'],
+                                    details=details,
+                                    pre_state=pre_state,
+                                    hipaa_controls=inc_row['hipaa_controls'] or [],
+                                )
+                                if decision.runbook_id and decision.confidence >= 0.6 and not decision.requires_human_review:
+                                    l2_handled = True
+                                    await conn.execute("""
+                                        UPDATE incidents SET resolution_tier = 'L2', status = 'resolving'
+                                        WHERE id = $1
+                                    """, inc_row['id'])
+                                    logger.info(f"L1 failed → L2 planner found runbook {decision.runbook_id} "
+                                                f"(confidence={decision.confidence}) for {inc_row['incident_type']}")
+                    except Exception as l2_err:
+                        logger.warning(f"L2 fallback failed for order {order_id}: {l2_err}")
+
+                    if not l2_handled:
+                        await conn.execute("""
+                            UPDATE incidents SET status = 'escalated', resolution_tier = 'L3'
+                            WHERE order_id = (SELECT id FROM orders WHERE order_id = $1)
+                            AND status = 'resolving'
+                        """, order_id)
             except Exception as e:
                 import logging
                 logging.warning(f"Failed to update incident for healing order {order_id}: {e}")
