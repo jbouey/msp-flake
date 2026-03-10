@@ -26,6 +26,9 @@ interface EscalationTicket {
   sla_target_at: string | null;
   sla_breached: boolean;
   updated_at: string;
+  recurrence_count?: number;
+  previous_ticket_id?: string | null;
+  escalated_to_l4?: boolean;
 }
 
 interface TicketCounts {
@@ -61,9 +64,12 @@ export const PartnerEscalations: React.FC = () => {
   const [selectedTicket, setSelectedTicket] = useState<EscalationTicket | null>(null);
   const [showAckModal, setShowAckModal] = useState(false);
   const [showResolveModal, setShowResolveModal] = useState(false);
+  const [showL4Modal, setShowL4Modal] = useState(false);
   const [ackBy, setAckBy] = useState('');
   const [resolveBy, setResolveBy] = useState('');
   const [resolutionNotes, setResolutionNotes] = useState('');
+  const [l4EscalatedBy, setL4EscalatedBy] = useState('');
+  const [l4Notes, setL4Notes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -162,6 +168,32 @@ export const PartnerEscalations: React.FC = () => {
     }
   };
 
+  const handleEscalateToL4 = async () => {
+    if (!selectedTicket || !l4EscalatedBy.trim() || !l4Notes.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch(
+        `/api/partners/me/notifications/tickets/${selectedTicket.id}/escalate-to-l4`,
+        postOptions({ escalated_by: l4EscalatedBy.trim(), notes: l4Notes.trim() })
+      );
+      if (res.ok) {
+        setSuccess('Ticket escalated to Central Command (L4)');
+        setShowL4Modal(false);
+        setL4EscalatedBy('');
+        setL4Notes('');
+        setSelectedTicket(null);
+        loadData();
+      } else {
+        const err = await res.json();
+        setError(err.detail || 'Failed to escalate');
+      }
+    } catch {
+      setError('Network error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const priorityColor = (p: string) => {
     switch (p) {
       case 'critical': return 'bg-red-100 text-red-800';
@@ -177,6 +209,7 @@ export const PartnerEscalations: React.FC = () => {
       case 'open': return 'bg-red-100 text-red-700';
       case 'acknowledged': return 'bg-blue-100 text-blue-700';
       case 'resolved': return 'bg-green-100 text-green-700';
+      case 'escalated_to_l4': return 'bg-purple-100 text-purple-700';
       default: return 'bg-slate-100 text-slate-600';
     }
   };
@@ -328,7 +361,14 @@ export const PartnerEscalations: React.FC = () => {
                         onClick={() => setSelectedTicket(ticket)}
                         className="text-left hover:text-indigo-600 transition"
                       >
-                        <p className="font-medium text-slate-900 text-sm">{ticket.title}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-medium text-slate-900 text-sm">{ticket.title}</p>
+                          {(ticket.recurrence_count ?? 0) > 0 && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-700">
+                              x{ticket.recurrence_count}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{ticket.summary}</p>
                       </button>
                     </td>
@@ -362,6 +402,15 @@ export const PartnerEscalations: React.FC = () => {
                             className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition"
                           >
                             Resolve
+                          </button>
+                        )}
+                        {ticket.status !== 'escalated_to_l4' && (ticket.recurrence_count ?? 0) > 0 && (
+                          <button
+                            onClick={() => { setSelectedTicket(ticket); setShowL4Modal(true); }}
+                            className="px-3 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition"
+                            title="Recurring issue — escalate to Central Command"
+                          >
+                            L4
                           </button>
                         )}
                       </div>
@@ -456,6 +505,17 @@ export const PartnerEscalations: React.FC = () => {
               </div>
             </div>
 
+            {/* Recurrence warning */}
+            {(selectedTicket.recurrence_count ?? 0) > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
+                <p className="text-xs font-semibold text-amber-800 uppercase mb-1">Recurring Issue</p>
+                <p className="text-sm text-amber-700">
+                  This issue has recurred {selectedTicket.recurrence_count} time{(selectedTicket.recurrence_count ?? 0) > 1 ? 's' : ''} after being resolved.
+                  Consider escalating to Central Command (L4) if it cannot be permanently resolved.
+                </p>
+              </div>
+            )}
+
             <div className="flex gap-2 justify-end mt-6 pt-4 border-t">
               {selectedTicket.status === 'open' && (
                 <button
@@ -465,13 +525,26 @@ export const PartnerEscalations: React.FC = () => {
                   Acknowledge
                 </button>
               )}
-              {selectedTicket.status !== 'resolved' && (
+              {selectedTicket.status !== 'resolved' && selectedTicket.status !== 'escalated_to_l4' && (
                 <button
                   onClick={() => setShowResolveModal(true)}
                   className="px-4 py-2 text-sm font-medium bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
                 >
                   Resolve
                 </button>
+              )}
+              {selectedTicket.status !== 'escalated_to_l4' && !selectedTicket.escalated_to_l4 && (
+                <button
+                  onClick={() => setShowL4Modal(true)}
+                  className="px-4 py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
+                >
+                  Escalate to L4
+                </button>
+              )}
+              {selectedTicket.status === 'escalated_to_l4' && (
+                <span className="px-4 py-2 text-sm font-medium text-purple-600">
+                  Escalated to Central Command
+                </span>
               )}
               <button
                 onClick={() => setSelectedTicket(null)}
@@ -561,6 +634,61 @@ export const PartnerEscalations: React.FC = () => {
                 className="px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition"
               >
                 {submitting ? 'Resolving...' : 'Resolve & Notify Client'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* L4 Escalation Modal */}
+      {showL4Modal && selectedTicket && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-900 mb-1">Escalate to Central Command</h3>
+            <p className="text-sm text-purple-600 font-medium mb-2">L4 Escalation</p>
+            <p className="text-sm text-slate-500 mb-4">{selectedTicket.title}</p>
+            {(selectedTicket.recurrence_count ?? 0) > 0 && (
+              <div className="bg-amber-50 rounded-lg p-2.5 mb-4">
+                <p className="text-xs text-amber-700">
+                  This issue has recurred {selectedTicket.recurrence_count} time(s). Central Command will investigate the root cause.
+                </p>
+              </div>
+            )}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Escalated By</label>
+                <input
+                  type="text"
+                  value={l4EscalatedBy}
+                  onChange={e => setL4EscalatedBy(e.target.value)}
+                  placeholder="Your name"
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Escalation Notes</label>
+                <textarea
+                  value={l4Notes}
+                  onChange={e => setL4Notes(e.target.value)}
+                  placeholder="Describe why this needs Central Command attention — what was tried, why it keeps recurring..."
+                  rows={4}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                />
+                <p className="text-xs text-slate-500 mt-1">This will be reviewed by the Central Command admin team.</p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-4">
+              <button
+                onClick={() => { setShowL4Modal(false); setL4EscalatedBy(''); setL4Notes(''); }}
+                className="px-4 py-2 text-slate-600 hover:text-slate-900 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEscalateToL4}
+                disabled={submitting || !l4EscalatedBy.trim() || !l4Notes.trim()}
+                className="px-4 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 transition"
+              >
+                {submitting ? 'Escalating...' : 'Escalate to L4'}
               </button>
             </div>
           </div>

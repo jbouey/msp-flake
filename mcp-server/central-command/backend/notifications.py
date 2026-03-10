@@ -511,6 +511,57 @@ async def resolve_ticket(
 
 
 # =============================================================================
+# L4 ESCALATION (PARTNER → CENTRAL COMMAND)
+# =============================================================================
+
+class L4EscalationRequest(BaseModel):
+    """Partner request to escalate a recurring/unresolvable ticket to Central Command."""
+    escalated_by: str
+    notes: str
+
+
+@router.post("/tickets/{ticket_id}/escalate-to-l4")
+async def escalate_to_l4(
+    ticket_id: str,
+    body: L4EscalationRequest,
+    partner=Depends(require_partner)
+):
+    """Escalate a ticket to L4 (Central Command) — for recurring drift or issues
+    the partner cannot resolve alone."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        ticket = await conn.fetchrow("""
+            SELECT * FROM escalation_tickets
+            WHERE id = $1 AND partner_id = $2
+        """, ticket_id, partner['id'])
+
+        if not ticket:
+            raise HTTPException(404, "Ticket not found")
+
+        if ticket.get('escalated_to_l4'):
+            raise HTTPException(400, "Ticket already escalated to L4")
+
+        await conn.execute("""
+            UPDATE escalation_tickets
+            SET escalated_to_l4 = true,
+                l4_escalated_at = NOW(),
+                l4_escalated_by = $2,
+                l4_notes = $3,
+                status = 'escalated_to_l4',
+                updated_at = NOW()
+            WHERE id = $1
+        """, ticket_id, body.escalated_by, body.notes)
+
+    logger.info(f"Ticket {ticket_id} escalated to L4 by {body.escalated_by} (partner {partner['id']})")
+    return {
+        "status": "escalated_to_l4",
+        "ticket_id": ticket_id,
+        "message": "Escalated to Central Command. An admin will review this ticket."
+    }
+
+
+# =============================================================================
 # SLA METRICS
 # =============================================================================
 

@@ -7,6 +7,7 @@ import { DeploymentProgress } from '../components/deployment';
 import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier, useUpdateL2Mode } from '../hooks';
 import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
 import { fleetUpdatesApi, type FleetStats } from '../utils/api';
+import { ComplianceHealthInfographic } from '../client/ComplianceHealthInfographic';
 
 function getCsrfToken(): string {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
@@ -1101,6 +1102,15 @@ export const SiteDetail: React.FC = () => {
         <div className="lg:col-span-2 space-y-6">
           {/* Deployment Progress (Zero-Friction Pipeline) */}
           {siteId && <DeploymentProgress siteId={siteId} />}
+
+          {/* Compliance Health Infographic */}
+          {siteId && site && (
+            <ComplianceHealthInfographic
+              sites={[{ site_id: site.site_id, clinic_name: site.clinic_name }]}
+              apiPrefix="/api/dashboard"
+              onCategoryClick={(category, sid) => navigate(`/incidents?site_id=${sid}&category=${category}`)}
+            />
+          )}
 
           {/* Contact Information */}
           <GlassCard>

@@ -1,6 +1,6 @@
 {
-  "session": 162,
-  "updated": "2026-03-08T20:00:00.000000Z",
+  "session": 165,
+  "updated": "2026-03-10T03:55:35.068321Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -16,7 +16,10 @@
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "fleet_wide_orders_live_update_daemon_e2e_verified_v0.3.19",
+    "fleet_updates": "fleet_wide_orders_live_update_daemon_v0.3.20_deploying",
+    "compliance_infographic": "client_portal_plus_admin_sitedetail_clickthrough_to_incidents_category_filter",
+    "l4_escalation": "partner_escalate_to_l4_admin_queue_recurrence_detection_migration_077",
+    "lead_swarm_automation": "openclaw_daily_cron_brave_hhs_hunter_anthropic_email_gen",
     "app_protection_profiles": "feature_complete_migration_070_applied_13_endpoints_6_runbooks",
     "portal_auth": "email_password_login_all_portals_totp_2fa_all_portals_security_hardened",
     "admin_user_management": "sessions_audit_log_2fa_email_edit_change_password_complete",
@@ -24,7 +27,7 @@
     "macos_scanning": "13_active_checks_filevault_gatekeeper_sip_firewall_autoupdates_screenlk_ntp",
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api"
   },
-  "current_blocker": "None. VM appliance stale (iMac host offline).",
+  "current_blocker": "Apollo API key still showing free plan despite upgrade. VM appliance stale (iMac offline).",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -180,38 +183,31 @@
       "note": "Built overlay with all session 106 changes (L1 rules, flap fix, scan checks, parallel scans). Uploaded to root@178.156.162.116:/var/www/updates/agent-overlay.tar.gz"
     }
   ],
-  "completed_this_session": [
-    "macOS drift scanning (13 active HIPAA checks)",
-    "Per-site drift config with admin/partner/client UI",
-    "Compliance score excludes disabled checks",
-    "SRA remediation save CSRF fix",
-    "MAC OUI device type hints in device inventory",
-    "Daemon v0.3.19 deployed via fleet order"
-  ],
+  "completed_this_session": [],
   "recent_commits": [
+    {
+      "hash": "aece44c",
+      "message": "feat: compliance health infographic + daemon v0.3.20"
+    },
+    {
+      "hash": "dbdd23b",
+      "message": "fix: L2 planner loads runbooks from DB dynamically"
+    },
+    {
+      "hash": "5ded789",
+      "message": "fix: L2 fallback when L1 healing order fails"
+    },
+    {
+      "hash": "e542c99",
+      "message": "fix: incidents queries join through appliances table for site_id"
+    },
+    {
+      "hash": "033ac67",
+      "message": "feat: native macOS agent + client portal device protection downloads"
+    },
     {
       "hash": "a28422e",
       "message": "feat: drift config in partner + client portals, exclude disabled checks from compliance score"
-    },
-    {
-      "hash": "1517c0f",
-      "message": "fix: SRA remediation save broken by CSRF + add save confirmation"
-    },
-    {
-      "hash": "1c4ff8f",
-      "message": "feat: per-site drift scan configuration with UI toggles"
-    },
-    {
-      "hash": "2949a50",
-      "message": "feat: add macOS drift scanning (14 HIPAA security checks via SSH)"
-    },
-    {
-      "hash": "1b443c2",
-      "message": "feat: fix org API paths + add site assignment to organizations"
-    },
-    {
-      "hash": "e7dd8d3",
-      "message": "fix: incident detail API passes UUID string instead of NaN"
     }
   ],
   "key_findings": {

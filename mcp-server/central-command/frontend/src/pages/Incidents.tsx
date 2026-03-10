@@ -1,10 +1,31 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { GlassCard, Spinner, LevelBadge } from '../components/shared';
 import { IncidentRow } from '../components/incidents/IncidentRow';
 import { useIncidents, useSites } from '../hooks';
 import { incidentApi } from '../utils/api';
 import type { Incident, IncidentDetail } from '../types';
 import { CHECK_TYPE_LABELS } from '../types';
+
+// Category → check_types mapping (matches backend compliance-health endpoint)
+const CATEGORY_CHECK_TYPES: Record<string, string[]> = {
+  patching: ['nixos_generation', 'windows_update', 'linux_patching'],
+  antivirus: ['windows_defender', 'windows_defender_exclusions'],
+  backup: ['backup_status', 'windows_backup_status'],
+  logging: ['audit_logging', 'windows_audit_policy', 'linux_audit', 'linux_logging'],
+  firewall: ['firewall', 'windows_firewall_status', 'firewall_status', 'linux_firewall'],
+  encryption: ['bitlocker', 'windows_bitlocker_status', 'linux_crypto', 'windows_smb_signing'],
+  access_control: ['rogue_admin_users', 'linux_accounts', 'windows_password_policy',
+                   'linux_permissions', 'linux_ssh_config', 'windows_screen_lock_policy'],
+  services: ['critical_services', 'linux_services', 'windows_service_dns',
+            'windows_service_netlogon', 'windows_service_spooler',
+            'windows_service_w32time', 'windows_service_wuauserv', 'agent_status'],
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  patching: 'Patching', antivirus: 'Antivirus', backup: 'Backup', logging: 'Logging',
+  firewall: 'Firewall', encryption: 'Encryption', access_control: 'Access Control', services: 'Services',
+};
 
 /**
  * Expanded incident detail panel
@@ -154,12 +175,23 @@ const IncidentDetailPanel: React.FC<{ incidentId: string; onClose: () => void }>
 };
 
 export const Incidents: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlSiteId = searchParams.get('site_id') || '';
+  const urlCategory = searchParams.get('category') || '';
+
   const [filter, setFilter] = useState<'all' | 'active' | 'resolved'>('all');
-  const [selectedSiteId, setSelectedSiteId] = useState<string>('');
+  const [selectedSiteId, setSelectedSiteId] = useState<string>(urlSiteId);
   const [selectedLevel, setSelectedLevel] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<string>(urlCategory);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const limit = 50;
+
+  // Sync URL params on mount
+  useEffect(() => {
+    if (urlSiteId) setSelectedSiteId(urlSiteId);
+    if (urlCategory) setSelectedCategory(urlCategory);
+  }, [urlSiteId, urlCategory]);
 
   // Fetch sites for the selector
   const { data: sitesData } = useSites({ limit: 200, sort_by: 'clinic_name', sort_dir: 'asc' });
@@ -167,7 +199,7 @@ export const Incidents: React.FC = () => {
 
   // Build query params
   const resolvedParam = filter === 'all' ? undefined : filter === 'resolved';
-  const { data: incidents = [], isLoading, error } = useIncidents({
+  const { data: rawIncidents = [], isLoading, error } = useIncidents({
     site_id: selectedSiteId || undefined,
     limit,
     offset: page * limit,
@@ -175,12 +207,34 @@ export const Incidents: React.FC = () => {
     resolved: resolvedParam,
   });
 
+  // Client-side category filter
+  const incidents = selectedCategory && CATEGORY_CHECK_TYPES[selectedCategory]
+    ? rawIncidents.filter((i: Incident) => CATEGORY_CHECK_TYPES[selectedCategory].includes(i.check_type))
+    : rawIncidents;
+
   // Reset page when filters change
-  useEffect(() => { setPage(0); }, [filter, selectedSiteId, selectedLevel]);
+  useEffect(() => { setPage(0); }, [filter, selectedSiteId, selectedLevel, selectedCategory]);
+
+  // Update URL when category/site changes
+  const handleCategoryChange = (cat: string) => {
+    setSelectedCategory(cat);
+    const params = new URLSearchParams(searchParams);
+    if (cat) params.set('category', cat); else params.delete('category');
+    if (selectedSiteId) params.set('site_id', selectedSiteId); else params.delete('site_id');
+    setSearchParams(params, { replace: true });
+  };
+
+  const handleSiteChange = (siteId: string) => {
+    setSelectedSiteId(siteId);
+    const params = new URLSearchParams(searchParams);
+    if (siteId) params.set('site_id', siteId); else params.delete('site_id');
+    if (selectedCategory) params.set('category', selectedCategory);
+    setSearchParams(params, { replace: true });
+  };
 
   const activeCount = incidents.filter((i: Incident) => !i.resolved).length;
   const resolvedCount = incidents.filter((i: Incident) => i.resolved).length;
-  const hasMore = incidents.length === limit;
+  const hasMore = rawIncidents.length === limit;
 
   return (
     <div className="space-y-6 page-enter">
@@ -239,7 +293,7 @@ export const Incidents: React.FC = () => {
               </svg>
               <select
                 value={selectedSiteId}
-                onChange={e => setSelectedSiteId(e.target.value)}
+                onChange={e => handleSiteChange(e.target.value)}
                 className="flex-1 px-3 py-2 text-sm border border-separator-light rounded-ios bg-fill-primary focus:ring-2 focus:ring-accent-primary focus:border-transparent"
               >
                 <option value="">All Sites</option>
@@ -249,6 +303,33 @@ export const Incidents: React.FC = () => {
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Category filter */}
+            <div className="flex gap-1 flex-wrap">
+              <button
+                onClick={() => handleCategoryChange('')}
+                className={`px-2.5 py-1.5 text-xs rounded-ios-sm transition-colors ${
+                  !selectedCategory
+                    ? 'bg-accent-primary text-white'
+                    : 'bg-separator-light text-label-secondary hover:bg-separator-light/80'
+                }`}
+              >
+                All Categories
+              </button>
+              {Object.entries(CATEGORY_LABELS).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => handleCategoryChange(key)}
+                  className={`px-2.5 py-1.5 text-xs rounded-ios-sm transition-colors ${
+                    selectedCategory === key
+                      ? 'bg-accent-primary text-white'
+                      : 'bg-separator-light text-label-secondary hover:bg-separator-light/80'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
             {/* Level filter */}

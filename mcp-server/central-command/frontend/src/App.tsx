@@ -32,6 +32,7 @@ const Partners = lazy(() => import('./pages/Partners').then(m => ({ default: m.P
 const Notifications = lazy(() => import('./pages/Notifications').then(m => ({ default: m.Notifications })));
 const NotificationSettings = lazy(() => import('./pages/NotificationSettings').then(m => ({ default: m.NotificationSettings })));
 const Incidents = lazy(() => import('./pages/Incidents').then(m => ({ default: m.Incidents })));
+const L4Queue = lazy(() => import('./pages/L4Queue').then(m => ({ default: m.L4Queue })));
 const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 // These have default exports
 const FleetUpdates = lazy(() => import('./pages/FleetUpdates'));
@@ -313,6 +314,7 @@ const AppLayout: React.FC = () => {
               <Route path="/organizations/:orgId" element={<OrgDashboard />} />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/incidents" element={<Incidents />} />
+              <Route path="/l4-queue" element={<L4Queue />} />
               <Route path="/notification-settings" element={<NotificationSettings />} />
               <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/partners" element={<Partners />} />

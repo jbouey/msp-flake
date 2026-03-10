@@ -568,14 +568,31 @@ class EscalationEngine:
                 "raw_data": incident.get('raw_data', incident)
             }
 
+            # Recurrence detection: check if same incident_type+site was resolved recently
+            incident_type = ticket_data['incident_type']
+            recurrence_count = 0
+            previous_ticket_id = None
+            try:
+                prev = await conn.fetchrow("""
+                    SELECT id, recurrence_count FROM escalation_tickets
+                    WHERE site_id = $1 AND incident_type = $2 AND status = 'resolved'
+                    ORDER BY resolved_at DESC LIMIT 1
+                """, site_id, incident_type)
+                if prev:
+                    recurrence_count = (prev['recurrence_count'] or 0) + 1
+                    previous_ticket_id = prev['id']
+                    logger.info(f"Recurrence detected for {incident_type} at {site_id}: count={recurrence_count}")
+            except Exception as e:
+                logger.warning(f"Recurrence check failed (non-fatal): {e}")
+
             # Create ticket in database
             await conn.execute("""
                 INSERT INTO escalation_tickets (
                     id, partner_id, site_id, incident_id, incident_type,
                     severity, priority, title, summary, raw_data,
                     hipaa_controls, attempted_actions, recommended_action,
-                    sla_target_at, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+                    sla_target_at, recurrence_count, previous_ticket_id, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
             """,
                 ticket_id,
                 partner_id,
@@ -590,10 +607,12 @@ class EscalationEngine:
                 ticket_data['hipaa_controls'],
                 json.dumps(attempted_actions or []),
                 recommended_action,
-                sla_target
+                sla_target,
+                recurrence_count,
+                previous_ticket_id
             )
 
-            logger.info(f"Created escalation ticket {ticket_id} for site {site_id}")
+            logger.info(f"Created escalation ticket {ticket_id} for site {site_id} (recurrence={recurrence_count})")
 
             # Send notifications
             notification_results = await self._send_all_notifications(

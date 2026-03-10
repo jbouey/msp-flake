@@ -41,6 +41,8 @@ interface Site {
 
 interface Props {
   sites: Site[];
+  apiPrefix?: string;  // '/api/client' (default) or '/api/dashboard' for admin
+  onCategoryClick?: (category: string, siteId: string) => void;  // drill into incidents
 }
 
 // ─── Category Metadata ──────────────────────────────────────────────────────
@@ -265,13 +267,17 @@ const CategoryCard: React.FC<{
   icon: string;
   score: number | null;
   delay: number;
-}> = ({ label, icon, score, delay }) => {
+  onClick?: () => void;
+}> = ({ label, icon, score, delay, onClick }) => {
   const color = scoreColor(score);
   const pct = score ?? 0;
 
   return (
     <div
-      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:scale-[1.02]"
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:scale-[1.02]${onClick ? ' cursor-pointer' : ''}`}
       style={{
         background: score !== null
           ? `linear-gradient(135deg, ${color}08 0%, ${color}03 100%)`
@@ -311,7 +317,7 @@ const CategoryCard: React.FC<{
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-export const ComplianceHealthInfographic: React.FC<Props> = ({ sites }) => {
+export const ComplianceHealthInfographic: React.FC<Props> = ({ sites, apiPrefix = '/api/client', onCategoryClick }) => {
   const [selectedSiteId, setSelectedSiteId] = useState<string>(sites[0]?.site_id || '');
   const [data, setData] = useState<ComplianceHealthData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -319,7 +325,7 @@ export const ComplianceHealthInfographic: React.FC<Props> = ({ sites }) => {
   useEffect(() => {
     if (!selectedSiteId) return;
     setLoading(true);
-    fetch(`/api/client/sites/${selectedSiteId}/compliance-health`, {
+    fetch(`${apiPrefix}/sites/${selectedSiteId}/compliance-health`, {
       credentials: 'include',
     })
       .then(r => r.ok ? r.json() : null)
@@ -457,6 +463,7 @@ export const ComplianceHealthInfographic: React.FC<Props> = ({ sites }) => {
                     icon={cat.icon}
                     score={cat.score}
                     delay={i * 60}
+                    onClick={onCategoryClick ? () => onCategoryClick(cat.key, selectedSiteId) : undefined}
                   />
                 ))}
               </div>
