@@ -9,17 +9,27 @@ import { CHECK_TYPE_LABELS } from '../types';
 
 // Category → check_types mapping (matches backend compliance-health endpoint)
 const CATEGORY_CHECK_TYPES: Record<string, string[]> = {
-  patching: ['nixos_generation', 'windows_update', 'linux_patching'],
-  antivirus: ['windows_defender', 'windows_defender_exclusions'],
+  patching: ['nixos_generation', 'windows_update', 'linux_patching',
+             'linux_unattended_upgrades', 'linux_kernel_params'],
+  antivirus: ['windows_defender', 'windows_defender_exclusions', 'defender_exclusions'],
   backup: ['backup_status', 'windows_backup_status'],
-  logging: ['audit_logging', 'windows_audit_policy', 'linux_audit', 'linux_logging'],
-  firewall: ['firewall', 'windows_firewall_status', 'firewall_status', 'linux_firewall'],
-  encryption: ['bitlocker', 'windows_bitlocker_status', 'linux_crypto', 'windows_smb_signing'],
+  logging: ['audit_logging', 'windows_audit_policy', 'linux_audit', 'linux_logging',
+            'security_audit', 'audit_policy', 'linux_log_forwarding'],
+  firewall: ['firewall', 'windows_firewall_status', 'firewall_status', 'linux_firewall',
+             'network_profile', 'net_unexpected_ports'],
+  encryption: ['bitlocker', 'windows_bitlocker_status', 'linux_crypto', 'windows_smb_signing',
+               'bitlocker_status', 'smb_signing', 'smb1_protocol'],
   access_control: ['rogue_admin_users', 'linux_accounts', 'windows_password_policy',
-                   'linux_permissions', 'linux_ssh_config', 'windows_screen_lock_policy'],
+                   'linux_permissions', 'linux_ssh_config', 'windows_screen_lock_policy',
+                   'screen_lock', 'screen_lock_policy', 'password_policy',
+                   'guest_account', 'rdp_nla', 'rogue_scheduled_tasks'],
   services: ['critical_services', 'linux_services', 'windows_service_dns',
             'windows_service_netlogon', 'windows_service_spooler',
-            'windows_service_w32time', 'windows_service_wuauserv', 'agent_status'],
+            'windows_service_w32time', 'windows_service_wuauserv', 'agent_status',
+            'service_dns', 'service_netlogon', 'service_status',
+            'spooler_service', 'linux_failed_services', 'ntp_sync',
+            'winrm', 'dns_config', 'net_dns_resolution',
+            'net_expected_service', 'net_host_reachability'],
 };
 
 const CATEGORY_LABELS: Record<string, string> = {

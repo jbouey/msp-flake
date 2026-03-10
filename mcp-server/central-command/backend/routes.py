@@ -2821,31 +2821,48 @@ async def get_admin_compliance_health(
             )
             disabled_set = {r["check_type"] for r in defaults}
 
+        # Expanded category map covering Windows bundles + Linux/NixOS incidents
         categories = {
-            "patching": ["nixos_generation", "windows_update", "linux_patching"],
-            "antivirus": ["windows_defender", "windows_defender_exclusions"],
+            "patching": ["nixos_generation", "windows_update", "linux_patching",
+                        "linux_unattended_upgrades", "linux_kernel_params"],
+            "antivirus": ["windows_defender", "windows_defender_exclusions",
+                         "defender_exclusions"],
             "backup": ["backup_status", "windows_backup_status"],
-            "logging": ["audit_logging", "windows_audit_policy", "linux_audit", "linux_logging"],
-            "firewall": ["firewall", "windows_firewall_status", "firewall_status", "linux_firewall"],
-            "encryption": ["bitlocker", "windows_bitlocker_status", "linux_crypto", "windows_smb_signing"],
+            "logging": ["audit_logging", "windows_audit_policy", "linux_audit",
+                       "linux_logging", "security_audit", "audit_policy",
+                       "linux_log_forwarding"],
+            "firewall": ["firewall", "windows_firewall_status", "firewall_status",
+                        "linux_firewall", "network_profile", "net_unexpected_ports"],
+            "encryption": ["bitlocker", "windows_bitlocker_status", "linux_crypto",
+                          "windows_smb_signing", "bitlocker_status", "smb_signing",
+                          "smb1_protocol"],
             "access_control": ["rogue_admin_users", "linux_accounts", "windows_password_policy",
-                              "linux_permissions", "linux_ssh_config", "windows_screen_lock_policy"],
+                              "linux_permissions", "linux_ssh_config", "windows_screen_lock_policy",
+                              "screen_lock", "screen_lock_policy", "password_policy",
+                              "guest_account", "rdp_nla", "rogue_scheduled_tasks"],
             "services": ["critical_services", "linux_services", "windows_service_dns",
                         "windows_service_netlogon", "windows_service_spooler",
-                        "windows_service_w32time", "windows_service_wuauserv", "agent_status"],
+                        "windows_service_w32time", "windows_service_wuauserv", "agent_status",
+                        "service_dns", "service_netlogon", "service_status",
+                        "spooler_service", "linux_failed_services", "ntp_sync",
+                        "winrm", "dns_config", "net_dns_resolution",
+                        "net_expected_service", "net_host_reachability"],
         }
         reverse_map = {}
         for cat, types in categories.items():
             for ct in types:
                 reverse_map[ct] = cat
 
+        # --- Source 1: Compliance bundles (Windows drift scans) ---
         bundles = await conn.fetch("""
             SELECT checks FROM compliance_bundles
             WHERE site_id = $1
             ORDER BY checked_at DESC LIMIT 50
         """, site_id)
 
-        cat_scores: dict = {cat: [] for cat in categories}
+        cat_pass: dict = {cat: 0 for cat in categories}
+        cat_fail: dict = {cat: 0 for cat in categories}
+        cat_warn: dict = {cat: 0 for cat in categories}
         total_passed = 0
         total_failed = 0
         total_warnings = 0
@@ -2865,29 +2882,51 @@ async def get_admin_compliance_health(
                 if ct in disabled_set:
                     continue
                 status = (check.get("status") or "").lower()
-                if status in ("compliant", "pass"):
-                    score = 100
-                    total_passed += 1
-                elif status == "warning":
-                    score = 50
-                    total_warnings += 1
-                elif status in ("non_compliant", "fail"):
-                    score = 0
-                    total_failed += 1
-                else:
-                    continue
                 cat = reverse_map.get(ct)
-                if cat:
-                    cat_scores[cat].append(score)
+                if status in ("compliant", "pass"):
+                    total_passed += 1
+                    if cat:
+                        cat_pass[cat] += 1
+                elif status == "warning":
+                    total_warnings += 1
+                    if cat:
+                        cat_warn[cat] += 1
+                elif status in ("non_compliant", "fail"):
+                    total_failed += 1
+                    if cat:
+                        cat_fail[cat] += 1
 
+        # --- Source 2: Active incidents (ALL platforms: Linux, NixOS, Windows) ---
+        incident_rows = await conn.fetch("""
+            SELECT i.check_type, i.severity, count(*) as cnt
+            FROM incidents i
+            JOIN appliances a ON a.id = i.appliance_id
+            WHERE a.site_id = $1 AND i.resolved_at IS NULL
+            GROUP BY i.check_type, i.severity
+        """, site_id)
+
+        incident_fails = 0
+        for row in incident_rows:
+            ct = row["check_type"]
+            cnt = row["cnt"]
+            cat = reverse_map.get(ct)
+            if cat:
+                # Each active incident counts as a failure in its category
+                cat_fail[cat] += cnt
+                total_failed += cnt
+                incident_fails += cnt
+
+        # --- Compute per-category scores from total basket ---
         breakdown = {}
         overall_sum = 0
         cats_with_data = 0
-        for cat, scores in cat_scores.items():
-            if scores:
-                avg = round(sum(scores) / len(scores))
-                breakdown[cat] = avg
-                overall_sum += avg
+        for cat in categories:
+            total = cat_pass[cat] + cat_fail[cat] + cat_warn[cat]
+            if total > 0:
+                # Score = (passes + 0.5*warnings) / total * 100
+                score = round(((cat_pass[cat] + 0.5 * cat_warn[cat]) / total) * 100)
+                breakdown[cat] = score
+                overall_sum += score
                 cats_with_data += 1
             else:
                 breakdown[cat] = None
