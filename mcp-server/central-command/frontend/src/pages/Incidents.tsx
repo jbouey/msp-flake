@@ -178,11 +178,13 @@ export const Incidents: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlSiteId = searchParams.get('site_id') || '';
   const urlCategory = searchParams.get('category') || '';
+  const urlHostname = searchParams.get('hostname') || '';
 
   const [filter, setFilter] = useState<'all' | 'active' | 'resolved'>('all');
   const [selectedSiteId, setSelectedSiteId] = useState<string>(urlSiteId);
   const [selectedLevel, setSelectedLevel] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>(urlCategory);
+  const [selectedHostname, setSelectedHostname] = useState<string>(urlHostname);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const limit = 50;
@@ -191,7 +193,8 @@ export const Incidents: React.FC = () => {
   useEffect(() => {
     if (urlSiteId) setSelectedSiteId(urlSiteId);
     if (urlCategory) setSelectedCategory(urlCategory);
-  }, [urlSiteId, urlCategory]);
+    if (urlHostname) setSelectedHostname(urlHostname);
+  }, [urlSiteId, urlCategory, urlHostname]);
 
   // Fetch sites for the selector
   const { data: sitesData } = useSites({ limit: 200, sort_by: 'clinic_name', sort_dir: 'asc' });
@@ -207,13 +210,19 @@ export const Incidents: React.FC = () => {
     resolved: resolvedParam,
   });
 
-  // Client-side category filter
-  const incidents = selectedCategory && CATEGORY_CHECK_TYPES[selectedCategory]
-    ? rawIncidents.filter((i: Incident) => CATEGORY_CHECK_TYPES[selectedCategory].includes(i.check_type))
-    : rawIncidents;
+  // Client-side category + hostname filter
+  const incidents = rawIncidents.filter((i: Incident) => {
+    if (selectedCategory && CATEGORY_CHECK_TYPES[selectedCategory]) {
+      if (!CATEGORY_CHECK_TYPES[selectedCategory].includes(i.check_type)) return false;
+    }
+    if (selectedHostname) {
+      if ((i.hostname || '').toLowerCase() !== selectedHostname.toLowerCase()) return false;
+    }
+    return true;
+  });
 
   // Reset page when filters change
-  useEffect(() => { setPage(0); }, [filter, selectedSiteId, selectedLevel, selectedCategory]);
+  useEffect(() => { setPage(0); }, [filter, selectedSiteId, selectedLevel, selectedCategory, selectedHostname]);
 
   // Update URL when category/site changes
   const handleCategoryChange = (cat: string) => {
@@ -246,6 +255,7 @@ export const Incidents: React.FC = () => {
               <h1 className="text-xl font-semibold text-label-primary tracking-tight">Incidents</h1>
               <p className="text-sm text-label-tertiary mt-1">
                 {incidents.length} incidents{selectedSiteId ? ` for ${sites.find(s => s.site_id === selectedSiteId)?.clinic_name || selectedSiteId}` : ''}
+                {selectedHostname ? ` on ${selectedHostname}` : ''}
                 {hasMore ? '+' : ''}
               </p>
             </div>
@@ -331,6 +341,32 @@ export const Incidents: React.FC = () => {
                 </button>
               ))}
             </div>
+
+            {/* Hostname filter badge */}
+            {selectedHostname && (
+              <div className="flex items-center gap-1">
+                <span className="px-2.5 py-1.5 text-xs rounded-ios-sm bg-accent-primary text-white flex items-center gap-1.5">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                  {selectedHostname}
+                  <button
+                    onClick={() => {
+                      setSelectedHostname('');
+                      const params = new URLSearchParams(searchParams);
+                      params.delete('hostname');
+                      setSearchParams(params, { replace: true });
+                    }}
+                    className="ml-0.5 hover:bg-white/20 rounded-full p-0.5"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </span>
+              </div>
+            )}
 
             {/* Level filter */}
             <div className="flex gap-1">

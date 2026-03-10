@@ -8,6 +8,7 @@ import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, 
 import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
 import { fleetUpdatesApi, type FleetStats } from '../utils/api';
 import { ComplianceHealthInfographic } from '../client/ComplianceHealthInfographic';
+import { DevicesAtRisk } from '../client/DevicesAtRisk';
 
 function getCsrfToken(): string {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
@@ -1109,6 +1110,15 @@ export const SiteDetail: React.FC = () => {
               sites={[{ site_id: site.site_id, clinic_name: site.clinic_name }]}
               apiPrefix="/api/dashboard"
               onCategoryClick={(category, sid) => navigate(`/incidents?site_id=${sid}&category=${category}`)}
+            />
+          )}
+
+          {/* Devices at Risk */}
+          {siteId && site && (
+            <DevicesAtRisk
+              siteId={site.site_id}
+              apiPrefix="/api/dashboard"
+              onDeviceClick={(hostname, sid) => navigate(`/incidents?site_id=${sid}&hostname=${hostname}`)}
             />
           )}
 

@@ -2946,6 +2946,152 @@ async def get_admin_compliance_health(
         }
 
 
+@router.get("/sites/{site_id}/devices-at-risk")
+async def get_devices_at_risk(
+    site_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Get per-device drift/compliance breakdown for a site.
+
+    Returns devices sorted by risk (most issues first), with per-category
+    incident counts so admins and clients can identify culprit devices at a glance.
+    """
+    from .fleet import get_pool
+    pool = await get_pool()
+
+    categories = {
+        "patching": ["nixos_generation", "windows_update", "linux_patching"],
+        "antivirus": ["windows_defender", "windows_defender_exclusions"],
+        "backup": ["backup_status", "windows_backup_status"],
+        "logging": ["audit_logging", "windows_audit_policy", "linux_audit", "linux_logging"],
+        "firewall": ["firewall", "windows_firewall_status", "firewall_status", "linux_firewall"],
+        "encryption": ["bitlocker", "windows_bitlocker_status", "linux_crypto", "windows_smb_signing"],
+        "access_control": ["rogue_admin_users", "linux_accounts", "windows_password_policy",
+                          "linux_permissions", "linux_ssh_config", "windows_screen_lock_policy"],
+        "services": ["critical_services", "linux_services", "windows_service_dns",
+                    "windows_service_netlogon", "windows_service_spooler",
+                    "windows_service_w32time", "windows_service_wuauserv", "agent_status"],
+    }
+    reverse_map = {}
+    for cat, types in categories.items():
+        for ct in types:
+            reverse_map[ct] = cat
+
+    async with pool.acquire() as conn:
+        # Verify site exists
+        site = await conn.fetchrow(
+            "SELECT site_id FROM sites WHERE site_id = $1", site_id
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Get all active (unresolved) incidents for this site, grouped by hostname
+        rows = await conn.fetch("""
+            SELECT i.hostname, i.check_type, i.severity, i.created_at, i.id,
+                   i.resolution_level
+            FROM incidents i
+            JOIN appliances a ON a.id = i.appliance_id
+            WHERE a.site_id = $1
+              AND i.resolved = false
+            ORDER BY i.hostname, i.created_at DESC
+        """, site_id)
+
+        # Get device info from discovered_devices for enrichment (hostname, ip, device_type)
+        device_info = {}
+        try:
+            devices = await conn.fetch("""
+                SELECT d.hostname, d.ip_address, d.device_type, d.os_name, d.compliance_status
+                FROM discovered_devices d
+                JOIN appliances a ON d.appliance_id = a.id
+                WHERE a.site_id = $1
+            """, site_id)
+            for d in devices:
+                hn = (d["hostname"] or "").lower()
+                if hn:
+                    device_info[hn] = {
+                        "ip_address": d["ip_address"],
+                        "device_type": d["device_type"],
+                        "os_name": d["os_name"],
+                        "compliance_status": d["compliance_status"],
+                    }
+        except Exception as e:
+            logger.warning(f"Device enrichment failed (non-fatal): {e}")
+
+        # Build per-device breakdown
+        device_map: dict = {}
+        for row in rows:
+            hostname = row["hostname"] or "unknown"
+            if hostname not in device_map:
+                hn_lower = hostname.lower()
+                info = device_info.get(hn_lower, {})
+                device_map[hostname] = {
+                    "hostname": hostname,
+                    "ip_address": info.get("ip_address"),
+                    "device_type": info.get("device_type"),
+                    "os_name": info.get("os_name"),
+                    "active_incidents": 0,
+                    "critical_count": 0,
+                    "high_count": 0,
+                    "medium_count": 0,
+                    "low_count": 0,
+                    "categories": {cat: 0 for cat in categories},
+                    "worst_severity": "low",
+                    "incidents": [],
+                }
+
+            dev = device_map[hostname]
+            dev["active_incidents"] += 1
+            sev = (row["severity"] or "medium").lower()
+            if sev == "critical":
+                dev["critical_count"] += 1
+            elif sev == "high":
+                dev["high_count"] += 1
+            elif sev == "medium":
+                dev["medium_count"] += 1
+            else:
+                dev["low_count"] += 1
+
+            # Update worst severity
+            sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+            if sev_rank.get(sev, 0) > sev_rank.get(dev["worst_severity"], 0):
+                dev["worst_severity"] = sev
+
+            # Category mapping
+            cat = reverse_map.get(row["check_type"])
+            if cat:
+                dev["categories"][cat] += 1
+
+            # Include incident summary (max 5 per device)
+            if len(dev["incidents"]) < 5:
+                dev["incidents"].append({
+                    "id": row["id"],
+                    "check_type": row["check_type"],
+                    "severity": row["severity"],
+                    "resolution_level": row["resolution_level"],
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                })
+
+        # Sort by risk: critical first, then high, then total count
+        devices_list = sorted(
+            device_map.values(),
+            key=lambda d: (d["critical_count"], d["high_count"], d["active_incidents"]),
+            reverse=True,
+        )
+
+        # Also compute a simple health score per device
+        # Based on active incident severity weights
+        for dev in devices_list:
+            penalty = (dev["critical_count"] * 25 + dev["high_count"] * 15 +
+                       dev["medium_count"] * 8 + dev["low_count"] * 3)
+            dev["health_score"] = max(0, 100 - penalty)
+
+        return {
+            "site_id": site_id,
+            "total_devices_at_risk": len(devices_list),
+            "devices": devices_list,
+        }
+
+
 @router.get("/sites/{site_id}/drift-config")
 async def get_drift_config(
     site_id: str,

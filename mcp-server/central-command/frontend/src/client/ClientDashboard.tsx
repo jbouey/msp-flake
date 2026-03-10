@@ -4,6 +4,7 @@ import { useClient } from './ClientContext';
 import { OsirisCareLeaf } from '../components/shared';
 import { ClientDriftConfig } from './ClientDriftConfig';
 import { ComplianceHealthInfographic } from './ComplianceHealthInfographic';
+import { DevicesAtRisk } from './DevicesAtRisk';
 
 interface Site {
   site_id: string;
@@ -422,6 +423,13 @@ export const ClientDashboard: React.FC = () => {
         {dashboard && dashboard.sites.length > 0 && (
           <ComplianceHealthInfographic
             sites={dashboard.sites.map(s => ({ site_id: s.site_id, clinic_name: s.clinic_name }))}
+          />
+        )}
+
+        {/* Devices at Risk */}
+        {dashboard && dashboard.sites.length > 0 && (
+          <DevicesAtRisk
+            siteId={dashboard.sites[0].site_id}
           />
         )}
 
