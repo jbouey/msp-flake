@@ -62,12 +62,12 @@
   --separator-light: rgba(84, 84, 88, 0.65);
   --separator-medium: rgba(84, 84, 88, 0.8);
 
-  /* Glass surfaces — real translucency */
-  --glass-bg: rgba(28, 28, 30, 0.55);
+  /* Glass surfaces — opaque in dark mode to avoid Chrome GPU compositing crashes */
+  --glass-bg: rgba(28, 28, 30, 0.92);
   --glass-border: rgba(255, 255, 255, 0.1);
-  --glass-sidebar-bg: rgba(28, 28, 30, 0.75);
+  --glass-sidebar-bg: rgba(28, 28, 30, 0.98);
   --glass-sidebar-border: rgba(255, 255, 255, 0.08);
-  --glass-header-bg: rgba(28, 28, 30, 0.7);
+  --glass-header-bg: rgba(28, 28, 30, 0.96);
   --glass-header-border: rgba(255, 255, 255, 0.08);
 
   /* Shadows */
@@ -102,10 +102,8 @@
 }
 .dark .content-atmosphere {
   background:
-    radial-gradient(ellipse 80% 60% at 10% 0%, rgba(60, 188, 180, 0.18) 0%, transparent 55%),
-    radial-gradient(ellipse 60% 80% at 90% 20%, rgba(0, 122, 255, 0.14) 0%, transparent 55%),
-    radial-gradient(ellipse 70% 50% at 50% 90%, rgba(88, 86, 214, 0.10) 0%, transparent 55%),
-    radial-gradient(ellipse 40% 40% at 75% 60%, rgba(255, 149, 0, 0.06) 0%, transparent 50%);
+    radial-gradient(ellipse 80% 60% at 10% 0%, rgba(60, 188, 180, 0.08) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 80% at 90% 20%, rgba(0, 122, 255, 0.06) 0%, transparent 55%);
 }
 
 /* iOS-inspired base styles */
@@ -154,13 +152,16 @@
   .glass-sidebar {
     background: var(--glass-sidebar-bg);
     border-right: 1px solid var(--glass-sidebar-border);
-    backdrop-filter: blur(32px) saturate(180%);
-    -webkit-backdrop-filter: blur(32px) saturate(180%);
   }
 
   .glass-header {
     background: var(--glass-header-bg);
     border-bottom: 1px solid var(--glass-header-border);
+  }
+
+  /* Only apply backdrop-filter in light mode — dark mode uses opaque bg to avoid Chrome GPU crashes */
+  :root:not(.dark) .glass-sidebar,
+  :root:not(.dark) .glass-header {
     backdrop-filter: blur(32px) saturate(180%);
     -webkit-backdrop-filter: blur(32px) saturate(180%);
   }
