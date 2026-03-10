@@ -656,6 +656,162 @@ async def get_site_detail(site_id: str, user: dict = Depends(require_client_user
         }
 
 
+@auth_router.get("/sites/{site_id}/compliance-health")
+async def get_site_compliance_health(
+    site_id: str,
+    user: dict = Depends(require_client_user)
+):
+    """Get detailed compliance health breakdown for the infographic.
+
+    Returns per-category scores, 30-day trend, and healing stats.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with pool.acquire() as conn:
+        # Verify site belongs to org
+        site = await conn.fetchrow("""
+            SELECT site_id, clinic_name, status FROM sites
+            WHERE site_id = $1 AND client_org_id = $2
+        """, site_id, org_id)
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Get disabled checks
+        disabled = await conn.fetch("""
+            SELECT check_type FROM site_drift_config
+            WHERE site_id = $1 AND enabled = false
+        """, site_id)
+        disabled_set = {r["check_type"] for r in disabled}
+        if not disabled:
+            defaults = await conn.fetch("""
+                SELECT check_type FROM site_drift_config
+                WHERE site_id = '__defaults__' AND enabled = false
+            """)
+            disabled_set = {r["check_type"] for r in defaults}
+
+        # Category mapping (matches db_queries.py CATEGORY_CHECKS)
+        categories = {
+            "patching": ["nixos_generation", "windows_update", "linux_patching"],
+            "antivirus": ["windows_defender", "windows_defender_exclusions"],
+            "backup": ["backup_status", "windows_backup_status"],
+            "logging": ["audit_logging", "windows_audit_policy", "linux_audit", "linux_logging"],
+            "firewall": ["firewall", "windows_firewall_status", "firewall_status", "linux_firewall"],
+            "encryption": ["bitlocker", "windows_bitlocker_status", "linux_crypto", "windows_smb_signing"],
+            "access_control": ["rogue_admin_users", "linux_accounts", "windows_password_policy",
+                              "linux_permissions", "linux_ssh_config", "windows_screen_lock_policy"],
+            "services": ["critical_services", "linux_services", "windows_service_dns",
+                        "windows_service_netlogon", "windows_service_spooler",
+                        "windows_service_w32time", "windows_service_wuauserv", "agent_status"],
+        }
+        reverse_map = {}
+        for cat, types in categories.items():
+            for ct in types:
+                reverse_map[ct] = cat
+
+        # Get latest compliance bundles
+        bundles = await conn.fetch("""
+            SELECT checks FROM compliance_bundles
+            WHERE site_id = $1
+            ORDER BY checked_at DESC LIMIT 50
+        """, site_id)
+
+        cat_scores = {cat: [] for cat in categories}
+        total_passed = 0
+        total_failed = 0
+        total_warnings = 0
+
+        for bundle in bundles:
+            checks = bundle["checks"] or []
+            for check in checks:
+                ct = check.get("check", "")
+                if ct in disabled_set:
+                    continue
+                status = (check.get("status") or "").lower()
+                if status in ("compliant", "pass"):
+                    score = 100
+                    total_passed += 1
+                elif status == "warning":
+                    score = 50
+                    total_warnings += 1
+                elif status in ("non_compliant", "fail"):
+                    score = 0
+                    total_failed += 1
+                else:
+                    continue
+                cat = reverse_map.get(ct)
+                if cat:
+                    cat_scores[cat].append(score)
+
+        # Compute category averages
+        breakdown = {}
+        overall_sum = 0
+        cats_with_data = 0
+        for cat, scores in cat_scores.items():
+            if scores:
+                avg = round(sum(scores) / len(scores))
+                breakdown[cat] = avg
+                overall_sum += avg
+                cats_with_data += 1
+            else:
+                breakdown[cat] = None
+
+        overall = round(overall_sum / cats_with_data, 1) if cats_with_data > 0 else None
+
+        # 30-day trend (daily scores)
+        trend_rows = await conn.fetch("""
+            SELECT
+                DATE(cb.checked_at) as date,
+                COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total,
+                COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant')) as passed
+            FROM compliance_bundles cb,
+                 jsonb_array_elements(cb.checks) as c
+            WHERE cb.site_id = $1
+              AND cb.checked_at > NOW() - INTERVAL '30 days'
+              AND jsonb_array_length(cb.checks) > 0
+            GROUP BY DATE(cb.checked_at)
+            ORDER BY date ASC
+        """, site_id)
+
+        trend = [
+            {
+                "date": r["date"].isoformat(),
+                "score": round((r["passed"] / r["total"]) * 100, 1) if r["total"] > 0 else 100.0
+            }
+            for r in trend_rows
+        ]
+
+        # Healing stats (last 30 days)
+        healing = await conn.fetchrow("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE success = true AND resolution_level IN ('L1', 'L2')) as auto_healed,
+                COUNT(*) FILTER (WHERE resolution_level = 'L3' OR success = false) as pending
+            FROM execution_telemetry
+            WHERE site_id = $1
+              AND started_at > NOW() - INTERVAL '30 days'
+        """, site_id)
+
+        return {
+            "site_id": site_id,
+            "clinic_name": site["clinic_name"],
+            "overall_score": overall,
+            "breakdown": breakdown,
+            "counts": {
+                "passed": total_passed,
+                "failed": total_failed,
+                "warnings": total_warnings,
+                "total": total_passed + total_failed + total_warnings,
+            },
+            "trend": trend,
+            "healing": {
+                "total": healing["total"] if healing else 0,
+                "auto_healed": healing["auto_healed"] if healing else 0,
+                "pending": healing["pending"] if healing else 0,
+            },
+        }
+
+
 @auth_router.get("/sites/{site_id}/history")
 async def get_site_history(
     site_id: str,
