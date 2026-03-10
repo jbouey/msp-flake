@@ -16,9 +16,14 @@
 -- 0. Ensure GUC defaults exist (prevents errors on unset settings)
 -- ============================================================================
 
--- Set defaults so current_setting() doesn't error when not set
+-- Set defaults so current_setting() doesn't error when not set.
+-- CRITICAL: app.is_admin defaults to 'true' so existing code that doesn't
+-- use tenant_connection() yet continues to work (admin bypass = see all rows).
+-- As endpoints are migrated to use tenant_connection(), they explicitly set
+-- app.is_admin = 'false' + app.current_tenant = '<site_id>'.
+-- Once ALL endpoints are migrated, flip this default to 'false'.
 ALTER DATABASE mcp SET app.current_tenant = '';
-ALTER DATABASE mcp SET app.is_admin = 'false';
+ALTER DATABASE mcp SET app.is_admin = 'true';
 
 -- ============================================================================
 -- 1. Add site_id to l2_decisions
