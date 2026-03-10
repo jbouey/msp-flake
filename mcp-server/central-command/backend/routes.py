@@ -2897,20 +2897,21 @@ async def get_admin_compliance_health(
                         cat_fail[cat] += 1
 
         # --- Source 2: Active incidents (ALL platforms: Linux, NixOS, Windows) ---
+        # Count distinct compliance issues (unique check_type per device), not raw alerts
         incident_rows = await conn.fetch("""
-            SELECT i.check_type, i.severity, count(*) as cnt
+            SELECT i.check_type, count(DISTINCT i.appliance_id) as devices_affected
             FROM incidents i
             JOIN appliances a ON a.id = i.appliance_id
             WHERE a.site_id = $1 AND i.resolved_at IS NULL
-            GROUP BY i.check_type, i.severity
+            GROUP BY i.check_type
         """, site_id)
 
         incident_fails = 0
         for row in incident_rows:
             ct = row["check_type"]
             if ct in disabled_set:
-                continue  # Administratively disabled — exclude from scoring
-            cnt = row["cnt"]
+                continue
+            cnt = row["devices_affected"]  # 1 fail per device with this issue
             cat = reverse_map.get(ct)
             if cat:
                 cat_fail[cat] += cnt
