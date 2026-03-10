@@ -1736,13 +1736,13 @@ export interface ProfileTemplate {
 }
 
 export const protectionProfilesApi = {
-  list: (siteId?: string) =>
+  list: (siteId: string) =>
     fetchApi<ProtectionProfileSummary[]>(
-      `/protection-profiles${siteId ? `?site_id=${siteId}` : ''}`
+      `/protection-profiles?site_id=${siteId}`
     ),
 
-  get: (profileId: string) =>
-    fetchApi<ProtectionProfileDetail>(`/protection-profiles/${profileId}`),
+  get: (profileId: string, siteId: string) =>
+    fetchApi<ProtectionProfileDetail>(`/protection-profiles/${profileId}?site_id=${siteId}`),
 
   create: (data: { site_id: string; name: string; description?: string; template_id?: string }) =>
     fetchApi<ProtectionProfileSummary>('/protection-profiles', {
@@ -1750,43 +1750,43 @@ export const protectionProfilesApi = {
       body: JSON.stringify(data),
     }),
 
-  update: (profileId: string, data: { name?: string; description?: string; status?: string }) =>
-    fetchApi<ProtectionProfileSummary>(`/protection-profiles/${profileId}`, {
+  update: (profileId: string, siteId: string, data: { name?: string; description?: string; status?: string }) =>
+    fetchApi<ProtectionProfileSummary>(`/protection-profiles/${profileId}?site_id=${siteId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
-  delete: (profileId: string) =>
-    fetchApi<{ status: string; rules_disabled: number }>(`/protection-profiles/${profileId}`, {
+  delete: (profileId: string, siteId: string) =>
+    fetchApi<{ status: string; rules_disabled: number }>(`/protection-profiles/${profileId}?site_id=${siteId}`, {
       method: 'DELETE',
     }),
 
-  discover: (profileId: string) =>
-    fetchApi<{ status: string; order_id: string }>(`/protection-profiles/${profileId}/discover`, {
+  discover: (profileId: string, siteId: string) =>
+    fetchApi<{ status: string; order_id: string }>(`/protection-profiles/${profileId}/discover?site_id=${siteId}`, {
       method: 'POST',
     }),
 
-  lockBaseline: (profileId: string) =>
+  lockBaseline: (profileId: string, siteId: string) =>
     fetchApi<{ status: string; assets_protected: number; rules_created: number }>(
-      `/protection-profiles/${profileId}/lock-baseline`,
+      `/protection-profiles/${profileId}/lock-baseline?site_id=${siteId}`,
       { method: 'POST' }
     ),
 
-  toggleAsset: (profileId: string, assetId: string, enabled: boolean) =>
+  toggleAsset: (profileId: string, assetId: string, siteId: string, enabled: boolean) =>
     fetchApi<{ status: string; enabled: boolean }>(
-      `/protection-profiles/${profileId}/assets/${assetId}`,
+      `/protection-profiles/${profileId}/assets/${assetId}?site_id=${siteId}`,
       { method: 'PATCH', body: JSON.stringify({ enabled }) }
     ),
 
-  pause: (profileId: string) =>
+  pause: (profileId: string, siteId: string) =>
     fetchApi<{ status: string; rules_disabled: number }>(
-      `/protection-profiles/${profileId}/pause`,
+      `/protection-profiles/${profileId}/pause?site_id=${siteId}`,
       { method: 'POST' }
     ),
 
-  resume: (profileId: string) =>
+  resume: (profileId: string, siteId: string) =>
     fetchApi<{ status: string; rules_enabled: number }>(
-      `/protection-profiles/${profileId}/resume`,
+      `/protection-profiles/${profileId}/resume?site_id=${siteId}`,
       { method: 'POST' }
     ),
 

@@ -60,7 +60,8 @@ export const ProtectionProfiles: React.FC = () => {
 
   const { data: profiles, isLoading } = useQuery({
     queryKey: ['protection-profiles', siteId],
-    queryFn: () => protectionProfilesApi.list(siteId),
+    queryFn: () => protectionProfilesApi.list(siteId!),
+    enabled: !!siteId,
   });
 
   const { data: templates } = useQuery({
@@ -258,13 +259,13 @@ export const ProtectionProfileView: React.FC = () => {
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ['protection-profile', profileId],
-    queryFn: () => protectionProfilesApi.get(profileId!),
-    enabled: !!profileId,
+    queryFn: () => protectionProfilesApi.get(profileId!, siteId!),
+    enabled: !!profileId && !!siteId,
     refetchInterval: 10_000, // Poll during discovery
   });
 
   const discoverMutation = useMutation({
-    mutationFn: () => protectionProfilesApi.discover(profileId!),
+    mutationFn: () => protectionProfilesApi.discover(profileId!, siteId!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['protection-profile', profileId] });
       setFeedback({ type: 'success', message: 'Discovery scan triggered. Results will appear shortly.' });
@@ -273,7 +274,7 @@ export const ProtectionProfileView: React.FC = () => {
   });
 
   const lockMutation = useMutation({
-    mutationFn: () => protectionProfilesApi.lockBaseline(profileId!),
+    mutationFn: () => protectionProfilesApi.lockBaseline(profileId!, siteId!),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['protection-profile', profileId] });
       queryClient.invalidateQueries({ queryKey: ['protection-profiles'] });
@@ -284,12 +285,12 @@ export const ProtectionProfileView: React.FC = () => {
 
   const toggleMutation = useMutation({
     mutationFn: ({ assetId, enabled }: { assetId: string; enabled: boolean }) =>
-      protectionProfilesApi.toggleAsset(profileId!, assetId, enabled),
+      protectionProfilesApi.toggleAsset(profileId!, assetId, siteId!, enabled),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['protection-profile', profileId] }),
   });
 
   const pauseMutation = useMutation({
-    mutationFn: () => protectionProfilesApi.pause(profileId!),
+    mutationFn: () => protectionProfilesApi.pause(profileId!, siteId!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['protection-profile', profileId] });
       setFeedback({ type: 'success', message: 'Protection paused' });
@@ -297,7 +298,7 @@ export const ProtectionProfileView: React.FC = () => {
   });
 
   const resumeMutation = useMutation({
-    mutationFn: () => protectionProfilesApi.resume(profileId!),
+    mutationFn: () => protectionProfilesApi.resume(profileId!, siteId!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['protection-profile', profileId] });
       setFeedback({ type: 'success', message: 'Protection resumed' });
@@ -305,7 +306,7 @@ export const ProtectionProfileView: React.FC = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => protectionProfilesApi.delete(profileId!),
+    mutationFn: () => protectionProfilesApi.delete(profileId!, siteId!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['protection-profiles'] });
       navigate(`/sites/${siteId}/protection`);

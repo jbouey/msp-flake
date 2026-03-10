@@ -427,10 +427,10 @@ const PROFILE_STATUS_DOTS: Record<string, string> = {
 };
 
 const ProtectedAppsSection: React.FC<{ orgId: string }> = ({ orgId }) => {
-  // Fetch all protection profiles (companion has cross-org access)
+  // Fetch protection profiles for this org's site
   const { data: profiles } = useQuery({
     queryKey: ['protection-profiles-companion', orgId],
-    queryFn: () => protectionProfilesApi.list(),
+    queryFn: () => protectionProfilesApi.list(orgId),
     staleTime: 60_000,
   });
 

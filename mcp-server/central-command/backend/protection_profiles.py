@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from .fleet import get_pool
 from .order_signing import sign_admin_order
+from .auth import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,7 @@ ASSET_DATA_FIELD_MAP = {
 # =============================================================================
 
 @router.get("/templates", response_model=List[TemplateSummary])
-async def list_templates():
+async def list_templates(user: Dict[str, Any] = Depends(require_auth)):
     """List available application profile templates."""
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -177,36 +178,28 @@ async def list_templates():
 # =============================================================================
 
 @router.get("", response_model=List[ProfileSummary])
-async def list_profiles(site_id: Optional[str] = Query(None)):
-    """List protection profiles, optionally filtered by site."""
+async def list_profiles(
+    site_id: str = Query(..., description="Required: site to list profiles for"),
+    user: Dict[str, Any] = Depends(require_auth),
+):
+    """List protection profiles for a specific site."""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        if site_id:
-            rows = await conn.fetch("""
-                SELECT p.*,
-                    (SELECT count(*) FROM app_profile_assets a WHERE a.profile_id = p.id) as asset_count,
-                    (SELECT count(*) FROM app_profile_assets a WHERE a.profile_id = p.id AND a.enabled) as enabled_asset_count,
-                    (SELECT count(*) FROM app_profile_rules r WHERE r.profile_id = p.id) as rule_count
-                FROM app_protection_profiles p
-                WHERE p.site_id = $1 AND p.status != 'archived'
-                ORDER BY p.created_at DESC
-            """, site_id)
-        else:
-            rows = await conn.fetch("""
-                SELECT p.*,
-                    (SELECT count(*) FROM app_profile_assets a WHERE a.profile_id = p.id) as asset_count,
-                    (SELECT count(*) FROM app_profile_assets a WHERE a.profile_id = p.id AND a.enabled) as enabled_asset_count,
-                    (SELECT count(*) FROM app_profile_rules r WHERE r.profile_id = p.id) as rule_count
-                FROM app_protection_profiles p
-                WHERE p.status != 'archived'
-                ORDER BY p.created_at DESC
-            """)
+        rows = await conn.fetch("""
+            SELECT p.*,
+                (SELECT count(*) FROM app_profile_assets a WHERE a.profile_id = p.id) as asset_count,
+                (SELECT count(*) FROM app_profile_assets a WHERE a.profile_id = p.id AND a.enabled) as enabled_asset_count,
+                (SELECT count(*) FROM app_profile_rules r WHERE r.profile_id = p.id) as rule_count
+            FROM app_protection_profiles p
+            WHERE p.site_id = $1 AND p.status != 'archived'
+            ORDER BY p.created_at DESC
+        """, site_id)
 
         return [_profile_summary(r) for r in rows]
 
 
 @router.post("", response_model=ProfileSummary, status_code=201)
-async def create_profile(body: ProfileCreate):
+async def create_profile(body: ProfileCreate, user: Dict[str, Any] = Depends(require_auth)):
     """Create a new protection profile (draft status)."""
     pool = await get_pool()
     profile_id = _uuid.uuid4()
@@ -238,14 +231,19 @@ async def create_profile(body: ProfileCreate):
 
 
 @router.get("/{profile_id}", response_model=ProfileDetail)
-async def get_profile(profile_id: str = Path(...)):
+async def get_profile(
+    profile_id: str = Path(...),
+    site_id: str = Query(..., description="Site ID co-constraint for tenant isolation"),
+    user: Dict[str, Any] = Depends(require_auth),
+):
     """Get profile with all assets and rules."""
     pool = await get_pool()
     pid = _uuid.UUID(profile_id)
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT * FROM app_protection_profiles WHERE id = $1", pid
+            "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
+            pid, site_id,
         )
         if not row:
             raise HTTPException(404, "Profile not found")
@@ -297,7 +295,12 @@ async def get_profile(profile_id: str = Path(...)):
 
 
 @router.patch("/{profile_id}", response_model=ProfileSummary)
-async def update_profile(body: ProfileUpdate, profile_id: str = Path(...)):
+async def update_profile(
+    body: ProfileUpdate,
+    profile_id: str = Path(...),
+    site_id: str = Query(..., description="Site ID co-constraint for tenant isolation"),
+    user: Dict[str, Any] = Depends(require_auth),
+):
     """Update profile name, description, or status."""
     pool = await get_pool()
     pid = _uuid.UUID(profile_id)
@@ -324,8 +327,10 @@ async def update_profile(body: ProfileUpdate, profile_id: str = Path(...)):
         idx += 1
 
     async with pool.acquire() as conn:
+        # site_id co-constraint prevents cross-tenant modification
+        params.append(site_id)
         result = await conn.execute(
-            f"UPDATE app_protection_profiles SET {', '.join(sets)} WHERE id = $1",
+            f"UPDATE app_protection_profiles SET {', '.join(sets)} WHERE id = $1 AND site_id = ${idx}",
             *params,
         )
         if result == "UPDATE 0":
@@ -342,7 +347,11 @@ async def update_profile(body: ProfileUpdate, profile_id: str = Path(...)):
 
 
 @router.delete("/{profile_id}")
-async def delete_profile(profile_id: str = Path(...)):
+async def delete_profile(
+    profile_id: str = Path(...),
+    site_id: str = Query(..., description="Site ID co-constraint for tenant isolation"),
+    user: Dict[str, Any] = Depends(require_auth),
+):
     """Archive a profile (soft delete). Also disables its L1 rules."""
     pool = await get_pool()
     pid = _uuid.UUID(profile_id)
@@ -350,6 +359,14 @@ async def delete_profile(profile_id: str = Path(...)):
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Verify profile belongs to site before any mutations
+            profile = await conn.fetchrow(
+                "SELECT id FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
+                pid, site_id,
+            )
+            if not profile:
+                raise HTTPException(404, "Profile not found")
+
             # Disable all L1 rules generated from this profile
             rule_ids = await conn.fetch(
                 "SELECT l1_rule_id FROM app_profile_rules WHERE profile_id = $1", pid
@@ -360,12 +377,10 @@ async def delete_profile(profile_id: str = Path(...)):
                     r["l1_rule_id"],
                 )
 
-            result = await conn.execute(
+            await conn.execute(
                 "UPDATE app_protection_profiles SET status = 'archived', updated_at = $2 WHERE id = $1",
                 pid, now,
             )
-            if result == "UPDATE 0":
-                raise HTTPException(404, "Profile not found")
 
     return {"status": "archived", "rules_disabled": len(rule_ids)}
 
@@ -375,7 +390,11 @@ async def delete_profile(profile_id: str = Path(...)):
 # =============================================================================
 
 @router.post("/{profile_id}/discover")
-async def trigger_discovery(profile_id: str = Path(...)):
+async def trigger_discovery(
+    profile_id: str = Path(...),
+    site_id: str = Query(..., description="Site ID co-constraint for tenant isolation"),
+    user: Dict[str, Any] = Depends(require_auth),
+):
     """Trigger app discovery scan on the site's appliance.
 
     Creates a run_drift fleet order with mode=app_discovery.
@@ -386,7 +405,8 @@ async def trigger_discovery(profile_id: str = Path(...)):
 
     async with pool.acquire() as conn:
         profile = await conn.fetchrow(
-            "SELECT * FROM app_protection_profiles WHERE id = $1", pid
+            "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
+            pid, site_id,
         )
         if not profile:
             raise HTTPException(404, "Profile not found")
@@ -474,7 +494,9 @@ async def trigger_discovery(profile_id: str = Path(...)):
 @router.post("/{profile_id}/discovery-results")
 async def receive_discovery_results(
     profile_id: str = Path(...),
+    site_id: str = Query(..., description="Site ID co-constraint for tenant isolation"),
     results: Dict[str, Any] = ...,
+    user: Dict[str, Any] = Depends(require_auth),
 ):
     """Receive discovery results from appliance (called via checkin pipeline).
 
@@ -487,7 +509,8 @@ async def receive_discovery_results(
     async with pool.acquire() as conn:
         async with conn.transaction():
             profile = await conn.fetchrow(
-                "SELECT * FROM app_protection_profiles WHERE id = $1", pid
+                "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
+                pid, site_id,
             )
             if not profile:
                 raise HTTPException(404, "Profile not found")
@@ -534,6 +557,8 @@ async def toggle_asset(
     body: AssetToggle,
     profile_id: str = Path(...),
     asset_id: str = Path(...),
+    site_id: str = Query(..., description="Site ID co-constraint for tenant isolation"),
+    user: Dict[str, Any] = Depends(require_auth),
 ):
     """Enable or disable an asset for baseline protection."""
     pool = await get_pool()
@@ -541,6 +566,14 @@ async def toggle_asset(
     aid = _uuid.UUID(asset_id)
 
     async with pool.acquire() as conn:
+        # Verify profile belongs to site before mutating assets
+        profile = await conn.fetchrow(
+            "SELECT id FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
+            pid, site_id,
+        )
+        if not profile:
+            raise HTTPException(404, "Profile not found")
+
         result = await conn.execute(
             "UPDATE app_profile_assets SET enabled = $3 WHERE id = $2 AND profile_id = $1",
             pid, aid, body.enabled,
@@ -556,7 +589,11 @@ async def toggle_asset(
 # =============================================================================
 
 @router.post("/{profile_id}/lock-baseline")
-async def lock_baseline(profile_id: str = Path(...)):
+async def lock_baseline(
+    profile_id: str = Path(...),
+    site_id: str = Query(..., description="Site ID co-constraint for tenant isolation"),
+    user: Dict[str, Any] = Depends(require_auth),
+):
     """Lock the golden baseline and auto-generate L1 rules for all enabled assets.
 
     This is the critical step that turns discovered assets into protection rules.
@@ -570,7 +607,8 @@ async def lock_baseline(profile_id: str = Path(...)):
     async with pool.acquire() as conn:
         async with conn.transaction():
             profile = await conn.fetchrow(
-                "SELECT * FROM app_protection_profiles WHERE id = $1", pid
+                "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
+                pid, site_id,
             )
             if not profile:
                 raise HTTPException(404, "Profile not found")
@@ -708,6 +746,7 @@ async def create_from_template(
     site_id: str = Query(...),
     template_id: str = Query(...),
     name: Optional[str] = Query(None),
+    user: Dict[str, Any] = Depends(require_auth),
 ):
     """Create a new profile pre-populated from a template."""
     pool = await get_pool()
@@ -748,7 +787,11 @@ async def create_from_template(
 # =============================================================================
 
 @router.post("/{profile_id}/pause")
-async def pause_profile(profile_id: str = Path(...)):
+async def pause_profile(
+    profile_id: str = Path(...),
+    site_id: str = Query(..., description="Site ID co-constraint for tenant isolation"),
+    user: Dict[str, Any] = Depends(require_auth),
+):
     """Pause protection — disables all L1 rules without deleting them."""
     pool = await get_pool()
     pid = _uuid.UUID(profile_id)
@@ -757,7 +800,8 @@ async def pause_profile(profile_id: str = Path(...)):
     async with pool.acquire() as conn:
         async with conn.transaction():
             profile = await conn.fetchrow(
-                "SELECT status FROM app_protection_profiles WHERE id = $1", pid
+                "SELECT status FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
+                pid, site_id,
             )
             if not profile:
                 raise HTTPException(404, "Profile not found")
@@ -783,7 +827,11 @@ async def pause_profile(profile_id: str = Path(...)):
 
 
 @router.post("/{profile_id}/resume")
-async def resume_profile(profile_id: str = Path(...)):
+async def resume_profile(
+    profile_id: str = Path(...),
+    site_id: str = Query(..., description="Site ID co-constraint for tenant isolation"),
+    user: Dict[str, Any] = Depends(require_auth),
+):
     """Resume protection — re-enables all L1 rules."""
     pool = await get_pool()
     pid = _uuid.UUID(profile_id)
@@ -792,7 +840,8 @@ async def resume_profile(profile_id: str = Path(...)):
     async with pool.acquire() as conn:
         async with conn.transaction():
             profile = await conn.fetchrow(
-                "SELECT status FROM app_protection_profiles WHERE id = $1", pid
+                "SELECT status FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
+                pid, site_id,
             )
             if not profile:
                 raise HTTPException(404, "Profile not found")
