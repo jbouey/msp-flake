@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WebSocketContext } from '../hooks/useWebSocket';
 
@@ -45,9 +46,13 @@ function createWrapper() {
 
   return ({ children }: { children: React.ReactNode }) =>
     React.createElement(
-      WebSocketContext.Provider,
-      { value: { connected: false } },
-      React.createElement(QueryClientProvider, { client: queryClient }, children)
+      MemoryRouter,
+      null,
+      React.createElement(
+        WebSocketContext.Provider,
+        { value: { connected: false } },
+        React.createElement(QueryClientProvider, { client: queryClient }, children)
+      )
     );
 }
 
