@@ -357,6 +357,46 @@ VALUES ('078', 'rls_tenant_isolation', NOW(), 'phase4-p1-v2', 0)
 ON CONFLICT (version) DO NOTHING;
 
 -- ============================================================================
+-- 9. Auto-populate site_id triggers (prevent NULL site_id on new rows)
+-- ============================================================================
+
+-- incidents: look up site_id from appliances table on INSERT
+CREATE OR REPLACE FUNCTION set_incident_site_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.site_id IS NULL AND NEW.appliance_id IS NOT NULL THEN
+        SELECT site_id INTO NEW.site_id
+        FROM appliances WHERE id = NEW.appliance_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS auto_set_incident_site_id ON incidents;
+CREATE TRIGGER auto_set_incident_site_id
+    BEFORE INSERT ON incidents
+    FOR EACH ROW
+    EXECUTE FUNCTION set_incident_site_id();
+
+-- l2_decisions: look up site_id from incidents table on INSERT
+CREATE OR REPLACE FUNCTION set_l2_decision_site_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.site_id IS NULL AND NEW.incident_id IS NOT NULL THEN
+        SELECT site_id INTO NEW.site_id
+        FROM incidents WHERE id::text = NEW.incident_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS auto_set_l2_decision_site_id ON l2_decisions;
+CREATE TRIGGER auto_set_l2_decision_site_id
+    BEFORE INSERT ON l2_decisions
+    FOR EACH ROW
+    EXECUTE FUNCTION set_l2_decision_site_id();
+
+-- ============================================================================
 -- Phase 4 P2 TODO (not in this migration):
 -- - Add site_id to: orders, evidence_bundles, fleet_orders, device_compliance_details
 -- - Enable RLS on: orders, evidence_bundles, fleet_orders, device_compliance_details
