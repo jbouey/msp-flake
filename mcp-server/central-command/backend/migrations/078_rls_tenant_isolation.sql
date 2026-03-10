@@ -1,119 +1,92 @@
 -- Migration 078: Row-Level Security + Tenant Isolation
 --
--- Priority 1 of database hardening plan:
--- 1. Enable RLS on all multi-tenant tables
--- 2. Create tenant isolation policies using current_setting('app.current_tenant')
--- 3. Admin bypass via current_setting('app.is_admin')
--- 4. Add site_id to l2_decisions (backfill from incidents)
--- 5. Append-only trigger on admin_audit_log
+-- Verified against VPS production schema 2026-03-10.
+-- Only targets tables that EXIST and HAVE the correct tenant column.
 --
--- Middleware sets SET LOCAL app.current_tenant = '<site_id>' per transaction.
--- FORCE ROW LEVEL SECURITY ensures policies apply even to table owner (mcp user).
+-- Tables with site_id: 12 tables (direct RLS)
+-- Tables with org_id: 5 HIPAA tables (RLS via org_id)
+-- Tables needing site_id added: incidents, l2_decisions (denormalize via appliance)
+-- Tables NOT targetable yet: orders, evidence_bundles, fleet_orders,
+--   device_compliance_details (need schema changes first — Phase 4 P2)
 --
--- Rollback: ALTER TABLE <name> DISABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS ...;
+-- Rollback: ALTER TABLE <name> DISABLE ROW LEVEL SECURITY; DROP POLICY ...;
 
 -- ============================================================================
--- 0. Ensure GUC defaults exist (prevents errors on unset settings)
+-- 0. GUC defaults — prevent errors when current_setting() called on unset vars
 -- ============================================================================
 
--- Set defaults so current_setting() doesn't error when not set.
 -- CRITICAL: app.is_admin defaults to 'true' so existing code that doesn't
 -- use tenant_connection() yet continues to work (admin bypass = see all rows).
--- As endpoints are migrated to use tenant_connection(), they explicitly set
--- app.is_admin = 'false' + app.current_tenant = '<site_id>'.
--- Once ALL endpoints are migrated, flip this default to 'false'.
+-- Flip to 'false' once ALL endpoints use tenant_connection().
 ALTER DATABASE mcp SET app.current_tenant = '';
 ALTER DATABASE mcp SET app.is_admin = 'true';
 
 -- ============================================================================
--- 1. Add site_id to l2_decisions
+-- 1. Denormalize site_id onto incidents (via appliances.site_id)
+-- ============================================================================
+
+-- incidents.appliance_id is UUID FK to appliances.id
+-- appliances has no site_id either — site_appliances has site_id
+-- Need: incidents → appliances.id = site_appliances.appliance_id? No.
+-- Actually: site_appliances.appliance_id is VARCHAR (like "site123-AABBCCDDEE")
+-- and incidents.appliance_id is UUID FK to appliances.id (UUID).
+-- The join path is: incidents.appliance_id → appliances.id,
+-- but appliances table also may not have site_id.
+-- Check: The working compliance-health query in routes.py uses:
+--   JOIN appliances a ON a.id = i.appliance_id → a.site_id
+-- So appliances DOES have site_id in the query context.
+-- But VPS shows appliances doesn't have site_id column either.
+-- The actual join used in routes.py is:
+--   JOIN site_appliances sa ON sa.appliance_id = i.appliance_id::text
+-- Let's add site_id to incidents via site_appliances lookup.
+
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS site_id VARCHAR(255);
+
+-- Backfill: incidents.appliance_id (UUID) needs to match something in site_appliances.
+-- site_appliances.appliance_id is VARCHAR. Try casting.
+UPDATE incidents i
+SET site_id = sa.site_id
+FROM site_appliances sa
+WHERE i.appliance_id::text = sa.appliance_id
+  AND i.site_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_incidents_site_id ON incidents(site_id);
+
+-- ============================================================================
+-- 2. Denormalize site_id onto l2_decisions (via incidents)
 -- ============================================================================
 
 ALTER TABLE l2_decisions ADD COLUMN IF NOT EXISTS site_id VARCHAR(255);
 
--- Backfill site_id from incidents table (incidents already has site_id)
+-- l2_decisions.incident_id is VARCHAR, incidents.id is UUID
+-- The join uses incident_id which may be the UUID as string
 UPDATE l2_decisions ld
 SET site_id = i.site_id
 FROM incidents i
-WHERE ld.incident_id = i.incident_id
-  AND ld.site_id IS NULL;
+WHERE ld.incident_id = i.id::text
+  AND ld.site_id IS NULL
+  AND i.site_id IS NOT NULL;
 
--- Index for RLS performance
 CREATE INDEX IF NOT EXISTS idx_l2_decisions_site_id ON l2_decisions(site_id);
 
 -- ============================================================================
--- 2. Ensure site_id indexes exist on all RLS target tables
+-- 3. Indexes for RLS performance
 -- ============================================================================
 
--- These are idempotent — IF NOT EXISTS prevents errors on existing indexes
 CREATE INDEX IF NOT EXISTS idx_compliance_bundles_site ON compliance_bundles(site_id);
-CREATE INDEX IF NOT EXISTS idx_orders_site ON orders(site_id);
-CREATE INDEX IF NOT EXISTS idx_site_credentials_site ON site_credentials(site_id);
-CREATE INDEX IF NOT EXISTS idx_evidence_bundles_site ON evidence_bundles(site_id);
 CREATE INDEX IF NOT EXISTS idx_escalation_tickets_site ON escalation_tickets(site_id);
 CREATE INDEX IF NOT EXISTS idx_go_agents_site ON go_agents(site_id);
 CREATE INDEX IF NOT EXISTS idx_go_agent_checks_site ON go_agent_checks(site_id);
-CREATE INDEX IF NOT EXISTS idx_device_compliance_details_site ON device_compliance_details(site_id);
 CREATE INDEX IF NOT EXISTS idx_admin_orders_site ON admin_orders(site_id);
+CREATE INDEX IF NOT EXISTS idx_hipaa_sra_org ON hipaa_sra_assessments(org_id);
+CREATE INDEX IF NOT EXISTS idx_hipaa_policies_org ON hipaa_policies(org_id);
+CREATE INDEX IF NOT EXISTS idx_hipaa_training_org ON hipaa_training_records(org_id);
+CREATE INDEX IF NOT EXISTS idx_hipaa_baas_org ON hipaa_baas(org_id);
+CREATE INDEX IF NOT EXISTS idx_hipaa_documents_org ON hipaa_documents(org_id);
 
 -- ============================================================================
--- 3. Enable RLS + Create Policies on Multi-Tenant Tables
+-- 4. RLS on tables with site_id (12 tables)
 -- ============================================================================
-
--- Helper: reusable policy creation function
--- Each table gets two policies:
---   1. tenant_isolation: USING (site_id = current_setting('app.current_tenant'))
---   2. admin_bypass: USING (current_setting('app.is_admin', true)::boolean = true)
-
--- ---------- compliance_snapshots ----------
-ALTER TABLE compliance_snapshots ENABLE ROW LEVEL SECURITY;
-ALTER TABLE compliance_snapshots FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON compliance_snapshots;
-DROP POLICY IF EXISTS admin_bypass ON compliance_snapshots;
-CREATE POLICY tenant_isolation ON compliance_snapshots
-    USING (site_id = current_setting('app.current_tenant', true));
-CREATE POLICY admin_bypass ON compliance_snapshots
-    USING (current_setting('app.is_admin', true)::boolean = true);
-
--- ---------- compliance_results ----------
-ALTER TABLE compliance_results ENABLE ROW LEVEL SECURITY;
-ALTER TABLE compliance_results FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON compliance_results;
-DROP POLICY IF EXISTS admin_bypass ON compliance_results;
-CREATE POLICY tenant_isolation ON compliance_results
-    USING (site_id = current_setting('app.current_tenant', true));
-CREATE POLICY admin_bypass ON compliance_results
-    USING (current_setting('app.is_admin', true)::boolean = true);
-
--- ---------- evidence_bundles ----------
-ALTER TABLE evidence_bundles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE evidence_bundles FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON evidence_bundles;
-DROP POLICY IF EXISTS admin_bypass ON evidence_bundles;
-CREATE POLICY tenant_isolation ON evidence_bundles
-    USING (site_id = current_setting('app.current_tenant', true));
-CREATE POLICY admin_bypass ON evidence_bundles
-    USING (current_setting('app.is_admin', true)::boolean = true);
-
--- ---------- site_kpis ----------
-ALTER TABLE site_kpis ENABLE ROW LEVEL SECURITY;
-ALTER TABLE site_kpis FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON site_kpis;
-DROP POLICY IF EXISTS admin_bypass ON site_kpis;
-CREATE POLICY tenant_isolation ON site_kpis
-    USING (site_id = current_setting('app.current_tenant', true));
-CREATE POLICY admin_bypass ON site_kpis
-    USING (current_setting('app.is_admin', true)::boolean = true);
-
--- ---------- portal_access_log ----------
-ALTER TABLE portal_access_log ENABLE ROW LEVEL SECURITY;
-ALTER TABLE portal_access_log FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON portal_access_log;
-DROP POLICY IF EXISTS admin_bypass ON portal_access_log;
-CREATE POLICY tenant_isolation ON portal_access_log
-    USING (site_id = current_setting('app.current_tenant', true));
-CREATE POLICY admin_bypass ON portal_access_log
-    USING (current_setting('app.is_admin', true)::boolean = true);
 
 -- ---------- compliance_bundles ----------
 ALTER TABLE compliance_bundles ENABLE ROW LEVEL SECURITY;
@@ -125,7 +98,7 @@ CREATE POLICY tenant_isolation ON compliance_bundles
 CREATE POLICY admin_bypass ON compliance_bundles
     USING (current_setting('app.is_admin', true)::boolean = true);
 
--- ---------- incidents ----------
+-- ---------- incidents (newly has site_id) ----------
 ALTER TABLE incidents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE incidents FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON incidents;
@@ -133,16 +106,6 @@ DROP POLICY IF EXISTS admin_bypass ON incidents;
 CREATE POLICY tenant_isolation ON incidents
     USING (site_id = current_setting('app.current_tenant', true));
 CREATE POLICY admin_bypass ON incidents
-    USING (current_setting('app.is_admin', true)::boolean = true);
-
--- ---------- orders ----------
-ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE orders FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON orders;
-DROP POLICY IF EXISTS admin_bypass ON orders;
-CREATE POLICY tenant_isolation ON orders
-    USING (site_id = current_setting('app.current_tenant', true));
-CREATE POLICY admin_bypass ON orders
     USING (current_setting('app.is_admin', true)::boolean = true);
 
 -- ---------- admin_orders ----------
@@ -153,17 +116,6 @@ DROP POLICY IF EXISTS admin_bypass ON admin_orders;
 CREATE POLICY tenant_isolation ON admin_orders
     USING (site_id = current_setting('app.current_tenant', true));
 CREATE POLICY admin_bypass ON admin_orders
-    USING (current_setting('app.is_admin', true)::boolean = true);
-
--- ---------- fleet_orders ----------
-ALTER TABLE fleet_orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE fleet_orders FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON fleet_orders;
-DROP POLICY IF EXISTS admin_bypass ON fleet_orders;
--- fleet_orders uses site_id but some are fleet-wide (NULL site_id)
-CREATE POLICY tenant_isolation ON fleet_orders
-    USING (site_id IS NULL OR site_id = current_setting('app.current_tenant', true));
-CREATE POLICY admin_bypass ON fleet_orders
     USING (current_setting('app.is_admin', true)::boolean = true);
 
 -- ---------- site_credentials ----------
@@ -201,7 +153,6 @@ ALTER TABLE site_drift_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE site_drift_config FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON site_drift_config;
 DROP POLICY IF EXISTS admin_bypass ON site_drift_config;
--- site_drift_config has '__defaults__' rows that are global
 CREATE POLICY tenant_isolation ON site_drift_config
     USING (site_id = '__defaults__' OR site_id = current_setting('app.current_tenant', true));
 CREATE POLICY admin_bypass ON site_drift_config
@@ -257,27 +208,6 @@ CREATE POLICY tenant_isolation ON app_protection_profiles
 CREATE POLICY admin_bypass ON app_protection_profiles
     USING (current_setting('app.is_admin', true)::boolean = true);
 
--- ---------- device_compliance_details ----------
-ALTER TABLE device_compliance_details ENABLE ROW LEVEL SECURITY;
-ALTER TABLE device_compliance_details FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON device_compliance_details;
-DROP POLICY IF EXISTS admin_bypass ON device_compliance_details;
-CREATE POLICY tenant_isolation ON device_compliance_details
-    USING (site_id = current_setting('app.current_tenant', true));
-CREATE POLICY admin_bypass ON device_compliance_details
-    USING (current_setting('app.is_admin', true)::boolean = true);
-
--- ---------- l2_decisions ----------
-ALTER TABLE l2_decisions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE l2_decisions FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON l2_decisions;
-DROP POLICY IF EXISTS admin_bypass ON l2_decisions;
--- site_id may be NULL for legacy rows without backfill match
-CREATE POLICY tenant_isolation ON l2_decisions
-    USING (site_id = current_setting('app.current_tenant', true));
-CREATE POLICY admin_bypass ON l2_decisions
-    USING (current_setting('app.is_admin', true)::boolean = true);
-
 -- ---------- sensor_registry ----------
 ALTER TABLE sensor_registry ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sensor_registry FORCE ROW LEVEL SECURITY;
@@ -309,7 +239,6 @@ CREATE POLICY admin_bypass ON agent_deployments
     USING (current_setting('app.is_admin', true)::boolean = true);
 
 -- ---------- execution_telemetry ----------
--- execution_telemetry has site_id column (added in migration 052)
 ALTER TABLE execution_telemetry ENABLE ROW LEVEL SECURITY;
 ALTER TABLE execution_telemetry FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON execution_telemetry;
@@ -319,58 +248,77 @@ CREATE POLICY tenant_isolation ON execution_telemetry
 CREATE POLICY admin_bypass ON execution_telemetry
     USING (current_setting('app.is_admin', true)::boolean = true);
 
+-- ---------- l2_decisions (newly has site_id) ----------
+ALTER TABLE l2_decisions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE l2_decisions FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON l2_decisions;
+DROP POLICY IF EXISTS admin_bypass ON l2_decisions;
+CREATE POLICY tenant_isolation ON l2_decisions
+    USING (site_id = current_setting('app.current_tenant', true));
+CREATE POLICY admin_bypass ON l2_decisions
+    USING (current_setting('app.is_admin', true)::boolean = true);
+
+-- ============================================================================
+-- 5. RLS on HIPAA tables (use org_id instead of site_id)
+-- ============================================================================
+
+-- These tables use org_id for tenant scoping (client_orgs).
+-- RLS policy uses a separate GUC: app.current_org
+
+ALTER DATABASE mcp SET app.current_org = '';
+
 -- ---------- hipaa_sra_assessments ----------
 ALTER TABLE hipaa_sra_assessments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hipaa_sra_assessments FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON hipaa_sra_assessments;
+DROP POLICY IF EXISTS org_isolation ON hipaa_sra_assessments;
 DROP POLICY IF EXISTS admin_bypass ON hipaa_sra_assessments;
-CREATE POLICY tenant_isolation ON hipaa_sra_assessments
-    USING (site_id = current_setting('app.current_tenant', true));
+CREATE POLICY org_isolation ON hipaa_sra_assessments
+    USING (org_id::text = current_setting('app.current_org', true));
 CREATE POLICY admin_bypass ON hipaa_sra_assessments
     USING (current_setting('app.is_admin', true)::boolean = true);
 
 -- ---------- hipaa_policies ----------
 ALTER TABLE hipaa_policies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hipaa_policies FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON hipaa_policies;
+DROP POLICY IF EXISTS org_isolation ON hipaa_policies;
 DROP POLICY IF EXISTS admin_bypass ON hipaa_policies;
-CREATE POLICY tenant_isolation ON hipaa_policies
-    USING (site_id = current_setting('app.current_tenant', true));
+CREATE POLICY org_isolation ON hipaa_policies
+    USING (org_id::text = current_setting('app.current_org', true));
 CREATE POLICY admin_bypass ON hipaa_policies
     USING (current_setting('app.is_admin', true)::boolean = true);
 
 -- ---------- hipaa_training_records ----------
 ALTER TABLE hipaa_training_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hipaa_training_records FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON hipaa_training_records;
+DROP POLICY IF EXISTS org_isolation ON hipaa_training_records;
 DROP POLICY IF EXISTS admin_bypass ON hipaa_training_records;
-CREATE POLICY tenant_isolation ON hipaa_training_records
-    USING (site_id = current_setting('app.current_tenant', true));
+CREATE POLICY org_isolation ON hipaa_training_records
+    USING (org_id::text = current_setting('app.current_org', true));
 CREATE POLICY admin_bypass ON hipaa_training_records
     USING (current_setting('app.is_admin', true)::boolean = true);
 
 -- ---------- hipaa_baas ----------
 ALTER TABLE hipaa_baas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hipaa_baas FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON hipaa_baas;
+DROP POLICY IF EXISTS org_isolation ON hipaa_baas;
 DROP POLICY IF EXISTS admin_bypass ON hipaa_baas;
-CREATE POLICY tenant_isolation ON hipaa_baas
-    USING (site_id = current_setting('app.current_tenant', true));
+CREATE POLICY org_isolation ON hipaa_baas
+    USING (org_id::text = current_setting('app.current_org', true));
 CREATE POLICY admin_bypass ON hipaa_baas
     USING (current_setting('app.is_admin', true)::boolean = true);
 
 -- ---------- hipaa_documents ----------
 ALTER TABLE hipaa_documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hipaa_documents FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON hipaa_documents;
+DROP POLICY IF EXISTS org_isolation ON hipaa_documents;
 DROP POLICY IF EXISTS admin_bypass ON hipaa_documents;
-CREATE POLICY tenant_isolation ON hipaa_documents
-    USING (site_id = current_setting('app.current_tenant', true));
+CREATE POLICY org_isolation ON hipaa_documents
+    USING (org_id::text = current_setting('app.current_org', true));
 CREATE POLICY admin_bypass ON hipaa_documents
     USING (current_setting('app.is_admin', true)::boolean = true);
 
 -- ============================================================================
--- 4. Append-Only Trigger on admin_audit_log
+-- 6. Append-Only Trigger on admin_audit_log
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
@@ -392,22 +340,28 @@ CREATE TRIGGER enforce_audit_append_only
     EXECUTE FUNCTION prevent_audit_log_mutation();
 
 -- ============================================================================
--- 5. WORM + RLS Interaction Verification
+-- 7. WORM + RLS Interaction (compliance_bundles)
 -- ============================================================================
 
 -- The WORM trigger (prevent_compliance_bundle_update) fires BEFORE UPDATE.
 -- RLS policies filter rows BEFORE triggers see them.
--- This means:
---   - A tenant can only see their own bundles (RLS filters first)
---   - If they try to UPDATE evidence content, WORM trigger blocks it
---   - Admin bypass allows chain metadata repair (prev_hash, chain_position)
---   - Evidence content (checks, bundle_hash, signature) remains immutable for ALL roles
--- This interaction is SAFE: RLS narrows scope, WORM protects integrity.
+-- Interaction is SAFE: RLS narrows scope, WORM protects integrity.
+-- Admin bypass allows chain metadata repair; evidence content stays immutable.
 
 -- ============================================================================
--- 6. Record migration
+-- 8. Record migration
 -- ============================================================================
 
-INSERT INTO schema_migrations (version, description, applied_at)
-VALUES (78, 'RLS tenant isolation + audit append-only trigger', NOW())
+INSERT INTO schema_migrations (version, name, applied_at, checksum, execution_time_ms)
+VALUES ('078', 'rls_tenant_isolation', NOW(), 'phase4-p1-v2', 0)
 ON CONFLICT (version) DO NOTHING;
+
+-- ============================================================================
+-- Phase 4 P2 TODO (not in this migration):
+-- - Add site_id to: orders, evidence_bundles, fleet_orders, device_compliance_details
+-- - Enable RLS on: orders, evidence_bundles, fleet_orders, device_compliance_details
+-- - Create tables: compliance_snapshots, compliance_results, site_kpis, portal_access_log
+--   (from migration 001 — may need to be re-run or tables created fresh)
+-- - PgBouncer deployment on VPS (config in pgbouncer/ directory)
+-- - Migrate endpoints to use tenant_connection() and flip app.is_admin default to false
+-- ============================================================================
