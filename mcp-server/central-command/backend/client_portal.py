@@ -776,6 +776,8 @@ async def get_site_compliance_health(
 
         for row in incident_rows:
             ct = row["check_type"]
+            if ct in disabled_set:
+                continue  # Administratively disabled — exclude from scoring
             cnt = row["cnt"]
             cat = reverse_map.get(ct)
             if cat:

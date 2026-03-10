@@ -2908,12 +2908,14 @@ async def get_admin_compliance_health(
         incident_fails = 0
         for row in incident_rows:
             ct = row["check_type"]
+            if ct in disabled_set:
+                continue  # Administratively disabled — exclude from scoring
             cnt = row["cnt"]
             cat = reverse_map.get(ct)
             if cat:
-                # Each active incident counts as a failure in its category
                 cat_fail[cat] += cnt
                 total_failed += cnt
+                incident_fails += cnt
                 incident_fails += cnt
 
         # --- Compute per-category scores from total basket ---
