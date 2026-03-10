@@ -723,7 +723,15 @@ async def get_site_compliance_health(
 
         for bundle in bundles:
             checks = bundle["checks"] or []
+            if isinstance(checks, str):
+                import json as _json
+                try:
+                    checks = _json.loads(checks)
+                except Exception:
+                    continue
             for check in checks:
+                if not isinstance(check, dict):
+                    continue
                 ct = check.get("check", "")
                 if ct in disabled_set:
                     continue
