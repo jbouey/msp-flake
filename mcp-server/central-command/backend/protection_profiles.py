@@ -153,7 +153,13 @@ ASSET_DATA_FIELD_MAP = {
 
 @router.get("/templates", response_model=List[TemplateSummary])
 async def list_templates(user: Dict[str, Any] = Depends(require_auth)):
-    """List available application profile templates."""
+    """List available application profile templates.
+
+    Intentionally global access — no site_id or require_site_access.
+    Templates are shared definitions (e.g. "SQL Server", "IIS") that any
+    authenticated admin can browse. Site-specific profiles are created
+    from these templates via create_profile (which IS site-scoped).
+    """
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
