@@ -3030,13 +3030,13 @@ async def get_devices_at_risk(
 
         # Get all active (unresolved) incidents for this site, grouped by hostname
         rows = await conn.fetch("""
-            SELECT i.hostname, i.check_type, i.severity, i.created_at, i.id,
-                   i.resolution_level
+            SELECT sa.hostname, i.check_type, i.severity, i.created_at, i.id,
+                   i.resolution_tier as resolution_level
             FROM incidents i
-            JOIN appliances a ON a.id = i.appliance_id
-            WHERE a.site_id = $1
-              AND i.resolved = false
-            ORDER BY i.hostname, i.created_at DESC
+            JOIN site_appliances sa ON sa.appliance_id = i.appliance_id
+            WHERE sa.site_id = $1
+              AND i.status != 'resolved'
+            ORDER BY sa.hostname, i.created_at DESC
         """, site_id)
 
         # Get device info from discovered_devices for enrichment (hostname, ip, device_type)
@@ -3045,8 +3045,7 @@ async def get_devices_at_risk(
             devices = await conn.fetch("""
                 SELECT d.hostname, d.ip_address, d.device_type, d.os_name, d.compliance_status
                 FROM discovered_devices d
-                JOIN appliances a ON d.appliance_id = a.id
-                WHERE a.site_id = $1
+                WHERE d.site_id = $1
             """, site_id)
             for d in devices:
                 hn = (d["hostname"] or "").lower()

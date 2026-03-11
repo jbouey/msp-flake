@@ -1056,7 +1056,6 @@ async def email_login(request: Request, body: EmailLoginRequest):
     await log_partner_login(
         partner_id=str(partner["id"]),
         provider="email",
-        email=email,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent", "")[:500],
     )
@@ -1143,7 +1142,6 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
     await log_partner_login(
         partner_id=str(partner["id"]),
         provider="email",
-        email=email,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent", "")[:500],
     )
@@ -1397,7 +1395,6 @@ async def partner_verify_totp(request: Request, body: PartnerVerifyTOTPRequest):
     await log_partner_login(
         partner_id=partner_id,
         provider="email",
-        email=pending.get("email", ""),
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent", "")[:500],
     )
