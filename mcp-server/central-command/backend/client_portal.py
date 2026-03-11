@@ -901,7 +901,7 @@ async def get_client_devices_at_risk(
             SELECT sa.hostname, i.check_type, i.severity, i.created_at, i.id,
                    i.resolution_tier as resolution_level
             FROM incidents i
-            JOIN site_appliances sa ON sa.appliance_id = i.appliance_id
+            JOIN site_appliances sa ON sa.appliance_id = i.appliance_id::text
             WHERE sa.site_id = $1
               AND i.status != 'resolved'
             ORDER BY sa.hostname, i.created_at DESC
