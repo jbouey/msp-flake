@@ -51,7 +51,7 @@ from dashboard_api.runbook_config import router as runbook_config_router
 from dashboard_api.users import router as users_router
 from dashboard_api.integrations.api import router as integrations_router, public_router as integrations_public_router
 from dashboard_api.frameworks import router as frameworks_router
-from dashboard_api.compliance_frameworks import partner_router as compliance_partner_router
+from dashboard_api.compliance_frameworks import router as compliance_frameworks_router, partner_router as compliance_partner_router
 from dashboard_api.fleet_updates import router as fleet_updates_router
 from dashboard_api.device_sync import device_sync_router
 from dashboard_api.email_alerts import create_notification_with_email
@@ -1091,6 +1091,7 @@ app.include_router(org_credentials_router)  # Organization-level shared credenti
 app.include_router(protection_profiles_router, prefix="/api")  # Application Protection Profiles
 app.include_router(billing_webhook_router, prefix="/api")  # Stripe webhooks
 app.include_router(notifications_router)  # Partner notifications + L3 escalation tickets
+app.include_router(compliance_frameworks_router)  # Multi-framework compliance management (admin)
 app.include_router(compliance_partner_router)  # Partner compliance defaults + site compliance
 
 # WebSocket endpoint for real-time event push

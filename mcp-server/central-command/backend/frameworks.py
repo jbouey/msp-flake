@@ -670,11 +670,17 @@ async def get_compliance_dashboard(
     Shows aggregated compliance status across all appliances.
     """
     # Build query
-    query_parts = ["""
+    join_clause = "ON afc.appliance_id = cs.appliance_id AND cs.framework = afc.primary_framework"
+    params = {}
+    if framework:
+        join_clause = "ON afc.appliance_id = cs.appliance_id AND (cs.framework = afc.primary_framework OR cs.framework = :framework)"
+        params["framework"] = framework
+
+    query_parts = [f"""
         SELECT
             afc.site_id,
             afc.appliance_id,
-            a.hostname,
+            sa.hostname,
             afc.primary_framework,
             afc.enabled_frameworks,
             cs.framework,
@@ -685,13 +691,11 @@ async def get_compliance_dashboard(
             cs.at_risk,
             cs.calculated_at
         FROM appliance_framework_configs afc
-        JOIN appliances a ON afc.appliance_id = a.id
+        LEFT JOIN site_appliances sa ON afc.appliance_id = sa.appliance_id
         LEFT JOIN compliance_scores cs
-            ON afc.appliance_id = cs.appliance_id
-            AND (cs.framework = afc.primary_framework OR cs.framework = :framework)
+            {join_clause}
         WHERE 1=1
     """]
-    params = {"framework": framework}
 
     if site_id:
         query_parts.append("AND afc.site_id = :site_id")
