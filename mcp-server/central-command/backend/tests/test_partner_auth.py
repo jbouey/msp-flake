@@ -403,7 +403,7 @@ class TestPartnerClaim:
             id=uuid.UUID(PROVISION_ID),
             partner_id=PARTNER_UUID,
             target_site_id="clinic-001",
-            target_client_name="North Valley Dental",
+            client_name="North Valley Dental",
             status="pending",
             expires_at=now + timedelta(days=7),
         )
@@ -462,7 +462,7 @@ class TestPartnerClaim:
             id=uuid.UUID(PROVISION_ID),
             partner_id=PARTNER_UUID,
             target_site_id="clinic-001",
-            target_client_name="North Valley Dental",
+            client_name="North Valley Dental",
             status="claimed",
             expires_at=datetime.now(timezone.utc) + timedelta(days=7),
         )
@@ -492,7 +492,7 @@ class TestPartnerClaim:
             id=uuid.UUID(PROVISION_ID),
             partner_id=PARTNER_UUID,
             target_site_id="clinic-001",
-            target_client_name="North Valley Dental",
+            client_name="North Valley Dental",
             status="pending",
             expires_at=expired_time,
         )
