@@ -500,51 +500,52 @@ async def _ots_resubmit_expired_loop():
                         ots_result = await submit_hash_to_ots(
                             proof.bundle_hash, proof.bundle_id
                         )
-                        if ots_result:
-                            submitted_at = ots_result["submitted_at"]
-                            if submitted_at.tzinfo is not None:
-                                submitted_at = submitted_at.replace(tzinfo=None)
+                        async with db.begin_nested():  # SAVEPOINT: isolate each proof
+                            if ots_result:
+                                submitted_at = ots_result["submitted_at"]
+                                if submitted_at.tzinfo is not None:
+                                    submitted_at = submitted_at.replace(tzinfo=None)
 
-                            await db.execute(text("""
-                                UPDATE ots_proofs
-                                SET status = 'pending',
-                                    proof_data = :proof_data,
-                                    calendar_url = :calendar_url,
-                                    submitted_at = :submitted_at,
-                                    error = NULL,
-                                    upgrade_attempts = 0,
-                                    last_upgrade_attempt = NULL
-                                WHERE bundle_id = :bundle_id
-                            """), {
-                                "proof_data": ots_result["proof_data"],
-                                "calendar_url": ots_result["calendar_url"],
-                                "submitted_at": submitted_at,
-                                "bundle_id": proof.bundle_id,
-                            })
+                                await db.execute(text("""
+                                    UPDATE ots_proofs
+                                    SET status = 'pending',
+                                        proof_data = :proof_data,
+                                        calendar_url = :calendar_url,
+                                        submitted_at = :submitted_at,
+                                        error = NULL,
+                                        upgrade_attempts = 0,
+                                        last_upgrade_attempt = NULL
+                                    WHERE bundle_id = :bundle_id
+                                """), {
+                                    "proof_data": ots_result["proof_data"],
+                                    "calendar_url": ots_result["calendar_url"],
+                                    "submitted_at": submitted_at,
+                                    "bundle_id": proof.bundle_id,
+                                })
 
-                            await db.execute(text("""
-                                UPDATE compliance_bundles
-                                SET ots_status = 'pending',
-                                    ots_proof = :proof_data,
-                                    ots_calendar_url = :calendar_url,
-                                    ots_submitted_at = :submitted_at,
-                                    ots_error = NULL
-                                WHERE bundle_id = :bundle_id
-                            """), {
-                                "proof_data": ots_result["proof_data"],
-                                "calendar_url": ots_result["calendar_url"],
-                                "submitted_at": submitted_at,
-                                "bundle_id": proof.bundle_id,
-                            })
-                            batch_ok += 1
-                        else:
-                            batch_fail += 1
-                            await db.execute(text("""
-                                UPDATE ots_proofs
-                                SET error = 'Resubmission failed - all calendars returned errors',
-                                    last_upgrade_attempt = NOW()
-                                WHERE bundle_id = :bundle_id
-                            """), {"bundle_id": proof.bundle_id})
+                                await db.execute(text("""
+                                    UPDATE compliance_bundles
+                                    SET ots_status = 'pending',
+                                        ots_proof = :proof_data,
+                                        ots_calendar_url = :calendar_url,
+                                        ots_submitted_at = :submitted_at,
+                                        ots_error = NULL
+                                    WHERE bundle_id = :bundle_id
+                                """), {
+                                    "proof_data": ots_result["proof_data"],
+                                    "calendar_url": ots_result["calendar_url"],
+                                    "submitted_at": submitted_at,
+                                    "bundle_id": proof.bundle_id,
+                                })
+                                batch_ok += 1
+                            else:
+                                batch_fail += 1
+                                await db.execute(text("""
+                                    UPDATE ots_proofs
+                                    SET error = 'Resubmission failed - all calendars returned errors',
+                                        last_upgrade_attempt = NOW()
+                                    WHERE bundle_id = :bundle_id
+                                """), {"bundle_id": proof.bundle_id})
                     except Exception as e:
                         batch_fail += 1
                         logger.warning(f"OTS resubmit failed {proof.bundle_id[:8]}: {e}")

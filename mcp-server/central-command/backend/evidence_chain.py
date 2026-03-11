@@ -511,6 +511,10 @@ def parse_ots_file(ots_bytes: bytes) -> Optional[Dict[str, Any]]:
 
     offset = len(OTS_MAGIC)
 
+    # Version byte (0x01) — skip if present
+    if offset < len(ots_bytes) and ots_bytes[offset] == 0x01:
+        offset += 1
+
     # Next byte should be hash algorithm (0x08 = SHA256)
     if offset >= len(ots_bytes) or ots_bytes[offset] != 0x08:
         return None
@@ -588,118 +592,123 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for proof in pending_proofs:
             try:
-                proof_bytes = base64.b64decode(proof.proof_data)
+                async with db.begin_nested():  # SAVEPOINT: isolate each proof from transaction poisoning
+                    proof_bytes = base64.b64decode(proof.proof_data)
 
-                # Fix v0 format (missing version byte) -> v1
-                if proof_bytes.startswith(OTS_MAGIC) and proof_bytes[len(OTS_MAGIC)] == 0x08:
-                    proof_bytes = proof_bytes[:len(OTS_MAGIC)] + b'\x01' + proof_bytes[len(OTS_MAGIC):]
-                    fixed_format += 1
+                    # Fix v0 format (missing version byte) -> v1
+                    if proof_bytes.startswith(OTS_MAGIC) and proof_bytes[len(OTS_MAGIC)] == 0x08:
+                        proof_bytes = proof_bytes[:len(OTS_MAGIC)] + b'\x01' + proof_bytes[len(OTS_MAGIC):]
+                        fixed_format += 1
 
-                # Parse with reference library
-                try:
-                    ctx = BytesDeserializationContext(proof_bytes)
-                    dtf = DetachedTimestampFile.deserialize(ctx)
-                except Exception as e:
-                    await db.execute(text("""
-                        UPDATE ots_proofs
-                        SET last_upgrade_attempt = NOW(),
-                            upgrade_attempts = upgrade_attempts + 1,
-                            error = :error
-                        WHERE bundle_id = :bundle_id
-                    """), {"bundle_id": proof.bundle_id, "error": f"Parse failed: {str(e)[:200]}"})
-                    continue
-
-                # Check all attestations
-                upgrade_success = False
-                last_error = "No pending attestations found"
-
-                for msg, attestation in dtf.timestamp.all_attestations():
-                    if isinstance(attestation, BitcoinBlockHeaderAttestation):
-                        # Already anchored
+                    # Parse with reference library
+                    try:
+                        ctx = BytesDeserializationContext(proof_bytes)
+                        dtf = DetachedTimestampFile.deserialize(ctx)
+                    except Exception as e:
                         await db.execute(text("""
                             UPDATE ots_proofs
-                            SET status = 'anchored',
-                                bitcoin_block = :block,
-                                anchored_at = NOW(),
-                                last_upgrade_attempt = NOW()
+                            SET last_upgrade_attempt = NOW(),
+                                upgrade_attempts = upgrade_attempts + 1,
+                                error = :error
                             WHERE bundle_id = :bundle_id
-                        """), {"bundle_id": proof.bundle_id, "block": attestation.height})
-                        upgraded += 1
-                        upgrade_success = True
-                        logger.info(f"OTS already anchored: {proof.bundle_id[:8]}... block={attestation.height}")
-                        break
+                        """), {"bundle_id": proof.bundle_id, "error": f"Parse failed: {str(e)[:200]}"})
+                        continue
 
-                    if isinstance(attestation, PendingAttestation):
-                        commitment = msg.hex()
-                        calendar_url = attestation.uri
+                    # Check all attestations
+                    upgrade_success = False
+                    last_error = "No pending attestations found"
 
-                        try:
-                            upgrade_url = f"{calendar_url}/timestamp/{commitment}"
-                            async with session.get(upgrade_url) as resp:
-                                if resp.status == 200:
-                                    upgrade_data = await resp.read()
+                    for msg, attestation in dtf.timestamp.all_attestations():
+                        if isinstance(attestation, BitcoinBlockHeaderAttestation):
+                            # Already anchored
+                            await db.execute(text("""
+                                UPDATE ots_proofs
+                                SET status = 'anchored',
+                                    bitcoin_block = :block,
+                                    anchored_at = NOW(),
+                                    last_upgrade_attempt = NOW()
+                                WHERE bundle_id = :bundle_id
+                            """), {"bundle_id": proof.bundle_id, "block": attestation.height})
+                            upgraded += 1
+                            upgrade_success = True
+                            logger.info(f"OTS already anchored: {proof.bundle_id[:8]}... block={attestation.height}")
+                            break
 
-                                    if BTC_ATTESTATION_TAG in upgrade_data:
-                                        # Extract block height from BTC attestation payload
-                                        pos = upgrade_data.find(BTC_ATTESTATION_TAG)
-                                        block_height = None
-                                        if pos >= 0:
-                                            block_height = extract_btc_block_height(upgrade_data, pos)
+                        if isinstance(attestation, PendingAttestation):
+                            commitment = msg.hex()
+                            calendar_url = attestation.uri
 
-                                        # Store upgraded proof (proper v1 format)
-                                        upgraded_ots = (OTS_MAGIC + b'\x01\x08' +
-                                                       dtf.file_digest + upgrade_data)
-                                        proof_b64 = base64.b64encode(upgraded_ots).decode('ascii')
+                            try:
+                                upgrade_url = f"{calendar_url}/timestamp/{commitment}"
+                                async with session.get(upgrade_url) as resp:
+                                    if resp.status == 200:
+                                        upgrade_data = await resp.read()
 
-                                        await db.execute(text("""
-                                            UPDATE ots_proofs
-                                            SET status = 'anchored',
-                                                proof_data = :proof_data,
-                                                bitcoin_block = :block,
-                                                calendar_url = :calendar_url,
-                                                anchored_at = NOW(),
-                                                last_upgrade_attempt = NOW(),
-                                                upgrade_attempts = upgrade_attempts + 1,
-                                                error = NULL
-                                            WHERE bundle_id = :bundle_id
-                                        """), {
-                                            "proof_data": proof_b64,
-                                            "block": block_height,
-                                            "bundle_id": proof.bundle_id,
-                                            "calendar_url": calendar_url,
-                                        })
+                                        if BTC_ATTESTATION_TAG in upgrade_data:
+                                            # Extract block height from BTC attestation payload
+                                            pos = upgrade_data.find(BTC_ATTESTATION_TAG)
+                                            block_height = None
+                                            if pos >= 0:
+                                                block_height = extract_btc_block_height(upgrade_data, pos)
 
-                                        upgraded += 1
-                                        upgrade_success = True
-                                        logger.info(f"OTS upgraded: {proof.bundle_id[:8]}... block={block_height}")
-                                        break
+                                            # Store upgraded proof (proper v1 format)
+                                            upgraded_ots = (OTS_MAGIC + b'\x01\x08' +
+                                                           dtf.file_digest + upgrade_data)
+                                            proof_b64 = base64.b64encode(upgraded_ots).decode('ascii')
+
+                                            await db.execute(text("""
+                                                UPDATE ots_proofs
+                                                SET status = 'anchored',
+                                                    proof_data = :proof_data,
+                                                    bitcoin_block = :block,
+                                                    calendar_url = :calendar_url,
+                                                    anchored_at = NOW(),
+                                                    last_upgrade_attempt = NOW(),
+                                                    upgrade_attempts = upgrade_attempts + 1,
+                                                    error = NULL
+                                                WHERE bundle_id = :bundle_id
+                                            """), {
+                                                "proof_data": proof_b64,
+                                                "block": block_height,
+                                                "bundle_id": proof.bundle_id,
+                                                "calendar_url": calendar_url,
+                                            })
+
+                                            upgraded += 1
+                                            upgrade_success = True
+                                            logger.info(f"OTS upgraded: {proof.bundle_id[:8]}... block={block_height}")
+                                            break
+                                        else:
+                                            last_error = f"No Bitcoin attestation yet from {calendar_url}"
+                                    elif resp.status == 404:
+                                        last_error = f"Commitment not found on {calendar_url}"
                                     else:
-                                        last_error = f"No Bitcoin attestation yet from {calendar_url}"
-                                elif resp.status == 404:
-                                    last_error = f"Commitment not found on {calendar_url}"
-                                else:
-                                    last_error = f"{calendar_url} returned {resp.status}"
-                        except aiohttp.ClientError as e:
-                            last_error = f"Connection error to {calendar_url}: {str(e)[:100]}"
+                                        last_error = f"{calendar_url} returned {resp.status}"
+                            except aiohttp.ClientError as e:
+                                last_error = f"Connection error to {calendar_url}: {str(e)[:100]}"
 
-                if not upgrade_success:
-                    await db.execute(text("""
-                        UPDATE ots_proofs
-                        SET last_upgrade_attempt = NOW(),
-                            upgrade_attempts = upgrade_attempts + 1,
-                            error = :error
-                        WHERE bundle_id = :bundle_id
-                    """), {"bundle_id": proof.bundle_id, "error": last_error})
+                    if not upgrade_success:
+                        await db.execute(text("""
+                            UPDATE ots_proofs
+                            SET last_upgrade_attempt = NOW(),
+                                upgrade_attempts = upgrade_attempts + 1,
+                                error = :error
+                            WHERE bundle_id = :bundle_id
+                        """), {"bundle_id": proof.bundle_id, "error": last_error})
 
             except Exception as e:
                 logger.warning(f"Failed to upgrade proof {proof.bundle_id[:8]}: {e}")
-                await db.execute(text("""
-                    UPDATE ots_proofs
-                    SET last_upgrade_attempt = NOW(),
-                        upgrade_attempts = upgrade_attempts + 1,
-                        error = :error
-                    WHERE bundle_id = :bundle_id
-                """), {"bundle_id": proof.bundle_id, "error": str(e)[:500]})
+                try:
+                    async with db.begin_nested():  # Separate savepoint for error recording
+                        await db.execute(text("""
+                            UPDATE ots_proofs
+                            SET last_upgrade_attempt = NOW(),
+                                upgrade_attempts = upgrade_attempts + 1,
+                                error = :error
+                            WHERE bundle_id = :bundle_id
+                        """), {"bundle_id": proof.bundle_id, "error": str(e)[:500]})
+                except Exception:
+                    logger.warning(f"Could not record error for {proof.bundle_id[:8]}")
 
     await db.commit()
 
@@ -2053,53 +2062,54 @@ async def resubmit_expired_proofs(
         try:
             ots_result = await submit_hash_to_ots(proof.bundle_hash, proof.bundle_id)
 
-            if ots_result:
-                submitted_at = ots_result["submitted_at"]
-                if submitted_at.tzinfo is not None:
-                    submitted_at = submitted_at.replace(tzinfo=None)
+            async with db.begin_nested():  # SAVEPOINT: isolate each proof
+                if ots_result:
+                    submitted_at = ots_result["submitted_at"]
+                    if submitted_at.tzinfo is not None:
+                        submitted_at = submitted_at.replace(tzinfo=None)
 
-                await db.execute(text("""
-                    UPDATE ots_proofs
-                    SET status = 'pending',
-                        proof_data = :proof_data,
-                        calendar_url = :calendar_url,
-                        submitted_at = :submitted_at,
-                        error = NULL,
-                        upgrade_attempts = 0,
-                        last_upgrade_attempt = NULL
-                    WHERE bundle_id = :bundle_id
-                """), {
-                    "proof_data": ots_result["proof_data"],
-                    "calendar_url": ots_result["calendar_url"],
-                    "submitted_at": submitted_at,
-                    "bundle_id": proof.bundle_id,
-                })
+                    await db.execute(text("""
+                        UPDATE ots_proofs
+                        SET status = 'pending',
+                            proof_data = :proof_data,
+                            calendar_url = :calendar_url,
+                            submitted_at = :submitted_at,
+                            error = NULL,
+                            upgrade_attempts = 0,
+                            last_upgrade_attempt = NULL
+                        WHERE bundle_id = :bundle_id
+                    """), {
+                        "proof_data": ots_result["proof_data"],
+                        "calendar_url": ots_result["calendar_url"],
+                        "submitted_at": submitted_at,
+                        "bundle_id": proof.bundle_id,
+                    })
 
-                # Sync to compliance_bundles
-                await db.execute(text("""
-                    UPDATE compliance_bundles
-                    SET ots_status = 'pending',
-                        ots_proof = :proof_data,
-                        ots_calendar_url = :calendar_url,
-                        ots_submitted_at = :submitted_at,
-                        ots_error = NULL
-                    WHERE bundle_id = :bundle_id
-                """), {
-                    "proof_data": ots_result["proof_data"],
-                    "calendar_url": ots_result["calendar_url"],
-                    "submitted_at": submitted_at,
-                    "bundle_id": proof.bundle_id,
-                })
+                    # Sync to compliance_bundles
+                    await db.execute(text("""
+                        UPDATE compliance_bundles
+                        SET ots_status = 'pending',
+                            ots_proof = :proof_data,
+                            ots_calendar_url = :calendar_url,
+                            ots_submitted_at = :submitted_at,
+                            ots_error = NULL
+                        WHERE bundle_id = :bundle_id
+                    """), {
+                        "proof_data": ots_result["proof_data"],
+                        "calendar_url": ots_result["calendar_url"],
+                        "submitted_at": submitted_at,
+                        "bundle_id": proof.bundle_id,
+                    })
 
-                resubmitted += 1
-            else:
-                failed += 1
-                await db.execute(text("""
-                    UPDATE ots_proofs
-                    SET error = 'Resubmission failed - all calendars returned errors',
-                        last_upgrade_attempt = NOW()
-                    WHERE bundle_id = :bundle_id
-                """), {"bundle_id": proof.bundle_id})
+                    resubmitted += 1
+                else:
+                    failed += 1
+                    await db.execute(text("""
+                        UPDATE ots_proofs
+                        SET error = 'Resubmission failed - all calendars returned errors',
+                            last_upgrade_attempt = NOW()
+                        WHERE bundle_id = :bundle_id
+                    """), {"bundle_id": proof.bundle_id})
 
         except Exception as e:
             failed += 1
