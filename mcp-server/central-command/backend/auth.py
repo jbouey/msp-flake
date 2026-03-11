@@ -521,6 +521,42 @@ def apply_org_filter(base_query: str, user: Dict[str, Any], params: dict, site_a
     return base_query, params
 
 
+async def require_site_access(conn, user: dict, site_id: str) -> dict:
+    """Validate admin user can access site_id.
+
+    Returns site row (id, client_org_id, partner_id) if access granted.
+    Raises 404 for both nonexistent sites AND out-of-scope sites.
+    Never raises 403 — that would leak site existence (IDOR prevention).
+
+    This helper is for admin auth (require_auth) only. Partner-authenticated
+    users cannot reach endpoints that use this helper — partner sessions use
+    a different cookie (osiris_partner_session) and auth dependency
+    (require_partner), which fail require_auth validation.
+
+    Logic:
+      - Global admin (org_scope=None): site must exist
+      - Org-scoped user (org_scope=[...]): site must exist AND
+        sites.client_org_id must be in user's org_scope
+    """
+    row = await conn.fetchrow(
+        "SELECT id, client_org_id, partner_id FROM sites WHERE site_id = $1",
+        site_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    org_scope = user.get("org_scope")
+    if org_scope is not None:
+        if str(row["client_org_id"]) not in org_scope:
+            logger.warning(
+                "Site access denied: user=%s site=%s org=%s scope=%s",
+                user.get("id"), site_id, row["client_org_id"], org_scope,
+            )
+            raise HTTPException(status_code=404, detail="Site not found")
+
+    return dict(row)
+
+
 async def logout(db: AsyncSession, token: str, ip_address: Optional[str] = None) -> bool:
     """Invalidate a session token."""
     token_hash = hash_token(token)

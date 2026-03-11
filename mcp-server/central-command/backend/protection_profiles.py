@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
 from .order_signing import sign_admin_order
-from .auth import require_auth
+from .auth import require_auth, require_site_access
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +186,7 @@ async def list_profiles(
     """List protection profiles for a specific site."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         rows = await conn.fetch("""
             SELECT p.*,
                 (SELECT count(*) FROM app_profile_assets a WHERE a.profile_id = p.id) as asset_count,
@@ -212,6 +213,7 @@ async def create_profile(body: ProfileCreate, user: Dict[str, Any] = Depends(req
         template_id = _uuid.UUID(body.template_id)
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, body.site_id)
         try:
             await conn.execute("""
                 INSERT INTO app_protection_profiles
@@ -242,6 +244,7 @@ async def get_profile(
     pid = _uuid.UUID(profile_id)
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         row = await conn.fetchrow(
             "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
             pid, site_id,
@@ -328,6 +331,7 @@ async def update_profile(
         idx += 1
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         # site_id co-constraint prevents cross-tenant modification
         params.append(site_id)
         result = await conn.execute(
@@ -359,6 +363,7 @@ async def delete_profile(
     now = datetime.now(timezone.utc)
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         async with conn.transaction():
             # Verify profile belongs to site before any mutations
             profile = await conn.fetchrow(
@@ -405,6 +410,7 @@ async def trigger_discovery(
     pid = _uuid.UUID(profile_id)
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         profile = await conn.fetchrow(
             "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
             pid, site_id,
@@ -508,6 +514,7 @@ async def receive_discovery_results(
     now = datetime.now(timezone.utc)
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         async with conn.transaction():
             profile = await conn.fetchrow(
                 "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
@@ -567,6 +574,7 @@ async def toggle_asset(
     aid = _uuid.UUID(asset_id)
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         # Verify profile belongs to site before mutating assets
         profile = await conn.fetchrow(
             "SELECT id FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
@@ -606,6 +614,7 @@ async def lock_baseline(
     now = datetime.now(timezone.utc)
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         async with conn.transaction():
             profile = await conn.fetchrow(
                 "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
@@ -754,6 +763,7 @@ async def create_from_template(
     tid = _uuid.UUID(template_id)
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         tmpl = await conn.fetchrow(
             "SELECT * FROM app_profile_templates WHERE id = $1", tid
         )
@@ -799,6 +809,7 @@ async def pause_profile(
     now = datetime.now(timezone.utc)
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         async with conn.transaction():
             profile = await conn.fetchrow(
                 "SELECT status FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
@@ -839,6 +850,7 @@ async def resume_profile(
     now = datetime.now(timezone.utc)
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
         async with conn.transaction():
             profile = await conn.fetchrow(
                 "SELECT status FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
