@@ -106,13 +106,17 @@ class RateLimiter:
         return True, None
 
 
-# Global rate limiter instances
+# Global rate limiter instances (in-memory fallback)
 _rate_limiter = RateLimiter()  # Dashboard/portal: 60/min, 1000/hr
 _agent_rate_limiter = RateLimiter(
     requests_per_minute=600,
     requests_per_hour=20000,
     burst_limit=30,
 )
+
+# Redis-backed rate limiter (lazy-initialized)
+_redis_limiter = None
+_redis_agent_limiter = None
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -160,6 +164,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.rate_limiter = rate_limiter or _rate_limiter
         self.agent_rate_limiter = agent_rate_limiter or _agent_rate_limiter
+        self._redis_initialized = False
 
     def _get_client_key(self, request: Request) -> str:
         """Get unique client identifier."""
@@ -174,6 +179,44 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Optionally include auth token for per-user limits
         auth_token = request.headers.get("Authorization", "")[:20]  # Just prefix
         return f"{client_ip}:{auth_token}"
+
+    async def _ensure_redis(self):
+        """Lazy-initialize Redis rate limiters."""
+        if self._redis_initialized:
+            return
+        self._redis_initialized = True
+        try:
+            from .redis_rate_limiter import RedisRateLimiter
+            global _redis_limiter, _redis_agent_limiter
+            _redis_limiter = RedisRateLimiter(
+                requests_per_minute=60, requests_per_hour=1000, burst_limit=10,
+                auth_requests_per_minute=5,
+            )
+            _redis_agent_limiter = RedisRateLimiter(
+                requests_per_minute=600, requests_per_hour=20000, burst_limit=30,
+                auth_requests_per_minute=5,
+            )
+            logger.info("Redis rate limiter initialized")
+        except Exception as e:
+            logger.warning(f"Redis rate limiter init failed, using in-memory: {e}")
+
+    async def _check_limit(self, client_key: str, is_auth: bool = False, is_agent: bool = False) -> Tuple[bool, Optional[int]]:
+        """Check rate limit via Redis (preferred) or in-memory fallback."""
+        await self._ensure_redis()
+
+        if is_agent and _redis_agent_limiter:
+            allowed, retry_after, _ = await _redis_agent_limiter.check_rate_limit(client_key, is_auth)
+            return allowed, retry_after
+        elif not is_agent and _redis_limiter:
+            allowed, retry_after, _ = await _redis_limiter.check_rate_limit(client_key, is_auth)
+            return allowed, retry_after
+
+        # Fallback to in-memory
+        if is_auth:
+            return self.rate_limiter.check_rate_limit(f"auth:{client_key}")
+        elif is_agent:
+            return self.agent_rate_limiter.check_rate_limit(client_key)
+        return self.rate_limiter.check_rate_limit(client_key)
 
     async def dispatch(self, request: Request, call_next):
         """Process request with rate limiting."""
@@ -192,8 +235,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Use stricter limits for auth endpoints
         if path in self.AUTH_PATHS:
-            # Only allow 5 auth attempts per minute
-            allowed, retry_after = self.rate_limiter.check_rate_limit(f"auth:{client_key}")
+            allowed, retry_after = await self._check_limit(client_key, is_auth=True)
             if not allowed:
                 logger.warning(f"Auth rate limit exceeded for {client_key}")
                 return JSONResponse(
@@ -205,9 +247,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     headers={"Retry-After": str(retry_after)},
                 )
         elif path.startswith(self.AGENT_PATH_PREFIXES):
-            # Agent traffic uses a separate limiter (600/min, 20000/hr, burst 30)
-            # to prevent scan-cycle telemetry from starving checkins
-            allowed, retry_after = self.agent_rate_limiter.check_rate_limit(client_key)
+            allowed, retry_after = await self._check_limit(client_key, is_agent=True)
             if not allowed:
                 logger.warning(f"Agent rate limit exceeded for {client_key}")
                 return JSONResponse(
@@ -219,8 +259,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     headers={"Retry-After": str(retry_after)},
                 )
         else:
-            # Standard rate limiting for dashboard/portal traffic
-            allowed, retry_after = self.rate_limiter.check_rate_limit(client_key)
+            allowed, retry_after = await self._check_limit(client_key)
             if not allowed:
                 logger.warning(f"Rate limit exceeded for {client_key}")
                 return JSONResponse(

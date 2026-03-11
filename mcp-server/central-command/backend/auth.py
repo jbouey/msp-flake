@@ -825,3 +825,26 @@ async def check_site_access_sa(db: "AsyncSession", user: Dict[str, Any], site_id
     if org_scope is not None:
         if str(row[0]) not in org_scope:
             raise HTTPException(status_code=404, detail="Site not found")
+
+
+async def check_site_access_pool(user: Dict[str, Any], site_id: str):
+    """Validate admin user can access site_id (asyncpg pool version).
+
+    Same IDOR prevention as check_site_access_sa but uses the asyncpg pool
+    directly instead of SQLAlchemy. For use in routes that use admin_connection().
+    """
+    org_scope = user.get("org_scope")
+    if org_scope is None:
+        return  # Global admin — no restriction
+
+    from .fleet import get_pool
+    from .tenant_middleware import admin_connection
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow(
+            "SELECT client_org_id FROM sites WHERE site_id = $1", site_id
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if str(row["client_org_id"]) not in org_scope:
+        raise HTTPException(status_code=404, detail="Site not found")

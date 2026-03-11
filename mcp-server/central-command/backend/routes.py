@@ -78,7 +78,7 @@ from .db_queries import (
 )
 from .email_alerts import send_critical_alert
 from . import auth as auth_module
-from .auth import check_site_access_sa
+from .auth import check_site_access_sa, check_site_access_pool
 
 
 # ---- Safe enum converters (prevent crashes on unknown DB values) ----
@@ -258,8 +258,9 @@ async def get_fleet_overview(
 
 
 @router.get("/fleet/{site_id}", response_model=ClientDetail)
-async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
+async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get detailed view of a single client."""
+    await check_site_access_sa(db, user, site_id)
     # Get site info
     site_result = await db.execute(
         text("SELECT site_id, clinic_name, tier FROM sites WHERE site_id = :site_id"),
@@ -396,8 +397,9 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/fleet/{site_id}/appliances", response_model=List[Appliance])
-async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)):
+async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get all appliances for a client."""
+    await check_site_access_sa(db, user, site_id)
     # Sequential - AsyncSession doesn't support concurrent ops on same session
     site_compliance = await get_compliance_scores_for_site(db, site_id)
     site_healing = await get_healing_metrics_for_site(db, site_id)
@@ -1841,8 +1843,9 @@ async def get_attention_required(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/stats/{site_id}", response_model=ClientStats)
-async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db)):
+async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get statistics for a specific client."""
+    await check_site_access_sa(db, user, site_id)
     # Check site exists
     site_result = await db.execute(
         text("SELECT site_id FROM sites WHERE site_id = :site_id"),
@@ -2781,6 +2784,7 @@ async def assign_site_to_org(
     site_id = body.get("site_id", "").strip()
     if not site_id:
         raise HTTPException(status_code=400, detail="site_id is required")
+    await check_site_access_sa(db, user, site_id)
 
     # Verify org exists
     org = await db.execute(text("SELECT id FROM client_orgs WHERE id = :org_id"), {"org_id": org_id})
@@ -2807,6 +2811,7 @@ async def unassign_site_from_org(
     user: dict = Depends(auth_module.require_auth),
 ):
     """Remove a site from an organization."""
+    await check_site_access_sa(db, user, site_id)
     await db.execute(text("""
         UPDATE sites SET client_org_id = NULL
         WHERE site_id = :site_id AND client_org_id = :org_id
@@ -2834,6 +2839,7 @@ async def get_admin_compliance_health(
     user: dict = Depends(auth_module.require_auth),
 ):
     """Get compliance health breakdown for admin site detail view."""
+    await check_site_access_pool(user, site_id)
     from .fleet import get_pool
     pool = await get_pool()
 
@@ -3032,6 +3038,7 @@ async def get_devices_at_risk(
     Returns devices sorted by risk (most issues first), with per-category
     incident counts so admins and clients can identify culprit devices at a glance.
     """
+    await check_site_access_pool(user, site_id)
     from .fleet import get_pool
     pool = await get_pool()
 
@@ -3173,6 +3180,7 @@ async def get_drift_config(
     user: dict = Depends(auth_module.require_auth),
 ):
     """Get drift scan configuration for a site, falling back to defaults."""
+    await check_site_access_pool(user, site_id)
     from .fleet import get_pool
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -3218,6 +3226,7 @@ async def update_drift_config(
     user: dict = Depends(auth_module.require_auth),
 ):
     """Upsert drift scan configuration for a site."""
+    await check_site_access_pool(user, site_id)
     from .fleet import get_pool
     pool = await get_pool()
     async with admin_connection(pool) as conn:
