@@ -13,12 +13,24 @@ Works with PgBouncer transaction pooling mode.
 """
 
 import logging
+import re
 from contextlib import asynccontextmanager
 from typing import Optional
 
 import asyncpg
 
 logger = logging.getLogger(__name__)
+
+# SET LOCAL doesn't support $1 parameterized queries in PostgreSQL.
+# Validate site_id to prevent SQL injection before interpolating.
+_SAFE_SITE_ID = re.compile(r"^[a-zA-Z0-9._-]{1,128}$")
+
+
+def _validated_site_id(site_id: str) -> str:
+    """Validate site_id is safe for SET LOCAL interpolation."""
+    if not _SAFE_SITE_ID.match(site_id):
+        raise ValueError(f"Invalid site_id for RLS context: {site_id!r}")
+    return site_id
 
 
 @asynccontextmanager
@@ -52,8 +64,9 @@ async def tenant_connection(
         elif site_id:
             # Tenant-scoped: wrap in transaction for SET LOCAL scoping
             async with conn.transaction():
+                safe_id = _validated_site_id(site_id)
                 await conn.execute(
-                    "SET LOCAL app.current_tenant = $1", site_id
+                    f"SET LOCAL app.current_tenant = '{safe_id}'"
                 )
                 await conn.execute("SET LOCAL app.is_admin = 'false'")
                 yield conn
@@ -99,6 +112,7 @@ async def set_tenant_context(
         await conn.execute("SET LOCAL app.is_admin = 'false'")
 
     if site_id:
-        await conn.execute("SET LOCAL app.current_tenant = $1", site_id)
+        safe_id = _validated_site_id(site_id)
+        await conn.execute(f"SET LOCAL app.current_tenant = '{safe_id}'")
     else:
         await conn.execute("SET LOCAL app.current_tenant = ''")
