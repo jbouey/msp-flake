@@ -123,6 +123,18 @@ class FakeConn:
         self.executed.append(("execute", query, args))
         return "INSERT 0 1"
 
+    def transaction(self):
+        """Fake transaction context manager for tenant_connection/admin_connection."""
+        return _FakeTransaction()
+
+
+class _FakeTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
 
 class FakePool:
     """Fake asyncpg pool that yields a FakeConn."""
