@@ -26,6 +26,7 @@ import uuid as _uuid
 from .fleet import get_pool
 from .auth import require_admin
 from .tenant_middleware import tenant_connection, admin_connection
+from .partner_auth import hash_session_token
 from .db_utils import _uid
 from .partner_activity_logger import (
     log_partner_activity,
@@ -188,7 +189,7 @@ async def require_partner(
 
     # Try session cookie
     if osiris_partner_session:
-        session_hash = hashlib.sha256(osiris_partner_session.encode()).hexdigest()
+        session_hash = hash_session_token(osiris_partner_session)
 
         async with admin_connection(pool) as conn:
             session = await conn.fetchrow("""
