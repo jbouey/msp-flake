@@ -511,7 +511,7 @@ class EscalationEngine:
                        pagerduty_enabled, pagerduty_routing_key,
                        teams_enabled, teams_webhook_url,
                        webhook_enabled, webhook_url, webhook_secret,
-                       min_severity, escalation_timeout_minutes
+                       escalation_timeout_minutes
                 FROM partner_notification_settings
                 WHERE partner_id = $1
             """, partner_id)

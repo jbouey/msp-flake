@@ -231,6 +231,46 @@ export const PartnerEscalations: React.FC = () => {
     return `${(m / 1440).toFixed(1)}d`;
   };
 
+  const incidentTypeLabel = (type: string) => {
+    return type
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+  };
+
+  const severityColor = (s: string) => {
+    switch (s) {
+      case 'critical': return 'bg-red-600 text-white';
+      case 'high': return 'bg-orange-500 text-white';
+      case 'medium': return 'bg-yellow-500 text-white';
+      case 'low': return 'bg-slate-400 text-white';
+      default: return 'bg-slate-400 text-white';
+    }
+  };
+
+  const extractRawDataFields = (raw: Record<string, unknown> | null) => {
+    if (!raw) return null;
+    const fields: { label: string; value: string }[] = [];
+    const keyMap: Record<string, string> = {
+      hostname: 'Hostname',
+      appliance_id: 'Appliance',
+      check_type: 'Check Type',
+      message: 'Message',
+      details: 'Details',
+      drift_type: 'Drift Type',
+      expected: 'Expected',
+      actual: 'Actual',
+      service_name: 'Service',
+      package_name: 'Package',
+      os_type: 'OS Type',
+    };
+    for (const [key, label] of Object.entries(keyMap)) {
+      if (raw[key] !== undefined && raw[key] !== null) {
+        fields.push({ label, value: String(raw[key]) });
+      }
+    }
+    return fields.length > 0 ? fields : null;
+  };
+
   const slaTimeRemaining = (ticket: EscalationTicket) => {
     if (!ticket.sla_target_at || ticket.status === 'resolved') return null;
     const remaining = new Date(ticket.sla_target_at).getTime() - Date.now();
@@ -447,15 +487,65 @@ export const PartnerEscalations: React.FC = () => {
             </div>
 
             <div className="space-y-4">
+              {/* Incident type + severity row */}
+              <div className="flex items-center gap-3">
+                <span className={`px-2.5 py-1 text-xs font-bold rounded-lg ${severityColor(selectedTicket.severity)}`}>
+                  {selectedTicket.severity.toUpperCase()}
+                </span>
+                <span className="text-sm font-medium text-slate-700">
+                  {incidentTypeLabel(selectedTicket.incident_type)}
+                </span>
+              </div>
+
               <div>
                 <p className="text-xs font-medium text-slate-500 uppercase mb-1">Summary</p>
                 <p className="text-sm text-slate-700">{selectedTicket.summary}</p>
               </div>
 
+              {/* Incident details from raw_data */}
+              {(() => {
+                const fields = extractRawDataFields(selectedTicket.raw_data);
+                if (!fields) return null;
+                return (
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase mb-2">Incident Details</p>
+                    <div className="bg-slate-50 rounded-lg p-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                      {fields.map(f => (
+                        <div key={f.label}>
+                          <p className="text-[10px] font-medium text-slate-400 uppercase">{f.label}</p>
+                          <p className="text-sm text-slate-700 break-words">{f.value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {selectedTicket.recommended_action && (
                 <div className="bg-indigo-50 rounded-lg p-3">
                   <p className="text-xs font-medium text-indigo-600 uppercase mb-1">Recommended Action</p>
                   <p className="text-sm text-indigo-800">{selectedTicket.recommended_action}</p>
+                </div>
+              )}
+
+              {/* Attempted auto-healing — formatted list */}
+              {selectedTicket.attempted_actions && Array.isArray(selectedTicket.attempted_actions) && selectedTicket.attempted_actions.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-slate-500 uppercase mb-2">Attempted Auto-Healing</p>
+                  <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 space-y-1.5">
+                    {selectedTicket.attempted_actions.map((action, i) => (
+                      <div key={i} className="flex items-start gap-2 text-sm">
+                        <span className="text-amber-500 mt-0.5 shrink-0">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </span>
+                        <span className="text-amber-800">
+                          {typeof action === 'string' ? action : JSON.stringify(action)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -466,15 +556,6 @@ export const PartnerEscalations: React.FC = () => {
                     {selectedTicket.hipaa_controls.map(c => (
                       <span key={c} className="px-2 py-0.5 bg-purple-50 text-purple-700 text-xs rounded-full">{c}</span>
                     ))}
-                  </div>
-                </div>
-              )}
-
-              {selectedTicket.attempted_actions && (
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase mb-1">Attempted Auto-Healing</p>
-                  <div className="bg-slate-50 rounded-lg p-3 text-sm text-slate-700">
-                    <pre className="whitespace-pre-wrap text-xs">{JSON.stringify(selectedTicket.attempted_actions, null, 2)}</pre>
                   </div>
                 </div>
               )}
