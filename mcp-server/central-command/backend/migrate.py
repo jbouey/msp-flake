@@ -33,7 +33,11 @@ import asyncpg
 
 # Configuration
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://mcp:mcp@localhost/mcp")
+_raw_url = os.getenv("DATABASE_URL", "postgresql://mcp:mcp@localhost/mcp")
+# Strip SQLAlchemy dialect prefix if present (asyncpg needs plain postgresql://)
+DATABASE_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://")
+# Use superuser for migrations (bypasses RLS) — fall back to app user
+MIGRATION_DB_URL = os.getenv("MIGRATION_DATABASE_URL", DATABASE_URL)
 
 
 def parse_migration(content: str) -> Tuple[str, Optional[str]]:
@@ -202,7 +206,7 @@ async def rollback_migration(
 
 async def cmd_up(target: Optional[str] = None) -> int:
     """Apply pending migrations."""
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn = await asyncpg.connect(MIGRATION_DB_URL)
 
     try:
         await ensure_migrations_table(conn)
@@ -234,7 +238,7 @@ async def cmd_up(target: Optional[str] = None) -> int:
 
 async def cmd_down(target: Optional[str] = None) -> int:
     """Rollback migrations."""
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn = await asyncpg.connect(MIGRATION_DB_URL)
 
     try:
         await ensure_migrations_table(conn)
@@ -271,7 +275,7 @@ async def cmd_down(target: Optional[str] = None) -> int:
 
 async def cmd_status() -> int:
     """Show migration status."""
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn = await asyncpg.connect(MIGRATION_DB_URL)
 
     try:
         await ensure_migrations_table(conn)
@@ -302,7 +306,7 @@ async def cmd_status() -> int:
 
 async def cmd_check() -> int:
     """Verify migration checksums."""
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn = await asyncpg.connect(MIGRATION_DB_URL)
 
     try:
         await ensure_migrations_table(conn)

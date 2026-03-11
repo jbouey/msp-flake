@@ -115,6 +115,15 @@ jobs:
             mcp-server/central-command/frontend/nginx.conf \
             ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/frontend/nginx.conf
 
+      - name: Run database migrations
+        run: |
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
+            # Run migrations as superuser directly to postgres (not through PgBouncer)
+            docker exec \
+              -e MIGRATION_DATABASE_URL="postgresql://mcp:$(cat /opt/mcp-server/.env | grep POSTGRES_PASSWORD | cut -d= -f2)@mcp-postgres:5432/mcp" \
+              mcp-server python3 /app/dashboard_api/migrate.py up || echo "Migration runner failed — manual migration may be needed"
+          EOF
+
       - name: Fix permissions and restart services
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
