@@ -380,15 +380,22 @@ async def get_site_compliance_config(site_id: str) -> SiteComplianceConfig:
         else:
             enabled_frameworks = ["nist_csf"]
 
+    def _parse_jsonb(val):
+        if val is None:
+            return {}
+        if isinstance(val, str):
+            return json.loads(val)
+        return val
+
     return SiteComplianceConfig(
         site_id=site["site_id"],
         site_name=site["clinic_name"],
         enabled_frameworks=enabled_frameworks,
         coverage_tier=site["tier"] or "standard",
         industry=site["industry"] or "healthcare",
-        runbook_overrides=site["runbook_overrides"] or {},
-        check_schedule=site["check_schedule"] or {},
-        alert_config=site["alert_config"] or {},
+        runbook_overrides=_parse_jsonb(site["runbook_overrides"]),
+        check_schedule=_parse_jsonb(site["check_schedule"]),
+        alert_config=_parse_jsonb(site["alert_config"]),
     )
 
 
