@@ -12,31 +12,12 @@ from sqlalchemy import text
 from pydantic import BaseModel
 
 try:
-    from auth import require_auth
+    from auth import require_auth, check_site_access_sa as _check_site_access
 except ImportError:
-    from .auth import require_auth
+    from .auth import require_auth, check_site_access_sa as _check_site_access
 
 
 router = APIRouter(prefix="/api/runbooks", tags=["runbooks"])
-
-
-async def _check_site_access(db: AsyncSession, user: Dict[str, Any], site_id: str):
-    """Validate admin user can access site_id (SQLAlchemy version).
-
-    Returns 404 for both nonexistent and out-of-scope sites (IDOR prevention).
-    """
-    result = await db.execute(
-        text("SELECT client_org_id FROM sites WHERE site_id = :site_id"),
-        {"site_id": site_id},
-    )
-    row = result.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Site not found")
-
-    org_scope = user.get("org_scope")
-    if org_scope is not None:
-        if str(row.client_org_id) not in org_scope:
-            raise HTTPException(status_code=404, detail="Site not found")
 
 
 # =============================================================================

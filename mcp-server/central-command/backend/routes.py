@@ -78,6 +78,7 @@ from .db_queries import (
 )
 from .email_alerts import send_critical_alert
 from . import auth as auth_module
+from .auth import check_site_access_sa
 
 
 # ---- Safe enum converters (prevent crashes on unknown DB values) ----
@@ -759,7 +760,11 @@ async def get_promotion_history(limit: int = Query(default=20, ge=1, le=100), db
 
 
 @router.post("/learning/promote/{pattern_id}")
-async def promote_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
+async def promote_pattern(
+    pattern_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
     """Manually trigger promotion of a pattern to L1.
 
     Supports both legacy patterns table and aggregated_pattern_stats IDs.
@@ -780,6 +785,9 @@ async def promote_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
 
     if not aps_row:
         raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
+    # IDOR check: ensure org-scoped user can access this pattern's site
+    await check_site_access_sa(db, user, aps_row.site_id)
 
     # Parse check_type from pattern_signature (format: "check_type:runbook_id")
     parts = aps_row.pattern_signature.split(":")
@@ -829,7 +837,11 @@ async def promote_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/learning/reject/{pattern_id}")
-async def reject_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
+async def reject_pattern(
+    pattern_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
     """Reject a promotion candidate, marking it as dismissed."""
     # Try legacy patterns table first
     result = await db.execute(
@@ -854,6 +866,9 @@ async def reject_pattern(pattern_id: str, db: AsyncSession = Depends(get_db)):
 
     if not aps_row:
         raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
+    # IDOR check: ensure org-scoped user can access this pattern's site
+    await check_site_access_sa(db, user, aps_row.site_id)
 
     # Mark as no longer eligible
     await db.execute(text("""
@@ -1306,8 +1321,14 @@ async def create_prospect(prospect: ProspectCreate, db: AsyncSession = Depends(g
 
 
 @router.patch("/onboarding/{client_id}/stage")
-async def advance_stage(client_id: str, request: StageAdvance, db: AsyncSession = Depends(get_db)):
+async def advance_stage(
+    client_id: str,
+    request: StageAdvance,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
     """Move client to next stage with transition validation."""
+    await check_site_access_sa(db, user, client_id)
     now = datetime.now(timezone.utc)
     stage_val = request.new_stage.value
 
@@ -1378,8 +1399,14 @@ async def advance_stage(client_id: str, request: StageAdvance, db: AsyncSession 
 
 
 @router.patch("/onboarding/{client_id}/blockers")
-async def update_blockers(client_id: str, request: BlockerUpdate, db: AsyncSession = Depends(get_db)):
+async def update_blockers(
+    client_id: str,
+    request: BlockerUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
     """Update blockers for a client."""
+    await check_site_access_sa(db, user, client_id)
     await db.execute(text("""
         UPDATE sites SET blockers = :blockers WHERE site_id = :client_id
     """), {"blockers": json.dumps(request.blockers), "client_id": client_id})
@@ -1388,8 +1415,14 @@ async def update_blockers(client_id: str, request: BlockerUpdate, db: AsyncSessi
 
 
 @router.post("/onboarding/{client_id}/note")
-async def add_note(client_id: str, request: NoteAdd, db: AsyncSession = Depends(get_db)):
+async def add_note(
+    client_id: str,
+    request: NoteAdd,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
     """Add a note to client's onboarding record."""
+    await check_site_access_sa(db, user, client_id)
     await db.execute(text("""
         UPDATE sites SET notes = COALESCE(notes || E'\\n', '') || :note
         WHERE site_id = :client_id

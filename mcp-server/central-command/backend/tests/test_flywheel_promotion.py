@@ -101,6 +101,9 @@ def make_mock_db():
     return db
 
 
+MOCK_ADMIN_USER = {"id": "1", "username": "admin", "role": "admin", "org_scope": None}
+
+
 # ---------------------------------------------------------------------------
 # Tests: POST /learning/promote/{pattern_id} endpoint
 # ---------------------------------------------------------------------------
@@ -121,7 +124,7 @@ class TestPromotePatternEndpoint:
 
         with patch("dashboard_api.db_queries.promote_pattern_in_db",
                    new_callable=AsyncMock, return_value=expected_rule_id):
-            result = await promote_fn(pattern_id=pattern_id, db=mock_db)
+            result = await promote_fn(pattern_id=pattern_id, db=mock_db, user=MOCK_ADMIN_USER)
 
         assert result["status"] == "promoted"
         assert result["pattern_id"] == pattern_id
@@ -159,9 +162,22 @@ class TestPromotePatternEndpoint:
 
         mock_db.execute = AsyncMock(side_effect=mock_execute)
 
+        # check_site_access_sa needs to find the site in DB — mock that query too
+        site_row = FakeRow(["org-1"], columns=["client_org_id"])
+
+        original_execute = mock_db.execute
+
+        async def execute_with_site_check(query, params=None):
+            query_str = str(query)
+            if "SELECT client_org_id FROM sites" in query_str:
+                return FakeResult([site_row])
+            return await original_execute(query, params)
+
+        mock_db.execute = AsyncMock(side_effect=execute_with_site_check)
+
         with patch("dashboard_api.db_queries.promote_pattern_in_db",
                    new_callable=AsyncMock, return_value=None):
-            result = await promote_fn(pattern_id=pattern_id, db=mock_db)
+            result = await promote_fn(pattern_id=pattern_id, db=mock_db, user=MOCK_ADMIN_USER)
 
         assert result["status"] == "promoted"
         assert result["pattern_id"] == pattern_id
@@ -188,7 +204,7 @@ class TestPromotePatternEndpoint:
         with patch("dashboard_api.db_queries.promote_pattern_in_db",
                    new_callable=AsyncMock, return_value=None):
             with pytest.raises(HTTPException) as exc_info:
-                await promote_fn(pattern_id=pattern_id, db=mock_db)
+                await promote_fn(pattern_id=pattern_id, db=mock_db, user=MOCK_ADMIN_USER)
 
         assert exc_info.value.status_code == 404
         assert "999" in exc_info.value.detail

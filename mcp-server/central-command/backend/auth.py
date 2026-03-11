@@ -804,3 +804,24 @@ def require_role(*allowed_roles: str):
             )
         return user
     return role_dependency
+
+
+async def check_site_access_sa(db: "AsyncSession", user: Dict[str, Any], site_id: str):
+    """Validate admin user can access site_id (SQLAlchemy version).
+
+    Returns 404 for both nonexistent and out-of-scope sites (IDOR prevention).
+    Global admins (org_scope=None) can access any site.
+    Org-scoped users can only access sites in their org.
+    """
+    result = await db.execute(
+        text("SELECT client_org_id FROM sites WHERE site_id = :site_id"),
+        {"site_id": site_id},
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    org_scope = user.get("org_scope")
+    if org_scope is not None:
+        if str(row[0]) not in org_scope:
+            raise HTTPException(status_code=404, detail="Site not found")
