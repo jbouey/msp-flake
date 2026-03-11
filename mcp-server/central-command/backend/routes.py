@@ -497,7 +497,7 @@ async def get_incidents(
     Returns:
         List of incidents with resolution details.
     """
-    incidents = await get_incidents_from_db(db, site_id=site_id, limit=limit, offset=offset, resolved=resolved)
+    incidents = await get_incidents_from_db(db, site_id=site_id, limit=limit, offset=offset, resolved=resolved, level=level)
 
     return [
         Incident(

@@ -115,11 +115,12 @@ async def get_incidents_from_db(
     site_id: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-    resolved: Optional[bool] = None
+    resolved: Optional[bool] = None,
+    level: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Get incidents from database."""
     query_str = """
-        SELECT 
+        SELECT
             i.id,
             a.site_id,
             i.incident_type,
@@ -134,7 +135,7 @@ async def get_incidents_from_db(
         JOIN appliances a ON a.id = i.appliance_id
         WHERE 1=1
     """
-    
+
     params = {}
     if site_id:
         query_str += " AND a.site_id = :site_id"
@@ -144,6 +145,9 @@ async def get_incidents_from_db(
             query_str += " AND i.status = 'resolved'"
         else:
             query_str += " AND i.status != 'resolved'"
+    if level and level in ("L1", "L2", "L3"):
+        query_str += " AND i.resolution_tier = :level"
+        params["level"] = level
     
     query_str += " ORDER BY i.reported_at DESC LIMIT :limit OFFSET :offset"
     params["limit"] = limit

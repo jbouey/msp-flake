@@ -4,13 +4,12 @@ Sets PostgreSQL session variables per-transaction so RLS policies
 can enforce multi-tenant data isolation at the database layer.
 
 Architecture:
-    Request → Auth → Middleware extracts site_id → SET LOCAL app.current_tenant
-    Admin requests → SET LOCAL app.is_admin = true (bypasses tenant filter)
-    Agent requests → site_id from appliance lookup
+    admin_connection: No transaction wrapper — relies on database default
+        app.is_admin = 'true'. Used for admin dashboard, internal operations.
+    tenant_connection: Wraps in transaction with SET LOCAL to enforce
+        tenant isolation (is_admin='false', current_tenant=site_id).
 
-Works with both asyncpg raw pool and SQLAlchemy AsyncSession.
-SET LOCAL is transaction-scoped — automatically cleared when connection
-returns to pool. Safe with PgBouncer transaction pooling mode.
+Works with PgBouncer transaction pooling mode.
 """
 
 import logging
@@ -45,37 +44,40 @@ async def tenant_connection(
         is_admin: If True, sets admin bypass (sees all tenants).
     """
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            if is_admin:
-                await conn.execute("SET LOCAL app.is_admin = 'true'")
-                if site_id:
-                    await conn.execute(
-                        "SET LOCAL app.current_tenant = $1", site_id
-                    )
-            elif site_id:
+        if is_admin:
+            # Database default is app.is_admin='true', so no SET needed.
+            # No transaction wrapper — avoids transaction poisoning for
+            # long multi-query endpoints (checkins, fleet overview, etc).
+            yield conn
+        elif site_id:
+            # Tenant-scoped: wrap in transaction for SET LOCAL scoping
+            async with conn.transaction():
                 await conn.execute(
                     "SET LOCAL app.current_tenant = $1", site_id
                 )
                 await conn.execute("SET LOCAL app.is_admin = 'false'")
-            else:
-                # No tenant context — RLS will return empty results
-                # This is intentionally restrictive (fail-closed)
+                yield conn
+        else:
+            # No tenant context — RLS will return empty results
+            async with conn.transaction():
                 logger.warning("tenant_connection called without site_id or is_admin")
                 await conn.execute("SET LOCAL app.is_admin = 'false'")
                 await conn.execute("SET LOCAL app.current_tenant = ''")
-
-            yield conn
+                yield conn
 
 
 @asynccontextmanager
 async def admin_connection(pool: asyncpg.Pool):
     """Shortcut for admin-level connections that bypass RLS.
 
+    No transaction wrapper — relies on database default app.is_admin='true'.
+    This avoids transaction poisoning for multi-query admin endpoints.
+
     Usage:
         async with admin_connection(pool) as conn:
             rows = await conn.fetch("SELECT * FROM incidents")  # all tenants
     """
-    async with tenant_connection(pool, is_admin=True) as conn:
+    async with pool.acquire() as conn:
         yield conn
 
 
