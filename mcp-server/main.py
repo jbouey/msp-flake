@@ -142,17 +142,17 @@ logger = structlog.get_logger()
 # Database Setup
 # ============================================================================
 
+# PgBouncer: disable prepared statement cache via URL param
+_db_sep = "&" if "?" in DATABASE_URL else "?"
+_db_url = DATABASE_URL + _db_sep + "prepared_statement_cache_size=0"
+
 engine = create_async_engine(
-    DATABASE_URL,
+    _db_url,
     echo=False,
     pool_size=20,           # Increased for production load
     max_overflow=30,        # Allow burst capacity
     pool_recycle=3600,      # Recycle stale connections after 1 hour
     pool_pre_ping=True,     # Verify connections before use
-    connect_args={
-        "server_settings": {"statement_timeout": "30000"},  # 30s query timeout
-        "statement_cache_size": 0,  # Required for PgBouncer transaction pooling
-    },
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

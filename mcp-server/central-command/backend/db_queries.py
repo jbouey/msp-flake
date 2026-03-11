@@ -676,7 +676,8 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
     Uses a window function to fetch the latest 50 bundles per site, then
     aggregates scores in Python using the pre-computed category lookup.
     """
-    cached = await _cache_get("compliance:all_scores")
+    # SECURITY: admin-only cache — callers MUST be behind require_auth (admin)
+    cached = await _cache_get("admin:compliance:all_scores")
     if cached is not None:
         return cached
 
@@ -761,7 +762,7 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
         result_scores["has_data"] = categories_with_data > 0
         scores[site_id] = result_scores
 
-    await _cache_set("compliance:all_scores", scores, ttl_seconds=CACHE_TTL_SCORES)
+    await _cache_set("admin:compliance:all_scores", scores, ttl_seconds=CACHE_TTL_SCORES)
     return scores
 
 
@@ -1592,7 +1593,8 @@ async def get_all_healing_metrics(db: AsyncSession) -> Dict[str, Dict[str, Any]]
 
     Returns dict keyed by site_id with same shape as get_healing_metrics_for_site().
     """
-    cached = await _cache_get("healing:all_metrics")
+    # SECURITY: admin-only cache — callers MUST be behind require_auth (admin)
+    cached = await _cache_get("admin:healing:all_metrics")
     if cached is not None:
         return cached
 
@@ -1644,7 +1646,7 @@ async def get_all_healing_metrics(db: AsyncSession) -> Dict[str, Dict[str, Any]]
             "last_incident": inc.last_incident if inc else None,
         }
 
-    await _cache_set("healing:all_metrics", results, ttl_seconds=CACHE_TTL_METRICS)
+    await _cache_set("admin:healing:all_metrics", results, ttl_seconds=CACHE_TTL_METRICS)
     return results
 
 

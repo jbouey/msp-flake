@@ -59,10 +59,11 @@ if _base_db_url:
     else:
         PG_DATABASE_URL = f"postgresql+asyncpg://{_base_db_url.split('://', 1)[-1]}"
 
-    # SQLAlchemy async engine and session for routers that need it
+    # SQLAlchemy async engine — PgBouncer requires no prepared statement cache
+    _sep = "&" if "?" in PG_DATABASE_URL else "?"
+    _pg_url = PG_DATABASE_URL + _sep + "prepared_statement_cache_size=0"
     _pg_engine = create_async_engine(
-        PG_DATABASE_URL, echo=False, pool_size=5, max_overflow=10,
-        connect_args={"statement_cache_size": 0},  # Required for PgBouncer
+        _pg_url, echo=False, pool_size=5, max_overflow=10,
     )
     async_session = async_sessionmaker(_pg_engine, class_=AsyncSession, expire_on_commit=False)
 else:
