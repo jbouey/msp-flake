@@ -121,6 +121,8 @@ jobs:
             chmod -R 755 /opt/mcp-server/dashboard_api_mount/
             chmod 644 /opt/mcp-server/app/main.py /opt/mcp-server/app/server.py
             cd /opt/mcp-server
+            docker compose restart pgbouncer
+            sleep 3
             docker compose restart mcp-server frontend
           EOF
 

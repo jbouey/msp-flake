@@ -931,7 +931,7 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
                 SELECT COUNT(*) as total,
                        COUNT(*) FILTER (WHERE i.status = 'open') as open_count
                 FROM incidents i
-                JOIN site_appliances sa ON sa.id = i.appliance_id
+                JOIN site_appliances sa ON sa.appliance_id = i.appliance_id
                 WHERE sa.site_id IN (SELECT site_id FROM sites WHERE partner_id = $1)
             """, _uid(partner_id))
         except Exception:
