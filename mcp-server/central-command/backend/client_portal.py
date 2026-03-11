@@ -3328,3 +3328,257 @@ async def get_agent_mobileconfig(
             "Content-Disposition": f'attachment; filename="OsirisCare-{site_id}.mobileconfig"',
         },
     )
+
+
+# =============================================================================
+# ESCALATION PREFERENCES + TICKET MANAGEMENT
+# =============================================================================
+
+class EscalationPreferencesUpdate(BaseModel):
+    """Client escalation routing preferences."""
+    escalation_mode: Literal['partner', 'direct', 'both'] = 'partner'
+    email_enabled: bool = True
+    email_recipients: List[str] = []
+    slack_enabled: bool = False
+    slack_webhook_url: Optional[str] = None
+    teams_enabled: bool = False
+    teams_webhook_url: Optional[str] = None
+    escalation_timeout_minutes: int = 60
+
+
+@auth_router.get("/escalation-preferences")
+async def get_escalation_preferences(user: dict = Depends(require_client_user)):
+    """Get client org's L3 escalation routing preferences."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow("""
+            SELECT escalation_mode, email_enabled, email_recipients,
+                   slack_enabled, slack_webhook_url,
+                   teams_enabled, teams_webhook_url,
+                   escalation_timeout_minutes, updated_at
+            FROM client_escalation_preferences
+            WHERE client_org_id = $1
+        """, org_id)
+
+        if not row:
+            return {
+                "escalation_mode": "partner",
+                "email_enabled": True,
+                "email_recipients": [],
+                "slack_enabled": False,
+                "slack_webhook_url": None,
+                "teams_enabled": False,
+                "teams_webhook_url": None,
+                "escalation_timeout_minutes": 60,
+                "configured": False,
+            }
+
+        return {**dict(row), "configured": True}
+
+
+@auth_router.put("/escalation-preferences")
+async def update_escalation_preferences(
+    body: EscalationPreferencesUpdate,
+    user: dict = Depends(require_client_admin),
+):
+    """Update client org's L3 escalation routing preferences. Requires admin role."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with admin_connection(pool) as conn:
+        await conn.execute("""
+            INSERT INTO client_escalation_preferences (
+                client_org_id, escalation_mode, email_enabled, email_recipients,
+                slack_enabled, slack_webhook_url,
+                teams_enabled, teams_webhook_url,
+                escalation_timeout_minutes, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            ON CONFLICT (client_org_id) DO UPDATE SET
+                escalation_mode = EXCLUDED.escalation_mode,
+                email_enabled = EXCLUDED.email_enabled,
+                email_recipients = EXCLUDED.email_recipients,
+                slack_enabled = EXCLUDED.slack_enabled,
+                slack_webhook_url = EXCLUDED.slack_webhook_url,
+                teams_enabled = EXCLUDED.teams_enabled,
+                teams_webhook_url = EXCLUDED.teams_webhook_url,
+                escalation_timeout_minutes = EXCLUDED.escalation_timeout_minutes,
+                updated_at = NOW()
+        """,
+            org_id,
+            body.escalation_mode,
+            body.email_enabled,
+            body.email_recipients,
+            body.slack_enabled,
+            body.slack_webhook_url,
+            body.teams_enabled,
+            body.teams_webhook_url,
+            body.escalation_timeout_minutes,
+        )
+
+    return {"status": "updated", "escalation_mode": body.escalation_mode}
+
+
+@auth_router.get("/escalations")
+async def list_client_escalations(
+    status: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(require_client_user),
+):
+    """List L3 escalation tickets for client org's sites."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with admin_connection(pool) as conn:
+        query = """
+            SELECT t.id, t.site_id, s.clinic_name as site_name,
+                   t.incident_type, t.severity, t.priority, t.title, t.summary,
+                   t.recommended_action, t.hipaa_controls, t.attempted_actions,
+                   t.raw_data, t.status, t.sla_breached,
+                   t.acknowledged_at, t.resolved_at, t.resolved_by,
+                   t.resolution_notes, t.recurrence_count,
+                   t.escalated_to_l4, t.created_at, t.updated_at
+            FROM escalation_tickets t
+            JOIN sites s ON s.site_id = t.site_id
+            WHERE s.client_org_id = $1
+        """
+        params: list = [org_id]
+        idx = 2
+
+        if status:
+            query += f" AND t.status = ${idx}"
+            params.append(status)
+            idx += 1
+
+        query += f" ORDER BY t.created_at DESC LIMIT ${idx} OFFSET ${idx + 1}"
+        params.extend([limit, offset])
+
+        rows = await conn.fetch(query, *params)
+
+        # Counts
+        count_row = await conn.fetchrow("""
+            SELECT
+                COUNT(*) FILTER (WHERE t.status = 'open') as open_count,
+                COUNT(*) FILTER (WHERE t.status = 'acknowledged') as acknowledged_count,
+                COUNT(*) FILTER (WHERE t.status = 'resolved') as resolved_count,
+                COUNT(*) FILTER (WHERE t.sla_breached = true AND t.status != 'resolved') as sla_breached_count
+            FROM escalation_tickets t
+            JOIN sites s ON s.site_id = t.site_id
+            WHERE s.client_org_id = $1
+        """, org_id)
+
+    import json as json_mod
+    tickets = []
+    for r in rows:
+        t = dict(r)
+        for key in ('raw_data', 'attempted_actions'):
+            if isinstance(t.get(key), str):
+                try:
+                    t[key] = json_mod.loads(t[key])
+                except Exception:
+                    pass
+        tickets.append(t)
+
+    return {
+        "tickets": tickets,
+        "counts": dict(count_row) if count_row else {},
+    }
+
+
+@auth_router.get("/escalations/{ticket_id}")
+async def get_client_escalation_detail(
+    ticket_id: str,
+    user: dict = Depends(require_client_user),
+):
+    """Get escalation ticket detail (client must own the site)."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow("""
+            SELECT t.*, s.clinic_name as site_name
+            FROM escalation_tickets t
+            JOIN sites s ON s.site_id = t.site_id
+            WHERE t.id = $1 AND s.client_org_id = $2
+        """, ticket_id, org_id)
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+    import json as json_mod
+    ticket = dict(row)
+    for key in ('raw_data', 'attempted_actions'):
+        if isinstance(ticket.get(key), str):
+            try:
+                ticket[key] = json_mod.loads(ticket[key])
+            except Exception:
+                pass
+
+    return {"ticket": ticket}
+
+
+@auth_router.post("/escalations/{ticket_id}/acknowledge")
+async def client_acknowledge_ticket(
+    ticket_id: str,
+    user: dict = Depends(require_client_user),
+):
+    """Client acknowledges an escalation ticket."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with admin_connection(pool) as conn:
+        result = await conn.execute("""
+            UPDATE escalation_tickets t
+            SET status = 'acknowledged',
+                acknowledged_at = NOW(),
+                acknowledged_by = $3,
+                updated_at = NOW()
+            FROM sites s
+            WHERE t.id = $1
+              AND s.site_id = t.site_id
+              AND s.client_org_id = $2
+              AND t.status = 'open'
+        """, ticket_id, org_id, user.get("email", user.get("user_id", "client")))
+
+        if result == "UPDATE 0":
+            raise HTTPException(status_code=404, detail="Ticket not found or already acknowledged")
+
+    return {"status": "acknowledged"}
+
+
+@auth_router.post("/escalations/{ticket_id}/resolve")
+async def client_resolve_ticket(
+    ticket_id: str,
+    body: dict,
+    user: dict = Depends(require_client_user),
+):
+    """Client resolves an escalation ticket with notes."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+    resolution_notes = body.get("resolution_notes", "").strip()
+    if not resolution_notes:
+        raise HTTPException(status_code=400, detail="Resolution notes required")
+
+    resolved_by = user.get("email", user.get("user_id", "client"))
+
+    async with admin_connection(pool) as conn:
+        result = await conn.execute("""
+            UPDATE escalation_tickets t
+            SET status = 'resolved',
+                resolved_at = NOW(),
+                resolved_by = $3,
+                resolution_notes = $4,
+                updated_at = NOW()
+            FROM sites s
+            WHERE t.id = $1
+              AND s.site_id = t.site_id
+              AND s.client_org_id = $2
+              AND t.status IN ('open', 'acknowledged')
+        """, ticket_id, org_id, resolved_by, resolution_notes)
+
+        if result == "UPDATE 0":
+            raise HTTPException(status_code=404, detail="Ticket not found or already resolved")
+
+    return {"status": "resolved"}

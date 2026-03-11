@@ -106,7 +106,7 @@ const PartnerRoutes = lazy(() => import('./partner').then(m => ({
 // Client module - lazy loaded with provider
 const ClientRoutes = lazy(() => import('./client').then(m => ({
   default: () => {
-    const { ClientProvider, ClientLogin, ClientVerify, ClientDashboard, ClientEvidence, ClientReports, ClientNotifications, ClientSettings, ClientSecurity, ClientHelp, ClientHealingLogs, ClientCompliance } = m;
+    const { ClientProvider, ClientLogin, ClientVerify, ClientDashboard, ClientEvidence, ClientReports, ClientNotifications, ClientSettings, ClientSecurity, ClientHelp, ClientHealingLogs, ClientEscalations, ClientCompliance } = m;
     return (
       <ClientProvider>
         <Routes>
@@ -117,6 +117,7 @@ const ClientRoutes = lazy(() => import('./client').then(m => ({
           <Route path="reports" element={<ClientReports />} />
           <Route path="notifications" element={<ClientNotifications />} />
           <Route path="healing-logs" element={<ClientHealingLogs />} />
+          <Route path="escalations" element={<ClientEscalations />} />
           <Route path="compliance" element={<ClientCompliance />} />
           <Route path="settings" element={<ClientSettings />} />
           <Route path="security" element={<ClientSecurity />} />

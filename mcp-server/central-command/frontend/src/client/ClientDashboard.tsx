@@ -751,6 +751,23 @@ export const ClientDashboard: React.FC = () => {
           </Link>
 
           <Link
+            to="/client/escalations"
+            className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:border-red-300 hover:shadow-md transition-all"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900">Escalations</h3>
+                <p className="text-sm text-slate-500">L3 tickets & routing</p>
+              </div>
+            </div>
+          </Link>
+
+          <Link
             to="/client/settings"
             className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:border-teal-300 hover:shadow-md transition-all"
           >

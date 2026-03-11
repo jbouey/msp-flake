@@ -9,5 +9,6 @@ export { ClientSettings } from './ClientSettings';
 export { ClientSecurity } from './ClientSecurity';
 export { ClientHelp } from './ClientHelp';
 export { ClientHealingLogs } from './ClientHealingLogs';
+export { ClientEscalations } from './ClientEscalations';
 export { ClientCompliance } from './ClientCompliance';
 export { ClientDriftConfig } from './ClientDriftConfig';

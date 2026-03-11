@@ -490,7 +490,7 @@ class EscalationEngine:
             # Get site and partner info
             site = await conn.fetchrow("""
                 SELECT s.id, s.site_id, s.clinic_name, s.partner_id, s.status,
-                       p.name as partner_name
+                       s.client_org_id, p.name as partner_name
                 FROM sites s
                 LEFT JOIN partners p ON s.partner_id = p.id
                 WHERE s.site_id = $1
@@ -499,10 +499,30 @@ class EscalationEngine:
             if not site:
                 raise ValueError(f"Site {site_id} not found")
 
+            # Check client escalation preferences
+            client_org_id = site.get('client_org_id')
+            client_prefs = None
+            if client_org_id:
+                client_prefs = await conn.fetchrow("""
+                    SELECT escalation_mode, email_enabled, email_recipients,
+                           slack_enabled, slack_webhook_url,
+                           teams_enabled, teams_webhook_url,
+                           escalation_timeout_minutes
+                    FROM client_escalation_preferences
+                    WHERE client_org_id = $1
+                """, client_org_id)
+
             partner_id = site['partner_id']
-            if not partner_id:
+            escalation_mode = client_prefs['escalation_mode'] if client_prefs else 'partner'
+
+            # No partner and no direct client routing → internal fallback
+            if not partner_id and escalation_mode == 'partner':
                 logger.warning(f"Site {site_id} has no partner, using internal escalation")
                 return await self._create_internal_escalation(incident, site)
+
+            # No partner but client wants direct routing → proceed (partner notifications skipped)
+            if not partner_id and escalation_mode in ('direct', 'both'):
+                escalation_mode = 'direct'  # can't notify non-existent partner
 
             # Get partner notification settings
             settings = await conn.fetchrow("""
@@ -592,8 +612,9 @@ class EscalationEngine:
                     id, partner_id, site_id, incident_id, incident_type,
                     severity, priority, title, summary, raw_data,
                     hipaa_controls, attempted_actions, recommended_action,
-                    sla_target_at, recurrence_count, previous_ticket_id, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+                    sla_target_at, recurrence_count, previous_ticket_id,
+                    client_org_id, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
             """,
                 ticket_id,
                 partner_id,
@@ -610,20 +631,34 @@ class EscalationEngine:
                 recommended_action,
                 sla_target,
                 recurrence_count,
-                previous_ticket_id
+                previous_ticket_id,
+                client_org_id,
             )
 
-            logger.info(f"Created escalation ticket {ticket_id} for site {site_id} (recurrence={recurrence_count})")
+            logger.info(f"Created escalation ticket {ticket_id} for site {site_id} (mode={escalation_mode}, recurrence={recurrence_count})")
 
-            # Send notifications
-            notification_results = await self._send_all_notifications(
-                conn, ticket_id, effective_settings, ticket_data, incident_priority
-            )
+            # Send notifications based on escalation mode
+            notification_results = []
+
+            # Partner notifications (mode: partner or both)
+            if escalation_mode in ('partner', 'both') and effective_settings:
+                notification_results = await self._send_all_notifications(
+                    conn, ticket_id, effective_settings, ticket_data, incident_priority
+                )
+
+            # Client direct notifications (mode: direct or both)
+            if escalation_mode in ('direct', 'both') and client_prefs:
+                client_results = await self._send_client_notifications(
+                    conn, ticket_id, client_prefs, ticket_data, incident_priority
+                )
+                notification_results.extend(client_results)
 
             return {
                 "ticket_id": ticket_id,
                 "partner_id": partner_id,
                 "site_id": site_id,
+                "client_org_id": client_org_id,
+                "escalation_mode": escalation_mode,
                 "priority": incident_priority,
                 "sla_target": sla_target.isoformat(),
                 "notifications": notification_results
@@ -644,6 +679,37 @@ class EscalationEngine:
         for channel in channels:
             result = await self._send_and_log(conn, ticket_id, channel, settings, payload)
             results.append(result)
+
+        return results
+
+    async def _send_client_notifications(
+        self,
+        conn,
+        ticket_id: str,
+        client_prefs: Dict[str, Any],
+        payload: Dict[str, Any],
+        priority: str
+    ) -> List[Dict[str, Any]]:
+        """Send notifications directly to client org based on their preferences."""
+        results = []
+        channels = []
+
+        if client_prefs.get('email_enabled') and client_prefs.get('email_recipients'):
+            channels.append('email')
+        if client_prefs.get('slack_enabled') and client_prefs.get('slack_webhook_url'):
+            channels.append('slack')
+        if client_prefs.get('teams_enabled') and client_prefs.get('teams_webhook_url'):
+            channels.append('teams')
+
+        # Build settings dict compatible with _send_and_log
+        settings = dict(client_prefs)
+
+        for channel in channels:
+            result = await self._send_and_log(conn, ticket_id, channel, settings, payload)
+            results.append(result)
+
+        if not channels:
+            logger.warning(f"Client direct escalation for {ticket_id} but no channels configured")
 
         return results
 
