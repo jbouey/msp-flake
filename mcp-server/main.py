@@ -2772,21 +2772,22 @@ async def agent_l2_plan(request: L2PlanRequest, db: AsyncSession = Depends(get_d
     escalate = True
 
     if decision.runbook_id and decision.confidence >= 0.6:
-        # Map runbook to action type
-        runbook_action_map = {
-            "RB-SERVICE-001": "restart_service",
-            "RB-FIREWALL-001": "configure_firewall",
-            "RB-AV-001": "enable_defender",
-            "RB-LOGGING-001": "fix_audit_policy",
-            "RB-ENCRYPTION-001": "enable_bitlocker",
-            "RB-DRIFT-001": "fix_permissions",
-            "RB-PATCH-001": "restart_service",
-            "RB-BACKUP-001": "restart_service",
-            "RB-CERT-001": "escalate",
-            "RB-DISK-001": "escalate",
-        }
-        action = runbook_action_map.get(decision.runbook_id, "escalate")
-        escalate = action == "escalate"  # Only escalate when no valid runbook; requires_approval is separate
+        # Runbooks that require human escalation (no automated remediation possible)
+        escalation_only_runbooks = {"RB-CERT-001", "RB-DISK-001"}
+        is_escalation = (
+            decision.runbook_id in escalation_only_runbooks
+            or decision.runbook_id.startswith("ESC-")
+        )
+
+        if is_escalation:
+            action = "escalate"
+            escalate = True
+        else:
+            # Tell the daemon to execute via its runbook engine.
+            # The daemon's executeL2Action dispatches to WinRM/SSH based on platform.
+            # Pass runbook_id so the daemon can look up proper steps.
+            action = "execute_runbook"
+            escalate = False
         action_params = {"runbook_id": decision.runbook_id}
 
     return {

@@ -1030,11 +1030,32 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 				return
 			}
 
-			log.Printf("[daemon] L2 decision: %s (confidence=%.2f, approval=%v) for %s/%s",
-				decision.RecommendedAction, decision.Confidence, decision.RequiresApproval, req.Hostname, req.CheckType)
+			log.Printf("[daemon] L2 decision: %s (confidence=%.2f, approval=%v, runbook=%s) for %s/%s",
+				decision.RecommendedAction, decision.Confidence, decision.RequiresApproval, decision.RunbookID, req.Hostname, req.CheckType)
 			d.healJournal.StartHealing(incidentID, decision.RunbookID, req.Hostname, platform, req.CheckType, "L2")
 			l2Start := time.Now()
-			l2Success, l2Err := d.executeL2Action(ctx, decision, req, incidentID)
+			var l2Success bool
+			var l2Err string
+			// Route through the runbook execution engine when we have a runbook ID.
+			// executeHealingOrder looks up runbook steps and runs them properly via
+			// WinRM/SSH, unlike executeL2Action which ran raw script strings.
+			if decision.RunbookID != "" {
+				params := map[string]interface{}{
+					"runbook_id":      decision.RunbookID,
+					"hostname":        req.Hostname,
+					"check_type":      req.CheckType,
+					"resolution_tier": "L2",
+				}
+				_, err := d.executeHealingOrder(ctx, params)
+				if err != nil {
+					l2Success = false
+					l2Err = err.Error()
+				} else {
+					l2Success = true
+				}
+			} else {
+				l2Success, l2Err = d.executeL2Action(ctx, decision, req, incidentID)
+			}
 			d.healJournal.FinishHealing(incidentID, l2Success, l2Err)
 			// Report telemetry for data flywheel (async) with actual success/failure
 			dur := time.Since(l2Start).Milliseconds()
