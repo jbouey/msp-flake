@@ -30,6 +30,16 @@ from .partners import require_partner
 
 logger = logging.getLogger(__name__)
 
+
+def _parse_jsonb(val):
+    """Parse JSONB values that asyncpg may return as strings."""
+    if val is None:
+        return {}
+    if isinstance(val, str):
+        return json.loads(val)
+    return val
+
+
 router = APIRouter(prefix="/api/frameworks", tags=["compliance-frameworks"])
 partner_router = APIRouter(prefix="/api/partners/me", tags=["partner-compliance"])
 
@@ -380,13 +390,6 @@ async def get_site_compliance_config(site_id: str) -> SiteComplianceConfig:
         else:
             enabled_frameworks = ["nist_csf"]
 
-    def _parse_jsonb(val):
-        if val is None:
-            return {}
-        if isinstance(val, str):
-            return json.loads(val)
-        return val
-
     return SiteComplianceConfig(
         site_id=site["site_id"],
         site_name=site["clinic_name"],
@@ -478,7 +481,7 @@ async def get_partner_compliance_defaults(
         default_frameworks=row["default_frameworks"] or ["hipaa"],
         default_industry=row["default_industry"] or "healthcare",
         default_coverage_tier=row["default_coverage_tier"] or "standard",
-        industry_presets=row["industry_presets"] or INDUSTRY_PRESETS,
+        industry_presets=_parse_jsonb(row["industry_presets"]) or INDUSTRY_PRESETS,
     )
 
     return {
@@ -581,7 +584,7 @@ async def get_partner_site_compliance(
     if not enabled:
         # Use industry preset or partner default
         industry = site["industry"] or partner_row["default_industry"] or "healthcare"
-        presets = partner_row["industry_presets"] or INDUSTRY_PRESETS
+        presets = _parse_jsonb(partner_row["industry_presets"]) or INDUSTRY_PRESETS
         enabled = presets.get(industry, INDUSTRY_PRESETS.get(industry, ["nist_csf"]))
         using_defaults = True
 
@@ -594,8 +597,8 @@ async def get_partner_site_compliance(
             "using_defaults": using_defaults,
             "industry": site["industry"],
             "coverage_tier": site["tier"] or "standard",
-            "runbook_overrides": site["runbook_overrides"] or {},
-            "check_schedule": site["check_schedule"] or {},
+            "runbook_overrides": _parse_jsonb(site["runbook_overrides"]),
+            "check_schedule": _parse_jsonb(site["check_schedule"]),
         },
         "available_frameworks": [
             {
@@ -698,7 +701,7 @@ async def get_partner_sites_compliance_summary(
     industry_counts = {}
     sites_data = []
 
-    presets = partner_row["industry_presets"] or INDUSTRY_PRESETS
+    presets = _parse_jsonb(partner_row["industry_presets"]) or INDUSTRY_PRESETS
 
     for site in sites:
         industry = site["industry"] or partner_row["default_industry"] or "healthcare"
@@ -749,7 +752,7 @@ async def apply_industry_preset(
             SELECT industry_presets FROM partners WHERE id = $1
         """, partner['id'])
 
-        presets = partner_row["industry_presets"] or INDUSTRY_PRESETS
+        presets = _parse_jsonb(partner_row["industry_presets"]) or INDUSTRY_PRESETS
 
         if industry not in presets and industry not in INDUSTRY_PRESETS:
             raise HTTPException(
