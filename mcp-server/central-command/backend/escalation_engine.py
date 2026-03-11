@@ -490,7 +490,7 @@ class EscalationEngine:
             # Get site and partner info
             site = await conn.fetchrow("""
                 SELECT s.id, s.site_id, s.clinic_name, s.partner_id, s.status,
-                       p.company_name as partner_name
+                       p.name as partner_name
                 FROM sites s
                 LEFT JOIN partners p ON s.partner_id = p.id
                 WHERE s.site_id = $1

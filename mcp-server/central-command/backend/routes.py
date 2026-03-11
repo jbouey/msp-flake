@@ -3230,9 +3230,9 @@ async def get_l4_queue(
                    et.l4_resolved_at, et.l4_resolved_by, et.l4_resolution_notes,
                    et.created_at, et.sla_breached,
                    s.clinic_name as site_name,
-                   p.company_name as partner_name
+                   p.name as partner_name
             FROM escalation_tickets et
-            LEFT JOIN sites s ON s.site_id = et.site_id
+            LEFT JOIN sites s ON s.site_id = et.site_id::text
             LEFT JOIN partners p ON p.id = et.partner_id
             WHERE et.escalated_to_l4 = true {status_clause}
             ORDER BY et.l4_escalated_at DESC
