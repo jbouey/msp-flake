@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
 from .partners import require_partner
+from .auth import require_auth, require_site_access
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,11 @@ def _parse_jsonb(val):
     return val
 
 
-router = APIRouter(prefix="/api/frameworks", tags=["compliance-frameworks"])
+router = APIRouter(
+    prefix="/api/frameworks",
+    tags=["compliance-frameworks"],
+    dependencies=[Depends(require_auth)],
+)
 partner_router = APIRouter(prefix="/api/partners/me", tags=["partner-compliance"])
 
 
@@ -356,17 +361,16 @@ async def list_framework_controls(
 # =============================================================================
 
 @router.get("/sites/{site_id}/compliance-config")
-async def get_site_compliance_config(site_id: str) -> SiteComplianceConfig:
-    """Get compliance configuration for a site.
-
-    Called by appliances during sync to determine:
-    - Which frameworks to enforce
-    - Coverage tier (determines runbooks)
-    - Custom schedules and overrides
-    """
+async def get_site_compliance_config(
+    site_id: str,
+    user: Dict[str, Any] = Depends(require_auth),
+) -> SiteComplianceConfig:
+    """Get compliance configuration for a site."""
     pool = await get_pool()
 
     async with admin_connection(pool) as conn:
+        await require_site_access(conn, user, site_id)
+
         site = await conn.fetchrow("""
             SELECT
                 s.site_id, s.clinic_name, s.tier, s.industry,
@@ -375,9 +379,6 @@ async def get_site_compliance_config(site_id: str) -> SiteComplianceConfig:
             FROM sites s
             WHERE s.site_id = $1
         """, site_id)
-
-        if not site:
-            raise HTTPException(status_code=404, detail="Site not found")
 
     # Default to HIPAA for healthcare if not specified
     enabled_frameworks = site["enabled_frameworks"]
@@ -406,6 +407,7 @@ async def get_site_compliance_config(site_id: str) -> SiteComplianceConfig:
 async def update_site_compliance_config(
     site_id: str,
     update: UpdateSiteFrameworks,
+    user: Dict[str, Any] = Depends(require_auth),
 ) -> Dict[str, Any]:
     """Update compliance configuration for a site.
 
@@ -422,13 +424,7 @@ async def update_site_compliance_config(
     pool = await get_pool()
 
     async with admin_connection(pool) as conn:
-        # Verify site exists
-        exists = await conn.fetchval(
-            "SELECT 1 FROM sites WHERE site_id = $1",
-            site_id
-        )
-        if not exists:
-            raise HTTPException(status_code=404, detail="Site not found")
+        await require_site_access(conn, user, site_id)
 
         # Update configuration
         await conn.execute("""

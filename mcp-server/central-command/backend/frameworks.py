@@ -17,6 +17,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
+try:
+    from auth import require_auth
+except ImportError:
+    from .auth import require_auth
+
 logger = logging.getLogger(__name__)
 
 # Import framework service (will be available after package install)
@@ -32,7 +37,11 @@ except ImportError:
     logger.warning("Framework service not available - using stub implementation")
 
 
-router = APIRouter(prefix="/api/frameworks", tags=["frameworks"])
+router = APIRouter(
+    prefix="/api/frameworks",
+    tags=["frameworks"],
+    dependencies=[Depends(require_auth)],
+)
 
 
 # =============================================================================

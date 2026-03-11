@@ -115,6 +115,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/orders/",          # Order acknowledgement from appliances
         "/api/evidence/",        # Evidence chain - appliance submissions + admin ops
         "/incidents/",           # Incident resolve from appliances (machine-to-machine)
+        "/api/partners/me/",     # Partner portal — partner session-auth protected
+        "/api/billing/",         # Billing — partner session-auth protected
         "/api/cve-watch/",       # CVE Watch — admin data ingest + sync triggers
         "/api/framework-sync/",  # Framework Sync — admin sync triggers
         "/api/devices/sync",     # Device inventory sync from appliances (API-key auth)

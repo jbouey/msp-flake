@@ -20,6 +20,25 @@ except ImportError:
 router = APIRouter(prefix="/api/runbooks", tags=["runbooks"])
 
 
+async def _check_site_access(db: AsyncSession, user: Dict[str, Any], site_id: str):
+    """Validate admin user can access site_id (SQLAlchemy version).
+
+    Returns 404 for both nonexistent and out-of-scope sites (IDOR prevention).
+    """
+    result = await db.execute(
+        text("SELECT client_org_id FROM sites WHERE site_id = :site_id"),
+        {"site_id": site_id},
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    org_scope = user.get("org_scope")
+    if org_scope is not None:
+        if str(row.client_org_id) not in org_scope:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+
 # =============================================================================
 # Pydantic Models
 # =============================================================================
@@ -261,6 +280,7 @@ async def update_site_runbook_config(
     user: Dict[str, Any] = Depends(require_auth)
 ):
     """Enable or disable a runbook for a site."""
+    await _check_site_access(db, user, site_id)
     # Verify runbook exists
     check_query = text("SELECT runbook_id FROM runbooks WHERE runbook_id = :runbook_id")
     result = await db.execute(check_query, {"runbook_id": runbook_id})
@@ -308,6 +328,7 @@ async def bulk_update_site_runbooks(
 
     Body: {"RB-WIN-SVC-001": true, "RB-WIN-SEC-002": false, ...}
     """
+    await _check_site_access(db, user, site_id)
     results = []
     modified_by = user.get("username", "api")
 
@@ -341,6 +362,7 @@ async def toggle_category_for_site(
     user: Dict[str, Any] = Depends(require_auth)
 ):
     """Enable or disable all runbooks in a category for a site."""
+    await _check_site_access(db, user, site_id)
     # Get runbooks in category
     query = text("SELECT runbook_id FROM runbooks WHERE category = :category")
     result = await db.execute(query, {"category": category})
