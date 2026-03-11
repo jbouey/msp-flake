@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Path
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .partners import require_partner
 
 logger = logging.getLogger(__name__)
@@ -216,7 +217,7 @@ async def create_exception(
 
     partner_email = partner.get("email", partner.get("name", "unknown"))
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # SECURITY: Verify partner owns this site
         await require_site_access(conn, partner, request.site_id)
 
@@ -280,7 +281,7 @@ async def list_exceptions(
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # SECURITY: Verify partner owns this site
         await require_site_access(conn, partner, site_id)
 
@@ -309,7 +310,7 @@ async def get_exception_summary(
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # SECURITY: Verify partner owns this site
         await require_site_access(conn, partner, site_id)
 
@@ -363,7 +364,7 @@ async def get_expiring_exceptions(
 
     cutoff = datetime.now(timezone.utc) + timedelta(days=days)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # SECURITY: Only get exceptions for sites this partner owns
         if site_id:
             # Verify partner owns this specific site
@@ -401,7 +402,7 @@ async def get_exception(
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # SECURITY: Verify partner owns this exception
         row = await verify_exception_ownership(conn, partner, exception_id)
 
@@ -420,7 +421,7 @@ async def get_exception_audit_log(
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # SECURITY: Verify partner owns this exception
         await verify_exception_ownership(conn, partner, exception_id)
 
@@ -460,7 +461,7 @@ async def renew_exception(
     now = datetime.now(timezone.utc)
     expiration = now + timedelta(days=duration)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # SECURITY: Verify partner owns this exception
         existing = await verify_exception_ownership(conn, partner, exception_id)
 
@@ -499,7 +500,7 @@ async def revoke_exception(
 
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # SECURITY: Verify partner owns this exception
         existing = await verify_exception_ownership(conn, partner, exception_id)
 
@@ -543,7 +544,7 @@ async def check_exception_exists(
 
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # SECURITY: Verify partner owns this site
         await require_site_access(conn, partner, site_id)
 

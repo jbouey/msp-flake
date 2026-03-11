@@ -27,6 +27,7 @@ from asyncpg.exceptions import PostgresError, LockNotAvailableError
 
 from .partners import require_partner
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .partner_activity_logger import log_partner_learning_action, PartnerEventType
 
 logger = logging.getLogger(__name__)
@@ -256,7 +257,7 @@ async def get_learning_stats(partner=Depends(require_partner)):
     """Get learning statistics for partner's sites."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_id = partner['id']
 
         # Get stats from view or calculate
@@ -309,7 +310,7 @@ async def get_promotion_candidates(
     """Get promotion-eligible patterns for partner's sites."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_id = partner['id']
 
         query = """
@@ -381,7 +382,7 @@ async def get_candidate_details(
     """Get detailed information about a specific promotion candidate."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_id = partner['id']
 
         # Get candidate details
@@ -448,7 +449,7 @@ async def approve_candidate(
         logger.error(f"Database pool unavailable: {e}")
         raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_id = partner['id']
 
         # Start explicit transaction
@@ -668,7 +669,7 @@ async def reject_candidate(
         logger.error(f"Database pool unavailable: {e}")
         raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_id = partner['id']
 
         # Start transaction
@@ -743,7 +744,7 @@ async def get_promoted_rules(
     """Get all promoted rules for partner's sites."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_id = partner['id']
 
         query = """
@@ -795,7 +796,7 @@ async def update_rule_status(
         logger.error(f"Database pool unavailable: {e}")
         raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_id = partner['id']
 
         # Start transaction
@@ -854,7 +855,7 @@ async def get_execution_history(
         logger.error(f"Database pool unavailable: {e}")
         raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_id = partner['id']
 
         # Build query with parameterized LIMIT (avoid SQL injection)
@@ -923,7 +924,7 @@ async def bulk_approve_candidates(
     failed = 0
     errors: List[str] = []
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_id = partner['id']
 
         for pattern_id in request.pattern_ids:
@@ -1093,7 +1094,7 @@ async def bulk_reject_candidates(
     failed = 0
     errors: List[str] = []
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_id = partner['id']
 
         for pattern_id in request.pattern_ids:

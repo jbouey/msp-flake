@@ -25,6 +25,7 @@ def normalize_mac(mac: str) -> str:
     return ':'.join(clean[i:i+2] for i in range(0, len(clean), 2))
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 
 # API endpoint from environment variable
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.osiriscare.net")
@@ -87,7 +88,7 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
     pool = await get_pool()
     code = claim.provision_code.upper().strip()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Find and validate provision code
         provision = await conn.fetchrow("""
             SELECT ap.id, ap.partner_id, ap.target_site_id, ap.client_name,
@@ -259,7 +260,7 @@ async def validate_provision_code(provision_code: str):
     pool = await get_pool()
     code = provision_code.upper().strip()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         provision = await conn.fetchrow("""
             SELECT ap.status, ap.client_name, ap.expires_at,
                    p.brand_name, p.primary_color
@@ -304,7 +305,7 @@ async def update_provision_status(status: ProvisionStatusRequest):
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Update appliance status
         result = await conn.execute("""
             UPDATE site_appliances
@@ -346,7 +347,7 @@ async def provisioning_heartbeat(heartbeat: HeartbeatRequest, request: Request):
     pool = await get_pool()
     client_ip = request.client.host if request.client else heartbeat.ip_address
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Look for appliance by MAC
         appliance = await conn.fetchrow("""
             SELECT appliance_id, site_id FROM site_appliances
@@ -391,7 +392,7 @@ async def get_provision_by_mac(mac_address: str):
     # Decode URL-encoded MAC and normalize
     mac = unquote(mac_address).upper().replace('-', ':')
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Check the appliance_provisioning table for MAC-based auto-provision
         provision = await conn.fetchrow("""
             SELECT ap.site_id, ap.api_key,
@@ -438,7 +439,7 @@ async def get_appliance_config(appliance_id: str):
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         appliance = await conn.fetchrow("""
             SELECT sa.*, s.tier, s.clinic_name,
                    p.brand_name, p.primary_color, p.logo_url

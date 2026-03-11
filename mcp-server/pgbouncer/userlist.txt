@@ -1,11 +1,7 @@
 ;; PgBouncer user authentication file
-;; Format: "username" "password_hash"
-;;
-;; IMPORTANT: Replace the password hash with actual md5 hash from PostgreSQL:
-;;   SELECT concat('md5', md5(concat('ACTUAL_PASSWORD', 'mcp')));
-;;
-;; The md5 hash format is: md5 + md5(password + username)
-;; Example for user 'mcp' with password 'mcp':
-;;   md5(mcp + mcp) = md5("mcpmcp")
+;; Format: "username" "password"
+;; PgBouncer hashes passwords for SCRAM-SHA-256 exchange.
+;; Password must match PostgreSQL role password.
 
-"mcp" "REPLACE_WITH_MD5_HASH"
+"mcp_app" "REPLACE_WITH_ACTUAL_PASSWORD"
+"mcp" "REPLACE_WITH_ACTUAL_PASSWORD"

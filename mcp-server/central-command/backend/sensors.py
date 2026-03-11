@@ -72,6 +72,7 @@ async def get_db_pool():
     """Get database connection pool."""
     # This should be configured at app startup
     from .main import get_pool
+    from .tenant_middleware import admin_connection
     return await get_pool()
 
 
@@ -85,7 +86,7 @@ async def get_site_sensors(site_id: str):
     pool = await get_db_pool()
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         sensors = await conn.fetch("""
             SELECT
                 hostname,
@@ -141,7 +142,7 @@ async def deploy_sensor_to_host(site_id: str, hostname: str):
     """
     pool = await get_db_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM appliances
@@ -176,7 +177,7 @@ async def remove_sensor_from_host(site_id: str, hostname: str):
     """
     pool = await get_db_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM appliances
@@ -217,7 +218,7 @@ async def get_pending_sensor_commands(site_id: str, appliance_id: Optional[str] 
     """
     pool = await get_db_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         if appliance_id:
             commands = await conn.fetch("""
                 SELECT id, command_type, hostname, status, created_at
@@ -266,7 +267,7 @@ async def complete_sensor_command(
     """Mark a sensor command as completed."""
     pool = await get_db_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = {"success": success}
         if error:
             result["error"] = error
@@ -289,7 +290,7 @@ async def record_sensor_heartbeat(heartbeat: SensorHeartbeatFromAppliance):
     pool = await get_db_pool()
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Upsert sensor registry
         await conn.execute("""
             INSERT INTO sensor_registry (
@@ -326,7 +327,7 @@ async def get_global_sensor_stats():
     now = datetime.now(timezone.utc)
     timeout_threshold = now - timedelta(seconds=SENSOR_TIMEOUT)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         stats = await conn.fetchrow("""
             SELECT
                 COUNT(*) as total_sensors,
@@ -357,7 +358,7 @@ async def get_site_dual_mode_status(site_id: str):
     now = datetime.now(timezone.utc)
     timeout_threshold = now - timedelta(seconds=SENSOR_TIMEOUT)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get all Windows targets for site
         credentials = await conn.fetch("""
             SELECT hostname, credential_type
@@ -452,7 +453,7 @@ async def deploy_linux_sensor_to_host(site_id: str, hostname: str):
     """
     pool = await get_db_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM appliances
@@ -488,7 +489,7 @@ async def remove_linux_sensor_from_host(site_id: str, hostname: str):
     """
     pool = await get_db_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM appliances
@@ -531,7 +532,7 @@ async def record_linux_sensor_heartbeat(heartbeat: LinuxSensorHeartbeatFromAppli
     pool = await get_db_pool()
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Upsert sensor registry
         await conn.execute("""
             INSERT INTO sensor_registry (
@@ -566,7 +567,7 @@ async def get_site_linux_sensors(site_id: str):
     pool = await get_db_pool()
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         sensors = await conn.fetch("""
             SELECT
                 hostname,

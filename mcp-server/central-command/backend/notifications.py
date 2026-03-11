@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, EmailStr
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .partners import require_partner
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ async def get_notification_settings(partner=Depends(require_partner)):
     """Get partner's notification settings."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         settings = await conn.fetchrow("""
             SELECT
                 email_enabled, email_recipients, email_from_name,
@@ -124,7 +125,7 @@ async def update_notification_settings(
     """Update partner's notification settings."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         await conn.execute("""
             INSERT INTO partner_notification_settings (
                 partner_id, email_enabled, email_recipients, email_from_name,
@@ -193,7 +194,7 @@ async def test_notification_channel(
     """Send a test notification to verify channel configuration."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         settings = await conn.fetchrow("""
             SELECT id, partner_id, email_enabled, email_recipients,
                    slack_enabled, slack_webhook_url, slack_channel,
@@ -260,7 +261,7 @@ async def get_site_overrides(
     """Get notification overrides for a specific site."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify partner owns this site (use site_id column, not id)
         site = await conn.fetchrow("""
             SELECT * FROM sites WHERE site_id = $1 AND partner_id = $2
@@ -288,7 +289,7 @@ async def update_site_overrides(
     """Set notification overrides for a specific site."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify partner owns this site (use site_id column, not id)
         site = await conn.fetchrow("""
             SELECT * FROM sites WHERE site_id = $1 AND partner_id = $2
@@ -339,7 +340,7 @@ async def list_escalation_tickets(
     """List escalation tickets for partner."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Build query with filters
         query = """
             SELECT t.*, s.clinic_name as site_name
@@ -396,7 +397,7 @@ async def get_escalation_ticket(
     """Get details of a specific escalation ticket."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         ticket = await conn.fetchrow("""
             SELECT t.*, s.clinic_name as site_name
             FROM escalation_tickets t
@@ -429,7 +430,7 @@ async def acknowledge_ticket(
     """Acknowledge an escalation ticket."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         ticket = await conn.fetchrow("""
             SELECT * FROM escalation_tickets
             WHERE id = $1 AND partner_id = $2
@@ -463,7 +464,7 @@ async def resolve_ticket(
     """Resolve an escalation ticket."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         ticket = await conn.fetchrow("""
             SELECT * FROM escalation_tickets
             WHERE id = $1 AND partner_id = $2
@@ -530,7 +531,7 @@ async def escalate_to_l4(
     the partner cannot resolve alone."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         ticket = await conn.fetchrow("""
             SELECT * FROM escalation_tickets
             WHERE id = $1 AND partner_id = $2
@@ -573,7 +574,7 @@ async def get_sla_metrics(
     """Get SLA performance metrics for partner."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         metrics = await conn.fetchrow(f"""
             SELECT
                 COUNT(*) as total_tickets,
@@ -619,7 +620,7 @@ async def get_sla_definitions(partner=Depends(require_partner)):
     """Get SLA definitions for partner (or defaults)."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get partner-specific or default SLAs
         slas = await conn.fetch("""
             SELECT priority, response_time_minutes, resolution_time_minutes,

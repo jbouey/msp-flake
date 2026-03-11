@@ -25,6 +25,7 @@ import uuid as _uuid
 
 from .fleet import get_pool
 from .auth import require_admin
+from .tenant_middleware import tenant_connection, admin_connection
 from .db_utils import _uid
 from .partner_activity_logger import (
     log_partner_activity,
@@ -152,7 +153,7 @@ async def get_partner_from_api_key(api_key: str):
     pool = await get_pool()
     key_hash = hash_api_key(api_key)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner = await conn.fetchrow("""
             SELECT id, name, slug, status
             FROM partners
@@ -189,7 +190,7 @@ async def require_partner(
     if osiris_partner_session:
         session_hash = hashlib.sha256(osiris_partner_session.encode()).hexdigest()
 
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             session = await conn.fetchrow("""
                 SELECT ps.partner_id, p.id, p.name, p.slug, p.status
                 FROM partner_sessions ps
@@ -220,7 +221,7 @@ async def claim_provision_code(claim: ProvisionClaim):
     """Claim a provision code (called by appliance during setup)."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Find and validate provision code
         provision = await conn.fetchrow("""
             SELECT id, partner_id, target_site_id, target_client_name, status, expires_at
@@ -300,7 +301,7 @@ async def get_my_partner(request: Request, partner=Depends(require_partner)):
     """Get current partner's info (self-service)."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT id, name, slug, contact_email, contact_phone,
                    brand_name, logo_url, primary_color,
@@ -360,7 +361,7 @@ async def get_my_sites(request: Request, partner=Depends(require_partner)):
     """Get sites belonging to this partner."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT s.site_id, s.clinic_name, s.status, s.tier,
                    s.onboarding_stage, s.created_at,
@@ -414,7 +415,7 @@ async def create_provision_code(
     code = generate_provision_code()
     expires_at = datetime.now(timezone.utc) + timedelta(days=provision.expires_days)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             INSERT INTO appliance_provisions (
                 partner_id, provision_code, target_site_id,
@@ -460,7 +461,7 @@ async def list_provision_codes(
     """List provision codes for this partner."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         if status:
             rows = await conn.fetch("""
                 SELECT id, provision_code, target_site_id, target_client_name,
@@ -505,7 +506,7 @@ async def revoke_provision_code(
     """Revoke a provision code."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.fetchrow("""
             UPDATE appliance_provisions
             SET status = 'revoked'
@@ -563,7 +564,7 @@ async def get_provision_qr_code(
 
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         provision = await conn.fetchrow("""
             SELECT provision_code, status
             FROM appliance_provisions
@@ -635,7 +636,7 @@ async def get_provision_qr_by_code(
 
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         provision = await conn.fetchrow("""
             SELECT status FROM appliance_provisions
             WHERE provision_code = $1
@@ -691,7 +692,7 @@ async def create_partner(request: Request, partner: PartnerCreate, admin: dict =
     api_key = generate_api_key()
     api_key_hash = hash_api_key(api_key)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Check slug uniqueness
         existing = await conn.fetchval(
             "SELECT 1 FROM partners WHERE slug = $1",
@@ -755,7 +756,7 @@ async def list_partners(
     """List partners with pagination, search, and sorting (admin only)."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Build WHERE clause
         conditions = []
         params: list = []
@@ -885,7 +886,7 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
     """Get partner details (admin only)."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT id, name, slug, contact_email, contact_phone,
                    brand_name, logo_url, primary_color,
@@ -1056,7 +1057,7 @@ async def update_partner(request: Request, partner_id: str, update: PartnerUpdat
         RETURNING id, name, slug
     """
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.fetchrow(query, *values)
         if not result:
             raise HTTPException(status_code=404, detail="Partner not found")
@@ -1088,7 +1089,7 @@ async def regenerate_api_key(request: Request, partner_id: str, admin: dict = De
     api_key = generate_api_key()
     api_key_hash = hash_api_key(api_key)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.fetchrow("""
             UPDATE partners
             SET api_key_hash = $1, updated_at = NOW()
@@ -1123,7 +1124,7 @@ async def delete_partner(request: Request, partner_id: str, admin: dict = Depend
     """Delete a partner (admin only). Cascades to sessions, provisions, etc."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get partner info for audit log before deleting
         partner = await conn.fetchrow(
             "SELECT id, name, slug FROM partners WHERE id = $1",
@@ -1185,7 +1186,7 @@ async def create_partner_user(partner_id: str, user: PartnerUserCreate, admin: d
     """Create a user for a partner (admin only)."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify partner exists
         partner = await conn.fetchval("SELECT 1 FROM partners WHERE id = $1", _uid(partner_id))
         if not partner:
@@ -1235,7 +1236,7 @@ async def generate_user_magic_link(partner_id: str, user_id: str, admin: dict = 
     magic_token = generate_magic_token()
     magic_expires = datetime.now(timezone.utc) + timedelta(hours=24)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.fetchrow("""
             UPDATE partner_users
             SET magic_token = $1, magic_token_expires = $2
@@ -1277,7 +1278,7 @@ async def get_partner_site_detail(request: Request, site_id: str, partner=Depend
     """Get detailed site info including assets and credentials."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify site belongs to partner
         site = await conn.fetchrow("""
             SELECT s.*, p.brand_name as partner_brand
@@ -1406,7 +1407,7 @@ async def add_site_credentials(
     """Add credentials for a site."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify site belongs to partner and get internal ID
         site = await conn.fetchrow("""
             SELECT id FROM sites
@@ -1474,7 +1475,7 @@ async def validate_credential(
     """Validate a credential by testing connectivity."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify site belongs to partner
         cred = await conn.fetchrow("""
             SELECT sc.*, s.site_id
@@ -1591,7 +1592,7 @@ async def delete_credential(
     """Delete a site credential."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         result = await conn.execute("""
             DELETE FROM site_credentials sc
             USING sites s
@@ -1622,7 +1623,7 @@ async def delete_credential(
 async def get_partner_drift_config(site_id: str, partner=Depends(require_partner)):
     """Get drift scan configuration for a partner-managed site."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify partner owns this site
         owner = await conn.fetchval(
             "SELECT partner_id FROM sites WHERE site_id = $1", site_id)
@@ -1649,7 +1650,7 @@ async def get_partner_drift_config(site_id: str, partner=Depends(require_partner
 async def update_partner_drift_config(site_id: str, body: dict, partner=Depends(require_partner)):
     """Update drift scan configuration for a partner-managed site."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         owner = await conn.fetchval(
             "SELECT partner_id FROM sites WHERE site_id = $1", site_id)
         if str(owner) != str(partner["id"]):
@@ -1673,7 +1674,7 @@ async def get_partner_onboarding(request: Request, partner=Depends(require_partn
     from datetime import timezone
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT s.site_id, s.clinic_name, s.contact_name, s.contact_email,
                    s.onboarding_stage, s.notes, s.blockers, s.created_at,
@@ -1771,7 +1772,7 @@ async def trigger_site_checkin(
     """Request immediate checkin from site's appliance (creates force_checkin order)."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify site belongs to partner
         site = await conn.fetchrow(
             "SELECT id FROM sites WHERE site_id = $1 AND partner_id = $2",
@@ -1812,7 +1813,7 @@ async def list_site_assets(
     """List discovered assets for a site."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify site belongs to partner
         site = await conn.fetchrow("""
             SELECT id FROM sites WHERE site_id = $1 AND partner_id = $2
@@ -1872,7 +1873,7 @@ async def update_asset(
     """Update a discovered asset (e.g., set monitoring status)."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify ownership
         asset = await conn.fetchrow("""
             SELECT da.id FROM discovered_assets da
@@ -1942,7 +1943,7 @@ async def trigger_discovery(request: Request, site_id: str, partner=Depends(requ
     """Trigger a network discovery scan for a site."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify site belongs to partner
         site = await conn.fetchrow("""
             SELECT id FROM sites WHERE site_id = $1 AND partner_id = $2
@@ -2075,7 +2076,7 @@ async def validate_magic_link(request: MagicTokenValidate):
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Find user with this magic token
         user = await conn.fetchrow("""
             SELECT pu.id, pu.partner_id, pu.email, pu.name, pu.role,

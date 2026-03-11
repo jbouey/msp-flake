@@ -1162,12 +1162,13 @@ async def map_evidence_to_frameworks(
         pool = None
         try:
             from .fleet import get_pool
+            from .tenant_middleware import admin_connection
             pool = await get_pool()
         except Exception:
             logger.debug("framework mapping: pool unavailable, skipping")
             return
 
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             # Get enabled frameworks for this site
             row = await conn.fetchrow(
                 "SELECT enabled_frameworks FROM appliance_framework_configs WHERE site_id = $1",

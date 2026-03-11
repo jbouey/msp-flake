@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .auth import require_admin
 from .order_signing import sign_admin_order, sign_fleet_order
 
@@ -236,7 +237,7 @@ async def list_releases(
 ):
     """List all update releases."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         query = """
             SELECT id, version, iso_url, sha256, size_bytes, release_notes,
                    agent_version, created_at, is_active, is_latest
@@ -268,7 +269,7 @@ async def list_releases(
 async def create_release(release: ReleaseCreate):
     """Create a new update release."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Check for duplicate version
         existing = await conn.fetchrow(
             "SELECT id FROM update_releases WHERE version = $1",
@@ -320,7 +321,7 @@ async def create_release(release: ReleaseCreate):
 async def get_release(version: str):
     """Get a specific release by version."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow(
             """
             SELECT id, version, iso_url, sha256, size_bytes, release_notes,
@@ -350,7 +351,7 @@ async def get_release(version: str):
 async def set_latest_release(version: str):
     """Mark a release as the latest."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute(
             "UPDATE update_releases SET is_latest = true WHERE version = $1",
             version
@@ -365,7 +366,7 @@ async def set_latest_release(version: str):
 async def deactivate_release(version: str):
     """Deactivate a release (soft delete)."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute(
             "UPDATE update_releases SET is_active = false, is_latest = false WHERE version = $1",
             version
@@ -387,7 +388,7 @@ async def list_rollouts(
 ):
     """List all rollouts."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         query = """
             SELECT r.id, r.release_id, rel.version, r.name, r.strategy, r.current_stage,
                    r.stages, r.maintenance_window, r.status, r.started_at, r.paused_at,
@@ -450,7 +451,7 @@ async def list_rollouts(
 async def create_rollout(rollout: RolloutCreate, background_tasks: BackgroundTasks):
     """Create and start a new rollout."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify release exists
         release = await conn.fetchrow(
             "SELECT id, version FROM update_releases WHERE id = $1 AND is_active = true",
@@ -575,7 +576,7 @@ async def create_rollout(rollout: RolloutCreate, background_tasks: BackgroundTas
 async def pause_rollout(rollout_id: str):
     """Pause a rollout."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute(
             """
             UPDATE update_rollouts
@@ -599,7 +600,7 @@ async def pause_rollout(rollout_id: str):
 async def resume_rollout(rollout_id: str):
     """Resume a paused rollout."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute(
             """
             UPDATE update_rollouts
@@ -623,7 +624,7 @@ async def resume_rollout(rollout_id: str):
 async def cancel_rollout(rollout_id: str):
     """Cancel a rollout."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute(
             """
             UPDATE update_rollouts
@@ -647,7 +648,7 @@ async def cancel_rollout(rollout_id: str):
 async def advance_rollout_stage(rollout_id: str):
     """Manually advance to the next rollout stage."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rollout = await conn.fetchrow(
             "SELECT current_stage, stages FROM update_rollouts WHERE id = $1",
             UUID(rollout_id)
@@ -705,7 +706,7 @@ async def list_rollout_appliances(
 ):
     """List appliances in a rollout."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         query = """
             SELECT au.id, au.appliance_id, a.host_id as appliance_name, a.site_id,
                    au.rollout_id, au.stage_assigned, au.status, au.previous_version,
@@ -754,7 +755,7 @@ async def get_pending_update(appliance_id: str):
     - site_id: String identifier like 'physical-appliance-pilot-1aea78'
     """
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Try to parse as UUID first, otherwise look up by site_id
         try:
             app_uuid = UUID(appliance_id)
@@ -815,7 +816,7 @@ async def update_appliance_status(appliance_id: str, status_update: ApplianceUpd
     appliance_id can be either UUID or site_id.
     """
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Try to parse as UUID first, otherwise look up by site_id
         try:
             app_uuid = UUID(appliance_id)
@@ -932,7 +933,7 @@ async def update_appliance_status(appliance_id: str, status_update: ApplianceUpd
 async def get_fleet_update_stats():
     """Get overall fleet update statistics."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         releases = await conn.fetchrow(
             "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE is_active) as active FROM update_releases"
         )
@@ -1049,7 +1050,7 @@ async def create_fleet_order(order: FleetOrderCreate, user: dict = Depends(requi
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=order.expires_hours)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             INSERT INTO fleet_orders (order_type, parameters, skip_version, status, expires_at, created_by,
                                       nonce, signature, signed_payload)
@@ -1100,7 +1101,7 @@ async def list_fleet_orders(
 ):
     """List fleet-wide orders with completion stats."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT fo.*,
                    (SELECT COUNT(*) FROM fleet_order_completions foc
@@ -1137,7 +1138,7 @@ async def list_fleet_orders(
 async def cancel_fleet_order(order_id: str):
     """Cancel a fleet-wide order."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute(
             "UPDATE fleet_orders SET status = 'cancelled' WHERE id = $1 AND status = 'active'",
             UUID(order_id)
@@ -1151,7 +1152,7 @@ async def cancel_fleet_order(order_id: str):
 async def get_fleet_order_delivery(order_id: str):
     """Get delivery status for a fleet order across all appliances."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         order = await conn.fetchrow(
             "SELECT order_type, status, created_at, expires_at FROM fleet_orders WHERE id = $1",
             UUID(order_id),
@@ -1200,7 +1201,7 @@ async def get_fleet_order_delivery(order_id: str):
 async def get_dead_letter_orders(limit: int = Query(default=50, ge=1)):
     """Get expired or failed fleet orders that didn't reach all appliances."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         dead_orders = await conn.fetch("""
             SELECT fo.id, fo.order_type, fo.parameters, fo.status,
                    fo.created_at, fo.expires_at, fo.created_by,
@@ -1243,7 +1244,7 @@ async def get_dead_letter_orders(limit: int = Query(default=50, ge=1)):
 async def retry_fleet_order(order_id: str, user: dict = Depends(require_admin)):
     """Re-activate an expired fleet order by extending its expiry."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         order = await conn.fetchrow("SELECT * FROM fleet_orders WHERE id = $1", UUID(order_id))
         if not order:
             raise HTTPException(status_code=404, detail="Fleet order not found")

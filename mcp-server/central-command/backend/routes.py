@@ -59,6 +59,7 @@ from .models import (
     L2ConfigResponse,
 )
 from .fleet import get_mock_fleet_overview, get_mock_client_detail
+from .tenant_middleware import admin_connection
 from .metrics import calculate_health_from_raw
 from .db_queries import (
     get_incidents_from_db,
@@ -2803,7 +2804,7 @@ async def get_admin_compliance_health(
     from .fleet import get_pool
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         site = await conn.fetchrow(
             "SELECT site_id, clinic_name FROM sites WHERE site_id = $1", site_id
         )
@@ -3019,7 +3020,7 @@ async def get_devices_at_risk(
         for ct in types:
             reverse_map[ct] = cat
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify site exists
         site = await conn.fetchrow(
             "SELECT site_id FROM sites WHERE site_id = $1", site_id
@@ -3142,7 +3143,7 @@ async def get_drift_config(
     """Get drift scan configuration for a site, falling back to defaults."""
     from .fleet import get_pool
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT check_type, enabled, notes FROM site_drift_config
             WHERE site_id = $1
@@ -3187,7 +3188,7 @@ async def update_drift_config(
     """Upsert drift scan configuration for a site."""
     from .fleet import get_pool
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         async with conn.transaction():
             for item in body.checks:
                 await conn.execute("""
@@ -3213,7 +3214,7 @@ async def get_l4_queue(
     from .fleet import get_pool
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         status_clause = ""
         params: list = [limit]
         if status == "resolved":
@@ -3260,7 +3261,7 @@ async def resolve_l4_ticket(
     from .fleet import get_pool
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         ticket = await conn.fetchrow("""
             SELECT id, escalated_to_l4, l4_resolved_at FROM escalation_tickets
             WHERE id = $1 AND escalated_to_l4 = true

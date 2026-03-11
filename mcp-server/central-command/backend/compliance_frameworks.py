@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .partners import require_partner
 
 logger = logging.getLogger(__name__)
@@ -240,7 +241,7 @@ async def get_framework(framework_id: str) -> FrameworkDefinition:
     # Load controls from database
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT
                 control_id, title, description, category,
@@ -323,7 +324,7 @@ async def list_framework_controls(
 
     query += " ORDER BY control_id"
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch(query, *params)
 
     controls = [dict(row) for row in rows]
@@ -355,7 +356,7 @@ async def get_site_compliance_config(site_id: str) -> SiteComplianceConfig:
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         site = await conn.fetchrow("""
             SELECT
                 s.site_id, s.clinic_name, s.tier, s.industry,
@@ -410,7 +411,7 @@ async def update_site_compliance_config(
 
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify site exists
         exists = await conn.fetchval(
             "SELECT 1 FROM sites WHERE site_id = $1",
@@ -457,7 +458,7 @@ async def get_partner_compliance_defaults(
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT
                 default_frameworks, default_industry,
@@ -515,7 +516,7 @@ async def update_partner_compliance_defaults(
                     detail=f"Invalid frameworks in preset '{industry}': {invalid}"
                 )
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         await conn.execute("""
             UPDATE partners SET
                 default_frameworks = COALESCE($2, default_frameworks),
@@ -548,7 +549,7 @@ async def get_partner_site_compliance(
     """Get compliance configuration for a partner's site."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         site = await conn.fetchrow("""
             SELECT
                 s.site_id, s.clinic_name, s.tier, s.industry,
@@ -621,7 +622,7 @@ async def update_partner_site_compliance(
 
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify site belongs to partner
         site = await conn.fetchrow("""
             SELECT site_id, clinic_name FROM sites
@@ -668,7 +669,7 @@ async def get_partner_sites_compliance_summary(
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get all sites with their frameworks
         sites = await conn.fetch("""
             SELECT
@@ -736,7 +737,7 @@ async def apply_industry_preset(
     pool = await get_pool()
 
     # Get partner's presets (or use defaults)
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner_row = await conn.fetchrow("""
             SELECT industry_presets FROM partners WHERE id = $1
         """, partner['id'])

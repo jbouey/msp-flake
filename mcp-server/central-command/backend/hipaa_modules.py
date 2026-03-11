@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .client_portal import require_client_user
 from .hipaa_templates import (
     SRA_QUESTIONS,
@@ -156,7 +157,7 @@ async def get_compliance_overview(user: dict = Depends(require_client_user)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # SRA
         sra_row = await conn.fetchrow("""
             SELECT status, overall_risk_score, expires_at, findings_count
@@ -337,7 +338,7 @@ async def get_compliance_overview(user: dict = Depends(require_client_user)):
 @router.get("/sra")
 async def list_sra_assessments(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT * FROM hipaa_sra_assessments
             WHERE org_id = $1 ORDER BY started_at DESC
@@ -348,7 +349,7 @@ async def list_sra_assessments(user: dict = Depends(require_client_user)):
 @router.post("/sra")
 async def create_sra_assessment(body: SRACreate, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             INSERT INTO hipaa_sra_assessments (org_id, title, total_questions, created_by)
             VALUES ($1, $2, $3, $4)
@@ -360,7 +361,7 @@ async def create_sra_assessment(body: SRACreate, user: dict = Depends(require_cl
 @router.get("/sra/{assessment_id}")
 async def get_sra_assessment(assessment_id: str, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         assessment = await conn.fetchrow("""
             SELECT * FROM hipaa_sra_assessments
             WHERE id = $1 AND org_id = $2
@@ -383,7 +384,7 @@ async def get_sra_assessment(assessment_id: str, user: dict = Depends(require_cl
 @router.put("/sra/{assessment_id}/responses")
 async def save_sra_responses(assessment_id: str, body: SRAResponseBatch, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify ownership
         owner = await conn.fetchval("""
             SELECT org_id FROM hipaa_sra_assessments WHERE id = $1
@@ -431,7 +432,7 @@ async def save_sra_responses(assessment_id: str, body: SRAResponseBatch, user: d
 @router.post("/sra/{assessment_id}/complete")
 async def complete_sra_assessment(assessment_id: str, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         owner = await conn.fetchval("""
             SELECT org_id FROM hipaa_sra_assessments WHERE id = $1
         """, _uid(assessment_id))
@@ -485,7 +486,7 @@ async def complete_sra_assessment(assessment_id: str, user: dict = Depends(requi
 @router.get("/policies")
 async def list_policies(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT * FROM hipaa_policies
             WHERE org_id = $1 ORDER BY policy_key, version DESC
@@ -506,7 +507,7 @@ async def create_policy(body: PolicyCreate, user: dict = Depends(require_client_
 
     if template and not body.content:
         # Fill template placeholders
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             org = await conn.fetchrow("SELECT name FROM client_orgs WHERE id = $1", user["org_id"])
             officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", user["org_id"])
         officer_map = {r["role_type"]: r["name"] for r in officers}
@@ -518,7 +519,7 @@ async def create_policy(body: PolicyCreate, user: dict = Depends(require_client_
 
     hipaa_refs = template["hipaa_references"] if template else []
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get next version
         max_ver = await conn.fetchval("""
             SELECT COALESCE(MAX(version), 0) FROM hipaa_policies
@@ -537,7 +538,7 @@ async def create_policy(body: PolicyCreate, user: dict = Depends(require_client_
 @router.put("/policies/{policy_id}")
 async def update_policy(policy_id: str, body: PolicyUpdate, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             UPDATE hipaa_policies
             SET content = $3, title = COALESCE($4, title), updated_at = NOW()
@@ -571,7 +572,7 @@ async def get_policy_template(template_key: str, user: dict = Depends(require_cl
         raise HTTPException(status_code=404, detail="Template not found")
 
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         org = await conn.fetchrow("SELECT name FROM client_orgs WHERE id = $1", user["org_id"])
         try:
             officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", user["org_id"])
@@ -603,7 +604,7 @@ async def get_policy_template_html(template_key: str, user: dict = Depends(requi
         raise HTTPException(status_code=404, detail="Template not found")
 
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         org = await conn.fetchrow("SELECT name FROM client_orgs WHERE id = $1", user["org_id"])
         try:
             officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", user["org_id"])
@@ -754,7 +755,7 @@ async def get_policy_template_html(template_key: str, user: dict = Depends(requi
 async def approve_policy(policy_id: str, user: dict = Depends(require_client_user)):
     pool = await get_pool()
     now = datetime.now(timezone.utc)
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             UPDATE hipaa_policies
             SET status = 'active',
@@ -778,7 +779,7 @@ async def approve_policy(policy_id: str, user: dict = Depends(require_client_use
 @router.get("/training")
 async def list_training(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT * FROM hipaa_training_records
             WHERE org_id = $1 ORDER BY due_date DESC
@@ -789,7 +790,7 @@ async def list_training(user: dict = Depends(require_client_user)):
 @router.post("/training")
 async def create_training(body: TrainingRecord, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             INSERT INTO hipaa_training_records
                 (org_id, employee_name, employee_email, employee_role, training_type,
@@ -807,7 +808,7 @@ async def create_training(body: TrainingRecord, user: dict = Depends(require_cli
 @router.put("/training/{record_id}")
 async def update_training(record_id: str, body: TrainingRecord, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             UPDATE hipaa_training_records
             SET employee_name = $3, employee_email = $4, employee_role = $5,
@@ -828,7 +829,7 @@ async def update_training(record_id: str, body: TrainingRecord, user: dict = Dep
 @router.delete("/training/{record_id}")
 async def delete_training(record_id: str, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute("""
             DELETE FROM hipaa_training_records WHERE id = $1 AND org_id = $2
         """, _uid(record_id),user["org_id"])
@@ -842,7 +843,7 @@ async def delete_training(record_id: str, user: dict = Depends(require_client_us
 @router.get("/baas")
 async def list_baas(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT * FROM hipaa_baas
             WHERE org_id = $1 ORDER BY associate_name
@@ -853,7 +854,7 @@ async def list_baas(user: dict = Depends(require_client_user)):
 @router.post("/baas")
 async def create_baa(body: BAARecord, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             INSERT INTO hipaa_baas
                 (org_id, associate_name, associate_type, contact_name, contact_email,
@@ -873,7 +874,7 @@ async def create_baa(body: BAARecord, user: dict = Depends(require_client_user))
 @router.put("/baas/{baa_id}")
 async def update_baa(baa_id: str, body: BAARecord, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             UPDATE hipaa_baas
             SET associate_name = $3, associate_type = $4, contact_name = $5,
@@ -896,7 +897,7 @@ async def update_baa(baa_id: str, body: BAARecord, user: dict = Depends(require_
 @router.delete("/baas/{baa_id}")
 async def delete_baa(baa_id: str, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute("""
             DELETE FROM hipaa_baas WHERE id = $1 AND org_id = $2
         """, _uid(baa_id),user["org_id"])
@@ -910,7 +911,7 @@ async def delete_baa(baa_id: str, user: dict = Depends(require_client_user)):
 @router.get("/ir-plan")
 async def get_ir_plan(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         plan = await conn.fetchrow("""
             SELECT * FROM hipaa_ir_plans
             WHERE org_id = $1 ORDER BY version DESC LIMIT 1
@@ -929,7 +930,7 @@ async def get_ir_plan(user: dict = Depends(require_client_user)):
 @router.post("/ir-plan")
 async def create_ir_plan(body: IRPlanCreate, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         max_ver = await conn.fetchval("""
             SELECT COALESCE(MAX(version), 0) FROM hipaa_ir_plans WHERE org_id = $1
         """, user["org_id"])
@@ -944,7 +945,7 @@ async def create_ir_plan(body: IRPlanCreate, user: dict = Depends(require_client
 @router.post("/ir-plan/review")
 async def mark_ir_plan_reviewed(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         now = datetime.now(timezone.utc)
         next_review = now + timedelta(days=365)
         row = await conn.fetchrow("""
@@ -963,7 +964,7 @@ async def mark_ir_plan_reviewed(user: dict = Depends(require_client_user)):
 @router.post("/breaches")
 async def create_breach(body: BreachRecord, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             INSERT INTO hipaa_breach_log
                 (org_id, incident_date, discovered_date, description, phi_involved,
@@ -988,7 +989,7 @@ async def create_breach(body: BreachRecord, user: dict = Depends(require_client_
 @router.put("/breaches/{breach_id}")
 async def update_breach(breach_id: str, body: BreachRecord, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             UPDATE hipaa_breach_log
             SET incident_date = $3, discovered_date = $4, description = $5,
@@ -1020,7 +1021,7 @@ async def update_breach(breach_id: str, body: BreachRecord, user: dict = Depends
 @router.get("/contingency")
 async def list_contingency(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT * FROM hipaa_contingency_plans
             WHERE org_id = $1 ORDER BY plan_type
@@ -1031,7 +1032,7 @@ async def list_contingency(user: dict = Depends(require_client_user)):
 @router.post("/contingency")
 async def create_contingency(body: ContingencyCreate, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             INSERT INTO hipaa_contingency_plans
                 (org_id, plan_type, title, content, rto_hours, rpo_hours)
@@ -1045,7 +1046,7 @@ async def create_contingency(body: ContingencyCreate, user: dict = Depends(requi
 @router.put("/contingency/{plan_id}")
 async def update_contingency(plan_id: str, body: ContingencyCreate, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             UPDATE hipaa_contingency_plans
             SET plan_type = $3, title = $4, content = $5,
@@ -1066,7 +1067,7 @@ async def update_contingency(plan_id: str, body: ContingencyCreate, user: dict =
 @router.get("/workforce")
 async def list_workforce(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT * FROM hipaa_workforce_access
             WHERE org_id = $1 ORDER BY employee_name
@@ -1077,7 +1078,7 @@ async def list_workforce(user: dict = Depends(require_client_user)):
 @router.post("/workforce")
 async def create_workforce(body: WorkforceRecord, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             INSERT INTO hipaa_workforce_access
                 (org_id, employee_name, employee_role, department, access_level,
@@ -1097,7 +1098,7 @@ async def create_workforce(body: WorkforceRecord, user: dict = Depends(require_c
 @router.put("/workforce/{member_id}")
 async def update_workforce(member_id: str, body: WorkforceRecord, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             UPDATE hipaa_workforce_access
             SET employee_name = $3, employee_role = $4, department = $5,
@@ -1124,7 +1125,7 @@ async def update_workforce(member_id: str, body: WorkforceRecord, user: dict = D
 @router.get("/physical")
 async def get_physical_safeguards(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT * FROM hipaa_physical_safeguards
             WHERE org_id = $1 ORDER BY category, item_key
@@ -1138,7 +1139,7 @@ async def get_physical_safeguards(user: dict = Depends(require_client_user)):
 @router.put("/physical")
 async def save_physical_safeguards(body: PhysicalSafeguardBatch, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         for item in body.items:
             await conn.execute("""
                 INSERT INTO hipaa_physical_safeguards
@@ -1167,7 +1168,7 @@ async def save_physical_safeguards(body: PhysicalSafeguardBatch, user: dict = De
 @router.get("/officers")
 async def get_officers(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT * FROM hipaa_officers WHERE org_id = $1 ORDER BY role_type
         """, user["org_id"])
@@ -1177,7 +1178,7 @@ async def get_officers(user: dict = Depends(require_client_user)):
 @router.put("/officers")
 async def upsert_officers(body: OfficerUpsert, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         for officer in body.officers:
             await conn.execute("""
                 INSERT INTO hipaa_officers
@@ -1208,7 +1209,7 @@ async def get_officer_template(
     org_id = user["org_id"]
 
     # Get org name
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         org = await conn.fetchrow(
             "SELECT org_name FROM client_portal_orgs WHERE id = $1", org_id
         )
@@ -1236,7 +1237,7 @@ async def get_officer_template(
 @router.get("/gap-analysis")
 async def get_gap_analysis(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT * FROM hipaa_gap_responses
             WHERE org_id = $1 ORDER BY section, question_key
@@ -1250,7 +1251,7 @@ async def get_gap_analysis(user: dict = Depends(require_client_user)):
 @router.put("/gap-analysis")
 async def save_gap_analysis(body: GapResponseBatch, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         for resp in body.responses:
             await conn.execute("""
                 INSERT INTO hipaa_gap_responses
@@ -1317,7 +1318,7 @@ async def upload_document(
 
     # Validate document count limit
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         doc_count = await conn.fetchval(
             "SELECT COUNT(*) FROM hipaa_documents WHERE org_id = $1 AND module_key = $2 AND deleted_at IS NULL",
             str(user["org_id"]), module_key,
@@ -1359,7 +1360,7 @@ async def upload_document(
 
     # Insert metadata
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         await conn.execute("""
             INSERT INTO hipaa_documents
                 (id, org_id, module_key, file_name, mime_type, size_bytes, minio_key, description, uploaded_by, uploaded_by_email)
@@ -1387,7 +1388,7 @@ async def list_documents(
     pool = await get_pool()
     org_id = str(user["org_id"])
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         if module_key:
             rows = await conn.fetch("""
                 SELECT id::text, module_key, file_name, mime_type, size_bytes,
@@ -1419,7 +1420,7 @@ async def download_document(
     pool = await get_pool()
     org_id = str(user["org_id"])
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT minio_key, file_name, mime_type
             FROM hipaa_documents
@@ -1453,7 +1454,7 @@ async def delete_document(
     pool = await get_pool()
     org_id = str(user["org_id"])
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute("""
             UPDATE hipaa_documents
             SET deleted_at = NOW()

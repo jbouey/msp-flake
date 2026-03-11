@@ -32,6 +32,7 @@ from uuid import uuid4
 import aiohttp
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 
 logger = logging.getLogger(__name__)
 
@@ -485,7 +486,7 @@ class EscalationEngine:
         """
         pool = await self._get_pool()
 
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             # Get site and partner info
             site = await conn.fetchrow("""
                 SELECT s.id, s.site_id, s.clinic_name, s.partner_id, s.status,
@@ -868,7 +869,7 @@ class EscalationEngine:
         pool = await self._get_pool()
         breached = []
 
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             # Find tickets that have breached SLA
             tickets = await conn.fetch("""
                 UPDATE escalation_tickets

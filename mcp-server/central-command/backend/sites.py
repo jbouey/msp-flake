@@ -16,6 +16,7 @@ from enum import Enum
 
 from .fleet import get_pool
 from .auth import require_auth, require_operator
+from .tenant_middleware import tenant_connection, admin_connection
 from .websocket_manager import broadcast_event
 from .fleet_updates import get_fleet_orders_for_appliance, record_fleet_order_completion
 from .order_signing import sign_admin_order
@@ -52,7 +53,7 @@ async def require_appliance_auth(request: Request) -> str:
         raise HTTPException(status_code=401, detail="Missing site_id in request body")
 
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Primary: verify against api_keys table
         try:
             if await verify_site_api_key(conn, site_id, api_key):
@@ -248,7 +249,7 @@ async def update_site(site_id: str, update: SiteUpdate, user: dict = Depends(req
         RETURNING site_id, clinic_name
     """
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         result = await conn.fetchrow(query, *values)
         if not result:
             raise HTTPException(status_code=404, detail=f"Site {site_id} not found")
@@ -279,7 +280,7 @@ async def update_healing_tier(site_id: str, update: HealingTierUpdate, user: dic
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         result = await conn.fetchrow("""
             UPDATE sites
             SET healing_tier = $1, updated_at = $2
@@ -305,7 +306,7 @@ async def get_healing_tier(site_id: str, user: dict = Depends(require_auth)):
     """Get the current healing tier for a site. Requires authentication."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         result = await conn.fetchrow("""
             SELECT site_id, clinic_name, healing_tier
             FROM sites
@@ -340,7 +341,7 @@ async def create_appliance_order(
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=1)
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify appliance exists
         appliance = await conn.fetchrow("""
             SELECT appliance_id, site_id
@@ -418,7 +419,7 @@ async def get_pending_orders(site_id: str, appliance_id: str):
         # Convert colons to hyphens for alternate format
         appliance_id_hyphen = appliance_id.replace(':', '-')
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Expire stale orders in both tables (piggyback on polling)
         try:
             await conn.execute("""
@@ -524,7 +525,7 @@ async def list_sites(
     """List all sites with aggregated appliance data, server-side pagination/search/sort."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         org_scope = user.get("org_scope")
         base_query = """
             SELECT
@@ -632,7 +633,7 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
     """Get details for a specific site. Requires authentication."""
     pool = await get_pool()
     
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Get appliances for this site
         appliance_rows = await conn.fetch("""
             SELECT 
@@ -810,7 +811,7 @@ async def add_credential(site_id: str, cred: CredentialCreate, user: dict = Depe
         cred_data_dict['distro'] = cred.distro
     cred_data = json.dumps(cred_data_dict)
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         try:
             row = await conn.fetchrow("""
                 INSERT INTO site_credentials (site_id, credential_type, credential_name, encrypted_data)
@@ -838,7 +839,7 @@ async def delete_credential(site_id: str, credential_id: str, user: dict = Depen
     """Delete a credential. Appliances will stop receiving it on next check-in. Requires operator or admin access."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         result = await conn.execute("""
             DELETE FROM site_credentials
             WHERE site_id = $1 AND id = $2
@@ -889,7 +890,7 @@ async def _add_manual_device(pool, site_id: str, device: ManualDeviceAdd) -> dic
 
     cred_data = json.dumps(cred_data_dict)
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         async with conn.transaction():
             # Create SSH credential
             row = await conn.fetchrow("""
@@ -942,7 +943,7 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
     """Get all appliances for a site. Requires authentication."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         rows = await conn.fetch("""
             SELECT
                 appliance_id, hostname, mac_address, ip_addresses,
@@ -986,7 +987,7 @@ async def delete_appliance(site_id: str, appliance_id: str, user: dict = Depends
     """Delete an appliance from a site. Requires operator or admin access."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         result = await conn.execute("""
             DELETE FROM site_appliances
             WHERE appliance_id = $1 AND site_id = $2
@@ -1020,7 +1021,7 @@ async def move_appliance(
     """Move an appliance from one site to another. Requires operator or admin access."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify appliance exists in source site
         existing = await conn.fetchrow(
             "SELECT appliance_id FROM site_appliances WHERE appliance_id = $1 AND site_id = $2",
@@ -1072,7 +1073,7 @@ async def update_appliance_l2_mode(
         raise HTTPException(400, "l2_mode must be 'auto', 'manual', or 'disabled'")
 
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         result = await conn.execute("""
             UPDATE site_appliances
             SET l2_mode = $1
@@ -1103,7 +1104,7 @@ async def clear_stale_appliances(site_id: str, request: ClearStaleRequest, user:
     pool = await get_pool()
     cutoff = datetime.now(timezone.utc) - timedelta(hours=request.stale_hours)
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Get count of stale appliances before deletion
         stale_count = await conn.fetchval("""
             SELECT COUNT(*) FROM site_appliances
@@ -1140,7 +1141,7 @@ async def broadcast_order(site_id: str, order: BroadcastOrderCreate, user: dict 
     expires_at = now + timedelta(hours=1)
     created_orders = []
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Get all appliances for this site
         appliances = await conn.fetch("""
             SELECT appliance_id FROM site_appliances
@@ -1218,7 +1219,7 @@ async def acknowledge_order(order_id: str, request: Request):
         parts = order_id.split("::", 2)
         if len(parts) == 3:
             fleet_order_id, appliance_id = parts[1], parts[2]
-            async with pool.acquire() as conn:
+            async with admin_connection(pool) as conn:
                 await record_fleet_order_completion(conn, fleet_order_id, appliance_id, "acknowledged")
                 return {
                     "status": "acknowledged",
@@ -1227,7 +1228,7 @@ async def acknowledge_order(order_id: str, request: Request):
                     "acknowledged_at": now.isoformat()
                 }
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Update the order status
         result = await conn.fetchrow("""
             UPDATE admin_orders
@@ -1312,7 +1313,7 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, raw_reque
         parts = order_id.split("::", 2)
         if len(parts) == 3:
             fleet_order_id, appliance_id = parts[1], parts[2]
-            async with pool.acquire() as conn:
+            async with admin_connection(pool) as conn:
                 await record_fleet_order_completion(conn, fleet_order_id, appliance_id, new_status)
                 return {
                     "status": new_status,
@@ -1321,7 +1322,7 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, raw_reque
                     "completed_at": now.isoformat()
                 }
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Try admin_orders first
         result = await conn.fetchrow("""
             UPDATE admin_orders
@@ -1472,7 +1473,7 @@ async def get_order(order_id: str):
     """Get order details by ID."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT order_id, appliance_id, site_id, order_type,
                    parameters, priority, status, created_at,
@@ -1566,7 +1567,7 @@ async def report_discovered_domain(report: DiscoveredDomainReport):
     pool = await get_pool()
     now = datetime.now(timezone.utc)
     
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=report.site_id) as conn:
         # Update site record with discovered domain
         await conn.execute("""
             UPDATE sites 
@@ -1655,7 +1656,7 @@ async def report_enumeration_results(report: EnumerationResultsReport):
     pool = await get_pool()
     now = datetime.now(timezone.utc)
     
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=report.site_id) as conn:
         # Store enumeration results
         await conn.execute("""
             INSERT INTO enumeration_results (
@@ -1705,7 +1706,7 @@ async def submit_domain_credentials(
     pool = await get_pool()
     now = datetime.now(timezone.utc)
     
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Validate site exists and is awaiting credentials
         site = await conn.fetchrow("""
             SELECT site_id, discovered_domain, awaiting_credentials
@@ -1772,7 +1773,7 @@ async def get_deployment_status(site_id: str, user: dict = Depends(require_auth)
     """
     pool = await get_pool()
     
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Get site deployment state
         site = await conn.fetchrow("""
             SELECT 
@@ -1881,7 +1882,7 @@ async def get_domain_credentials(site_id: str, user: dict = Depends(require_oper
     """
     pool = await get_pool()
     
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         cred = await conn.fetchrow("""
             SELECT encrypted_data
             FROM site_credentials
@@ -1923,7 +1924,7 @@ async def report_agent_deployments(report: AgentDeploymentReport):
     pool = await get_pool()
     now = datetime.now(timezone.utc)
     
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=report.site_id) as conn:
         for deployment in report.deployments:
             await conn.execute("""
                 INSERT INTO agent_deployments (
@@ -1986,7 +1987,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
     mac_clean = mac_normalized.replace(':', '')
     appliance_id = f"{checkin.site_id}-{mac_normalized}"
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=checkin.site_id) as conn:
       async with conn.transaction():
         # === STEP 1: Find existing appliances with same MAC or hostname ===
         # Use FOR UPDATE to prevent concurrent check-ins from racing
@@ -2603,7 +2604,7 @@ async def get_site_workstations(site_id: str, user: dict = Depends(require_auth)
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Get summary (if exists)
         summary_row = await conn.fetchrow("""
             SELECT site_id, total_workstations, online_workstations,
@@ -2753,7 +2754,7 @@ async def compare_workstations_with_rmm(
             detail="No RMM devices provided"
         )
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get our workstations for this site
         ws_rows = await conn.fetch("""
             SELECT hostname, ip_address, mac_address, os_name, os_version, online
@@ -2805,7 +2806,7 @@ async def get_rmm_comparison_report(site_id: str, user: dict = Depends(require_a
     """Get the latest RMM comparison report for a site. Requires authentication."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         row = await conn.fetchrow("""
             SELECT site_id, provider, our_count, rmm_count,
                    matched_count, coverage_rate, report_data, created_at
@@ -2838,7 +2839,7 @@ async def get_workstation(site_id: str, workstation_id: str, user: dict = Depend
     """Get details for a specific workstation. Requires authentication."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         ws = await conn.fetchrow("""
             SELECT id, hostname, ip_address, os_name, os_version,
                    online, last_seen, compliance_status, last_compliance_check,
@@ -2910,7 +2911,7 @@ async def trigger_workstation_scan(site_id: str, user: dict = Depends(require_op
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Find the first online appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id
@@ -3166,7 +3167,7 @@ async def get_site_go_agents(site_id: str, user: dict = Depends(require_auth)):
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Get summary (if exists)
         summary_row = await conn.fetchrow("""
             SELECT site_id, total_agents, active_agents, offline_agents,
@@ -3279,7 +3280,7 @@ async def get_go_agent_summary(site_id: str, user: dict = Depends(require_auth))
     """Get Go agent summary for a site. Requires authentication."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         summary_row = await conn.fetchrow("""
             SELECT site_id, total_agents, active_agents, offline_agents,
                    error_agents, pending_agents, overall_compliance_rate,
@@ -3338,7 +3339,7 @@ async def get_go_agent(site_id: str, agent_id: str, user: dict = Depends(require
     """Get details for a specific Go agent. Requires authentication."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         agent = await conn.fetchrow("""
             SELECT agent_id, hostname, ip_address, mac_address,
                    agent_version, os_name, os_version, capability_tier,
@@ -3421,7 +3422,7 @@ async def update_go_agent_tier(site_id: str, agent_id: str, data: GoAgentTierUpd
 
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Check agent exists
         agent = await conn.fetchrow("""
             SELECT agent_id FROM go_agents
@@ -3463,7 +3464,7 @@ async def trigger_go_agent_check(site_id: str, agent_id: str, user: dict = Depen
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Check agent exists
         agent = await conn.fetchrow("""
             SELECT agent_id, status FROM go_agents
@@ -3499,7 +3500,7 @@ async def remove_go_agent(site_id: str, agent_id: str, user: dict = Depends(requ
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with tenant_connection(pool, site_id=site_id) as conn:
         # Check agent exists
         agent = await conn.fetchrow("""
             SELECT agent_id FROM go_agents

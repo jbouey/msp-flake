@@ -17,6 +17,7 @@ from fastapi import APIRouter, Query, HTTPException, Depends, Path
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .order_signing import sign_admin_order
 from .auth import require_auth
 
@@ -154,7 +155,7 @@ ASSET_DATA_FIELD_MAP = {
 async def list_templates(user: Dict[str, Any] = Depends(require_auth)):
     """List available application profile templates."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT id, name, description, category, discovery_hints, icon
             FROM app_profile_templates
@@ -184,7 +185,7 @@ async def list_profiles(
 ):
     """List protection profiles for a specific site."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT p.*,
                 (SELECT count(*) FROM app_profile_assets a WHERE a.profile_id = p.id) as asset_count,
@@ -210,7 +211,7 @@ async def create_profile(body: ProfileCreate, user: Dict[str, Any] = Depends(req
     if body.template_id:
         template_id = _uuid.UUID(body.template_id)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         try:
             await conn.execute("""
                 INSERT INTO app_protection_profiles
@@ -240,7 +241,7 @@ async def get_profile(
     pool = await get_pool()
     pid = _uuid.UUID(profile_id)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow(
             "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
             pid, site_id,
@@ -326,7 +327,7 @@ async def update_profile(
         params.append(body.status)
         idx += 1
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # site_id co-constraint prevents cross-tenant modification
         params.append(site_id)
         result = await conn.execute(
@@ -357,7 +358,7 @@ async def delete_profile(
     pid = _uuid.UUID(profile_id)
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         async with conn.transaction():
             # Verify profile belongs to site before any mutations
             profile = await conn.fetchrow(
@@ -403,7 +404,7 @@ async def trigger_discovery(
     pool = await get_pool()
     pid = _uuid.UUID(profile_id)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         profile = await conn.fetchrow(
             "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
             pid, site_id,
@@ -506,7 +507,7 @@ async def receive_discovery_results(
     pid = _uuid.UUID(profile_id)
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         async with conn.transaction():
             profile = await conn.fetchrow(
                 "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
@@ -565,7 +566,7 @@ async def toggle_asset(
     pid = _uuid.UUID(profile_id)
     aid = _uuid.UUID(asset_id)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify profile belongs to site before mutating assets
         profile = await conn.fetchrow(
             "SELECT id FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
@@ -604,7 +605,7 @@ async def lock_baseline(
     pid = _uuid.UUID(profile_id)
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         async with conn.transaction():
             profile = await conn.fetchrow(
                 "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
@@ -752,7 +753,7 @@ async def create_from_template(
     pool = await get_pool()
     tid = _uuid.UUID(template_id)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         tmpl = await conn.fetchrow(
             "SELECT * FROM app_profile_templates WHERE id = $1", tid
         )
@@ -797,7 +798,7 @@ async def pause_profile(
     pid = _uuid.UUID(profile_id)
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         async with conn.transaction():
             profile = await conn.fetchrow(
                 "SELECT status FROM app_protection_profiles WHERE id = $1 AND site_id = $2",
@@ -837,7 +838,7 @@ async def resume_profile(
     pid = _uuid.UUID(profile_id)
     now = datetime.now(timezone.utc)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         async with conn.transaction():
             profile = await conn.fetchrow(
                 "SELECT status FROM app_protection_profiles WHERE id = $1 AND site_id = $2",

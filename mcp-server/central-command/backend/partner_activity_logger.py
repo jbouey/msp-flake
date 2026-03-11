@@ -25,6 +25,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ async def log_partner_activity(
         pool = await get_pool()
         category = EVENT_CATEGORIES.get(event_type, PartnerEventCategory.SITE)
 
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             row = await conn.fetchrow(
                 """
                 INSERT INTO partner_activity_log (
@@ -341,7 +342,7 @@ async def get_partner_activity(
     query += f" ORDER BY pal.created_at DESC LIMIT ${idx} OFFSET ${idx + 1}"
     params.extend([limit, offset])
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch(query, *params)
         results = []
         for row in rows:
@@ -378,7 +379,7 @@ async def get_partner_activity_stats(
         params.append(partner_id)
         idx += 1
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow(
             f"""
             SELECT

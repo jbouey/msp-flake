@@ -8,6 +8,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 import asyncpg
 
+from .tenant_middleware import admin_connection
+
 from .models import (
     Appliance,
     ClientOverview,
@@ -47,7 +49,10 @@ async def get_pool() -> asyncpg.Pool:
         # Strip SQLAlchemy async driver suffix for raw asyncpg
         if "+asyncpg" in database_url:
             database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
-        _pool = await asyncpg.create_pool(database_url, min_size=5, max_size=50)
+        _pool = await asyncpg.create_pool(
+            database_url, min_size=5, max_size=50,
+            statement_cache_size=0,  # Required for PgBouncer transaction pooling
+        )
     return _pool
 
 
@@ -100,7 +105,7 @@ async def _get_appliance_health(
     last_checkin: Optional[datetime],
 ) -> HealthMetrics:
     """Calculate health metrics for a single appliance."""
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get incident stats
         incident_stats = await conn.fetchrow("""
             SELECT
@@ -170,7 +175,7 @@ async def get_fleet_overview() -> List[ClientOverview]:
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get all unique sites with appliance counts
         sites = await conn.fetch("""
             SELECT
@@ -254,7 +259,7 @@ async def get_client_detail(site_id: str) -> Optional[ClientDetail]:
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get all appliances for this site
         appliance_rows = await conn.fetch("""
             SELECT id, site_id, hostname, ip_address, agent_version,
@@ -327,7 +332,7 @@ async def get_client_appliances(site_id: str) -> List[Appliance]:
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         appliance_rows = await conn.fetch("""
             SELECT id, site_id, hostname, ip_address, agent_version,
                    tier, is_online, last_checkin, created_at

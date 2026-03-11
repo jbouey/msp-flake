@@ -13,6 +13,7 @@ import asyncpg
 from fastapi import APIRouter, HTTPException, Query
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .oui_lookup import get_manufacturer_hint
 
 logger = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
     devices_created = 0
     errors = []
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Look up appliance by site_id (unique constraint)
         appliance_row = await conn.fetchrow(
             "SELECT id FROM appliances WHERE site_id = $1",
@@ -256,7 +257,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
 
     # Auto-populate workstations table from discovered workstation/server devices
     try:
-        async with pool.acquire() as link_conn:
+        async with admin_connection(pool) as link_conn:
             await _link_devices_to_workstations(link_conn, report.site_id)
     except Exception as e:
         logger.warning(f"Device→workstation linkage failed for {report.site_id}: {e}")
@@ -317,7 +318,7 @@ async def get_site_devices(
     query += f" ORDER BY d.last_seen_at DESC LIMIT ${param_idx} OFFSET ${param_idx + 1}"
     params.extend([limit, offset])
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch(query, *params)
 
         # Fetch agent coverage data for this site
@@ -390,7 +391,7 @@ async def get_site_device_counts(site_id: str) -> dict:
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow(
             """
             SELECT
@@ -552,7 +553,7 @@ async def get_site_device_summary(site_id: str) -> dict:
     scanned = compliant + drifted  # Only devices that have been checked
 
     # Coverage stats
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         agent_count = await conn.fetchval(
             "SELECT COUNT(DISTINCT hostname) FROM go_agents WHERE site_id = $1",
             site_id,
@@ -602,7 +603,7 @@ async def list_medical_devices(
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch(
             """
             SELECT
@@ -648,7 +649,7 @@ async def get_device_compliance_details(site_id: str, device_id: int) -> dict:
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify device belongs to site
         device = await conn.fetchrow(
             """

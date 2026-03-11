@@ -25,6 +25,7 @@ except ImportError:
     NACL_AVAILABLE = False
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .auth import require_admin
 
 logger = logging.getLogger(__name__)
@@ -271,7 +272,7 @@ async def delegate_signing_key(
         raise HTTPException(status_code=500, detail="Signing not available")
 
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify appliance belongs to site
         if not await verify_appliance_ownership(conn, appliance_id, request.site_id):
             raise HTTPException(status_code=404, detail="Appliance not found for this site")
@@ -357,7 +358,7 @@ async def revoke_delegated_key(
     Revoked keys will no longer be accepted for signature verification.
     """
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute("""
             UPDATE delegated_keys
             SET revoked = true, revoked_at = NOW(), revoked_reason = $3
@@ -380,7 +381,7 @@ async def list_delegated_keys(
 ):
     """List all delegated keys for an appliance."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         if include_revoked:
             rows = await conn.fetch("""
                 SELECT key_id, site_id, scope, delegated_at, expires_at,
@@ -419,7 +420,7 @@ async def sync_audit_trail(
     synced_ids = []
     failed_ids = []
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         for entry in request.entries:
             try:
                 # Verify entry hash
@@ -504,7 +505,7 @@ async def get_audit_trail(
 ):
     """Get synced audit trail for an appliance."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Build query
         conditions = ["appliance_id = $1"]
         params = [appliance_id]
@@ -567,7 +568,7 @@ async def process_urgent_escalations(
     escalated_to_l3 = []
     failed_ids = []
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         for escalation in request.escalations:
             try:
                 # Check if already processed
@@ -652,7 +653,7 @@ async def get_escalation_history(
 ):
     """Get escalation history for an appliance."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get appliance's site for filtering
         # Note: appliance_id can be UUID or site_id
         appliance = await conn.fetchrow("""

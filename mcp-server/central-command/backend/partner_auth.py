@@ -37,6 +37,7 @@ import httpx
 from typing import Dict
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .auth import require_admin
 from .db_utils import _uid
 from .oauth_login import encrypt_secret, decrypt_secret
@@ -147,7 +148,7 @@ def hash_session_token(token: str) -> str:
 
 async def store_oauth_state(state: str, data: OAuthState, pool) -> None:
     """Store OAuth state in dedicated oauth_partner_state table."""
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         await conn.execute("""
             INSERT INTO oauth_partner_state (state_token, provider, code_verifier, redirect_after, expires_at)
             VALUES ($1, $2, $3, $4, $5)
@@ -158,7 +159,7 @@ async def store_oauth_state(state: str, data: OAuthState, pool) -> None:
 
 async def get_oauth_state(state: str, pool) -> Optional[OAuthState]:
     """Retrieve and delete OAuth state (single use)."""
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             DELETE FROM oauth_partner_state
             WHERE state_token = $1 AND expires_at > NOW()
@@ -190,7 +191,7 @@ async def create_partner_session(partner_id: str, request: Request, pool) -> str
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent", "")[:500]
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         await conn.execute("""
             INSERT INTO partner_sessions (partner_id, session_token_hash, ip_address, user_agent, expires_at)
             VALUES ($1, $2, $3, $4, $5)
@@ -209,7 +210,7 @@ async def get_partner_from_session(session_token: str, pool):
 
     token_hash = hash_session_token(session_token)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Check idle timeout before updating last_used_at
         idle_check = await conn.fetchrow("""
             SELECT last_used_at FROM partner_sessions
@@ -244,7 +245,7 @@ async def get_partner_from_session(session_token: str, pool):
 async def delete_partner_session(session_token: str, pool) -> None:
     """Delete a session."""
     token_hash = hash_session_token(session_token)
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         await conn.execute("""
             DELETE FROM partner_sessions WHERE session_token_hash = $1
         """, token_hash)
@@ -256,7 +257,7 @@ async def delete_partner_session(session_token: str, pool) -> None:
 
 async def get_oauth_config(pool) -> dict:
     """Get partner OAuth configuration."""
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT allowed_domains, require_approval, allow_consumer_gmail, notify_emails
             FROM partner_oauth_config
@@ -334,7 +335,7 @@ async def upsert_partner_from_oauth(
     # Get OAuth config for approval settings
     config = await get_oauth_config(pool)
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Check if partner exists with this OAuth identity
         existing = await conn.fetchrow("""
             SELECT id, name, slug, status, pending_approval FROM partners
@@ -892,7 +893,7 @@ async def email_signup(request: Request, body: EmailSignupRequest):
 
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Check if partner already exists with this email
         existing = await conn.fetchrow("""
             SELECT id, pending_approval, status FROM partners
@@ -994,7 +995,7 @@ async def email_login(request: Request, body: EmailLoginRequest):
 
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner = await conn.fetchrow("""
             SELECT id, name, slug, password_hash, status, pending_approval
             FROM partners
@@ -1084,7 +1085,7 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
 
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         partner = await conn.fetchrow("""
             SELECT id, name, slug, password_hash, status, pending_approval
             FROM partners
@@ -1174,7 +1175,7 @@ async def list_pending_partners(request: Request, user: Dict = Depends(require_a
     """List all partners pending approval (admin only)."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
             SELECT id, name, slug, contact_email, oauth_email, auth_provider,
                    oauth_tenant_id, created_at
@@ -1207,7 +1208,7 @@ async def approve_partner(partner_id: str, request: Request, user: Dict = Depend
     # Get admin user ID from authenticated user
     admin_user_id = user.get("id")
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Check partner exists and is pending
         partner = await conn.fetchrow("""
             SELECT id, name, slug, oauth_email, pending_approval
@@ -1270,7 +1271,7 @@ async def reject_partner(partner_id: str, request: Request, user: Dict = Depends
     """Reject and delete a pending partner (admin only)."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Check partner exists and is pending
         partner = await conn.fetchrow("""
             SELECT id, name, slug, oauth_email, pending_approval
@@ -1317,7 +1318,7 @@ async def update_oauth_config(request: Request, user: Dict = Depends(require_adm
     pool = await get_pool()
     data = await request.json()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         await conn.execute("""
             UPDATE partner_oauth_config
             SET allowed_domains = $1,
@@ -1362,7 +1363,7 @@ async def partner_verify_totp(request: Request, body: PartnerVerifyTOTPRequest):
     partner_id = pending["partner_id"]
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow(
             "SELECT mfa_secret, mfa_backup_codes FROM partners WHERE id = $1",
             partner_id
@@ -1456,7 +1457,7 @@ async def partner_totp_setup(partner: dict = Depends(_require_partner_session)):
     pool = await get_pool()
     partner_id = str(partner["id"])
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow(
             "SELECT mfa_enabled, contact_email, oauth_email FROM partners WHERE id = $1",
             partner_id
@@ -1494,7 +1495,7 @@ async def partner_totp_verify(
     pool = await get_pool()
     partner_id = str(partner["id"])
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow(
             "SELECT password_hash, mfa_secret, mfa_enabled FROM partners WHERE id = $1",
             partner_id
@@ -1540,7 +1541,7 @@ async def partner_totp_disable(
     pool = await get_pool()
     partner_id = str(partner["id"])
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow(
             "SELECT password_hash, mfa_enabled FROM partners WHERE id = $1",
             partner_id

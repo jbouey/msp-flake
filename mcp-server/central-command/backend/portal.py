@@ -24,6 +24,7 @@ from io import BytesIO
 import sys
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .sites import ManualDeviceAdd, _add_manual_device
 from .db_queries import (
     get_site_info,
@@ -905,7 +906,7 @@ async def get_portal_data(
 
     # Count SSH-monitored devices
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         device_count = await conn.fetchval(
             "SELECT COUNT(*) FROM site_credentials WHERE site_id = $1 AND credential_type IN ('ssh_password', 'ssh_key')",
             site_id)

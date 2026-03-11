@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .auth import require_auth, require_operator
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ class OrgCredentialCreate(BaseModel):
 async def list_org_credentials(org_id: str, user: dict = Depends(require_auth)):
     """List credentials for an organization (passwords redacted)."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify org exists
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1", org_id
@@ -74,7 +75,7 @@ async def create_org_credential(
 ):
     """Add a credential to an organization."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1", org_id
         )
@@ -107,7 +108,7 @@ async def delete_org_credential(
 ):
     """Delete an organization credential."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         result = await conn.execute("""
             DELETE FROM org_credentials
             WHERE id = $1 AND client_org_id = $2

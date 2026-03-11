@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends, Request
 from pydantic import BaseModel
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 from .partners import require_partner
 from .db_utils import _uid
 
@@ -145,7 +146,7 @@ async def get_or_create_stripe_customer(partner_id: str, email: str, name: str) 
     """Get existing or create new Stripe customer for partner."""
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Check if partner already has a Stripe customer ID
         row = await conn.fetchrow("""
             SELECT stripe_customer_id FROM partners WHERE id = $1
@@ -191,7 +192,7 @@ async def get_billing_status(partner=Depends(require_partner)):
     check_stripe_available()
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT stripe_customer_id, stripe_subscription_id,
                    subscription_status, subscription_plan,
@@ -285,7 +286,7 @@ async def create_checkout_session(
     check_stripe_available()
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT contact_email, name FROM partners WHERE id = $1
         """, partner['id'])
@@ -346,7 +347,7 @@ async def create_customer_portal_session(partner=Depends(require_partner)):
     check_stripe_available()
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT stripe_customer_id FROM partners WHERE id = $1
         """, partner['id'])
@@ -381,7 +382,7 @@ async def list_invoices(
     check_stripe_available()
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT stripe_customer_id FROM partners WHERE id = $1
         """, partner['id'])
@@ -426,7 +427,7 @@ async def cancel_subscription(partner=Depends(require_partner)):
     check_stripe_available()
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT stripe_subscription_id FROM partners WHERE id = $1
         """, partner['id'])
@@ -442,7 +443,7 @@ async def cancel_subscription(partner=Depends(require_partner)):
         )
 
         # Update local status
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             await conn.execute("""
                 UPDATE partners
                 SET subscription_status = 'canceling'
@@ -468,7 +469,7 @@ async def reactivate_subscription(partner=Depends(require_partner)):
     check_stripe_available()
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT stripe_subscription_id FROM partners WHERE id = $1
         """, partner['id'])
@@ -483,7 +484,7 @@ async def reactivate_subscription(partner=Depends(require_partner)):
         )
 
         # Update local status
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             await conn.execute("""
                 UPDATE partners
                 SET subscription_status = 'active'
@@ -534,7 +535,7 @@ async def stripe_webhook(request: Request):
 
     # Replay protection: deduplicate by Stripe event ID
     event_id = event.id
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Create dedup table if not exists (idempotent)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS stripe_webhook_events (
@@ -567,7 +568,7 @@ async def stripe_webhook(request: Request):
         partner_id = data.metadata.get("partner_id")
         if partner_id and data.subscription:
             subscription = stripe.Subscription.retrieve(data.subscription)
-            async with pool.acquire() as conn:
+            async with admin_connection(pool) as conn:
                 await conn.execute("""
                     UPDATE partners SET
                         stripe_subscription_id = $1,
@@ -586,7 +587,7 @@ async def stripe_webhook(request: Request):
         # Subscription updated (plan change, renewal, etc.)
         partner_id = data.metadata.get("partner_id")
         if partner_id:
-            async with pool.acquire() as conn:
+            async with admin_connection(pool) as conn:
                 await conn.execute("""
                     UPDATE partners SET
                         subscription_status = $1,
@@ -603,7 +604,7 @@ async def stripe_webhook(request: Request):
         # Subscription canceled/ended
         partner_id = data.metadata.get("partner_id")
         if partner_id:
-            async with pool.acquire() as conn:
+            async with admin_connection(pool) as conn:
                 await conn.execute("""
                     UPDATE partners SET
                         subscription_status = 'canceled',
@@ -615,7 +616,7 @@ async def stripe_webhook(request: Request):
     elif event_type == "invoice.paid":
         # Invoice paid successfully
         customer_id = data.customer
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             await conn.execute("""
                 UPDATE partners SET
                     subscription_status = 'active'
@@ -626,7 +627,7 @@ async def stripe_webhook(request: Request):
     elif event_type == "invoice.payment_failed":
         # Payment failed
         customer_id = data.customer
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             await conn.execute("""
                 UPDATE partners SET
                     subscription_status = 'past_due'

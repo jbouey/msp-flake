@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .fleet import get_pool
+from .tenant_middleware import admin_connection
 
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
@@ -197,7 +198,7 @@ async def report_discovery_results(report: DiscoveryReport):
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Verify scan exists and get site internal ID
         scan = await conn.fetchrow("""
             SELECT ds.id, ds.site_id, s.site_id as site_id_str
@@ -337,7 +338,7 @@ async def update_scan_status(status: ScanStatus):
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         if status.status == "completed":
             result = await conn.execute("""
                 UPDATE discovery_scans
@@ -375,7 +376,7 @@ async def get_pending_scans(site_id: str):
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         scans = await conn.fetch("""
             SELECT ds.id, ds.scan_type, ds.triggered_by, ds.started_at,
                    s.site_id as site_id_str
@@ -407,7 +408,7 @@ async def get_asset_summary(site_id: str):
     """
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
+    async with admin_connection(pool) as conn:
         # Get site internal ID
         site = await conn.fetchrow("""
             SELECT id FROM sites WHERE site_id = $1

@@ -178,8 +178,9 @@ async def _load_dynamic_runbooks() -> Dict[str, Dict[str, Any]]:
 
     try:
         from .fleet import get_pool
+        from .tenant_middleware import admin_connection
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with admin_connection(pool) as conn:
             rows = await conn.fetch("""
                 SELECT runbook_id, name, description, category
                 FROM runbooks
