@@ -334,6 +334,8 @@
 @layer components {
   .modal-backdrop {
     background: rgba(0, 0, 0, 0.4);
+  }
+  :root:not(.dark) .modal-backdrop {
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
   }
@@ -435,14 +437,16 @@
   pointer-events: auto;
   padding: 0.75rem 1rem;
   border-radius: 12px;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   box-shadow: var(--card-shadow);
   animation: slide-in-right 0.3s ease-out, fade-out 0.3s ease-in 4.7s forwards;
   max-width: 400px;
   font-size: 14px;
+}
+:root:not(.dark) .toast {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 .toast-success { border-left: 3px solid #34C759; }
 .toast-error { border-left: 3px solid #FF3B30; }

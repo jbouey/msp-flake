@@ -46,12 +46,12 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/30"
         onClick={onClose}
       />
 
       {/* Modal */}
-      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden bg-background-secondary/90 backdrop-blur-xl rounded-ios-lg shadow-2xl border border-separator-light">
+      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden bg-background-secondary rounded-ios-lg shadow-2xl border border-separator-light">
         {/* Header */}
         <div className="p-6 border-b border-separator-light">
           <div className="flex items-start justify-between">

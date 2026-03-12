@@ -33,7 +33,7 @@ const CustomTooltip: React.FC<{
   if (!active || !payload?.length) return null;
   const entry = payload[0];
   return (
-    <div className="bg-background-secondary/90 backdrop-blur-xl rounded-ios-md border border-separator-light px-3 py-2 shadow-lg">
+    <div className="bg-background-secondary rounded-ios-md border border-separator-light px-3 py-2 shadow-lg">
       <div className="flex items-center gap-1.5 text-xs">
         <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: entry.payload.color }} />
         <span className="font-medium text-label-primary">{entry.name}</span>

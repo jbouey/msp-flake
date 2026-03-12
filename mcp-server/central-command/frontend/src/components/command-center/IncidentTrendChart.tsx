@@ -49,7 +49,7 @@ const CustomTooltip: React.FC<{
   const total = barEntries.reduce((sum, e) => sum + (e.value || 0), 0);
 
   return (
-    <div className="bg-background-secondary/90 backdrop-blur-xl rounded-ios-md border border-separator-light px-3 py-2.5 shadow-lg min-w-[140px]">
+    <div className="bg-background-secondary rounded-ios-md border border-separator-light px-3 py-2.5 shadow-lg min-w-[140px]">
       <p className="text-xs text-label-tertiary mb-1.5 font-medium">{timeStr}</p>
       {barEntries.map((entry) => (
         <div key={entry.name} className="flex items-center justify-between gap-4 text-xs py-0.5">
