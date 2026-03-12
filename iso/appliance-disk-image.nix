@@ -54,7 +54,7 @@ let
     version = "0.3.20";
     src = ../appliance;
 
-    vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    vendorHash = "sha256-JbeTjY8oNJsh6x1mjQFif45WRojjjW/90+9YObtN/RfM=";
 
     ldflags = [
       "-s" "-w"
