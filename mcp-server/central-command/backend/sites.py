@@ -887,6 +887,10 @@ async def _add_manual_device(pool, site_id: str, device: ManualDeviceAdd) -> dic
         cred_data_dict['private_key'] = device.ssh_key
     if device.distro:
         cred_data_dict['distro'] = device.distro
+    # Set label so the daemon routes to the correct scan engine
+    # (macOS targets use macosScanScript instead of linuxScanScript)
+    if device.os_type == 'macos':
+        cred_data_dict['label'] = 'macos'
 
     cred_data = json.dumps(cred_data_dict)
 

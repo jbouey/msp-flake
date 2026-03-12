@@ -1534,18 +1534,41 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     runbook_id = None
     resolution_tier = None
 
-    # Step 1: Query l1_rules table for exact incident_type match
-    l1_match = await db.execute(
+    # Chronic drift detection: if this incident_type has been resolved 5+ times
+    # in 7 days for this appliance, L1 healing isn't working. Escalate to L3.
+    chronic_check = await db.execute(
         text("""
-            SELECT runbook_id FROM l1_rules
-            WHERE enabled = true
-            AND incident_pattern->>'incident_type' = :incident_type
-            ORDER BY confidence DESC
-            LIMIT 1
+            SELECT COUNT(*) FROM incidents
+            WHERE appliance_id = :appliance_id
+            AND incident_type = :incident_type
+            AND status = 'resolved'
+            AND resolved_at > NOW() - INTERVAL '7 days'
         """),
-        {"incident_type": incident.incident_type}
+        {"appliance_id": appliance_id, "incident_type": incident.incident_type}
     )
-    l1_row = l1_match.fetchone()
+    chronic_count = chronic_check.scalar() or 0
+    if chronic_count >= 5:
+        resolution_tier = "L3"
+        logger.warning("Chronic drift detected — escalating to L3",
+                       site_id=incident.site_id,
+                       incident_type=incident.incident_type,
+                       resolved_count_7d=chronic_count)
+
+    # Step 1: Query l1_rules table for exact incident_type match (skip if chronic)
+    if resolution_tier != "L3":
+        l1_match = await db.execute(
+            text("""
+                SELECT runbook_id FROM l1_rules
+                WHERE enabled = true
+                AND incident_pattern->>'incident_type' = :incident_type
+                ORDER BY confidence DESC
+                LIMIT 1
+            """),
+            {"incident_type": incident.incident_type}
+        )
+        l1_row = l1_match.fetchone()
+    else:
+        l1_row = None
 
     if l1_row:
         matched_runbook = l1_row[0]
