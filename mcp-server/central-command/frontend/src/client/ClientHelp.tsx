@@ -265,7 +265,8 @@ export const ClientHelp: React.FC = () => {
           <h4 className="font-medium text-slate-900">Welcome to OsirisCare</h4>
           <p className="text-slate-600">
             Your compliance portal gives you visibility into your HIPAA compliance status,
-            evidence collection, and audit readiness.
+            evidence collection, and audit readiness. You can access it anytime by logging in
+            with your email and password, or via a magic link sent to your email.
           </p>
           <DashboardWalkthrough />
         </div>
@@ -499,6 +500,73 @@ export const ClientHelp: React.FC = () => {
             <div className="flex items-start gap-3 p-3 bg-slate-50 rounded-lg">
               <span className="bg-slate-200 text-slate-800 px-2 py-1 rounded text-sm font-medium">Viewer</span>
               <span className="text-slate-700 text-sm">View dashboard and evidence only - read-only access</span>
+            </div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'portal-features',
+      title: 'Portal Features Guide',
+      icon: '📱',
+      content: (
+        <div className="space-y-4">
+          <p className="text-slate-600">
+            Your client portal includes several sections accessible from the sidebar navigation:
+          </p>
+          <div className="space-y-3">
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h5 className="font-medium text-slate-900">Dashboard</h5>
+              <p className="text-sm text-slate-600 mt-1">
+                Overview of all your sites with compliance health scores, devices at risk, and recent activity.
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h5 className="font-medium text-slate-900">Evidence Archive</h5>
+              <p className="text-sm text-slate-600 mt-1">
+                Browse and download cryptographically signed compliance evidence bundles for audit purposes.
+                Filter by check type, result, and date range.
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h5 className="font-medium text-slate-900">Reports</h5>
+              <p className="text-sm text-slate-600 mt-1">
+                Monthly compliance reports with trend analysis. View current snapshot or historical monthly breakdowns.
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h5 className="font-medium text-slate-900">Healing Logs</h5>
+              <p className="text-sm text-slate-600 mt-1">
+                See every automated remediation action taken on your systems. Shows what was detected,
+                what action was taken, and the outcome (success/failure).
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h5 className="font-medium text-slate-900">Escalations</h5>
+              <p className="text-sm text-slate-600 mt-1">
+                View open tickets that require human attention. You can track status and
+                see recommended actions from your IT provider.
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h5 className="font-medium text-slate-900">Compliance Modules</h5>
+              <p className="text-sm text-slate-600 mt-1">
+                Complete your HIPAA compliance program: Security Risk Assessment, Policy Library,
+                Training Tracker, BAA management, Incident Response Plan, and more.
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h5 className="font-medium text-slate-900">Notifications</h5>
+              <p className="text-sm text-slate-600 mt-1">
+                Stay informed about compliance events, new escalations, and system status changes.
+              </p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <h5 className="font-medium text-slate-900">Security (2FA)</h5>
+              <p className="text-sm text-slate-600 mt-1">
+                Enable two-factor authentication using an authenticator app (Google Authenticator, Authy, etc.)
+                for additional account security. Strongly recommended for all users.
+              </p>
             </div>
           </div>
         </div>

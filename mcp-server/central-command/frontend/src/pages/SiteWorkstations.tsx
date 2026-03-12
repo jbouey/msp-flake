@@ -185,7 +185,15 @@ const WorkstationRow: React.FC<{
           </span>
         </td>
         <td className="px-4 py-3 text-label-secondary text-sm">
-          {formatRelativeTime(workstation.last_compliance_check)}
+          {workstation.last_compliance_check
+            ? formatRelativeTime(workstation.last_compliance_check)
+            : workstation.compliance_status === 'compliant'
+              ? 'Status inherited'
+              : workstation.compliance_status === 'drifted'
+                ? 'Check needed'
+                : workstation.compliance_status === 'unknown'
+                  ? 'Pending scan'
+                  : 'Never'}
         </td>
         <td className="px-4 py-3 text-right">
           <svg

@@ -332,7 +332,7 @@ const sections: Record<DocSection, { title: string; icon: string; items: DocItem
             <ul className="list-disc list-inside space-y-2 text-label-secondary text-sm">
               <li>Site created in Central Command with API key</li>
               <li>Nix installed on build machine</li>
-              <li>Target hardware: HP T640 or equivalent (4GB+ RAM)</li>
+              <li>Target hardware: Beelink S12 Pro or equivalent Intel N100 mini PC (4GB+ RAM)</li>
               <li>USB drive 8GB+ (will be erased)</li>
             </ul>
 
@@ -374,29 +374,21 @@ curl -X POST https://api.osiriscare.net/api/sites \\
 
             <h4 className="font-semibold mt-6">Step 3: Build the ISO</h4>
             <div className="p-4 bg-background-secondary rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
-              <pre>{`# Build the appliance ISO (requires Linux or remote builder)
-nix build -f flake-compliance.nix appliance-iso -o result-iso
+              <pre>{`# Build the appliance ISO (requires Nix)
+nix build .#appliance-iso -o result-iso
 
 # ISO will be at:
-ls -lh result-iso/iso/osiriscare-appliance.iso
-# -r--r--r-- 1 user user 850M Dec 31 12:00 osiriscare-appliance.iso`}</pre>
+ls -lh result-iso/iso/`}</pre>
             </div>
 
             <h4 className="font-semibold mt-6">Step 4: Flash to USB</h4>
             <div className="p-4 bg-background-secondary rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
-              <pre>{`# Find USB device (CAREFUL - this erases the drive!)
-lsblk
-# Example: /dev/sdc
+              <pre>{`# Write to USB using Balena Etcher (recommended)
+# Download from https://etcher.balena.io
+# Or use the ISO to boot directly - installation is automatic
 
-# Write ISO to USB
-sudo dd if=result-iso/iso/osiriscare-appliance.iso \\
-  of=/dev/sdX \\
-  bs=4M \\
-  status=progress \\
-  conv=fsync
-
-# Verify
-sync`}</pre>
+# DO NOT use dd for production appliances
+# The Golden Flake installer handles partitioning and setup`}</pre>
             </div>
 
             <h4 className="font-semibold mt-6">Step 5: Copy Configuration to USB</h4>
@@ -1737,28 +1729,28 @@ sudo dd if=result/nixos.img of=/dev/sdX \\
               <li>Verify Ethernet cable is connected (check link lights)</li>
               <li>Confirm DHCP is working: <code className="bg-fill-secondary px-1 rounded">journalctl -u systemd-networkd</code></li>
               <li>Test DNS: <code className="bg-fill-secondary px-1 rounded">ping api.osiriscare.net</code></li>
-              <li>Check agent logs: <code className="bg-fill-secondary px-1 rounded">journalctl -u compliance-agent</code></li>
-              <li>Verify API key is correct in <code className="bg-fill-secondary px-1 rounded">/etc/compliance-agent/config.yaml</code></li>
+              <li>Check agent logs: <code className="bg-fill-secondary px-1 rounded">journalctl -u appliance-daemon</code></li>
+              <li>Verify API key is correct in <code className="bg-fill-secondary px-1 rounded">/var/lib/msp/config.yaml</code></li>
             </ol>
 
             <h4 className="font-semibold mt-6">Connectivity Drops</h4>
             <ul className="list-disc list-inside space-y-2 text-label-secondary">
               <li>Check for firewall blocking outbound 443</li>
               <li>Verify static IP hasn't changed</li>
-              <li>Review <code className="bg-fill-secondary px-1 rounded">/var/log/mcp-client.log</code></li>
-              <li>Restart agent: <code className="bg-fill-secondary px-1 rounded">systemctl restart compliance-agent</code></li>
+              <li>Review logs: <code className="bg-fill-secondary px-1 rounded">journalctl -u appliance-daemon</code></li>
+              <li>Restart daemon: <code className="bg-fill-secondary px-1 rounded">systemctl restart appliance-daemon</code></li>
             </ul>
 
             <h4 className="font-semibold mt-6">Remote Access (Emergency)</h4>
             <div className="p-4 bg-background-secondary rounded-ios text-green-400 font-mono text-sm">
-              <pre>{`# SSH is enabled for admin user
-ssh admin@<appliance-ip>
+              <pre>{`# SSH is enabled for root user
+ssh root@<appliance-ip>
 
 # View real-time logs
-journalctl -u compliance-agent -f
+journalctl -u appliance-daemon -f
 
-# Manual check-in
-/opt/compliance-agent/bin/phone-home --now`}</pre>
+# Restart daemon to force check-in
+systemctl restart appliance-daemon`}</pre>
             </div>
           </div>
         ),
@@ -1771,7 +1763,7 @@ journalctl -u compliance-agent -f
             <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-ios">
               <p className="text-amber-400 font-medium">Important: A/B Partition System</p>
               <p className="text-sm text-label-secondary mt-1">
-                Starting with ISO v44, appliances use an A/B partition system for zero-downtime updates.
+                Appliances use the Golden Flake architecture for zero-downtime updates.
                 The first deployment must be via USB flash, then future updates work via OTA.
               </p>
             </div>
@@ -1781,75 +1773,66 @@ journalctl -u compliance-agent -f
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <span className="text-label-tertiary">Version:</span>
-                  <span className="ml-2 font-mono">v44</span>
+                  <span className="ml-2 font-mono">v0.3.20</span>
                 </div>
                 <div>
-                  <span className="text-label-tertiary">Agent:</span>
-                  <span className="ml-2 font-mono">1.0.44</span>
+                  <span className="text-label-tertiary">Daemon:</span>
+                  <span className="ml-2 font-mono">v0.3.20</span>
                 </div>
                 <div className="col-span-2">
                   <span className="text-label-tertiary">SHA256:</span>
-                  <code className="ml-2 text-xs bg-background-secondary px-2 py-1 rounded">1daf70e124c71c8c0c4826fb283e9e5ba2c6a9c4bff230d74d27f8a7fbf5a7ce</code>
+                  <code className="ml-2 text-xs bg-background-secondary px-2 py-1 rounded">Check Fleet Updates page for current hash</code>
                 </div>
               </div>
             </div>
 
             <h4 className="font-semibold mt-6">Download ISO</h4>
             <div className="p-4 bg-background-secondary rounded-ios text-green-400 font-mono text-sm overflow-x-auto">
-              <pre>{`# Download from VPS (if you have SSH access)
-scp root@178.156.162.116:/opt/mcp-server/static/releases/v44/nixos-appliance-v44.iso ~/Downloads/
+              <pre>{`# Build the installer ISO (requires Nix)
+nix build .#appliance-iso -o result-iso
 
-# Or download via HTTPS
-curl -O https://api.osiriscare.net/releases/v44/nixos-appliance-v44.iso
+# The ISO will be at:
+ls -lh result-iso/iso/
 
-# Verify SHA256
-shasum -a 256 nixos-appliance-v44.iso
-# Should match: 1daf70e124c71c8c0c4826fb283e9e5ba2c6a9c4bff230d74d27f8a7fbf5a7ce`}</pre>
+# Or download the latest build from Fleet Updates page`}</pre>
             </div>
 
             <h4 className="font-semibold mt-6">Flash to USB</h4>
             <div className="space-y-3">
               <p className="text-sm text-label-secondary">
-                Use Balena Etcher (recommended) or dd to write the ISO to a USB drive.
+                Use Balena Etcher (recommended) to write the ISO to a USB drive. Do not use dd.
               </p>
               <div className="p-4 bg-background-secondary rounded-ios text-green-400 font-mono text-sm">
-                <pre>{`# Option 1: Balena Etcher (GUI)
+                <pre>{`# Option 1: Balena Etcher (GUI - Recommended)
 # Download from https://etcher.balena.io
 # Select ISO, select USB drive, click Flash
 
-# Option 2: dd (macOS/Linux)
-# Find USB device first
-diskutil list   # macOS
-lsblk           # Linux
-
-# Unmount and write (replace diskN with your device)
-diskutil unmountDisk /dev/diskN   # macOS
-sudo dd if=nixos-appliance-v44.iso of=/dev/rdiskN bs=4m
-# Note: Use /dev/rdiskN (raw) on macOS for faster writes`}</pre>
+# Option 2: Using the NixOS installer
+# Boot from USB, installation is automatic
+# Appliance calls home, MAC lookup provisions identity`}</pre>
               </div>
             </div>
 
             <h4 className="font-semibold mt-6">Deploy to Appliance</h4>
             <ol className="list-decimal list-inside space-y-2 text-label-secondary">
-              <li>Insert USB into appliance (HP T640 or compatible)</li>
+              <li>Insert USB into appliance (Beelink S12 Pro or compatible Intel N100 mini PC)</li>
               <li>Power on and boot from USB (may need F12 for boot menu)</li>
               <li>Wait for NixOS to boot and install (~5 minutes)</li>
               <li>Appliance will auto-register and check in to Central Command</li>
-              <li>Verify in Fleet Updates page that appliance shows v44</li>
+              <li>Verify in Fleet Updates page that appliance shows current version</li>
             </ol>
 
             <h4 className="font-semibold mt-6">A/B Partition Layout</h4>
             <div className="p-4 bg-fill-secondary rounded-ios font-mono text-sm">
               <pre className="text-label-secondary">{`/dev/sda (Internal SSD)
-├── sda1  512MB   ESP (FAT32) - GRUB bootloader, ab_state
-├── sda2  2GB     Partition A (squashfs, read-only)
-├── sda3  2GB     Partition B (squashfs, read-only)
-└── sda4  *       Data partition (ext4) - /var/lib/msp`}</pre>
+├── sda1  512MB   ESP (FAT32) - systemd-boot
+├── sda2  8GB     MSP-DATA partition
+└── sda3  *       Root partition (NixOS)`}</pre>
             </div>
 
-            <h4 className="font-semibold mt-6">OTA Updates (After v44)</h4>
+            <h4 className="font-semibold mt-6">OTA Updates</h4>
             <p className="text-sm text-label-secondary">
-              Once an appliance is running v44+, future updates are deployed via Fleet Updates:
+              Once an appliance is running, future updates are deployed via Fleet Updates:
             </p>
             <ol className="list-decimal list-inside space-y-2 text-label-secondary mt-2">
               <li>Navigate to Fleet Updates in Central Command</li>
@@ -1865,7 +1848,7 @@ sudo dd if=nixos-appliance-v44.iso of=/dev/rdiskN bs=4m
               <p className="text-sm text-label-secondary">
                 If an update fails health checks after 3 boot attempts, the appliance
                 automatically rolls back to the previous working partition. Manual rollback
-                is also available via the GRUB recovery menu.
+                is also available via the systemd-boot recovery menu.
               </p>
             </div>
           </div>
@@ -1953,7 +1936,7 @@ sudo dd if=nixos-appliance-v44.iso of=/dev/rdiskN bs=4m
             <div className="p-4 bg-fill-secondary rounded-ios">
               <h4 className="font-semibold text-level-l2">L2: LLM Planner (15-20%)</h4>
               <p className="text-sm text-label-secondary mt-1">
-                GPT-4 powered analysis for novel issues. Generates remediation plans
+                LLM-powered analysis (via Claude) for novel issues. Generates remediation plans
                 in 2-5 seconds at ~$0.001 per incident. Successful patterns promote to L1.
               </p>
             </div>
@@ -2109,8 +2092,8 @@ sudo dd if=nixos-appliance-v44.iso of=/dev/rdiskN bs=4m
         content: (
           <div className="space-y-4">
             <p className="text-label-secondary">
-              Portal links are magic URLs that give clients read-only access to their
-              compliance dashboard. No login required - the token in the URL authenticates access.
+              Clients access their compliance portal via email/password login or magic link.
+              The portal provides real-time visibility into compliance status, evidence, and reports.
             </p>
 
             <h4 className="font-semibold mt-4">Via Central Command</h4>
@@ -2132,13 +2115,18 @@ sudo dd if=nixos-appliance-v44.iso of=/dev/rdiskN bs=4m
 }`}</pre>
             </div>
 
-            <h4 className="font-semibold mt-4">Portal Features</h4>
+            <h4 className="font-semibold mt-4">Client Portal Features</h4>
             <ul className="list-disc list-inside space-y-2 text-label-secondary">
               <li>Real-time compliance score and KPIs</li>
-              <li>8 control status tiles with HIPAA mappings</li>
-              <li>Recent incident log with auto-fix status</li>
-              <li>Evidence bundle downloads</li>
-              <li>Monthly compliance packet (PDF)</li>
+              <li>Control status tiles with HIPAA mappings</li>
+              <li>Healing logs showing automated remediation actions</li>
+              <li>Escalation tracking for issues requiring human attention</li>
+              <li>Evidence bundle archive with download</li>
+              <li>Monthly compliance reports with trend analysis</li>
+              <li>HIPAA compliance modules (SRA, policies, training, BAAs)</li>
+              <li>Notifications for compliance events</li>
+              <li>Two-factor authentication (TOTP)</li>
+              <li>Drift configuration per site</li>
             </ul>
           </div>
         ),
@@ -2180,21 +2168,26 @@ sudo dd if=nixos-appliance-v44.iso of=/dev/rdiskN bs=4m
 
 Hi [Contact Name],
 
-Your HIPAA compliance monitoring portal is now active. You can access your real-time compliance dashboard at any time using this secure link:
+Your HIPAA compliance monitoring portal is now active. You can access your real-time compliance dashboard at:
 
-[PASTE PORTAL LINK HERE]
+https://dashboard.osiriscare.net/client/login
+
+Log in with your email: [CLIENT EMAIL]
+Temporary password: [TEMP PASSWORD]
+
+You'll be prompted to set a new password on first login. We strongly recommend enabling two-factor authentication (Settings > Security).
 
 What You'll See:
-• Overall compliance health score
-• Status of all 8 HIPAA security controls
-• Recent automated remediation activity
+• Overall compliance health score across all sites
+• Automated remediation activity (healing logs)
 • Evidence bundle archive for audit purposes
-
-No login required - simply click the link to view your dashboard.
+• Monthly compliance reports with trends
+• HIPAA compliance modules (policies, training, risk assessment)
+• Escalation tracking for issues needing attention
 
 Tips:
-• Bookmark this link for easy access
-• Share with your compliance officer or practice manager
+• Bookmark the login page for easy access
+• Enable 2FA for additional security
 • The dashboard updates in real-time as our appliance monitors your systems
 
 Questions? Reply to this email or call us at [Support Number].
@@ -2245,10 +2238,11 @@ OsirisCare Compliance Team`}
             <h4 className="font-semibold text-lg">Common Client Questions</h4>
             <div className="space-y-3">
               <div className="p-4 bg-fill-secondary rounded-ios">
-                <p className="font-medium">"Do I need to log in?"</p>
+                <p className="font-medium">"How do I log in?"</p>
                 <p className="text-sm text-label-tertiary mt-1">
-                  No. The portal uses a secure magic link - just click the URL we sent.
-                  No username or password needed. The link itself contains your secure access token.
+                  Visit dashboard.osiriscare.net/client/login. Log in with your email and password,
+                  or request a magic link sent to your email. If 2FA is enabled, you'll enter
+                  a code from your authenticator app after your password.
                 </p>
               </div>
               <div className="p-4 bg-fill-secondary rounded-ios">
@@ -2373,8 +2367,8 @@ OsirisCare Compliance Team`}
                 <li>Verify network connectivity (ping api.osiriscare.net)</li>
                 <li>Check firewall allows outbound HTTPS (443)</li>
                 <li>Verify API key in config matches Central Command</li>
-                <li>Review agent logs: journalctl -u compliance-agent</li>
-                <li>Restart agent: systemctl restart compliance-agent</li>
+                <li>Review daemon logs: journalctl -u appliance-daemon</li>
+                <li>Restart daemon: systemctl restart appliance-daemon</li>
               </ol>
             </div>
 
