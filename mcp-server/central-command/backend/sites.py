@@ -886,7 +886,7 @@ async def _add_manual_device(pool, site_id: str, device: ManualDeviceAdd) -> dic
                     first_seen_at, last_seen_at
                 )
                 SELECT
-                    sa.appliance_id, $1, $2, $3, $4,
+                    sa.appliance_id::uuid, $1, $2, $3, $4,
                     $5, $6, 'manual', 'unknown',
                     NOW(), NOW()
                 FROM site_appliances sa
