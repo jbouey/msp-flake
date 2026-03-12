@@ -879,6 +879,7 @@ async def _add_manual_device(pool, site_id: str, device: ManualDeviceAdd) -> dic
             credential_id = str(row['id'])
 
             # Upsert into discovered_devices for inventory visibility
+            # Use appliances.id (UUID) not site_appliances.appliance_id (compound string)
             await conn.execute("""
                 INSERT INTO discovered_devices (
                     appliance_id, site_id, local_device_id, hostname, ip_address,
@@ -886,11 +887,11 @@ async def _add_manual_device(pool, site_id: str, device: ManualDeviceAdd) -> dic
                     first_seen_at, last_seen_at
                 )
                 SELECT
-                    sa.appliance_id::uuid, $1, $2, $3, $4,
+                    a.id, $1, $2, $3, $4,
                     $5, $6, 'manual', 'unknown',
                     NOW(), NOW()
-                FROM site_appliances sa
-                WHERE sa.site_id = $1
+                FROM appliances a
+                WHERE a.site_id = $1
                 LIMIT 1
                 ON CONFLICT (appliance_id, local_device_id) DO UPDATE
                 SET hostname = EXCLUDED.hostname, ip_address = EXCLUDED.ip_address,
