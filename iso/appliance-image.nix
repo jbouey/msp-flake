@@ -59,7 +59,7 @@ let
     version = "0.3.20";
     src = ../appliance;
 
-    vendorHash = "sha256-JbeTjY8oNJsh6x1mjQFif45WRojjjW/90+9Y0btN/RfM=";
+    vendorHash = "sha256-JbeTjY0oNJsh6xlmjQFif45WAojjW/9Q+9YObtN/AfM=";
 
     ldflags = [
       "-s" "-w"
@@ -103,7 +103,7 @@ let
     pname = "local-portal-frontend";
     version = "0.1.0";
     src = ../packages/local-portal/frontend;
-    npmDepsHash = "sha256-JbeTjY8oNJsh6x1mjQFif45WRojjjW/90+9Y0btN/RfM=";  # TODO: Update after first build
+    npmDepsHash = "sha256-JbeTjY0oNJsh6xlmjQFif45WAojjW/9Q+9YObtN/AfM=";  # TODO: Update after first build
     buildPhase = "npm run build";
     installPhase = ''
       mkdir -p $out
