@@ -29,8 +29,7 @@ async def require_appliance_auth(request: Request) -> str:
     """Validate appliance Bearer token from Authorization header.
 
     Extracts the API key, looks up the site_id from the request body,
-    and verifies the key against the api_keys table. Falls back to
-    checking site_appliances if api_keys has no entries (graceful migration).
+    and verifies the key against the api_keys table.
 
     Returns the validated site_id on success, raises 401 on failure.
     """
@@ -54,34 +53,8 @@ async def require_appliance_auth(request: Request) -> str:
 
     pool = await get_pool()
     async with admin_connection(pool) as conn:
-        # Primary: verify against api_keys table
-        try:
-            if await verify_site_api_key(conn, site_id, api_key):
-                return site_id
-
-            # Check if api_keys table has any entries for this site
-            has_api_keys = await conn.fetchval(
-                "SELECT EXISTS(SELECT 1 FROM api_keys WHERE site_id = $1 AND active = true)",
-                site_id
-            )
-        except Exception:
-            # api_keys table doesn't exist yet — treat as no keys configured
-            has_api_keys = False
-
-        if not has_api_keys:
-            # No API keys configured for this site yet — allow if site exists
-            # (graceful migration for appliances provisioned before API keys)
-            # NOTE: This fallback should be removed once all appliances have API keys
-            site_exists = await conn.fetchval(
-                "SELECT EXISTS(SELECT 1 FROM sites WHERE site_id = $1)",
-                site_id
-            )
-            if site_exists:
-                logger.warning(
-                    f"Appliance auth fallback: site={site_id} has no API keys, allowing checkin. "
-                    "This fallback will be removed in a future release."
-                )
-                return site_id
+        if await verify_site_api_key(conn, site_id, api_key):
+            return site_id
 
     raise HTTPException(status_code=401, detail="Invalid API key for site")
 

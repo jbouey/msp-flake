@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # SET LOCAL doesn't support $1 parameterized queries in PostgreSQL.
 # Validate site_id to prevent SQL injection before interpolating.
 _SAFE_SITE_ID = re.compile(r"^[a-zA-Z0-9._-]{1,128}$")
+_SAFE_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
 def _validated_site_id(site_id: str) -> str:
@@ -92,6 +93,41 @@ async def admin_connection(pool: asyncpg.Pool):
     """
     async with pool.acquire() as conn:
         yield conn
+
+
+def _validated_org_id(org_id: str) -> str:
+    """Validate org_id (UUID) is safe for SET LOCAL interpolation."""
+    org_str = str(org_id)
+    if not _SAFE_UUID.match(org_str):
+        raise ValueError(f"Invalid org_id for RLS context: {org_str!r}")
+    return org_str
+
+
+@asynccontextmanager
+async def org_connection(
+    pool: asyncpg.Pool,
+    org_id: str,
+):
+    """Acquire a connection with org-level tenant context for RLS.
+
+    Sets app.is_admin='false' and app.current_org=org_id.
+    RLS policies on site-level tables use:
+        site_id IN (SELECT site_id FROM sites WHERE client_org_id = current_org)
+    Tables with direct org_id columns (e.g. client_escalation_preferences)
+    check client_org_id = current_org.
+
+    Usage:
+        async with org_connection(pool, org_id=user["org_id"]) as conn:
+            rows = await conn.fetch("SELECT * FROM incidents")
+            # RLS filters to sites owned by this org
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            safe_org = _validated_org_id(org_id)
+            await conn.execute(f"SET LOCAL app.current_org = '{safe_org}'")
+            await conn.execute("SET LOCAL app.is_admin = 'false'")
+            await conn.execute("SET LOCAL app.current_tenant = ''")
+            yield conn
 
 
 async def set_tenant_context(

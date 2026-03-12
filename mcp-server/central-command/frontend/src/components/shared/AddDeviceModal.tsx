@@ -59,9 +59,17 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({
         body.ssh_key = sshKey;
       }
 
+      const csrfToken = document.cookie
+        .split('; ')
+        .find(c => c.startsWith('csrf_token='))
+        ?.split('=')[1] || '';
+
       const res = await fetch(apiEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken,
+        },
         credentials: 'include',
         body: JSON.stringify(body),
       });

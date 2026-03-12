@@ -42,7 +42,7 @@ except ImportError:
 
 from .fleet import get_pool
 from .db_utils import _uid
-from .tenant_middleware import tenant_connection, admin_connection
+from .tenant_middleware import tenant_connection, admin_connection, org_connection
 
 logger = logging.getLogger(__name__)
 
@@ -483,7 +483,7 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Get org details
         org = await conn.fetchrow("""
             SELECT co.*, p.name as partner_name, p.brand_name as partner_brand
@@ -574,7 +574,7 @@ async def list_sites(user: dict = Depends(require_client_user)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         sites = await conn.fetch("""
             SELECT s.site_id, s.clinic_name, s.status, s.tier,
                    s.onboarding_stage, s.created_at,
@@ -887,7 +887,7 @@ async def get_client_devices_at_risk(
         for ct in types:
             reverse_map[ct] = cat
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Verify site belongs to org
         site = await conn.fetchrow("""
             SELECT site_id FROM sites
@@ -1121,7 +1121,7 @@ async def list_evidence(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Build query with filters
         query = """
             SELECT cb.id, cb.site_id, cb.check_type, cb.check_result,
@@ -1188,7 +1188,7 @@ async def get_evidence_detail(bundle_id: str, user: dict = Depends(require_clien
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Try to find by UUID id first, then by bundle_id string
         bundle = await conn.fetchrow("""
             SELECT cb.*, s.clinic_name
@@ -1256,7 +1256,7 @@ async def download_evidence(bundle_id: str, user: dict = Depends(require_client_
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # compliance_bundles doesn't store in MinIO, but we can return the bundle data
         bundle = await conn.fetchrow("""
             SELECT cb.bundle_id, cb.checks, cb.summary, cb.checked_at, cb.check_type, cb.check_result
@@ -1300,7 +1300,7 @@ async def verify_evidence(bundle_id: str, user: dict = Depends(require_client_us
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         bundle = await conn.fetchrow("""
             SELECT cb.* FROM compliance_bundles cb
             JOIN sites s ON s.site_id = cb.site_id
@@ -1336,7 +1336,7 @@ async def list_monthly_reports(user: dict = Depends(require_client_user)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         reports = await conn.fetch("""
             SELECT id, report_month, overall_score, controls_passed,
                    controls_failed, controls_total, incidents_count,
@@ -1376,7 +1376,7 @@ async def download_monthly_report(month: str, user: dict = Depends(require_clien
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid month format. Use YYYY-MM.")
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         report = await conn.fetchrow("""
             SELECT pdf_path, pdf_hash
             FROM client_monthly_reports
@@ -1435,7 +1435,7 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Get all sites for this org
         sites = await conn.fetch("""
             SELECT s.site_id, s.clinic_name, s.status, s.tier
@@ -1559,7 +1559,7 @@ async def list_notifications(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         query = """
             SELECT id, type, severity, title, message, action_url, action_label,
                    is_read, read_at, created_at
@@ -1607,7 +1607,7 @@ async def mark_notification_read(notification_id: str, user: dict = Depends(requ
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         result = await conn.execute("""
             UPDATE client_notifications
             SET is_read = true, read_at = NOW(), read_by_user_id = $1
@@ -1626,7 +1626,7 @@ async def mark_all_notifications_read(user: dict = Depends(require_client_user))
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         result = await conn.execute("""
             UPDATE client_notifications
             SET is_read = true, read_at = NOW(), read_by_user_id = $1
@@ -1649,7 +1649,7 @@ async def list_users(user: dict = Depends(require_client_admin)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         users = await conn.fetch("""
             SELECT id, email, name, role, is_active, email_verified,
                    last_login_at, created_at
@@ -1682,7 +1682,7 @@ async def invite_user(invite: InviteUser, user: dict = Depends(require_client_ad
     org_id = user["org_id"]
     email = invite.email.lower()
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Check if user already exists
         existing = await conn.fetchval("""
             SELECT 1 FROM client_users WHERE client_org_id = $1 AND email = $2
@@ -1746,7 +1746,7 @@ async def remove_user(target_user_id: str, user: dict = Depends(require_client_a
     if target_user_id == str(user["user_id"]):
         raise HTTPException(status_code=400, detail="Cannot remove yourself")
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Check target user
         target = await conn.fetchrow("""
             SELECT role FROM client_users WHERE id = $1 AND client_org_id = $2
@@ -1791,7 +1791,7 @@ async def update_user_role(
     if target_user_id == str(user["user_id"]):
         raise HTTPException(status_code=400, detail="Cannot change your own role")
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         result = await conn.execute("""
             UPDATE client_users SET role = $1, updated_at = NOW()
             WHERE id = $2 AND client_org_id = $3 AND role != 'owner'
@@ -1818,8 +1818,9 @@ async def set_password(body: PasswordSet, user: dict = Depends(require_client_us
 
     password_hash = hash_password(body.password)
     pool = await get_pool()
+    org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         await conn.execute("""
             UPDATE client_users SET password_hash = $1, updated_at = NOW()
             WHERE id = $2
@@ -1838,7 +1839,7 @@ async def request_transfer(body: TransferRequest, user: dict = Depends(require_c
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Check for existing pending request
         existing = await conn.fetchval("""
             SELECT 1 FROM partner_transfer_requests
@@ -1891,7 +1892,7 @@ async def get_transfer_status(user: dict = Depends(require_client_owner)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         request = await conn.fetchrow("""
             SELECT ptr.*, p.name as from_partner_name
             FROM partner_transfer_requests ptr
@@ -1924,7 +1925,7 @@ async def cancel_transfer(user: dict = Depends(require_client_owner)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         result = await conn.execute("""
             UPDATE partner_transfer_requests
             SET status = 'cancelled', updated_at = NOW()
@@ -1958,7 +1959,7 @@ async def list_healing_logs(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         query = """
             SELECT et.execution_id, et.site_id, s.clinic_name,
                    et.runbook_id, et.incident_type, et.success,
@@ -2024,7 +2025,7 @@ async def list_promotion_candidates(user: dict = Depends(require_client_user)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         rows = await conn.fetch("""
             SELECT
                 aps.id,
@@ -2083,7 +2084,7 @@ async def forward_promotion_candidate(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Verify candidate belongs to a site owned by this client org
         candidate = await conn.fetchrow("""
             SELECT aps.id, aps.pattern_signature, aps.site_id,
@@ -2170,7 +2171,7 @@ async def approve_promotion_candidate(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Verify candidate belongs to this client org AND site is full_coverage
         candidate = await conn.fetchrow("""
             SELECT aps.id, aps.pattern_signature, aps.site_id, aps.check_type,
@@ -2298,7 +2299,7 @@ async def reject_promotion_candidate(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         candidate = await conn.fetchrow("""
             SELECT aps.id, aps.pattern_signature, aps.site_id, s.healing_tier
             FROM aggregated_pattern_stats aps
@@ -2373,7 +2374,7 @@ async def get_billing_info(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         org = await conn.fetchrow("""
             SELECT stripe_customer_id, subscription_status, subscription_plan,
                    billing_email, next_billing_date
@@ -2452,7 +2453,7 @@ async def create_checkout_session(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         org = await conn.fetchrow("""
             SELECT id, name, stripe_customer_id
             FROM client_orgs
@@ -2527,7 +2528,7 @@ async def create_billing_portal_session(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         org = await conn.fetchrow("""
             SELECT stripe_customer_id
             FROM client_orgs
@@ -2565,7 +2566,7 @@ async def list_invoices(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         org = await conn.fetchrow("""
             SELECT stripe_customer_id
             FROM client_orgs
@@ -2808,8 +2809,9 @@ async def client_totp_setup(user: dict = Depends(require_client_user)):
 
     pool = await get_pool()
     user_id = str(user["user_id"])
+    org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         row = await conn.fetchrow(
             "SELECT mfa_enabled, email FROM client_users WHERE id = $1",
             user_id
@@ -2845,8 +2847,9 @@ async def client_totp_verify(
 
     pool = await get_pool()
     user_id = str(user["user_id"])
+    org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         row = await conn.fetchrow(
             "SELECT password_hash, mfa_secret, mfa_enabled FROM client_users WHERE id = $1",
             user_id
@@ -2891,8 +2894,9 @@ async def client_totp_disable(
 
     pool = await get_pool()
     user_id = str(user["user_id"])
+    org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         row = await conn.fetchrow(
             "SELECT password_hash, mfa_enabled FROM client_users WHERE id = $1",
             user_id
@@ -2932,7 +2936,7 @@ async def get_agent_install_info(user: dict = Depends(require_client_user)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         # Get all sites + their appliances for this org
         rows = await conn.fetch("""
             SELECT s.site_id, s.clinic_name,
@@ -3352,7 +3356,7 @@ async def get_escalation_preferences(user: dict = Depends(require_client_user)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         row = await conn.fetchrow("""
             SELECT escalation_mode, email_enabled, email_recipients,
                    slack_enabled, slack_webhook_url,
@@ -3387,7 +3391,7 @@ async def update_escalation_preferences(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         await conn.execute("""
             INSERT INTO client_escalation_preferences (
                 client_org_id, escalation_mode, email_enabled, email_recipients,
@@ -3431,7 +3435,7 @@ async def list_client_escalations(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         query = """
             SELECT t.id, t.site_id, s.clinic_name as site_name,
                    t.incident_type, t.severity, t.priority, t.title, t.summary,
@@ -3496,7 +3500,7 @@ async def get_client_escalation_detail(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         row = await conn.fetchrow("""
             SELECT t.*, s.clinic_name as site_name
             FROM escalation_tickets t
@@ -3528,7 +3532,7 @@ async def client_acknowledge_ticket(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         result = await conn.execute("""
             UPDATE escalation_tickets t
             SET status = 'acknowledged',
@@ -3563,7 +3567,7 @@ async def client_resolve_ticket(
 
     resolved_by = user.get("email", user.get("user_id", "client"))
 
-    async with admin_connection(pool) as conn:
+    async with org_connection(pool, org_id=org_id) as conn:
         result = await conn.execute("""
             UPDATE escalation_tickets t
             SET status = 'resolved',
