@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from enum import Enum
 
 from .fleet import get_pool
-from .auth import require_auth, require_operator
+from .auth import require_auth, require_operator, require_admin
 from .tenant_middleware import tenant_connection, admin_connection
 from .websocket_manager import broadcast_event
 from .fleet_updates import get_fleet_orders_for_appliance, record_fleet_order_completion
