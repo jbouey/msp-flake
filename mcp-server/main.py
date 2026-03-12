@@ -1455,7 +1455,9 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     now = datetime.now(timezone.utc)
 
     # Deduplicate: Check for existing incident of same type (open OR recently resolved)
-    # This prevents flapping: L1 heals → drift recurs → new incident every cycle
+    # This prevents flapping: L1 heals → drift recurs → new incident every cycle.
+    # 24-hour resolved window prevents recurring driftscans from creating 5+ incidents/day
+    # for the same check (e.g. windows_update, linux_unattended_upgrades).
     existing_check = await db.execute(
         text("""
             SELECT id, status FROM incidents
@@ -1463,9 +1465,9 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             AND incident_type = :incident_type
             AND (
                 (status IN ('open', 'resolving', 'escalated'))
-                OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '2 hours')
+                OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '24 hours')
             )
-            AND created_at > NOW() - INTERVAL '4 hours'
+            AND created_at > NOW() - INTERVAL '48 hours'
             ORDER BY created_at DESC
             LIMIT 1
         """),
@@ -1521,7 +1523,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             "incident_type": incident.incident_type,
             "severity": incident.severity,
             "check_type": incident.check_type,
-            "details": json.dumps(incident.details),
+            "details": json.dumps({**incident.details, "hostname": incident.host_id}),
             "pre_state": json.dumps(incident.pre_state),
             "hipaa_controls": incident.hipaa_controls,
             "reported_at": now

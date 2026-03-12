@@ -697,7 +697,7 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
 
     When the network scanner discovers devices typed as 'workstation' or 'server',
     upsert them into the workstations table so the Workstations tab shows data.
-    Compliance status is derived from the discovered_devices compliance_status.
+    Compliance status is derived from recent incidents targeting each device.
     """
     devices = await conn.fetch("""
         SELECT d.id, d.hostname, d.ip_address, d.mac_address,
@@ -713,13 +713,79 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
     if not devices:
         return
 
+    # Derive compliance status from incidents: query recent incidents that have
+    # hostname in their details JSON (set by Go daemon's incident reporter).
+    # Also check incidents keyed by appliance_id for the local NixOS appliance.
+    incident_status = await conn.fetch("""
+        SELECT
+            details->>'hostname' as hostname,
+            COUNT(*) FILTER (WHERE status IN ('open', 'resolving')) as open_count,
+            COUNT(*) FILTER (WHERE status = 'resolved') as resolved_count,
+            MAX(created_at) as last_incident_at
+        FROM incidents
+        WHERE site_id = $1
+        AND created_at > NOW() - INTERVAL '7 days'
+        AND details->>'hostname' IS NOT NULL
+        GROUP BY details->>'hostname'
+    """, site_id)
+
+    # Build lookup: hostname/IP → compliance status + last check time
+    compliance_map = {}
+    for row in incident_status:
+        h = row['hostname']
+        if row['open_count'] > 0:
+            compliance_map[h] = ('drifted', row['last_incident_at'])
+        elif row['resolved_count'] > 0:
+            compliance_map[h] = ('compliant', row['last_incident_at'])
+
+    # Site-level fallback: derive compliance per platform from incidents without
+    # per-host hostname (pre-backfill data). This gives a reasonable status
+    # for devices where we have incident data but no per-host linkage yet.
+    platform_status = await conn.fetch("""
+        SELECT
+            COALESCE(details->>'platform', 'unknown') as platform,
+            COUNT(*) FILTER (WHERE status IN ('open', 'resolving')) as open_count,
+            COUNT(*) FILTER (WHERE status = 'resolved') as resolved_count,
+            MAX(created_at) as last_incident_at
+        FROM incidents
+        WHERE site_id = $1
+        AND created_at > NOW() - INTERVAL '7 days'
+        GROUP BY COALESCE(details->>'platform', 'unknown')
+    """, site_id)
+
+    platform_map = {}
+    for row in platform_status:
+        p = row['platform']
+        if row['open_count'] > 0:
+            platform_map[p] = ('drifted', row['last_incident_at'])
+        elif row['resolved_count'] > 0:
+            platform_map[p] = ('compliant', row['last_incident_at'])
+
     upserted = 0
     for dev in devices:
         hostname = dev['hostname'] or dev['ip_address']
         if not hostname:
             continue
 
-        status = dev['compliance_status'] or 'unknown'
+        # Check incident-derived status: per-host first, then platform fallback
+        ip = dev['ip_address']
+        incident_data = compliance_map.get(ip) or compliance_map.get(hostname)
+        if not incident_data:
+            # Platform fallback: match OS to incident platform
+            os_lower = (dev['os_name'] or '').lower()
+            if 'windows' in os_lower:
+                incident_data = platform_map.get('windows')
+            elif 'linux' in os_lower or 'nixos' in os_lower:
+                incident_data = platform_map.get('linux')
+            elif 'darwin' in os_lower or 'macos' in os_lower or 'apple' in os_lower:
+                incident_data = platform_map.get('linux')  # macOS scanned as linux targets
+
+        if incident_data:
+            status, last_check = incident_data
+        else:
+            status = dev['compliance_status'] or 'unknown'
+            last_check = None
+
         # last_seen within 30 min = online
         online = False
         if dev['last_seen_at']:
@@ -733,8 +799,8 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
             INSERT INTO workstations (
                 site_id, hostname, ip_address, mac_address,
                 os_name, os_version, online, last_seen,
-                compliance_status, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                compliance_status, last_compliance_check, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
             ON CONFLICT (site_id, hostname) DO UPDATE SET
                 ip_address = COALESCE(EXCLUDED.ip_address, workstations.ip_address),
                 mac_address = COALESCE(EXCLUDED.mac_address, workstations.mac_address),
@@ -743,6 +809,7 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
                 online = EXCLUDED.online,
                 last_seen = COALESCE(EXCLUDED.last_seen, workstations.last_seen),
                 compliance_status = EXCLUDED.compliance_status,
+                last_compliance_check = COALESCE(EXCLUDED.last_compliance_check, workstations.last_compliance_check),
                 updated_at = NOW()
         """,
             site_id,
@@ -754,6 +821,7 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
             online,
             dev['last_seen_at'],
             status,
+            last_check,
         )
         upserted += 1
 
