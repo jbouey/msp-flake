@@ -143,6 +143,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/devices/",
         "/incidents",
         "/checkin",
+        "/api/logs/",
     )
 
     # Endpoints with stricter limits

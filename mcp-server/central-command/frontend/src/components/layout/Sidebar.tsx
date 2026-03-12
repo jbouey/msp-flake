@@ -197,6 +197,16 @@ const navItems: NavItem[] = [
     ),
   },
   {
+    path: '/logs',
+    label: 'Logs',
+    adminOnly: true,
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 10h16M4 14h16M4 18h12" />
+      </svg>
+    ),
+  },
+  {
     path: '/settings',
     label: 'Settings',
     adminOnly: true,

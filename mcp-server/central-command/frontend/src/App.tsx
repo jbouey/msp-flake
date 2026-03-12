@@ -32,6 +32,7 @@ const Partners = lazy(() => import('./pages/Partners').then(m => ({ default: m.P
 const Notifications = lazy(() => import('./pages/Notifications').then(m => ({ default: m.Notifications })));
 const NotificationSettings = lazy(() => import('./pages/NotificationSettings').then(m => ({ default: m.NotificationSettings })));
 const Incidents = lazy(() => import('./pages/Incidents').then(m => ({ default: m.Incidents })));
+const LogExplorer = lazy(() => import('./pages/LogExplorer').then(m => ({ default: m.LogExplorer })));
 const L4Queue = lazy(() => import('./pages/L4Queue').then(m => ({ default: m.L4Queue })));
 const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 // These have default exports
@@ -325,6 +326,7 @@ const AppLayout: React.FC = () => {
               <Route path="/runbook-config" element={<RunbookConfig />} />
               <Route path="/learning" element={<Learning />} />
               <Route path="/audit-logs" element={<AuditLogs />} />
+              <Route path="/logs" element={<LogExplorer />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/settings/oauth" element={<AdminOAuthSettings />} />
               <Route path="/fleet-updates" element={<FleetUpdates />} />

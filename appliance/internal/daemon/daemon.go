@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/healing"
 	"github.com/osiriscare/appliance/internal/l2bridge"
+	"github.com/osiriscare/appliance/internal/logshipper"
 	"github.com/osiriscare/appliance/internal/maputil"
 	"github.com/osiriscare/appliance/internal/l2planner"
 	"github.com/osiriscare/appliance/internal/orders"
@@ -131,6 +133,9 @@ type Daemon struct {
 	// Drift check types disabled by site config (received from checkin response)
 	disabledChecks   map[string]bool
 	disabledChecksMu sync.RWMutex
+
+	// Log shipper: tails journald and ships batches to Central Command
+	logShipper *logshipper.Shipper
 }
 
 // safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
@@ -206,6 +211,21 @@ func New(cfg *Config) *Daemon {
 		d.telemetry.EnableQueue(cfg.StateDir)
 		d.incidents = newIncidentReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
 		log.Printf("[daemon] Telemetry + incident reporters initialized (endpoint=%s)", cfg.APIEndpoint)
+	}
+
+	// Initialize log shipper (journald → Central Command)
+	if cfg.APIEndpoint != "" && cfg.APIKey != "" {
+		hostname, _ := os.Hostname()
+		d.logShipper = logshipper.New(logshipper.Config{
+			APIEndpoint: cfg.APIEndpoint,
+			APIKey:      cfg.APIKey,
+			SiteID:      cfg.SiteID,
+			Hostname:    hostname,
+			StateDir:    cfg.StateDir,
+			BatchSize:   500,
+			FlushEvery:  30 * time.Second,
+		})
+		log.Printf("[daemon] Log shipper initialized (endpoint=%s)", cfg.APIEndpoint)
 	}
 
 	// Initialize credential envelope encryption keypair (X25519)
@@ -373,6 +393,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.safeGo("processHealRequests", func() {
 		d.processHealRequests(ctx)
 	})
+
+	// Start log shipper (journald → Central Command)
+	if d.logShipper != nil {
+		d.safeGo("logShipper", func() {
+			d.logShipper.Run(ctx)
+		})
+	}
 
 	// Initial checkin
 	d.runCheckin(ctx)

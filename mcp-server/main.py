@@ -54,6 +54,7 @@ from dashboard_api.frameworks import router as frameworks_router
 from dashboard_api.compliance_frameworks import router as compliance_frameworks_router, partner_router as compliance_partner_router
 from dashboard_api.fleet_updates import router as fleet_updates_router
 from dashboard_api.device_sync import device_sync_router
+from dashboard_api.log_ingest import router as log_ingest_router
 from dashboard_api.email_alerts import create_notification_with_email
 from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
 from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router, session_router as partner_session_router
@@ -1094,6 +1095,7 @@ app.include_router(billing_webhook_router, prefix="/api")  # Stripe webhooks
 app.include_router(notifications_router)  # Partner notifications + L3 escalation tickets
 app.include_router(compliance_frameworks_router)  # Multi-framework compliance management (admin)
 app.include_router(compliance_partner_router)  # Partner compliance defaults + site compliance
+app.include_router(log_ingest_router)  # Centralized log aggregation from appliances
 
 # WebSocket endpoint for real-time event push
 @app.websocket("/ws/events")

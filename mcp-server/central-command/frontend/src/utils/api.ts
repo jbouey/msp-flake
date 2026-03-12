@@ -1800,4 +1800,73 @@ export const protectionProfilesApi = {
     ),
 };
 
+// =============================================================================
+// LOGS API (centralized log aggregation)
+// =============================================================================
+
+export interface LogEntry {
+  id: number;
+  site_id: string;
+  hostname: string;
+  unit: string;
+  priority: number;
+  priority_label: string;
+  timestamp: string;
+  message: string;
+  boot_id: string | null;
+}
+
+export interface LogSearchResponse {
+  logs: LogEntry[];
+  total: number;
+  has_more: boolean;
+}
+
+export const logsApi = {
+  search: (params: {
+    site_id: string;
+    start?: string;
+    end?: string;
+    unit?: string;
+    priority?: number;
+    q?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const query = new URLSearchParams();
+    query.set('site_id', params.site_id);
+    if (params.start) query.set('start', params.start);
+    if (params.end) query.set('end', params.end);
+    if (params.unit) query.set('unit', params.unit);
+    if (params.priority !== undefined) query.set('priority', String(params.priority));
+    if (params.q) query.set('q', params.q);
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.offset !== undefined) query.set('offset', String(params.offset));
+    return fetchSitesApi<LogSearchResponse>(`/logs/search?${query}`);
+  },
+
+  getUnits: (siteId: string) =>
+    fetchSitesApi<string[]>(`/logs/units?site_id=${encodeURIComponent(siteId)}`),
+
+  exportUrl: (params: {
+    site_id: string;
+    start?: string;
+    end?: string;
+    unit?: string;
+    priority?: number;
+    q?: string;
+    format?: 'csv' | 'json';
+  }) => {
+    const query = new URLSearchParams();
+    query.set('site_id', params.site_id);
+    if (params.start) query.set('start', params.start);
+    if (params.end) query.set('end', params.end);
+    if (params.unit) query.set('unit', params.unit);
+    if (params.priority !== undefined) query.set('priority', String(params.priority));
+    if (params.q) query.set('q', params.q);
+    query.set('format', params.format || 'csv');
+    return `/api/logs/export?${query}`;
+  },
+};
+
 export { ApiError };
