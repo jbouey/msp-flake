@@ -79,15 +79,22 @@ class FakeRow:
 class FakeResult:
     """Simulate SQLAlchemy execute() result."""
 
-    def __init__(self, rows=None, rowcount=0):
+    def __init__(self, rows=None, rowcount=0, scalar_value=None):
         self._rows = rows or []
         self.rowcount = rowcount
+        self._scalar_value = scalar_value
 
     def fetchone(self):
         return self._rows[0] if self._rows else None
 
     def fetchall(self):
         return self._rows
+
+    def scalar(self):
+        if self._scalar_value is not None:
+            return self._scalar_value
+        row = self.fetchone()
+        return row[0] if row else None
 
 
 def make_mock_db():
@@ -147,6 +154,9 @@ class TestIncidentPipelineL1Match:
             # Dedup check - no existing incident
             if "SELECT id, status FROM incidents" in query_str:
                 return FakeResult([])
+            # Chronic drift check - return 0 (not chronic)
+            if "SELECT COUNT(*) FROM incidents" in query_str:
+                return FakeResult([FakeRow([0])], scalar_value=0)
             # L1 rule match
             if "SELECT runbook_id FROM l1_rules" in query_str:
                 return FakeResult([FakeRow(["RB-AUTO-SERVICE_RESTART"])])
@@ -202,6 +212,8 @@ class TestIncidentPipelineL1Match:
                 return FakeResult([FakeRow(["test-site-002-aa:bb:cc:dd:ee:ff"])])
             if "SELECT id, status FROM incidents" in query_str:
                 return FakeResult([])
+            if "SELECT COUNT(*) FROM incidents" in query_str:
+                return FakeResult([FakeRow([0])], scalar_value=0)
             if "SELECT runbook_id FROM l1_rules" in query_str:
                 return FakeResult([FakeRow(["ESC-RANSOMWARE-001"])])
             if "SELECT id FROM notifications" in query_str:
@@ -251,6 +263,8 @@ class TestIncidentPipelineL3Escalation:
                 return FakeResult([FakeRow(["test-site-003-ff:ff:ff:ff:ff:ff"])])
             if "SELECT id, status FROM incidents" in query_str:
                 return FakeResult([])
+            if "SELECT COUNT(*) FROM incidents" in query_str:
+                return FakeResult([FakeRow([0])], scalar_value=0)
             if "SELECT runbook_id FROM l1_rules" in query_str:
                 return FakeResult([])  # No L1 match
             if "SELECT id FROM notifications" in query_str:
@@ -384,6 +398,8 @@ class TestIncidentKeywordFallback:
                 return FakeResult([FakeRow(["test-site-006-aa:bb:cc:dd:ee:ff"])])
             if "SELECT id, status FROM incidents" in query_str:
                 return FakeResult([])
+            if "SELECT COUNT(*) FROM incidents" in query_str:
+                return FakeResult([FakeRow([0])], scalar_value=0)
             if "SELECT runbook_id FROM l1_rules" in query_str:
                 return FakeResult([])  # No DB rule
             if "SELECT id FROM notifications" in query_str:
