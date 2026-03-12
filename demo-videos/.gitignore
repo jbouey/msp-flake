@@ -1,0 +1,9 @@
+.env
+recordings/*.mov
+recordings/*.mp4
+avatars/*.mp4
+avatars/*.webm
+output/*.mp4
+output/*.mov
+*.tmp
+__pycache__/

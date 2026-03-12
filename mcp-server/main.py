@@ -56,6 +56,7 @@ from dashboard_api.fleet_updates import router as fleet_updates_router
 from dashboard_api.device_sync import device_sync_router
 from dashboard_api.log_ingest import router as log_ingest_router
 from dashboard_api.email_alerts import create_notification_with_email
+from dashboard_api.health_monitor import health_monitor_loop
 from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
 from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router, session_router as partner_session_router
 from dashboard_api.billing import router as billing_router
@@ -971,6 +972,7 @@ async def lifespan(app: FastAPI):
         ("flywheel", _flywheel_promotion_loop),
         ("companion_alerts", companion_alert_check_loop),
         ("fleet_order_expiry", expire_fleet_orders_loop),
+        ("health_monitor", health_monitor_loop),
     ]
 
     for name, fn in task_defs:

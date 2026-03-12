@@ -1077,7 +1077,8 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
                 appliance_id, hostname, mac_address, ip_addresses,
                 agent_version, nixos_version, status, first_checkin,
                 last_checkin, uptime_seconds,
-                COALESCE(l2_mode, 'auto') as l2_mode
+                COALESCE(l2_mode, 'auto') as l2_mode,
+                offline_since
             FROM site_appliances
             WHERE site_id = $1
             ORDER BY hostname
@@ -1101,6 +1102,7 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
                 'last_checkin': last_checkin.isoformat() if last_checkin else None,
                 'uptime_seconds': row['uptime_seconds'],
                 'l2_mode': row['l2_mode'],
+                'offline_since': row['offline_since'].isoformat() if row['offline_since'] else None,
             })
         
         return {
@@ -1626,6 +1628,92 @@ async def get_order(order_id: str):
             "acknowledged_at": row['acknowledged_at'].isoformat() if row['acknowledged_at'] else None,
             "completed_at": row['completed_at'].isoformat() if row['completed_at'] else None,
             "result": parse_parameters(row['result'])
+        }
+
+
+# =============================================================================
+# HEALING KILL SWITCH (disable/enable per-site)
+# =============================================================================
+
+
+@router.post("/{site_id}/disable-healing")
+async def disable_site_healing(site_id: str, user: dict = Depends(require_admin)):
+    """Disable all healing (L1+L2) for a site via fleet order.
+
+    Appliance keeps monitoring + checkin alive, but stops executing remediation.
+    Use cases: unpaid client, compromised site, decommission prep.
+    """
+    return await _toggle_healing(site_id, enabled=False, user=user)
+
+
+@router.post("/{site_id}/enable-healing")
+async def enable_site_healing(site_id: str, user: dict = Depends(require_admin)):
+    """Re-enable healing for a site via fleet order."""
+    return await _toggle_healing(site_id, enabled=True, user=user)
+
+
+async def _toggle_healing(site_id: str, enabled: bool, user: dict):
+    """Create a fleet order to enable or disable healing for a specific site."""
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+    order_type = "enable_healing" if enabled else "disable_healing"
+    action = "enabled" if enabled else "disabled"
+
+    async with admin_connection(pool) as conn:
+        # Verify site exists
+        site = await conn.fetchrow("SELECT site_id, name FROM sites WHERE site_id = $1", site_id)
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Get appliance(s) for this site
+        appliances = await conn.fetch(
+            "SELECT appliance_id FROM site_appliances WHERE site_id = $1",
+            site_id,
+        )
+        if not appliances:
+            raise HTTPException(status_code=404, detail="No appliances found for site")
+
+        # Create fleet order targeting this site
+        from .fleet_updates import sign_fleet_order
+        expires_at = now + timedelta(hours=24)
+        parameters = {"site_id": site_id, "reason": f"Admin {action} healing"}
+
+        row = await conn.fetchrow("""
+            INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
+                                      nonce, signature, signed_payload)
+            VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+            RETURNING id, created_at
+        """,
+            order_type,
+            json.dumps(parameters),
+            expires_at,
+            user.get("username") or user.get("email"),
+            *sign_fleet_order(0, order_type, parameters, now, expires_at),
+        )
+
+        # Audit log
+        try:
+            await conn.execute("""
+                INSERT INTO audit_log (action, actor, target_type, target_id, details)
+                VALUES ($1, $2, 'site', $3, $4::jsonb)
+            """,
+                f"healing_{action}",
+                user.get("username") or user.get("email"),
+                site_id,
+                json.dumps({"order_id": str(row["id"]), "site_name": site["name"]}),
+            )
+        except Exception as e:
+            logger.warning(f"Audit log for healing toggle failed: {e}")
+
+        logger.info(f"Healing {action} for site {site_id} by {user.get('username')} (order {row['id']})")
+
+        return {
+            "status": "ok",
+            "action": action,
+            "site_id": site_id,
+            "order_id": str(row["id"]),
+            "expires_at": expires_at.isoformat(),
+            "appliance_count": len(appliances),
         }
 
 
@@ -2175,7 +2263,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                 nixos_version = EXCLUDED.nixos_version,
                 status = 'online',
                 uptime_seconds = EXCLUDED.uptime_seconds,
-                last_checkin = EXCLUDED.last_checkin
+                last_checkin = EXCLUDED.last_checkin,
+                offline_since = NULL,
+                offline_notified = false
         """,
             checkin.site_id,
             canonical_id,
@@ -2594,6 +2684,22 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         except Exception as e:
             logger.warning(f"Checkin {checkin.site_id}: trigger flags lookup failed: {e}")
 
+    # === STEP 7b: Check billing status ===
+    billing_hold = False
+    billing_status = "none"
+    try:
+        from .billing_guard import check_billing_status
+        async with tenant_connection(pool, site_id=checkin.site_id) as bconn:
+            billing_status, billing_active = await check_billing_status(bconn, checkin.site_id)
+            billing_hold = not billing_active
+    except Exception as e:
+        logger.warning(f"Checkin {checkin.site_id}: billing check failed (allowing): {e}")
+
+    # If billing hold, strip orders (keep checkin alive for visibility)
+    if billing_hold:
+        pending_orders = []
+        logger.info(f"Checkin {checkin.site_id}: billing hold active (status={billing_status}), orders suppressed")
+
     # Broadcast checkin event to connected dashboard clients
     try:
         await broadcast_event("appliance_checkin", {
@@ -2650,6 +2756,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         "disabled_checks": disabled_checks,
         "trigger_enumeration": trigger_enumeration,
         "trigger_immediate_scan": trigger_immediate_scan,
+        "billing_hold": billing_hold,
+        "billing_status": billing_status,
     }
 
 

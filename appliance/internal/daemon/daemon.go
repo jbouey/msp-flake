@@ -901,7 +901,7 @@ func (d *Daemon) processHealRequests(ctx context.Context) {
 			log.Printf("[daemon] Heal request: %s/%s from %s",
 				req.Hostname, req.CheckType, req.AgentID)
 
-			if !d.config.HealingEnabled {
+			if !d.config.HealingEnabled || !d.orderProc.IsHealingEnabled() {
 				log.Printf("[daemon] Healing disabled, skipping %s/%s", req.Hostname, req.CheckType)
 				continue
 			}

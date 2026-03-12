@@ -240,6 +240,8 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p.handlers["update_credentials"] = p.handleUpdateCredentials
 	p.handlers["update_daemon"] = p.handleUpdateDaemon
 	p.handlers["validate_credential"] = p.handleValidateCredential
+	p.handlers["disable_healing"] = p.handleDisableHealing
+	p.handlers["enable_healing"] = p.handleEnableHealing
 
 	return p
 }
@@ -1067,4 +1069,44 @@ func (p *Processor) loadNonces() {
 	if loaded > 0 {
 		log.Printf("[orders] Loaded %d nonces from disk (evicted %d expired)", loaded, len(store.Nonces)-loaded)
 	}
+}
+
+// healingFlagPath returns the path to the persistent healing-enabled flag file.
+func (p *Processor) healingFlagPath() string {
+	return filepath.Join(p.stateDir, "healing_enabled")
+}
+
+// IsHealingEnabled checks the persistent flag. Defaults to true if file doesn't exist.
+func (p *Processor) IsHealingEnabled() bool {
+	data, err := os.ReadFile(p.healingFlagPath())
+	if err != nil {
+		return true // Default: healing enabled
+	}
+	return strings.TrimSpace(string(data)) != "false"
+}
+
+// handleDisableHealing persists healing=disabled and logs it.
+func (p *Processor) handleDisableHealing(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if err := os.WriteFile(p.healingFlagPath(), []byte("false"), 0o644); err != nil {
+		return nil, fmt.Errorf("failed to write healing flag: %w", err)
+	}
+	reason, _ := params["reason"].(string)
+	log.Printf("[orders] Healing DISABLED by Central Command (reason: %s)", reason)
+	return map[string]interface{}{
+		"healing_enabled": false,
+		"reason":          reason,
+	}, nil
+}
+
+// handleEnableHealing persists healing=enabled and logs it.
+func (p *Processor) handleEnableHealing(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if err := os.WriteFile(p.healingFlagPath(), []byte("true"), 0o644); err != nil {
+		return nil, fmt.Errorf("failed to write healing flag: %w", err)
+	}
+	reason, _ := params["reason"].(string)
+	log.Printf("[orders] Healing ENABLED by Central Command (reason: %s)", reason)
+	return map[string]interface{}{
+		"healing_enabled": true,
+		"reason":          reason,
+	}, nil
 }
