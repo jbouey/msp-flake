@@ -25,7 +25,7 @@ import sys
 
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
-from .sites import ManualDeviceAdd, _add_manual_device
+from .sites import ManualDeviceAdd, NetworkDeviceAdd, _add_manual_device, _add_network_device
 from .db_queries import (
     get_site_info,
     get_compliance_scores_for_site,
@@ -1051,6 +1051,19 @@ async def add_portal_device(
     await validate_session(site_id, portal_session, token)
     pool = await get_pool()
     return await _add_manual_device(pool, site_id, device)
+
+
+@router.post("/site/{site_id}/devices/network")
+async def add_portal_network_device(
+    site_id: str,
+    device: NetworkDeviceAdd,
+    token: str = Query(None),
+    portal_session: Optional[str] = Cookie(None),
+):
+    """Register a network device from the partner portal."""
+    await validate_session(site_id, portal_session, token)
+    pool = await get_pool()
+    return await _add_network_device(pool, site_id, device)
 
 
 # =============================================================================

@@ -840,6 +840,32 @@ class ManualDeviceAdd(BaseModel):
     distro: Optional[str] = None  # ubuntu, centos, macos, etc.
 
 
+class NetworkDeviceAdd(BaseModel):
+    hostname: str               # Display name (e.g. "Core Switch 1")
+    ip_address: str             # Management IP
+    device_category: str = "switch"  # switch, router, firewall, access_point, other
+    vendor: Optional[str] = None     # cisco, ubiquiti, aruba, juniper, etc.
+    model: Optional[str] = None
+    # Management access (read-only by default)
+    mgmt_protocol: str = "snmp"     # snmp, ssh, api
+    # SNMP fields
+    snmp_community: Optional[str] = None   # SNMPv2c community string
+    snmp_version: str = "2c"               # 2c, 3
+    snmp_v3_user: Optional[str] = None
+    snmp_v3_auth_pass: Optional[str] = None
+    snmp_v3_priv_pass: Optional[str] = None
+    # SSH fields (for CLI-based read-only checks)
+    ssh_username: Optional[str] = None
+    ssh_password: Optional[str] = None
+    ssh_key: Optional[str] = None
+    ssh_port: int = 22
+    # API fields (REST/HTTP)
+    api_url: Optional[str] = None
+    api_token: Optional[str] = None
+    # Policy
+    remediation_mode: str = "advisory"  # advisory (L2 suggests, human executes) or disabled
+
+
 async def _add_manual_device(pool, site_id: str, device: ManualDeviceAdd) -> dict:
     """Shared logic for adding a non-AD device via SSH credentials.
     Used by both admin and portal endpoints."""
@@ -914,6 +940,109 @@ async def add_manual_device(site_id: str, device: ManualDeviceAdd, user: dict = 
     """Register a non-AD device for SSH-based compliance monitoring."""
     pool = await get_pool()
     return await _add_manual_device(pool, site_id, device)
+
+
+async def _add_network_device(pool, site_id: str, device: NetworkDeviceAdd) -> dict:
+    """Register a network device (switch/router/AP/firewall) for read-only monitoring.
+    Credentials stay server-side. Daemon gets detection-only config."""
+
+    # Build credential data based on management protocol
+    cred_data_dict: dict = {
+        'device_category': device.device_category,
+        'vendor': device.vendor or '',
+        'model': device.model or '',
+        'mgmt_protocol': device.mgmt_protocol,
+        'management_ip': device.ip_address,
+        'remediation_mode': device.remediation_mode,
+    }
+
+    if device.mgmt_protocol == 'snmp':
+        if not device.snmp_community and device.snmp_version == '2c':
+            raise HTTPException(status_code=400, detail="SNMP community string required for v2c.")
+        if device.snmp_version == '3' and not device.snmp_v3_user:
+            raise HTTPException(status_code=400, detail="SNMPv3 username required.")
+        cred_data_dict['snmp_version'] = device.snmp_version
+        if device.snmp_community:
+            cred_data_dict['snmp_community'] = device.snmp_community
+        if device.snmp_v3_user:
+            cred_data_dict['snmp_v3_user'] = device.snmp_v3_user
+        if device.snmp_v3_auth_pass:
+            cred_data_dict['snmp_v3_auth_pass'] = device.snmp_v3_auth_pass
+        if device.snmp_v3_priv_pass:
+            cred_data_dict['snmp_v3_priv_pass'] = device.snmp_v3_priv_pass
+        cred_type = 'network_snmp'
+    elif device.mgmt_protocol == 'ssh':
+        if not device.ssh_password and not device.ssh_key:
+            raise HTTPException(status_code=400, detail="SSH password or key required.")
+        cred_data_dict['username'] = device.ssh_username or 'admin'
+        cred_data_dict['port'] = device.ssh_port
+        if device.ssh_password:
+            cred_data_dict['password'] = device.ssh_password
+        if device.ssh_key:
+            cred_data_dict['private_key'] = device.ssh_key
+        cred_type = 'network_ssh'
+    elif device.mgmt_protocol == 'api':
+        if not device.api_url:
+            raise HTTPException(status_code=400, detail="API URL required.")
+        cred_data_dict['api_url'] = device.api_url
+        if device.api_token:
+            cred_data_dict['api_token'] = device.api_token
+        cred_type = 'network_api'
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported protocol: {device.mgmt_protocol}")
+
+    cred_name = f"{device.hostname} ({device.device_category})"
+    cred_data = json.dumps(cred_data_dict)
+
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow("""
+                INSERT INTO site_credentials (site_id, credential_type, credential_name, encrypted_data)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, created_at
+            """, site_id, cred_type, cred_name, cred_data.encode())
+
+            credential_id = str(row['id'])
+
+            # Register in discovered_devices with device_type = 'network'
+            await conn.execute("""
+                INSERT INTO discovered_devices (
+                    appliance_id, site_id, local_device_id, hostname, ip_address,
+                    device_type, os_name, discovery_source, compliance_status,
+                    first_seen_at, last_seen_at
+                )
+                SELECT
+                    a.id, $1, $2, $3, $4,
+                    'network', $5, 'manual', 'unknown',
+                    NOW(), NOW()
+                FROM appliances a
+                WHERE a.site_id = $1
+                LIMIT 1
+                ON CONFLICT (appliance_id, local_device_id) DO UPDATE
+                SET hostname = EXCLUDED.hostname, ip_address = EXCLUDED.ip_address,
+                    last_seen_at = NOW()
+            """, site_id, f"network-{device.ip_address}", device.hostname,
+                device.ip_address, device.device_category)
+
+    return {
+        'credential_id': credential_id,
+        'credential_type': cred_type,
+        'hostname': device.hostname,
+        'ip_address': device.ip_address,
+        'device_category': device.device_category,
+        'mgmt_protocol': device.mgmt_protocol,
+        'remediation_mode': device.remediation_mode,
+        'created_at': row['created_at'].isoformat(),
+        'message': f'Network device {device.hostname} registered. Detection-only monitoring will begin on next check-in.',
+    }
+
+
+@router.post("/{site_id}/devices/network")
+async def add_network_device(site_id: str, device: NetworkDeviceAdd, user: dict = Depends(require_operator)):
+    """Register a network device (switch/router/AP/firewall) for monitoring.
+    Network devices are NEVER auto-remediated. L2 provides advisory commands only."""
+    pool = await get_pool()
+    return await _add_network_device(pool, site_id, device)
 
 
 @router.get("/{site_id}/appliances")
