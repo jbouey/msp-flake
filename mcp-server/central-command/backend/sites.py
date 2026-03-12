@@ -1661,7 +1661,7 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
 
     async with admin_connection(pool) as conn:
         # Verify site exists
-        site = await conn.fetchrow("SELECT site_id, name FROM sites WHERE site_id = $1", site_id)
+        site = await conn.fetchrow("SELECT site_id, clinic_name FROM sites WHERE site_id = $1", site_id)
         if not site:
             raise HTTPException(status_code=404, detail="Site not found")
 
@@ -1700,7 +1700,7 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
                 f"healing_{action}",
                 user.get("username") or user.get("email"),
                 site_id,
-                json.dumps({"order_id": str(row["id"]), "site_name": site["name"]}),
+                json.dumps({"order_id": str(row["id"]), "site_name": site["clinic_name"]}),
             )
         except Exception as e:
             logger.warning(f"Audit log for healing toggle failed: {e}")

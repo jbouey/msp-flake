@@ -67,7 +67,7 @@ async def _check_appliance_health():
         warn_appliances = await conn.fetch("""
             SELECT sa.appliance_id, sa.site_id, sa.hostname, sa.last_checkin,
                    sa.offline_since, sa.agent_version, sa.ip_addresses,
-                   s.name as site_name
+                   s.clinic_name as site_name
             FROM site_appliances sa
             LEFT JOIN sites s ON s.site_id = sa.site_id
             WHERE sa.offline_since IS NOT NULL
@@ -103,7 +103,7 @@ async def _check_appliance_health():
         critical_appliances = await conn.fetch("""
             SELECT sa.appliance_id, sa.site_id, sa.hostname, sa.last_checkin,
                    sa.offline_since, sa.agent_version, sa.ip_addresses,
-                   s.name as site_name
+                   s.clinic_name as site_name
             FROM site_appliances sa
             LEFT JOIN sites s ON s.site_id = sa.site_id
             WHERE sa.offline_since IS NOT NULL
