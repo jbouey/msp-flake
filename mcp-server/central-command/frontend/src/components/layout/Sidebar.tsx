@@ -262,7 +262,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={onClose}
         />
       )}
-      <aside className={`glass-sidebar w-64 h-screen flex flex-col fixed left-0 top-0 z-50 transition-transform duration-300 ease-in-out lg:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`glass-sidebar w-64 h-dvh flex flex-col fixed left-0 top-0 z-50 transition-transform duration-300 ease-in-out lg:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`} style={{ height: '100dvh' }}>
       {/* Logo */}
       <div className="px-5 py-5 border-b border-separator-light">
         <div className="flex items-center gap-3">
