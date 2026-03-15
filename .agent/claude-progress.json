@@ -7,7 +7,7 @@
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "go_daemon_v0.3.20_fleet_order_v0.3.21_reissued_7d_expiry",
+    "physical_appliance": "go_daemon_v0.3.20_fleet_orders_delivering_rebuild_not_taking_effect",
     "vm_appliance": "go_daemon_v0.3.21",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
@@ -27,7 +27,7 @@
     "macos_scanning": "13_active_checks_filevault_gatekeeper_sip_firewall_autoupdates_screenlk_ntp",
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api"
   },
-  "current_blocker": "Physical appliance not picking up fleet orders despite active checkins. iMac unreachable (SSH timeout). Apollo API 403. External credential rotation pending.",
+  "current_blocker": "Physical appliance fleet orders now deliver (RLS fix), but nixos-rebuild completes without version change (0.3.20\u21920.3.22 expected). Need appliance console access to check nix build logs. iMac unreachable.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -190,7 +190,10 @@
     "Firewall dangerous inbound rules \u2014 new scanner check + L1 rule + runbook",
     "DNS service recovery improved with dependency-aware restart",
     "Fleet order re-issued with 7-day expiry (48e4e7f6)",
-    "Runbooks.json now has 122 entries (was 120)"
+    "Runbooks.json now has 122 entries (was 120)",
+    "Fleet order RLS fix \u2014 Migration 093 (admin-only\u2192read-all for fleet_orders)",
+    "Fleet order delivery confirmed working (physical appliance picked up 2 orders)",
+    "v0.3.22 fleet order created (skip 0.3.22, 7-day expiry)"
   ],
   "recent_commits": [
     {
@@ -264,7 +267,8 @@
     "nixos_runbook_lesson": "Linux runbook scripts from Python agent were designed for Debian/Ubuntu (sed on /etc, apt-get, logrotate). NixOS appliances self-scan via linuxscan.go and these scripts fail silently because: (1) /etc is read-only symlinks to nix store, (2) no apt/yum, (3) journald configured declaratively. Fix: detect /etc/NIXOS in remediate scripts and use NixOS-appropriate commands (systemctl for timers, skip sed on managed paths). Also: scanner log_forwarding check must accept journald_persistent as valid \u2014 not just rsyslog or journal-upload. Configuration.nix must enable system.autoUpgrade and set MaxRetentionSec=90d for HIPAA. The handleHealing stub in processor.go was NOT the blocker \u2014 daemon.go:160 already overrides it with executeHealingOrder(). The real issue was empty/broken runbook scripts.",
     "nix_wrong_file_lesson": "CRITICAL: flake.nix line 172 maps osiriscare-appliance-disk to ./iso/appliance-disk-image.nix (NOT appliance-image.nix). appliance-image.nix is the installer ISO builder. appliance-disk-image.nix is the installed system config that nixos-rebuild uses. Version bumps MUST update appliance-disk-image.nix or rebuilds produce old versions. This caused v0.3.4 to persist across 3 sessions despite commits claiming v0.3.9.",
     "winrm_ntlm_negotiate_lesson": "ws01 only offers Negotiate and Kerberos auth (no NTLM header in WWW-Authenticate). Go WinRM ClientNTLM gets 401. DC works because it also accepts Basic auth. Kerberos double-hop (appliance\u2192DC\u2192ws01) fails with Access is Denied because NTLM doesn't delegate credentials. Fix: GPO self-deployment from NETLOGON bypasses WinRM to workstations entirely.",
-    "gpo_self_deploy_lesson": "GPO startup script v2 deploys osiris-agent from NETLOGON share: copies agent.exe + config.json to C:\\OsirisCare\\, installs as Windows service, opens SMB port 445. Version-stamped script auto-updates on group policy refresh. Avoids WinRM auth issues with workstations. Config staged to NETLOGON by autodeploy.go alongside the binary."
+    "gpo_self_deploy_lesson": "GPO startup script v2 deploys osiris-agent from NETLOGON share: copies agent.exe + config.json to C:\\OsirisCare\\, installs as Windows service, opens SMB port 445. Version-stamped script auto-updates on group policy refresh. Avoids WinRM auth issues with workstations. Config staged to NETLOGON by autodeploy.go alongside the binary.",
+    "fleet_order_rls_lesson": "Fleet orders had admin-only RLS policy (fleet_orders_admin_only). Appliance checkins use tenant_connection() which sets app.is_admin=false. Fleet orders were invisible. Fix: Migration 093 adds permissive SELECT policy for all connections. Fleet order completions table had RLS disabled so was not affected."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",
