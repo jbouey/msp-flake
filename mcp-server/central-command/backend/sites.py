@@ -2501,13 +2501,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
             fleet_orders = await get_fleet_orders_for_appliance(
                 conn, canonical_id, checkin.agent_version
             )
-            if fleet_orders:
-                import logging
-                logging.info(f"Fleet orders for {canonical_id} (v{checkin.agent_version}): {len(fleet_orders)} orders")
+            print(f"FLEET-DEBUG: {canonical_id} v{checkin.agent_version} -> {len(fleet_orders)} orders", flush=True)
             pending_orders.extend(fleet_orders)
         except Exception as e:
-            import logging
-            logging.warning(f"Failed to fetch fleet orders: {e}")
+            print(f"FLEET-DEBUG-ERR: {canonical_id} -> {e}", flush=True)
 
         # === STEP 5: Get windows targets (conditional credential delivery) ===
         # Always check credential freshness — if creds were updated since last checkin,
