@@ -1920,3 +1920,1167 @@ Completed the end-to-end compliance evidence pipeline and fixed three systemic i
 [truncated...]
 
 ---
+
+## 2026-02-22-session-125-runbook-l1-sync-telemetry-flywheel.md
+
+# Session 125 - Runbook L1 Sync Telemetry Flywheel
+
+**Date:** 2026-02-22
+**Started:** 07:20
+**Previous Session:** 124
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-02-22-session-126-non-AD device join UI, flywheel data gaps, fleet order delivery.md
+
+# Session 126 - Non-AD Device Join UI, Flywheel Data Gaps, Fleet Order Delivery
+
+**Date:** 2026-02-22
+**Previous Session:** 125
+
+---
+
+## Goals
+
+- [x] Audit flywheel data gaps and fix L1 telemetry + field name mismatches
+- [x] Add fleet order delivery to Go checkin-receiver
+- [x] Deploy v0.2.2 Go daemon to both appliances via fleet order
+- [x] Build non-AD device join UI for portal + dashboard
+
+---
+
+## Progress
+
+### Completed
+
+1. **Flywheel data gap fixes** — Go daemon L1 telemetry was completely missing. Added `ReportL1Execution()` to telemetry.go, wired into daemon heal paths. Fixed field name mismatch in backend ingestion (level→resolution_level, duration_ms→duration_seconds, error→error_message).
+
+2. **Fleet order delivery** — Go checkin-receiver only fetched admin_orders + healing_orders. Added `FetchFleetOrders()` to db.go, cross-compiled new binary, deployed to VPS. Created fleet order, both appliances rebuilt to v0.2.2.
+
+3. **Non-AD device join** — Full-stack feature: backend endpoints (admin + portal), shared AddDeviceModal component, wired into SiteDevices.tsx and PortalDashboard.tsx. No migration needed — uses existing site_credentials + discovered_devices tables. Appliance picks up new linux_targets on next checkin.
+
+### Blocked
+
+None.
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `backend/sites.py` | CredentialCreate extended, ManualDeviceAdd model, _add_manual_device helper, POST endpoint |
+| `backend/portal.py` | device_count in PortalData, POST portal device endpoint |
+| `frontend/src/components/shared/AddDeviceModal.tsx` | **New** shared modal component |
+| `frontend/src/pages/SiteDevices.tsx` | "Join Device" button + modal wiring |
+| `frontend/src/portal/PortalDashboard.tsx` | "Managed Devices" section + modal wiring |
+| `appliance/internal/l2planner/telemetry.go` | ReportL1Execution method |
+| `appliance/internal/daemon/daemon.go` | Telemetry reporter wiring |
+| `appliance/internal/checkin/db.go` | FetchFleetOrders |
+| `.claude/skills/docs/backend/backend.md` | Updated with new endpoints |
+
+## Commits
+
+- `b143db4` — fix: close flywheel data gaps — L1 telemetry + field name compat
+- `efbe532` — chore: bump Go daemon to v0.2.2
+
+[truncated...]
+
+---
+
+## 2026-02-24-session-127-security-hardening-ed25519-host-scoping-parameter-allowlists.md
+
+# Session 127 - Security Hardening Ed25519 Host Scoping Parameter Allowlists
+
+**Date:** 2026-02-24
+**Started:** 14:23
+**Previous Session:** 126
+**Commit:** 0656088
+
+---
+
+## Goals
+
+- [x] P1: Add host scoping (target_appliance_id) to order signature envelope
+- [x] P1: Allowlist order parameters for dangerous order types (nixos_rebuild, update_agent, update_iso)
+- [x] P1: Constrain sync_promoted_rule with YAML schema validation
+
+---
+
+## Progress
+
+### Completed
+
+**Host Scoping** — `order_signing.py` adds `target_appliance_id` to signed payload. All admin/healing order creation paths (sites.py, partners.py, main.py, fleet_updates.py rollouts) now include the target appliance. Go `processor.go` verifies host scope after Ed25519 check. Fleet orders exempt.
+
+**Parameter Allowlists** — `nixos_rebuild` validates flake_ref against `github:jbouey/msp-flake#<output>` pattern. `update_agent`/`update_iso` validate URLs are HTTPS from allowlisted domains (github.com, objects.githubusercontent.com, VPS). Added `validateFlakeRef()` and `validateDownloadURL()` helpers.
+
+**Schema Validation** — `sync_promoted_rule` validates YAML against L1 Rule schema: parses into struct, checks action in 10-action allowlist, verifies rule ID match, requires conditions with field+operator, enforces 8KB size limit.
+
+### Blocked
+
+None.
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `appliance/internal/crypto/verify.go` | New: Ed25519 verification package (P0, prev session) |
+| `appliance/internal/crypto/verify_test.go` | New: 4 crypto tests |
+| `appliance/internal/checkin/db.go` | Fetch signature fields, server_public_key |
+| `appliance/internal/checkin/models.go` | Added Nonce/Signature/SignedPayload/ServerPublicKey |
+| `appliance/internal/daemon/daemon.go` | Pass server pubkey + appliance ID to processor/L1 |
+| `appliance/internal/daemon/phonehome.go` | Added ServerPublicKey to response |
+| `appliance/internal/healing/l1_engine.go` | Verify signed L1 rules bundles |
+| `appliance/internal/orders/processor.go` | Host scoping, param allowlists, schema validation |
+| `appliance/internal/orders/processor_test.go` | 15 new tests (37 total) |
+| `backend/migrations/054_order_signatures.sql` | New: nonce/signature/signed_payload columns |
+| `backend/order_signing.py` | New: shared signing helper with target_appliance_id |
+| `backend/fleet_updates.py` | Host-scoped rollout orders |
+| `backend/partners.py` | Host-scoped discovery orders |
+
+[truncated...]
+
+---
+
+## 2026-02-24-session-128-companion-router-uuid-audit-chaos-parser-fix.md
+
+# Session 128 — Companion Router, UUID Audit, Chaos Parser Fix
+
+**Date:** 2026-02-24
+**Started:** 20:41
+**Previous Session:** 127
+
+---
+
+## Goals
+
+- [x] Fix chaos lab parser not recognizing new EXECUTION_PLAN.sh log formats (Feb 22-24)
+- [x] Register companion router in server.py (all 10 HIPAA module buttons returning 404)
+- [x] Fix remaining _uid() bugs in companion.py overview
+- [x] Audit partner portal for _uid() issues — found and fixed 8
+- [x] Audit client portal — confirmed clean (auth returns UUID objects)
+- [x] Update backend.md with _uid()/db_utils.py patterns
+
+---
+
+## Progress
+
+### Completed
+
+**Chaos Lab Parser (iMac 192.168.88.50)**
+- Added v8 (`SCENARIO: scn_xxx - Name`), v9 (`Executing: scn_xxx`), v10 (`Running scenario: scn_xxx`) patterns
+- Fixed campaign detection regex (was requiring parenthesis, now accepts `===` terminator)
+- Re-parsed Feb 22-24: healing rate trending 15.6% → 21.9% → 37.5%
+
+**Companion Portal**
+- Registered companion router in server.py (was never imported — all buttons 404)
+- Fixed 2 _uid() in _compute_overview (breach_log + officers queries)
+
+**Partner Portal**
+- Fixed 8 raw string params in get_partner, update_partner, regenerate_api_key, create_partner_user, generate_user_magic_link
+
+**Client Portal** — audited, clean. All org_id from auth (UUID objects), site_id is VARCHAR.
+
+### Blocked
+
+None.
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `mcp-server/server.py` | Register companion_router with prefix="/api" |
+| `mcp-server/central-command/backend/companion.py` | 2 _uid() fixes in _compute_overview |
+| `mcp-server/central-command/backend/partners.py` | 8 _uid() fixes across 5 endpoints |
+
+[truncated...]
+
+---
+
+## 2026-02-24-session-129-tiered-flywheel-promotion-l2-mode-toggle.md
+
+# Session 129 — Tiered Flywheel Promotion + L2 Mode Toggle
+
+**Date:** 2026-02-24
+**Commit:** `2afea53` → `main`
+**Deploy:** CI/CD auto-deploy + manual migration run + backend restart
+
+## Summary
+
+Built three-tier delegation model for scaling L2→L1 pattern promotions across 50-100+ clients, plus per-appliance L2 mode control and critical flywheel bug fixes.
+
+## Bug Fixes (Flywheel Audit)
+
+1. **Pattern signature fix** — Was `incident_type:incident_type:hostname` (duplicated field), fixed to `incident_type:runbook_id:hostname` in 4 locations (main.py x2, telemetry.go x2)
+2. **ON CONFLICT DO NOTHING → DO UPDATE** — Pattern occurrence counts never accumulated
+3. **Removed auto-promotion Path 1** — Manual-only for now
+
+## Per-Appliance L2 Mode Toggle
+
+3-state control: `auto` | `manual` | `disabled`. Migration 056, Go daemon gating, backend PATCH endpoint, frontend segmented control in SiteDetail ApplianceCard.
+
+## Tier 1 — Platform Auto-Promote
+
+Migration 057 `platform_pattern_stats` table. Flywheel Steps 3-4: aggregate L2 patterns across all sites/orgs, auto-promote to `l1_rules` with `source='platform'` when 5+ orgs, 90%+ success, 20+ occurrences. Syncs to all appliances via `/agent/sync`.
+
+## Tier 2 — Client Self-Service
+
+`POST /api/client/promotion-candidates/{id}/approve` and `/reject` — gated by `healing_tier='full_coverage'`. ClientHealingLogs.tsx: full_coverage sees Approve+Reject+Forward, standard sees Forward only.
+
+## Tier 3 — Partner Bulk Management
+
+`POST /api/partners/me/learning/candidates/bulk-approve` and `bulk-reject` (up to 50). PartnerLearning.tsx: checkbox column, Select All, floating bulk action bar, client endorsement badges, healing tier badges, endorsed filter.
+
+## Files Changed (18 files, +1313/-98)
+
+| File | Change |
+|------|--------|
+| `migrations/056_appliance_l2_mode.sql` | NEW — l2_mode on site_appliances |
+| `migrations/057_platform_pattern_aggregation.sql` | NEW — platform_pattern_stats table |
+| `main.py` | Pattern sig fix, removed auto-promote, Steps 3-4 |
+| `client_portal.py` | Client approve/reject endpoints |
+| `learning_api.py` | Bulk approve/reject, client_endorsed in response |
+| `sites.py` | L2 mode PATCH endpoint |
+| `ClientHealingLogs.tsx` | Approve/Reject UI for full_coverage |
+| `PartnerLearning.tsx` | Checkbox selection, bulk action bar, badges |
+| `SiteDetail.tsx` | L2ModeToggle component |
+| `api.ts`, `useFleet.ts`, `hooks/index.ts` | L2 mode API + hook |
+| `checkin/db.go`, `models.go` | FetchL2Mode |
+| `daemon/daemon.go`, `phonehome.go` | L2 mode gating |
+| `l2planner/telemetry.go` | Pattern signature fix |
+
+
+[truncated...]
+
+---
+
+## 2026-02-25-session-130-HIPAA doc upload, module guidance, companion CSRF, learning loop fix.md
+
+# Session 130 - HIPAA Doc Upload, Module Guidance, Companion CSRF, Learning Loop Fix
+
+**Date:** 2026-02-25
+**Started:** 00:07
+**Previous Session:** 129
+
+---
+
+## Goals
+
+- [x] Wire document uploads into compliance scoring (upload = module evidence)
+- [x] Fix Learning Loop 500 error (PromotionCandidate.description nullable)
+- [x] Policy template preview + download + inline content view
+- [x] Guidance captions on all 10 HIPAA modules (What is this? / How to complete it)
+- [x] Widen guidance blocks + verify companion portal visibility
+- [x] Fix companion notes CSRF 403 (missing X-CSRF-Token header)
+
+---
+
+## Progress
+
+### Completed
+
+1. **Document upload → compliance scoring** (7bf4282)
+   - Added `hipaa_documents` count query to overview endpoints in `hipaa_modules.py` and `companion.py`
+   - Modules with docs but no structured data get 100% score (upload = evidence provided)
+   - Added `documents` field to API response + `DOC_KEY_MAP` in `ClientCompliance.tsx`
+   - Module status shows "N Docs" badge when docs exist but no structured data
+
+2. **Learning Loop 500 fix** (0e2cddf)
+   - Root cause: `PromotionCandidate.description: str` in models.py but DB had NULL values
+   - Fixed: `Optional[str] = None` in models.py + `or ""` coalescing in routes.py
+
+3. **Policy template preview + download** (f5e3498)
+   - Added `GET /policies/templates` (list all 8) and `GET /policies/templates/{key}` (full content)
+   - Template cards with Preview/Download/Adopt buttons in PolicyLibrary.tsx
+
+4. **Policy templates inline view** (e007a44)
+   - Replaced modal Preview with inline View/Collapse toggle
+   - Template content cached in state, expandable per-card
+
+5. **Guidance captions on all 10 modules** (731ccc1)
+   - Added teal "What is this?" + "How to complete it" blocks to all 10 compliance module .tsx files
+   - Written in near-lay language for office managers, still industry-relevant
+   - Consistent styling: `bg-teal-50/60 rounded-2xl border border-teal-100`
+
+6. **Widen guidance blocks** (4443e6d)
+   - Changed from `p-4 rounded-xl` to `px-6 py-5 rounded-2xl` with `leading-relaxed`
+   - Companion portal shares same components (CompanionModuleWork.tsx lazy-imports) — no changes needed
+
+
+[truncated...]
+
+---
+
+## 2026-02-25-session-131-linux-drift-scanner-chaos-lab.md
+
+# Session 131 — Linux Drift Scanner + Chaos Lab Full-Spectrum
+
+**Date:** 2026-02-25
+**Duration:** ~90 minutes
+**Focus:** Fix Linux drift scanning, run chaos lab, deploy v0.2.3 daemon
+
+---
+
+## Completed
+
+### 1. Fleet Updates Version Fix
+- Fleet Updates page showed stale `v1.0.52` (old Python agent) for a month
+- Added auto-detection: query `appliances` table for most common `agent_version` from recent checkins
+- Added "Deployed Version" card (5-column grid) showing live version + appliance count
+- Inserted `v0.2.2` release in `update_releases`, deactivated old Python releases
+- **Commit:** `cbfe457`
+
+### 2. Go Daemon SudoPassword Support (linuxscan.go)
+- **Root cause:** `sshexec.Target.SudoPassword` was never set during Linux scan
+  - `linuxTarget` struct: added `SudoPassword` field
+  - `parseLinuxTargets()`: extract `sudo_password` with password fallback
+  - Target construction: added `target.SudoPassword = &lt.SudoPassword`
+- **Backend (sites.py):** Added `sudo_password` passthrough — uses `password` as fallback
+- **Commit:** `837426d` (backend), `6f699f3` (Go daemon)
+
+### 3. Linux Scan Script Fixes
+- **ufw detection:** Ubuntu uses ufw, not nft/iptables. Added `ufw status` check first
+- **Numeric sanitization:** `grep -c` can output multi-line values causing Python SyntaxError
+  - Added `head -1 | tr -dc '0-9'` for `fw_rules`, `failed_count`, `disk_pct`
+  - Pre-Python sanitization block ensures all numeric vars are clean integers
+- **Better error logging:** Show exit code + stderr on scan failure (was empty string)
+
+### 4. Credential Fixes
+- Linux target password was `msp123` (wrong) — fixed to `NorthValley2024!` for both appliances
+- Added WinRM credentials for VM appliance (`test-appliance-lab-b3c40c`)
+
+### 5. Chaos Lab Full-Spectrum Test
+Injected drift on 192.168.88.242 (northvalley-linux):
+- SSH: PermitRootLogin=yes, PasswordAuth=yes, MaxAuthTries=10
+- Firewall: ufw disabled
+- Service: auditd stopped
+- Permissions: /etc/shadow=644, sshd_config=666
+
+**Results — 7 drift findings detected:**
+
+| Finding | Rule | Outcome |
+|---------|------|---------|
+| SSH config drift | L1-SSH-001 | Runbook dispatched |
+| Failed services | L1-LIN-SVC-001 | Runbook dispatched |
+| SUID binaries | L1-SUID-001 | Auto-healed (4.5s) |
+
+[truncated...]
+
+---
+
+## 2026-02-25-session-132-network-compliance-checks-frontend-verification.md
+
+# Session 132 — Network Compliance Checks + Frontend Verification
+
+**Date:** 2026-02-25
+**Started:** 10:32
+**Previous Session:** 131
+
+---
+
+## Goals
+
+- [x] Verify frontend Device Inventory consistency (summary vs table)
+- [x] Complete end-to-end verification of compliance pipeline
+- [x] Update session tracking and documentation
+
+---
+
+## Progress
+
+### Completed
+
+1. **Frontend verified working** — Device Inventory page at `dashboard.osiriscare.net` shows:
+   - Summary: 7 Total, 0 Compliant, 1 Drifted, 6 Unknown, 0 Medical
+   - Table: 7 devices with correct status, expandable details showing open ports
+   - Previous "0 devices" issue was transient (stale cache / pre-deploy state)
+
+2. **End-to-end pipeline confirmed operational:**
+   - Nmap auto-detects 192.168.88.0/24 from appliance interfaces
+   - Scans find 7 hosts, 192.168.88.241 gets port data (22, 80, 8083, 8090)
+   - 7 HIPAA compliance checks run → 192.168.88.241 = drifted (HTTP w/o HTTPS)
+   - Results sync to Central Command PostgreSQL (migration 060)
+   - Dashboard displays consistent data with expandable compliance details
+
+3. **Key discovery:** `routes/device_sync.py` compliance detail endpoint is NOT reachable — main.py imports `device_sync_router` from `device_sync.py`, not from `routes/`. Needs consolidation.
+
+### Blocked
+
+- Nothing blocked
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `.agent/claude-progress.json` | Updated: session 132, health, commits, new key findings |
+
+Previous session (130-131) created all the compliance check files — see session 131 log.
+
+---
+
+
+[truncated...]
+
+---
+
+## 2026-02-25-session-133-HIPAA doc audit + resilience hardening plan.md
+
+# Session 133 - Hipaa Doc Audit + Resilience Hardening Plan
+
+**Date:** 2026-02-25
+**Started:** 12:20
+**Previous Session:** 132
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-02-25-session-133-hipaa-doc-audit-resilience-plan.md
+
+# Session 133 — HIPAA Doc Audit + Resilience Hardening Plan
+
+**Date:** 2026-02-25
+**Duration:** ~45 min
+**Status:** Plan ready, implementation deferred
+
+## What Was Done
+
+### 1. HIPAA Compliance Doc Audit (13 Fixes)
+
+Audited `.claude/skills/docs/hipaa/compliance.md` against actual codebase with 5 parallel Explore agents. Found and fixed 13 discrepancies:
+
+1. **DriftResult** — changed from `@dataclass` to Pydantic `BaseModel`
+2. **EvidenceBundle** — changed to Pydantic `BaseModel`, removed bundle_hash/signature fields (stored as separate files), added 40+ actual fields
+3. **Generation pipeline** — updated to `store_evidence()` API
+4. **Runbook format** — updated to v2 (params nesting, version, constraints, continue_on_failure)
+5. **L1 rule format** — removed fake confidence field, added actual fields (action_params, severity_filter, cooldown_seconds, gpo_managed)
+6. **Operators** — added EXISTS (9th operator)
+7. **Data Boundary Zones** — removed nonexistent ALLOWED_PATHS/PROHIBITED_PATHS constants
+8. **L1 Rule Coverage** — fixed counts: 12 cross-platform + 13 Linux + 13 Windows = 38 total
+9. **Windows scan checks** — fixed from 16 to 12
+10. **CIS mappings** — updated v7→v8 numbering
+11. **HIPAA Control Mapping** — expanded to 14 controls with categories
+12. **Key Files** — expanded from 8 to 13 entries
+13. **Network Compliance Checks** — added new section documenting 7 HIPAA network checks
+
+### 2. Resilience Gap Audit
+
+Ran 2 parallel Explore agents to audit offline/disconnect resilience. Found 7 gaps:
+
+| Gap | Status |
+|-----|--------|
+| StartLimitBurst on disk image services | Plan written |
+| WatchdogSec on long-running services | Plan written |
+| Subscription enforcement | Plan written (immediate degraded mode) |
+| Go daemon state persistence | Plan written |
+| Network vs server connectivity distinction | Plan written |
+| A/B physical partitions | Deferred to next session |
+| Doc updates | Plan written |
+
+### 3. Resilience Implementation Plan
+
+Wrote comprehensive plan to `/Users/dad/.claude/plans/synchronous-stirring-taco.md` covering:
+- Systemd crash-loop protection (StartLimitBurst=5/300s on 3 services)
+- WatchdogSec (120s) with sd_notify in Go daemon
+- Subscription enforcement via checkin-receiver JOIN → daemon healing gate
+- daemon_state.json atomic persistence for linux targets, L2 mode, subscription status
+- Connectivity error classification (DNS fail vs connection refused vs timeout)
+- hipaa/compliance.md resilience section
+
+
+[truncated...]
+
+---
+
+## 2026-02-25-session-134-l2-planner-flywheel-fix.md
+
+# Session 134: L2 Planner Enable + Flywheel Promotion Fix
+
+**Date:** 2026-02-25
+**Focus:** L2 was completely dead — everything escalated to L3. Fixed three-layer bug in L2 pipeline + broken flywheel promotion aggregation.
+
+## Problem
+
+All non-L1 incidents went straight to L3 email alerts. L2 LLM planner was never called. Learning flywheel had zero promotion candidates despite 912 L2 executions in telemetry.
+
+## Root Causes Found
+
+### L2 Never Called (3 bugs)
+1. **config.go:79** — `L2Enabled` defaulted to `false`. Daemon logged `l2=disabled` at startup, `l2Planner` was nil.
+2. **main.py:2511** — Backend set `escalate_to_l3 = action == "escalate" or decision.requires_human_review`. Even with valid runbook at 0.75 confidence, `requires_human_review=true` forced escalation.
+3. **daemon.go:600** — `ShouldExecute()` required `!RequiresApproval`, blocking auto-mode execution. Auto mode should override this.
+
+### Flywheel Dead (1 bug)
+4. **main.py:617** — Flywheel loop Step 2 updated `promotion_eligible` on `aggregated_pattern_stats` rows, but nothing created those rows. Go daemon doesn't call `/api/agent/sync/pattern-stats`. The table was empty for L2 patterns.
+
+## Fixes
+
+| File | Change |
+|------|--------|
+| `appliance/internal/daemon/config.go:79` | `L2Enabled: false` → `true` |
+| `mcp-server/main.py:2511` | `escalate = action == "escalate"` (removed `or requires_human_review`) |
+| `appliance/internal/daemon/daemon.go:600` | `canExecute = !EscalateToL3 && Confidence >= 0.6` (ignores RequiresApproval in auto mode) |
+| `mcp-server/main.py:617` | Added Step 1: aggregate `execution_telemetry` → `aggregated_pattern_stats` in flywheel loop |
+
+## Deployment
+
+- **Commit 8771d36** — L2 enable + escalation fix → CI/CD deployed to VPS
+- **Commit f9cd525** — Flywheel aggregation bridge → CI/CD deployed to VPS
+- **Go binary** — Cross-compiled, uploaded to VPS `/var/www/updates/appliance-daemon`
+- **Fleet order 7aa80c25** — `nixos_rebuild` active, 48h expiry, both appliances will rebuild
+- **DB fix** — Manually marked 2 L2 patterns as promotion_eligible (786 firewall heals, 110 backup heals)
+
+## Verified
+
+- L2 endpoint returns `escalate_to_l3: false` for valid runbooks (was `true`)
+- CI/CD both succeeded
+- Both appliances checking in (v0.2.5, last checkin <60s ago)
+- 37 patterns now promotion-eligible in learning dashboard
+- 912 L2 executions in telemetry (100% success rate)
+
+## Next
+
+- Verify appliances pick up fleet rebuild order and restart with `l2=native`
+- Monitor L2 decisions on live incidents (should see L2 handling instead of L3)
+- WinRM 401 on DC (192.168.88.250) still needs investigation
+
+---
+
+## 2026-02-26-session-135-resilience-hardening-sdnotify-state-subscription.md
+
+# Session 135 - Resilience Hardening: sd_notify, State Persistence, Subscription Gating
+
+**Date:** 2026-02-26
+**Started:** 02:35
+**Previous Session:** 134
+
+---
+
+## Goals
+
+- [x] Systemd crash-loop protection on all services
+- [x] sd_notify watchdog integration for appliance-daemon
+- [x] Go daemon state persistence across restarts
+- [x] Subscription enforcement — gate healing on active/trialing
+- [x] Connectivity error classification for better diagnostics
+- [x] Build, deploy, create fleet order
+
+---
+
+## Progress
+
+### Completed
+
+1. **Crash-loop protection** — `StartLimitBurst=5/IntervalSec=300` on appliance-daemon, network-scanner, local-portal
+2. **sd_notify watchdog** — new `sdnotify` package (zero-cgo), `WatchdogSec=120s` on all 3 services, `Type=notify` for daemon, Ready/Watchdog/Stopping calls in daemon.go
+3. **State persistence** — new `state.go`, saves linux_targets + l2_mode + subscription_status to `/var/lib/msp/daemon_state.json` with atomic write (tmp+rename), loaded on startup
+4. **Subscription enforcement** — `FetchSubscriptionStatus()` JOINs sites→partners, `SubscriptionStatus` in CheckinResponse, `isSubscriptionActive()` gates auto-deploy + heal requests, drift detection continues in degraded mode
+5. **Connectivity classification** — `classifyConnectivityError()` using `errors.As` for DNS/OpError, string matching for timeout/tls/5xx
+6. **Deployed** — binaries to VPS, checkin-receiver restarted, CI/CD triggered, fleet order 3bf579c6
+
+### Blocked
+
+- WinRM 401 on DC — needs home network
+- HIPAA compliance at 56% — needs more check coverage
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `iso/appliance-disk-image.nix` | StartLimitBurst, WatchdogSec, Type=notify |
+| `appliance/internal/sdnotify/sdnotify.go` | NEW — zero-cgo sd_notify helper |
+| `appliance/internal/daemon/state.go` | NEW — state persistence (save/load JSON) |
+| `appliance/internal/daemon/daemon.go` | sd_notify calls, subscription gating, state save/load, connectivity classification |
+| `appliance/internal/daemon/phonehome.go` | SubscriptionStatus field, classifyConnectivityError() |
+| `appliance/internal/checkin/db.go` | FetchSubscriptionStatus(), Step 9 in ProcessCheckin |
+| `appliance/internal/checkin/models.go` | SubscriptionStatus field |
+| `.claude/skills/docs/hipaa/compliance.md` | Resilience & Offline Operation section |
+| `.claude/skills/docs/nixos/infrastructure.md` | sd_notify, state persistence, crash-loop docs |
+
+[truncated...]
+
+---
+
+## 2026-02-26-session-136-incident-pipeline-production-l1-l2-l3-rate-limiter-fix.md
+
+# Session 136 — Incident Pipeline Production + Rate Limiter Fix
+
+**Date:** 2026-02-26
+**Started:** 08:02
+**Previous Session:** 135
+
+---
+
+## Goals
+
+- [x] Fix both sites showing Offline on dashboard
+- [x] Fix incident pipeline to use L1 DB rules → L2 LLM → L3 escalation
+- [x] Populate Linux runbook steps for production fleet orders
+- [x] Consolidate duplicate L1 rules
+- [x] Audit site detail features (Portal Link, Devices, Workstations, Go Agents, Frameworks, Cloud Integrations)
+- [x] Wire network incidents through L2 analysis instead of straight-to-L3
+
+---
+
+## Progress
+
+### Completed
+
+1. **Rate limiter fix** — separate agent bucket (600/min) prevents scan telemetry from starving checkins
+2. **Caddy route fix** — removed broken `checkin-receiver:8001` route, all API traffic to `mcp-server:8000`
+3. **Incident pipeline rewrite** — L1 queries `l1_rules` table, L2 LLM fallback, L3 only as last resort
+4. **Notification dedup** — increased from 1h to 4h for L1/L2 incidents (reduces linux_firewall spam)
+5. **41 runbooks with steps** — 13 core Linux + LIN-* series populated with real remediation commands
+6. **L1 rule consolidation** — 1 active rule per incident type, disabled 12+ duplicates
+7. **DB cleanup** — expired 20 orders, resolved 14 stale incidents, fixed framework 404
+8. **Network L2 analysis** — 4 network incident types now flow through L2 for vendor-specific recommendations
+9. **Frontend audit** — all 6 site detail tabs verified working
+
+### Blocked
+
+- WinRM 401 still open (no workstation enrollment)
+- Fleet rebuild pending (order 3bf579c6)
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/rate_limiter.py` | Separate agent rate limiter (600/min, 20k/hr) |
+| `mcp-server/main.py` | L1 DB rules → L2 LLM → L3 pipeline; 4h notification dedup |
+| `mcp-server/central-command/backend/migrations/063_linux_runbook_steps_l1_cleanup.sql` | Runbook steps + L1 consolidation |
+| `/opt/mcp-server/Caddyfile` (VPS) | Removed broken checkin-receiver route |
+
+## Commits
+
+[truncated...]
+
+---
+
+## 2026-02-26-session-137-Fleet rebuild v0.3.2, WinRM DC credential fix, AD enrollment unblocked.md
+
+# Session 137 - Fleet Rebuild V0.3.2, Winrm Dc Credential Fix, Ad Enrollment Unblocked
+
+**Date:** 2026-02-26
+**Started:** 21:18
+**Previous Session:** 136
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-02-26-session-137-fleet-rebuild-winrm-credential-fix.md
+
+# Session 137 — Fleet Rebuild + WinRM Credential Fix
+
+**Date:** 2026-02-26
+**Started:** 13:07
+**Previous Session:** 136
+
+---
+
+## Goals
+
+- [x] Deploy resilience hardening via fleet rebuild (sd_notify, state persistence, crash-loop protection)
+- [x] Fix WinRM 401 — load Windows credentials from checkin response
+- [x] Bump appliance daemon version to 0.3.1
+- [x] Verify appliances report v0.3.1 after rebuild — Physical at 0.3.1, VM stuck at 0.2.5 (restart goroutine fails on VirtualBox)
+- [x] Verify WinRM connections succeed — DC at 192.168.88.250, GPO configured, AD enumeration running
+- [x] Fix DC targeting — domain_admin credential prioritized over workstations (v0.3.2)
+- [x] Fix healing order pipeline — runbook_id missing from parameters JSON (v0.3.3)
+
+---
+
+## Progress
+
+### Completed
+
+1. **Fleet order fix** — Cancelled broken `3bf579c6` (status 'pending', wrong params). Created proper `db4b76d5` with correct `flake_ref` and 'active' status.
+2. **Resilience hardening deployed** — Both appliances completed fleet order `db4b76d5` (nixos_rebuild). Physical at 0.3.0, VM completing.
+3. **Version bump to 0.3.0** — Updated `daemon.go`, `appliance-disk-image.nix`, `appliance-image.nix` (Go source + ldflags + Nix version).
+4. **WinRM root cause found** — `runCheckin()` in daemon.go processed LinuxTargets, L2Mode, SubscriptionStatus but completely ignored `WindowsTargets`. DC credentials from Central Command were never loaded into config. Drift scanner and auto-deployer early-exited with nil credentials.
+5. **WinRM fix implemented** — Added `loadWindowsTargets()` to extract DC hostname/username/password from first Windows target in checkin response. Config's DomainController/DCUsername/DCPassword now populated dynamically.
+6. **Version bump to 0.3.1** — Includes WinRM credential loading fix.
+7. **Fleet order for v0.3.1** — Created `42d63738` (active, skip_version=0.3.1, 48h expiry). Both appliances will rebuild.
+8. **DC targeting fix (v0.3.2)** — Backend was returning workstation cred (.244) before DC cred (.250). Fixed: backend orders domain_admin first, adds `role` field; Go `loadWindowsTargets()` prefers `role=domain_admin`.
+9. **WinRM verified working** — Physical appliance: DC at 192.168.88.250 connected, GPO configured, AD enumeration started against DC.
+10. **Healing pipeline fix (v0.3.3)** — 40 failed healing orders/day with "runbook_id is required". Root cause: backend stored runbook_id in DB column but `parameters = {}`. Go daemon's `processOrders()` only extracted `parameters` map. Fixed both: backend embeds runbook_id in parameters JSON; Go injects top-level runbook_id into params map.
+
+### Pending
+
+- Fleet order `de656138` (v0.3.3) active — appliances need to rebuild for healing fix
+- VM appliance still at v0.3.1 — needs manual `nixos-rebuild switch`
+- `handleHealing` in processor.go is a stub — returns success without executing runbook steps
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `appliance/internal/daemon/daemon.go` | Added `loadWindowsTargets()`, bumped Version 0.2.5→0.3.3, added win_targets to checkin log, inject runbook_id into order params |
+| `iso/appliance-disk-image.nix` | Version 0.3.3 in buildGoModule + ldflags |
+| `iso/appliance-image.nix` | Version 0.3.3 in buildGoModule + ldflags |
+
+[truncated...]
+
+---
+
+## 2026-02-27-session-138-nixos-runbook-healing-fix.md
+
+# Session 138 — NixOS Runbook Healing Fix (v0.3.5)
+
+**Date:** 2026-02-27
+**Focus:** Audit and fix 7 recurring non-healing incidents
+
+## Problem
+
+7 dashboard notifications recurring every scan cycle, all marked "Resolution: L1" but never actually healed:
+- `linux_failed_services` (both appliances)
+- `linux_unattended_upgrades` (both appliances)
+- `linux_log_forwarding` (physical)
+- `net_host_reachability` (both appliances) — correctly escalates to L3
+
+## Root Cause
+
+The `handleHealing` stub in `processor.go` was **NOT** the blocker — `daemon.go:160` already overrides it with the real `executeHealingOrder()`. The real issues:
+
+1. **LIN-SVC-001** (linux_failed_services): `remediate_script` was EMPTY — L1 matched, called runbook, nothing happened
+2. **LIN-PATCH-001** (linux_unattended_upgrades): `remediate_script` was EMPTY — and NixOS doesn't have apt/yum
+3. **LIN-LOG-001** (linux_log_forwarding): remediate used `sed -i` on `/etc/journald.conf` — fails on NixOS (read-only symlinks)
+4. **Scanner too strict**: log forwarding check only accepted rsyslog or journal-upload, not journald persistent storage
+5. **NixOS config gaps**: `MaxRetentionSec=7day` (HIPAA needs 90d), no `system.autoUpgrade` configured
+
+## Fixes
+
+### 1. runbooks.json — 3 runbook scripts fixed
+- **LIN-SVC-001**: Added generic failed-service restart (`systemctl restart` each failed svc) + verify
+- **LIN-PATCH-001**: NixOS-aware auto-update timer enablement (checks `/etc/NIXOS`, uses appropriate timer)
+- **LIN-LOG-001**: NixOS-aware remediation (detects NixOS, skips sed on symlinks, checks journald persistent)
+
+### 2. linuxscan.go — Scanner log forwarding check
+- Added `journald_persistent` as valid log management state
+- Checks `grep -qE "^Storage=persistent" /etc/systemd/journald.conf`
+
+### 3. configuration.nix — NixOS config fixes
+- `MaxRetentionSec`: 7day → 90day (HIPAA 164.312(b))
+- `SystemMaxUse`: 100M → 500M (room for 90-day retention)
+- Added `system.autoUpgrade` with flake ref, 4 AM schedule, no auto-reboot
+
+### 4. processor.go — Stub converted to error sentinel
+- Stub now returns error + WARNING log instead of fake success
+- Makes it obvious if daemon fails to register real handler
+- Test updated to verify stub→RegisterHandler override chain
+
+### 5. Version bump
+- daemon.go: 0.3.4 → 0.3.5
+
+## Files Changed
+- `appliance/internal/daemon/runbooks.json` — 3 runbook scripts
+- `appliance/internal/daemon/linuxscan.go` — log forwarding check
+
+[truncated...]
+
+---
+
+## 2026-02-27-session-139-comprehensive-nixos-runbook-scanner-fix.md
+
+# Session 139 — Comprehensive NixOS Runbook & Scanner Fix (v0.3.6)
+
+**Date:** 2026-02-27
+**Focus:** Fix all remaining NixOS-incompatible runbooks and scanner false positives
+
+## Continuation of Session 138
+
+After v0.3.5 fixed LIN-SVC-001, LIN-PATCH-001, LIN-LOG-001, 40+ new notifications revealed more broken runbooks and scanner issues.
+
+## Comprehensive Audit Results
+
+15 scanner checks audited. 7 issues found, 4 critical:
+
+## Fixes
+
+### 1. configuration.nix — HIPAA kernel sysctl params
+Added 7 HIPAA-required kernel hardening params to `boot.kernel.sysctl`:
+- `net.ipv4.ip_forward = 0`
+- `net.ipv4.tcp_syncookies = 1`
+- `net.ipv4.conf.all.send_redirects = 0`
+- `net.ipv4.conf.all.accept_redirects = 0`
+- `net.ipv4.conf.all.rp_filter = 1`
+- `kernel.randomize_va_space = 2`
+- `kernel.suid_dumpable = 0`
+
+### 2. LIN-FW-001 — Firewall (was empty)
+- **remediate_script**: NixOS-aware — detects /etc/NIXOS, reloads nftables service; standard Linux falls through to ufw/firewalld
+- **verify_script**: Checks nft ruleset count, ufw status, firewalld state
+
+### 3. LIN-SSH-001 — SSH Root Login (was sed on read-only)
+- **detect_script**: Now accepts both `no` and `prohibit-password` as compliant
+- **remediate_script**: NixOS-aware — detects /etc/NIXOS, verifies config is already correct declaratively, skips sed
+- **verify_script**: Accepts both `no` and `prohibit-password`
+
+### 4. LIN-KERN-001 — Kernel Params (cat > /etc/sysctl.d/ fails on NixOS)
+- **remediate_script**: `sysctl -w` for immediate effect on all Linux; skips file persistence on NixOS (managed by configuration.nix)
+
+### 5. SUID Scanner — False positives on NixOS
+- linuxscan.go SUID check: Added `case "$f" in /nix/store/*) continue ;;` to skip declaratively-managed NixOS store paths
+
+### 6. Version bump 0.3.5 → 0.3.6
+
+## Files Changed
+- `iso/configuration.nix` — 7 HIPAA kernel sysctl params
+- `appliance/internal/daemon/runbooks.json` — LIN-FW-001, LIN-SSH-001, LIN-KERN-001 NixOS-aware
+- `appliance/internal/daemon/linuxscan.go` — SUID /nix/store filter
+- `appliance/internal/daemon/daemon.go` — version 0.3.5 → 0.3.6
+
+## Test Results
+- `go build ./...` — clean
+
+[truncated...]
+
+---
+
+## 2026-02-27-session-140-skill-docs-agents-md-restructure.md
+
+# Session 140 — Skill Docs + agents.md Restructure
+
+**Date:** 2026-02-27
+**Previous Session:** 139
+
+---
+
+## Goals
+
+- [x] Research expert Go patterns across the internet
+- [x] Research advanced NixOS patterns (lesser-known features)
+- [x] Scan SkillsJars.com for relevant skills
+- [x] Create Go skill doc from research
+- [x] Create NixOS advanced skill doc from research
+- [x] Restructure knowledge index per Vercel agents.md findings
+- [x] Integrate obra/superpowers debugging + verification methodology
+
+---
+
+## Progress
+
+### Completed
+
+- **Go skill doc** (`.claude/skills/docs/golang/golang.md`) — concurrency, pgx, slog, testing, security, production patterns. 5 research agents compiled.
+- **NixOS advanced skill doc** (`.claude/skills/docs/nixos/advanced.md`) — module system, sops-nix, impermanence, deploy-rs, disko, systemd hardening. 2 research agents compiled.
+- **Workflow skill doc** (`.claude/skills/docs/workflow/workflow.md`) — systematic debugging (4-phase, 95% fix rate) + verification-before-completion from obra/superpowers.
+- **Vercel agents.md restructure** — compressed index with critical snippets moved into CLAUDE.md (always in context). Skills requiring invocation: +0pp. Always-in-context index: +47pp per Vercel evals.
+- **CLAUDE.md rules** — added root-cause-first debugging and evidence-before-claims verification as always-loaded rules.
+- **SkillsJars scan** — no Go/NixOS/Python skills. Catalog dominated by Java/Spring Boot and marketing.
+- **INDEX.md** — slimmed from full pipe table to doc map pointer (CLAUDE.md now holds the index).
+
+### Blocked
+
+None.
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `.claude/skills/docs/golang/golang.md` | NEW — Go expert patterns |
+| `.claude/skills/docs/nixos/advanced.md` | NEW — NixOS advanced patterns |
+| `.claude/skills/docs/workflow/workflow.md` | NEW — debugging + verification |
+| `.claude/skills/INDEX.md` | Slimmed to pointer |
+| `CLAUDE.md` | Expanded knowledge index + retrieval instruction + rules |
+
+---
+
+## Commits
+
+[truncated...]
+
+---
+
+## 2026-02-27-session-141-Go daemon security hardening — SSH TOFU, UTF-16 fix, LRU cache, WaitGroup drain.md
+
+# Session 141 - Go Daemon Security Hardening — Ssh Tofu, Utf 16 Fix, Lru Cache, Waitgroup Drain
+
+**Date:** 2026-02-27
+**Started:** 05:44
+**Previous Session:** 140
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-02-27-session-141-go-daemon-security-hardening.md
+
+# Session 141: Go Daemon Security Hardening
+
+**Date:** 2026-02-27
+**Scope:** Comprehensive audit + 4-phase hardening of the Go appliance daemon
+
+## Summary
+
+Three parallel audit agents identified ~50 issues across security, correctness, resource management, and code quality in `appliance/`. Implemented 13 fixes across 4 phases.
+
+## Phase 1: Security Hardening
+
+| Fix | File | Change |
+|-----|------|--------|
+| SSH TOFU host key verification | `sshexec/executor.go` | Replaced `InsecureIgnoreHostKey()` with TOFU: persist keys to `/var/lib/msp/ssh_known_hosts`, reject changed keys |
+| WinRM full SHA256 hash | `winrm/executor.go:204` | Changed `[:8]` truncation to full 64-char SHA256 hex for temp file names |
+| UTF-16LE encoding fix | `winrm/executor.go:328-334` | Replaced byte-iteration with `unicode/utf16.Encode()` for correct multi-byte char handling |
+| Reject unsigned orders | `orders/processor.go:301-306` | Changed from warn-and-allow to reject unsigned orders when server public key is present |
+| Tighten file permissions | `orders/processor.go:723` | Changed promoted rule files from `0644` to `0600` |
+
+## Phase 2: Correctness Fixes
+
+| Fix | File | Change |
+|-----|------|--------|
+| io.ReadAll error handling | `daemon.go:524` | Check and return error instead of discarding with `_` |
+| Context propagation | `healing_executor.go` | Added `executeRunbookCtx()`, `executeLocalCtx()`, `executeInlineScriptCtx()` — healing order path now propagates parent context to SSH/local execution |
+| Incident reporter context | `incident_reporter.go:86,131` | Added 30s timeout context via `http.NewRequestWithContext()` |
+
+## Phase 3: Resource Management
+
+| Fix | File | Change |
+|-----|------|--------|
+| SSH LRU cache | `sshexec/executor.go` | Max 50 cached connections with LRU eviction via `connOrder` slice |
+| Distro cache TTL | `sshexec/executor.go` | 24h TTL on distro detection cache via `distroCacheEntry` struct |
+| WaitGroup drain | `daemon.go` | `sync.WaitGroup` on key goroutines; 30s timeout drain on shutdown |
+
+## Phase 4: Code Quality
+
+| Fix | File | Change |
+|-----|------|--------|
+| Atomic DriftCount | `grpcserver/registry.go`, `server.go` | Changed `DriftCount int64` to `atomic.Int64` for race-free concurrent access |
+| gpoFixDone to struct | `daemon.go` | Moved package-level `var gpoFixDone sync.Map` to `Daemon` struct field |
+
+## Not Fixed (already correct)
+- Cooldown key separator collision (4C) — already uses `:` separator at `daemon.go:591`
+
+## Test Results
+- All Go packages pass (except pre-existing `TestWindowsRulesMatch/smb_signing`)
+- `go vet ./...` clean
+- `go build ./...` clean
+
+---
+
+## 2026-02-27-session-142-security hardening — fleet orders auth, signatures, nonce replay, WinRM SSL.md
+
+# Session 142 - Security Hardening — Fleet Orders Auth, Signatures, Nonce Replay, WinRM SSL
+
+**Date:** 2026-02-27
+**Started:** 06:48
+**Previous Session:** 141
+**Commit:** a68fe2d
+
+---
+
+## Goals
+
+- [x] Fix 4 CRITICAL + 3 HIGH vulnerabilities from fleet orders audit
+
+---
+
+## Progress
+
+### Completed
+
+1. **Appliance checkin auth (CRITICAL)** — `require_appliance_auth()` validates Bearer token via `verify_site_api_key()`. Graceful fallback for sites without API keys. Applied to checkin, acknowledge, complete.
+2. **Signature delivery (CRITICAL)** — admin_orders, healing orders, fleet_orders now include nonce/signature/signed_payload in SELECT and response.
+3. **server_public_key (CRITICAL)** — Checkin response returns `get_public_key_hex()` for Go daemon signature verification.
+4. **Nonce replay protection (HIGH)** — Go Processor tracks used nonces in-memory + JSON persistence, 24h eviction.
+5. **Hostname validation (HIGH)** — `isKnownTarget()` validates healing hostnames against DC, deployed workstations, linux targets.
+6. **WinRM SSL (HIGH)** — All 10 WinRM sites switched to port 5986 + UseSSL:true + VerifySSL:false.
+7. **Fleet order signatures (CRITICAL)** — `get_fleet_orders_for_appliance()` includes signature columns.
+
+### Blocked
+
+- WinRM HTTPS listener must be configured on Windows targets before SSL connections work
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/sites.py` | Auth, signatures, server_public_key |
+| `mcp-server/central-command/backend/fleet_updates.py` | Fleet order signatures |
+| `appliance/internal/orders/processor.go` | Nonce replay tracking |
+| `appliance/internal/daemon/healing_executor.go` | Hostname validation, WinRM SSL |
+| `appliance/internal/daemon/daemon.go` | WinRM SSL (3 locations) |
+| `appliance/internal/daemon/driftscan.go` | WinRM SSL (3 locations) |
+| `appliance/internal/daemon/autodeploy.go` | WinRM SSL (3 locations) |
+
+---
+
+## Next Session
+
+1. Push to main, verify CI/CD deploys backend
+
+[truncated...]
+
+---
+
+## 2026-02-27-session-143-v0.3.10-gpo-agent-deploy.md
+
+# Session 143: v0.3.10 GPO Agent Self-Deploy from NETLOGON
+
+**Date:** 2026-02-27
+**Duration:** ~3 hours (continued from session that ran out of context)
+
+## Summary
+
+Fixed the root cause of v0.3.4 persisting through rebuilds (wrong Nix file), confirmed v0.3.9 on both appliances, then built v0.3.10 with GPO-based agent self-deployment to bypass WinRM auth issues with workstations.
+
+## Key Accomplishments
+
+1. **Root cause: wrong Nix file** — `flake.nix` references `appliance-disk-image.nix` (not `appliance-image.nix`) for the `osiriscare-appliance-disk` config. Previous sessions updated the wrong file. `appliance-disk-image.nix` was stuck at v0.3.4.
+
+2. **v0.3.9 confirmed on both appliances** — After fixing the Nix file and deploying via fleet order:
+   - VM: running from `/nix/store/4hb4kskd15zmhbc6yx7ggd572fh227jc-appliance-daemon-0.3.9/bin/appliance-daemon`
+   - Physical: v0.3.9 with WinRM HTTP fallback working (`DC 192.168.88.250: WinRM HTTPS unavailable, using HTTP (5985)`)
+
+3. **WinRM auth investigation** — ws01 only offers Negotiate/Kerberos (no NTLM). DC works via NTLM but double-hop fails (Access is Denied). Direct WinRM to workstations is a dead end.
+
+4. **GPO self-deployment (v0.3.10)** — New approach bypasses WinRM:
+   - `autodeploy.go` stages `osiris-agent.exe` AND `osiris-config.json` to NETLOGON share
+   - GPO startup script v2 copies agent+config from `\\NETLOGON\` to `C:\OsirisCare\`
+   - Installs as Windows service on boot
+   - Version-stamped to auto-update on GPO refresh
+
+5. **Fleet order deployed** — Order `50311a01` active on VPS for nixos-rebuild to v0.3.10
+
+## Commits
+
+- `1248601` — fix: bump daemon version to 0.3.9 in appliance-disk-image.nix
+- `c73c478` — feat: GPO startup script deploys agent from NETLOGON + config staging (v0.3.10)
+
+## Next Priorities (when back on home WiFi)
+
+1. Verify v0.3.10 deployed to both appliances
+2. Verify GPO startup script updated on DC with agent deployment logic
+3. Reboot ws01 (`VBoxManage controlvm northvalley-ws01 reset`) to trigger agent self-deploy
+4. Verify osiris-agent installed and running on ws01
+5. Verify gRPC TLS enrollment: agent → appliance :50051 → register → mTLS certs
+6. End-to-end push/pull validation
+
+---

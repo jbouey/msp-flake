@@ -776,6 +776,7 @@ export const CHECK_TYPE_LABELS: Record<string, string> = {
   registry_run_persistence: 'Registry Run',
   defender_cloud_protection: 'Cloud AV',
   spooler_service: 'Print Spooler',
+  firewall_dangerous_rules: 'FW Inbound Rules',
   // Deploy / special
   'WIN-DEPLOY-UNREACHABLE': 'Deploy Fail',
   // Legacy / alternate check types

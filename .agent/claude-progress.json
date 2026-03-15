@@ -1,14 +1,14 @@
 {
-  "session": 165,
-  "updated": "2026-03-10T03:55:35.068321Z",
+  "session": 179,
+  "updated": "2026-03-14T21:45:00Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "go_daemon_v0.3.19_live_agent_enrolled",
-    "vm_appliance": "go_daemon_v0.3.19_live",
+    "physical_appliance": "go_daemon_v0.3.20_fleet_order_v0.3.21_reissued_7d_expiry",
+    "vm_appliance": "go_daemon_v0.3.21",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_37_eligible_2_l2_patterns_promoted_flywheel_aggregation_bridge_deployed",
@@ -16,7 +16,7 @@
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "fleet_wide_orders_live_update_daemon_v0.3.20_deploying",
+    "fleet_updates": "fleet_wide_orders_live_v0.3.21_fleet_order_active_kill_switch_handlers",
     "compliance_infographic": "client_portal_plus_admin_sitedetail_clickthrough_to_incidents_category_filter",
     "l4_escalation": "partner_escalate_to_l4_admin_queue_recurrence_detection_migration_077",
     "lead_swarm_automation": "openclaw_daily_cron_brave_hhs_hunter_anthropic_email_gen",
@@ -27,7 +27,7 @@
     "macos_scanning": "13_active_checks_filevault_gatekeeper_sip_firewall_autoupdates_screenlk_ntp",
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api"
   },
-  "current_blocker": "Apollo API key still showing free plan despite upgrade. VM appliance stale (iMac offline).",
+  "current_blocker": "Physical appliance not picking up fleet orders despite active checkins. iMac unreachable (SSH timeout). Apollo API 403. External credential rotation pending.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -183,8 +183,24 @@
       "note": "Built overlay with all session 106 changes (L1 rules, flap fix, scan checks, parallel scans). Uploaded to root@178.156.162.116:/var/www/updates/agent-overlay.tar.gz"
     }
   ],
-  "completed_this_session": [],
+  "completed_this_session": [
+    "Audit policy healing expanded (6\u219212 subcategories + gpupdate /force)",
+    "Registry persistence runbook covers Winlogon key path",
+    "Rogue admin changed from escalate to auto-heal (RB-WIN-SEC-027)",
+    "Firewall dangerous inbound rules \u2014 new scanner check + L1 rule + runbook",
+    "DNS service recovery improved with dependency-aware restart",
+    "Fleet order re-issued with 7-day expiry (48e4e7f6)",
+    "Runbooks.json now has 122 entries (was 120)"
+  ],
   "recent_commits": [
+    {
+      "hash": "03b895a",
+      "message": "fix: appliance checkin auth fallback for key mismatch"
+    },
+    {
+      "hash": "dca4e13",
+      "message": "feat: network device management + auto-patching L1 rules + backup verification"
+    },
     {
       "hash": "aece44c",
       "message": "feat: compliance health infographic + daemon v0.3.20"
@@ -200,14 +216,6 @@
     {
       "hash": "e542c99",
       "message": "fix: incidents queries join through appliances table for site_id"
-    },
-    {
-      "hash": "033ac67",
-      "message": "feat: native macOS agent + client portal device protection downloads"
-    },
-    {
-      "hash": "a28422e",
-      "message": "feat: drift config in partner + client portals, exclude disabled checks from compliance score"
     }
   ],
   "key_findings": {

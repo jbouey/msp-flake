@@ -810,16 +810,13 @@ func builtinRules() []*Rule {
 		{
 			ID:          "L1-WIN-ROGUE-ADMIN-001",
 			Name:        "Rogue Admin User Detected",
-			Description: "Unauthorized administrator account — escalate for human review",
+			Description: "Unauthorized administrator account — disable and remove from Administrators group",
 			Conditions: []RuleCondition{
 				{Field: "check_type", Operator: OpEquals, Value: "rogue_admin_users"},
 				{Field: "drift_detected", Operator: OpEquals, Value: true},
 			},
-			Action: "escalate",
-			ActionParams: map[string]interface{}{
-				"reason":  "Unauthorized admin account requires human investigation",
-				"urgency": "critical",
-			},
+			Action:          "run_windows_runbook",
+			ActionParams:    map[string]interface{}{"runbook_id": "RB-WIN-SEC-027", "phases": []interface{}{"remediate", "verify"}},
 			HIPAAControls:   []string{"164.312(a)(1)", "164.308(a)(3)(ii)(B)"},
 			Enabled:         true,
 			Priority:        1,
@@ -970,6 +967,24 @@ func builtinRules() []*Rule {
 			MaxRetries:      1,
 			Source:          "builtin",
 			GPOManaged:      true,
+		},
+
+	{
+			ID:          "L1-WIN-FW-RULES-001",
+			Name:        "Dangerous Firewall Inbound Rules",
+			Description: "Dangerous inbound firewall allow rules detected — remove non-standard rules",
+			Conditions: []RuleCondition{
+				{Field: "check_type", Operator: OpEquals, Value: "firewall_dangerous_rules"},
+				{Field: "drift_detected", Operator: OpEquals, Value: true},
+			},
+			Action:          "run_windows_runbook",
+			ActionParams:    map[string]interface{}{"runbook_id": "RB-WIN-SEC-028", "phases": []interface{}{"remediate", "verify"}},
+			HIPAAControls:   []string{"164.312(e)(1)", "164.312(a)(1)"},
+			Enabled:         true,
+			Priority:        3,
+			CooldownSeconds: 600,
+			MaxRetries:      1,
+			Source:          "builtin",
 		},
 
 		// --- Network Check Types ---

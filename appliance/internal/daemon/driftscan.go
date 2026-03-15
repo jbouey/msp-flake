@@ -466,7 +466,7 @@ $result.RegistryRunKeys = $runKeys
 $auditPolicy = @{}
 try {
     $ap = auditpol /get /category:* /r 2>$null | ConvertFrom-Csv
-    $critical = @('Logon','Account Lockout','Process Creation','Security Group Management','User Account Management','Audit Policy Change')
+    $critical = @('Logon','Account Lockout','Process Creation','Security Group Management','User Account Management','Audit Policy Change','File System','Registry','Handle Manipulation','Detailed File Share','Process Termination','DPAPI Activity')
     foreach ($entry in $ap) {
         if ($critical -contains $entry.'Subcategory') {
             $auditPolicy[$entry.'Subcategory'] = $entry.'Inclusion Setting'
@@ -491,6 +491,24 @@ $result.DefenderAdvanced = $defAdv
 # 23. Print Spooler service (attack surface)
 $sp = Get-Service Spooler -EA SilentlyContinue
 $result.SpoolerService = if ($sp) { $sp.Status.ToString() } else { "NotFound" }
+
+# 24. Dangerous inbound firewall rules (allow rules on risky ports/any)
+$dangerousRules = @()
+try {
+    Get-NetFirewallRule -Direction Inbound -Action Allow -Enabled True -EA Stop | ForEach-Object {
+        $r = $_
+        $port = (Get-NetFirewallPortFilter -AssociatedNetFirewallRule $r -EA SilentlyContinue)
+        $isRisky = $false
+        if ($port.LocalPort -eq 'Any' -and $port.Protocol -ne 'ICMPv4') { $isRisky = $true }
+        if ($port.LocalPort -match '(21|23|69|445|3389|4444|5985|5986)') {
+            if ($r.DisplayGroup -notmatch '(Remote Desktop|Windows Remote Management|File and Printer|Core Networking)') { $isRisky = $true }
+        }
+        if ($r.DisplayName -notmatch '^(Core Networking|File and Printer|Remote Desktop|Windows Remote|DFS|AllJoyn|Cast to|Delivery|mDNS|Hyper-V|Network Discovery|Performance|Remote Event|OsirisCare|Wi-Fi Direct|BranchCache)' -and $isRisky) {
+            $dangerousRules += @{ Name=$r.DisplayName; Port=$port.LocalPort; Protocol=$port.Protocol.ToString() }
+        }
+    }
+} catch {}
+$result.DangerousInboundRules = $dangerousRules
 
 $result | ConvertTo-Json -Depth 3 -Compress
 `
@@ -558,8 +576,13 @@ type windowsScanState struct {
 		Path  string `json:"Path"`
 	} `json:"RegistryRunKeys"`
 	AuditPolicy      map[string]string `json:"AuditPolicy"`
-	DefenderAdvanced map[string]string `json:"DefenderAdvanced"`
-	SpoolerService   string            `json:"SpoolerService"`
+	DefenderAdvanced    map[string]string `json:"DefenderAdvanced"`
+	SpoolerService      string            `json:"SpoolerService"`
+	DangerousInboundRules []struct {
+		Name     string `json:"Name"`
+		Port     string `json:"Port"`
+		Protocol string `json:"Protocol"`
+	} `json:"DangerousInboundRules"`
 }
 
 // evaluateWindowsFindings converts a parsed Windows scan state into drift findings.
@@ -924,6 +947,23 @@ func (ds *driftScanner) evaluateWindowsFindings(state *windowsScanState, t scanT
 			HIPAAControl: "164.312(e)(1)",
 			Severity:     "medium",
 			Details:      map[string]string{"note": "PrintNightmare attack surface"},
+		})
+	}
+
+	// 24. Dangerous inbound firewall rules
+	if len(state.DangerousInboundRules) > 0 {
+		ruleNames := make([]string, 0, len(state.DangerousInboundRules))
+		for _, r := range state.DangerousInboundRules {
+			ruleNames = append(ruleNames, r.Name)
+		}
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "firewall_dangerous_rules",
+			Expected:     "none",
+			Actual:       strings.Join(ruleNames, ", "),
+			HIPAAControl: "164.312(e)(1)",
+			Severity:     "high",
+			Details:      map[string]string{"rules": strings.Join(ruleNames, ",")},
 		})
 	}
 

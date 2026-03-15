@@ -1,7 +1,7 @@
 # Current State
 
-**Updated:** 2026-02-27T18:30:00Z
-**Session:** 142
+**Updated:** 2026-03-14T21:45:00Z
+**Session:** 179
 **Branch:** main
 
 ## System Health
@@ -10,45 +10,40 @@
 |-----------|--------|
 | VPS API | healthy |
 | Dashboard | healthy |
-| Physical Appliance | go_daemon_v0.3.6, fleet order pending (security hardening) |
-| VM Appliance | go_daemon_v0.3.6, fleet order pending (security hardening) |
-| L2 Planner | enabled (L2Enabled=true default, confidence >= 0.6 auto-exec) |
-| Learning Flywheel | active, aggregation bridge deployed, 2 patterns promoted |
-| Evidence Pipeline | 216k+ bundles, Ed25519 signed, real drift data |
+| Physical Appliance | go_daemon_v0.3.20, fleet order v0.3.21 re-issued (7d expiry) |
+| VM Appliance | go_daemon_v0.3.21 |
+| L2 Planner | enabled (L2Enabled=true, confidence >= 0.6 auto-exec) |
+| Learning Flywheel | active, 37 eligible, 2 promoted |
+| Evidence Pipeline | 203k+ bundles, Ed25519 signed |
 | Compliance Packets | 56% compliance, 15 HIPAA controls |
 | OTS Proofs | 2705 anchored, 251 pending |
-| Fleet Updates | fleet_orders live, v0.3.6 deployed, security hardened |
+| Fleet Updates | v0.3.21 order 48e4e7f6 active (expires Mar 22) |
+| Chaos Lab | 43.8% healing rate → improvements shipped |
 
-## Latest Commit
-
-```
-a68fe2d security: harden fleet orders — auth, signatures, nonce replay, WinRM SSL
-```
-
-## Session 142 Changes — Security Hardening (7 fixes)
-
-### CRITICAL (4)
-1. **Appliance checkin auth** — `require_appliance_auth()` validates Bearer token against `api_keys` table with graceful migration fallback; applied to checkin, acknowledge, complete
-2. **Signature delivery** — admin_orders, healing orders, fleet_orders now include `nonce, signature, signed_payload` in SELECT and response
-3. **server_public_key** — checkin response now returns `get_public_key_hex()` for Go daemon signature verification
-4. **Fleet order signatures** — `get_fleet_orders_for_appliance()` includes signature columns
+## Session 179 — Chaos Lab Healing Gaps (5 fixes)
 
 ### HIGH (3)
-5. **Nonce replay protection** — Go `Processor` tracks used nonces in-memory + persists to `used_nonces.json`, 24h eviction
-6. **Hostname validation** — `isKnownTarget()` validates healing order hostnames against DC, deployed workstations, linux targets
-7. **WinRM SSL** — All 10 WinRM connection sites switched to port 5986 + `UseSSL: true` + `VerifySSL: false` (self-signed tolerance)
+1. **Audit policy healing** — `RB-WIN-SEC-026` expanded from 6→12 subcategories (Object Access, Detailed Tracking), added `gpupdate /force` before `auditpol /set`. Scanner updated to match.
+2. **Registry persistence** — `RB-WIN-SEC-019` now covers Winlogon key path + safe entry whitelist
+3. **Rogue admin healing** — `L1-WIN-ROGUE-ADMIN-001` changed from `escalate` to `run_windows_runbook` → new `RB-WIN-SEC-027` (remove from Admins group + disable account)
+
+### MEDIUM (2)
+4. **Firewall inbound rules** — New end-to-end: scanner check #24 (`firewall_dangerous_rules`) + `L1-WIN-FW-RULES-001` + `RB-WIN-SEC-028` (remove/disable dangerous inbound allow rules)
+5. **DNS service recovery** — `RB-WIN-SVC-001` improved with dependency-aware restart + disabled StartType fix
+
+### Fleet Order
+- Cancelled expired order `359717f5` (0/2 delivered, 2 days old)
+- Created new order `48e4e7f6` — nixos_rebuild, skip v0.3.21, 7-day expiry (Mar 22)
+- VM appliance already at v0.3.21 (marked skipped)
 
 ### Files Changed
-- `mcp-server/central-command/backend/sites.py` — auth, signatures, server_public_key
-- `mcp-server/central-command/backend/fleet_updates.py` — fleet order signatures
-- `appliance/internal/orders/processor.go` — nonce replay tracking
-- `appliance/internal/daemon/healing_executor.go` — hostname validation, WinRM SSL
-- `appliance/internal/daemon/daemon.go` — WinRM SSL (3 locations)
-- `appliance/internal/daemon/driftscan.go` — WinRM SSL (3 locations)
-- `appliance/internal/daemon/autodeploy.go` — WinRM SSL (3 locations)
+- `appliance/internal/daemon/driftscan.go` — 12 audit subcategories, new firewall inbound rules scanner check #24
+- `appliance/internal/healing/builtin_rules.go` — rogue admin→heal, new L1-WIN-FW-RULES-001
+- `appliance/internal/daemon/runbooks.json` — improved 3 runbooks + 2 new (122 total)
+- `mcp-server/central-command/frontend/src/types/index.ts` — `firewall_dangerous_rules` label
 
 ## Current Blockers
 
-- **WinRM HTTPS prerequisite** — Windows targets need WinRM HTTPS listener configured with cert before SSL connections will work
-- **HIPAA compliance at 56%** — needs more check coverage
-- **Deploy required** — push to main triggers CI/CD for backend; appliances need fleet order for Go daemon rebuild
+- **Fleet order delivery** — physical appliance (v0.3.20) not picking up fleet orders despite active checkins. iMac unreachable from Mac (SSH timeout). Need to check appliance logs when iMac accessible.
+- **Apollo API** — 403 on People Search (trial plan limitation)
+- **External credential rotation** — Anthropic, AWS, SMTP, OAuth still pending provider console access
