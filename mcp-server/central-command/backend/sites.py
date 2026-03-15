@@ -2501,6 +2501,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
             fleet_orders = await get_fleet_orders_for_appliance(
                 conn, canonical_id, checkin.agent_version
             )
+            if fleet_orders:
+                import logging
+                logging.info(f"Fleet orders for {canonical_id} (v{checkin.agent_version}): {len(fleet_orders)} orders")
             pending_orders.extend(fleet_orders)
         except Exception as e:
             import logging
