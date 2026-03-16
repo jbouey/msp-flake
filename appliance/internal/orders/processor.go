@@ -534,6 +534,16 @@ func (p *Processor) handleNixOSRebuild(ctx context.Context, params map[string]in
 		os.WriteFile(pendingPath, []byte(orderID), 0o644)
 	}
 
+	// Remove stale systemd override that may point to an old bind-mounted binary.
+	// Previous hot-deploys create /run/systemd/system/appliance-daemon.service.d/override.conf
+	// which overrides ExecStart to /var/lib/msp/appliance-daemon. After nixos-rebuild,
+	// the nix store binary is correct but the override makes the service use the old one.
+	overridePath := "/run/systemd/system/appliance-daemon.service.d/override.conf"
+	if _, err := os.Stat(overridePath); err == nil {
+		os.Remove(overridePath)
+		log.Printf("[orders] Removed stale systemd override at %s", overridePath)
+	}
+
 	log.Printf("[orders] Two-phase rebuild: nixos-rebuild test --flake %s --refresh", flakeRef)
 
 	// Run nixos-rebuild test via systemd-run to escape ProtectSystem=strict sandbox.
