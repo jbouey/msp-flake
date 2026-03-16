@@ -7,8 +7,8 @@
   "system_health": {
     "vps_api": "healthy",
     "dashboard": "healthy",
-    "physical_appliance": "go_daemon_v0.3.20_fleet_orders_delivering_rebuild_not_taking_effect",
-    "vm_appliance": "go_daemon_v0.3.21",
+    "physical_appliance": "go_daemon_v0.3.22_live_chaos_healing_active",
+    "vm_appliance": "go_daemon_v0.3.22",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "active_37_eligible_2_l2_patterns_promoted_flywheel_aggregation_bridge_deployed",
@@ -16,7 +16,7 @@
     "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "fleet_wide_orders_live_v0.3.21_fleet_order_active_kill_switch_handlers",
+    "fleet_updates": "fleet_orders_rls_fixed_v0.3.22_deployed_both_appliances",
     "compliance_infographic": "client_portal_plus_admin_sitedetail_clickthrough_to_incidents_category_filter",
     "l4_escalation": "partner_escalate_to_l4_admin_queue_recurrence_detection_migration_077",
     "lead_swarm_automation": "openclaw_daily_cron_brave_hhs_hunter_anthropic_email_gen",
@@ -27,7 +27,7 @@
     "macos_scanning": "13_active_checks_filevault_gatekeeper_sip_firewall_autoupdates_screenlk_ntp",
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api"
   },
-  "current_blocker": "Physical appliance fleet orders now deliver (RLS fix), but nixos-rebuild completes without version change (0.3.20\u21920.3.22 expected). Need appliance console access to check nix build logs. iMac unreachable.",
+  "current_blocker": "Apollo API 403 (trial plan). External credential rotation pending (Anthropic, AWS, SMTP, OAuth).",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -193,7 +193,11 @@
     "Runbooks.json now has 122 entries (was 120)",
     "Fleet order RLS fix \u2014 Migration 093 (admin-only\u2192read-all for fleet_orders)",
     "Fleet order delivery confirmed working (physical appliance picked up 2 orders)",
-    "v0.3.22 fleet order created (skip 0.3.22, 7-day expiry)"
+    "v0.3.22 fleet order created (skip 0.3.22, 7-day expiry)",
+    "Systemd override cleanup in handleNixOSRebuild (prevents stale hot-deploy binaries)",
+    "Physical appliance upgraded to v0.3.22 (was stuck at v0.3.20 due to stale override)",
+    "VM appliance upgraded to v0.3.22",
+    "appliance-image.nix synced to v0.3.22 (installer ISO)"
   ],
   "recent_commits": [
     {
@@ -268,7 +272,8 @@
     "nix_wrong_file_lesson": "CRITICAL: flake.nix line 172 maps osiriscare-appliance-disk to ./iso/appliance-disk-image.nix (NOT appliance-image.nix). appliance-image.nix is the installer ISO builder. appliance-disk-image.nix is the installed system config that nixos-rebuild uses. Version bumps MUST update appliance-disk-image.nix or rebuilds produce old versions. This caused v0.3.4 to persist across 3 sessions despite commits claiming v0.3.9.",
     "winrm_ntlm_negotiate_lesson": "ws01 only offers Negotiate and Kerberos auth (no NTLM header in WWW-Authenticate). Go WinRM ClientNTLM gets 401. DC works because it also accepts Basic auth. Kerberos double-hop (appliance\u2192DC\u2192ws01) fails with Access is Denied because NTLM doesn't delegate credentials. Fix: GPO self-deployment from NETLOGON bypasses WinRM to workstations entirely.",
     "gpo_self_deploy_lesson": "GPO startup script v2 deploys osiris-agent from NETLOGON share: copies agent.exe + config.json to C:\\OsirisCare\\, installs as Windows service, opens SMB port 445. Version-stamped script auto-updates on group policy refresh. Avoids WinRM auth issues with workstations. Config staged to NETLOGON by autodeploy.go alongside the binary.",
-    "fleet_order_rls_lesson": "Fleet orders had admin-only RLS policy (fleet_orders_admin_only). Appliance checkins use tenant_connection() which sets app.is_admin=false. Fleet orders were invisible. Fix: Migration 093 adds permissive SELECT policy for all connections. Fleet order completions table had RLS disabled so was not affected."
+    "fleet_order_rls_lesson": "Fleet orders had admin-only RLS policy (fleet_orders_admin_only). Appliance checkins use tenant_connection() which sets app.is_admin=false. Fleet orders were invisible. Fix: Migration 093 adds permissive SELECT policy for all connections. Fleet order completions table had RLS disabled so was not affected.",
+    "systemd_override_lesson": "Hot-deploy bind mounts leave /run/systemd/system/appliance-daemon.service.d/override.conf that redirects ExecStart to /var/lib/msp/appliance-daemon. nixos-rebuild builds correct nix store binary but override bypasses it. Fix: handleNixOSRebuild removes override before rebuild. Also: /run/ is tmpfs, cleared on reboot \u2014 but nixos-rebuild test does not clear runtime overrides."
   },
   "deployment_flow": [
     "1. Build installer ISO on VPS: nix build .#appliance-iso",

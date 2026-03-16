@@ -56,14 +56,14 @@ let
   # Build the Go appliance daemon (replaces Python compliance-agent)
   appliance-daemon-go = pkgs.buildGoModule {
     pname = "appliance-daemon";
-    version = "0.3.20";
+    version = "0.3.22";
     src = ../appliance;
 
     vendorHash = "sha256-JbeTjY0oNJsh6xlmjQFif45WAojjW/9Q+9YObtN/AfM=";
 
     ldflags = [
       "-s" "-w"
-      "-X github.com/osiriscare/appliance/internal/daemon.Version=0.3.20"
+      "-X github.com/osiriscare/appliance/internal/daemon.Version=0.3.22"
     ];
 
     subPackages = [
