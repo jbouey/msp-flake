@@ -157,7 +157,7 @@ func (e *Executor) Execute(ctx context.Context, target *Target, script, runbookI
 
 // executeOnce runs a script via SSH, using base64 encoding to avoid shell quoting issues.
 func (e *Executor) executeOnce(ctx context.Context, target *Target, script string, timeout int, useSudo bool) (map[string]interface{}, int, error) {
-	client, err := e.getConnection(target)
+	client, err := e.getConnection(ctx, target)
 	if err != nil {
 		return nil, -1, fmt.Errorf("get connection: %w", err)
 	}
@@ -264,7 +264,8 @@ func (e *Executor) DetectDistro(ctx context.Context, target *Target) (string, er
 }
 
 // getConnection returns a cached or new SSH connection.
-func (e *Executor) getConnection(target *Target) (*ssh.Client, error) {
+// The context is used for TCP dial cancellation and SSH handshake deadline.
+func (e *Executor) getConnection(ctx context.Context, target *Target) (*ssh.Client, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -300,15 +301,27 @@ func (e *Executor) getConnection(target *Target) (*ssh.Client, error) {
 
 	addr := net.JoinHostPort(target.Hostname, fmt.Sprintf("%d", port))
 	dialer := net.Dialer{Timeout: connectTimeout}
-	conn, err := dialer.DialContext(context.Background(), "tcp", addr)
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
+	}
+
+	// Set deadline on TCP conn so SSH handshake cannot hang forever.
+	// The handshake (key exchange, auth) must complete within connectTimeout.
+	if err := conn.SetDeadline(time.Now().Add(connectTimeout)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("set deadline %s: %w", addr, err)
 	}
 
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("SSH handshake %s: %w", addr, err)
+	}
+
+	// Clear the deadline after successful handshake — sessions manage their own timeouts.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		log.Printf("[ssh] Warning: failed to clear deadline on %s: %v", addr, err)
 	}
 
 	client := ssh.NewClient(sshConn, chans, reqs)
