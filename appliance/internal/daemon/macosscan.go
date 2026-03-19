@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/maputil"
@@ -237,8 +240,72 @@ type macosScanState struct {
 	CertExpiry string `json:"cert_expiry"`
 }
 
+// sendWakeOnLAN sends a Wake-on-LAN magic packet to the broadcast address
+// for the given MAC. Used to wake sleeping macOS targets before SSH scan.
+func sendWakeOnLAN(macAddr string) error {
+	mac, err := net.ParseMAC(macAddr)
+	if err != nil {
+		return fmt.Errorf("parse MAC %q: %w", macAddr, err)
+	}
+
+	// Magic packet: 6 bytes of 0xFF + MAC repeated 16 times
+	var packet [102]byte
+	for i := 0; i < 6; i++ {
+		packet[i] = 0xFF
+	}
+	for i := 0; i < 16; i++ {
+		copy(packet[6+i*6:], mac)
+	}
+
+	conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.IPv4bcast, Port: 9})
+	if err != nil {
+		return fmt.Errorf("dial UDP broadcast: %w", err)
+	}
+	defer conn.Close()
+
+	_, err = conn.Write(packet[:])
+	return err
+}
+
+// resolveMAC looks up the MAC address for an IP from /proc/net/arp.
+func resolveMAC(ip string) string {
+	data, err := os.ReadFile("/proc/net/arp")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 4 && fields[0] == ip && fields[3] != "00:00:00:00:00:00" {
+			return fields[3]
+		}
+	}
+	return ""
+}
+
 // scanMacOSRemote scans a remote macOS target via SSH.
+// Sends Wake-on-LAN if SSH probe fails (macOS may be sleeping).
 func (ds *driftScanner) scanMacOSRemote(ctx context.Context, target *sshexec.Target, label string) []driftFinding {
+	// Quick TCP probe — if SSH port is unreachable, try WoL to wake the Mac
+	probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer probeCancel()
+	probeConn, probeErr := (&net.Dialer{}).DialContext(probeCtx, "tcp", fmt.Sprintf("%s:%d", target.Hostname, target.Port))
+	if probeErr != nil {
+		mac := resolveMAC(target.Hostname)
+		if mac != "" {
+			log.Printf("[macosscan] SSH probe failed for %s, sending Wake-on-LAN to %s", target.Hostname, mac)
+			if err := sendWakeOnLAN(mac); err != nil {
+				log.Printf("[macosscan] WoL failed: %v", err)
+			} else {
+				// Wait for Mac to wake up (typically 10-15s)
+				time.Sleep(20 * time.Second)
+			}
+		} else {
+			log.Printf("[macosscan] SSH probe failed for %s, no MAC found for WoL", target.Hostname)
+		}
+	} else {
+		probeConn.Close()
+	}
+
 	result := ds.daemon.sshExec.Execute(
 		ctx, target, macosScanScript,
 		"MACOS-DRIFT-SCAN", "driftscan",
