@@ -41,9 +41,14 @@ async def require_appliance_auth(request: Request) -> str:
     if not api_key:
         raise HTTPException(status_code=401, detail="Empty API key")
 
-    # Parse request body to extract site_id
+    # Parse request body to extract site_id (handle gzip from log shipper)
     try:
-        body = await request.json()
+        content_encoding = request.headers.get("content-encoding", "")
+        raw_body = await request.body()
+        if content_encoding == "gzip":
+            import gzip
+            raw_body = gzip.decompress(raw_body)
+        body = json.loads(raw_body)
     except Exception:
         body = {}
 
