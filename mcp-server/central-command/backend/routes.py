@@ -2548,6 +2548,56 @@ async def reset_learning_data(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.post("/admin/rules/{rule_id}/disable")
+async def disable_promoted_rule(rule_id: str, db: AsyncSession = Depends(get_db)):
+    """Disable a promoted L1 rule (rollback). Logs to audit trail."""
+    result = await db.execute(
+        text("SELECT rule_id, runbook_id, source, enabled FROM l1_rules WHERE rule_id = :rid"),
+        {"rid": rule_id}
+    )
+    rule = result.fetchone()
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Rule not found: {rule_id}")
+
+    if not rule.enabled:
+        return {"status": "already_disabled", "rule_id": rule_id}
+
+    await db.execute(
+        text("UPDATE l1_rules SET enabled = false WHERE rule_id = :rid"),
+        {"rid": rule_id}
+    )
+    # Audit log
+    await db.execute(text("""
+        INSERT INTO audit_log (event_type, actor, resource_type, resource_id, details)
+        VALUES ('rule.disabled', 'admin', 'l1_rule', :rid,
+                :details::jsonb)
+    """), {
+        "rid": rule_id,
+        "details": json.dumps({
+            "runbook_id": rule.runbook_id,
+            "source": rule.source,
+            "action": "manual_rollback",
+        }),
+    })
+    await db.commit()
+
+    return {"status": "disabled", "rule_id": rule_id, "runbook_id": rule.runbook_id}
+
+
+@router.post("/admin/rules/{rule_id}/enable")
+async def enable_rule(rule_id: str, db: AsyncSession = Depends(get_db)):
+    """Re-enable a disabled L1 rule."""
+    result = await db.execute(
+        text("UPDATE l1_rules SET enabled = true WHERE rule_id = :rid RETURNING rule_id"),
+        {"rid": rule_id}
+    )
+    row = result.fetchone()
+    await db.commit()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Rule not found: {rule_id}")
+    return {"status": "enabled", "rule_id": rule_id}
+
+
 # =============================================================================
 # ORGANIZATION ENDPOINTS
 # =============================================================================

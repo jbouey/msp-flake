@@ -701,12 +701,14 @@ async def _flywheel_promotion_loop():
                     await db.rollback()
 
                 # Step 2: Update promotion_eligible on aggregated_pattern_stats
+                # Only L2 patterns are eligible — L1 patterns are already deterministic rules
                 try:
                     eligible_result = await db.execute(text("""
                         UPDATE aggregated_pattern_stats
                         SET promotion_eligible = true
                         WHERE total_occurrences >= 5
                           AND success_rate >= 0.90
+                          AND l2_resolutions >= 3
                           AND last_seen > NOW() - INTERVAL '7 days'
                           AND promotion_eligible = false
                         RETURNING pattern_signature
@@ -862,6 +864,41 @@ async def _flywheel_promotion_loop():
 
                 except Exception as e:
                     logger.debug(f"Platform auto-promotion: {e}")
+                    await db.rollback()
+
+                # Step 5: Post-promotion health monitoring
+                # Auto-disable promoted rules whose success rate dropped below 70%
+                # in the 48 hours after promotion (protects against bad promotions)
+                try:
+                    degraded = await db.execute(text("""
+                        UPDATE l1_rules SET enabled = false
+                        WHERE source = 'promoted'
+                          AND enabled = true
+                          AND created_at > NOW() - INTERVAL '48 hours'
+                          AND rule_id IN (
+                              SELECT r.rule_id FROM l1_rules r
+                              JOIN execution_telemetry et
+                                ON et.runbook_id = r.runbook_id
+                                AND et.created_at > r.created_at
+                              WHERE r.source = 'promoted'
+                                AND r.enabled = true
+                                AND r.created_at > NOW() - INTERVAL '48 hours'
+                              GROUP BY r.rule_id
+                              HAVING COUNT(*) >= 3
+                                AND SUM(CASE WHEN et.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*) < 0.70
+                          )
+                        RETURNING rule_id
+                    """))
+                    auto_disabled = degraded.fetchall()
+                    await db.commit()
+                    if auto_disabled:
+                        for row in auto_disabled:
+                            logger.warning(
+                                "Promoted rule auto-disabled (success rate < 70%)",
+                                rule_id=row[0],
+                            )
+                except Exception as e:
+                    logger.debug(f"Post-promotion monitoring: {e}")
                     await db.rollback()
 
         except asyncio.CancelledError:
