@@ -14,6 +14,7 @@ import asyncio
 import os
 import json
 import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
@@ -70,6 +71,7 @@ from dashboard_api.protection_profiles import router as protection_profiles_rout
 from dashboard_api.notifications import router as notifications_router
 from dashboard_api.cve_watch import router as cve_watch_router, cve_sync_loop
 from dashboard_api.framework_sync import router as framework_sync_router, framework_sync_loop
+from dashboard_api.prometheus_metrics import router as metrics_router
 from dashboard_api.websocket_manager import ws_manager
 
 # ============================================================================
@@ -607,6 +609,7 @@ async def _flywheel_promotion_loop():
     await asyncio.sleep(120)  # Wait 2 min after startup
     while True:
         try:
+            promotions_this_cycle = 0
             async with async_session() as db:
                 # Step 0: Generate/update patterns from L2 execution telemetry
                 # The agent reports telemetry but not patterns — bridge the gap
@@ -766,6 +769,9 @@ async def _flywheel_promotion_loop():
                 # Patterns proven across 5+ client orgs with 90%+ success
                 # become platform L1 rules — no human approval needed
                 try:
+                    remaining = max(0, 5 - promotions_this_cycle)
+                    if remaining == 0:
+                        logger.info("Flywheel promotion cap reached (5/cycle), skipping platform auto-promotion")
                     platform_result = await db.execute(text("""
                         SELECT pattern_key, incident_type, runbook_id,
                                distinct_orgs, total_occurrences, success_rate
@@ -775,12 +781,33 @@ async def _flywheel_promotion_loop():
                           AND success_rate >= 0.90
                           AND total_occurrences >= 20
                         ORDER BY distinct_orgs DESC, total_occurrences DESC
-                        LIMIT 5
-                    """))
+                        LIMIT :remaining
+                    """), {"remaining": remaining})
                     platform_candidates = platform_result.fetchall()
+
+                    # Validate runbook_id before promotion: must exist in DB or match embedded prefix
+                    _EMBEDDED_RUNBOOK_RE = re.compile(
+                        r"^(L1|LIN|WIN|MAC|NET|RB|ESC)-", re.IGNORECASE
+                    )
+                    valid_rb_result = await db.execute(text(
+                        "SELECT runbook_id FROM runbooks"
+                    ))
+                    valid_runbook_ids = {
+                        row.runbook_id for row in valid_rb_result.fetchall()
+                    }
 
                     platform_promoted = 0
                     for pc in platform_candidates:
+                        # Validate runbook_id exists in DB or matches known embedded prefix
+                        if pc.runbook_id not in valid_runbook_ids and not _EMBEDDED_RUNBOOK_RE.match(pc.runbook_id):
+                            logger.warning(
+                                "Skipping platform promotion: invalid runbook_id",
+                                runbook_id=pc.runbook_id,
+                                incident_type=pc.incident_type,
+                                pattern_key=pc.pattern_key,
+                            )
+                            continue
+
                         rule_id = f"L1-PLATFORM-{pc.incident_type.upper()}-{pc.runbook_id[:12].upper().replace('-', '')}"
                         try:
                             # Upsert: create rule if not exists, update confidence if it does
@@ -817,6 +844,7 @@ async def _flywheel_promotion_loop():
                             await db.commit()
                             if was_inserted:
                                 platform_promoted += 1
+                                promotions_this_cycle += 1
                                 logger.info(
                                     "Platform rule auto-promoted",
                                     rule_id=rule_id,
@@ -964,6 +992,31 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"Fleet order expiry check failed: {e}")
             await asyncio.sleep(300)  # Every 5 minutes
 
+    async def _reconciliation_loop():
+        """Periodically sync site_appliances from appliances when diverged (every 5 min)."""
+        await asyncio.sleep(180)  # Wait 3 min after startup
+        while True:
+            try:
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    synced = await conn.fetch("""
+                        UPDATE site_appliances sa SET
+                            last_checkin = a.last_checkin,
+                            agent_version = a.agent_version,
+                            status = CASE WHEN a.last_checkin > NOW() - INTERVAL '15 minutes' THEN 'online' ELSE sa.status END
+                        FROM appliances a
+                        WHERE sa.site_id = a.site_id
+                        AND a.last_checkin > sa.last_checkin + INTERVAL '5 minutes'
+                        RETURNING sa.site_id
+                    """)
+                    if synced:
+                        logger.info(f"Reconciliation: synced {len(synced)} stale site_appliances rows")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Reconciliation loop error: {e}")
+            await asyncio.sleep(300)  # 5 minutes
+
     task_defs = [
         ("ots_upgrade", _ots_upgrade_loop),
         ("ots_resubmit", _ots_resubmit_expired_loop),
@@ -973,6 +1026,7 @@ async def lifespan(app: FastAPI):
         ("companion_alerts", companion_alert_check_loop),
         ("fleet_order_expiry", expire_fleet_orders_loop),
         ("health_monitor", health_monitor_loop),
+        ("reconciliation", _reconciliation_loop),
     ]
 
     for name, fn in task_defs:
@@ -1056,6 +1110,34 @@ try:
 except ImportError:
     logger.warning("CSRF middleware not available - continuing without CSRF protection")
 
+# Structured request logging middleware
+@app.middleware("http")
+async def structured_request_logging(request: Request, call_next):
+    """Log all requests with structured fields for observability."""
+    import time as _time
+    start = _time.monotonic()
+    response = await call_next(request)
+    duration_ms = round((_time.monotonic() - start) * 1000, 1)
+    path = request.url.path
+    # Extract site_id from path or skip noisy endpoints
+    if path in ("/health", "/metrics") or path.startswith("/static"):
+        return response
+    site_id = None
+    if "/sites/" in path:
+        parts = path.split("/sites/")
+        if len(parts) > 1:
+            site_id = parts[1].split("/")[0]
+    logger.info(
+        "request",
+        method=request.method,
+        path=path,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
+        site_id=site_id,
+        client=request.client.host if request.client else None,
+    )
+    return response
+
 # Include dashboard API routes
 app.include_router(dashboard_router)
 app.include_router(auth_router)
@@ -1098,6 +1180,7 @@ app.include_router(notifications_router)  # Partner notifications + L3 escalatio
 app.include_router(compliance_frameworks_router)  # Multi-framework compliance management (admin)
 app.include_router(compliance_partner_router)  # Partner compliance defaults + site compliance
 app.include_router(log_ingest_router)  # Centralized log aggregation from appliances
+app.include_router(metrics_router)  # Prometheus-compatible metrics endpoint
 
 # WebSocket endpoint for real-time event push
 @app.websocket("/ws/events")

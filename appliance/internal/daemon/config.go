@@ -64,6 +64,9 @@ type Config struct {
 
 	// Feature flag for Go daemon rollout
 	UseGoDaemon bool `yaml:"use_go_daemon"`
+
+	// Security: reject unsigned L1 rules when a server public key is configured
+	RequireSignedRules bool `yaml:"require_signed_rules"`
 }
 
 // DefaultConfig returns a config with sane defaults.

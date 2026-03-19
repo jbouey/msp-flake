@@ -11,6 +11,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
+from email_alerts import send_critical_alert
+
 logger = logging.getLogger("health_monitor")
 
 
@@ -209,6 +211,30 @@ async def _send_offline_notification(
     """, site_id, appliance_id, severity, title, message, metadata)
 
     logger.info(f"[{severity}] {title}")
+
+    # Send email alert for offline appliances
+    try:
+        send_critical_alert(
+            title=title,
+            message=message,
+            site_id=site_id,
+            category="appliance_offline",
+            severity=severity,
+            host_id=hostname,
+            metadata={
+                "appliance_id": appliance_id,
+                "hostname": hostname,
+                "last_checkin": last_checkin.isoformat(),
+                "minutes_offline": minutes_offline,
+                "agent_version": agent_version,
+            },
+            recommended_action=(
+                "Check network connectivity and power status of the appliance. "
+                "If the appliance is unreachable, a site visit may be required."
+            ),
+        )
+    except Exception as e:
+        logger.error(f"Failed to send offline alert email for {hostname}: {e}")
 
 
 async def _send_recovery_notification(conn, site_id: str, appliance_id: str, hostname: str):

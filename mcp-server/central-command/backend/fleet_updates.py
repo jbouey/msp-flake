@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Depends
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Depends, Request
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
@@ -1260,6 +1260,26 @@ async def retry_fleet_order(order_id: str, user: dict = Depends(require_admin)):
             "order_id": order_id,
             "new_expires_at": new_expiry.isoformat(),
         }
+
+
+@router.get("/orders/pending")
+async def get_pending_orders_for_appliance(
+    appliance_id: str = Query(...),
+    agent_version: str = Query(None),
+    request: Request = None,
+):
+    """Fallback endpoint for appliances to fetch fleet orders when checkin is broken.
+
+    Called by the Go daemon when consecutive checkin failures prevent normal
+    order delivery via the checkin response.
+    """
+    from .sites import require_appliance_auth
+    await require_appliance_auth(request)
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        orders = await get_fleet_orders_for_appliance(conn, appliance_id, agent_version)
+        return {"orders": orders}
 
 
 @router.post("/rotate-signing-key")

@@ -176,12 +176,13 @@ type ActionExecutor func(action string, params map[string]interface{}, siteID, h
 
 // Engine is the L1 deterministic rules engine.
 type Engine struct {
-	rulesDir       string
-	rules          []*Rule
-	cooldowns      map[string]time.Time // "rule_id:host_id" -> last execution
-	mu             sync.RWMutex
-	actionExecutor ActionExecutor
-	verifier       *crypto.OrderVerifier // Verifies signed rules from Central Command
+	rulesDir          string
+	rules             []*Rule
+	cooldowns         map[string]time.Time // "rule_id:host_id" -> last execution
+	mu                sync.RWMutex
+	actionExecutor    ActionExecutor
+	verifier          *crypto.OrderVerifier // Verifies signed rules from Central Command
+	requireSignedRules bool                 // When true, reject unsigned rules if public key is configured
 }
 
 // NewEngine creates a new L1 deterministic engine.
@@ -199,6 +200,16 @@ func NewEngine(rulesDir string, executor ActionExecutor) *Engine {
 // SetServerPublicKey sets the Ed25519 public key for verifying signed rules.
 func (e *Engine) SetServerPublicKey(hexKey string) error {
 	return e.verifier.SetPublicKey(hexKey)
+}
+
+// SetRequireSignedRules controls whether unsigned rules are rejected when a
+// public key is configured. When false (default), unsigned rules are loaded
+// with a warning for backwards compatibility. When true, unsigned rules are
+// skipped with an error log.
+func (e *Engine) SetRequireSignedRules(b bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.requireSignedRules = b
 }
 
 // LoadRules loads all rules from builtins and disk.
@@ -504,6 +515,10 @@ func (e *Engine) loadSyncedJSONRules(dir string) {
 				}
 				log.Printf("[l1] Rules signature verified for %s", entry.Name())
 			} else if sigHex == "" && e.verifier.HasKey() {
+				if e.requireSignedRules {
+					log.Printf("[l1] SECURITY: unsigned rules file %s rejected (require_signed_rules=true)", entry.Name())
+					continue
+				}
 				log.Printf("[l1] WARNING: unsigned rules file %s — will be rejected after rollout", entry.Name())
 			}
 

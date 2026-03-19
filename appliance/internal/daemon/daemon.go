@@ -185,7 +185,8 @@ func New(cfg *Config) *Daemon {
 		executor = d.makeActionExecutor()
 	}
 	d.l1Engine = healing.NewEngine(rulesDir, executor)
-	log.Printf("[daemon] L1 engine loaded: %d rules (healing=%v)", d.l1Engine.RuleCount(), !cfg.HealingDryRun)
+	d.l1Engine.SetRequireSignedRules(cfg.RequireSignedRules)
+	log.Printf("[daemon] L1 engine loaded: %d rules (healing=%v, require_signed_rules=%v)", d.l1Engine.RuleCount(), !cfg.HealingDryRun, cfg.RequireSignedRules)
 
 	// Initialize L2 planner (calls Central Command → Anthropic, no LLM key on device)
 	if cfg.L2Enabled {
@@ -523,7 +524,16 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 
 	resp, err := d.phoneCli.Checkin(ctx, &req)
 	if err != nil {
-		log.Printf("[daemon] Checkin failed (%s): %v", classifyConnectivityError(err), err)
+		failures := d.phoneCli.ConsecutiveFailures()
+		log.Printf("[daemon] Checkin failed (%s, consecutive=%d): %v", classifyConnectivityError(err), failures, err)
+
+		// Fallback: poll for fleet orders directly when checkin is broken
+		if failures >= 1 && d.orderProc.ApplianceID() != "" {
+			if orders, fetchErr := d.phoneCli.FetchPendingOrders(ctx, d.orderProc.ApplianceID()); fetchErr == nil && len(orders) > 0 {
+				log.Printf("[daemon] Fleet order fallback: fetched %d pending orders", len(orders))
+				d.processOrders(ctx, orders)
+			}
+		}
 		return
 	}
 

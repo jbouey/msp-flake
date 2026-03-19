@@ -270,6 +270,11 @@ func (p *Processor) SetApplianceID(id string) {
 	p.applianceID = id
 }
 
+// ApplianceID returns the current appliance identity (empty if not yet set from checkin).
+func (p *Processor) ApplianceID() string {
+	return p.applianceID
+}
+
 // Process handles a single order: verify signature, dispatch to handler, report completion.
 func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 	if order.OrderID == "" || order.OrderType == "" {

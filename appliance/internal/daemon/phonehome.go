@@ -22,8 +22,10 @@ import (
 
 // PhoneHomeClient handles communication with Central Command.
 type PhoneHomeClient struct {
-	config *Config
-	client *http.Client
+	config              *Config
+	client              *http.Client
+	consecutiveFailures int
+	maxFailuresBeforeReset int
 }
 
 // NewPhoneHomeClient creates a new client for Central Command checkin.
@@ -76,7 +78,59 @@ func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 			Timeout:   30 * time.Second,
 			Transport: transport,
 		},
+		maxFailuresBeforeReset: 3,
 	}
+}
+
+// RecreateClient rebuilds the HTTP client with a fresh transport to recover
+// from stuck connection pools or stale TLS state. Preserves the TOFU pin.
+func (c *PhoneHomeClient) RecreateClient() {
+	log.Printf("[phonehome] Recreating HTTP client after %d consecutive failures", c.consecutiveFailures)
+	c.client.CloseIdleConnections()
+	// Rebuild with the same config — NewPhoneHomeClient re-reads the existing pin file
+	fresh := NewPhoneHomeClient(c.config)
+	c.client = fresh.client
+	c.consecutiveFailures = 0
+}
+
+// ConsecutiveFailures returns the current failure count.
+func (c *PhoneHomeClient) ConsecutiveFailures() int {
+	return c.consecutiveFailures
+}
+
+// FetchPendingOrders polls the fleet order fallback endpoint when checkin is broken.
+func (c *PhoneHomeClient) FetchPendingOrders(ctx context.Context, applianceID string) ([]map[string]interface{}, error) {
+	url := strings.TrimRight(c.config.APIEndpoint, "/") + "/api/fleet/orders/pending?appliance_id=" + applianceID
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+	httpReq.Header.Set("User-Agent", "OsirisCare-Appliance/Go")
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("fetch orders: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Orders []map[string]interface{} `json:"orders"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	return result.Orders, nil
 }
 
 // CheckinRequest is the payload sent to Central Command.
@@ -146,6 +200,10 @@ func (c *PhoneHomeClient) Checkin(ctx context.Context, req *CheckinRequest) (*Ch
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
+		c.consecutiveFailures++
+		if c.consecutiveFailures >= c.maxFailuresBeforeReset {
+			c.RecreateClient()
+		}
 		return nil, fmt.Errorf("checkin request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -156,6 +214,10 @@ func (c *PhoneHomeClient) Checkin(ctx context.Context, req *CheckinRequest) (*Ch
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		c.consecutiveFailures++
+		if c.consecutiveFailures >= c.maxFailuresBeforeReset {
+			c.RecreateClient()
+		}
 		return nil, fmt.Errorf("checkin returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -164,6 +226,7 @@ func (c *PhoneHomeClient) Checkin(ctx context.Context, req *CheckinRequest) (*Ch
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
+	c.consecutiveFailures = 0
 	return &result, nil
 }
 

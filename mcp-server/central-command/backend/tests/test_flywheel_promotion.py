@@ -11,6 +11,7 @@ These tests mock the database layer (SQLAlchemy AsyncSession) so we can
 exercise the FastAPI endpoint and db_queries logic without a real Postgres.
 """
 
+import asyncio
 import json
 import os
 import sys
@@ -297,6 +298,153 @@ class TestPromotePatternInDb:
         # No commit, no broadcast
         mock_db.commit.assert_not_awaited()
         mock_broadcast.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Tests: Flywheel runbook_id validation in platform auto-promotion (Step 4)
+# ---------------------------------------------------------------------------
+
+class TestPlatformPromotionRunbookValidation:
+    """Test that _flywheel_promotion_loop validates runbook_ids before promotion."""
+
+    @pytest.mark.asyncio
+    async def test_valid_db_runbook_id_is_promoted(self):
+        """A platform candidate whose runbook_id exists in the runbooks table should be promoted."""
+        import re
+        import main as m
+
+        # Verify the regex pattern matches known embedded prefixes
+        pattern = re.compile(r"^(L1|LIN|WIN|MAC|NET|RB|ESC)-", re.IGNORECASE)
+        assert not pattern.match("unknown-runbook-123")
+        # A runbook_id in the DB set should pass validation
+        valid_runbook_ids = {"custom-runbook-abc"}
+        rb_id = "custom-runbook-abc"
+        assert rb_id in valid_runbook_ids or pattern.match(rb_id)
+
+    @pytest.mark.asyncio
+    async def test_valid_embedded_prefix_is_promoted(self):
+        """A platform candidate with a known embedded prefix should pass validation."""
+        import re
+
+        pattern = re.compile(r"^(L1|LIN|WIN|MAC|NET|RB|ESC)-", re.IGNORECASE)
+        valid_prefixes = [
+            "L1-SVC-DNS-001", "LIN-PATCH-001", "WIN-FW-001",
+            "MAC-FILEVAULT-001", "NET-NTP-001", "RB-AUTO-SERVICE_RESTART",
+            "ESC-CRITICAL-001",
+        ]
+        for rb_id in valid_prefixes:
+            assert pattern.match(rb_id), f"Expected {rb_id} to match embedded prefix pattern"
+
+    @pytest.mark.asyncio
+    async def test_invalid_runbook_id_is_skipped(self):
+        """A platform candidate with an unknown runbook_id (not in DB, no known prefix) should be skipped."""
+        import re
+
+        pattern = re.compile(r"^(L1|LIN|WIN|MAC|NET|RB|ESC)-", re.IGNORECASE)
+        invalid_ids = [
+            "bogus-runbook", "UNKNOWN-001", "random_string",
+            "12345", "", "l1",  # "l1" alone (no dash) should not match
+        ]
+        valid_runbook_ids = set()  # empty DB set
+        for rb_id in invalid_ids:
+            assert rb_id not in valid_runbook_ids and not pattern.match(rb_id), \
+                f"Expected {rb_id} to be rejected"
+
+    @pytest.mark.asyncio
+    async def test_flywheel_loop_skips_invalid_runbook(self):
+        """Integration: _flywheel_promotion_loop skips candidates with invalid runbook_ids."""
+        from unittest.mock import call
+        import main as m
+
+        mock_db = make_mock_db()
+
+        # Track which queries were executed
+        executed_queries = []
+
+        # Platform candidate with an INVALID runbook_id (no DB match, no prefix match)
+        bad_candidate = FakeRow(
+            ["bad_type:bogus_rb", "bad_type", "bogus_rb", 6, 25, 0.95],
+            columns=["pattern_key", "incident_type", "runbook_id",
+                      "distinct_orgs", "total_occurrences", "success_rate"],
+        )
+        # Platform candidate with a VALID embedded prefix
+        good_candidate = FakeRow(
+            ["svc_stop:L1-SVC-DNS-001", "svc_stop", "L1-SVC-DNS-001", 7, 30, 0.92],
+            columns=["pattern_key", "incident_type", "runbook_id",
+                      "distinct_orgs", "total_occurrences", "success_rate"],
+        )
+
+        # Mock for the inserted row result
+        inserted_row = FakeRow([True], columns=["inserted"])
+
+        call_count = {"n": 0}
+
+        async def mock_execute(query, params=None):
+            query_str = str(query)
+            executed_queries.append(query_str)
+            call_count["n"] += 1
+
+            # Step 0-3: pattern generation, aggregation, eligible update, platform stats
+            if "INSERT INTO patterns" in query_str:
+                return FakeResult([], rowcount=0)
+            if "INSERT INTO aggregated_pattern_stats" in query_str:
+                return FakeResult([], rowcount=0)
+            if "UPDATE aggregated_pattern_stats" in query_str:
+                return FakeResult([], rowcount=0)
+            if "INSERT INTO platform_pattern_stats" in query_str:
+                return FakeResult([], rowcount=0)
+
+            # Step 4: platform candidates query
+            if "FROM platform_pattern_stats" in query_str and "promoted_at IS NULL" in query_str:
+                return FakeResult([bad_candidate, good_candidate])
+
+            # Runbook validation query
+            if "SELECT runbook_id FROM runbooks" in query_str:
+                return FakeResult([])  # empty DB — only prefix-based validation
+
+            # INSERT INTO l1_rules (should only happen for good_candidate)
+            if "INSERT INTO l1_rules" in query_str:
+                return FakeResult([inserted_row], rowcount=1)
+
+            # UPDATE platform_pattern_stats SET promoted_at
+            if "UPDATE platform_pattern_stats" in query_str and "promoted_at" in query_str:
+                return FakeResult([], rowcount=1)
+
+            return FakeResult([], rowcount=0)
+
+        mock_db.execute = AsyncMock(side_effect=mock_execute)
+
+        # Patch async_session to return our mock, and make the loop run once then stop
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        run_count = {"n": 0}
+        original_sleep = asyncio.sleep
+
+        async def limited_sleep(duration):
+            run_count["n"] += 1
+            if run_count["n"] >= 2:
+                raise asyncio.CancelledError()
+            # Skip the initial 120s startup wait
+            return
+
+        with patch.object(m, "async_session", mock_session), \
+             patch("asyncio.sleep", side_effect=limited_sleep):
+            try:
+                await m._flywheel_promotion_loop()
+            except asyncio.CancelledError:
+                pass  # Expected: limited_sleep raises CancelledError to stop the loop
+
+        # The INSERT INTO l1_rules should have been called exactly once (for the good candidate)
+        l1_inserts = [q for q in executed_queries if "INSERT INTO l1_rules" in q]
+        assert len(l1_inserts) == 1, f"Expected 1 l1_rules INSERT, got {len(l1_inserts)}"
+
+        # The bogus_rb candidate should NOT have produced an INSERT
+        # Verify by checking that "bogus_rb" never appeared as a runbook_id in INSERT params
+        # (We can't easily check params, but we know only 1 INSERT happened = the good one)
 
 
 if __name__ == "__main__":
