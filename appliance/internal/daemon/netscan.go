@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,16 +21,28 @@ const (
 	portTimeout     = 3 * time.Second
 )
 
+// discoveredDevice holds a device found via ARP table scanning.
+type discoveredDevice struct {
+	IPAddress  string `json:"ip_address"`
+	MACAddress string `json:"mac_address"`
+	Interface  string `json:"interface,omitempty"`
+}
+
 // netScanner periodically checks network-level security:
 // - Appliance listening ports (detect unexpected services)
 // - Host reachability (known hosts responsive on expected ports)
 // - External binding detection (services on 0.0.0.0 vs localhost)
+// - ARP-based device discovery (LAN host inventory)
 type netScanner struct {
 	daemon *Daemon
 
 	mu           sync.Mutex
 	lastScanTime time.Time
 	running      int32
+
+	// Last discovered devices from ARP table
+	devicesMu       sync.Mutex
+	discoveredDevs  []discoveredDevice
 }
 
 func newNetScanner(d *Daemon) *netScanner {
@@ -96,7 +110,13 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 		}
 	}
 
-	log.Printf("[netscan] Scan complete: findings=%d", len(findings))
+	// 3. Discover devices from the ARP table (passive — reads kernel ARP cache)
+	devices := discoverARPDevices()
+	ns.devicesMu.Lock()
+	ns.discoveredDevs = devices
+	ns.devicesMu.Unlock()
+
+	log.Printf("[netscan] Scan complete: findings=%d, arp_devices=%d", len(findings), len(devices))
 }
 
 // expectedPorts are the ports the appliance should have open.
@@ -262,6 +282,79 @@ func (ns *netScanner) checkHostReachability(ctx context.Context, applianceHostna
 	}
 
 	return findings
+}
+
+// DiscoveredDevices returns the most recent ARP-discovered device list.
+func (ns *netScanner) DiscoveredDevices() []discoveredDevice {
+	ns.devicesMu.Lock()
+	defer ns.devicesMu.Unlock()
+	out := make([]discoveredDevice, len(ns.discoveredDevs))
+	copy(out, ns.discoveredDevs)
+	return out
+}
+
+// discoverARPDevices reads the Linux ARP table from /proc/net/arp and returns
+// all valid entries with their actual hardware (MAC) addresses.
+//
+// /proc/net/arp format:
+//   IP address       HW type     Flags       HW address            Mask     Device
+//   192.168.88.250   0x1         0x2         08:00:27:fd:68:81     *        enp0s3
+//
+// Column 3 (index 3, zero-based) is the remote device's MAC address.
+// This must NOT be confused with the local interface MAC (which net.Interfaces()
+// would return) — that was the source of the bug where all devices showed the
+// appliance's own MAC.
+func discoverARPDevices() []discoveredDevice {
+	f, err := os.Open("/proc/net/arp")
+	if err != nil {
+		log.Printf("[netscan] Cannot read /proc/net/arp: %v", err)
+		return nil
+	}
+	defer f.Close()
+
+	var devices []discoveredDevice
+	scanner := bufio.NewScanner(f)
+
+	// Skip header line
+	if !scanner.Scan() {
+		return nil
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue
+		}
+
+		ip := fields[0]
+		flags := fields[2]
+		mac := fields[3]
+		iface := fields[5]
+
+		// Skip incomplete entries (flags 0x0 means no valid ARP entry)
+		if flags == "0x0" {
+			continue
+		}
+
+		// Skip entries with no MAC resolved
+		if mac == "00:00:00:00:00:00" || mac == "" {
+			continue
+		}
+
+		// Validate IP format (basic check)
+		if net.ParseIP(ip) == nil {
+			continue
+		}
+
+		devices = append(devices, discoveredDevice{
+			IPAddress:  ip,
+			MACAddress: strings.ToLower(mac),
+			Interface:  iface,
+		})
+	}
+
+	return devices
 }
 
 // reportNetDrift sends a network finding through the healing pipeline.
