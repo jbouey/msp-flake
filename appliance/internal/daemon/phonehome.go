@@ -83,11 +83,16 @@ func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 }
 
 // RecreateClient rebuilds the HTTP client with a fresh transport to recover
-// from stuck connection pools or stale TLS state. Preserves the TOFU pin.
+// from stuck connection pools or stale TLS state. Clears the TOFU pin so the
+// next connection re-pins (handles cert rotation from Let's Encrypt renewals).
 func (c *PhoneHomeClient) RecreateClient() {
-	log.Printf("[phonehome] Recreating HTTP client after %d consecutive failures", c.consecutiveFailures)
+	log.Printf("[phonehome] Recreating HTTP client after %d consecutive failures — clearing TLS pin for re-TOFU", c.consecutiveFailures)
 	c.client.CloseIdleConnections()
-	// Rebuild with the same config — NewPhoneHomeClient re-reads the existing pin file
+	// Delete stale TOFU pin so NewPhoneHomeClient will re-pin on next connection
+	pinPath := filepath.Join(c.config.StateDir, "server_cert_pin.hex")
+	if err := os.Remove(pinPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("[phonehome] WARNING: could not remove stale pin file: %v", err)
+	}
 	fresh := NewPhoneHomeClient(c.config)
 	c.client = fresh.client
 	c.consecutiveFailures = 0
