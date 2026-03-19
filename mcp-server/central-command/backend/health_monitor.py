@@ -11,7 +11,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
-from email_alerts import send_critical_alert
+from dashboard_api.email_alerts import send_critical_alert
 
 logger = logging.getLogger("health_monitor")
 
