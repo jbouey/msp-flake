@@ -855,12 +855,17 @@ async def submit_evidence(
             signature_valid = True
             logger.info(f"Evidence signature verified for site={site_id}")
 
-            # Track acceptance
+            # Track acceptance + heartbeat (keeps dashboard status accurate
+            # even when the dedicated checkin endpoint fails)
             try:
                 await db.execute(text("""
                     UPDATE site_appliances SET
                         evidence_rejection_count = 0,
-                        last_evidence_accepted = NOW()
+                        last_evidence_accepted = NOW(),
+                        last_checkin = NOW(),
+                        status = 'online',
+                        offline_since = NULL,
+                        offline_notified = false
                     WHERE site_id = :site_id
                 """), {"site_id": site_id})
             except Exception:
