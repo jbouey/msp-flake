@@ -81,8 +81,8 @@ func (d *Daemon) makeActionExecutor() healing.ActionExecutor {
 			script := "if command -v certbot >/dev/null 2>&1; then certbot renew --non-interactive; elif command -v acme.sh >/dev/null 2>&1; then acme.sh --renew-all; else echo 'No ACME client found'; exit 1; fi"
 			return d.executeInlineScript(script, hostID, "linux", params)
 		case "cleanup_disk_space":
-			// Clean up temp files, old logs, journal vacuum
-			script := "journalctl --vacuum-size=100M 2>/dev/null; find /tmp -type f -atime +7 -delete 2>/dev/null; find /var/log -name '*.gz' -mtime +30 -delete 2>/dev/null; nix-collect-garbage -d 2>/dev/null; df -h / | tail -1"
+			// Clean up temp files, old logs, journal vacuum (keep 7d of nix generations for rollback)
+			script := "journalctl --vacuum-size=100M 2>/dev/null; find /tmp -type f -atime +7 -delete 2>/dev/null; find /var/log -name '*.gz' -mtime +30 -delete 2>/dev/null; nix-collect-garbage --delete-older-than 7d 2>/dev/null; df -h / | tail -1"
 			return d.executeInlineScript(script, hostID, "linux", params)
 		default:
 			return nil, fmt.Errorf("unknown action: %s", action)
