@@ -121,6 +121,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/framework-sync/",  # Framework Sync — admin sync triggers
         "/api/devices/sync",     # Device inventory sync from appliances (API-key auth)
         "/api/escalations",      # Agent L3 escalations from appliances (machine-to-machine)
+        "/api/logs/",            # Log ingestion from appliances (API-key auth)
     )
 
     # Safe methods that don't require CSRF validation

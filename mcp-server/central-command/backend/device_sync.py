@@ -255,6 +255,20 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
             appliance_db_id,
         )
 
+        # Also update site_appliances so dashboard status stays accurate
+        # even when the dedicated checkin endpoint fails
+        await conn.execute(
+            """
+            UPDATE site_appliances SET
+                last_checkin = NOW(),
+                status = 'online',
+                offline_since = NULL,
+                offline_notified = false
+            WHERE site_id = $1
+            """,
+            report.site_id,
+        )
+
     # Auto-populate workstations table from discovered workstation/server devices
     try:
         async with admin_connection(pool) as link_conn:
