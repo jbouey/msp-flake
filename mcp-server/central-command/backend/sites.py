@@ -2523,10 +2523,12 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         except Exception:
             pass  # Table may not have updated_at column yet
 
-        # Send credentials if: appliance has none OR creds were updated after last checkin
-        should_send_creds = not checkin.has_local_credentials
-        if creds_updated_at and last_checkin_time:
-            should_send_creds = should_send_creds or (creds_updated_at > last_checkin_time)
+        # Always send credentials — the bandwidth optimization of skipping
+        # caused appliances to miss newly-added credential types (e.g., macOS SSH
+        # creds added after initial Windows creds were cached). Credential JSON
+        # is small (~1KB) and checkins happen every 60s, so always including them
+        # is acceptable.
+        should_send_creds = True
 
         windows_targets = []
         if should_send_creds:
