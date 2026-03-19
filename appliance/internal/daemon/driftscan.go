@@ -1095,12 +1095,23 @@ func (ds *driftScanner) runLinuxScanIfNeeded(ctx context.Context) {
 	}
 	defer atomic.StoreInt32(&ds.linuxRunning, 0)
 
+	// Check if we have targets — don't burn the interval timer on an empty scan
+	ds.daemon.linuxTargetsMu.RLock()
+	hasTargets := len(ds.daemon.linuxTargets) > 0
+	ds.daemon.linuxTargetsMu.RUnlock()
+
 	ds.linuxMu.Lock()
 	since := time.Since(ds.lastLinuxScanTime)
 	first := ds.lastLinuxScanTime.IsZero()
 	ds.linuxMu.Unlock()
 
 	if !first && since < driftScanInterval {
+		return
+	}
+
+	// If no targets yet (credentials haven't arrived from checkin), skip
+	// without updating lastLinuxScanTime so we retry next cycle
+	if !hasTargets {
 		return
 	}
 
