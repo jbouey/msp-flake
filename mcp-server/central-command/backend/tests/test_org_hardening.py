@@ -14,17 +14,22 @@ backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-# Stub out starlette and fastapi so auth.py can import without full install
-for _mod in (
-    "starlette", "starlette.middleware",
-    "starlette.middleware.base", "starlette.responses",
-    "asyncpg",
-):
-    if _mod not in sys.modules:
-        sys.modules[_mod] = types.ModuleType(_mod)
+# Stub modules only if they aren't already installed (CI has them, local dev may not)
+def _try_import(mod_name):
+    try:
+        __import__(mod_name)
+        return True
+    except ImportError:
+        return False
 
-# Provide enough fastapi stubs for auth.py to import
-if "fastapi" not in sys.modules:
+if not _try_import("fastapi"):
+    for _mod in (
+        "starlette", "starlette.middleware",
+        "starlette.middleware.base", "starlette.responses",
+    ):
+        if _mod not in sys.modules:
+            sys.modules[_mod] = types.ModuleType(_mod)
+
     _fastapi = types.ModuleType("fastapi")
     _fastapi.Request = type("Request", (), {})
     _fastapi.HTTPException = type("HTTPException", (Exception,), {
@@ -39,17 +44,20 @@ if "fastapi" not in sys.modules:
     _fastapi.Query = lambda *a, **kw: None
     sys.modules["fastapi"] = _fastapi
 
-# Stub sqlalchemy so auth.py can import
-_sa_mod = types.ModuleType("sqlalchemy")
-_sa_mod.text = lambda x: x
-sys.modules["sqlalchemy"] = _sa_mod
+if not _try_import("sqlalchemy"):
+    _sa_mod = types.ModuleType("sqlalchemy")
+    _sa_mod.text = lambda x: x
+    sys.modules["sqlalchemy"] = _sa_mod
 
-_sa_ext = types.ModuleType("sqlalchemy.ext")
-sys.modules["sqlalchemy.ext"] = _sa_ext
+    _sa_ext = types.ModuleType("sqlalchemy.ext")
+    sys.modules["sqlalchemy.ext"] = _sa_ext
 
-_sa_ext_async = types.ModuleType("sqlalchemy.ext.asyncio")
-_sa_ext_async.AsyncSession = type("AsyncSession", (), {})
-sys.modules["sqlalchemy.ext.asyncio"] = _sa_ext_async
+    _sa_ext_async = types.ModuleType("sqlalchemy.ext.asyncio")
+    _sa_ext_async.AsyncSession = type("AsyncSession", (), {})
+    sys.modules["sqlalchemy.ext.asyncio"] = _sa_ext_async
+
+if not _try_import("asyncpg"):
+    sys.modules["asyncpg"] = types.ModuleType("asyncpg")
 
 
 class TestOrgAccessControl:
