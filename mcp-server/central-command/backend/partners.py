@@ -404,6 +404,61 @@ async def get_my_sites(request: Request, partner=Depends(require_partner)):
         return {'sites': sites, 'count': len(sites)}
 
 
+@router.get("/me/orgs")
+async def get_my_orgs(request: Request, partner=Depends(require_partner)):
+    """Get organizations managed by this partner with consolidated health."""
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch("""
+            SELECT
+                co.id, co.name, co.primary_email, co.practice_type,
+                co.provider_count, co.status, co.created_at,
+                COUNT(DISTINCT s.site_id) as site_count,
+                COUNT(DISTINCT sa.appliance_id) as appliance_count,
+                MAX(sa.last_checkin) as last_checkin,
+                COUNT(DISTINCT sa.id) FILTER (
+                    WHERE sa.last_checkin > NOW() - INTERVAL '15 minutes'
+                ) as online_count
+            FROM client_orgs co
+            LEFT JOIN sites s ON s.client_org_id = co.id AND s.partner_id = $1
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+            WHERE co.current_partner_id = $1
+            GROUP BY co.id
+            ORDER BY co.name
+        """, partner['id'])
+
+        orgs = []
+        for row in rows:
+            orgs.append({
+                'id': str(row['id']),
+                'name': row['name'],
+                'primary_email': row['primary_email'],
+                'practice_type': row['practice_type'],
+                'provider_count': row['provider_count'],
+                'status': row['status'],
+                'site_count': row['site_count'],
+                'appliance_count': row['appliance_count'],
+                'online_count': row['online_count'],
+                'last_checkin': row['last_checkin'].isoformat() if row['last_checkin'] else None,
+                'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+            })
+
+        await log_partner_activity(
+            partner_id=str(partner['id']),
+            event_type=PartnerEventType.SITES_LISTED,
+            target_type="organizations",
+            target_id=str(partner['id']),
+            event_data={"org_count": len(orgs)},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", "")[:500],
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
+
+        return {'organizations': orgs, 'count': len(orgs)}
+
+
 @router.post("/me/provisions")
 async def create_provision_code(
     request: Request,
