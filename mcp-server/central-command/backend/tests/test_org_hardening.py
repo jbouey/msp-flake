@@ -14,6 +14,43 @@ backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
+# Stub out starlette and fastapi so auth.py can import without full install
+for _mod in (
+    "starlette", "starlette.middleware",
+    "starlette.middleware.base", "starlette.responses",
+    "asyncpg",
+):
+    if _mod not in sys.modules:
+        sys.modules[_mod] = types.ModuleType(_mod)
+
+# Provide enough fastapi stubs for auth.py to import
+if "fastapi" not in sys.modules:
+    _fastapi = types.ModuleType("fastapi")
+    _fastapi.Request = type("Request", (), {})
+    _fastapi.HTTPException = type("HTTPException", (Exception,), {
+        "__init__": lambda self, status_code=500, detail="": (
+            setattr(self, "status_code", status_code) or
+            setattr(self, "detail", detail)
+        ),
+    })
+    _fastapi.Depends = lambda x: x
+    _fastapi.Header = lambda *a, **kw: None
+    _fastapi.Cookie = lambda *a, **kw: None
+    _fastapi.Query = lambda *a, **kw: None
+    sys.modules["fastapi"] = _fastapi
+
+# Stub sqlalchemy so auth.py can import
+_sa_mod = types.ModuleType("sqlalchemy")
+_sa_mod.text = lambda x: x
+sys.modules["sqlalchemy"] = _sa_mod
+
+_sa_ext = types.ModuleType("sqlalchemy.ext")
+sys.modules["sqlalchemy.ext"] = _sa_ext
+
+_sa_ext_async = types.ModuleType("sqlalchemy.ext.asyncio")
+_sa_ext_async.AsyncSession = type("AsyncSession", (), {})
+sys.modules["sqlalchemy.ext.asyncio"] = _sa_ext_async
+
 
 class TestOrgAccessControl:
     """Test org_scope enforcement on organization endpoints."""
