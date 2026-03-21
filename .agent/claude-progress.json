@@ -1,33 +1,35 @@
 {
-  "session": 179,
-  "updated": "2026-03-14T21:45:00Z",
+  "session": 182,
+  "updated": "2026-03-21T20:49:03.747066Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
-    "vps_api": "healthy",
-    "dashboard": "healthy",
-    "physical_appliance": "go_daemon_v0.3.22_live_chaos_healing_active",
-    "vm_appliance": "go_daemon_v0.3.22",
+    "vps_api": "healthy_10_production_features_deployed",
+    "dashboard": "healthy_metrics_endpoint_structured_logging",
+    "physical_appliance": "go_daemon_v0.3.24_online_tls_pin_cleared",
+    "vm_appliance": "go_daemon_v0.3.24_online_tls_pin_cleared",
+    "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
-    "learning_flywheel": "active_37_eligible_2_l2_patterns_promoted_flywheel_aggregation_bridge_deployed",
-    "incident_resolution": "pipeline_active_runbooks_nixos_aware_v0.3.6_deployed",
-    "evidence_pipeline": "end_to_end_live_216k_bundles_go_daemon_ed25519_signed_real_drift_data",
+    "learning_flywheel": "production_hardened_l2_only_eligibility_rate_limited_post_promotion_monitoring_rollback_endpoints",
+    "incident_resolution": "pipeline_active_514_stale_incidents_resolved_nixos_generation_disabled",
+    "evidence_pipeline": "end_to_end_live_heartbeats_site_appliances",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "fleet_orders_rls_fixed_v0.3.22_deployed_both_appliances",
+    "fleet_updates": "v0.3.24_deployed_both_appliances_online",
+    "log_pipeline": "operational_35k_plus_entries_csrf_gzip_auth_fixed",
+    "prometheus_metrics": "live_at_slash_metrics_7_gauges_counters",
+    "offline_alerting": "partner_email_on_15min_offline",
+    "reconciliation": "5min_background_sync_site_appliances_from_appliances",
+    "runbook_system": "169_db_runbooks_122_embedded_0_general_category_20_orphan_rules_disabled",
     "compliance_infographic": "client_portal_plus_admin_sitedetail_clickthrough_to_incidents_category_filter",
     "l4_escalation": "partner_escalate_to_l4_admin_queue_recurrence_detection_migration_077",
-    "lead_swarm_automation": "openclaw_daily_cron_brave_hhs_hunter_anthropic_email_gen",
-    "app_protection_profiles": "feature_complete_migration_070_applied_13_endpoints_6_runbooks",
     "portal_auth": "email_password_login_all_portals_totp_2fa_all_portals_security_hardened",
-    "admin_user_management": "sessions_audit_log_2fa_email_edit_change_password_complete",
-    "drift_config": "per_site_toggles_47_checks_admin_partner_client_portals_compliance_score_exclusion",
-    "macos_scanning": "13_active_checks_filevault_gatekeeper_sip_firewall_autoupdates_screenlk_ntp",
+    "macos_scanning": "scan_timer_fixed_wol_added_credential_delivery_fixed_pending_tls_pin_clear",
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api"
   },
-  "current_blocker": "Apollo API 403 (trial plan). External credential rotation pending (Anthropic, AWS, SMTP, OAuth).",
+  "current_blocker": "None. TLS pins cleared, v0.3.24 deployed to both appliances. Org hardening changes ready to deploy via git push.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -41,274 +43,80 @@
   "agent_decision": {
     "active": "Go appliance-daemon (appliance/appliance-daemon/)",
     "deprecated": "Python compliance-agent (packages/compliance-agent/) \u2014 DO NOT USE for new work",
-    "rationale": "Go daemon is production-ready with full L1/L2/L3 healing, Windows+Linux scanning, evidence chain, flap detection, learning flywheel, fleet updates, auto-deploy, AD discovery. 17x less RAM (6.6MB vs 112MB), 6000x faster startup (102ms vs 10min), 73x smaller binary (15MB vs 1.1GB).",
-    "l2_native": "Native Go L2 planner in appliance/internal/l2planner/ \u2014 PHI scrubbing + guardrails on-device, calls Central Command /api/agent/l2/plan which holds the Anthropic API key. No Python sidecar needed.",
+    "rationale": "Go daemon is production-ready with full L1/L2/L3 healing, Windows+Linux+macOS scanning, evidence chain, flap detection, learning flywheel, fleet updates, auto-deploy, AD discovery, WoL. 17x less RAM, 6000x faster startup, 73x smaller binary.",
     "decided": "2026-02-21"
   },
-  "fleet_update_mechanism": {
-    "fleet_orders": [
-      "1. POST /api/fleet/orders creates one fleet_orders row (order_type, parameters, skip_version, expires_at)",
-      "2. During checkin, get_fleet_orders_for_appliance() returns active orders the appliance hasn't completed",
-      "3. Appliances at skip_version are automatically excluded",
-      "4. Appliance acknowledges/completes order via fleet::{uuid}::{appliance_id} format",
-      "5. record_fleet_order_completion() tracks per-appliance status",
-      "6. GET /api/fleet/orders shows completion stats (total_appliances, completed, pending)",
-      "7. POST /api/fleet/orders/{id}/cancel to cancel a fleet order"
-    ],
-    "legacy_per_appliance": [
-      "admin_orders table still used for per-appliance orders (healing, diagnostic)",
-      "Fleet-wide updates now use fleet_orders table instead"
-    ],
-    "rebuild_flow": [
-      "1. Create fleet order: order_type=nixos_rebuild, parameters={flake_ref: ...}, skip_version=target",
-      "2. Each appliance picks up during checkin, runs nixos-rebuild test",
-      "3. Watchdog persists with nixos-rebuild switch, rolls back on failure"
-    ]
+  "daemon_v0_3_24_changes": [
+    "Checkin resilience: recreate HTTP client after 3 consecutive failures",
+    "TOFU pin auto-clear: delete stale pin on TLS cert rotation",
+    "Fleet order fallback: GET /api/fleet/orders/pending when checkin broken",
+    "ARP MAC fix: read /proc/net/arp column 3 instead of local interface MAC",
+    "Linux/macOS scan timer fix: don't burn interval on empty targets",
+    "Wake-on-LAN: probe SSH before macOS scan, send WoL if sleeping",
+    "Rule signature enforcement: configurable RequireSignedRules flag",
+    "nix-collect-garbage: --delete-older-than 7d preserves rollback",
+    "ApplianceID() getter on order processor"
+  ],
+  "backend_session_181_changes": [
+    "Checkin consistency: device_sync + evidence submission heartbeat site_appliances",
+    "CSRF exemption for /api/logs/ (log shipper was 403)",
+    "Gzip auth: require_appliance_auth decompresses gzip bodies",
+    "Always deliver credentials in checkin (removed has_local_credentials gate)",
+    "Flywheel: L2-only eligibility, runbook validation, rate limit 5/cycle",
+    "Flywheel: post-promotion monitoring auto-disables <70% success in 48h",
+    "Admin rollback: POST /api/dashboard/admin/rules/{id}/disable|enable",
+    "Offline alerting: partner email on 15min offline",
+    "Prometheus metrics: GET /metrics with 7 gauges/counters",
+    "Stale data reconciliation: 5min background job",
+    "Structured request logging middleware",
+    "Runbook category cleanup: migration 094, 0 general remaining",
+    "Fleet order fallback endpoint: GET /api/fleet/orders/pending"
+  ],
+  "data_cleanup_session_181": [
+    "71 stale hash-based aggregated_pattern_stats rows deleted",
+    "20 orphan L1 rules disabled (AUTO-*, L2-*, run_*)",
+    "514 stale incidents resolved (413 nixos_generation + 101 WIN-DEPLOY-UNREACHABLE)",
+    "nixos_generation + WIN-DEPLOY-UNREACHABLE disabled for both sites",
+    "34 home network devices (192.168.0.x) deleted from VM site",
+    "Appliances (.241, .254) reclassified from unknown to appliance"
+  ],
+  "test_results": {
+    "python_backend": "211 passed (8 new org hardening), 0 failures",
+    "go_daemon": "17 packages passed, 0 failures",
+    "frontend": "tsc + eslint 0 errors 0 warnings"
   },
-  "active_tasks": [
-    {
-      "id": 2,
-      "task": "Rotate leaked credentials from old settings.local.json",
-      "status": "completed",
-      "priority": "high",
-      "note": "Infra rotated: PostgreSQL, Redis, MinIO, session/API secrets. Fixed hardcoded REDIS_URL bug in docker-compose.yml. External pending: Anthropic API key, AWS keys (AKIA2J4U2R6VFUUEUKXD), SMTP, Microsoft/Google OAuth secrets \u2014 user must rotate at provider consoles."
-    },
-    {
-      "id": 6,
-      "task": "Create migration 036_credential_versioning.sql",
-      "status": "completed",
-      "note": "Already existed at mcp-server/central-command/backend/migrations/036_credential_versioning.sql"
-    },
-    {
-      "id": 9,
-      "task": "Old evidence-worm bucket cleanup",
-      "status": "completed",
-      "note": "Done. Storagebox at 182MB (down from terabytes). rm -rf finished."
-    },
-    {
-      "id": 10,
-      "task": "Re-submit expired OTS proofs",
-      "status": "completed",
-      "note": "Added _ots_resubmit_expired_loop() background task in main.py. Runs on server startup, drains 78K expired proofs in 500-proof batches with 30s delays. Backs off to 5min on calendar failures, stops after 5 consecutive zero-success batches. Also set last_upgrade_attempt on failed resubmissions to prevent tight retry loops."
-    },
-    {
-      "id": 11,
-      "task": "Fix Bitcoin block height extraction in OTS",
-      "status": "completed",
-      "priority": "low",
-      "note": "Fixed: replaced fixed 4-byte int with read_bitcoin_varint(). Commit e60bdfa"
-    },
-    {
-      "id": 15,
-      "task": "Fix rebuild order completion on agent restart",
-      "status": "completed",
-      "priority": "medium",
-      "note": "Persists order_id to /var/lib/msp/.pending-rebuild-order before rebuild. Completes on first successful checkin after restart. Commit 9e3d408."
-    },
-    {
-      "id": 16,
-      "task": "Add healing order handler",
-      "status": "completed",
-      "priority": "medium",
-      "note": "Added 'healing' to dispatch dict + _handle_healing() routes through _execute_healing_action() with run_runbook:<ID> format. Commit 9e3d408."
-    },
-    {
-      "id": 18,
-      "task": "Finish Linux VM SSH + chaos integration",
-      "status": "completed",
-      "priority": "high",
-      "note": "DONE: Root cause was empty /root/.ssh/authorized_keys + MaxAuthTries=3. Fixed by copying iMac key to root, bumping MaxAuthTries=6. Updated ssh_attack.py with key-based SSH fallback (no sshpass needed). Both FULL_SPECTRUM + FULL_COVERAGE_5X launched on iMac."
-    },
-    {
-      "id": 19,
-      "task": "Apply VirtualBox VM performance tweaks to all 5 VMs",
-      "status": "completed",
-      "priority": "medium",
-      "note": "Applied by user. All 5 VMs running with tweaks."
-    },
-    {
-      "id": 20,
-      "task": "Fix sed quoting in FULL_SPECTRUM_CHAOS.sh Linux attacks",
-      "status": "completed",
-      "priority": "medium",
-      "note": "Already fixed: ssh_attack.py uses the standard bash '\\'' escaping technique for single quotes in sudo wrapper. Both LIN-SSH-RootLogin and LIN-SSH-PasswordAuth sed attacks succeed in FULL_SPECTRUM test."
-    },
-    {
-      "id": 21,
-      "task": "Set static IP or DHCP reservation for appliance VM",
-      "status": "completed",
-      "priority": "medium",
-      "note": "Committed d365525: msp-static-ip service reads config.yaml static_ip field. VM needs rebuild to activate."
-    },
-    {
-      "id": 17,
-      "task": "Remove argparse bootstrap shim after nix rebuild",
-      "status": "completed",
-      "priority": "low",
-      "note": "No action needed. The argparse.py shim was never included in production tarballs (package-agent.sh only copies compliance_agent/ source). Both appliances have the fixed _apply_overlay() via PYTHONPATH+os.execv (physical v1.0.64, VM v1.0.57)."
-    },
-    {
-      "id": 22,
-      "task": "Decouple Linux and Windows scan cycles into parallel async tasks",
-      "status": "completed",
-      "priority": "high",
-      "note": "Replaced sequential awaits with asyncio.gather() in _run_cycle(). Linux+Windows+network+workstation scans now parallel. Cycle timeout increased 300\u2192600s."
-    },
-    {
-      "id": 23,
-      "task": "Add 6 Windows L1 rules + scan checks",
-      "status": "completed",
-      "priority": "medium",
-      "note": "Added L1 rules: L1-WIN-SVC-DNS, L1-WIN-SEC-SMB, L1-WIN-SVC-WUAUSERV, L1-WIN-NET-PROFILE, L1-WIN-SEC-SCREENLOCK, L1-WIN-SEC-DEFENDER-EXCL. Added 5 new scan checks: smb_signing, service_wuauserv, network_profile, screen_lock_policy, defender_exclusions."
-    },
-    {
-      "id": 24,
-      "task": "Add L1 rules for 4 Linux checks",
-      "status": "completed",
-      "priority": "medium",
-      "note": "Added L1-LIN-NET-001 (network), L1-LIN-BANNER-001 (banner), L1-LIN-CRYPTO-001 (crypto), L1-LIN-IR-001 (incident_response). All route to run_linux_runbook with existing runbook IDs."
-    },
-    {
-      "id": 25,
-      "task": "Fix flap tracker counting failed heals toward suppression",
-      "status": "completed",
-      "priority": "medium",
-      "note": "Moved _track_flap() from before healing to after successful L1/L2 healing. Flap counter only increments on real resolve\u2192recur cycles. Added test_no_flap_without_successful_healing."
-    },
-    {
-      "id": 26,
-      "task": "Upload v1.0.65 overlay to VPS",
-      "status": "completed",
-      "priority": "low",
-      "note": "Built overlay with all session 106 changes (L1 rules, flap fix, scan checks, parallel scans). Uploaded to root@178.156.162.116:/var/www/updates/agent-overlay.tar.gz"
-    }
-  ],
-  "completed_this_session": [
-    "Audit policy healing expanded (6\u219212 subcategories + gpupdate /force)",
-    "Registry persistence runbook covers Winlogon key path",
-    "Rogue admin changed from escalate to auto-heal (RB-WIN-SEC-027)",
-    "Firewall dangerous inbound rules \u2014 new scanner check + L1 rule + runbook",
-    "DNS service recovery improved with dependency-aware restart",
-    "Fleet order re-issued with 7-day expiry (48e4e7f6)",
-    "Runbooks.json now has 122 entries (was 120)",
-    "Fleet order RLS fix \u2014 Migration 093 (admin-only\u2192read-all for fleet_orders)",
-    "Fleet order delivery confirmed working (physical appliance picked up 2 orders)",
-    "v0.3.22 fleet order created (skip 0.3.22, 7-day expiry)",
-    "Systemd override cleanup in handleNixOSRebuild (prevents stale hot-deploy binaries)",
-    "Physical appliance upgraded to v0.3.22 (was stuck at v0.3.20 due to stale override)",
-    "VM appliance upgraded to v0.3.22",
-    "appliance-image.nix synced to v0.3.22 (installer ISO)"
-  ],
-  "recent_commits": [
-    {
-      "hash": "03b895a",
-      "message": "fix: appliance checkin auth fallback for key mismatch"
-    },
-    {
-      "hash": "dca4e13",
-      "message": "feat: network device management + auto-patching L1 rules + backup verification"
-    },
-    {
-      "hash": "aece44c",
-      "message": "feat: compliance health infographic + daemon v0.3.20"
-    },
-    {
-      "hash": "dbdd23b",
-      "message": "fix: L2 planner loads runbooks from DB dynamically"
-    },
-    {
-      "hash": "5ded789",
-      "message": "fix: L2 fallback when L1 healing order fails"
-    },
-    {
-      "hash": "e542c99",
-      "message": "fix: incidents queries join through appliances table for site_id"
-    }
-  ],
-  "key_findings": {
-    "evidence_pipeline_status": "203,076 bundles across 2 sites. Hash chain fully repaired (0 broken links). Race condition fixed with pg_advisory_xact_lock + unique index on (site_id, chain_position). Genesis bundles use 64-zero sentinel for prev_hash. Agent submits to /api/evidence/sites/{site_id}/submit with Ed25519 signature.",
-    "minio_worm_status": "evidence-worm-v2 bucket with COMPLIANCE 90d Object Lock. WORM uploads active (verified latest bundle in MinIO). Transient Docker DNS issue resolved after container restart",
-    "compliance_packet_data": "Real HIPAA compliance packets LIVE at /api/evidence/sites/{site_id}/compliance-packet. Jan: 28.3% (109K bundles, early setup). Feb: 52.1% (2.4K bundles, all signed, 2.2K BTC-anchored). 15 check types mapped to HIPAA controls. MTTR 0.3-0.5h",
-    "ots_status": "2,705 anchored to Bitcoin, 251 pending, 78,699 expired. Fixed construct_ots_file (missing version byte). Uses opentimestamps-client reference library. Upgrade loop: 15min/500 batch",
-    "nix_overlay_lesson": "NixOS buildPythonApplication creates bash wrappers that override PYTHONPATH. os.execve re-runs the wrapper, losing the overlay. Fix: manipulate __path__ and sys.modules within the same process. For pre-fix appliances, hijack an import (argparse.py shim) to bootstrap the overlay.",
-    "systemd_sandbox_lesson": "ProtectSystem=strict makes filesystem read-only. nixos-rebuild needs /nix/store write access. Use systemd-run --wait --pipe to escape the sandbox into an unsandboxed transient unit.",
-    "deployment_lesson": "ALWAYS push to main instead of manual scp. CI/CD workflow (.github/workflows/deploy-central-command.yml) auto-deploys backend + frontend to VPS on push to main when mcp-server/central-command/** changes. Manual scp causes stale versions. Pipeline: checkout -> npm ci -> npm run build -> rsync backend to /opt/mcp-server/dashboard_api_mount/ -> rsync frontend to /opt/mcp-server/frontend_dist/ -> docker compose restart.",
-    "learning_loop_stats_lesson": "Promotion history must match execution_telemetry by incident_type + hostname/site_id (from pattern_signature), NOT by runbook_id. Agent records executions with internal IDs (L1-SVC-DNS-001) that differ from promoted_to_rule_id (RB-AUTO-SERVICE_). The pattern_signature format is check_type:check_type:target where target is hostname or site_id.",
-    "dashboard_asyncio_lesson": "SQLAlchemy AsyncSession cannot run concurrent queries via asyncio.gather(). Causes InvalidStateError. Must run queries sequentially on the same session. Fixed in db_queries.py, routes.py (2x), portal.py (1x). All deployed to VPS.",
-    "l3_email_lesson": "L3 escalation emails are generated in email_alerts.py send_critical_alert(), called from main.py POST /incidents handler. The escalation_engine.py path (via notifications.py /api/escalations) is separate \u2014 used when agent posts to Central Command directly. Both paths now have rich context.",
-    "phi_scrubber_lesson": "PHI scrubber in WindowsExecutor._execute_sync() replaces ALL IPs in WinRM output with [IP-REDACTED-xxx]. This breaks AD enumeration because IPv4Address values become unreachable hostnames. Fix: skip_phi_scrub=True parameter for infrastructure queries (AD enumeration, DNS resolution). PHI scrubber still active for all other WinRM queries (compliance checks, healing actions).",
-    "flap_detector_lesson": "Flap detector thresholds must account for drift cooldown math. With 600s cooldown, max incidents in 30min = 3 (not 5). Three-layer fix needed: (1) agent-side flap thresholds 3/120min, (2) synced rules platform guard (rules from Central Command override built-in), (3) per-check cooldown extension to 1hr on flap. Synced rules at /var/lib/msp/rules/l1_rules.json override built-in rules in level1_deterministic.py \u2014 must update both.",
-    "vbox_black_screen_lesson": "VirtualBox Ubuntu Server VMs show black screen on screenshotpng due to console blanking (screen saver). Fix: add consoleblank=0 to GRUB_CMDLINE_LINUX_DEFAULT. For best screenshot compatibility on server VMs, use vboxvga graphics controller. Also: use serial console (uart1 file mode) for headless debugging.",
-    "linux_vm_ssh_lesson": "Ubuntu 24.04 server cloud-init can override sshd_config on boot. Fix: add /etc/cloud/cloud.cfg.d/99-disable-ssh-pwauth.cfg with ssh_pwauth:true. Also disable cloud-init networking via 99-disable-network-config.cfg to prevent netplan overrides. Password reset via NixOS live ISO: mount disk, chroot with explicit PATH=/usr/bin:/usr/sbin:/bin:/sbin, use chpasswd.",
-    "vbox_scancode_lesson": "VBoxManage keyboardputscancode requires PS/2 keyboard mode (--keyboard ps2). USB keyboard mode breaks scancodes. Best approach for complex commands: boot NixOS live ISO, set nixos password + start sshd, SSH in for a real terminal. Helper script type_vm.sh converts ASCII to scancodes.",
-    "ssh_auth_lesson": "When SSH agent has many keys, MaxAuthTries=3 causes 'Too many authentication failures' before the right key is tried. Fix: bump MaxAuthTries=6 AND ensure authorized_keys is populated for all users (root had empty file). ssh_attack.py now falls back to native SSH key auth when sshpass unavailable \u2014 uses BatchMode=yes with agent keys. Sudo commands wrap via echo password | sudo -S.",
-    "appliance_dhcp_lesson": "Appliance VM DHCP lease can change after reboot (.247 -> .254). Serial console (uart1 file mode) is essential for diagnosing boot issues when network is unreachable. The appliance banner shows current IP on login prompt.",
-    "ad_enrollment_lesson": "AD enumeration returns FQDNs (e.g., nvdc01.northvalley.local) that the appliance can't resolve because its DNS points to the router. Fix: resolve_missing_ips() runs bulk DNS lookup on the DC via PowerShell, then connectivity tests use IP-first (ip_address or fqdn or hostname). Direct TCP asyncio.open_connection() from appliance is faster and more accurate than PowerShell Test-NetConnection from DC.",
-    "perf_audit_lesson": "Health endpoint was 2.18s because DB/Redis/MinIO checks ran sequentially and MinIO (sync SDK) blocked the event loop. Fix: asyncio.gather() + run_in_executor() for sync calls. N+1 in compliance scoring: each site triggered a separate query. Fix: ROW_NUMBER() window function in a single query. Redis caching (120s TTL) for expensive aggregates. Pre-computed reverse lookup dicts beat inner loops. Migration 039: pg_stat_user_indexes with idx_scan=0 identifies safe-to-drop indexes.",
-    "overlay_structure_lesson": "Overlay tarball MUST preserve Python package structure: compliance_agent/ subdirectory required. Flat extraction (files at overlay root) means PYTHONPATH finds the overlay dir but 'from compliance_agent.X import Y' fails because there's no compliance_agent/ package. Previous overlay deployments appeared to work but were actually running NixOS store code \u2014 synced server-side L1 rules masked the issue.",
-    "chaos_test_timing_lesson": "180s chaos test window is marginal for a full heal cycle. Even with parallel scans via asyncio.gather(), the 600s cycle timeout in _run_cycle() can abort the Linux drift processing loop before all drifts are healed. Root cause: drift results were processed sequentially (evidence submission + healing for each). SSH/FW/SVC healing consumed most of the budget, leaving NET/CRON/SUID unhealed. FIXED: healing now fires as background asyncio.create_task() calls that survive the cycle timeout. Evidence submission remains inline (deferrable). Tasks tracked in _healing_tasks set, cancelled on agent stop.",
-    "winrm_cmdline_limit_lesson": "pywinrm run_ps() encodes scripts as UTF-16LE base64 via 'powershell -encodedcommand <base64>'. This goes through cmd.exe which has 8,191 char limit. A ~4.7KB PowerShell script becomes ~12.7KB after encoding (2x UTF-16 + 1.33x base64). Fix: _execute_via_tempfile() writes base64 chunks via cmd.exe echo (6000 chars/chunk), then a short run_ps() call decodes and executes. Threshold: _MAX_INLINE_SCRIPT_LEN = 2000.",
-    "nixos_etc_symlink_lesson": "NixOS manages /etc/issue as a symlink to a read-only nix store path. Scripts cannot write directly with 'cat > /etc/issue'. Must rm -f the symlink first, then write. Same pattern applies to any /etc file managed by NixOS.",
-    "systemd_activation_deadlock_lesson": "During nixos-rebuild test, systemd holds a transaction lock for the activation. Running 'systemctl restart' inside a oneshot service (e.g., console-branding) that triggers during activation causes a deadlock \u2014 the restart waits for the lock that activation holds. Fix: 'systemctl --no-block restart' to fire-and-forget.",
-    "tty_write_blocking_lesson": "Writing to /dev/tty1 (e.g., printf '\\033c' > /dev/tty1) blocks indefinitely when no physical console is attached \u2014 common on VMs or headless hardware. Fix: wrap with 'timeout 2 bash -c \"...\"' to bound the wait.",
-    "appliance_port_layout": "Port layout on appliance: 22=SSH, 80=nginx, 8080=web-ui, 8081=scanner-web (localhost), 8082=scanner-api (localhost), 8083=go-agent-checkins (0.0.0.0), 8084=local-portal (0.0.0.0), 50051=gRPC. Firewall exposes: 22, 80, 8080, 50051, 8084.",
-    "ws_trust_fix_lesson": "Broken trust relationship (error 1789) means machine account password is out of sync with AD. NTLM domain auth still works (doesn't need machine trust), but Kerberos/GPO fails. Fix: Reset-ComputerMachinePassword -Server NVDC01 run from DC side. Verify: Test-ComputerSecureChannel returns True. Test-ComputerSecureChannel -Repair via WinRM on the broken WS returns HTTP 400 \u2014 use DC-side reset instead.",
-    "nix_store_pythonpath_lesson": "After nixos-rebuild, nix store hashes change. PYTHONPATH from previous sessions becomes invalid. Build dynamically: for pkg in pywinrm requests-2 ...; do ls -d /nix/store/*${pkg}*/lib/python*/site-packages; done",
-    "granular_flap_lesson": "Multiple runbooks sharing same check_type (e.g., SSH-001..004 all use ssh_config) cross-trigger flap detection because circuit_key = (site_id, host_id, incident_type). Fix: include runbook_id in flap key: flap_type = f'{incident_type}:{runbook_id}' when available. Also: _track_flap() counts ALL heal() calls regardless of success, so runbooks without L1 rules still increment flap counter and get permanently suppressed after 3 scan cycles.",
-    "chaos_management_plane_lesson": "LLM-generated chaos campaigns can create attacks that kill the management plane (WinRM/PSRemoting). Feb 17 campaign stopped+disabled WinRM on DC, making all subsequent scenarios unexecutable and requiring manual console recovery. Fix: two-layer protection \u2014 (1) prompt-level exclusion in generate_and_plan.py/v2 telling LLM to never target WinRM/PSRemoting, (2) runtime safety filter in winrm_attack.py (is_blocked_command()) that blocks execution even if LLM generates it. Same principle applies to SSH on Linux targets. VBoxManage guestcontrol (with Guest Additions) provides WinRM-independent recovery path.",
-    "vm_ram_balancing_lesson": "5 VMs on iMac totaling 24GB caused host to choke. DC had 10GB (overkill for lab AD). Rebalanced: DC 6GB, SRV01 4GB, WS01 4GB, Linux 2GB, Appliance 6GB = 22GB. Appliance needs 6GB for nixos-rebuild (nix store builds are memory-hungry). VMs must be powered off to change RAM via VBoxManage modifyvm --memory.",
-    "l1_rule_check_type_lesson": "Go drift scanners (linuxscan.go, driftscan.go, netscan.go) send prefixed check_types (linux_ssh_config, linux_firewall, etc.) but builtin_rules.go originally matched on short names (ssh_config, firewall). Rules never fired because check_type != condition. Always use exact scanner output strings in L1 rule conditions. 55 builtin rules now cover all 38 scanner check types at 100%. Network checks (4 types) escalate to L3 by default \u2014 can't auto-remediate network topology.",
-    "l2_centralized_key_lesson": "LLM API keys (Anthropic) must live on Central Command (VPS), never on appliance devices. Appliances call POST /api/agent/l2/plan with PHI-scrubbed incident data. Central Command holds the key and calls the LLM. This prevents key sprawl across customer sites and centralizes spend control. The Go planner in appliance/internal/l2planner/ handles: PHI scrubbing (12 regex categories, IPs excluded per HIPAA Safe Harbor), guardrails (dangerous pattern detection + allowlist), budget tracking ($10/day, 60/hr rate limit, 3 concurrent), and telemetry reporting. The Central Command endpoint wraps existing l2_planner.py analyze_incident() + record_l2_decision().",
-    "docker_import_path_lesson": "CI/CD deploys mcp-server/central-command/backend/ to /opt/mcp-server/dashboard_api_mount/ on VPS. The Docker container resolves this as dashboard_api.* module path. Always use 'from dashboard_api.X import Y' in main.py, never 'from backend.X'. The local dev symlink (mcp-server/dashboard_api -> central-command/backend) makes both work locally, but only dashboard_api.* works in production.",
-    "nix_bind_mount_deploy_lesson": "NixOS /nix/store and /etc/systemd/system are read-only. To hot-deploy a Go binary without nixos-rebuild: (1) scp to /var/lib/msp/bin/, (2) systemctl stop, (3) mount --bind new_binary over nix_store_binary, (4) systemctl start. Bind mount survives service restarts but not reboots. For permanent deploy, nixos-rebuild is needed.",
-    "linux_scan_numeric_lesson": "Linux scan script embeds shell variables into Python JSON: 'rules': $fw_rules. If grep -c produces multiline output (e.g., '0\\n0'), Python gets invalid syntax. Fix: sanitize ALL numeric vars with 'head -1 | tr -dc 0-9' before the Python block. Also: Ubuntu uses ufw (not nft/iptables directly) \u2014 check ufw status first.",
-    "network_compliance_pipeline": "7 HIPAA port-based compliance checks run after each nmap scan via compliance/runner.py. Checks: ProhibitedPorts(21/23/69/512-514), EncryptedServices(HTTP w/o HTTPS), TLSWebServices(8080 w/o 8443), DatabaseExposure(3306/5432/etc on non-servers), SNMPSecurity(161/162), RDPExposure(3389 on non-workstations), DeviceInventory(no-ports=warn). Medical devices excluded from all checks. Results stored in device_compliance SQLite table, synced to Central Command device_compliance_details PostgreSQL table (migration 060). NETWORK_RANGES=auto detects subnets from netifaces or `ip -4 addr` fallback.",
-    "device_sync_router_duplication": "device_sync.py defines both DB functions AND a device_sync_router (FastAPI APIRouter) with endpoints. routes/device_sync.py ALSO defines a router importing from device_sync.py. main.py imports from device_sync.py directly. The routes/__init__.py exports are NOT used by main.py. New endpoints (like compliance detail) added to routes/device_sync.py are unreachable \u2014 must add to device_sync.py or fix the import in main.py.",
-    "l2_planner_lesson": "L2 was dead because: (1) L2Enabled defaulted to false in config.go \u2014 daemon never initialized l2Planner, logged l2=disabled at startup. (2) Backend response mapping set escalate_to_l3=true whenever requires_human_review=true \u2014 even with valid runbook at 0.75 confidence. (3) Go daemon ShouldExecute() required both !EscalateToL3 AND !RequiresApproval \u2014 too conservative for auto mode. Fix: default L2Enabled=true, decouple escalate_to_l3 from requires_human_review in main.py, use confidence >= 0.6 + !EscalateToL3 for auto mode execution.",
-    "flywheel_aggregation_lesson": "Go daemon reports L2 telemetry to execution_telemetry table but NEVER calls /api/agent/sync/pattern-stats. This left aggregated_pattern_stats empty, breaking the promotion pipeline. Fix: added Step 1 to _flywheel_promotion_loop() that aggregates execution_telemetry directly into aggregated_pattern_stats (grouped by site_id + incident_type + runbook_id). Also: duration column is duration_seconds not duration_ms.",
-    "resilience_hardening_lesson": "Appliance resilience: (1) StartLimitBurst=5/IntervalSec=300 prevents infinite crash loops. (2) WatchdogSec=120s with sd_notify catches frozen services \u2014 Type=notify for daemon requires READY=1 at startup, simple services still get watchdog monitoring. (3) sdnotify package: zero-cgo, writes to NOTIFY_SOCKET Unix datagram. (4) State persistence via atomic JSON write (tmp+rename) to /var/lib/msp/daemon_state.json \u2014 survives restarts. (5) Subscription gating: healing suppressed when status != active/trialing, drift detection+evidence continue. (6) Connectivity classification: errors.As for *net.DNSError/*net.OpError, string matching for timeout/tls/5xx.",
-    "vps_db_credentials_lesson": "VPS PostgreSQL: container=mcp-postgres, user=mcp, db=mcp, password in docker inspect env vars. Fleet orders require expires_at (NOT NULL constraint).",
-    "nixos_runbook_lesson": "Linux runbook scripts from Python agent were designed for Debian/Ubuntu (sed on /etc, apt-get, logrotate). NixOS appliances self-scan via linuxscan.go and these scripts fail silently because: (1) /etc is read-only symlinks to nix store, (2) no apt/yum, (3) journald configured declaratively. Fix: detect /etc/NIXOS in remediate scripts and use NixOS-appropriate commands (systemctl for timers, skip sed on managed paths). Also: scanner log_forwarding check must accept journald_persistent as valid \u2014 not just rsyslog or journal-upload. Configuration.nix must enable system.autoUpgrade and set MaxRetentionSec=90d for HIPAA. The handleHealing stub in processor.go was NOT the blocker \u2014 daemon.go:160 already overrides it with executeHealingOrder(). The real issue was empty/broken runbook scripts.",
-    "nix_wrong_file_lesson": "CRITICAL: flake.nix line 172 maps osiriscare-appliance-disk to ./iso/appliance-disk-image.nix (NOT appliance-image.nix). appliance-image.nix is the installer ISO builder. appliance-disk-image.nix is the installed system config that nixos-rebuild uses. Version bumps MUST update appliance-disk-image.nix or rebuilds produce old versions. This caused v0.3.4 to persist across 3 sessions despite commits claiming v0.3.9.",
-    "winrm_ntlm_negotiate_lesson": "ws01 only offers Negotiate and Kerberos auth (no NTLM header in WWW-Authenticate). Go WinRM ClientNTLM gets 401. DC works because it also accepts Basic auth. Kerberos double-hop (appliance\u2192DC\u2192ws01) fails with Access is Denied because NTLM doesn't delegate credentials. Fix: GPO self-deployment from NETLOGON bypasses WinRM to workstations entirely.",
-    "gpo_self_deploy_lesson": "GPO startup script v2 deploys osiris-agent from NETLOGON share: copies agent.exe + config.json to C:\\OsirisCare\\, installs as Windows service, opens SMB port 445. Version-stamped script auto-updates on group policy refresh. Avoids WinRM auth issues with workstations. Config staged to NETLOGON by autodeploy.go alongside the binary.",
-    "fleet_order_rls_lesson": "Fleet orders had admin-only RLS policy (fleet_orders_admin_only). Appliance checkins use tenant_connection() which sets app.is_admin=false. Fleet orders were invisible. Fix: Migration 093 adds permissive SELECT policy for all connections. Fleet order completions table had RLS disabled so was not affected.",
-    "systemd_override_lesson": "Hot-deploy bind mounts leave /run/systemd/system/appliance-daemon.service.d/override.conf that redirects ExecStart to /var/lib/msp/appliance-daemon. nixos-rebuild builds correct nix store binary but override bypasses it. Fix: handleNixOSRebuild removes override before rebuild. Also: /run/ is tmpfs, cleared on reboot \u2014 but nixos-rebuild test does not clear runtime overrides."
-  },
-  "deployment_flow": [
-    "1. Build installer ISO on VPS: nix build .#appliance-iso",
-    "2. Write to USB: dd if=result/iso/*.iso of=/dev/diskN bs=4m",
-    "3. Boot target hardware from USB",
-    "4. msp-auto-install runs: dialog TUI with 8-step progress",
-    "5. System reboots, compliance-agent calls home",
-    "6. Central Command provisions via MAC address"
-  ],
   "fleet_update_commands": {
-    "create_fleet_order": "curl -X POST https://api.osiriscare.net/api/fleet/orders -H 'Content-Type: application/json' -d '{\"order_type\": \"nixos_rebuild\", \"parameters\": {\"flake_ref\": \"github:jbouey/msp-flake#osiriscare-appliance-disk\"}, \"skip_version\": \"0.2.1\", \"expires_hours\": 24}'",
-    "list_fleet_orders": "curl https://api.osiriscare.net/api/fleet/orders",
-    "cancel_fleet_order": "curl -X POST https://api.osiriscare.net/api/fleet/orders/{id}/cancel",
-    "per_appliance_diagnostic": "INSERT INTO admin_orders (order_id, appliance_id, site_id, order_type, parameters, status, expires_at) VALUES ('diag-ID', 'APPLIANCE_ID', 'SITE_ID', 'diagnostic', '{\"command\": \"agent_status\"}', 'pending', now() + interval '1 hour')",
+    "clear_tls_pins": "ssh root@192.168.88.241 'rm /var/lib/msp/server_cert_pin.hex' && ssh root@192.168.88.254 'rm /var/lib/msp/server_cert_pin.hex'",
+    "pending_fleet_order": "cb0ce1f3-1071-4e3d-bff7-fe97dee4d18d (update_daemon v0.3.24)",
     "appliance_ids": {
       "physical": "physical-appliance-pilot-1aea78-84:3A:5B:91:B6:61 (site: physical-appliance-pilot-1aea78)",
       "vm": "test-appliance-lab-b3c40c-08:00:27:98:FD:84 (site: test-appliance-lab-b3c40c)"
     }
   },
   "quick_commands": {
-    "build_iso": "ssh root@178.156.162.116 'cd /opt/msp-flakes && nix build .#appliance-iso'",
     "vps_ssh": "ssh root@178.156.162.116",
-    "imac_ssh": "ssh jrelly@192.168.88.50",
-    "physical_ssh": "ssh jrelly@192.168.88.50 'ssh root@192.168.88.241'",
-    "vm_rebuild": "ssh jrelly@192.168.88.50 \"ssh root@192.168.88.254 'nixos-rebuild test --flake github:jbouey/msp-flake#osiriscare-appliance-disk --refresh'\"  # NOTE: appliance VM currently at .254 (DHCP), may change",
-    "physical_rebuild": "ssh jrelly@192.168.88.50 \"ssh root@192.168.88.241 'nixos-rebuild test --flake github:jbouey/msp-flake#osiriscare-appliance-disk --refresh'\"",
-    "appliance_status": "ssh root@178.156.162.116 \"docker exec mcp-postgres psql -U mcp -d mcp -c 'SELECT site_id, agent_version, last_checkin FROM appliances ORDER BY last_checkin DESC'\"",
-    "compliance_packet": "ssh root@178.156.162.116 \"curl -s 'http://localhost:8000/api/evidence/sites/physical-appliance-pilot-1aea78/compliance-packet?month=2&year=2026'\""
+    "metrics": "curl -s https://api.osiriscare.net/metrics",
+    "clear_pins": "ssh jrelly@192.168.88.50 \"ssh root@192.168.88.241 'rm /var/lib/msp/server_cert_pin.hex' && ssh root@192.168.88.254 'rm /var/lib/msp/server_cert_pin.hex'\"",
+    "check_logs": "ssh root@178.156.162.116 \"docker exec mcp-postgres psql -U mcp -d mcp -c \\\"SELECT site_id, count(*) FROM log_entries GROUP BY site_id\\\"\"",
+    "appliance_status": "ssh root@178.156.162.116 \"docker exec mcp-postgres psql -U mcp -d mcp -c 'SELECT site_id, agent_version, last_checkin FROM appliances ORDER BY last_checkin DESC'\""
   },
-  "context_files": {
-    "credentials": ".agent/LAB_CREDENTIALS.md",
-    "architecture": "docs/ARCHITECTURE.md",
-    "phase_status": "docs/archive/IMPLEMENTATION-STATUS.md",
-    "session_logs": ".agent/sessions/"
-  },
-  "physical_appliance": "go_daemon_v0.3.18_live_agent_enrolled",
-  "blocker": "VM appliance stale (iMac offline). OpenClaw origin fix needs browser refresh."
+  "backend_session_182_changes": [
+    "IDOR fix: GET /organizations/{org_id} now requires auth + org_scope check",
+    "IDOR fix: org_credentials endpoints now enforce org_scope validation",
+    "N+1 elimination: org list uses single site→org mapping query",
+    "Pagination: limit/offset/status filter on org list endpoint",
+    "New endpoint: GET /organizations/{org_id}/health — consolidated compliance, incidents, healing, fleet, categories",
+    "New endpoint: GET /organizations/{org_id}/incidents — paginated with site/severity/status filters",
+    "PHI boundary: phi_boundary.py strips IPs, hostnames, raw output from client portal evidence",
+    "Partner portal: GET /api/partners/me/orgs — org list with consolidated metrics",
+    "Partner portal: GET/PUT /api/partners/me/orgs/{org_id}/drift-config — bulk org-level drift config",
+    "Migration 095: sub_partner_id column on sites for future sub-partner support",
+    "Frontend: OrgDashboard wired to health endpoint with severity breakdown, fleet status, category compliance"
+  ],
+  "completed_this_session": [
+    "TLS TOFU pin cleared on both appliances",
+    "v0.3.24 confirmed deployed and checking in",
+    "Org feature audit + full hardening (12 commits)",
+    "EV SSL cert in progress at ssl.com (phone verification done, 1-3 business days)"
+  ]
 }
