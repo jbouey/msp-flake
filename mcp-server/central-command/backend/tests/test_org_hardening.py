@@ -63,6 +63,13 @@ def _ensure_http_exception():
 
 _ensure_http_exception()
 
+# Force-reload auth module so it picks up our fixed HTTPException.
+# Without this, auth.py may have already imported a broken HTTPException
+# from test_production_security.py's stubs during pytest collection.
+import importlib
+if "auth" in sys.modules:
+    importlib.reload(sys.modules["auth"])
+
 
 class TestOrgAccessControl:
     """Test org_scope enforcement on organization endpoints."""
