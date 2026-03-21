@@ -2897,6 +2897,170 @@ async def unassign_site_from_org(
     return {"status": "unassigned", "site_id": site_id}
 
 
+@router.get("/organizations/{org_id}/health")
+async def get_organization_health(
+    org_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Get consolidated health metrics across all sites in an organization."""
+    auth_module._check_org_access(user, org_id)
+
+    # Verify org exists
+    org_check = await db.execute(
+        text("SELECT id FROM client_orgs WHERE id = :org_id"),
+        {"org_id": org_id}
+    )
+    if not org_check.fetchone():
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Get org's site_ids
+    sites_result = await db.execute(
+        text("SELECT site_id FROM sites WHERE client_org_id = :org_id"),
+        {"org_id": org_id}
+    )
+    site_ids = [r.site_id for r in sites_result.fetchall()]
+
+    if not site_ids:
+        return {
+            "org_id": org_id,
+            "compliance": {"score": 0, "has_data": False, "site_scores": {}},
+            "incidents": {"total_24h": 0, "total_7d": 0, "total_30d": 0, "by_severity": {}},
+            "healing": {"success_rate": 0, "order_execution_rate": 0, "total_incidents": 0, "resolved_incidents": 0, "total_orders": 0, "completed_orders": 0},
+            "fleet": {"total": 0, "online": 0, "stale": 0, "offline": 0},
+            "categories": {},
+        }
+
+    # Compliance scores
+    all_compliance = await get_all_compliance_scores(db)
+    site_scores = {}
+    scores_list = []
+    for sid in site_ids:
+        sc = all_compliance.get(sid, {})
+        if sc.get("has_data"):
+            site_scores[sid] = round(sc["score"], 1)
+            scores_list.append(sc["score"])
+    avg_score = round(sum(scores_list) / len(scores_list), 1) if scores_list else 0
+
+    # Incident counts (24h, 7d, 30d)
+    incident_result = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as total_24h,
+            COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') as total_7d,
+            COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') as total_30d,
+            COUNT(*) FILTER (WHERE severity = 'critical' AND created_at > NOW() - INTERVAL '7 days') as critical_7d,
+            COUNT(*) FILTER (WHERE severity = 'high' AND created_at > NOW() - INTERVAL '7 days') as high_7d,
+            COUNT(*) FILTER (WHERE severity = 'medium' AND created_at > NOW() - INTERVAL '7 days') as medium_7d,
+            COUNT(*) FILTER (WHERE severity = 'low' AND created_at > NOW() - INTERVAL '7 days') as low_7d
+        FROM incidents
+        WHERE site_id = ANY(:site_ids)
+    """), {"site_ids": site_ids})
+    inc = incident_result.fetchone()
+
+    # Healing metrics (mirrors db_queries.py get_all_healing_metrics pattern)
+    healing_inc_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE i.status = 'resolved') as resolved
+        FROM incidents i
+        WHERE i.site_id = ANY(:site_ids)
+    """), {"site_ids": site_ids})
+    heal_inc = healing_inc_result.fetchone()
+
+    healing_ord_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE status = 'completed') as completed
+        FROM admin_orders
+        WHERE site_id = ANY(:site_ids)
+    """), {"site_ids": site_ids})
+    heal_ord = healing_ord_result.fetchone()
+
+    healing_rate = round(
+        (heal_inc.resolved / heal_inc.total * 100) if heal_inc.total > 0 else 100.0, 1
+    )
+    order_rate = round(
+        (heal_ord.completed / heal_ord.total * 100) if heal_ord.total > 0 else 100.0, 1
+    )
+
+    # Fleet status
+    fleet_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '15 minutes') as online,
+            COUNT(*) FILTER (
+                WHERE last_checkin <= NOW() - INTERVAL '15 minutes'
+                  AND last_checkin > NOW() - INTERVAL '1 hour'
+            ) as stale,
+            COUNT(*) FILTER (
+                WHERE last_checkin IS NULL OR last_checkin <= NOW() - INTERVAL '1 hour'
+            ) as offline
+        FROM site_appliances
+        WHERE site_id = ANY(:site_ids)
+    """), {"site_ids": site_ids})
+    fleet = fleet_result.fetchone()
+
+    # Per-category compliance breakdown
+    cat_result = await db.execute(text("""
+        SELECT
+            cb.check_type,
+            COUNT(*) FILTER (WHERE cb.check_result = 'pass') as passes,
+            COUNT(*) FILTER (WHERE cb.check_result = 'fail') as fails,
+            COUNT(*) as total
+        FROM compliance_bundles cb
+        WHERE cb.site_id = ANY(:site_ids)
+          AND cb.checked_at = (
+              SELECT MAX(cb2.checked_at) FROM compliance_bundles cb2
+              WHERE cb2.site_id = cb.site_id AND cb2.check_type = cb.check_type
+          )
+        GROUP BY cb.check_type
+        ORDER BY cb.check_type
+    """), {"site_ids": site_ids})
+    categories = {}
+    for row in cat_result.fetchall():
+        categories[row.check_type] = {
+            "passes": row.passes,
+            "fails": row.fails,
+            "total": row.total,
+            "score": round(row.passes / row.total * 100, 1) if row.total > 0 else 0,
+        }
+
+    return {
+        "org_id": org_id,
+        "compliance": {
+            "score": avg_score,
+            "has_data": len(scores_list) > 0,
+            "site_scores": site_scores,
+        },
+        "incidents": {
+            "total_24h": inc.total_24h,
+            "total_7d": inc.total_7d,
+            "total_30d": inc.total_30d,
+            "by_severity": {
+                "critical": inc.critical_7d,
+                "high": inc.high_7d,
+                "medium": inc.medium_7d,
+                "low": inc.low_7d,
+            },
+        },
+        "healing": {
+            "success_rate": healing_rate,
+            "order_execution_rate": order_rate,
+            "total_incidents": heal_inc.total,
+            "resolved_incidents": heal_inc.resolved,
+            "total_orders": heal_ord.total,
+            "completed_orders": heal_ord.completed,
+        },
+        "fleet": {
+            "total": fleet.total,
+            "online": fleet.online,
+            "stale": fleet.stale,
+            "offline": fleet.offline,
+        },
+        "categories": categories,
+    }
+
+
 # =============================================================================
 # DRIFT CONFIG ENDPOINTS
 # =============================================================================
