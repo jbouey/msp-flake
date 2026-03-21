@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
-from .auth import require_auth, require_operator
+from .auth import require_auth, require_operator, _check_org_access
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ class OrgCredentialCreate(BaseModel):
 @router.get("/{org_id}/credentials")
 async def list_org_credentials(org_id: str, user: dict = Depends(require_auth)):
     """List credentials for an organization (passwords redacted)."""
+    _check_org_access(user, org_id)
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         # Verify org exists
@@ -74,6 +75,7 @@ async def create_org_credential(
     user: dict = Depends(require_operator),
 ):
     """Add a credential to an organization."""
+    _check_org_access(user, org_id)
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         org = await conn.fetchrow(
@@ -107,6 +109,7 @@ async def delete_org_credential(
     user: dict = Depends(require_operator),
 ):
     """Delete an organization credential."""
+    _check_org_access(user, org_id)
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         result = await conn.execute("""
