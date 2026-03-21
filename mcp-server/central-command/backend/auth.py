@@ -848,3 +848,17 @@ async def check_site_access_pool(user: Dict[str, Any], site_id: str):
         raise HTTPException(status_code=404, detail="Site not found")
     if str(row["client_org_id"]) not in org_scope:
         raise HTTPException(status_code=404, detail="Site not found")
+
+
+def _check_org_access(user: Dict[str, Any], org_id: str):
+    """Validate admin user can access org_id.
+
+    Returns None if access granted.
+    Raises 404 for out-of-scope orgs (IDOR prevention — never 403).
+    Global admins (org_scope=None) can access any org.
+    """
+    org_scope = user.get("org_scope")
+    if org_scope is None:
+        return  # Global admin
+    if str(org_id) not in org_scope:
+        raise HTTPException(status_code=404, detail="Organization not found")

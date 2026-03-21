@@ -2710,8 +2710,13 @@ async def create_organization(
 
 
 @router.get("/organizations/{org_id}")
-async def get_organization_detail(org_id: str, db: AsyncSession = Depends(get_db)):
+async def get_organization_detail(
+    org_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
     """Get organization detail with nested site list."""
+    auth_module._check_org_access(user, org_id)
     # Get org info
     result = await db.execute(text("""
         SELECT id, name, primary_email, primary_phone, address_line1,
