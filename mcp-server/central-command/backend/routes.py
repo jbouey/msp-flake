@@ -2636,29 +2636,32 @@ async def list_organizations(
     """), params)
     rows = result.fetchall()
 
-    # Get compliance scores for averaging per org
+    # Build site→org mapping from a single query (eliminates N+1)
+    site_org_result = await db.execute(text(
+        "SELECT site_id, client_org_id FROM sites WHERE client_org_id IS NOT NULL"
+    ))
+    site_org_map = {}
+    for sr in site_org_result.fetchall():
+        site_org_map.setdefault(str(sr.client_org_id), []).append(sr.site_id)
+
     all_compliance = await get_all_compliance_scores(db)
 
     orgs = []
     for row in rows:
-        # Calculate avg compliance across org's sites
-        org_sites_compliance = []
-        site_result = await db.execute(
-            text("SELECT site_id FROM sites WHERE client_org_id = :org_id"),
-            {"org_id": str(row.id)}
-        )
-        for site_row in site_result.fetchall():
-            sc = all_compliance.get(site_row.site_id, {})
+        org_id_str = str(row.id)
+        org_site_ids = site_org_map.get(org_id_str, [])
+        org_scores = []
+        for sid in org_site_ids:
+            sc = all_compliance.get(sid, {})
             if sc.get("has_data"):
-                org_sites_compliance.append(sc.get("score", 0))
+                org_scores.append(sc.get("score", 0))
 
         avg_compliance = (
-            sum(org_sites_compliance) / len(org_sites_compliance)
-            if org_sites_compliance else 0
+            sum(org_scores) / len(org_scores) if org_scores else 0
         )
 
         orgs.append({
-            "id": str(row.id),
+            "id": org_id_str,
             "name": row.name,
             "primary_email": row.primary_email,
             "practice_type": row.practice_type,
