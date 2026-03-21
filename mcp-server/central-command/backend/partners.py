@@ -459,6 +459,107 @@ async def get_my_orgs(request: Request, partner=Depends(require_partner)):
         return {'organizations': orgs, 'count': len(orgs)}
 
 
+@router.get("/me/orgs/{org_id}/drift-config")
+async def get_partner_org_drift_config(
+    org_id: str,
+    partner=Depends(require_partner)
+):
+    """Get drift config for all sites in an org (org-level view)."""
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # Verify partner owns this org
+        org = await conn.fetchrow(
+            "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
+            org_id, partner['id']
+        )
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        # Get all site drift configs in this org
+        rows = await conn.fetch("""
+            SELECT s.site_id, s.clinic_name, sdc.disabled_checks
+            FROM sites s
+            LEFT JOIN site_drift_config sdc ON sdc.site_id = s.site_id
+            WHERE s.client_org_id = $1 AND s.partner_id = $2
+            ORDER BY s.clinic_name
+        """, org_id, partner['id'])
+
+        sites = []
+        for row in rows:
+            disabled = row['disabled_checks'] or []
+            if isinstance(disabled, str):
+                import json
+                disabled = json.loads(disabled)
+            sites.append({
+                'site_id': row['site_id'],
+                'clinic_name': row['clinic_name'],
+                'disabled_checks': disabled,
+            })
+
+        return {'org_id': org_id, 'sites': sites}
+
+
+@router.put("/me/orgs/{org_id}/drift-config")
+async def update_partner_org_drift_config(
+    org_id: str,
+    request: Request,
+    partner=Depends(require_partner)
+):
+    """Apply drift config to ALL sites in an org (bulk operation)."""
+    pool = await get_pool()
+    body = await request.json()
+    disabled_checks = body.get("disabled_checks", [])
+
+    if not isinstance(disabled_checks, list):
+        raise HTTPException(status_code=400, detail="disabled_checks must be a list")
+
+    async with admin_connection(pool) as conn:
+        # Verify partner owns this org
+        org = await conn.fetchrow(
+            "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
+            org_id, partner['id']
+        )
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        # Get org's sites
+        site_rows = await conn.fetch(
+            "SELECT site_id FROM sites WHERE client_org_id = $1 AND partner_id = $2",
+            org_id, partner['id']
+        )
+
+        import json
+        updated = 0
+        async with conn.transaction():
+            for row in site_rows:
+                await conn.execute("""
+                    INSERT INTO site_drift_config (site_id, disabled_checks)
+                    VALUES ($1, $2)
+                    ON CONFLICT (site_id) DO UPDATE SET
+                        disabled_checks = $2,
+                        updated_at = NOW()
+                """, row['site_id'], json.dumps(disabled_checks))
+                updated += 1
+
+        await log_partner_site_action(
+            partner_id=str(partner['id']),
+            site_id=org_id,
+            event_type=PartnerEventType.ASSET_UPDATED,
+            event_data={
+                "action": "bulk_drift_config",
+                "disabled_checks": disabled_checks,
+                "sites_updated": updated,
+            },
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", "")[:500],
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
+
+        return {'status': 'updated', 'sites_updated': updated}
+
+
 @router.post("/me/provisions")
 async def create_provision_code(
     request: Request,
