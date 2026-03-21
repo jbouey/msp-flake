@@ -2606,6 +2606,9 @@ async def enable_rule(rule_id: str, db: AsyncSession = Depends(get_db)):
 async def list_organizations(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(auth_module.require_auth),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    status_filter: Optional[str] = Query(None, alias="status"),
 ):
     """List all organizations with site counts and aggregate health."""
     org_scope = user.get("org_scope")
@@ -2613,6 +2616,21 @@ async def list_organizations(
     params = {}
     if org_scope:
         params["org_scope_ids"] = org_scope
+
+    if status_filter:
+        if where_clause:
+            where_clause += " AND co.status = :status_filter"
+        else:
+            where_clause = "WHERE co.status = :status_filter"
+        params["status_filter"] = status_filter
+
+    count_result = await db.execute(text(f"""
+        SELECT COUNT(*) FROM client_orgs co {where_clause}
+    """), params)
+    total = count_result.scalar()
+
+    params["limit"] = limit
+    params["offset"] = offset
 
     result = await db.execute(text(f"""
         SELECT
@@ -2633,6 +2651,7 @@ async def list_organizations(
         GROUP BY co.id, co.name, co.primary_email, co.practice_type,
                  co.provider_count, co.status, co.created_at
         ORDER BY co.name
+        LIMIT :limit OFFSET :offset
     """), params)
     rows = result.fetchall()
 
@@ -2674,7 +2693,7 @@ async def list_organizations(
             "avg_compliance": round(avg_compliance, 1),
         })
 
-    return {"organizations": orgs, "count": len(orgs)}
+    return {"organizations": orgs, "count": len(orgs), "total": total, "limit": limit, "offset": offset}
 
 
 @router.post("/organizations")
