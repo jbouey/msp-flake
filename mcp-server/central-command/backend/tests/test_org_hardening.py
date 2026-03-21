@@ -14,50 +14,54 @@ backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-# Stub modules only if they aren't already installed (CI has them, local dev may not)
-def _try_import(mod_name):
-    try:
-        __import__(mod_name)
-        return True
-    except ImportError:
-        return False
-
-if not _try_import("fastapi"):
-    for _mod in (
-        "starlette", "starlette.middleware",
-        "starlette.middleware.base", "starlette.responses",
-    ):
-        if _mod not in sys.modules:
-            sys.modules[_mod] = types.ModuleType(_mod)
-
-    _fastapi = types.ModuleType("fastapi")
-    _fastapi.Request = type("Request", (), {})
-    _fastapi.HTTPException = type("HTTPException", (Exception,), {
+# Ensure fastapi.HTTPException works with keyword args.
+# Other test files (test_production_security.py) may stub fastapi with a broken
+# HTTPException that doesn't accept kwargs. We must fix this before importing auth.
+def _ensure_http_exception():
+    """Ensure HTTPException accepts status_code/detail kwargs."""
+    _HTTPExc = type("HTTPException", (Exception,), {
         "__init__": lambda self, status_code=500, detail="": (
             setattr(self, "status_code", status_code) or
             setattr(self, "detail", detail)
         ),
     })
-    _fastapi.Depends = lambda x: x
-    _fastapi.Header = lambda *a, **kw: None
-    _fastapi.Cookie = lambda *a, **kw: None
-    _fastapi.Query = lambda *a, **kw: None
-    sys.modules["fastapi"] = _fastapi
 
-if not _try_import("sqlalchemy"):
-    _sa_mod = types.ModuleType("sqlalchemy")
-    _sa_mod.text = lambda x: x
-    sys.modules["sqlalchemy"] = _sa_mod
+    if "fastapi" in sys.modules:
+        # Fix existing stub/module
+        sys.modules["fastapi"].HTTPException = _HTTPExc
+    else:
+        # Full stub for environments without fastapi
+        for _mod in (
+            "starlette", "starlette.middleware",
+            "starlette.middleware.base", "starlette.responses",
+        ):
+            if _mod not in sys.modules:
+                sys.modules[_mod] = types.ModuleType(_mod)
 
-    _sa_ext = types.ModuleType("sqlalchemy.ext")
-    sys.modules["sqlalchemy.ext"] = _sa_ext
+        _fastapi = types.ModuleType("fastapi")
+        _fastapi.Request = type("Request", (), {})
+        _fastapi.HTTPException = _HTTPExc
+        _fastapi.Depends = lambda x: x
+        _fastapi.Header = lambda *a, **kw: None
+        _fastapi.Cookie = lambda *a, **kw: None
+        _fastapi.Query = lambda *a, **kw: None
+        sys.modules["fastapi"] = _fastapi
 
-    _sa_ext_async = types.ModuleType("sqlalchemy.ext.asyncio")
-    _sa_ext_async.AsyncSession = type("AsyncSession", (), {})
-    sys.modules["sqlalchemy.ext.asyncio"] = _sa_ext_async
+    # Stub sqlalchemy if missing
+    if "sqlalchemy" not in sys.modules:
+        _sa = types.ModuleType("sqlalchemy")
+        _sa.text = lambda x: x
+        sys.modules["sqlalchemy"] = _sa
+    if "sqlalchemy.ext" not in sys.modules:
+        sys.modules["sqlalchemy.ext"] = types.ModuleType("sqlalchemy.ext")
+    if "sqlalchemy.ext.asyncio" not in sys.modules:
+        _sa_async = types.ModuleType("sqlalchemy.ext.asyncio")
+        _sa_async.AsyncSession = type("AsyncSession", (), {})
+        sys.modules["sqlalchemy.ext.asyncio"] = _sa_async
+    if "asyncpg" not in sys.modules:
+        sys.modules["asyncpg"] = types.ModuleType("asyncpg")
 
-if not _try_import("asyncpg"):
-    sys.modules["asyncpg"] = types.ModuleType("asyncpg")
+_ensure_http_exception()
 
 
 class TestOrgAccessControl:
