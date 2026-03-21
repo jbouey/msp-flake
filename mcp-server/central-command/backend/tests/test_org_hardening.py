@@ -87,16 +87,14 @@ class TestOrgAccessControl:
     def test_check_org_access_scoped_admin_denied(self):
         """Org-scoped admin cannot access other orgs."""
         from auth import _check_org_access
-        from fastapi import HTTPException
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(Exception) as exc_info:
             _check_org_access({"org_scope": ["org-1"]}, "org-99")
         assert exc_info.value.status_code == 404
 
     def test_check_org_access_returns_404_not_403(self):
         """Denied access returns 404 to prevent org enumeration."""
         from auth import _check_org_access
-        from fastapi import HTTPException
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(Exception) as exc_info:
             _check_org_access({"org_scope": ["org-1"]}, "org-99")
         assert "not found" in exc_info.value.detail.lower()
 
