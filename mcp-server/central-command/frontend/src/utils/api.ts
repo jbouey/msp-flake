@@ -575,6 +575,41 @@ export interface OrgCredential {
   created_at: string | null;
 }
 
+export interface OrgHealth {
+  org_id: string;
+  compliance: {
+    score: number;
+    has_data: boolean;
+    site_scores: Record<string, number>;
+  };
+  incidents: {
+    total_24h: number;
+    total_7d: number;
+    total_30d: number;
+    by_severity: Record<string, number>;
+  };
+  healing: {
+    success_rate: number;
+    order_execution_rate: number;
+    total_incidents: number;
+    resolved_incidents: number;
+    total_orders: number;
+    completed_orders: number;
+  };
+  fleet: {
+    total: number;
+    online: number;
+    stale: number;
+    offline: number;
+  };
+  categories: Record<string, {
+    passes: number;
+    fails: number;
+    total: number;
+    score: number;
+  }>;
+}
+
 export const organizationsApi = {
   getOrganizations: () =>
     fetchApi<{ organizations: Organization[]; count: number }>('/organizations'),
@@ -631,6 +666,9 @@ export const organizationsApi = {
     fetchApi<{ status: string }>(`/organizations/${orgId}/sites/${siteId}`, {
       method: 'DELETE',
     }),
+
+  getOrgHealth: (orgId: string) =>
+    fetchApi<OrgHealth>(`/organizations/${orgId}/health`),
 };
 
 // =============================================================================

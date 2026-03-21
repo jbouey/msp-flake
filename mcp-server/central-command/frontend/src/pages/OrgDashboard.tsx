@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { organizationsApi } from '../utils/api';
-import type { OrgSite, OrgCredential } from '../utils/api';
+import type { OrgSite, OrgCredential, OrgHealth } from '../utils/api';
 
 function formatRelativeTime(dateString: string | null): string {
   if (!dateString) return 'Never';
@@ -127,6 +127,13 @@ export const OrgDashboard: React.FC = () => {
     refetchInterval: 30000,
   });
 
+  const { data: health } = useQuery<OrgHealth>({
+    queryKey: ['org-health', orgId],
+    queryFn: () => organizationsApi.getOrgHealth(orgId!),
+    enabled: !!orgId,
+    refetchInterval: 30000,
+  });
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -193,20 +200,20 @@ export const OrgDashboard: React.FC = () => {
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <GlassCard padding="md" className="text-center">
-          <p className={`text-2xl font-bold ${avgCompliance >= 80 ? 'text-health-healthy' : avgCompliance >= 50 ? 'text-health-warning' : 'text-label-primary'}`}>
-            {avgCompliance > 0 ? `${avgCompliance}%` : 'N/A'}
+          <p className={`text-2xl font-bold ${(health?.compliance.score ?? avgCompliance) >= 80 ? 'text-health-healthy' : (health?.compliance.score ?? avgCompliance) >= 50 ? 'text-health-warning' : 'text-label-primary'}`}>
+            {(health?.compliance.score ?? avgCompliance) > 0 ? `${Math.round(health?.compliance.score ?? avgCompliance)}%` : 'N/A'}
           </p>
           <p className="text-xs text-label-tertiary">Compliance Score</p>
         </GlassCard>
         <GlassCard padding="md" className="text-center">
-          <p className={`text-2xl font-bold ${totalIncidents24h > 0 ? 'text-health-warning' : 'text-health-healthy'}`}>
-            {totalIncidents24h}
+          <p className={`text-2xl font-bold ${(health?.incidents.total_24h ?? totalIncidents24h) > 0 ? 'text-health-warning' : 'text-health-healthy'}`}>
+            {health?.incidents.total_24h ?? totalIncidents24h}
           </p>
           <p className="text-xs text-label-tertiary">Incidents 24h</p>
         </GlassCard>
         <GlassCard padding="md" className="text-center">
-          <p className={`text-2xl font-bold ${avgHealing >= 80 ? 'text-health-healthy' : avgHealing >= 50 ? 'text-health-warning' : 'text-label-primary'}`}>
-            {avgHealing > 0 ? `${avgHealing}%` : 'N/A'}
+          <p className={`text-2xl font-bold ${(health?.healing.success_rate ?? avgHealing) >= 80 ? 'text-health-healthy' : (health?.healing.success_rate ?? avgHealing) >= 50 ? 'text-health-warning' : 'text-label-primary'}`}>
+            {(health?.healing.success_rate ?? avgHealing) > 0 ? `${Math.round(health?.healing.success_rate ?? avgHealing)}%` : 'N/A'}
           </p>
           <p className="text-xs text-label-tertiary">Healing Rate</p>
         </GlassCard>
@@ -216,11 +223,70 @@ export const OrgDashboard: React.FC = () => {
         </GlassCard>
         <GlassCard padding="md" className="text-center">
           <p className="text-2xl font-bold text-label-primary">
-            {totalOnlineAppliances}/{totalAppliances}
+            {health ? `${health.fleet.online}/${health.fleet.total}` : `${totalOnlineAppliances}/${totalAppliances}`}
           </p>
           <p className="text-xs text-label-tertiary">Appliances Online</p>
         </GlassCard>
       </div>
+
+      {/* Incident Severity + Fleet Status (from health endpoint) */}
+      {health && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <GlassCard>
+            <h2 className="text-lg font-semibold text-label-primary mb-3">Incident Summary (7d)</h2>
+            <div className="grid grid-cols-4 gap-3 text-center">
+              {(['critical', 'high', 'medium', 'low'] as const).map((sev) => (
+                <div key={sev}>
+                  <p className={`text-xl font-bold ${sev === 'critical' ? 'text-health-critical' : sev === 'high' ? 'text-health-warning' : 'text-label-secondary'}`}>
+                    {health.incidents.by_severity[sev] ?? 0}
+                  </p>
+                  <p className="text-xs text-label-tertiary capitalize">{sev}</p>
+                </div>
+              ))}
+            </div>
+          </GlassCard>
+          <GlassCard>
+            <h2 className="text-lg font-semibold text-label-primary mb-3">Fleet Status</h2>
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div>
+                <p className="text-xl font-bold text-health-healthy">{health.fleet.online}</p>
+                <p className="text-xs text-label-tertiary">Online</p>
+              </div>
+              <div>
+                <p className="text-xl font-bold text-health-warning">{health.fleet.stale}</p>
+                <p className="text-xs text-label-tertiary">Stale</p>
+              </div>
+              <div>
+                <p className="text-xl font-bold text-health-critical">{health.fleet.offline}</p>
+                <p className="text-xs text-label-tertiary">Offline</p>
+              </div>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {/* Category Compliance Breakdown (from health endpoint) */}
+      {health && Object.keys(health.categories).length > 0 && (
+        <GlassCard>
+          <h2 className="text-lg font-semibold text-label-primary mb-3">Compliance by Category</h2>
+          <div className="space-y-2">
+            {Object.entries(health.categories).map(([checkType, cat]) => (
+              <div key={checkType} className="flex items-center gap-3">
+                <span className="text-sm text-label-primary w-40 truncate">{checkType.replace(/_/g, ' ')}</span>
+                <div className="flex-1 h-5 bg-fill-quaternary rounded-ios-sm overflow-hidden">
+                  <div
+                    className={`h-full rounded-ios-sm transition-all duration-500 ${cat.score >= 80 ? 'bg-health-healthy' : cat.score >= 50 ? 'bg-health-warning' : 'bg-health-critical'}`}
+                    style={{ width: `${Math.max(cat.score, 2)}%` }}
+                  />
+                </div>
+                <span className="text-sm font-medium text-label-secondary w-16 text-right">
+                  {cat.passes}/{cat.total} ({cat.score}%)
+                </span>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
 
       {/* Per-site compliance chart */}
       <GlassCard>
