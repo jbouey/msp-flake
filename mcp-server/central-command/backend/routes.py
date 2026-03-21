@@ -3061,6 +3061,74 @@ async def get_organization_health(
     }
 
 
+@router.get("/organizations/{org_id}/incidents")
+async def get_organization_incidents(
+    org_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+    site_id: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, alias="incident_status"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """List incidents across all sites in an organization."""
+    auth_module._check_org_access(user, org_id)
+
+    # Build dynamic query
+    conditions = ["s.client_org_id = :org_id"]
+    params = {"org_id": org_id}
+
+    if site_id:
+        conditions.append("i.site_id = :site_id")
+        params["site_id"] = site_id
+    if severity:
+        conditions.append("i.severity = :severity")
+        params["severity"] = severity
+    if status:
+        conditions.append("i.status = :inc_status")
+        params["inc_status"] = status
+
+    where = " AND ".join(conditions)
+
+    result = await db.execute(text(f"""
+        SELECT i.id, i.site_id, s.clinic_name, i.incident_type, i.severity,
+               i.status, i.created_at, i.resolved_at
+        FROM incidents i
+        JOIN sites s ON s.site_id = i.site_id
+        WHERE {where}
+        ORDER BY i.created_at DESC
+        LIMIT :limit OFFSET :offset
+    """), {**params, "limit": limit, "offset": offset})
+    rows = result.fetchall()
+
+    count_result = await db.execute(text(f"""
+        SELECT COUNT(*) FROM incidents i
+        JOIN sites s ON s.site_id = i.site_id
+        WHERE {where}
+    """), params)
+    total = count_result.scalar()
+
+    return {
+        "incidents": [
+            {
+                "id": str(r.id),
+                "site_id": r.site_id,
+                "clinic_name": r.clinic_name or r.site_id,
+                "incident_type": r.incident_type,
+                "severity": r.severity,
+                "status": r.status,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 # =============================================================================
 # DRIFT CONFIG ENDPOINTS
 # =============================================================================
