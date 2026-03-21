@@ -43,6 +43,7 @@ except ImportError:
 from .fleet import get_pool
 from .db_utils import _uid
 from .tenant_middleware import tenant_connection, admin_connection, org_connection
+from .phi_boundary import sanitize_evidence_checks
 
 logger = logging.getLogger(__name__)
 
@@ -1225,6 +1226,8 @@ async def get_evidence_detail(bundle_id: str, user: dict = Depends(require_clien
             if isinstance(check_item, dict):
                 hipaa_control = check_item.get("hipaa_control")
 
+        sanitized_checks = sanitize_evidence_checks(checks)
+
         return {
             "bundle": {
                 "id": str(bundle["id"]),
@@ -1238,6 +1241,7 @@ async def get_evidence_detail(bundle_id: str, user: dict = Depends(require_clien
                 "prev_hash": bundle.get("prev_hash"),
                 "agent_signature": bundle.get("agent_signature") or bundle.get("signature"),
                 "minio_path": None,  # compliance_bundles doesn't have s3_uri
+                "checks": sanitized_checks,
             },
             "chain": [
                 {
@@ -1277,11 +1281,14 @@ async def download_evidence(bundle_id: str, user: dict = Depends(require_client_
             "check_result": bundle["check_result"],
             "checked_at": checked_at.isoformat() if checked_at else None,
             "summary": _json.loads(bundle["summary"]) if isinstance(bundle["summary"], str) else bundle["summary"],
-            "checks": _json.loads(bundle["checks"]) if isinstance(bundle["checks"], str) else bundle["checks"],
+            "checks": sanitize_evidence_checks(
+                _json.loads(bundle["checks"]) if isinstance(bundle["checks"], str) else bundle["checks"]
+            ),
             "metadata": {
                 "format": "OsirisCare Evidence Bundle v1",
                 "exported_at": datetime.now(timezone.utc).isoformat(),
                 "integrity": "compliance_bundle",
+                "portal_sanitized": True,
             },
         }
         content = _json.dumps(evidence_data, indent=2, default=str)

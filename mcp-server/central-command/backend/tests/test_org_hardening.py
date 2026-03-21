@@ -43,3 +43,62 @@ class TestOrgAccessControl:
         with pytest.raises(HTTPException) as exc_info:
             _check_org_access({"org_scope": ["org-1"]}, "org-99")
         assert "not found" in exc_info.value.detail.lower()
+
+
+class TestPHIBoundary:
+    """Test that PHI/infrastructure data is sanitized for portal access."""
+
+    def test_sanitize_checks_removes_raw_output(self):
+        """Raw command output should be stripped from checks."""
+        from phi_boundary import sanitize_evidence_checks
+        checks = [
+            {
+                "check_type": "windows_patching",
+                "result": "fail",
+                "hipaa_control": "164.308(a)(5)(ii)(B)",
+                "raw_output": "KB5034441 missing on DC01 at 192.168.88.250",
+                "details": {"missing_patches": ["KB5034441"]},
+                "hostname": "DC01",
+            }
+        ]
+        sanitized = sanitize_evidence_checks(checks)
+        assert "raw_output" not in sanitized[0]
+        assert "hostname" not in sanitized[0]
+        assert sanitized[0]["check_type"] == "windows_patching"
+        assert sanitized[0]["result"] == "fail"
+        assert sanitized[0]["hipaa_control"] == "164.308(a)(5)(ii)(B)"
+
+    def test_sanitize_checks_preserves_compliance_fields(self):
+        """Compliance-relevant fields are preserved."""
+        from phi_boundary import sanitize_evidence_checks
+        checks = [
+            {
+                "check_type": "firewall_enabled",
+                "result": "pass",
+                "hipaa_control": "164.312(e)(1)",
+                "summary": "Firewall active on all endpoints",
+            }
+        ]
+        sanitized = sanitize_evidence_checks(checks)
+        assert sanitized[0]["check_type"] == "firewall_enabled"
+        assert sanitized[0]["result"] == "pass"
+        assert sanitized[0]["summary"] == "Firewall active on all endpoints"
+
+    def test_sanitize_strips_ip_addresses_from_summary(self):
+        """IP addresses in summary text should be masked."""
+        from phi_boundary import sanitize_evidence_checks
+        checks = [
+            {
+                "check_type": "logging",
+                "result": "pass",
+                "summary": "Syslog forwarding active to 192.168.88.50:514",
+            }
+        ]
+        sanitized = sanitize_evidence_checks(checks)
+        assert "192.168.88.50" not in sanitized[0].get("summary", "")
+
+    def test_sanitize_empty_checks(self):
+        """Empty or None checks handled gracefully."""
+        from phi_boundary import sanitize_evidence_checks
+        assert sanitize_evidence_checks([]) == []
+        assert sanitize_evidence_checks(None) == []
