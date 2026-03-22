@@ -346,7 +346,7 @@ async def get_site_devices(
             if a["hostname"]:
                 agent_by_host[a["hostname"].upper()] = dict(a)
             if a["ip_address"]:
-                agent_by_ip[a["ip_address"]] = dict(a)
+                agent_by_ip[str(a["ip_address"])] = dict(a)
 
         # Fetch credential coverage (what protocols we can reach)
         creds = await conn.fetch(
@@ -373,7 +373,7 @@ async def get_site_devices(
             "SELECT ip_address FROM appliances WHERE site_id = $1", site_id
         )
         for ar in appliance_rows:
-            aip = ar["ip_address"]
+            aip = str(ar["ip_address"] or "")
             if aip and "." in aip:
                 # Extract /24 subnet (e.g. "192.168.88" from "192.168.88.241")
                 appliance_subnets.add(".".join(aip.split(".")[:3]))
@@ -385,7 +385,7 @@ async def get_site_devices(
             d["manufacturer_hint"] = get_manufacturer_hint(mac) if mac else {"manufacturer": None, "device_class": None, "confidence": None}
 
             # Tag devices as managed/unmanaged based on subnet
-            ip = d.get("ip_address") or ""
+            ip = str(d.get("ip_address") or "")
             device_subnet = ".".join(ip.split(".")[:3]) if "." in ip else ""
             d["managed_network"] = device_subnet in appliance_subnets if device_subnet else False
 
@@ -427,7 +427,7 @@ async def get_site_device_counts(site_id: str) -> dict:
         )
         managed_prefixes = []
         for ar in appliance_rows:
-            aip = ar["ip_address"]
+            aip = str(ar["ip_address"] or "")
             if aip and "." in aip:
                 managed_prefixes.append(".".join(aip.split(".")[:3]) + ".")
 
