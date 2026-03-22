@@ -134,12 +134,12 @@ try {
 		log.Printf("[configure-agent] [%s] Download result: %s", hostname, strings.TrimSpace(dlStdout))
 	}
 
-	// Step 3: Write config
+	// Step 3: Write config to BOTH locations (install dir + data dir)
 	log.Printf("[configure-agent] [%s] Step 3: Writing config (addr=%s)", hostname, applianceAddr)
 	configJSON := fmt.Sprintf(`{"appliance_addr":"%s","check_interval":300,"data_dir":"C:\\ProgramData\\OsirisCare"}`, applianceAddr)
 	configScript := fmt.Sprintf(
-		`Set-Content -Path "C:\OsirisCare\config.json" -Value '%s' -Encoding UTF8 -Force; "OK"`,
-		configJSON)
+		`New-Item -ItemType Directory -Force -Path "C:\ProgramData\OsirisCare" | Out-Null; Set-Content -Path "C:\OsirisCare\config.json" -Value '%s' -Encoding UTF8 -Force; Set-Content -Path "C:\ProgramData\OsirisCare\config.json" -Value '%s' -Encoding UTF8 -Force; "OK"`,
+		configJSON, configJSON)
 	cfgResult := d.winrmExec.Execute(target, configScript, "AGENT-CFG-WRITE", "configure", 15, 0, 10.0, nil)
 	if !cfgResult.Success {
 		return nil, fmt.Errorf("write config failed: %s", cfgResult.Error)
