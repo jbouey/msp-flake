@@ -265,6 +265,10 @@ func (s *servicer) ReportDrift(stream pb.ComplianceAgent_ReportDriftServer) erro
 		// Update agent stats
 		if agent := s.registry.GetAgent(event.AgentId); agent != nil {
 			agent.DriftCount.Add(1)
+			agent.ChecksTotal.Add(1)
+			if event.Passed {
+				agent.ChecksPassed.Add(1)
+			}
 			agent.LastHeartbeat = time.Now().UTC()
 		}
 
@@ -315,6 +319,9 @@ func (s *servicer) ReportHealing(_ context.Context, req *pb.HealingResult) (*pb.
 func (s *servicer) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
 	if agent := s.registry.GetAgent(req.AgentId); agent != nil {
 		agent.LastHeartbeat = time.Now().UTC()
+		if req.AgentVersion != "" {
+			agent.AgentVersion = req.AgentVersion
+		}
 	}
 
 	pending := s.registry.PopPendingCommands(req.AgentId)

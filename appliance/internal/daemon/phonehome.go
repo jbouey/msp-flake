@@ -163,6 +163,8 @@ type ConnectedAgent struct {
 	ConnectedAt   string `json:"connected_at"`
 	LastHeartbeat string `json:"last_heartbeat"`
 	DriftCount    int64  `json:"drift_count"`
+	ChecksPassed  int64  `json:"checks_passed"`
+	ChecksTotal   int64  `json:"checks_total"`
 }
 
 // CheckinResponse is what Central Command returns.

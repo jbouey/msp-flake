@@ -507,10 +507,13 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 			req.ConnectedAgents = append(req.ConnectedAgents, ConnectedAgent{
 				AgentID:       a.AgentID,
 				Hostname:      a.Hostname,
+				AgentVersion:  a.AgentVersion,
 				Tier:          int(a.Tier),
 				ConnectedAt:   a.ConnectedAt.UTC().Format(time.RFC3339),
 				LastHeartbeat: a.LastHeartbeat.UTC().Format(time.RFC3339),
 				DriftCount:    a.DriftCount.Load(),
+				ChecksPassed:  a.ChecksPassed.Load(),
+				ChecksTotal:   a.ChecksTotal.Load(),
 			})
 		}
 	}

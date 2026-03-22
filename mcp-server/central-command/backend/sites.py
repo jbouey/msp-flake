@@ -1739,6 +1739,8 @@ class ConnectedAgentInfo(BaseModel):
     connected_at: Optional[str] = None
     last_heartbeat: Optional[str] = None
     drift_count: int = 0
+    checks_passed: int = 0
+    checks_total: int = 0
 
 
 class ApplianceCheckin(BaseModel):
@@ -2357,17 +2359,25 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                             DELETE FROM go_agents
                             WHERE site_id = $1 AND hostname = $2 AND agent_id != $3
                         """, checkin.site_id, agent.hostname, agent.agent_id)
+                        compliance_pct = round(
+                            (agent.checks_passed / agent.checks_total * 100)
+                            if agent.checks_total > 0 else 0.0, 2
+                        )
                         await conn.execute("""
                             INSERT INTO go_agents (
                                 agent_id, site_id, hostname, agent_version,
-                                capability_tier, status, connected_at, last_heartbeat,
+                                capability_tier, status, checks_passed, checks_total,
+                                compliance_percentage, connected_at, last_heartbeat,
                                 updated_at
-                            ) VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, NOW())
+                            ) VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, $8, $9, $10, NOW())
                             ON CONFLICT (agent_id) DO UPDATE SET
                                 hostname = EXCLUDED.hostname,
                                 agent_version = EXCLUDED.agent_version,
                                 capability_tier = EXCLUDED.capability_tier,
                                 status = 'connected',
+                                checks_passed = EXCLUDED.checks_passed,
+                                checks_total = EXCLUDED.checks_total,
+                                compliance_percentage = EXCLUDED.compliance_percentage,
                                 last_heartbeat = EXCLUDED.last_heartbeat,
                                 updated_at = NOW()
                         """,
@@ -2376,6 +2386,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                             agent.hostname,
                             agent.agent_version,
                             agent.capability_tier,
+                            agent.checks_passed,
+                            agent.checks_total,
+                            compliance_pct,
                             connected_at_dt,
                             last_heartbeat_dt,
                         )

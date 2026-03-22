@@ -22,6 +22,9 @@ type AgentState struct {
 	ConnectedAt   time.Time
 	LastHeartbeat time.Time
 	DriftCount    atomic.Int64
+	ChecksPassed  atomic.Int64
+	ChecksTotal   atomic.Int64
+	AgentVersion  string
 	RMMAgents     []*pb.RMMAgent
 	pendingCmds   []*pb.HealCommand
 }
