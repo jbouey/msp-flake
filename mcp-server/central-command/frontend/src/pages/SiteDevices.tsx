@@ -643,7 +643,10 @@ export const SiteDevices: React.FC = () => {
     );
   }
 
-  const devices = devicesData?.devices || [];
+  const allDevices = devicesData?.devices || [];
+  const devices = allDevices.filter(d => d.managed_network !== false);
+  const neighborDevices = allDevices.filter(d => d.managed_network === false);
+  const [showNeighbors, setShowNeighbors] = useState(false);
 
   return (
     <div className="space-y-6">
@@ -665,7 +668,10 @@ export const SiteDevices: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-label-primary">Device Inventory</h1>
           <p className="text-label-secondary mt-1">
-            {devices.length} device{devices.length !== 1 ? 's' : ''} discovered via AD, ARP, nmap, and manual registration
+            {devices.length} device{devices.length !== 1 ? 's' : ''} on protected network
+            {neighborDevices.length > 0 && (
+              <span className="text-label-tertiary"> + {neighborDevices.length} on neighboring subnets</span>
+            )}
           </p>
         </div>
         <div className="relative">
@@ -743,13 +749,65 @@ export const SiteDevices: React.FC = () => {
       {/* Summary */}
       {summary && <SummaryCard summary={summary} />}
 
-      {/* Device list */}
+      {/* Protected network devices */}
       <DeviceTable
         devices={devices}
         siteId={siteId || ''}
         filter={filter}
         onFilterChange={setFilter}
       />
+
+      {/* Neighboring network devices (collapsed by default) */}
+      {neighborDevices.length > 0 && (
+        <GlassCard className="overflow-hidden">
+          <button
+            onClick={() => setShowNeighbors(!showNeighbors)}
+            className="w-full px-4 py-3 flex items-center justify-between hover:bg-fill-quaternary transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <svg
+                className={`w-4 h-4 text-label-tertiary transition-transform ${showNeighbors ? 'rotate-90' : ''}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              <span className="text-sm font-medium text-label-secondary">
+                Neighboring Network Devices
+              </span>
+              <Badge variant="default">{neighborDevices.length}</Badge>
+            </div>
+            <span className="text-xs text-label-tertiary">
+              Discovered on adjacent subnets — not under active protection
+            </span>
+          </button>
+          {showNeighbors && (
+            <div className="border-t border-separator-light">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-glass-border">
+                      <th className="px-4 py-2 text-left text-xs font-medium text-label-tertiary">Device</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-label-tertiary">IP Address</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-label-tertiary">MAC</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-label-tertiary">Last Seen</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-label-tertiary">
+                    {neighborDevices.map((d) => (
+                      <tr key={d.id} className="border-b border-glass-border/50">
+                        <td className="px-4 py-2 text-sm">{d.hostname || d.ip_address}</td>
+                        <td className="px-4 py-2 text-sm font-mono">{d.ip_address}</td>
+                        <td className="px-4 py-2 text-sm font-mono">{d.mac_address || '-'}</td>
+                        <td className="px-4 py-2 text-sm">{formatRelativeTime(d.last_seen_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </GlassCard>
+      )}
     </div>
   );
 };

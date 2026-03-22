@@ -25,6 +25,7 @@ const (
 type discoveredDevice struct {
 	IPAddress  string `json:"ip_address"`
 	MACAddress string `json:"mac_address"`
+	Hostname   string `json:"hostname,omitempty"`
 	Interface  string `json:"interface,omitempty"`
 }
 
@@ -354,7 +355,59 @@ func discoverARPDevices() []discoveredDevice {
 		})
 	}
 
+	// Resolve hostnames via reverse DNS (best-effort, parallel with timeout)
+	resolveHostnames(devices)
+
 	return devices
+}
+
+// resolveHostnames performs reverse DNS lookups on discovered devices.
+// Uses the local resolver (which queries the router/DHCP server's DNS),
+// picking up DHCP-assigned hostnames that the router tracks.
+// Lookups are parallel with a per-IP timeout to avoid blocking the scan.
+func resolveHostnames(devices []discoveredDevice) {
+	if len(devices) == 0 {
+		return
+	}
+
+	const lookupTimeout = 2 * time.Second
+	var wg sync.WaitGroup
+
+	for i := range devices {
+		if devices[i].Hostname != "" {
+			continue // already has a name
+		}
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
+			defer cancel()
+
+			resolver := &net.Resolver{}
+			names, err := resolver.LookupAddr(ctx, devices[idx].IPAddress)
+			if err != nil || len(names) == 0 {
+				return
+			}
+			// LookupAddr returns FQDNs with trailing dot — strip it
+			name := strings.TrimSuffix(names[0], ".")
+			// Skip if the "hostname" is just the IP repeated
+			if name == devices[idx].IPAddress {
+				return
+			}
+			devices[idx].Hostname = name
+		}(i)
+	}
+
+	wg.Wait()
+	resolved := 0
+	for _, d := range devices {
+		if d.Hostname != "" {
+			resolved++
+		}
+	}
+	if resolved > 0 {
+		log.Printf("[netscan] Resolved %d/%d device hostnames via reverse DNS", resolved, len(devices))
+	}
 }
 
 // reportNetDrift sends a network finding through the healing pipeline.

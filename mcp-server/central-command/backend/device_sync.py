@@ -367,15 +367,30 @@ async def get_site_devices(
                 except (json.JSONDecodeError, TypeError):
                     pass
 
+        # Determine managed subnets from appliance IPs (/24)
+        appliance_subnets = set()
+        appliance_rows = await conn.fetch(
+            "SELECT ip_address FROM appliances WHERE site_id = $1", site_id
+        )
+        for ar in appliance_rows:
+            aip = ar["ip_address"]
+            if aip and "." in aip:
+                # Extract /24 subnet (e.g. "192.168.88" from "192.168.88.241")
+                appliance_subnets.add(".".join(aip.split(".")[:3]))
+
         devices = []
         for row in rows:
             d = dict(row)
             mac = d.get("mac_address")
             d["manufacturer_hint"] = get_manufacturer_hint(mac) if mac else {"manufacturer": None, "device_class": None, "confidence": None}
 
+            # Tag devices as managed/unmanaged based on subnet
+            ip = d.get("ip_address") or ""
+            device_subnet = ".".join(ip.split(".")[:3]) if "." in ip else ""
+            d["managed_network"] = device_subnet in appliance_subnets if device_subnet else False
+
             # Determine agent coverage
             hostname = (d.get("hostname") or "").upper()
-            ip = d.get("ip_address") or ""
             agent = agent_by_host.get(hostname) or agent_by_ip.get(ip)
             cred_types = cred_hosts.get(ip, [])
 
@@ -406,6 +421,16 @@ async def get_site_device_counts(site_id: str) -> dict:
     pool = await get_pool()
 
     async with admin_connection(pool) as conn:
+        # Get managed subnets for filtering
+        appliance_rows = await conn.fetch(
+            "SELECT ip_address FROM appliances WHERE site_id = $1", site_id
+        )
+        managed_prefixes = []
+        for ar in appliance_rows:
+            aip = ar["ip_address"]
+            if aip and "." in aip:
+                managed_prefixes.append(".".join(aip.split(".")[:3]) + ".")
+
         row = await conn.fetchrow(
             """
             SELECT

@@ -1543,6 +1543,7 @@ export interface DiscoveredDevice {
     agent_version: string | null;
     agent_status: string | null;
   } | null;
+  managed_network: boolean;
 }
 
 export interface DeviceCounts {
