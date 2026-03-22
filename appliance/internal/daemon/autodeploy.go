@@ -491,18 +491,170 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 			}
 			failed++
 		} else {
-			// Deploy succeeded — internal verification already passed in deployAgentDirect/deployAgentViaDC.
-			log.Printf("[autodeploy] Successfully deployed agent to %s", hostname)
+			// Deploy succeeded — internal verification confirmed service is running.
+			// Now verify the agent actually connects to our gRPC server.
+			log.Printf("[autodeploy] Successfully deployed agent to %s — waiting for gRPC registration", hostname)
 			ad.mu.Lock()
 			ad.deployed[hostname] = time.Now()
 			ad.failures[hostname] = 0
 			ad.mu.Unlock()
 			deployed++
+
+			// Post-deploy: verify gRPC connection within 60 seconds
+			go ad.verifyAgentConnection(ctx, hostname)
 		}
 	}
 
 	log.Printf("[autodeploy] Complete: deployed=%d, skipped=%d, failed=%d",
 		deployed, skipped, failed)
+}
+
+// verifyAgentConnection waits up to 60 seconds for a deployed agent to register
+// via gRPC. If it doesn't connect, runs a diagnostic WinRM check to get the
+// agent log and connection status, then logs a warning.
+func (ad *autoDeployer) verifyAgentConnection(ctx context.Context, hostname string) {
+	registry := ad.daemon.registry
+	if registry == nil {
+		return
+	}
+
+	// Poll for gRPC registration (check every 5 seconds for 60 seconds)
+	deadline := time.After(60 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline:
+			// Agent didn't connect — run diagnostic
+			log.Printf("[autodeploy] WARNING: %s deployed but did not register via gRPC within 60s", hostname)
+			ad.runPostDeployDiagnostic(hostname)
+			return
+		case <-ticker.C:
+			if registry.HasAgentForHost(hostname) {
+				log.Printf("[autodeploy] %s confirmed: gRPC registration successful", hostname)
+				return
+			}
+		}
+	}
+}
+
+// runPostDeployDiagnostic checks the agent's status on a workstation via WinRM
+// when it fails to connect to gRPC. Collects service status, agent log tail,
+// and network connectivity to help diagnose the issue.
+func (ad *autoDeployer) runPostDeployDiagnostic(hostname string) {
+	cfg := ad.daemon.config
+	if cfg.DomainController == nil || cfg.DCUsername == nil || cfg.DCPassword == nil {
+		return
+	}
+
+	grpcAddr := cfg.GRPCListenAddr()
+	grpcIP := grpcAddr
+	if idx := strings.LastIndex(grpcIP, ":"); idx >= 0 {
+		grpcIP = grpcIP[:idx]
+	}
+
+	diagScript := fmt.Sprintf(""+
+		"$ErrorActionPreference = 'SilentlyContinue'\n"+
+		"$diag = @{}\n"+
+		"$svc = Get-Service -Name \"%s\" -EA SilentlyContinue\n"+
+		"$diag.service_status = if ($svc) { $svc.Status.ToString() } else { 'NOT_FOUND' }\n"+
+		"$diag.service_start = if ($svc) { $svc.StartType.ToString() } else { 'N/A' }\n"+
+		"$proc = Get-Process -Name 'osiris-agent' -EA SilentlyContinue\n"+
+		"$diag.process_running = [bool]$proc\n"+
+		"$diag.process_id = if ($proc) { $proc.Id } else { $null }\n"+
+		"$logPaths = @(\"%s\\agent.log\", \"C:\\ProgramData\\OsirisCare\\agent.log\")\n"+
+		"foreach ($lp in $logPaths) {\n"+
+		"  if (Test-Path $lp) {\n"+
+		"    $diag.log_tail = (Get-Content $lp -Tail 15) -join [char]10\n"+
+		"    $diag.log_path = $lp\n"+
+		"    break\n"+
+		"  }\n"+
+		"}\n"+
+		"if (-not $diag.log_tail) { $diag.log_tail = 'NO_LOG_FILE' }\n"+
+		"try { $diag.config = Get-Content \"%s\\config.json\" -Raw } catch { $diag.config = 'NOT_FOUND' }\n"+
+		"try {\n"+
+		"  $tcp = New-Object System.Net.Sockets.TcpClient\n"+
+		"  $tcp.Connect('%s', 50051)\n"+
+		"  $diag.grpc_reachable = $true\n"+
+		"  $tcp.Close()\n"+
+		"} catch {\n"+
+		"  $diag.grpc_reachable = $false\n"+
+		"  $diag.grpc_error = $_.Exception.Message\n"+
+		"}\n"+
+		"try {\n"+
+		"  $fw = Get-NetFirewallProfile -Profile Domain,Private | Select-Object Name,Enabled\n"+
+		"  $diag.firewall = ($fw | ForEach-Object { $_.Name + '=' + $_.Enabled }) -join ','\n"+
+		"} catch { $diag.firewall = 'QUERY_FAILED' }\n"+
+		"$diag | ConvertTo-Json -Depth 2 -Compress\n",
+		agentServiceName, agentInstallDir, agentInstallDir, grpcIP)
+
+	// Try direct WinRM first, then DC proxy
+	target := ad.buildTargetByHostname(hostname)
+	if target != nil {
+		res := ad.daemon.winrmExec.Execute(target, diagScript, "AGENT-DIAG", "autodeploy", 30, 0, 10.0, nil)
+		if res.Success {
+			stdout := maputil.String(res.Output, "std_out")
+			log.Printf("[autodeploy] [%s] Post-deploy diagnostic: %s", hostname, strings.TrimSpace(stdout))
+			return
+		}
+	}
+
+	// Fallback: run via DC proxy
+	dcTarget := ad.dcTarget()
+	proxyScript := fmt.Sprintf(""+
+		"$Computer = \"%s\"\n"+
+		"$secPass = ConvertTo-SecureString \"%s\" -AsPlainText -Force\n"+
+		"$cred = New-Object PSCredential(\"%s\", $secPass)\n"+
+		"try {\n"+
+		"  $session = New-PSSession -ComputerName $Computer -Credential $cred -Authentication Negotiate -ErrorAction Stop\n"+
+		"  $result = Invoke-Command -Session $session -ScriptBlock { %s } -ErrorAction Stop\n"+
+		"  Remove-PSSession $session -EA SilentlyContinue\n"+
+		"  $result\n"+
+		"} catch {\n"+
+		"  @{ error = $_.Exception.Message } | ConvertTo-Json -Compress\n"+
+		"}\n",
+		hostname, escapePSString(*cfg.DCPassword), *cfg.DCUsername, diagScript)
+
+	dcRes := ad.daemon.winrmExec.Execute(dcTarget, proxyScript, "AGENT-DIAG-DC", "autodeploy", 45, 0, 10.0, nil)
+	if dcRes.Success {
+		stdout := maputil.String(dcRes.Output, "std_out")
+		log.Printf("[autodeploy] [%s] Post-deploy diagnostic (via DC): %s", hostname, strings.TrimSpace(stdout))
+	} else {
+		log.Printf("[autodeploy] [%s] Post-deploy diagnostic failed: %s", hostname, dcRes.Error)
+	}
+}
+
+// buildTargetByHostname creates a WinRM target for a hostname using credential lookup.
+func (ad *autoDeployer) buildTargetByHostname(hostname string) *winrm.Target {
+	cfg := ad.daemon.config
+
+	username := ""
+	password := ""
+	connectHost := hostname
+
+	if wt, ok := ad.daemon.LookupWinTarget(hostname); ok && wt.Role != "domain_admin" {
+		username = wt.Username
+		password = wt.Password
+		connectHost = wt.Hostname
+	} else if cfg.DCUsername != nil && cfg.DCPassword != nil {
+		username = *cfg.DCUsername
+		password = *cfg.DCPassword
+	} else {
+		return nil
+	}
+
+	ws := ad.daemon.probeWinRM(connectHost)
+	return &winrm.Target{
+		Hostname:  connectHost,
+		Port:      ws.Port,
+		Username:  username,
+		Password:  password,
+		UseSSL:    ws.UseSSL,
+		VerifySSL: false,
+	}
 }
 
 // deployWithFallback tries to deploy to a workstation using the fallback chain:

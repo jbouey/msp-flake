@@ -166,10 +166,16 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		},
 	}
 
-	// Add deployed workstations from the autodeploy tracker
+	// Add deployed workstations from the autodeploy tracker.
+	// Push-first, pull-fallback: skip WinRM for hosts with connected Go agents.
 	if ds.daemon.deployer != nil {
 		ds.daemon.deployer.mu.Lock()
 		for hostname := range ds.daemon.deployer.deployed {
+			// If a Go agent is connected for this host, skip WinRM — push covers it
+			if ds.daemon.registry != nil && ds.daemon.registry.HasAgentForHost(hostname) {
+				log.Printf("[driftscan] Skipping WinRM for %s (covered by Go agent)", hostname)
+				continue
+			}
 			ws := ds.daemon.probeWinRM(hostname)
 			// Use per-workstation credentials if available.
 			// Try hostname first, then resolved IP (credentials may be stored under IP).
