@@ -717,11 +717,12 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
     for row in rows:
         site_bundles.setdefault(row.site_id, []).append(row.checks)
 
-    # Score each site
+    # Score each site from bundles
     scores = {}
     for site_id, bundles_checks in site_bundles.items():
         site_disabled = disabled_by_site.get(site_id, default_disabled)
         category_scores = {cat: [] for cat in CATEGORY_CHECKS}
+        bundle_check_count = 0
 
         for checks in bundles_checks:
             if not checks:
@@ -741,6 +742,7 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
                 else:
                     continue
 
+                bundle_check_count += 1
                 category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
                 if category:
                     category_scores[category].append(score)
@@ -764,7 +766,53 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
             result_scores["score"] = None
 
         result_scores["has_data"] = categories_with_data > 0
+        result_scores["_bundle_check_count"] = bundle_check_count
         scores[site_id] = result_scores
+
+    # Fetch Go agent compliance summaries for all sites and blend into scores
+    try:
+        ga_result = await db.execute(text("""
+            SELECT site_id,
+                   COALESCE(total_agents, 0) as total_agents,
+                   COALESCE(active_agents, 0) as active_agents,
+                   COALESCE(overall_compliance_rate, 0) as compliance_rate
+            FROM site_go_agent_summaries
+            WHERE active_agents > 0
+        """))
+        ga_rows = ga_result.fetchall()
+
+        for ga in ga_rows:
+            agent_score = float(ga.compliance_rate)
+            sid = ga.site_id
+
+            if sid in scores and scores[sid].get("has_data") and scores[sid]["score"] is not None:
+                # Blend: weight by check count (bundles) vs agent count
+                bundle_count = scores[sid].get("_bundle_check_count", 0)
+                agent_count = ga.active_agents
+                if bundle_count > 0:
+                    total_weight = bundle_count + agent_count
+                    scores[sid]["score"] = round(
+                        (scores[sid]["score"] * bundle_count + agent_score * agent_count) / total_weight,
+                        1,
+                    )
+                # Add agent metadata
+                scores[sid]["agent_count"] = ga.total_agents
+                scores[sid]["agent_compliance"] = round(agent_score, 1)
+            elif ga.active_agents > 0:
+                # Site has Go agent data but no bundle data — create entry
+                if sid not in scores:
+                    scores[sid] = {cat: None for cat in CATEGORY_CHECKS}
+                scores[sid]["score"] = round(agent_score, 1)
+                scores[sid]["has_data"] = True
+                scores[sid]["agent_count"] = ga.total_agents
+                scores[sid]["agent_compliance"] = round(agent_score, 1)
+                scores[sid]["_bundle_check_count"] = 0
+    except Exception:
+        pass  # If table doesn't exist yet, skip gracefully
+
+    # Clean up internal fields before caching
+    for sid in scores:
+        scores[sid].pop("_bundle_check_count", None)
 
     await _cache_set("admin:compliance:all_scores", scores, ttl_seconds=CACHE_TTL_SCORES)
     return scores

@@ -448,6 +448,8 @@ class GlobalStats(BaseModel):
     incidents_7d: int
     incidents_30d: int
     l1_resolution_rate: float
+    active_drift_checks: int = 47
+    total_go_agents: int = 0
     l2_resolution_rate: float
     l3_escalation_rate: float
     computed_at: Optional[str] = None

@@ -366,13 +366,19 @@ async def get_my_sites(request: Request, partner=Depends(require_partner)):
         rows = await conn.fetch("""
             SELECT s.site_id, s.clinic_name, s.status, s.tier,
                    s.onboarding_stage, s.created_at,
-                   COUNT(sa.id) as appliance_count,
-                   MAX(sa.last_checkin) as last_checkin
+                   COUNT(DISTINCT sa.id) as appliance_count,
+                   MAX(sa.last_checkin) as last_checkin,
+                   COALESCE(gas.total_agents, 0) as agent_count,
+                   COALESCE(gas.overall_compliance_rate, 0) as agent_compliance_rate,
+                   gas.last_event as agent_last_event
             FROM sites s
             LEFT JOIN site_appliances sa ON s.site_id = sa.site_id
+            LEFT JOIN site_go_agent_summaries gas ON s.site_id = gas.site_id
             WHERE s.partner_id = $1
+              AND s.status != 'inactive'
             GROUP BY s.site_id, s.clinic_name, s.status, s.tier,
-                     s.onboarding_stage, s.created_at
+                     s.onboarding_stage, s.created_at,
+                     gas.total_agents, gas.overall_compliance_rate, gas.last_event
             ORDER BY s.clinic_name
         """, partner['id'])
 
@@ -387,6 +393,9 @@ async def get_my_sites(request: Request, partner=Depends(require_partner)):
                 'appliance_count': row['appliance_count'],
                 'last_checkin': row['last_checkin'].isoformat() if row['last_checkin'] else None,
                 'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                'agent_count': row['agent_count'],
+                'agent_compliance_rate': float(row['agent_compliance_rate']),
+                'agent_last_event': row['agent_last_event'].isoformat() if row['agent_last_event'] else None,
             })
 
         await log_partner_activity(
@@ -419,10 +428,16 @@ async def get_my_orgs(request: Request, partner=Depends(require_partner)):
                 MAX(sa.last_checkin) as last_checkin,
                 COUNT(DISTINCT sa.id) FILTER (
                     WHERE sa.last_checkin > NOW() - INTERVAL '15 minutes'
-                ) as online_count
+                ) as online_count,
+                COALESCE(SUM(gas.total_agents), 0) as total_agents,
+                CASE WHEN COUNT(gas.site_id) > 0
+                     THEN ROUND(AVG(gas.overall_compliance_rate)::numeric, 1)
+                     ELSE 0 END as avg_agent_compliance
             FROM client_orgs co
-            LEFT JOIN sites s ON s.client_org_id = co.id AND s.partner_id = $1
+            LEFT JOIN sites s ON s.client_org_id = co.id
+                AND s.partner_id = $1 AND s.status != 'inactive'
             LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+            LEFT JOIN site_go_agent_summaries gas ON gas.site_id = s.site_id
             WHERE co.current_partner_id = $1
             GROUP BY co.id
             ORDER BY co.name
@@ -442,6 +457,8 @@ async def get_my_orgs(request: Request, partner=Depends(require_partner)):
                 'online_count': row['online_count'],
                 'last_checkin': row['last_checkin'].isoformat() if row['last_checkin'] else None,
                 'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                'total_agents': row['total_agents'],
+                'avg_agent_compliance': float(row['avg_agent_compliance']),
             })
 
         await log_partner_activity(

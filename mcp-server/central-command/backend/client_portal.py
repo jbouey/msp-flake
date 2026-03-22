@@ -534,10 +534,40 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
             WHERE client_org_id = $1 AND NOT is_read
         """, org_id)
 
-        # Get compliance score
-        total = kpis["total_checks"] or 1
+        # Get Go agent compliance data across org sites
+        agent_compliance = None
+        if site_ids:
+            agent_row = await conn.fetchrow("""
+                SELECT
+                    COALESCE(SUM(total_agents), 0) as total_agents,
+                    COALESCE(SUM(active_agents), 0) as active_agents,
+                    CASE WHEN COUNT(site_id) > 0
+                         THEN ROUND(AVG(overall_compliance_rate)::numeric, 1)
+                         ELSE NULL END as avg_compliance
+                FROM site_go_agent_summaries
+                WHERE site_id = ANY($1)
+            """, site_ids)
+            if agent_row and agent_row['total_agents'] > 0:
+                agent_compliance = {
+                    'total_agents': agent_row['total_agents'],
+                    'active_agents': agent_row['active_agents'],
+                    'avg_compliance': float(agent_row['avg_compliance']) if agent_row['avg_compliance'] is not None else 0.0,
+                }
+
+        # Get compliance score - blend bundle and agent compliance
+        total = kpis["total_checks"] or 0
         passed = kpis["passed"] or 0
-        compliance_score = round((passed / total) * 100, 1) if total > 0 else 100.0
+        bundle_score = round((passed / total) * 100, 1) if total > 0 else None
+
+        if bundle_score is not None and agent_compliance:
+            # Both sources available: weighted average (70% bundle, 30% agent)
+            compliance_score = round(bundle_score * 0.7 + agent_compliance['avg_compliance'] * 0.3, 1)
+        elif bundle_score is not None:
+            compliance_score = bundle_score
+        elif agent_compliance:
+            compliance_score = agent_compliance['avg_compliance']
+        else:
+            compliance_score = 100.0
 
         return {
             "org": {
@@ -565,6 +595,7 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
                 "failed": kpis["failed"],
                 "warnings": kpis["warnings"],
             },
+            "agent_compliance": agent_compliance,
             "unread_notifications": unread_count,
         }
 
@@ -580,12 +611,21 @@ async def list_sites(user: dict = Depends(require_client_user)):
             SELECT s.site_id, s.clinic_name, s.status, s.tier,
                    s.onboarding_stage, s.created_at,
                    COUNT(DISTINCT cb.id) as evidence_count,
-                   MAX(cb.checked_at) as last_check
+                   GREATEST(
+                       MAX(cb.checked_at),
+                       MAX(sa.last_checkin),
+                       gas.last_event
+                   ) as last_check,
+                   COALESCE(gas.total_agents, 0) as agent_count,
+                   COALESCE(gas.overall_compliance_rate, 0) as agent_compliance_rate
             FROM sites s
             LEFT JOIN compliance_bundles cb ON cb.site_id = s.site_id
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+            LEFT JOIN site_go_agent_summaries gas ON gas.site_id = s.site_id
             WHERE s.client_org_id = $1
             GROUP BY s.site_id, s.clinic_name, s.status, s.tier,
-                     s.onboarding_stage, s.created_at
+                     s.onboarding_stage, s.created_at,
+                     gas.last_event, gas.total_agents, gas.overall_compliance_rate
             ORDER BY s.clinic_name
         """, org_id)
 
@@ -600,6 +640,8 @@ async def list_sites(user: dict = Depends(require_client_user)):
                     "evidence_count": s["evidence_count"],
                     "last_check": s["last_check"].isoformat() if s["last_check"] else None,
                     "created_at": s["created_at"].isoformat() if s["created_at"] else None,
+                    "agent_count": s["agent_count"],
+                    "agent_compliance_rate": float(s["agent_compliance_rate"]),
                 }
                 for s in sites
             ],

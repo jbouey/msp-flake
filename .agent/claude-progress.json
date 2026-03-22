@@ -1,14 +1,14 @@
 {
-  "session": 182,
-  "updated": "2026-03-22T04:03:25.385171Z",
+  "session": 183,
+  "updated": "2026-03-22T16:11:53.408523Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "healthy_metrics_endpoint_structured_logging",
-    "physical_appliance": "go_daemon_v0.3.25_online_hostname_resolution_event_logs_winrm_fallback",
-    "vm_appliance": "go_daemon_v0.3.25_online_hostname_resolution_event_logs_winrm_fallback",
+    "physical_appliance": "go_daemon_v0.3.26_online_push_first_scan_agent_configure_check_sync",
+    "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
@@ -29,7 +29,7 @@
     "macos_scanning": "scan_timer_fixed_wol_added_credential_delivery_fixed_pending_tls_pin_clear",
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api"
   },
-  "current_blocker": "None. All systems operational. v0.3.25 deployed with hostname resolution, device event analysis, WinRM fallback, auto-recovery.",
+  "current_blocker": "None. All systems operational. v0.3.26 deployed. 3 Go agents live (NVDC01, NVWS01, iMac). Push-first architecture production.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -121,16 +121,57 @@
     "Nonce cache cleared on execution failures (enables auto-retry)",
     "Fleet order auto-recovery: failed completions expire after 1 hour"
   ],
+  "daemon_v0_3_26_changes": [
+    "Push-first scan priority: driftscan.go skips WinRM for Go agent-covered hosts",
+    "Post-deploy gRPC verification: 60s timeout + WinRM diagnostic on failure",
+    "configure_workstation_agent fleet order: full agent lifecycle via daemon WinRM",
+    "update_agent fleet order: actually downloads binary (was stub)",
+    "NETLOGON UNC fallback when HTTP download blocked",
+    "WinRM base64 chunked transfer fallback (20KB chunks)",
+    "Download failure detection: checks PowerShell Success:false in output",
+    "Size mismatch detection for stale SYSVOL cache",
+    "Full agent cleanup: nukes offline_queue.db, certs, stale configs",
+    "--appliance flag in Windows service registration",
+    "Agent check results sync: checks_passed/checks_total from drift events to Central Command",
+    "Agent version tracking via heartbeat"
+  ],
+  "backend_session_183_changes": [
+    "Device API 500 fix: cast asyncpg IPv4Address to str in device_sync.py (4 locations)",
+    "Site decommission: GET /sites/{id}/export + POST /sites/{id}/decommission",
+    "DecommissionModal frontend: export-first workflow, confirmation, inactive banner",
+    "configure_workstation_agent + validate_credential added to fleet CLI valid types",
+    "Go agent check result sync: checks_passed/checks_total/compliance_percentage upsert"
+  ],
+  "go_agents_deployed": {
+    "NVDC01": "go-NVDC01-c2a2b3d8 (192.168.88.250, Windows Server 2019 DC)",
+    "NVWS01": "go-NVWS01-b2c70cd6 (192.168.88.251, Windows 10 Workstation)",
+    "MaCs-iMac": "go-MaCs-iMac.local-9235ea2c (192.168.88.50, macOS 11.7 launchd daemon)"
+  },
+  "vm_appliance_deprecated": {
+    "site_id": "test-appliance-lab-b3c40c",
+    "status": "inactive",
+    "reason": "Source of stale .247 address poison, freed iMac RAM",
+    "date": "2026-03-22"
+  },
   "completed_this_session": [
-    "TLS TOFU pin cleared on both appliances",
-    "v0.3.25 deployed to both appliances (hostname resolution, event logs, WinRM fallback, auto-recovery)",
-    "Org feature audit + full hardening (12 commits: IDOR, N+1, pagination, health, PHI, partner)",
-    "Protection Profiles route fix (was 404), Drift Config shows all 47 checks",
-    "Go Agents page production appearance",
-    "Device subnet filtering + neighbor device collapse",
-    "Fleet order bulletproof auto-recovery pipeline",
-    "Workstation deduplication cleanup",
-    "EV SSL cert swap instructions prepared",
-    "Appliance disk image bumped to v0.3.25"
+    "Device API 500 fix (IPv4Address cast) \u2014 deployed via CI/CD",
+    "Push-first scan priority wired into driftscan.go",
+    "Post-deploy gRPC connection verification with WinRM diagnostic",
+    "update_agent fleet order implemented (was stub)",
+    "NETLOGON UNC fallback + size mismatch detection + WinRM b64 fallback",
+    "configure_workstation_agent fleet order \u2014 full agent lifecycle",
+    "VM appliance deprecated (test-appliance-lab-b3c40c \u2192 inactive)",
+    "Go agent deployed to NVWS01 \u2014 push architecture proven on Windows",
+    "Go agent deployed to NVDC01 \u2014 immediate heal commands flowing",
+    "Go agent deployed to iMac as launchd daemon (macOS 11.7, Go 1.22 compat)",
+    "Agent check result sync to Central Command go_agents table",
+    "Site decommission feature: export + deactivate + audit trail + frontend modal",
+    "macOS build compat: Makefile uses Go 1.22 for darwin (Big Sur support)",
+    "agent/DEPLOY.md production deployment guide",
+    "agent/packaging/deploy.sh universal SSH deploy script",
+    "agent/packaging/linux/osiriscare-agent.service systemd unit",
+    "OpenClaw DNS fixed (Cloudflare proxied \u2192 DNS only for Caddy auto-TLS)",
+    "OpenClaw workspace files downloaded to ~/Downloads/openclaw-workspace/",
+    "Claude Code workspace setup prompt for daughter"
   ]
 }

@@ -89,7 +89,7 @@ export const Dashboard: React.FC = () => {
             <div>
               <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Drift Checks</p>
               <p className="text-2xl font-bold text-health-healthy mt-1 tabular-nums animate-count-up">
-                {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : '6 Active'}
+                {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : `${stats?.active_drift_checks ?? 47} Active`}
               </p>
             </div>
             <div

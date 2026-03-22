@@ -822,3 +822,366 @@ Frontend API routing: `API_BASE = '/api/dashboard'` means the frontend hits `rou
 - Frontend: 89 passed, TypeScript clean
 
 ---
+
+## 2026-03-08-session-158-Server-side pagination, dark mode, auth fixes.md
+
+# Session 158 - Server Side Pagination, Dark Mode, Auth Fixes
+
+**Date:** 2026-03-08
+**Started:** 04:58
+**Previous Session:** 157
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-08-session-158-Server-side-pagination-dark-mode-auth-fixes.md
+
+# Session 158: Server-side Pagination, Dark Mode, Auth Fixes
+
+**Date:** 2026-03-08
+**Duration:** ~2 hours (continued from prior context)
+
+## What Was Done
+
+### 1. Partners Page Auth Fix (Critical)
+- **Root cause:** `AuthContext.tsx` clears `localStorage.auth_token` on load — app uses cookie-based session auth, not Bearer tokens
+- `getToken()` always returned null → `fetchPartners` returned early → `isLoading` stuck at `true` → infinite spinner
+- **Fix:** Replaced all Bearer token auth with `credentials: 'same-origin'` (cookie auth) + CSRF tokens for mutations
+- Affected all 15+ fetch functions in Partners.tsx
+
+### 2. Partner Detail Crash Fix
+- `GET /api/partners/{id}` returned 500: `column "site_id" does not exist` in incidents query
+- `incidents` table has no `site_id` column — must join through `site_appliances`
+- Fixed query to JOIN via `site_appliances.id = incidents.appliance_id`
+
+### 3. View Logs Order Type Mismatch
+- Frontend sent `view_logs` but backend `OrderType` enum only has `collect_logs`
+- Synced all 16 backend order types to frontend `OrderType` type
+
+### 4. Sites List Limit Validation
+- Backend limited `limit` query param to 100, but Incidents page site dropdown sends `limit=200`
+- Raised to 500 (admin-only endpoint)
+
+### 5. Dark Mode
+- CSS custom properties for all theme colors (light/dark)
+- `useTheme` hook: reads localStorage, respects system preference, real-time media query listener
+- Three modes: System / Light / Dark in Settings > Display
+- iOS dark palette: pure black background, dark glass surfaces, inverted labels
+
+### 6. Settings Page Auth Fix
+- Same Bearer token bug as Partners — fixed to cookie auth + CSRF
+
+### 7. Healing Tier Labels
+- Removed hardcoded rule counts "(4 rules)" / "(21 rules)" from SiteDetail dropdown
+- Now just shows "Standard" and "Full Coverage"
+
+### 8. Users All Accounts Fix (from prior context)
+- Removed `mfa_enabled` from `client_users` query — column doesn't exist on VPS (migration 072 never ran)
+
+## Commits
+- `6ecd586` fix: use array index instead of .at() for CI TS target compat
+- `b0bd2e7` perf: fix Partners double-fetch on mount, use cookie auth
+- `a6b1233` fix: remove mfa_enabled from client_users query
+- `35bdd61` fix: restore Bearer auth in Partners fetchPartners (wrong fix)
+- `3d808c9` fix: Partners page auth — use cookie auth (correct fix)
+- `f5351e9` feat: dark mode with iOS-style theme + fix Settings auth
+- `d5221cc` fix: View Logs order type mismatch + sites limit validation
+
+[truncated...]
+
+---
+
+## 2026-03-08-session-159-Frontend design overhaul - glassmorphism, dark mode, sidebar fleet status.md
+
+# Session 159 - Frontend Design Overhaul   Glassmorphism, Dark Mode, Sidebar Fleet Status
+
+**Date:** 2026-03-08
+**Started:** 06:14
+**Previous Session:** 158
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-08-session-159-Frontend-design-overhaul.md
+
+# Session 159: Frontend Design Overhaul — Glassmorphism, Dark Mode, Sidebar Fleet Status
+
+**Date:** 2026-03-08
+**Status:** Completed
+
+## Summary
+
+Major frontend design pass covering glassmorphism, dark mode fixes, new shared components, and sidebar redesign.
+
+## Changes Made
+
+### 1. Real Glassmorphism (index.css)
+- Added `backdrop-filter: blur(24px) saturate(180%)` to `.glass`, `.glass-sidebar`, `.glass-header`
+- Lowered opacity: dark `--glass-bg: rgba(28,28,30,0.55)`, light `--glass-bg: rgba(255,255,255,0.6)`
+- Added rich `content-atmosphere` with 4 radial gradients behind content area
+- Added `--accent-primary` CSS variable for both light/dark
+
+### 2. Dark Mode Fixes (~190 replacements across 21 files)
+- Replaced all hardcoded `bg-white`, `bg-slate-*`, `bg-gray-*` with theme-aware tokens
+- Token mapping: `bg-white` → `bg-background-secondary`, `bg-slate-50` → `bg-fill-tertiary`, `text-gray-500` → `text-label-tertiary`
+- Files: IncidentRow, CommandBar, ResolutionBreakdown, TopIncidentTypes, IncidentTrendChart, AddDeviceModal, IdleTimeoutWarning, RunbookDetail, ClientCard, PatternCard, SensorStatus, Header, Notifications, AuditLogs, FleetUpdates, Runbooks, RunbookConfig, SiteDetail, NotificationSettings, Documentation
+
+### 3. Stagger Animation Fix
+- `opacity: 0` + `animation-fill-mode: forwards` doesn't re-trigger on React re-renders
+- Fixed: changed to `animation-fill-mode: both` (no separate opacity setting)
+- Incidents page rows were invisible due to this bug
+
+### 4. New Shared Components
+- `StatCard.tsx` — KPI card with sparkline and trend arrow
+- `Toast.tsx` — ToastProvider context + useToast hook
+- `Modal.tsx` — Standardized modal with ESC/backdrop close
+- `DataTable.tsx` — Generic sortable table with type-safe columns
+- `FormInput.tsx` — Accessible input with label/error states
+
+### 5. Sidebar Redesign: Fleet Status
+- Replaced full CLIENTS list (doesn't scale beyond ~5 sites) with Fleet Status summary
+- Shows online/warning/offline counts with colored dots and text labels
+- Shows up to 3 sites needing attention below
+- Clicking summary navigates to Sites page (clears site filter)
+- Used `text-label-primary` for status labels (visible in dark mode)
+- Added `border-separator-medium` between Fleet Status and Navigation sections
+
+### 6. Typography & Animation
+- Added Plus Jakarta Sans display font via Google Fonts
+- Added keyframes: `stagger-in`, `slide-up`, `gauge-fill`, `count-up`
+- Added `stagger-list` class to Dashboard KPI grid, Incidents, Sites, Partners tables
+
+## Commits
+- `8c0e989` fix: dark mode overhaul + real glassmorphism across entire dashboard
+- `ae3e711` fix: stagger-list animation hiding incident rows on re-render
+
+[truncated...]
+
+---
+
+## 2026-03-08-session-160-Production-hardening-audit-6-rounds-40-fixes.md
+
+# Session 160 - Production Hardening Audit: 6 Rounds, 40+ Fixes
+
+**Date:** 2026-03-08
+**Previous Session:** 159
+
+## Goals
+
+- [x] Systematic production readiness audit (rounds 4-6)
+- [x] Fix all onboarding pipeline technical issues (10 items)
+- [x] Panic recovery for Go daemon goroutines
+- [x] Timing-safe evidence chain verification
+- [x] Partner onboarding visibility endpoints
+
+## Rounds Completed
+
+### Round 4: Panic Recovery, Timing Attacks, Input Validation (8 fixes)
+- safeGo() wrapper with recover() for all daemon goroutines
+- SSH timeout goroutine leak: session.Close() on timeout
+- hmac.compare_digest() for 5 evidence chain hash comparisons
+- Open redirect fix in OAuthCallback
+- ge=1 lower bound on 10 limit query parameters
+- All fire-and-forget goroutines converted to safeGo
+
+### Round 5: Webhook Dedup, Input Bounds, JSON Safety (3 fixes)
+- Stripe webhook replay protection (stripe_webhook_events dedup table)
+- ip_addresses checkin field bounded to max 100 items
+- 4 json.loads in cve_watch.py wrapped with try/except
+
+### Round 6: Onboarding Pipeline (10 issues addressed)
+1. API key generation on provisioning
+2. Credential delivery race fix (compare updated_at vs last_checkin)
+3. Credential format mismatch (handle both admin JSON + partner Fernet)
+4. Stage transition validation (max 3 forward, 1 backward)
+5. Site ID entropy increase (24→48 bits)
+6. Discovery credential gate (block if no Windows creds)
+7. Stage timestamps on auto-transition
+8. Agent registry disk persistence
+9. Partner onboarding + trigger-checkin endpoints
+10. L1 rules sync confirmed working (audit false positive)
+
+## Commits
+- `51aa063` Round 4
+- `8cdd6ec` Round 5
+- `b1830f3` Round 6a: pipeline fixes
+- `5cdcebd` Round 6b: credential delivery, partner endpoints, agent persistence
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+[truncated...]
+
+---
+
+## 2026-03-08-session-161-Checkin-savepoint-fix-UI-workflow-polish.md
+
+# Session 161 - Checkin Savepoint Fix + UI Workflow Polish
+
+**Date:** 2026-03-08
+**Previous Session:** 160
+
+---
+
+## Goals
+
+- [x] Fix appliances showing "stale" on dashboard (checkin 500 errors)
+- [x] Fix `_link_devices_to_workstations` `bundle_id` NOT NULL issue
+- [x] Fix incident detail panel (NaN UUID)
+- [x] Wire IncidentFeed row click (was console.log placeholder)
+- [x] End-user workflow audit across all portals
+
+---
+
+## Progress
+
+### Completed
+
+1. **Checkin savepoint fix** (`736f3b8`): Steps 3.7b and 3.8 wrapped in `async with conn.transaction():` savepoints to prevent transaction poisoning. Appliances back to 200 OK.
+
+2. **Workstation summary NOT NULL fix** (`e59015f`): `_update_workstation_summary` was missing `bundle_id`, `check_compliance`, `evidence_hash` columns (all NOT NULL). Added deterministic uuid5 bundle_id and sha256 evidence_hash.
+
+3. **IncidentFeed click** (`06142bf`): Replaced `console.log('View incident', id)` with `navigate('/incidents')`.
+
+4. **Incident detail NaN fix** (`e7dd8d3`): `getIncident(id: number)` → `getIncident(id: string)`. Incident IDs are UUIDs; `Number("uuid")` returned NaN, causing backend 500. Now passes string directly.
+
+5. **Full UI walkthrough verified live**:
+   - Dashboard: 2 Online, 93.3% compliance, incident chart, all cards working
+   - Sites: Both online, "Just now" checkin, click-through to site detail works
+   - Site detail: Devices/Workstations/Agents/Protection/Frameworks/Integrations tabs all render
+   - Devices: 11 devices, summary stats, type breakdown
+   - Incidents: 50+ incidents, filter by level/site/status, expandable detail panel shows drift data + HIPAA controls
+   - Organizations: Renders with "+ New Organization" button
+   - Client portal: Login page renders (Email & Password / Magic Link)
+   - Partner portal: Login page renders (Microsoft/Google OAuth + Email/API Key)
+
+### Remaining Issues
+
+- Organizations page shows 0 orgs — `client_organizations` table is empty (sites use a different org reference). Data mismatch, not a code bug.
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `backend/sites.py` | Savepoints for steps 3.7b + 3.8 |
+
+[truncated...]
+
+---
+
+## 2026-03-08-session-162-macOS-drift-OUI-lookup-drift-config-portals.md
+
+# Session 162: macOS Drift, OUI Lookup, Drift Config, Portal Fixes
+
+**Date:** 2026-03-08
+**Focus:** macOS drift scanning, per-site drift config, portal auth fixes, MAC OUI device hints
+
+## Completed
+
+### macOS Drift Scanning (14 HIPAA checks)
+- Added `macosscan.go` with 13 active checks: FileVault, Gatekeeper, SIP, firewall, auto-updates, screen lock, file sharing, Time Machine, NTP, admin users, disk space, cert expiry
+- Removed SSH/remote login check (flags the management channel itself)
+- Routes macOS targets via `linuxscan.go` label detection (`lt.Label == "macos"`)
+
+### Per-Site Drift Scan Configuration
+- Migration 075: `site_drift_config` table with 47 default check types, `macos_remote_login` disabled by default
+- Admin dashboard `DriftConfig.tsx`: toggle grid grouped by platform (Windows/Linux/macOS)
+- Backend: GET/PUT `/api/dashboard/sites/{site_id}/drift-config`
+- Daemon: `disabledChecks` map populated from checkin response `disabled_checks` array
+- All 3 scan types (Windows, Linux, macOS) filter findings via `isCheckDisabled()`
+
+### Drift Config in Partner + Client Portals
+- Partner: GET/PUT `/me/sites/{site_id}/drift-config` with ownership verification
+- Client: GET/PUT `/client/sites/{site_id}/drift-config` with org ownership verification
+- Frontend: `PartnerDriftConfig.tsx` (indigo theme), `ClientDriftConfig.tsx` (teal theme)
+- "Security Checks" button on partner + client dashboard site rows
+- Compliance scoring (`db_queries.py`): all 3 scoring functions exclude disabled checks
+
+### SRA Remediation Save Fix
+- Root cause: CSRF middleware blocked companion/client portal PUT/POST requests
+- Fix: exempted `/api/companion/` and `/api/client/` prefixes (session-auth protected)
+- Added CSRF token headers to SRAWizard fetch calls
+- Added visual save confirmation (checkmark + error states)
+
+### MAC OUI Device Type Hints
+- Created `oui_lookup.py`: ~500+ MAC prefix entries covering major manufacturers
+- Device classes: server, workstation, network, printer, phone, iot, virtual, unknown
+- Integrated into `device_sync.py` `get_site_devices()` — enriches API response on-the-fly
+- Frontend: manufacturer shown italic under MAC column, type hint shown for "unknown" devices
+- Expanded details: manufacturer + device class with "inferred" tooltip
+
+### Daemon Deploy
+- Built + deployed daemon v0.3.19 via fleet order (macOS scanning + drift config filtering)
+- Fleet order `19e5bd7d` deployed to both appliances
+
+## Key Commits
+- `2949a50` feat: add macOS drift scanning (14 HIPAA security checks via SSH)
+- `1c4ff8f` feat: per-site drift scan configuration with UI toggles
+- `1517c0f` fix: SRA remediation save broken by CSRF + add save confirmation
+- `a28422e` feat: drift config in partner + client portals, exclude disabled checks from compliance score
+
+## Files Changed (Backend)
+
+[truncated...]
+
+---

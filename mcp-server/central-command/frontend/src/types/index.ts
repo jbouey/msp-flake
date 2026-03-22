@@ -336,6 +336,8 @@ export interface GlobalStats {
   l1_resolution_rate: number;
   l2_resolution_rate: number;
   l3_escalation_rate: number;
+  active_drift_checks: number;
+  total_go_agents: number;
 }
 
 export interface ClientStats {

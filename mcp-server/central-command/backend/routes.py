@@ -143,7 +143,10 @@ async def get_fleet_overview(
     """Get all clients with aggregated health scores."""
     # Get site data with org info
     org_scope = user.get("org_scope")
-    where_clause = "WHERE s.client_org_id = ANY(:org_scope_ids)" if org_scope else ""
+    if org_scope:
+        where_clause = "WHERE s.status != 'inactive' AND s.client_org_id = ANY(:org_scope_ids)"
+    else:
+        where_clause = "WHERE s.status != 'inactive'"
     query_str = f"""
         SELECT
             s.site_id,
@@ -1443,6 +1446,30 @@ async def add_note(
 async def get_global_stats(db: AsyncSession = Depends(get_db)):
     """Get aggregate statistics across all clients."""
     stats = await get_global_stats_from_db(db)
+
+    # Get Go agent stats and drift check count from asyncpg pool
+    total_go_agents = 0
+    active_drift_checks = 47  # default: all known check types
+    try:
+        from .fleet import get_pool
+        from .tenant_middleware import admin_connection
+        pool = await get_pool()
+        async with admin_connection(pool) as conn:
+            agent_row = await conn.fetchrow(
+                "SELECT COUNT(*) as cnt FROM go_agents WHERE status = 'connected'"
+            )
+            total_go_agents = agent_row["cnt"] if agent_row else 0
+
+            # Count enabled drift checks across all active sites
+            drift_row = await conn.fetchrow("""
+                SELECT COUNT(DISTINCT check_type) as cnt
+                FROM site_drift_config WHERE enabled = true
+            """)
+            if drift_row and drift_row["cnt"] > 0:
+                active_drift_checks = drift_row["cnt"]
+    except Exception:
+        pass
+
     return GlobalStats(
         total_clients=stats.get("total_clients", 0),
         total_appliances=stats.get("total_appliances", 0),
@@ -1455,6 +1482,8 @@ async def get_global_stats(db: AsyncSession = Depends(get_db)):
         l1_resolution_rate=stats.get("l1_resolution_rate", 0.0),
         l2_resolution_rate=stats.get("l2_resolution_rate", 0.0),
         l3_escalation_rate=stats.get("l3_escalation_rate", 0.0),
+        active_drift_checks=active_drift_checks,
+        total_go_agents=total_go_agents,
         computed_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -2926,7 +2955,8 @@ async def get_organization_health(
     if not site_ids:
         return {
             "org_id": org_id,
-            "compliance": {"score": 0, "has_data": False, "site_scores": {}},
+            "compliance": {"score": 0, "has_data": False, "site_scores": {}, "bundle_score": 0},
+            "go_agents": {"total_agents": 0, "active_agents": 0, "compliance_rate": None},
             "incidents": {"total_24h": 0, "total_7d": 0, "total_30d": 0, "by_severity": {}},
             "healing": {"success_rate": 0, "order_execution_rate": 0, "total_incidents": 0, "resolved_incidents": 0, "total_orders": 0, "completed_orders": 0},
             "fleet": {"total": 0, "online": 0, "stale": 0, "offline": 0},
@@ -3027,12 +3057,54 @@ async def get_organization_health(
             "score": round(row.passes / row.total * 100, 1) if row.total > 0 else 0,
         }
 
+    # Go agent compliance data across org sites
+    go_agent_result = await db.execute(text("""
+        SELECT sg.site_id,
+               COALESCE(sg.total_agents, 0) as total_agents,
+               COALESCE(sg.active_agents, 0) as active_agents,
+               COALESCE(sg.overall_compliance_rate, 0) as compliance_rate
+        FROM site_go_agent_summaries sg
+        WHERE sg.site_id = ANY(:site_ids)
+    """), {"site_ids": site_ids})
+    go_agent_rows = go_agent_result.fetchall()
+
+    org_agent_count = 0
+    org_active_agents = 0
+    go_scores_weighted_sum = 0.0
+    go_total_agents_for_weight = 0
+    for ga in go_agent_rows:
+        org_agent_count += ga.total_agents
+        org_active_agents += ga.active_agents
+        if ga.active_agents > 0:
+            go_scores_weighted_sum += float(ga.compliance_rate) * ga.active_agents
+            go_total_agents_for_weight += ga.active_agents
+
+    org_agent_compliance = round(go_scores_weighted_sum / go_total_agents_for_weight, 1) if go_total_agents_for_weight > 0 else None
+
+    # Blend bundle compliance score with Go agent compliance
+    if org_agent_compliance is not None and avg_score > 0:
+        # Weight by data density: bundle sites vs active agent sites
+        bundle_weight = len(scores_list)
+        agent_weight = sum(1 for ga in go_agent_rows if ga.active_agents > 0)
+        total_weight = bundle_weight + agent_weight
+        blended_score = round((avg_score * bundle_weight + org_agent_compliance * agent_weight) / total_weight, 1) if total_weight > 0 else avg_score
+    elif org_agent_compliance is not None:
+        blended_score = org_agent_compliance
+    else:
+        blended_score = avg_score
+
     return {
         "org_id": org_id,
         "compliance": {
-            "score": avg_score,
-            "has_data": len(scores_list) > 0,
+            "score": blended_score,
+            "has_data": len(scores_list) > 0 or org_agent_compliance is not None,
             "site_scores": site_scores,
+            "bundle_score": avg_score,
+        },
+        "go_agents": {
+            "total_agents": org_agent_count,
+            "active_agents": org_active_agents,
+            "compliance_rate": org_agent_compliance,
         },
         "incidents": {
             "total_24h": inc.total_24h,
@@ -3270,6 +3342,20 @@ async def get_admin_compliance_health(
                 incident_fails += cnt
                 incident_fails += cnt
 
+        # --- Source 3: Go agent check results (workstation-level compliance) ---
+        go_agent_rows = await conn.fetch("""
+            SELECT checks_passed, checks_total, compliance_percentage
+            FROM go_agents
+            WHERE site_id = $1 AND status IN ('connected', 'active')
+              AND checks_total > 0
+        """, site_id)
+
+        go_agent_checks_passed = 0
+        go_agent_checks_total = 0
+        for ga_row in go_agent_rows:
+            go_agent_checks_passed += ga_row["checks_passed"] or 0
+            go_agent_checks_total += ga_row["checks_total"] or 0
+
         # --- Compute per-category scores from total basket ---
         breakdown = {}
         overall_sum = 0
@@ -3285,7 +3371,24 @@ async def get_admin_compliance_health(
             else:
                 breakdown[cat] = None
 
-        overall = round(overall_sum / cats_with_data, 1) if cats_with_data > 0 else None
+        bundle_overall = round(overall_sum / cats_with_data, 1) if cats_with_data > 0 else None
+
+        # Blend bundle compliance with Go agent compliance, weighted by check count
+        if go_agent_checks_total > 0:
+            go_agent_score = round((go_agent_checks_passed / go_agent_checks_total) * 100, 1)
+            bundle_check_count = total_passed + total_failed + total_warnings
+            if bundle_overall is not None and bundle_check_count > 0:
+                # Weighted average: each source weighted by its check count
+                total_weight = bundle_check_count + go_agent_checks_total
+                overall = round(
+                    (bundle_overall * bundle_check_count + go_agent_score * go_agent_checks_total) / total_weight,
+                    1,
+                )
+            else:
+                # Only Go agent data available
+                overall = go_agent_score
+        else:
+            overall = bundle_overall
 
         trend_rows = await conn.fetch("""
             SELECT
@@ -3329,6 +3432,12 @@ async def get_admin_compliance_health(
                 "failed": total_failed,
                 "warnings": total_warnings,
                 "total": total_passed + total_failed + total_warnings,
+            },
+            "go_agents": {
+                "agent_count": len(go_agent_rows),
+                "checks_passed": go_agent_checks_passed,
+                "checks_total": go_agent_checks_total,
+                "compliance_score": round((go_agent_checks_passed / go_agent_checks_total) * 100, 1) if go_agent_checks_total > 0 else None,
             },
             "trend": trend,
             "healing": {
