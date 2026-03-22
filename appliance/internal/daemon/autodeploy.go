@@ -1054,6 +1054,11 @@ try {
 	stdout := maputil.String(dlResult.Output, "std_out")
 	log.Printf("[autodeploy] [%s] Direct: Download result: %s", hostname, strings.TrimSpace(stdout))
 
+	// Check if the PowerShell download script reported failure
+	if strings.Contains(stdout, `"Success":false`) || strings.Contains(stdout, `"Success": false`) {
+		return fmt.Errorf("binary download failed on workstation: %s", strings.TrimSpace(stdout))
+	}
+
 	// Step 3: Write config + install service
 	log.Printf("[autodeploy] [%s] Direct: Step 3/4 Writing config + installing service", hostname)
 	if err := ad.writeConfigToTarget(target, grpcAddr); err != nil {
