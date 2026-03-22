@@ -221,11 +221,12 @@ async def create_profile(body: ProfileCreate, user: Dict[str, Any] = Depends(req
     async with admin_connection(pool) as conn:
         await require_site_access(conn, user, body.site_id)
         try:
+            created_by = user.get("username") or user.get("displayName") or str(user.get("id", ""))
             await conn.execute("""
                 INSERT INTO app_protection_profiles
-                    (id, site_id, name, description, status, created_at, updated_at, template_id)
-                VALUES ($1, $2, $3, $4, 'draft', $5, $5, $6)
-            """, profile_id, body.site_id, body.name, body.description, now, template_id)
+                    (id, site_id, name, description, status, created_by, created_at, updated_at, template_id)
+                VALUES ($1, $2, $3, $4, 'draft', $5, $6, $6, $7)
+            """, profile_id, body.site_id, body.name, body.description, created_by, now, template_id)
         except Exception as e:
             if "unique" in str(e).lower():
                 raise HTTPException(409, f"Profile '{body.name}' already exists for this site")

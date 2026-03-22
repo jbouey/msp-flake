@@ -3488,7 +3488,11 @@ async def get_drift_config(
     site_id: str,
     user: dict = Depends(auth_module.require_auth),
 ):
-    """Get drift scan configuration for a site, falling back to defaults."""
+    """Get drift scan configuration for a site.
+
+    Returns ALL known check types with enabled=true as default,
+    overlaid by any site-specific overrides from the database.
+    """
     await check_site_access_pool(user, site_id)
     from .fleet import get_pool
     pool = await get_pool()
@@ -3499,23 +3503,61 @@ async def get_drift_config(
             ORDER BY check_type
         """, site_id)
 
-        if not rows:
-            # Fall back to defaults
-            rows = await conn.fetch("""
-                SELECT check_type, enabled, notes FROM site_drift_config
-                WHERE site_id = '__defaults__'
-                ORDER BY check_type
-            """)
+    # Build override map from DB
+    overrides = {r["check_type"]: r for r in rows}
 
-    checks = [
-        {
-            "check_type": r["check_type"],
-            "enabled": r["enabled"],
-            "platform": _check_platform(r["check_type"]),
-            "notes": r["notes"] or "",
-        }
-        for r in rows
+    # Canonical list of all check types (must match daemon scan capabilities)
+    ALL_CHECK_TYPES = [
+        # Windows
+        "firewall_status", "windows_defender", "windows_update", "audit_logging",
+        "rogue_admin_users", "rogue_scheduled_tasks", "agent_status",
+        "bitlocker_status", "smb_signing", "smb1_protocol", "screen_lock_policy",
+        "defender_exclusions", "dns_config", "network_profile", "password_policy",
+        "rdp_nla", "guest_account", "service_dns", "service_netlogon",
+        "wmi_event_persistence", "registry_run_persistence", "audit_policy",
+        "defender_cloud_protection", "spooler_service",
+        # Linux
+        "linux_firewall", "linux_ssh_root", "linux_ssh_password",
+        "linux_failed_services", "linux_disk_space", "linux_suid",
+        "linux_unattended_upgrades", "linux_audit", "linux_ntp", "linux_cert_expiry",
+        # macOS
+        "macos_filevault", "macos_gatekeeper", "macos_sip", "macos_firewall",
+        "macos_auto_update", "macos_screen_lock", "macos_remote_login",
+        "macos_file_sharing", "macos_time_machine", "macos_ntp_sync",
+        "macos_admin_users", "macos_disk_space", "macos_cert_expiry",
     ]
+
+    # Default disabled checks (SSH is the management channel for macOS)
+    DEFAULT_DISABLED = {"macos_remote_login"}
+
+    checks = []
+    for ct in ALL_CHECK_TYPES:
+        override = overrides.get(ct)
+        if override:
+            checks.append({
+                "check_type": ct,
+                "enabled": override["enabled"],
+                "platform": _check_platform(ct),
+                "notes": override["notes"] or "",
+            })
+        else:
+            checks.append({
+                "check_type": ct,
+                "enabled": ct not in DEFAULT_DISABLED,
+                "platform": _check_platform(ct),
+                "notes": "",
+            })
+
+    # Include any site-specific checks not in the canonical list (custom checks)
+    for ct, r in overrides.items():
+        if ct not in {c["check_type"] for c in checks}:
+            checks.append({
+                "check_type": ct,
+                "enabled": r["enabled"],
+                "platform": _check_platform(ct),
+                "notes": r["notes"] or "",
+            })
+
     return {"site_id": site_id, "checks": checks}
 
 

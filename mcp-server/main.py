@@ -1211,7 +1211,7 @@ app.include_router(client_portal_router, prefix="/api")  # Client portal endpoin
 app.include_router(hipaa_modules_router, prefix="/api")  # HIPAA compliance modules
 app.include_router(companion_router, prefix="/api")  # Compliance Companion portal
 app.include_router(org_credentials_router)  # Organization-level shared credentials
-app.include_router(protection_profiles_router, prefix="/api")  # Application Protection Profiles
+app.include_router(protection_profiles_router, prefix="/api/dashboard")  # Application Protection Profiles
 app.include_router(billing_webhook_router, prefix="/api")  # Stripe webhooks
 app.include_router(notifications_router)  # Partner notifications + L3 escalation tickets
 app.include_router(compliance_frameworks_router)  # Multi-framework compliance management (admin)
