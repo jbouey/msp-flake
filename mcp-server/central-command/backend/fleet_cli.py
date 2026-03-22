@@ -48,6 +48,7 @@ VALID_ORDER_TYPES = {
     "diagnostic", "deploy_sensor", "remove_sensor",
     "deploy_linux_sensor", "remove_linux_sensor", "sensor_status",
     "sync_promoted_rule", "healing", "update_credentials", "update_daemon",
+    "configure_workstation_agent", "validate_credential",
 }
 
 DEFAULT_PARAMS = {
