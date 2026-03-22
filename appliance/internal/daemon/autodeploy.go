@@ -1106,9 +1106,63 @@ try {
 		uncStdout := maputil.String(uncResult.Output, "std_out")
 		log.Printf("[autodeploy] [%s] Direct: NETLOGON copy result: %s", hostname, strings.TrimSpace(uncStdout))
 		if strings.Contains(uncStdout, `"Success":false`) {
-			return fmt.Errorf("NETLOGON copy failed: %s", strings.TrimSpace(uncStdout))
+			log.Printf("[autodeploy] [%s] NETLOGON copy failed, falling back to WinRM base64 transfer", hostname)
+			goto winrmB64Transfer
 		}
+
+		// Verify size matches expected (SYSVOL can serve stale cached files)
+		agentData, loadErr := ad.loadAgentBinary()
+		if loadErr == nil {
+			rawBytes, _ := base64.StdEncoding.DecodeString(agentData)
+			expectedSize := len(rawBytes)
+			// Parse size from UNC result
+			var uncParsed struct{ Size int }
+			if json.Unmarshal([]byte(uncStdout), &uncParsed) == nil && uncParsed.Size != expectedSize {
+				log.Printf("[autodeploy] [%s] NETLOGON copy size mismatch: got %d, expected %d — falling back to WinRM base64", hostname, uncParsed.Size, expectedSize)
+				goto winrmB64Transfer
+			}
+		}
+		goto downloadDone
 	}
+
+winrmB64Transfer:
+	{
+		// Last resort: push binary via WinRM base64 chunks
+		log.Printf("[autodeploy] [%s] Direct: WinRM base64 transfer (slow but reliable)", hostname)
+		b64Data, err := ad.loadAgentBinary()
+		if err != nil {
+			return fmt.Errorf("load agent binary for b64 transfer: %w", err)
+		}
+
+		// Stop service first to unlock the binary
+		ad.daemon.winrmExec.Execute(target,
+			fmt.Sprintf(`Stop-Service -Name "%s" -Force -EA SilentlyContinue; Start-Sleep -Seconds 1; "OK"`, agentServiceName),
+			"AGENT-STOP", "autodeploy", 15, 0, 10.0, nil)
+
+		// Write base64 in chunks (WinRM has ~150KB per-command limit)
+		chunkSize := 100000 // ~100KB per chunk
+		b64File := agentInstallDir + `\agent.b64`
+		for i := 0; i < len(b64Data); i += chunkSize {
+			end := i + chunkSize
+			if end > len(b64Data) {
+				end = len(b64Data)
+			}
+			chunk := b64Data[i:end]
+			op := "Set-Content"
+			if i > 0 {
+				op = "Add-Content"
+			}
+			chunkScript := fmt.Sprintf(`%s -Path "%s" -Value "%s" -NoNewline -Encoding ASCII; "OK"`, op, b64File, chunk)
+			res := ad.daemon.winrmExec.Execute(target,
+				chunkScript, "AGENT-B64-CHUNK", "autodeploy", 30, 0, 10.0, nil)
+			if !res.Success {
+				return fmt.Errorf("b64 chunk write failed at offset %d: %s", i, res.Error)
+			}
+		}
+		log.Printf("[autodeploy] [%s] Direct: Base64 transfer complete (%d chars)", hostname, len(b64Data))
+	}
+
+downloadDone:
 
 	// Step 3: Write config + install service
 	log.Printf("[autodeploy] [%s] Direct: Step 3/4 Writing config + installing service", hostname)
