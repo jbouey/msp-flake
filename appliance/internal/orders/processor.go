@@ -325,6 +325,11 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 	result, err := handler(ctx, params)
 	if err != nil {
 		log.Printf("[orders] Order %s failed: %v", order.OrderID, err)
+		// Clear nonce on execution failure so the order can be retried
+		// after the backend auto-expires the failed completion (1 hour).
+		// Security failures (bad signature, bad nonce) are caught above
+		// and keep the nonce cached to prevent replay attacks.
+		p.removeNonce(order.Nonce)
 		p.complete(ctx, order.OrderID, false, nil, err.Error())
 		return &OrderResult{OrderID: order.OrderID, Success: false, Error: err.Error()}
 	}
@@ -1032,6 +1037,18 @@ func (p *Processor) checkAndRecordNonce(nonce string) error {
 	p.persistNoncesLocked()
 
 	return nil
+}
+
+// removeNonce removes a nonce from the cache, allowing the order to be retried.
+// Called when an order fails due to download/execution errors (not security issues).
+func (p *Processor) removeNonce(nonce string) {
+	if nonce == "" {
+		return
+	}
+	p.nonceMu.Lock()
+	defer p.nonceMu.Unlock()
+	delete(p.usedNonces, nonce)
+	p.persistNoncesLocked()
 }
 
 // evictExpiredNoncesLocked removes nonces older than 24h. Must hold nonceMu.

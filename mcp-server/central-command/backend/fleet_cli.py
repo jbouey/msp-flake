@@ -125,6 +125,15 @@ async def cmd_create(args: argparse.Namespace) -> None:
                 f"Use: --param {missing[0]}=VALUE"
             )
 
+    # Validate binary_url for update_daemon orders
+    if order_type == "update_daemon":
+        url = params.get("binary_url", "")
+        if not url.startswith("https://"):
+            sys.exit(
+                f"binary_url must be HTTPS (got: {url!r})\n"
+                f"Upload binary to VPS and use: https://api.osiriscare.net/updates/<filename>"
+            )
+
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=args.expires)
 
@@ -133,7 +142,7 @@ async def cmd_create(args: argparse.Namespace) -> None:
         signing_key, order_type, params, now, expires_at
     )
 
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
     try:
         row = await conn.fetchrow(
             """
@@ -166,7 +175,7 @@ async def cmd_create(args: argparse.Namespace) -> None:
 
 
 async def cmd_list(args: argparse.Namespace) -> None:
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
     try:
         rows = await conn.fetch(
             """
@@ -209,7 +218,7 @@ async def cmd_list(args: argparse.Namespace) -> None:
 
 
 async def cmd_cancel(args: argparse.Namespace) -> None:
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
     try:
         result = await conn.execute(
             "UPDATE fleet_orders SET status = 'cancelled' WHERE id = $1 AND status = 'active'",

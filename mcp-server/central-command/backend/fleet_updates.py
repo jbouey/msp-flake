@@ -1324,7 +1324,23 @@ async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version:
     - Appliance already completed/acknowledged the order
     - Appliance already matches skip_version
     """
-    # Get active, non-expired fleet orders
+    # Auto-expire stale failed completions so orders retry automatically.
+    # Failed completions older than 1 hour are deleted — the appliance will
+    # re-receive the order on next checkin and try again (e.g. after a
+    # binary URL is fixed or network issue resolves).
+    try:
+        await conn.execute("""
+            DELETE FROM fleet_order_completions
+            WHERE appliance_id = $1
+            AND status = 'failed'
+            AND completed_at < NOW() - INTERVAL '1 hour'
+        """, appliance_id)
+    except Exception:
+        pass  # Non-critical — worst case is order doesn't retry this cycle
+
+    # Get active, non-expired fleet orders that this appliance hasn't
+    # completed or skipped. Failed completions are auto-expired above,
+    # so the order will reappear after 1 hour.
     fleet_rows = await conn.fetch("""
         SELECT fo.id, fo.order_type, fo.parameters, fo.skip_version, fo.created_at, fo.expires_at,
                fo.nonce, fo.signature, fo.signed_payload
@@ -1333,7 +1349,9 @@ async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version:
         AND fo.expires_at > NOW()
         AND NOT EXISTS (
             SELECT 1 FROM fleet_order_completions foc
-            WHERE foc.fleet_order_id = fo.id AND foc.appliance_id = $1
+            WHERE foc.fleet_order_id = fo.id
+            AND foc.appliance_id = $1
+            AND foc.status IN ('completed', 'skipped')
         )
         ORDER BY fo.created_at ASC
     """, appliance_id)
