@@ -1054,9 +1054,37 @@ try {
 	stdout := maputil.String(dlResult.Output, "std_out")
 	log.Printf("[autodeploy] [%s] Direct: Download result: %s", hostname, strings.TrimSpace(stdout))
 
-	// Check if the PowerShell download script reported failure
+	// Check if the PowerShell download script reported failure — try NETLOGON UNC fallback
 	if strings.Contains(stdout, `"Success":false`) || strings.Contains(stdout, `"Success": false`) {
-		return fmt.Errorf("binary download failed on workstation: %s", strings.TrimSpace(stdout))
+		log.Printf("[autodeploy] [%s] HTTP download failed, trying NETLOGON UNC copy", hostname)
+
+		// Stage binary to NETLOGON first (idempotent, cached per version)
+		if err := ad.stageAgentToNETLOGON(ctx); err != nil {
+			return fmt.Errorf("HTTP download failed and NETLOGON stage failed: %w", err)
+		}
+
+		// Copy from NETLOGON share — domain-joined machines can always read this
+		uncScript := fmt.Sprintf(`
+$dest = "%s\%s"
+try {
+    $domain = (Get-WmiObject Win32_ComputerSystem).Domain
+    $src = "\\$domain\NETLOGON\%s"
+    Copy-Item -Path $src -Destination $dest -Force
+    $fi = Get-Item $dest
+    @{ Success = $true; Size = $fi.Length; Path = $dest; Method = "NETLOGON" } | ConvertTo-Json -Compress
+} catch {
+    @{ Success = $false; Error = $_.Exception.Message; Method = "NETLOGON" } | ConvertTo-Json -Compress
+}`, agentInstallDir, agentBinaryName, agentBinaryName)
+		uncResult := ad.daemon.winrmExec.Execute(target,
+			uncScript, "AGENT-DEPLOY-UNC", "autodeploy", 60, 0, 10.0, nil)
+		if !uncResult.Success {
+			return fmt.Errorf("both HTTP and NETLOGON download failed: %s", strings.TrimSpace(stdout))
+		}
+		uncStdout := maputil.String(uncResult.Output, "std_out")
+		log.Printf("[autodeploy] [%s] Direct: NETLOGON copy result: %s", hostname, strings.TrimSpace(uncStdout))
+		if strings.Contains(uncStdout, `"Success":false`) {
+			return fmt.Errorf("NETLOGON copy failed: %s", strings.TrimSpace(uncStdout))
+		}
 	}
 
 	// Step 3: Write config + install service
