@@ -199,7 +199,7 @@ if ($existing) {
     Start-Sleep -Seconds 2
 }
 
-New-Service -Name $serviceName -BinaryPathName """$exePath"" --config ""$configPath""" -DisplayName "OsirisCare Compliance Agent" -Description "HIPAA compliance monitoring agent" -StartupType Automatic -ErrorAction Stop
+New-Service -Name $serviceName -BinaryPathName """$exePath"" --appliance ""` + applianceAddr + `"" --config ""$configPath""" -DisplayName "OsirisCare Compliance Agent" -Description "HIPAA compliance monitoring agent" -StartupType Automatic -ErrorAction Stop
 
 Start-Service -Name $serviceName -ErrorAction Stop
 sc.exe failure $serviceName reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
