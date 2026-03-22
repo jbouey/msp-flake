@@ -271,6 +271,12 @@ func New(cfg *Config) *Daemon {
 		return d.handleValidateCredential(ctx, params)
 	})
 
+	// configure_workstation_agent: fix execution policy + write config + start agent service
+	// Uses the daemon's own authenticated WinRM session (bypasses external auth issues)
+	d.orderProc.RegisterHandler("configure_workstation_agent", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+		return d.handleConfigureWorkstationAgent(ctx, params)
+	})
+
 	// Initialize network scanner for port/reachability checks
 	d.netScan = newNetScanner(d)
 
