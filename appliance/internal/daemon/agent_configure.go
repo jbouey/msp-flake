@@ -149,8 +149,15 @@ try {
 	// Step 3b: Clear stale TLS certificates (forces re-enrollment with current appliance)
 	log.Printf("[configure-agent] [%s] Step 3b: Clearing stale TLS certs", hostname)
 	certCleanScript := `
-$paths = @("C:\OsirisCare\agent.crt", "C:\OsirisCare\agent.key", "C:\OsirisCare\ca.crt",
-           "C:\ProgramData\OsirisCare\agent.crt", "C:\ProgramData\OsirisCare\agent.key", "C:\ProgramData\OsirisCare\ca.crt")
+$paths = @(
+    "C:\OsirisCare\agent.crt", "C:\OsirisCare\agent.key", "C:\OsirisCare\ca.crt",
+    "C:\ProgramData\OsirisCare\agent.crt", "C:\ProgramData\OsirisCare\agent.key", "C:\ProgramData\OsirisCare\ca.crt",
+    "C:\ProgramData\OsirisCare\offline_queue.db", "C:\ProgramData\OsirisCare\offline_queue.db-wal", "C:\ProgramData\OsirisCare\offline_queue.db-shm",
+    "C:\ProgramData\OsirisCare\config.json",
+    "C:\OsirisCare\offline_queue.db", "C:\OsirisCare\offline_queue.db-wal", "C:\OsirisCare\offline_queue.db-shm"
+)
+Stop-Service -Name "OsirisCareAgent" -Force -EA SilentlyContinue
+Start-Sleep -Seconds 2
 $removed = 0
 foreach ($p in $paths) { if (Test-Path $p) { Remove-Item $p -Force; $removed++ } }
 "removed=$removed"
