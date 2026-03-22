@@ -628,6 +628,7 @@ func (ad *autoDeployer) runPostDeployDiagnostic(hostname string) {
 }
 
 // buildTargetByHostname creates a WinRM target for a hostname using credential lookup.
+// Tries hostname, then resolved IP for credential lookup.
 func (ad *autoDeployer) buildTargetByHostname(hostname string) *winrm.Target {
 	cfg := ad.daemon.config
 
@@ -639,11 +640,27 @@ func (ad *autoDeployer) buildTargetByHostname(hostname string) *winrm.Target {
 		username = wt.Username
 		password = wt.Password
 		connectHost = wt.Hostname
-	} else if cfg.DCUsername != nil && cfg.DCPassword != nil {
-		username = *cfg.DCUsername
-		password = *cfg.DCPassword
 	} else {
-		return nil
+		// Try resolving hostname to IP for credential lookup
+		if addrs, err := net.DefaultResolver.LookupHost(context.Background(), hostname); err == nil {
+			for _, addr := range addrs {
+				if wt2, ok2 := ad.daemon.LookupWinTarget(addr); ok2 && wt2.Role != "domain_admin" {
+					username = wt2.Username
+					password = wt2.Password
+					connectHost = addr
+					break
+				}
+			}
+		}
+		// Final fallback: DC credentials
+		if username == "" {
+			if cfg.DCUsername != nil && cfg.DCPassword != nil {
+				username = *cfg.DCUsername
+				password = *cfg.DCPassword
+			} else {
+				return nil
+			}
+		}
 	}
 
 	ws := ad.daemon.probeWinRM(connectHost)
@@ -1064,17 +1081,23 @@ try {
 		}
 
 		// Copy from NETLOGON share — domain-joined machines can always read this
+		// Use DC IP directly to bypass DNS/DFS caching issues
+		dcIP := *ad.daemon.config.DomainController
 		uncScript := fmt.Sprintf(`
 $dest = "%s\%s"
 try {
-    $domain = (Get-WmiObject Win32_ComputerSystem).Domain
-    $src = "\\$domain\NETLOGON\%s"
+    $src = "\\%s\NETLOGON\%s"
+    # Stop service before overwriting binary (locked file)
+    Stop-Service -Name "%s" -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+    # Clear SMB client cache for this path
+    net use "\\%s\NETLOGON" /delete 2>$null
     Copy-Item -Path $src -Destination $dest -Force
     $fi = Get-Item $dest
     @{ Success = $true; Size = $fi.Length; Path = $dest; Method = "NETLOGON" } | ConvertTo-Json -Compress
 } catch {
     @{ Success = $false; Error = $_.Exception.Message; Method = "NETLOGON" } | ConvertTo-Json -Compress
-}`, agentInstallDir, agentBinaryName, agentBinaryName)
+}`, agentInstallDir, agentBinaryName, dcIP, agentBinaryName, agentServiceName, dcIP)
 		uncResult := ad.daemon.winrmExec.Execute(target,
 			uncScript, "AGENT-DEPLOY-UNC", "autodeploy", 60, 0, 10.0, nil)
 		if !uncResult.Success {
