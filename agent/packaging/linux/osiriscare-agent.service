@@ -1,0 +1,27 @@
+[Unit]
+Description=OsirisCare Compliance Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/osiriscare/osiris-agent
+WorkingDirectory=/opt/osiriscare
+Restart=always
+RestartSec=10
+User=root
+
+# Hardening
+ProtectSystem=strict
+ReadWritePaths=/opt/osiriscare /var/lib/osiriscare
+ProtectHome=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=osiriscare-agent
+
+[Install]
+WantedBy=multi-user.target

@@ -23,6 +23,20 @@ cp "${PLIST_SRC}" "${PLIST_DST}"
 chmod 644 "${PLIST_DST}"
 chown root:wheel "${PLIST_DST}"
 
+# Write default config if none exists (appliance auto-discovery via DNS SRV)
+CONFIG_FILE="${INSTALL_DIR}/config.json"
+if [ ! -f "${CONFIG_FILE}" ]; then
+    cat > "${CONFIG_FILE}" <<EOCFG
+{
+    "appliance_addr": "",
+    "check_interval": 300,
+    "data_dir": "/Library/Application Support/OsirisCare"
+}
+EOCFG
+    chmod 644 "${CONFIG_FILE}"
+    chown root:wheel "${CONFIG_FILE}"
+fi
+
 # Unload if already running (upgrade case)
 launchctl unload "${PLIST_DST}" 2>/dev/null || true
 
