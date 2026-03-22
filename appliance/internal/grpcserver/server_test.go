@@ -243,8 +243,14 @@ func TestReportDriftStream(t *testing.T) {
 	if agent == nil {
 		t.Fatal("agent should be in registry")
 	}
-	if agent.DriftCount.Load() != 2 { // 1 pass + 1 fail
-		t.Fatalf("expected drift count 2, got %d", agent.DriftCount.Load())
+	if agent.DriftCount.Load() != 1 { // only failures count as drift
+		t.Fatalf("expected drift count 1, got %d", agent.DriftCount.Load())
+	}
+	if agent.ChecksTotal.Load() != 2 { // 1 pass + 1 fail = 2 total checks
+		t.Fatalf("expected checks total 2, got %d", agent.ChecksTotal.Load())
+	}
+	if agent.ChecksPassed.Load() != 1 { // 1 pass
+		t.Fatalf("expected checks passed 1, got %d", agent.ChecksPassed.Load())
 	}
 
 	stream.CloseSend()

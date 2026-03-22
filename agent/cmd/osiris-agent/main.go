@@ -474,6 +474,11 @@ func runChecks(
 		// Record all results in flap detector (pass and fail)
 		shouldSend := flap.ShouldSend(result.CheckType, result.Passed)
 
+		agentID := ""
+		if reg != nil {
+			agentID = reg.AgentId
+		}
+
 		if result.Passed {
 			log.Printf("  [PASS] %s", result.CheckType)
 			passCount++
@@ -487,41 +492,37 @@ func runChecks(
 			}
 
 			log.Printf("  [FAIL] %s: expected=%q, actual=%q", result.CheckType, result.Expected, result.Actual)
+		}
 
-			agentID := ""
-			if reg != nil {
-				agentID = reg.AgentId
+		// Send ALL check results (pass + fail) so the appliance has full compliance picture
+		event := &pb.DriftEvent{
+			AgentId:      agentID,
+			Hostname:     checks.GetHostname(),
+			CheckType:    result.CheckType,
+			Passed:       result.Passed,
+			Expected:     result.Expected,
+			Actual:       result.Actual,
+			HipaaControl: result.HIPAAControl,
+			Timestamp:    checks.GetTimestamp(),
+			Metadata:     result.Metadata,
+		}
+		// Tag flapping events so the backend knows
+		if !result.Passed && flap.Status(result.CheckType) != "stable" {
+			if event.Metadata == nil {
+				event.Metadata = make(map[string]string)
 			}
+			event.Metadata["flapping"] = "true"
+		}
 
-			event := &pb.DriftEvent{
-				AgentId:      agentID,
-				Hostname:     checks.GetHostname(),
-				CheckType:    result.CheckType,
-				Passed:       result.Passed,
-				Expected:     result.Expected,
-				Actual:       result.Actual,
-				HipaaControl: result.HIPAAControl,
-				Timestamp:    checks.GetTimestamp(),
-				Metadata:     result.Metadata,
-			}
-			// Tag flapping events so the backend knows
-			if flap.Status(result.CheckType) != "stable" {
-				if event.Metadata == nil {
-					event.Metadata = make(map[string]string)
+		if client != nil && client.IsConnected() {
+			if err := client.SendDrift(ctx, event); err != nil {
+				log.Printf("Failed to send drift event, queueing: %v", err)
+				if queue != nil && !result.Passed {
+					queue.Enqueue(event)
 				}
-				event.Metadata["flapping"] = "true"
 			}
-
-			if client != nil && client.IsConnected() {
-				if err := client.SendDrift(ctx, event); err != nil {
-					log.Printf("Failed to send drift event, queueing: %v", err)
-					if queue != nil {
-						queue.Enqueue(event)
-					}
-				}
-			} else if queue != nil {
-				queue.Enqueue(event)
-			}
+		} else if queue != nil && !result.Passed {
+			queue.Enqueue(event)
 		}
 	}
 

@@ -2412,6 +2412,68 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
             import logging
             logging.debug(f"Device→workstation linkage during checkin: {e}")
 
+        # === STEP 3.7c: Sync Go agent data → workstations table + cleanup ===
+        if checkin.connected_agents:
+            try:
+                async with conn.transaction():
+                    for agent in checkin.connected_agents:
+                        if not agent.hostname:
+                            continue
+                        # Upsert workstation from Go agent data
+                        await conn.execute("""
+                            INSERT INTO workstations (site_id, hostname, ip_address, online,
+                                compliance_status, last_compliance_check, last_seen, updated_at)
+                            VALUES ($1, $2, $2, true,
+                                CASE WHEN $3 > 0 AND $4 > 0 AND $3 = $4 THEN 'compliant'
+                                     WHEN $4 > 0 THEN 'drifted'
+                                     ELSE 'unknown' END,
+                                CASE WHEN $4 > 0 THEN NOW() ELSE NULL END,
+                                NOW(), NOW())
+                            ON CONFLICT (site_id, hostname) DO UPDATE SET
+                                online = true,
+                                compliance_status = CASE
+                                    WHEN $3 > 0 AND $4 > 0 AND $3 = $4 THEN 'compliant'
+                                    WHEN $4 > 0 THEN 'drifted'
+                                    ELSE workstations.compliance_status END,
+                                last_compliance_check = CASE
+                                    WHEN $4 > 0 THEN NOW()
+                                    ELSE workstations.last_compliance_check END,
+                                last_seen = NOW(),
+                                updated_at = NOW()
+                        """, checkin.site_id, agent.hostname,
+                            agent.checks_passed, agent.checks_total)
+
+                    # Deduplicate: remove IP-only entries when a named workstation has the same IP
+                    await conn.execute("""
+                        DELETE FROM workstations w1
+                        WHERE w1.site_id = $1
+                        AND w1.hostname ~ '^\d+\.\d+\.\d+\.\d+$'
+                        AND EXISTS (
+                            SELECT 1 FROM workstations w2
+                            WHERE w2.site_id = w1.site_id
+                            AND w2.ip_address = w1.ip_address
+                            AND w2.hostname !~ '^\d+\.\d+\.\d+\.\d+$'
+                        )
+                    """, checkin.site_id)
+
+                    # Expire stale: mark offline if no activity in 7 days
+                    await conn.execute("""
+                        UPDATE workstations SET online = false
+                        WHERE site_id = $1 AND online = true
+                        AND last_seen < NOW() - INTERVAL '7 days'
+                    """, checkin.site_id)
+
+                    # Remove ancient: delete workstations with no activity in 30 days
+                    await conn.execute("""
+                        DELETE FROM workstations
+                        WHERE site_id = $1
+                        AND last_seen < NOW() - INTERVAL '30 days'
+                        AND compliance_status = 'unknown'
+                    """, checkin.site_id)
+            except Exception as e:
+                import logging
+                logging.warning(f"Failed to sync go_agent→workstations: {e}")
+
         # === STEP 3.8: Handle app protection discovery results ===
         if checkin.discovery_results and checkin.discovery_results.get("profile_id"):
             try:

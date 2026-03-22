@@ -260,14 +260,17 @@ func (s *servicer) ReportDrift(stream pb.ComplianceAgent_ReportDriftServer) erro
 			return err
 		}
 
-		log.Printf("[gRPC] Drift: %s/%s passed=%v", event.Hostname, event.CheckType, event.Passed)
+		if !event.Passed {
+			log.Printf("[gRPC] Drift: %s/%s FAIL", event.Hostname, event.CheckType)
+		}
 
 		// Update agent stats
 		if agent := s.registry.GetAgent(event.AgentId); agent != nil {
-			agent.DriftCount.Add(1)
 			agent.ChecksTotal.Add(1)
 			if event.Passed {
 				agent.ChecksPassed.Add(1)
+			} else {
+				agent.DriftCount.Add(1)
 			}
 			agent.LastHeartbeat = time.Now().UTC()
 		}
