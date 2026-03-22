@@ -1139,27 +1139,37 @@ winrmB64Transfer:
 			fmt.Sprintf(`Stop-Service -Name "%s" -Force -EA SilentlyContinue; Start-Sleep -Seconds 1; "OK"`, agentServiceName),
 			"AGENT-STOP", "autodeploy", 15, 0, 10.0, nil)
 
-		// Write base64 in chunks (WinRM has ~150KB per-command limit)
-		chunkSize := 100000 // ~100KB per chunk
+		// Write base64 in chunks via PowerShell file append.
+		// WinRM command size limit is ~32KB so use 20KB chunks.
+		chunkSize := 20000
 		b64File := agentInstallDir + `\agent.b64`
+		totalChunks := (len(b64Data) + chunkSize - 1) / chunkSize
 		for i := 0; i < len(b64Data); i += chunkSize {
 			end := i + chunkSize
 			if end > len(b64Data) {
 				end = len(b64Data)
 			}
 			chunk := b64Data[i:end]
-			op := "Set-Content"
-			if i > 0 {
-				op = "Add-Content"
+			chunkNum := i/chunkSize + 1
+
+			// Use single-quoted here-string to avoid PowerShell variable expansion
+			var chunkScript string
+			if i == 0 {
+				chunkScript = fmt.Sprintf("[IO.File]::WriteAllText('%s', '%s'); 'OK'", b64File, chunk)
+			} else {
+				chunkScript = fmt.Sprintf("[IO.File]::AppendAllText('%s', '%s'); 'OK'", b64File, chunk)
 			}
-			chunkScript := fmt.Sprintf(`%s -Path "%s" -Value "%s" -NoNewline -Encoding ASCII; "OK"`, op, b64File, chunk)
 			res := ad.daemon.winrmExec.Execute(target,
 				chunkScript, "AGENT-B64-CHUNK", "autodeploy", 30, 0, 10.0, nil)
 			if !res.Success {
-				return fmt.Errorf("b64 chunk write failed at offset %d: %s", i, res.Error)
+				stderr := maputil.String(res.Output, "std_err")
+				return fmt.Errorf("b64 chunk %d/%d write failed at offset %d: err=%s stderr=%s", chunkNum, totalChunks, i, res.Error, stderr)
+			}
+			if chunkNum%50 == 0 || chunkNum == totalChunks {
+				log.Printf("[autodeploy] [%s] Direct: Base64 chunk %d/%d", hostname, chunkNum, totalChunks)
 			}
 		}
-		log.Printf("[autodeploy] [%s] Direct: Base64 transfer complete (%d chars)", hostname, len(b64Data))
+		log.Printf("[autodeploy] [%s] Direct: Base64 transfer complete (%d chars in %d chunks)", hostname, len(b64Data), totalChunks)
 	}
 
 downloadDone:
