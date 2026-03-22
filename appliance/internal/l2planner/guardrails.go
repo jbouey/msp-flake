@@ -25,6 +25,9 @@ var DefaultAllowedActions = []string{
 	"fix_permissions",
 	"enable_defender",
 	"fix_password_policy",
+	"execute_runbook",
+	"configure_screen_lock",
+	"enable_screen_lock",
 	"escalate",
 }
 
