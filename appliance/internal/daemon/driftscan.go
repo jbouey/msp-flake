@@ -1084,11 +1084,54 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		return nil
 	}
 	if proxyState.Error != "" {
-		log.Printf("[driftscan] DC proxy session error for %s: %s", t.hostname, proxyState.Error)
-		return nil
+		log.Printf("[driftscan] DC proxy session error for %s: %s — trying direct WinRM fallback", t.hostname, proxyState.Error)
+		// Fallback: try direct WinRM with workstation-specific credentials.
+		// The initial direct attempt (in checkTarget) used DC admin creds which
+		// may not have local admin rights on the workstation. Here we try with
+		// per-workstation credentials from the credential store.
+		return ds.checkTargetDirectFallback(ctx, t)
 	}
 
 	return ds.evaluateWindowsFindings(&proxyState.windowsScanState, t)
+}
+
+// checkTargetDirectFallback tries a direct WinRM scan using per-workstation
+// credentials when both the initial direct attempt and DC proxy fail.
+// This handles the common case where:
+// - DC admin creds don't have local admin on the workstation
+// - DC proxy (Invoke-Command) fails due to delegation/CredSSP config
+// - But the workstation has its own local admin credentials in the cred store
+func (ds *driftScanner) checkTargetDirectFallback(ctx context.Context, t scanTarget) []driftFinding {
+	// Look up per-workstation credentials
+	wt, ok := ds.daemon.LookupWinTarget(t.hostname)
+	if !ok {
+		// Try by IP from the original target
+		wt, ok = ds.daemon.LookupWinTarget(t.target.Hostname)
+	}
+	if !ok || wt.Username == "" {
+		log.Printf("[driftscan] No workstation-specific credentials for %s, cannot fallback", t.hostname)
+		return nil
+	}
+
+	// Build a new target with workstation-specific credentials
+	ws := ds.daemon.probeWinRM(wt.Hostname)
+	directTarget := scanTarget{
+		hostname: t.hostname,
+		label:    "WS-DIRECT",
+		target: &winrm.Target{
+			Hostname:  wt.Hostname,
+			Port:      ws.Port,
+			Username:  wt.Username,
+			Password:  wt.Password,
+			UseSSL:    ws.UseSSL,
+			VerifySSL: false,
+		},
+	}
+
+	log.Printf("[driftscan] Direct fallback scan for %s using %s@%s",
+		t.hostname, wt.Username, wt.Hostname)
+
+	return ds.checkTarget(ctx, directTarget)
 }
 
 // runLinuxScanIfNeeded runs a Linux scan if the interval has elapsed.
