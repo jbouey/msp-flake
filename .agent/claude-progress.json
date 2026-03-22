@@ -1,6 +1,6 @@
 {
   "session": 182,
-  "updated": "2026-03-21T20:49:03.747066Z",
+  "updated": "2026-03-22T04:03:25.385171Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -103,13 +103,13 @@
   "backend_session_182_changes": [
     "IDOR fix: GET /organizations/{org_id} now requires auth + org_scope check",
     "IDOR fix: org_credentials endpoints now enforce org_scope validation",
-    "N+1 elimination: org list uses single site→org mapping query",
+    "N+1 elimination: org list uses single site\u2192org mapping query",
     "Pagination: limit/offset/status filter on org list endpoint",
-    "New endpoint: GET /organizations/{org_id}/health — consolidated compliance, incidents, healing, fleet, categories",
-    "New endpoint: GET /organizations/{org_id}/incidents — paginated with site/severity/status filters",
+    "New endpoint: GET /organizations/{org_id}/health \u2014 consolidated compliance, incidents, healing, fleet, categories",
+    "New endpoint: GET /organizations/{org_id}/incidents \u2014 paginated with site/severity/status filters",
     "PHI boundary: phi_boundary.py strips IPs, hostnames, raw output from client portal evidence",
-    "Partner portal: GET /api/partners/me/orgs — org list with consolidated metrics",
-    "Partner portal: GET/PUT /api/partners/me/orgs/{org_id}/drift-config — bulk org-level drift config",
+    "Partner portal: GET /api/partners/me/orgs \u2014 org list with consolidated metrics",
+    "Partner portal: GET/PUT /api/partners/me/orgs/{org_id}/drift-config \u2014 bulk org-level drift config",
     "Migration 095: sub_partner_id column on sites for future sub-partner support",
     "Frontend: OrgDashboard wired to health endpoint with severity breakdown, fleet status, category compliance"
   ],
@@ -117,7 +117,7 @@
     "Reverse DNS hostname resolution on ARP-discovered devices",
     "Windows Event Log analysis (on-prem only, 22 HIPAA-relevant event IDs)",
     "Critical security events (audit log cleared) generate incidents",
-    "WinRM direct fallback when DC proxy fails (3-tier: DC admin → DC proxy → local admin)",
+    "WinRM direct fallback when DC proxy fails (3-tier: DC admin \u2192 DC proxy \u2192 local admin)",
     "Nonce cache cleared on execution failures (enables auto-retry)",
     "Fleet order auto-recovery: failed completions expire after 1 hour"
   ],
