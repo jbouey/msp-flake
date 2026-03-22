@@ -228,6 +228,7 @@ async def get_fleet_overview(
         clients.append(ClientOverview(
             site_id=row.site_id,
             name=row.name or row.site_id,
+            status=row.status or "online",
             client_org_id=str(row.client_org_id) if row.client_org_id else None,
             org_name=row.org_name,
             appliance_count=row.appliance_count or 0,

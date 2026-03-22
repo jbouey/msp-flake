@@ -135,6 +135,7 @@ class ClientOverview(BaseModel):
     """Client summary for fleet overview."""
     site_id: str
     name: str
+    status: str = "online"
     client_org_id: Optional[str] = None
     org_name: Optional[str] = None
     appliance_count: int

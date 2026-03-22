@@ -101,6 +101,7 @@ export interface Appliance {
 export interface ClientOverview {
   site_id: string;
   name: string;
+  status: string;
   appliance_count: number;
   online_count: number;
   health: HealthMetrics;

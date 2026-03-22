@@ -288,10 +288,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           Fleet Status
         </h2>
         {(() => {
-          const online = clients.filter(c => c.health.status === 'healthy').length;
-          const warning = clients.filter(c => c.health.status === 'warning').length;
-          const offline = clients.filter(c => c.health.status === 'critical').length;
-          const needsAttention = clients.filter(c => c.health.status !== 'healthy');
+          const activeSites = clients.filter(c => c.status !== 'inactive');
+          const online = activeSites.filter(c => c.health.status === 'healthy').length;
+          const warning = activeSites.filter(c => c.health.status === 'warning').length;
+          const offline = activeSites.filter(c => c.health.status === 'critical').length;
+          const needsAttention = activeSites.filter(c => c.health.status !== 'healthy');
           return (
             <>
               <button
@@ -324,7 +325,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span className="text-xs text-label-tertiary">No sites connected</span>
                   )}
                 </div>
-                <span className="text-[10px] text-label-secondary mt-1.5 block">{clients.length} total sites</span>
+                <span className="text-[10px] text-label-secondary mt-1.5 block">{activeSites.length} total sites</span>
               </button>
               {/* Show sites that need attention (max 3) */}
               {needsAttention.length > 0 && (
