@@ -605,19 +605,94 @@ func (p *Processor) handleNixOSRebuild(ctx context.Context, params map[string]in
 func (p *Processor) handleUpdateAgent(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {
 	packageURL, _ := params["package_url"].(string)
 	version, _ := params["version"].(string)
+	expectedSHA, _ := params["binary_sha256"].(string)
 
 	// Validate package URL against domain allowlist
 	if err := validateDownloadURL(packageURL, "package_url"); err != nil {
 		return nil, fmt.Errorf("SECURITY: %w", err)
 	}
 	if version == "" {
-		version = "unknown"
+		return nil, fmt.Errorf("version is required")
 	}
 
+	// Download agent binary to temp file
+	log.Printf("[orders] Downloading agent binary v%s from %s", version, packageURL)
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Get(packageURL)
+	if err != nil {
+		return nil, fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
+
+	tmpFile, err := os.CreateTemp("", "osiris-agent-*.exe")
+	if err != nil {
+		return nil, fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	hasher := sha256.New()
+	written, err := io.Copy(io.MultiWriter(tmpFile, hasher), resp.Body)
+	tmpFile.Close()
+	if err != nil {
+		return nil, fmt.Errorf("download write failed: %w", err)
+	}
+
+	actualSHA := hex.EncodeToString(hasher.Sum(nil))
+	if expectedSHA != "" && actualSHA != expectedSHA {
+		return nil, fmt.Errorf("SHA256 mismatch: expected %s, got %s", expectedSHA, actualSHA)
+	}
+
+	// Install: move to agent directory
+	agentDir := filepath.Join(p.stateDir, "agent")
+	if err := os.MkdirAll(agentDir, 0755); err != nil {
+		return nil, fmt.Errorf("create agent dir: %w", err)
+	}
+
+	destPath := filepath.Join(agentDir, "osiris-agent.exe")
+	versionPath := filepath.Join(agentDir, "VERSION")
+
+	// Atomic replace: copy to temp in target dir, then rename
+	destTmp := destPath + ".tmp"
+	src, err := os.Open(tmpPath)
+	if err != nil {
+		return nil, fmt.Errorf("open temp: %w", err)
+	}
+	dst, err := os.OpenFile(destTmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		src.Close()
+		return nil, fmt.Errorf("create dest: %w", err)
+	}
+	_, err = io.Copy(dst, src)
+	src.Close()
+	dst.Close()
+	if err != nil {
+		os.Remove(destTmp)
+		return nil, fmt.Errorf("copy failed: %w", err)
+	}
+
+	if err := os.Rename(destTmp, destPath); err != nil {
+		os.Remove(destTmp)
+		return nil, fmt.Errorf("rename failed: %w", err)
+	}
+
+	// Write VERSION file
+	if err := os.WriteFile(versionPath, []byte(version), 0644); err != nil {
+		log.Printf("[orders] WARNING: failed to write VERSION file: %v", err)
+	}
+
+	log.Printf("[orders] Agent binary updated to v%s (%d bytes, sha256=%s)", version, written, actualSHA)
+
 	return map[string]interface{}{
-		"status":  "update_received",
+		"status":  "updated",
 		"version": version,
-		"message": "Agent update will be applied",
+		"size":    written,
+		"sha256":  actualSHA,
+		"message": "Agent binary updated — autodeploy will distribute to workstations",
 	}, nil
 }
 
