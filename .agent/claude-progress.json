@@ -7,8 +7,8 @@
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "healthy_metrics_endpoint_structured_logging",
-    "physical_appliance": "go_daemon_v0.3.24_online_tls_pin_cleared",
-    "vm_appliance": "go_daemon_v0.3.24_online_tls_pin_cleared",
+    "physical_appliance": "go_daemon_v0.3.25_online_hostname_resolution_event_logs_winrm_fallback",
+    "vm_appliance": "go_daemon_v0.3.25_online_hostname_resolution_event_logs_winrm_fallback",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
@@ -17,7 +17,7 @@
     "evidence_pipeline": "end_to_end_live_heartbeats_site_appliances",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "v0.3.24_deployed_both_appliances_online",
+    "fleet_updates": "v0.3.25_deployed_auto_recovery_pipeline_bulletproof",
     "log_pipeline": "operational_35k_plus_entries_csrf_gzip_auth_fixed",
     "prometheus_metrics": "live_at_slash_metrics_7_gauges_counters",
     "offline_alerting": "partner_email_on_15min_offline",
@@ -29,7 +29,7 @@
     "macos_scanning": "scan_timer_fixed_wol_added_credential_delivery_fixed_pending_tls_pin_clear",
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api"
   },
-  "current_blocker": "None. TLS pins cleared, v0.3.24 deployed to both appliances. Org hardening changes ready to deploy via git push.",
+  "current_blocker": "None. All systems operational. v0.3.25 deployed with hostname resolution, device event analysis, WinRM fallback, auto-recovery.",
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -113,10 +113,24 @@
     "Migration 095: sub_partner_id column on sites for future sub-partner support",
     "Frontend: OrgDashboard wired to health endpoint with severity breakdown, fleet status, category compliance"
   ],
+  "daemon_v0_3_25_changes": [
+    "Reverse DNS hostname resolution on ARP-discovered devices",
+    "Windows Event Log analysis (on-prem only, 22 HIPAA-relevant event IDs)",
+    "Critical security events (audit log cleared) generate incidents",
+    "WinRM direct fallback when DC proxy fails (3-tier: DC admin → DC proxy → local admin)",
+    "Nonce cache cleared on execution failures (enables auto-retry)",
+    "Fleet order auto-recovery: failed completions expire after 1 hour"
+  ],
   "completed_this_session": [
     "TLS TOFU pin cleared on both appliances",
-    "v0.3.24 confirmed deployed and checking in",
-    "Org feature audit + full hardening (12 commits)",
-    "EV SSL cert in progress at ssl.com (phone verification done, 1-3 business days)"
+    "v0.3.25 deployed to both appliances (hostname resolution, event logs, WinRM fallback, auto-recovery)",
+    "Org feature audit + full hardening (12 commits: IDOR, N+1, pagination, health, PHI, partner)",
+    "Protection Profiles route fix (was 404), Drift Config shows all 47 checks",
+    "Go Agents page production appearance",
+    "Device subnet filtering + neighbor device collapse",
+    "Fleet order bulletproof auto-recovery pipeline",
+    "Workstation deduplication cleanup",
+    "EV SSL cert swap instructions prepared",
+    "Appliance disk image bumped to v0.3.25"
   ]
 }
