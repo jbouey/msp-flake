@@ -146,6 +146,21 @@ try {
 	}
 	addStep("config_written")
 
+	// Step 3b: Clear stale TLS certificates (forces re-enrollment with current appliance)
+	log.Printf("[configure-agent] [%s] Step 3b: Clearing stale TLS certs", hostname)
+	certCleanScript := `
+$paths = @("C:\OsirisCare\agent.crt", "C:\OsirisCare\agent.key", "C:\OsirisCare\ca.crt",
+           "C:\ProgramData\OsirisCare\agent.crt", "C:\ProgramData\OsirisCare\agent.key", "C:\ProgramData\OsirisCare\ca.crt")
+$removed = 0
+foreach ($p in $paths) { if (Test-Path $p) { Remove-Item $p -Force; $removed++ } }
+"removed=$removed"
+`
+	certResult := d.winrmExec.Execute(target, certCleanScript, "AGENT-CFG-CERTS", "configure", 15, 0, 10.0, nil)
+	if certResult.Success {
+		certStdout := maputil.String(certResult.Output, "std_out")
+		addStep(fmt.Sprintf("certs=%s", strings.TrimSpace(certStdout)))
+	}
+
 	// Step 4: Open firewall for outbound gRPC (port 50051)
 	log.Printf("[configure-agent] [%s] Step 4: Firewall rule for gRPC", hostname)
 	fwResult := d.winrmExec.Execute(target,
