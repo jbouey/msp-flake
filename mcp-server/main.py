@@ -4633,6 +4633,8 @@ async def appliances_checkin(req: ApplianceCheckinRequest, request: Request, db:
                 ORDER BY CASE WHEN credential_type = 'domain_admin' THEN 0 ELSE 1 END, created_at DESC
             """), {"site_id": req.site_id})
             creds = result.fetchall()
+            if not creds:
+                logger.warning(f"Checkin win_targets: 0 site_credentials for site={req.site_id} (RLS may be filtering)")
 
             # Org-level credentials (fill gaps)
             org_creds_result = await db.execute(text("""
