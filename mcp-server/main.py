@@ -4633,8 +4633,7 @@ async def appliances_checkin(req: ApplianceCheckinRequest, request: Request, db:
                 ORDER BY CASE WHEN credential_type = 'domain_admin' THEN 0 ELSE 1 END, created_at DESC
             """), {"site_id": req.site_id})
             creds = result.fetchall()
-            if not creds:
-                logger.warning(f"Checkin win_targets: 0 site_credentials for site={req.site_id} (RLS may be filtering)")
+            logger.info(f"Checkin creds: site={req.site_id} site_creds={len(creds)}")
 
             # Org-level credentials (fill gaps)
             org_creds_result = await db.execute(text("""
@@ -4671,12 +4670,13 @@ async def appliances_checkin(req: ApplianceCheckinRequest, request: Request, db:
                         })
                 except Exception as e:
                     logger.warning(f"Failed to parse credential: {e}")
+            logger.info(f"Checkin win_targets: site={req.site_id} targets={len(windows_targets)} seen_hosts={seen_hosts}")
         except Exception as e:
             logger.warning(f"Failed to fetch Windows targets: {e}")
-        
+
         return {
-            "status": "ok", 
-            "appliance_id": appliance_id, 
+            "status": "ok",
+            "appliance_id": appliance_id,
             "server_time": now.isoformat(),
             "windows_targets": windows_targets,
         }
