@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 
 	"github.com/osiriscare/appliance/internal/maputil"
@@ -54,19 +55,83 @@ func (d *Daemon) handleConfigureWorkstationAgent(_ context.Context, params map[s
 		addStep(fmt.Sprintf("execution_policy_failed=%s", epResult.Error))
 	}
 
-	// Step 2: Check binary exists
+	// Step 2: Check binary exists and version matches
 	log.Printf("[configure-agent] [%s] Step 2: Checking binary", hostname)
+	expectedVersion := readVersionFile(filepath.Join(d.config.StateDir, "agent"))
 	checkResult := d.winrmExec.Execute(target,
-		`$exe = "C:\OsirisCare\osiris-agent.exe"; if (Test-Path $exe) { $fi = Get-Item $exe; @{ exists=$true; size=$fi.Length } | ConvertTo-Json -Compress } else { @{ exists=$false } | ConvertTo-Json -Compress }`,
-		"AGENT-CFG-CHECK", "configure", 15, 0, 10.0, nil)
+		fmt.Sprintf(`$exe = "C:\OsirisCare\osiris-agent.exe"
+if (Test-Path $exe) {
+    $fi = Get-Item $exe
+    $ver = "unknown"
+    try { $out = & $exe --version 2>&1; if ($out -match "(\d+\.\d+\.\d+)") { $ver = $matches[1] } } catch {}
+    @{ exists=$true; size=$fi.Length; version=$ver; expected="%s" } | ConvertTo-Json -Compress
+} else {
+    @{ exists=$false } | ConvertTo-Json -Compress
+}`, expectedVersion),
+		"AGENT-CFG-CHECK", "configure", 20, 0, 10.0, nil)
 	if !checkResult.Success {
 		return nil, fmt.Errorf("binary check failed: %s", checkResult.Error)
 	}
 	checkStdout := maputil.String(checkResult.Output, "std_out")
 	addStep(fmt.Sprintf("binary=%s", strings.TrimSpace(checkStdout)))
 
-	if strings.Contains(checkStdout, `"exists":false`) {
-		return nil, fmt.Errorf("agent binary not found at C:\\OsirisCare\\osiris-agent.exe — run update_agent + autodeploy first")
+	// If binary missing or wrong version, download from appliance file server
+	needsDownload := strings.Contains(checkStdout, `"exists":false`)
+	if !needsDownload && expectedVersion != "" {
+		needsDownload = !strings.Contains(checkStdout, fmt.Sprintf(`"version":"%s"`, expectedVersion))
+	}
+
+	if needsDownload {
+		log.Printf("[configure-agent] [%s] Step 2b: Downloading correct binary", hostname)
+		applianceIP := d.config.GRPCListenAddr()
+		if idx := strings.LastIndex(applianceIP, ":"); idx >= 0 {
+			applianceIP = applianceIP[:idx]
+		}
+		downloadURL := fmt.Sprintf("http://%s:8090/agent/osiris-agent.exe", applianceIP)
+
+		// Try HTTP download first
+		dlScript := fmt.Sprintf(`
+New-Item -ItemType Directory -Force -Path "C:\OsirisCare" | Out-Null
+Stop-Service -Name "OsirisCareAgent" -Force -EA SilentlyContinue
+Start-Sleep -Seconds 1
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $wc = New-Object System.Net.WebClient
+    $wc.DownloadFile("%s", "C:\OsirisCare\osiris-agent.exe")
+    $fi = Get-Item "C:\OsirisCare\osiris-agent.exe"
+    @{ Success=$true; Size=$fi.Length; Method="HTTP" } | ConvertTo-Json -Compress
+} catch {
+    @{ Success=$false; Error=$_.Exception.Message; Method="HTTP" } | ConvertTo-Json -Compress
+}`, downloadURL)
+		dlResult := d.winrmExec.Execute(target, dlScript, "AGENT-CFG-DL", "configure", 120, 0, 10.0, nil)
+		dlStdout := ""
+		if dlResult.Success {
+			dlStdout = maputil.String(dlResult.Output, "std_out")
+		}
+
+		if !dlResult.Success || strings.Contains(dlStdout, `"Success":false`) {
+			// HTTP failed — try NETLOGON UNC
+			log.Printf("[configure-agent] [%s] HTTP download failed, trying NETLOGON", hostname)
+			if d.config.DomainController != nil && *d.config.DomainController != "" {
+				dcIP := *d.config.DomainController
+				uncScript := fmt.Sprintf(`
+Stop-Service -Name "OsirisCareAgent" -Force -EA SilentlyContinue
+net use "\\%s\NETLOGON" /delete 2>$null
+try {
+    Copy-Item -Path "\\%s\NETLOGON\osiris-agent.exe" -Destination "C:\OsirisCare\osiris-agent.exe" -Force
+    $fi = Get-Item "C:\OsirisCare\osiris-agent.exe"
+    @{ Success=$true; Size=$fi.Length; Method="NETLOGON" } | ConvertTo-Json -Compress
+} catch {
+    @{ Success=$false; Error=$_.Exception.Message; Method="NETLOGON" } | ConvertTo-Json -Compress
+}`, dcIP, dcIP)
+				uncResult := d.winrmExec.Execute(target, uncScript, "AGENT-CFG-UNC", "configure", 60, 0, 10.0, nil)
+				if uncResult.Success {
+					dlStdout = maputil.String(uncResult.Output, "std_out")
+				}
+			}
+		}
+		addStep(fmt.Sprintf("download=%s", strings.TrimSpace(dlStdout)))
+		log.Printf("[configure-agent] [%s] Download result: %s", hostname, strings.TrimSpace(dlStdout))
 	}
 
 	// Step 3: Write config
