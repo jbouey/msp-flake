@@ -5,11 +5,9 @@ import { useSiteGoAgents, useUpdateGoAgentTier, useTriggerGoAgentCheck, useRemov
 import type {
   GoAgent,
   SiteGoAgentSummary,
-  GoAgentStatus,
   GoAgentCapabilityTier,
 } from '../types';
 import {
-  GO_AGENT_STATUS_LABELS,
   GO_AGENT_TIER_LABELS,
   GO_AGENT_CHECK_LABELS,
   GO_AGENT_CHECK_HIPAA,
@@ -39,12 +37,35 @@ function formatRelativeTime(dateString: string | null | undefined): string {
 /**
  * Status badge colors
  */
-const statusColors: Record<GoAgentStatus, string> = {
+const statusColors: Record<string, string> = {
   active: 'bg-health-healthy text-white',
   offline: 'bg-slate-500 text-white',
+  stale: 'bg-health-warning text-white',
   error: 'bg-health-critical text-white',
   pending: 'bg-yellow-500 text-white',
 };
+
+/**
+ * Derive display status from agent data.
+ * "Unknown" status with a heartbeat > 1h ago → "Stale"
+ * "Unknown" status with a heartbeat > 24h ago → "Offline"
+ */
+function deriveAgentStatus(agent: GoAgent): { status: string; label: string } {
+  if (agent.status === 'active') return { status: 'active', label: 'Active' };
+  if (agent.status === 'error') return { status: 'error', label: 'Error' };
+  if (agent.status === 'pending') return { status: 'pending', label: 'Pending' };
+
+  // For offline/unknown, determine staleness from heartbeat
+  if (agent.last_heartbeat) {
+    const age = Date.now() - new Date(agent.last_heartbeat).getTime();
+    const hours = age / (1000 * 60 * 60);
+    if (hours > 24) return { status: 'offline', label: 'Offline' };
+    if (hours > 1) return { status: 'stale', label: 'Stale' };
+  }
+
+  if (agent.status === 'offline') return { status: 'offline', label: 'Offline' };
+  return { status: 'offline', label: 'No Contact' };
+}
 
 const tierColors: Record<GoAgentCapabilityTier, string> = {
   monitor_only: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
@@ -64,11 +85,11 @@ const SummaryCard: React.FC<{ summary: SiteGoAgentSummary }> = ({ summary }) => 
     <GlassCard className="p-6 mb-6">
       <h2 className="text-lg font-semibold text-label-primary mb-4">Go Agent Fleet Summary</h2>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {/* Overall compliance */}
         <div className="text-center">
-          <div className={`text-3xl font-bold ${rateColor}`}>
-            {complianceRate.toFixed(0)}%
+          <div className={`text-3xl font-bold ${summary.total_agents > 0 && summary.active_agents > 0 ? rateColor : 'text-label-tertiary'}`}>
+            {summary.total_agents > 0 && summary.active_agents > 0 ? `${complianceRate.toFixed(0)}%` : 'N/A'}
           </div>
           <div className="text-sm text-label-secondary">Compliance</div>
         </div>
@@ -113,13 +134,15 @@ const SummaryCard: React.FC<{ summary: SiteGoAgentSummary }> = ({ summary }) => 
           <div className="text-sm text-label-secondary">Pending</div>
         </div>
 
-        {/* RMM Detected */}
-        <div className="text-center">
-          <div className="text-3xl font-bold text-orange-400">
-            {summary.rmm_detected_count}
+        {/* RMM Detected — only show if any found */}
+        {summary.rmm_detected_count > 0 && (
+          <div className="text-center">
+            <div className="text-3xl font-bold text-orange-400">
+              {summary.rmm_detected_count}
+            </div>
+            <div className="text-sm text-label-secondary">RMM Found</div>
           </div>
-          <div className="text-sm text-label-secondary">RMM Found</div>
-        </div>
+        )}
       </div>
 
       {/* Agents by tier */}
@@ -167,8 +190,9 @@ const GoAgentRow: React.FC<{
   expanded: boolean;
   onToggle: () => void;
 }> = ({ agent, siteId, expanded, onToggle }) => {
-  const statusColor = statusColors[agent.status] || statusColors.pending;
-  const statusLabel = GO_AGENT_STATUS_LABELS[agent.status] || 'Unknown';
+  const derived = deriveAgentStatus(agent);
+  const statusColor = statusColors[derived.status] || statusColors.pending;
+  const statusLabel = derived.label;
   const tierColor = tierColors[agent.capability_tier] || tierColors.monitor_only;
   const tierLabel = GO_AGENT_TIER_LABELS[agent.capability_tier] || 'Unknown';
 
@@ -195,11 +219,11 @@ const GoAgentRow: React.FC<{
             <span className="font-medium text-label-primary">{agent.hostname}</span>
           </div>
         </td>
-        <td className="px-4 py-3 text-label-secondary">
-          {agent.ip_address || '-'}
+        <td className="px-4 py-3 text-label-secondary font-mono text-sm">
+          {agent.ip_address || <span className="text-label-tertiary italic">unknown</span>}
         </td>
         <td className="px-4 py-3 text-label-secondary text-sm">
-          v{agent.agent_version || '?'}
+          {agent.agent_version ? `v${agent.agent_version}` : <span className="text-label-tertiary">-</span>}
         </td>
         <td className="px-4 py-3">
           <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColor}`}>
@@ -231,15 +255,19 @@ const GoAgentRow: React.FC<{
             )}
           </div>
         </td>
-        <td className="px-4 py-3 text-label-secondary text-sm">
+        <td className={`px-4 py-3 text-sm ${derived.status === 'offline' ? 'text-health-critical' : derived.status === 'stale' ? 'text-health-warning' : 'text-label-secondary'}`}>
           {formatRelativeTime(agent.last_heartbeat)}
         </td>
         <td className="px-4 py-3">
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-health-healthy">{agent.checks_passed}</span>
-            <span className="text-label-tertiary">/</span>
-            <span className="text-label-secondary">{agent.checks_total}</span>
-          </div>
+          {agent.checks_total > 0 ? (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-health-healthy">{agent.checks_passed}</span>
+              <span className="text-label-tertiary">/</span>
+              <span className="text-label-secondary">{agent.checks_total}</span>
+            </div>
+          ) : (
+            <span className="text-xs text-label-tertiary">No data</span>
+          )}
         </td>
         <td className="px-4 py-3 text-right">
           <svg
