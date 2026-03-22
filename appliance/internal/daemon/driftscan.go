@@ -230,6 +230,9 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 	log.Printf("[driftscan] Scan complete: targets=%d, drifts_found=%d",
 		len(targets), len(allFindings))
 
+	// Collect and analyze compliance-relevant Windows Event Logs (on-prem only)
+	go ds.collectAndAnalyzeDeviceLogs(ctx, targets)
+
 	// Submit evidence bundle to Central Command
 	if ds.daemon.evidenceSubmitter != nil && len(scannedHosts) > 0 {
 		// Convert to evidence package types

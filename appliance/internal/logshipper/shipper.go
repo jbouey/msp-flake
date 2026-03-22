@@ -250,6 +250,79 @@ func (s *Shipper) postBatch(ctx context.Context, entries []logEntry) error {
 	return nil
 }
 
+// RemoteLogEntry is a log entry from a remote device (Windows workstation, etc).
+type RemoteLogEntry struct {
+	TS   string `json:"ts"`
+	Unit string `json:"unit"`
+	Pri  int    `json:"pri"`
+	Msg  string `json:"msg"`
+}
+
+// ShipRemoteEntries ships log entries from a remote device through the same
+// ingest pipeline as local journald logs. The hostname parameter identifies
+// the source device (e.g. "NVDC01", "NVWS01").
+func (s *Shipper) ShipRemoteEntries(ctx context.Context, hostname string, entries []RemoteLogEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// Convert to wire format
+	batch := make([]logEntry, len(entries))
+	for i, e := range entries {
+		batch[i] = logEntry{
+			TS:   e.TS,
+			Unit: e.Unit,
+			Pri:  e.Pri,
+			Msg:  e.Msg,
+		}
+	}
+
+	// Ship with the remote device's hostname
+	payload := map[string]interface{}{
+		"site_id":  s.cfg.SiteID,
+		"hostname": hostname,
+		"batch":    batch,
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(jsonData); err != nil {
+		return fmt.Errorf("gzip write: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		return fmt.Errorf("gzip close: %w", err)
+	}
+
+	url := strings.TrimRight(s.cfg.APIEndpoint, "/") + "/api/logs/ingest"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf)
+	if err != nil {
+		return fmt.Errorf("new request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Authorization", "Bearer "+s.cfg.APIKey)
+
+	resp, err := s.cfg.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("HTTP POST: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned %d", resp.StatusCode)
+	}
+
+	log.Printf("[logshipper] Shipped %d remote entries for %s", len(entries), hostname)
+	return nil
+}
+
 func (s *Shipper) loadCursor() string {
 	data, err := os.ReadFile(s.cursorFile)
 	if err != nil {
