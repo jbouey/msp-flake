@@ -562,6 +562,47 @@ export const sitesApi = {
 };
 
 // =============================================================================
+// SITE DECOMMISSION API
+// =============================================================================
+
+export interface SiteExportData {
+  export_version: string;
+  exported_at: string;
+  site: Record<string, unknown>;
+  appliances: Record<string, unknown>[];
+  incidents: Record<string, unknown>[];
+  incidents_count: number;
+  evidence_bundles: Record<string, unknown>[];
+  evidence_count: number;
+  compliance_results: Record<string, unknown>[];
+  workstations: Record<string, unknown>[];
+  devices: Record<string, unknown>[];
+  credentials: Record<string, unknown>[];
+  go_agents: Record<string, unknown>[];
+  drift_config: Record<string, unknown>[];
+  orders: Record<string, unknown>[];
+  orders_count: number;
+}
+
+export interface DecommissionResult {
+  status: string;
+  site_id: string;
+  clinic_name: string;
+  actions: string[];
+  decommissioned_at: string;
+}
+
+export const decommissionApi = {
+  exportSiteData: (siteId: string) =>
+    fetchApi<SiteExportData>(`/sites/${siteId}/export`),
+
+  decommissionSite: (siteId: string) =>
+    fetchApi<DecommissionResult>(`/sites/${siteId}/decommission`, {
+      method: 'POST',
+    }),
+};
+
+// =============================================================================
 // ORGANIZATIONS API
 // =============================================================================
 

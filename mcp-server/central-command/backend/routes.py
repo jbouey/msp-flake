@@ -9,6 +9,7 @@ to mock data for demo/development purposes.
 
 import json
 import logging
+import secrets
 from enum import Enum
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
@@ -3676,3 +3677,361 @@ async def resolve_l4_ticket(
         """, ticket_id, body.resolved_by, body.resolution_notes)
 
     return {"status": "l4_resolved", "ticket_id": ticket_id}
+
+
+# =============================================================================
+# SITE DECOMMISSION ENDPOINTS
+# =============================================================================
+
+
+@router.get("/sites/{site_id}/export")
+async def export_site_data(
+    site_id: str,
+    user: dict = Depends(auth_module.require_operator),
+):
+    """Export all site data as JSON for archival before decommission.
+
+    HIPAA requires 6-year data retention — this endpoint produces
+    a comprehensive export that can be stored offline.
+    """
+    await check_site_access_pool(user, site_id)
+    from .fleet import get_pool
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # Verify site exists
+        site = await conn.fetchrow(
+            "SELECT * FROM sites WHERE site_id = $1", site_id
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Site info
+        site_info = dict(site)
+        # Convert non-serializable types
+        for k, v in site_info.items():
+            if isinstance(v, datetime):
+                site_info[k] = v.isoformat()
+
+        # Incidents (last 1000)
+        incident_rows = await conn.fetch("""
+            SELECT id, incident_type, hostname, severity, status,
+                   resolution_level, details, created_at, resolved_at, site_id
+            FROM incidents
+            WHERE site_id = $1
+            ORDER BY created_at DESC
+            LIMIT 1000
+        """, site_id)
+        incidents = []
+        for row in incident_rows:
+            d = dict(row)
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            incidents.append(d)
+
+        # Evidence bundles (last 500)
+        evidence_rows = await conn.fetch("""
+            SELECT id, site_id, bundle_type, checks, checked_at, created_at
+            FROM compliance_bundles
+            WHERE site_id = $1
+            ORDER BY created_at DESC
+            LIMIT 500
+        """, site_id)
+        evidence = []
+        for row in evidence_rows:
+            d = dict(row)
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            evidence.append(d)
+
+        # Compliance results (latest per check type)
+        compliance_rows = await conn.fetch("""
+            SELECT DISTINCT ON (check_type)
+                id, site_id, check_type, status, details, checked_at
+            FROM compliance_results
+            WHERE site_id = $1
+            ORDER BY check_type, checked_at DESC
+        """, site_id)
+        compliance = []
+        for row in compliance_rows:
+            d = dict(row)
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            compliance.append(d)
+
+        # Workstations
+        workstation_rows = await conn.fetch("""
+            SELECT id, site_id, hostname, os_type, compliance_status,
+                   last_compliance_check, details, created_at
+            FROM workstations
+            WHERE site_id = $1
+            ORDER BY hostname
+        """, site_id)
+        workstations = []
+        for row in workstation_rows:
+            d = dict(row)
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            workstations.append(d)
+
+        # Discovered devices
+        device_rows = await conn.fetch("""
+            SELECT id, site_id, mac_address, ip_address, hostname,
+                   device_type, vendor, compliance_status, first_seen, last_seen
+            FROM discovered_devices
+            WHERE site_id = $1
+            ORDER BY last_seen DESC NULLS LAST
+        """, site_id)
+        devices = []
+        for row in device_rows:
+            d = dict(row)
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            devices.append(d)
+
+        # Credentials (names only, NOT secrets — HIPAA safe)
+        cred_rows = await conn.fetch("""
+            SELECT id, site_id, credential_type, credential_name, created_at
+            FROM site_credentials
+            WHERE site_id = $1
+            ORDER BY credential_name
+        """, site_id)
+        credentials = []
+        for row in cred_rows:
+            d = dict(row)
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            credentials.append(d)
+
+        # Go agents
+        go_agent_rows = await conn.fetch("""
+            SELECT id, site_id, agent_id, hostname, capability_tier,
+                   status, version, last_checkin, created_at
+            FROM go_agents
+            WHERE site_id = $1
+            ORDER BY hostname
+        """, site_id)
+        go_agents = []
+        for row in go_agent_rows:
+            d = dict(row)
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            go_agents.append(d)
+
+        # Drift config
+        drift_rows = await conn.fetch("""
+            SELECT check_type, enabled, notes
+            FROM site_drift_config
+            WHERE site_id = $1
+            ORDER BY check_type
+        """, site_id)
+        drift_config = [dict(r) for r in drift_rows]
+
+        # Orders (last 200)
+        order_rows = await conn.fetch("""
+            SELECT order_id, appliance_id, site_id, order_type,
+                   parameters, status, created_at, expires_at,
+                   acknowledged_at, completed_at
+            FROM admin_orders
+            WHERE site_id = $1
+            ORDER BY created_at DESC
+            LIMIT 200
+        """, site_id)
+        orders = []
+        for row in order_rows:
+            d = dict(row)
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            orders.append(d)
+
+        # Appliances
+        appliance_rows = await conn.fetch("""
+            SELECT appliance_id, hostname, mac_address, ip_addresses,
+                   agent_version, status, last_checkin, first_checkin
+            FROM site_appliances
+            WHERE site_id = $1
+        """, site_id)
+        appliances = []
+        for row in appliance_rows:
+            d = dict(row)
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            appliances.append(d)
+
+    return {
+        "export_version": "1.0",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "site": site_info,
+        "appliances": appliances,
+        "incidents": incidents,
+        "incidents_count": len(incidents),
+        "evidence_bundles": evidence,
+        "evidence_count": len(evidence),
+        "compliance_results": compliance,
+        "workstations": workstations,
+        "devices": devices,
+        "credentials": credentials,
+        "go_agents": go_agents,
+        "drift_config": drift_config,
+        "orders": orders,
+        "orders_count": len(orders),
+    }
+
+
+@router.post("/sites/{site_id}/decommission")
+async def decommission_site(
+    site_id: str,
+    user: dict = Depends(auth_module.require_operator),
+):
+    """Decommission a site — revoke access, stop appliances, mark inactive.
+
+    This is a destructive operation:
+    1. Validates site exists and is not already inactive
+    2. Revokes all API keys for the site
+    3. Invalidates portal access tokens
+    4. Creates fleet order to stop appliances (force_checkin with stop flag)
+    5. Updates site status to 'inactive'
+    6. Logs to audit trail
+
+    HIPAA note: Data is NOT deleted. Site data remains for 6-year retention.
+    Use the export endpoint first to create an offline archive.
+    """
+    await check_site_access_pool(user, site_id)
+    from .fleet import get_pool
+    from .order_signing import sign_admin_order
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+    actions_taken = []
+
+    async with admin_connection(pool) as conn:
+        # 1. Validate site exists and is not already inactive
+        site = await conn.fetchrow(
+            "SELECT site_id, clinic_name, status FROM sites WHERE site_id = $1",
+            site_id,
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        if site["status"] == "inactive":
+            raise HTTPException(
+                status_code=400,
+                detail="Site is already decommissioned (status: inactive)",
+            )
+
+        clinic_name = site["clinic_name"] or site_id
+
+        # 2. Revoke all API keys for the site
+        api_key_result = await conn.execute(
+            "UPDATE api_keys SET active = false WHERE site_id = $1 AND active = true",
+            site_id,
+        )
+        revoked_keys = int(api_key_result.split()[-1]) if api_key_result else 0
+        if revoked_keys > 0:
+            actions_taken.append(f"Revoked {revoked_keys} API key(s)")
+
+        # 3. Invalidate portal access tokens
+        token_result = await conn.execute("""
+            DELETE FROM portal_access_tokens WHERE site_id = $1
+        """, site_id)
+        revoked_tokens = int(token_result.split()[-1]) if token_result else 0
+        if revoked_tokens > 0:
+            actions_taken.append(f"Invalidated {revoked_tokens} portal token(s)")
+
+        # 4. Create fleet orders to stop appliances
+        appliances = await conn.fetch(
+            "SELECT appliance_id FROM site_appliances WHERE site_id = $1",
+            site_id,
+        )
+        stop_orders_created = 0
+        expires_at = now + timedelta(hours=1)
+        for row in appliances:
+            order_id = f"ORD-DECOM-{now.strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}"
+            parameters = {"reason": "site_decommissioned", "stop": True}
+            nonce, signature, signed_payload = sign_admin_order(
+                order_id,
+                "force_checkin",
+                parameters,
+                now,
+                expires_at,
+                target_appliance_id=row["appliance_id"],
+            )
+            await conn.execute("""
+                INSERT INTO admin_orders (
+                    order_id, appliance_id, site_id, order_type,
+                    parameters, priority, status, created_at, expires_at,
+                    nonce, signature, signed_payload
+                ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12)
+            """,
+                order_id,
+                row["appliance_id"],
+                site_id,
+                "force_checkin",
+                json.dumps(parameters),
+                0,
+                "pending",
+                now,
+                expires_at,
+                nonce,
+                signature,
+                signed_payload,
+            )
+            stop_orders_created += 1
+
+        if stop_orders_created > 0:
+            actions_taken.append(
+                f"Sent stop order to {stop_orders_created} appliance(s)"
+            )
+
+        # 5. Update site status to 'inactive'
+        await conn.execute(
+            "UPDATE sites SET status = 'inactive', updated_at = $2 WHERE site_id = $1",
+            site_id,
+            now,
+        )
+        actions_taken.append("Site status set to inactive")
+
+        # 6. Audit trail
+        await conn.execute("""
+            INSERT INTO audit_log (event_type, actor, resource_type, resource_id, details)
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+        """,
+            "site.decommissioned",
+            user.get("username", "unknown"),
+            "site",
+            site_id,
+            json.dumps({
+                "clinic_name": clinic_name,
+                "previous_status": site["status"],
+                "revoked_api_keys": revoked_keys,
+                "revoked_portal_tokens": revoked_tokens,
+                "stop_orders_created": stop_orders_created,
+                "actions": actions_taken,
+            }),
+        )
+        actions_taken.append("Audit trail entry created")
+
+    # Broadcast site status change via websocket
+    try:
+        await broadcast_event("site_decommissioned", {
+            "site_id": site_id,
+            "clinic_name": clinic_name,
+        })
+    except Exception as e:
+        logger.warning(f"Failed to broadcast decommission event: {e}")
+
+    return {
+        "status": "decommissioned",
+        "site_id": site_id,
+        "clinic_name": clinic_name,
+        "actions": actions_taken,
+        "decommissioned_at": now.isoformat(),
+    }

@@ -6,7 +6,7 @@ import type { ActionItem } from '../components/shared';
 import { DeploymentProgress } from '../components/deployment';
 import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier, useUpdateL2Mode } from '../hooks';
 import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
-import { fleetUpdatesApi, type FleetStats } from '../utils/api';
+import { fleetUpdatesApi, decommissionApi, type FleetStats } from '../utils/api';
 import { ComplianceHealthInfographic } from '../client/ComplianceHealthInfographic';
 import { DevicesAtRisk } from '../client/DevicesAtRisk';
 
@@ -804,6 +804,188 @@ const MoveApplianceModal: React.FC<{
 
 
 /**
+ * Decommission Site Modal
+ */
+const DecommissionModal: React.FC<{
+  site: SiteDetailType;
+  onClose: () => void;
+  onDecommissioned: () => void;
+  showToast: (msg: string, type: 'success' | 'error') => void;
+}> = ({ site, onClose, onDecommissioned, showToast }) => {
+  const [isExporting, setIsExporting] = useState(false);
+  const [isDecommissioning, setIsDecommissioning] = useState(false);
+  const [exportDone, setExportDone] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const data = await decommissionApi.exportSiteData(site.site_id);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `site-export-${site.site_id}-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setExportDone(true);
+      showToast('Site data exported successfully', 'success');
+    } catch (err) {
+      showToast(`Export failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleDecommission = async () => {
+    setIsDecommissioning(true);
+    try {
+      const result = await decommissionApi.decommissionSite(site.site_id);
+      showToast(`Site decommissioned: ${result.actions.join(', ')}`, 'success');
+      onDecommissioned();
+    } catch (err) {
+      showToast(`Decommission failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    } finally {
+      setIsDecommissioning(false);
+    }
+  };
+
+  const canDecommission = confirmText === site.site_id;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="w-full max-w-lg" onClick={e => e.stopPropagation()}>
+        <GlassCard>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-full bg-health-critical/10 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5 text-health-critical" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-label-primary">Decommission Site</h2>
+              <p className="text-sm text-label-tertiary">This action cannot be undone</p>
+            </div>
+          </div>
+
+          {/* Site summary */}
+          <div className="bg-fill-secondary rounded-ios p-4 mb-4 space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-label-tertiary">Site</span>
+              <span className="text-label-primary font-medium">{site.clinic_name}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-label-tertiary">Site ID</span>
+              <span className="text-label-primary font-mono text-xs">{site.site_id}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-label-tertiary">Appliances</span>
+              <span className="text-label-primary">{site.appliances.length}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-label-tertiary">Credentials</span>
+              <span className="text-label-primary">{site.credentials.length}</span>
+            </div>
+          </div>
+
+          {/* Warning */}
+          <div className="bg-health-warning/10 border border-health-warning/20 rounded-ios p-3 mb-4">
+            <p className="text-sm text-label-primary">
+              <strong>What happens:</strong>
+            </p>
+            <ul className="text-sm text-label-secondary mt-1 space-y-1 list-disc list-inside">
+              <li>All API keys for this site will be revoked</li>
+              <li>Portal access tokens will be invalidated</li>
+              <li>Appliances will receive a stop order</li>
+              <li>Site status will be set to inactive</li>
+            </ul>
+            <p className="text-sm text-label-tertiary mt-2">
+              Data is retained for HIPAA compliance (6-year requirement). Export first to create an offline archive.
+            </p>
+          </div>
+
+          {/* Export button */}
+          <div className="mb-4">
+            <button
+              onClick={handleExport}
+              disabled={isExporting}
+              className={`w-full px-4 py-2.5 rounded-ios text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                exportDone
+                  ? 'bg-health-healthy/10 text-health-healthy border border-health-healthy/20'
+                  : 'bg-accent-primary/10 text-accent-primary hover:bg-accent-primary/20 border border-accent-primary/20'
+              } disabled:opacity-50`}
+            >
+              {isExporting ? (
+                <>
+                  <Spinner size="sm" />
+                  Exporting...
+                </>
+              ) : exportDone ? (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Export Downloaded
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Export Site Data (JSON)
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Confirmation input */}
+          <div className="mb-4">
+            <label className="block text-sm text-label-secondary mb-1.5">
+              Type <code className="bg-fill-secondary px-1.5 py-0.5 rounded text-xs font-mono">{site.site_id}</code> to confirm:
+            </label>
+            <input
+              type="text"
+              value={confirmText}
+              onChange={e => setConfirmText(e.target.value)}
+              placeholder={site.site_id}
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-health-critical focus:outline-none text-sm font-mono"
+            />
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              disabled={isDecommissioning}
+              className="flex-1 px-4 py-2.5 rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary transition-colors text-sm disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDecommission}
+              disabled={!canDecommission || isDecommissioning}
+              className="flex-1 px-4 py-2.5 rounded-ios bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 text-white font-semibold shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              {isDecommissioning ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Spinner size="sm" />
+                  Decommissioning...
+                </span>
+              ) : (
+                'Confirm Decommission'
+              )}
+            </button>
+          </div>
+        </GlassCard>
+      </div>
+    </div>
+  );
+};
+
+
+/**
  * Site detail page
  */
 export const SiteDetail: React.FC = () => {
@@ -816,6 +998,7 @@ export const SiteDetail: React.FC = () => {
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [showEditSiteModal, setShowEditSiteModal] = useState(false);
   const [showMoveApplianceModal, setShowMoveApplianceModal] = useState<string | null>(null);
+  const [showDecommissionModal, setShowDecommissionModal] = useState(false);
 
   const { data: site, isLoading, error } = useSite(siteId || null);
   const { data: fleetStats } = useQuery<FleetStats>({
@@ -984,6 +1167,21 @@ export const SiteDetail: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Decommissioned banner */}
+      {site.status === 'inactive' && (
+        <div className="bg-health-critical/10 border border-health-critical/20 rounded-ios p-4 flex items-center gap-3">
+          <svg className="w-5 h-5 text-health-critical flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+          </svg>
+          <div>
+            <p className="text-sm font-semibold text-health-critical">This site has been decommissioned</p>
+            <p className="text-xs text-label-tertiary mt-0.5">
+              Status is inactive. API keys revoked, portal tokens invalidated. Data retained for HIPAA compliance.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="space-y-0">
         {/* Row 1: Site identity + status + action */}
@@ -1025,6 +1223,17 @@ export const SiteDetail: React.FC = () => {
               </svg>
               {isGeneratingLink ? 'Generating...' : 'Portal Link'}
             </button>
+            {site.status !== 'inactive' && (
+              <button
+                onClick={() => setShowDecommissionModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-health-critical hover:bg-health-critical/10 rounded-ios-sm transition-colors whitespace-nowrap"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                </svg>
+                Decommission
+              </button>
+            )}
           </div>
         </div>
 
@@ -1374,6 +1583,19 @@ export const SiteDetail: React.FC = () => {
           currentSiteId={siteId}
           onClose={() => setShowMoveApplianceModal(null)}
           onMove={handleMoveAppliance}
+        />
+      )}
+
+      {/* Decommission Modal */}
+      {showDecommissionModal && site && (
+        <DecommissionModal
+          site={site}
+          onClose={() => setShowDecommissionModal(false)}
+          onDecommissioned={() => {
+            setShowDecommissionModal(false);
+            navigate('/sites');
+          }}
+          showToast={showToast}
         />
       )}
 
