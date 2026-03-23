@@ -336,7 +336,7 @@ export const PartnerLogin: React.FC = () => {
           </div>
 
           <p className="mt-8 text-center text-sm text-indigo-300/60">
-            Powered by OsirisCare HIPAA Compliance Platform
+            Powered by OsirisCare HIPAA Compliance Monitoring Platform
           </p>
         </div>
       </div>
@@ -647,7 +647,7 @@ export const PartnerLogin: React.FC = () => {
 
         {/* Footer */}
         <p className="mt-8 text-center text-sm text-indigo-300/60">
-          Powered by OsirisCare HIPAA Compliance Platform
+          Powered by OsirisCare HIPAA Compliance Monitoring Platform
         </p>
       </div>
     </div>

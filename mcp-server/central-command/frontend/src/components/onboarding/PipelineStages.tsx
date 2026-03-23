@@ -55,7 +55,7 @@ const phase2Stages: StageConfig[] = [
   { key: 'connectivity', label: 'Connectivity', shortLabel: 'Conn' },
   { key: 'scanning', label: 'Scanning', shortLabel: 'Scan' },
   { key: 'baseline', label: 'Baseline', shortLabel: 'Base' },
-  { key: 'compliant', label: 'Compliant', shortLabel: 'Comp' },
+  { key: 'compliant', label: 'Baseline Complete', shortLabel: 'Base' },
   { key: 'active', label: 'Active', shortLabel: 'Live' },
 ];
 

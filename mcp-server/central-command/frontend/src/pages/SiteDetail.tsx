@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { GlassCard, Spinner, Badge, ActionDropdown } from '../components/shared';
+import { GlassCard, Spinner, Badge, ActionDropdown, EmptyState, OnboardingChecklist } from '../components/shared';
 import type { ActionItem } from '../components/shared';
 import { DeploymentProgress } from '../components/deployment';
 import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier, useUpdateL2Mode } from '../hooks';
@@ -1407,12 +1407,15 @@ export const SiteDetail: React.FC = () => {
               isLoading={isOrderLoading}
             />
             {site.appliances.length === 0 ? (
-              <div className="text-center py-8">
-                <p className="text-label-tertiary">No appliances connected yet.</p>
-                <p className="text-label-tertiary text-sm mt-1">
-                  The appliance will appear here when it phones home.
-                </p>
-              </div>
+              <EmptyState
+                icon={
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                  </svg>
+                }
+                title="No appliances connected"
+                description="The appliance will appear here automatically once it is installed and phones home to Central Command."
+              />
             ) : (
               <div className="space-y-4">
                 {site.appliances.map((appliance) => (
@@ -1446,12 +1449,19 @@ export const SiteDetail: React.FC = () => {
               </button>
             </div>
             {site.credentials.length === 0 ? (
-              <div className="text-center py-8">
-                <p className="text-label-tertiary">No credentials stored.</p>
-                <p className="text-label-tertiary text-sm mt-1">
-                  Add router, AD, or other credentials for the appliance.
-                </p>
-              </div>
+              <EmptyState
+                icon={
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                  </svg>
+                }
+                title="No credentials configured"
+                description="Add router, Active Directory, or other credentials so the appliance can perform deep compliance scans."
+                action={{
+                  label: 'Add credential',
+                  onClick: () => setShowCredModal(true),
+                }}
+              />
             ) : (
               <div className="space-y-2">
                 {site.credentials.map((cred) => (
@@ -1494,6 +1504,17 @@ export const SiteDetail: React.FC = () => {
                     : 'All devices managed'}
                 </div>
               </div>
+            </GlassCard>
+          )}
+
+          {/* Onboarding Checklist — shows for new sites that aren't fully active yet */}
+          {(site.onboarding_stage !== 'active' || (site.timestamps.baseline_at === null && site.timestamps.scanning_at === null)) && (
+            <GlassCard>
+              <OnboardingChecklist
+                site={site}
+                onNavigateDevices={() => navigate(`/sites/${siteId}/devices`)}
+                onAddCredential={() => setShowCredModal(true)}
+              />
             </GlassCard>
           )}
 

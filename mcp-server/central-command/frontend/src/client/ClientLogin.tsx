@@ -204,7 +204,7 @@ export const ClientLogin: React.FC = () => {
           </div>
 
           <p className="mt-8 text-center text-sm text-teal-300/60">
-            Powered by OsirisCare HIPAA Compliance Platform
+            Powered by OsirisCare HIPAA Compliance Monitoring Platform
           </p>
         </div>
       </div>
@@ -285,7 +285,7 @@ export const ClientLogin: React.FC = () => {
             <OsirisCareLeaf className="w-9 h-9" color="white" />
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight">Client Portal</h1>
-          <p className="text-teal-200/80 mt-2">Access your HIPAA compliance dashboard</p>
+          <p className="text-teal-200/80 mt-2">Access your HIPAA monitoring dashboard</p>
         </div>
 
         {/* Login Card */}
@@ -294,7 +294,7 @@ export const ClientLogin: React.FC = () => {
             Sign In
           </h2>
           <p className="text-slate-600 text-center mb-6">
-            Access your HIPAA compliance dashboard.
+            Access your HIPAA monitoring dashboard.
           </p>
 
           {error && (
@@ -415,7 +415,7 @@ export const ClientLogin: React.FC = () => {
 
         {/* Footer */}
         <p className="mt-8 text-center text-sm text-teal-300/60">
-          Powered by OsirisCare HIPAA Compliance Platform
+          Powered by OsirisCare HIPAA Compliance Monitoring Platform
         </p>
       </div>
     </div>

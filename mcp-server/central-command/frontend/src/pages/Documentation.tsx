@@ -300,7 +300,7 @@ const sections: Record<DocSection, { title: string; icon: string; items: DocItem
                   <tr className="border-b border-separator-light/50">
                     <td className="py-2 px-3 font-mono">15</td>
                     <td className="py-2 px-3 font-medium">Achieve compliance</td>
-                    <td className="py-2 px-3">Fix any failing controls. Target 8/8 passing. Update to "Compliant".</td>
+                    <td className="py-2 px-3">Fix any failing controls. Target 8/8 passing. Update to "Baseline Complete".</td>
                   </tr>
                   <tr className="border-b border-separator-light/50">
                     <td className="py-2 px-3 font-mono">16</td>
@@ -1567,7 +1567,7 @@ dig api.osiriscare.net +short`}</pre>
                     <td className="py-2 px-3">1 day</td>
                   </tr>
                   <tr className="border-b border-separator-light/50">
-                    <td className="py-2 px-3 font-medium">Compliant</td>
+                    <td className="py-2 px-3 font-medium">Baseline Complete</td>
                     <td className="py-2 px-3">All controls passing</td>
                     <td className="py-2 px-3">Verify 8/8 controls, fix issues</td>
                     <td className="py-2 px-3">1-3 days</td>
@@ -2264,17 +2264,17 @@ OsirisCare Compliance Team`}
               <div className="p-4 bg-fill-secondary rounded-ios">
                 <p className="font-medium">"What do I do if something is red/failing?"</p>
                 <p className="text-sm text-label-tertiary mt-1">
-                  Nothing, usually! Our system automatically remediates most issues within
-                  seconds. If a control stays red, we're already alerted and working on it.
-                  You'll see it turn green once resolved.
+                  Our system uses a multi-tier approach: deterministic fixes (L1), AI-assisted
+                  planning (L2), and human escalation (L3). Most configuration drift is resolved
+                  automatically, but some issues require manual review. You control all remediation settings.
                 </p>
               </div>
               <div className="p-4 bg-fill-secondary rounded-ios">
                 <p className="font-medium">"Can I download reports for auditors?"</p>
                 <p className="text-sm text-label-tertiary mt-1">
-                  Yes. Click "Download Monthly Report" to get a PDF compliance packet.
+                  Yes. Click "Download Monthly Report" to get a PDF monitoring evidence bundle.
                   For specific evidence bundles, use the "Evidence" section to download
-                  signed proof of compliance checks.
+                  signed evidence of compliance check results.
                 </p>
               </div>
             </div>

@@ -134,7 +134,7 @@ async def send_magic_link_email(to_email: str, site_name: str, magic_link: str) 
             <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
                 <div style="text-align: center; margin-bottom: 40px;">
                     <h1 style="color: #1a365d; font-size: 24px; margin: 0;">OsirisCare</h1>
-                    <p style="color: #718096; margin-top: 8px;">HIPAA Compliance Platform</p>
+                    <p style="color: #718096; margin-top: 8px;">HIPAA Compliance Monitoring Platform</p>
                 </div>
 
                 <p style="color: #2d3748; font-size: 16px; line-height: 1.6;">
@@ -699,7 +699,7 @@ async def request_magic_link(site_id: str, request: MagicLinkRequest):
                 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
                     <div style="text-align: center; margin-bottom: 40px;">
                         <h1 style="color: #1a365d; font-size: 24px; margin: 0;">OsirisCare</h1>
-                        <p style="color: #718096; margin-top: 8px;">HIPAA Compliance Platform</p>
+                        <p style="color: #718096; margin-top: 8px;">HIPAA Compliance Monitoring Platform</p>
                     </div>
                     <p style="color: #2d3748; font-size: 16px; line-height: 1.6;">
                         Click the button below to access your compliance dashboard for <strong>{site_name}</strong>.

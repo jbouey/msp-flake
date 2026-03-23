@@ -482,7 +482,7 @@ export const PortalVerify: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Evidence Chain Verification</h1>
             <p className="text-sm text-slate-500">
-              Cryptographic proof of compliance evidence integrity
+              Cryptographic verification of evidence integrity and authenticity
             </p>
           </div>
           <button
@@ -631,7 +631,7 @@ export const PortalVerify: React.FC = () => {
               <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 font-bold mb-3">4</div>
               <h3 className="font-semibold mb-1">Bitcoin Anchoring</h3>
               <p className="text-amber-800">
-                The bundle hash is submitted to the Bitcoin blockchain via OpenTimestamps, creating a tamper-proof timestamp.
+                The bundle hash is submitted to the Bitcoin blockchain via OpenTimestamps, creating an immutable timestamp anchor that independently verifies evidence generation time.
               </p>
             </div>
             <div>

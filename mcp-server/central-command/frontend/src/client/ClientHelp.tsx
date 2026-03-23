@@ -280,7 +280,7 @@ export const ClientHelp: React.FC = () => {
         <div className="space-y-4">
           <p className="text-slate-600">
             OsirisCare uses cryptographic hash chains (similar to blockchain) to ensure your
-            compliance evidence is tamper-proof and verifiable.
+            compliance evidence is tamper-resistant and independently verifiable.
           </p>
           <EvidenceChainDiagram />
           <div className="bg-teal-50 p-4 rounded-lg">
@@ -686,7 +686,7 @@ export const ClientHelp: React.FC = () => {
 
         {/* Footer */}
         <div className="mt-8 text-center text-white/60 text-sm">
-          <p>Powered by OsirisCare HIPAA Compliance Platform</p>
+          <p>Powered by OsirisCare HIPAA Compliance Monitoring Platform</p>
         </div>
       </main>
     </div>

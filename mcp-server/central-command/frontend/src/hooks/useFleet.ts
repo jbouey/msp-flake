@@ -5,7 +5,7 @@
 import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
 import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi } from '../utils/api';
 import type { Site, SiteDetail, OrderType, OrderStatus, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice } from '../utils/api';
-import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, LearningStatus, PromotionCandidate, PromotionHistory, CoverageGap, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory, FleetPostureSite, IncidentTrendsResponse, IncidentBreakdownResponse, AttentionRequiredResponse } from '../types';
+import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, StatsDeltas, LearningStatus, PromotionCandidate, PromotionHistory, CoverageGap, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory, FleetPostureSite, IncidentTrendsResponse, IncidentBreakdownResponse, AttentionRequiredResponse } from '../types';
 import { useWebSocketStatus } from './useWebSocket';
 
 // Polling intervals
@@ -87,6 +87,51 @@ export function useIncidents(params?: {
 }
 
 /**
+ * Hook for manually resolving an incident
+ */
+export function useResolveIncident() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => incidentApi.resolve(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['incidents'] });
+      queryClient.invalidateQueries({ queryKey: ['stats'] });
+    },
+    onError: (error) => logMutationError('resolveIncident', error),
+  });
+}
+
+/**
+ * Hook for escalating an incident to L3
+ */
+export function useEscalateIncident() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
+      incidentApi.escalate(id, notes),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['incidents'] });
+      queryClient.invalidateQueries({ queryKey: ['stats'] });
+    },
+    onError: (error) => logMutationError('escalateIncident', error),
+  });
+}
+
+/**
+ * Hook for suppressing an incident's check_type+hostname for 24h
+ */
+export function useSuppressIncident() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => incidentApi.suppress(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['incidents'] });
+    },
+    onError: (error) => logMutationError('suppressIncident', error),
+  });
+}
+
+/**
  * Hook for fetching compliance events (drift detections from compliance bundles)
  */
 export function useEvents(params?: {
@@ -109,6 +154,18 @@ export function useGlobalStats() {
   return useQuery<GlobalStats>({
     queryKey: ['stats'],
     queryFn: statsApi.getGlobalStats,
+    ...defaults,
+  });
+}
+
+/**
+ * Hook for fetching week-over-week KPI deltas
+ */
+export function useStatsDeltas() {
+  const defaults = useQueryDefaults();
+  return useQuery<StatsDeltas>({
+    queryKey: ['stats', 'deltas'],
+    queryFn: statsApi.getStatsDeltas,
     ...defaults,
   });
 }

@@ -88,7 +88,7 @@ REPORT_TEMPLATE = """
 <html>
 <head>
     <meta charset="utf-8">
-    <title>HIPAA Compliance Report - {{ site_name }}</title>
+    <title>HIPAA Monitoring Report - {{ site_name }}</title>
     <style>
         @page {
             size: letter;
@@ -303,7 +303,7 @@ REPORT_TEMPLATE = """
                 <text x="10" y="45" font-family="Arial" font-size="32" font-weight="bold" fill="#1a365d">OsirisCare</text>
             </svg>
         </div>
-        <h1>HIPAA Compliance Report</h1>
+        <h1>HIPAA Monitoring Report</h1>
         <div class="subtitle">{{ site_name }}</div>
         <div class="meta">
             <p>Report Period: {{ report_month }}</p>
@@ -433,7 +433,7 @@ REPORT_TEMPLATE = """
     <div class="footer-note">
         <p><strong>Disclaimer:</strong> This report contains system metadata only. No Protected Health Information (PHI)
         is processed, stored, or transmitted by the compliance monitoring system.</p>
-        <p>This report is generated automatically by OsirisCare Compliance Platform.</p>
+        <p>This report is generated automatically by OsirisCare Compliance Monitoring Platform. This report represents point-in-time monitoring observations and does not constitute compliance certification.</p>
         <p>For questions or concerns, contact support@osiriscare.net</p>
     </div>
 </body>
@@ -474,7 +474,7 @@ def render_report_html(
         report_month = month
 
     # Generate report ID
-    report_id = f"CP-{month.replace('-', '')}-{site_id[:12]}"
+    report_id = f"MON-{month.replace('-', '')}-{site_id[:12]}"
 
     html = template.render(
         site_name=site_name,

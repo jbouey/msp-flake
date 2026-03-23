@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { GlassCard, Spinner, LevelBadge } from '../components/shared';
+import { GlassCard, Spinner, LevelBadge, useToast } from '../components/shared';
 import { IncidentRow } from '../components/incidents/IncidentRow';
-import { useIncidents, useSites } from '../hooks';
+import { useIncidents, useSites, useResolveIncident, useEscalateIncident, useSuppressIncident } from '../hooks';
 import { incidentApi } from '../utils/api';
 import type { Incident, IncidentDetail } from '../types';
 import { CHECK_TYPE_LABELS } from '../types';
 
-// Category → check_types mapping (matches backend compliance-health endpoint)
+// Category -> check_types mapping (matches backend compliance-health endpoint)
 const CATEGORY_CHECK_TYPES: Record<string, string[]> = {
   patching: ['nixos_generation', 'windows_update', 'linux_patching',
              'linux_unattended_upgrades', 'linux_kernel_params'],
@@ -196,8 +196,16 @@ export const Incidents: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>(urlCategory);
   const [selectedHostname, setSelectedHostname] = useState<string>(urlHostname);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const limit = 50;
+
+  const { addToast } = useToast();
+
+  // Mutations for incident actions
+  const resolveMutation = useResolveIncident();
+  const escalateMutation = useEscalateIncident();
+  const suppressMutation = useSuppressIncident();
 
   // Sync URL params on mount
   useEffect(() => {
@@ -250,6 +258,49 @@ export const Incidents: React.FC = () => {
     if (selectedCategory) params.set('category', selectedCategory);
     setSearchParams(params, { replace: true });
   };
+
+  // ---- Incident action handlers ----
+  const handleResolve = useCallback((id: string) => {
+    setActionLoadingId(id);
+    resolveMutation.mutate(id, {
+      onSuccess: () => {
+        addToast('success', 'Incident resolved');
+        setActionLoadingId(null);
+      },
+      onError: (err) => {
+        addToast('error', err instanceof Error ? err.message : 'Failed to resolve incident');
+        setActionLoadingId(null);
+      },
+    });
+  }, [resolveMutation, addToast]);
+
+  const handleEscalate = useCallback((id: string) => {
+    setActionLoadingId(id);
+    escalateMutation.mutate({ id }, {
+      onSuccess: () => {
+        addToast('warning', 'Escalated to L3');
+        setActionLoadingId(null);
+      },
+      onError: (err) => {
+        addToast('error', err instanceof Error ? err.message : 'Failed to escalate incident');
+        setActionLoadingId(null);
+      },
+    });
+  }, [escalateMutation, addToast]);
+
+  const handleSuppress = useCallback((id: string) => {
+    setActionLoadingId(id);
+    suppressMutation.mutate(id, {
+      onSuccess: () => {
+        addToast('info', 'Suppressed for 24h');
+        setActionLoadingId(null);
+      },
+      onError: (err) => {
+        addToast('error', err instanceof Error ? err.message : 'Failed to suppress incident');
+        setActionLoadingId(null);
+      },
+    });
+  }, [suppressMutation, addToast]);
 
   const activeCount = incidents.filter((i: Incident) => !i.resolved).length;
   const resolvedCount = incidents.filter((i: Incident) => i.resolved).length;
@@ -437,6 +488,10 @@ export const Incidents: React.FC = () => {
                   incident={incident}
                   compact={false}
                   onClick={() => setExpandedId(expandedId === String(incident.id) ? null : String(incident.id))}
+                  onResolve={handleResolve}
+                  onEscalate={handleEscalate}
+                  onSuppress={handleSuppress}
+                  actionLoading={actionLoadingId}
                 />
                 {expandedId === String(incident.id) && (
                   <IncidentDetailPanel

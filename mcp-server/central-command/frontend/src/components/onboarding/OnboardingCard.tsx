@@ -19,7 +19,7 @@ const stageLabels: Record<OnboardingStage, string> = {
   connectivity: 'Connectivity',
   scanning: 'Scanning',
   baseline: 'Baseline',
-  compliant: 'Compliant',
+  compliant: 'Baseline Complete',
   active: 'Active',
 };
 

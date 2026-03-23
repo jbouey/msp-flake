@@ -340,6 +340,13 @@ export interface GlobalStats {
   total_go_agents: number;
 }
 
+export interface StatsDeltas {
+  compliance_delta: number;
+  incidents_24h_delta: number;
+  l1_rate_delta: number;
+  clients_delta: number;
+}
+
 export interface ClientStats {
   site_id: string;
   appliance_count: number;

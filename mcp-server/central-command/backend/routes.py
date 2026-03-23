@@ -47,6 +47,7 @@ from .models import (
     BlockerUpdate,
     NoteAdd,
     GlobalStats,
+    StatsDeltas,
     ClientStats,
     CommandRequest,
     CommandResponse,
@@ -559,6 +560,183 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
         execution_log=None,
         created_at=row.created_at,
     )
+
+
+# =============================================================================
+# INCIDENT ACTION ENDPOINTS (Resolve / Escalate / Suppress)
+# =============================================================================
+
+
+@router.post("/incidents/{incident_id}/resolve")
+async def resolve_incident(
+    incident_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Manually resolve an incident.
+
+    Sets status to 'resolved', resolution_tier to 'manual', and records
+    who resolved it and when.
+    """
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow(
+            "SELECT id, status FROM incidents WHERE id = $1",
+            incident_id,
+        )
+        if not row:
+            raise HTTPException(404, "Incident not found")
+        if row["status"] == "resolved":
+            raise HTTPException(400, "Incident already resolved")
+
+        await conn.execute("""
+            UPDATE incidents
+            SET status = 'resolved',
+                resolved = true,
+                resolved_at = NOW(),
+                resolution_tier = 'manual',
+                updated_at = NOW()
+            WHERE id = $1
+        """, incident_id)
+
+    logger.info(f"Incident {incident_id} manually resolved by admin")
+    await broadcast_event("incident_resolved", {"incident_id": incident_id})
+    return {"status": "resolved", "incident_id": incident_id}
+
+
+class EscalateRequest(BaseModel):
+    notes: Optional[str] = None
+
+
+@router.post("/incidents/{incident_id}/escalate")
+async def escalate_incident(
+    incident_id: str,
+    body: EscalateRequest = EscalateRequest(),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Escalate an incident to L3 by creating an escalation ticket.
+
+    Creates a new escalation ticket linked to this incident and marks
+    the incident resolution_tier as L3.
+    """
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow("""
+            SELECT i.id, i.status, i.site_id, i.check_type, i.hostname,
+                   i.severity, i.appliance_id
+            FROM incidents i
+            WHERE i.id = $1
+        """, incident_id)
+
+        if not row:
+            raise HTTPException(404, "Incident not found")
+        if row["status"] == "resolved":
+            raise HTTPException(400, "Cannot escalate a resolved incident")
+
+        ticket_id = str(secrets.token_hex(8))
+        await conn.execute("""
+            INSERT INTO escalation_tickets (
+                id, incident_id, site_id, check_type, hostname,
+                severity, status, escalation_reason, created_at, updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                $6, 'open', $7, NOW(), NOW()
+            )
+        """,
+            ticket_id,
+            incident_id,
+            row["site_id"],
+            row.get("check_type") or "unknown",
+            row.get("hostname") or "",
+            row["severity"],
+            body.notes or "Manual escalation from admin dashboard",
+        )
+
+        await conn.execute("""
+            UPDATE incidents
+            SET resolution_tier = 'L3', updated_at = NOW()
+            WHERE id = $1
+        """, incident_id)
+
+    logger.info(f"Incident {incident_id} escalated to L3, ticket {ticket_id}")
+    await broadcast_event("incident_escalated", {
+        "incident_id": incident_id,
+        "ticket_id": ticket_id,
+    })
+    return {"status": "escalated", "incident_id": incident_id, "ticket_id": ticket_id}
+
+
+@router.post("/incidents/{incident_id}/suppress")
+async def suppress_incident(
+    incident_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Suppress future alerts for this check_type + hostname for 24 hours.
+
+    Creates a compliance exception with a 1-day duration scoped to the
+    check type and hostname of the incident.
+    """
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow("""
+            SELECT i.id, i.site_id, i.check_type, i.hostname
+            FROM incidents i
+            WHERE i.id = $1
+        """, incident_id)
+
+        if not row:
+            raise HTTPException(404, "Incident not found")
+
+        check_type = row.get("check_type") or "unknown"
+        hostname = row.get("hostname") or ""
+
+        exception_id = str(secrets.token_hex(8))
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(hours=24)
+
+        await conn.execute("""
+            INSERT INTO compliance_exceptions (
+                id, site_id, scope_type, item_id, device_filter,
+                requested_by, approved_by, approval_date, approval_tier,
+                start_date, expiration_date, requires_renewal,
+                reason, risk_accepted_by, action,
+                created_at, updated_at
+            ) VALUES (
+                $1, $2, 'check', $3, $4,
+                'admin', 'admin', $5, 'admin',
+                $5, $6, false,
+                $7, 'admin', 'suppress_alert',
+                $5, $5
+            )
+        """,
+            exception_id,
+            row["site_id"],
+            check_type,
+            f"hostname:{hostname}" if hostname else None,
+            now,
+            expires,
+            f"24h suppression for {check_type} on {hostname or 'all hosts'} from incident {incident_id}",
+        )
+
+    logger.info(f"Incident {incident_id} suppressed 24h: {check_type} on {hostname}")
+    await broadcast_event("incident_suppressed", {
+        "incident_id": incident_id,
+        "check_type": check_type,
+        "hostname": hostname,
+        "expires_at": expires.isoformat(),
+    })
+    return {
+        "status": "suppressed",
+        "incident_id": incident_id,
+        "check_type": check_type,
+        "hostname": hostname,
+        "expires_at": expires.isoformat(),
+    }
 
 
 # =============================================================================
@@ -1486,6 +1664,108 @@ async def get_global_stats(db: AsyncSession = Depends(get_db)):
         total_go_agents=total_go_agents,
         computed_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+@router.get("/stats/deltas", response_model=StatsDeltas)
+async def get_stats_deltas(db: AsyncSession = Depends(get_db)):
+    """Week-over-week delta indicators for dashboard KPI cards.
+
+    Compares current metrics against 7-day-ago values:
+    - compliance_delta: current avg compliance score minus 7d-ago score
+    - incidents_24h_delta: current 24h count minus 7d-ago 24h count
+    - l1_rate_delta: current L1 resolution % minus 7d-ago %
+    - clients_delta: current site count minus 7d-ago count
+    """
+    try:
+        # --- Current compliance score (same logic as get_global_stats) ---
+        comp_now = await db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant')) as passed,
+                COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total
+            FROM compliance_bundles cb,
+                 jsonb_array_elements(cb.checks) as c
+            WHERE cb.created_at > NOW() - INTERVAL '24 hours'
+              AND jsonb_array_length(cb.checks) > 0
+        """))
+        cn = comp_now.fetchone()
+        compliance_now = round((cn.passed or 0) / max(cn.total or 1, 1) * 100, 1)
+
+        # --- 7-day-ago compliance score (24h window starting 7 days ago) ---
+        comp_prev = await db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant')) as passed,
+                COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total
+            FROM compliance_bundles cb,
+                 jsonb_array_elements(cb.checks) as c
+            WHERE cb.created_at BETWEEN NOW() - INTERVAL '8 days' AND NOW() - INTERVAL '7 days'
+              AND jsonb_array_length(cb.checks) > 0
+        """))
+        cp = comp_prev.fetchone()
+        compliance_prev = round((cp.passed or 0) / max(cp.total or 1, 1) * 100, 1)
+
+        compliance_delta = round(compliance_now - compliance_prev, 1)
+
+        # --- Incident counts: 24h now vs 24h window 7 days ago ---
+        inc_row = await db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE reported_at > NOW() - INTERVAL '24 hours'
+                ) as now_24h,
+                COUNT(*) FILTER (
+                    WHERE reported_at BETWEEN NOW() - INTERVAL '8 days' AND NOW() - INTERVAL '7 days'
+                ) as prev_24h,
+                COUNT(*) FILTER (
+                    WHERE resolution_tier = 'L1' AND status = 'resolved'
+                      AND reported_at > NOW() - INTERVAL '30 days'
+                ) as l1_now,
+                COUNT(*) FILTER (
+                    WHERE status = 'resolved'
+                      AND reported_at > NOW() - INTERVAL '30 days'
+                ) as resolved_now
+            FROM incidents
+        """))
+        ir = inc_row.fetchone()
+        incidents_24h_delta = (ir.now_24h or 0) - (ir.prev_24h or 0)
+
+        # --- L1 resolution rate: current vs 7d-ago window ---
+        l1_rate_now = round((ir.l1_now or 0) / max(ir.resolved_now or 1, 1) * 100, 1)
+
+        l1_prev_row = await db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE resolution_tier = 'L1' AND status = 'resolved'
+                ) as l1_prev,
+                COUNT(*) FILTER (
+                    WHERE status = 'resolved'
+                ) as resolved_prev
+            FROM incidents
+            WHERE reported_at BETWEEN NOW() - INTERVAL '37 days' AND NOW() - INTERVAL '7 days'
+        """))
+        lpr = l1_prev_row.fetchone()
+        l1_rate_prev = round((lpr.l1_prev or 0) / max(lpr.resolved_prev or 1, 1) * 100, 1)
+        l1_rate_delta = round(l1_rate_now - l1_rate_prev, 1)
+
+        # --- Client count delta ---
+        sites_now = await db.execute(text("SELECT COUNT(*) as cnt FROM sites"))
+        sn = sites_now.fetchone()
+
+        # Sites that existed 7 days ago (created_at <= 7 days ago)
+        sites_prev = await db.execute(text("""
+            SELECT COUNT(*) as cnt FROM sites
+            WHERE created_at <= NOW() - INTERVAL '7 days'
+        """))
+        sp = sites_prev.fetchone()
+        clients_delta = (sn.cnt or 0) - (sp.cnt or 0)
+
+        return StatsDeltas(
+            compliance_delta=compliance_delta,
+            incidents_24h_delta=incidents_24h_delta,
+            l1_rate_delta=l1_rate_delta,
+            clients_delta=clients_delta,
+        )
+    except Exception as e:
+        logger.warning(f"Stats deltas query failed: {e}")
+        return StatsDeltas()
 
 
 # =============================================================================

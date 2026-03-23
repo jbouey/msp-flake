@@ -235,8 +235,8 @@ export const ClientCompliance: React.FC = () => {
                     </svg>
                   </div>
                   <div>
-                    <h2 className="text-2xl font-bold text-slate-900">HIPAA Readiness Score</h2>
-                    <p className="text-slate-500 mt-1">Composite score across all compliance modules</p>
+                    <h2 className="text-2xl font-bold text-slate-900">Configuration Monitoring Score</h2>
+                    <p className="text-slate-500 mt-1">This score measures automated check pass rates and does not constitute compliance certification.</p>
                   </div>
                 </div>
               </div>
@@ -298,6 +298,10 @@ export const ClientCompliance: React.FC = () => {
             {renderModuleContent()}
           </>
         )}
+
+        <p className="text-[10px] text-label-tertiary text-center mt-8 max-w-2xl mx-auto leading-relaxed">
+          OsirisCare provides automated compliance monitoring and does not constitute legal advice, HIPAA certification, or a guarantee of regulatory compliance. All metrics represent point-in-time observations. Consult qualified compliance professionals for formal assessments.
+        </p>
       </main>
     </div>
   );

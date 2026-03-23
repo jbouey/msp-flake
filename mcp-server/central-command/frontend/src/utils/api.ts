@@ -194,6 +194,21 @@ export const incidentApi = {
 
   getIncident: (id: string) => fetchApi<IncidentDetail>(`/incidents/${id}`),
 
+  resolve: (id: string) =>
+    fetchApi<{ status: string; incident_id: string }>(`/incidents/${id}/resolve`, { method: 'POST' }),
+
+  escalate: (id: string, notes?: string) =>
+    fetchApi<{ status: string; incident_id: string; ticket_id: string }>(
+      `/incidents/${id}/escalate`,
+      { method: 'POST', body: JSON.stringify({ notes }) },
+    ),
+
+  suppress: (id: string) =>
+    fetchApi<{ status: string; incident_id: string; check_type: string; hostname: string; expires_at: string }>(
+      `/incidents/${id}/suppress`,
+      { method: 'POST' },
+    ),
+
   getEvents: (params?: {
     site_id?: string;
     limit?: number;
@@ -304,10 +319,12 @@ export const onboardingApi = {
 // STATS API
 // =============================================================================
 
-import type { GlobalStats, ClientStats } from '../types';
+import type { GlobalStats, StatsDeltas, ClientStats } from '../types';
 
 export const statsApi = {
   getGlobalStats: () => fetchApi<GlobalStats>('/stats'),
+
+  getStatsDeltas: () => fetchApi<StatsDeltas>('/stats/deltas'),
 
   getClientStats: (siteId: string) => fetchApi<ClientStats>(`/stats/${siteId}`),
 };

@@ -472,7 +472,7 @@ export const ClientDashboard: React.FC = () => {
                   </div>
                 </div>
                 <p className="text-sm text-slate-600 mb-4">
-                  12 compliance checks: FileVault, Gatekeeper, SIP, Firewall, Updates, Screen Lock, and more. Auto-heals 6 common issues.
+                  12 compliance checks: FileVault, Gatekeeper, SIP, Firewall, Updates, Screen Lock, and more. Attempts automated remediation of 6 common issues; escalates others to your administrator.
                 </p>
                 <div className="text-xs text-slate-500 mb-4 flex items-center gap-2">
                   <svg className="w-4 h-4 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -810,7 +810,10 @@ export const ClientDashboard: React.FC = () => {
       <footer className="border-t border-slate-200/60 mt-12 py-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <p className="text-center text-sm text-slate-400">
-            Powered by OsirisCare HIPAA Compliance Platform
+            Powered by OsirisCare HIPAA Compliance Monitoring Platform
+          </p>
+          <p className="text-[10px] text-label-tertiary text-center mt-4 max-w-2xl mx-auto leading-relaxed">
+            OsirisCare provides automated compliance monitoring and does not constitute legal advice, HIPAA certification, or a guarantee of regulatory compliance. All metrics represent point-in-time observations. Consult qualified compliance professionals for formal assessments.
           </p>
         </div>
       </footer>

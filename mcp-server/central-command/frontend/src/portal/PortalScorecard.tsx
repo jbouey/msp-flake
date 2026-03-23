@@ -185,7 +185,7 @@ const CARD_GROUPS = [
   {
     title: 'Your System Security',
     ids: ['patch_freshness', 'secrets_hygiene', 'git_protections'],
-    fallbackText: 'Your systems are patched, secrets are secured, and code is protected.',
+    fallbackText: 'Monitoring indicates patches applied, access controls configured, and encryption enabled. These are point-in-time observations.',
     icon: (
       <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
@@ -588,7 +588,10 @@ export const PortalScorecard: React.FC = () => {
           <p className="text-xs text-slate-400 max-w-2xl mx-auto">
             This scorecard is generated from real-time compliance monitoring data. Evidence bundles are
             cryptographically signed and hash-chained. Bitcoin blockchain anchors provide independent,
-            tamper-proof verification of evidence timestamps. For questions, contact your compliance administrator.
+            immutable timestamp anchoring that independently verifies evidence generation time. For questions, contact your compliance administrator.
+          </p>
+          <p className="text-[10px] text-label-tertiary text-center mt-8 max-w-2xl mx-auto leading-relaxed">
+            OsirisCare provides automated compliance monitoring and does not constitute legal advice, HIPAA certification, or a guarantee of regulatory compliance. All metrics represent point-in-time observations. Consult qualified compliance professionals for formal assessments.
           </p>
           <div className="mt-4 flex items-center justify-center gap-2">
             <span className="text-xs text-slate-300">Powered by</span>

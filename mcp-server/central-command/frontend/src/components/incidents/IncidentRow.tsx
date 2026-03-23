@@ -7,6 +7,10 @@ interface IncidentRowProps {
   incident: Incident;
   onClick?: () => void;
   compact?: boolean;
+  onResolve?: (id: string) => void;
+  onEscalate?: (id: string) => void;
+  onSuppress?: (id: string) => void;
+  actionLoading?: string | null;
 }
 
 const formatTime = (dateStr: string): string => {
@@ -30,12 +34,46 @@ const formatTimeShort = (dateStr: string): string => {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
+/** Inline SVG icons for action buttons */
+const CheckIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+  </svg>
+);
+
+const ArrowUpIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+  </svg>
+);
+
+const BellSlashIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+    <line x1="3" y1="3" x2="21" y2="21" strokeLinecap="round" />
+  </svg>
+);
+
 export const IncidentRow: React.FC<IncidentRowProps> = memo(({
   incident,
   onClick,
   compact = false,
+  onResolve,
+  onEscalate,
+  onSuppress,
+  actionLoading,
 }) => {
   const checkLabel = CHECK_TYPE_LABELS[incident.check_type] || incident.check_type;
+  const isLoading = actionLoading === String(incident.id);
+  const showActions = !compact && !incident.resolved && (onResolve || onEscalate || onSuppress);
+
+  /** Stop event propagation so row click (expand) does not fire */
+  const handleAction = (e: React.MouseEvent, action: ((id: string) => void) | undefined) => {
+    e.stopPropagation();
+    if (action && !isLoading) {
+      action(String(incident.id));
+    }
+  };
 
   if (compact) {
     return (
@@ -71,7 +109,7 @@ export const IncidentRow: React.FC<IncidentRowProps> = memo(({
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-4 p-4 bg-fill-secondary hover:bg-fill-primary rounded-ios-md transition-colors text-left border border-separator-light"
+      className="group w-full flex items-center gap-4 p-4 bg-fill-secondary hover:bg-fill-primary rounded-ios-md transition-colors text-left border border-separator-light"
     >
       {/* Status indicator */}
       <span
@@ -119,14 +157,57 @@ export const IncidentRow: React.FC<IncidentRowProps> = memo(({
         )}
       </div>
 
-      {/* Status */}
-      <div className="w-16 flex-shrink-0 text-right">
-        {incident.resolved ? (
-          <span className="text-sm text-health-healthy font-medium">Resolved</span>
-        ) : (
-          <span className="text-sm text-health-warning font-medium">Active</span>
-        )}
-      </div>
+      {/* Inline action buttons */}
+      {showActions ? (
+        <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex-shrink-0">
+          {isLoading ? (
+            <span className="w-20 flex justify-center">
+              <svg className="w-4 h-4 animate-spin text-label-tertiary" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4 31.4" strokeLinecap="round" />
+              </svg>
+            </span>
+          ) : (
+            <>
+              {onResolve && (
+                <button
+                  onClick={(e) => handleAction(e, onResolve)}
+                  className="p-1.5 rounded-ios-sm hover:bg-health-healthy/10 text-health-healthy transition-colors"
+                  title="Resolve"
+                >
+                  <CheckIcon className="w-4 h-4" />
+                </button>
+              )}
+              {onEscalate && (
+                <button
+                  onClick={(e) => handleAction(e, onEscalate)}
+                  className="p-1.5 rounded-ios-sm hover:bg-ios-orange/10 text-ios-orange transition-colors"
+                  title="Escalate to L3"
+                >
+                  <ArrowUpIcon className="w-4 h-4" />
+                </button>
+              )}
+              {onSuppress && (
+                <button
+                  onClick={(e) => handleAction(e, onSuppress)}
+                  className="p-1.5 rounded-ios-sm hover:bg-label-tertiary/10 text-label-tertiary transition-colors"
+                  title="Suppress 24h"
+                >
+                  <BellSlashIcon className="w-4 h-4" />
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        /* Status (shown when resolved or no action handlers) */
+        <div className="w-16 flex-shrink-0 text-right">
+          {incident.resolved ? (
+            <span className="text-sm text-health-healthy font-medium">Resolved</span>
+          ) : (
+            <span className="text-sm text-health-warning font-medium">Active</span>
+          )}
+        </div>
+      )}
     </button>
   );
 });

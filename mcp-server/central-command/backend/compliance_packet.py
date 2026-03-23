@@ -1,7 +1,7 @@
 """
-Compliance Packet Generator
+Monitoring Evidence Bundle Generator
 
-Generates monthly HIPAA compliance packets from real evidence bundle data.
+Generates monthly HIPAA monitoring evidence bundles from real evidence bundle data.
 
 Queries compliance_bundles table for actual check results, computes
 compliance scores, and generates auditor-ready markdown.
@@ -171,7 +171,7 @@ class CompliancePacket:
         self.output_dir = output_dir or Path("/tmp/compliance-packets")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.packet_id = f"CP-{year}{month:02d}-{site_id[:16]}"
+        self.packet_id = f"MON-{year}{month:02d}-{site_id[:16]}"
         self._period_start = datetime(year, month, 1, tzinfo=timezone.utc)
         if month == 12:
             self._period_end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
@@ -827,8 +827,8 @@ class CompliancePacket:
         return manifest
 
     def _render_markdown(self, data: Dict) -> str:
-        """Render compliance packet markdown from real data."""
-        template = Template("""# Monthly {{ framework_label }} Compliance Packet
+        """Render monitoring evidence bundle markdown from real data."""
+        template = Template("""# Monthly {{ framework_label }} Monitoring Evidence Bundle
 
 **Site:** {{ client_name }}
 **Site ID:** {{ client_id }}
@@ -990,8 +990,9 @@ To independently verify any Bitcoin anchor:
 
 ---
 
-**End of Monthly Compliance Packet**
+**End of Monthly Monitoring Evidence Bundle**
 **Audit Support:** All evidence bundles retained for 90+ days in WORM storage.
-Bitcoin blockchain anchors provide independent, tamper-proof verification of evidence timestamps.
+Bitcoin blockchain anchors provide independent, immutable timestamp anchoring that verifies evidence generation time.
+**Disclaimer:** This report represents automated monitoring observations and does not constitute HIPAA compliance certification. Consult qualified compliance professionals for formal assessments.
 """)
         return template.render(**data)

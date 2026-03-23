@@ -4,14 +4,65 @@ import { GlassCard } from '../components/shared';
 import { HealthGauge } from '../components/fleet';
 import { IncidentTrendChart, FleetHealthMatrix, AttentionPanel, ResolutionBreakdown, TopIncidentTypes } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
-import { useGlobalStats, useLearningStatus, useIncidents } from '../hooks';
+import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFleetPosture } from '../hooks';
+
+/**
+ * Renders a week-over-week delta indicator with directional arrow.
+ * positive = good for compliance/L1 rate, bad for incidents (inverted).
+ */
+const DeltaIndicator: React.FC<{
+  value: number;
+  suffix?: string;
+  invertColor?: boolean;
+}> = ({ value, suffix = '', invertColor = false }) => {
+  if (value === 0) {
+    return (
+      <span className="text-xs font-medium text-label-tertiary tabular-nums">
+        0{suffix} vs last week
+      </span>
+    );
+  }
+
+  const isPositive = value > 0;
+  // For incidents, positive delta (more incidents) is bad — invert the color
+  const isGood = invertColor ? !isPositive : isPositive;
+
+  return (
+    <span className={`text-xs font-medium tabular-nums ${isGood ? 'text-health-healthy' : 'text-health-critical'}`}>
+      <svg
+        className="w-3 h-3 inline-block mr-0.5 -mt-px"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={2.5}
+      >
+        {isPositive ? (
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+        ) : (
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        )}
+      </svg>
+      {isPositive ? '+' : ''}{typeof value === 'number' && !Number.isInteger(value) ? value.toFixed(1) : value}{suffix} vs last week
+    </span>
+  );
+};
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
 
   const { data: stats, isLoading: statsLoading } = useGlobalStats();
+  const { data: deltas } = useStatsDeltas();
   const { data: learning, isLoading: learningLoading } = useLearningStatus();
   const { data: incidents, isLoading: incidentsLoading, error: incidentsError } = useIncidents({ limit: 10 });
+  const { data: fleetPosture, isLoading: fleetLoading } = useFleetPosture();
+
+  // Worst 3 sites by compliance score (fleet-posture is already sorted by needs-attention)
+  const worstSites = React.useMemo(() => {
+    if (!fleetPosture || fleetPosture.length === 0) return [];
+    return [...fleetPosture]
+      .sort((a, b) => a.compliance_score - b.compliance_score)
+      .slice(0, 3);
+  }, [fleetPosture]);
 
   return (
     <div className="space-y-5 page-enter">
@@ -24,6 +75,7 @@ export const Dashboard: React.FC = () => {
               <p className="text-2xl font-bold mt-1 tabular-nums animate-count-up">
                 {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : stats?.total_clients ?? 0}
               </p>
+              {deltas && <DeltaIndicator value={deltas.clients_delta} />}
             </div>
             <div
               className="w-9 h-9 rounded-ios-md flex items-center justify-center bg-ios-blue/15 text-ios-blue"
@@ -42,6 +94,7 @@ export const Dashboard: React.FC = () => {
               <p className="text-2xl font-bold text-health-healthy mt-1 tabular-nums animate-count-up">
                 {statsLoading ? <span className="skeleton inline-block w-12 h-7" /> : `${stats?.avg_compliance_score ?? 0}%`}
               </p>
+              {deltas && <DeltaIndicator value={deltas.compliance_delta} suffix="%" />}
             </div>
             <HealthGauge score={stats?.avg_compliance_score ?? 0} size="sm" showLabel={false} />
           </div>
@@ -54,6 +107,7 @@ export const Dashboard: React.FC = () => {
               <p className="text-2xl font-bold mt-1 tabular-nums animate-count-up">
                 {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : stats?.incidents_24h ?? 0}
               </p>
+              {deltas && <DeltaIndicator value={deltas.incidents_24h_delta} invertColor />}
             </div>
             <div
               className="w-9 h-9 rounded-ios-md flex items-center justify-center bg-ios-orange/15 text-ios-orange"
@@ -72,6 +126,7 @@ export const Dashboard: React.FC = () => {
               <p className="text-2xl font-bold text-ios-blue mt-1 tabular-nums animate-count-up">
                 {statsLoading ? <span className="skeleton inline-block w-12 h-7" /> : `${stats?.l1_resolution_rate ?? 0}%`}
               </p>
+              {deltas && <DeltaIndicator value={deltas.l1_rate_delta} suffix="%" />}
             </div>
             <div
               className="w-9 h-9 rounded-ios-md flex items-center justify-center bg-ios-blue/15 text-ios-blue"
@@ -83,7 +138,7 @@ export const Dashboard: React.FC = () => {
           </div>
         </GlassCard>
 
-        {/* Drift Detection — 6 HIPAA checks active */}
+        {/* Drift Detection */}
         <GlassCard padding="md">
           <div className="flex items-center justify-between">
             <div>
@@ -103,9 +158,95 @@ export const Dashboard: React.FC = () => {
         </GlassCard>
       </div>
 
-      {/* Attention + Incident trend */}
+      {/* Attention + Worst Sites + Incident trend */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-        <AttentionPanel className="lg:col-span-2" />
+        <div className="lg:col-span-2 space-y-4">
+          <AttentionPanel />
+
+          {/* Worst-performing sites panel */}
+          <GlassCard>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-semibold text-label-primary">Needs Attention</h3>
+              <button
+                onClick={() => navigate('/fleet')}
+                className="text-xs text-accent-primary font-medium hover:underline"
+              >
+                View Fleet
+              </button>
+            </div>
+            {fleetLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="skeleton h-14 rounded-ios-md" />
+                ))}
+              </div>
+            ) : worstSites.length === 0 ? (
+              <p className="text-sm text-label-tertiary py-4 text-center">All sites healthy — nothing needs attention</p>
+            ) : (
+              <div className="space-y-1">
+                {worstSites.map((site) => {
+                  const scoreColor =
+                    site.compliance_score >= 80
+                      ? 'text-health-healthy'
+                      : site.compliance_score >= 50
+                        ? 'text-health-warning'
+                        : 'text-health-critical';
+                  const barColor =
+                    site.compliance_score >= 80
+                      ? 'bg-health-healthy'
+                      : site.compliance_score >= 50
+                        ? 'bg-health-warning'
+                        : 'bg-health-critical';
+                  const trendIcon =
+                    site.trend === 'improving' ? (
+                      <svg className="w-3 h-3 text-health-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                      </svg>
+                    ) : site.trend === 'declining' ? (
+                      <svg className="w-3 h-3 text-health-critical" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    ) : null;
+
+                  return (
+                    <button
+                      key={site.site_id}
+                      onClick={() => navigate(`/sites/${site.site_id}`)}
+                      className="w-full flex items-center gap-3 p-3 rounded-ios-md text-left transition-all hover:bg-fill-secondary"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-label-primary truncate">
+                            {site.clinic_name}
+                          </p>
+                          {trendIcon}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <div className="flex-1 h-1.5 bg-fill-secondary rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${barColor}`}
+                              style={{ width: `${Math.min(site.compliance_score, 100)}%` }}
+                            />
+                          </div>
+                          <span className={`text-xs font-semibold tabular-nums ${scoreColor}`}>
+                            {site.compliance_score}%
+                          </span>
+                        </div>
+                        {(site.unresolved > 0 || site.incidents_24h > 0) && (
+                          <p className="text-[10px] text-label-tertiary mt-1">
+                            {site.unresolved > 0 && <span>{site.unresolved} unresolved</span>}
+                            {site.unresolved > 0 && site.incidents_24h > 0 && <span> / </span>}
+                            {site.incidents_24h > 0 && <span>{site.incidents_24h} in 24h</span>}
+                          </p>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </GlassCard>
+        </div>
         <IncidentTrendChart className="lg:col-span-3" />
       </div>
 

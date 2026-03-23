@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { NotificationBell } from '../shared/NotificationBell';
 
 interface User {
   username: string;
@@ -63,6 +64,9 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right: Actions */}
       <div className="flex items-center gap-2">
+        {/* Notifications */}
+        <NotificationBell />
+
         {/* Search */}
         <div className="relative">
           {searchOpen ? (

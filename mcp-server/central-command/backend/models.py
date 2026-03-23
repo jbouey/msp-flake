@@ -455,6 +455,14 @@ class GlobalStats(BaseModel):
     computed_at: Optional[str] = None
 
 
+class StatsDeltas(BaseModel):
+    """Week-over-week delta indicators for KPI cards."""
+    compliance_delta: float = 0.0
+    incidents_24h_delta: int = 0
+    l1_rate_delta: float = 0.0
+    clients_delta: int = 0
+
+
 class ClientStats(BaseModel):
     """Statistics for a specific client."""
     site_id: str
