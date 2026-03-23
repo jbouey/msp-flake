@@ -85,6 +85,37 @@ func newAutoDeployer(d *Daemon) *autoDeployer {
 	}
 }
 
+// processPendingDeploys handles "Take Over" deploys from Central Command.
+// Called after each successful checkin when the response includes pending_deploys.
+func (a *autoDeployer) processPendingDeploys(ctx context.Context, deploys []PendingDeploy, siteID string) []DeployResult {
+	var results []DeployResult
+	for _, deploy := range deploys {
+		result := DeployResult{DeviceID: deploy.DeviceID}
+
+		var err error
+		switch deploy.DeployMethod {
+		case "ssh":
+			err = a.daemon.deployViaSSH(ctx, deploy, siteID)
+		case "winrm":
+			// Reuse existing WinRM deploy infrastructure
+			err = fmt.Errorf("winrm auto-deploy not yet implemented for standalone devices")
+		default:
+			err = fmt.Errorf("unknown deploy method: %s", deploy.DeployMethod)
+		}
+
+		if err != nil {
+			result.Status = "failed"
+			result.Error = err.Error()
+			log.Printf("[autodeploy] deploy failed: device=%s hostname=%s error=%v", deploy.DeviceID, deploy.Hostname, err)
+		} else {
+			result.Status = "success"
+			log.Printf("[autodeploy] deploy succeeded: device=%s hostname=%s os=%s", deploy.DeviceID, deploy.Hostname, deploy.OSType)
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
 // runAutoDeployIfNeeded is called each daemon cycle. It checks if it's time
 // to enumerate and deploy, and runs if so. Uses atomic guard to prevent
 // overlapping runs when the main loop ticks faster than AD enumeration.
@@ -458,6 +489,12 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 
 		hostname := ws.Hostname
 		if hostname == "" {
+			continue
+		}
+
+		// Skip if a Go agent is already connected for this host (active agent = no deploy needed)
+		if ad.daemon.registry != nil && ad.daemon.registry.HasAgentForHost(hostname) {
+			skipped++
 			continue
 		}
 

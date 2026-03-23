@@ -136,6 +136,9 @@ type Daemon struct {
 
 	// Log shipper: tails journald and ships batches to Central Command
 	logShipper *logshipper.Shipper
+
+	// Pending deploy results to report on the next checkin
+	pendingDeployResults []DeployResult
 }
 
 // safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
@@ -531,6 +534,12 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		req.EncryptionPublicKey = d.envelopeKP.PublicKeyHex()
 	}
 
+	// Include deploy results from previous cycle (cleared after send)
+	if len(d.pendingDeployResults) > 0 {
+		req.DeployResults = d.pendingDeployResults
+		d.pendingDeployResults = nil
+	}
+
 	resp, err := d.phoneCli.Checkin(ctx, &req)
 	if err != nil {
 		failures := d.phoneCli.ConsecutiveFailures()
@@ -658,6 +667,13 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	// Process pending orders via order processor
 	if len(resp.PendingOrders) > 0 {
 		d.processOrders(ctx, resp.PendingOrders)
+	}
+
+	// Process pending deploys from Central Command ("Take Over" flow)
+	if len(resp.PendingDeploys) > 0 {
+		log.Printf("[daemon] Received %d pending deploys", len(resp.PendingDeploys))
+		results := d.deployer.processPendingDeploys(ctx, resp.PendingDeploys, d.config.SiteID)
+		d.pendingDeployResults = results
 	}
 
 	// Drain queued telemetry entries (network is known-good after successful checkin)
