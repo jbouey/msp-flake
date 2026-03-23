@@ -30,7 +30,7 @@ func (ds *driftScanner) RunAppDiscovery(ctx context.Context, params map[string]i
 	// Build PowerShell discovery script from hints
 	script := buildDiscoveryScript(hintsRaw)
 
-	cfg := ds.daemon.config
+	cfg := ds.svc.Config
 	if cfg.DomainController == nil || *cfg.DomainController == "" {
 		return nil, fmt.Errorf("no domain controller configured")
 	}
@@ -50,7 +50,7 @@ func (ds *driftScanner) RunAppDiscovery(ctx context.Context, params map[string]i
 		}
 
 		log.Printf("[app_discovery] Scanning %s (%s)", t.hostname, t.label)
-		result := ds.daemon.winrmExec.ExecuteCtx(ctx, t.target, script, "APP-DISCOVERY", "detect", 120, 1, 0, nil)
+		result := ds.svc.WinRM.ExecuteCtx(ctx, t.target, script, "APP-DISCOVERY", "detect", 120, 1, 0, nil)
 		if !result.Success {
 			log.Printf("[app_discovery] Failed to scan %s: %s", t.hostname, result.Error)
 			continue
@@ -105,8 +105,8 @@ func (ds *driftScanner) RunAppDiscovery(ctx context.Context, params map[string]i
 
 // buildWindowsTargets returns the list of Windows scan targets (DC + workstations).
 func (ds *driftScanner) buildWindowsTargets() []scanTarget {
-	cfg := ds.daemon.config
-	dcWS := ds.daemon.probeWinRM(*cfg.DomainController)
+	cfg := ds.svc.Config
+	dcWS := ds.svc.Targets.ProbeWinRMPort(*cfg.DomainController)
 	targets := []scanTarget{
 		{
 			hostname: *cfg.DomainController,
@@ -125,7 +125,7 @@ func (ds *driftScanner) buildWindowsTargets() []scanTarget {
 	if ds.daemon.deployer != nil {
 		ds.daemon.deployer.mu.Lock()
 		for hostname := range ds.daemon.deployer.deployed {
-			ws := ds.daemon.probeWinRM(hostname)
+			ws := ds.svc.Targets.ProbeWinRMPort(hostname)
 			targets = append(targets, scanTarget{
 				hostname: hostname,
 				label:    "WS",

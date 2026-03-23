@@ -103,7 +103,8 @@ func (rd *rogueDetector) checkForRogues(devices []discoveredDevice) []discovered
 // - External binding detection (services on 0.0.0.0 vs localhost)
 // - ARP-based device discovery (LAN host inventory)
 type netScanner struct {
-	daemon *Daemon
+	svc    *Services // interfaces for decoupled access
+	daemon *Daemon   // for healing pipeline, evidence, deployer, etc.
 
 	mu           sync.Mutex
 	lastScanTime time.Time
@@ -117,8 +118,9 @@ type netScanner struct {
 	rogueDetector *rogueDetector
 }
 
-func newNetScanner(d *Daemon) *netScanner {
+func newNetScanner(svc *Services, d *Daemon) *netScanner {
 	return &netScanner{
+		svc:           svc,
 		daemon:        d,
 		rogueDetector: newRogueDetector(),
 	}
@@ -151,7 +153,7 @@ func (ns *netScanner) runNetScanIfNeeded(ctx context.Context) {
 // scanNetwork performs all network-level checks.
 func (ns *netScanner) scanNetwork(ctx context.Context) {
 	var findings []driftFinding
-	hostname := ns.daemon.config.SiteID + "-appliance"
+	hostname := ns.svc.Config.SiteID + "-appliance"
 
 	// 1. Check for unexpected listening ports on the appliance
 	portFindings := ns.checkListeningPorts(hostname)
@@ -351,7 +353,7 @@ func (ns *netScanner) checkListeningPorts(hostname string) []driftFinding {
 // checkHostReachability verifies known network hosts are responsive.
 func (ns *netScanner) checkHostReachability(ctx context.Context, applianceHostname string) []driftFinding {
 	var findings []driftFinding
-	cfg := ns.daemon.config
+	cfg := ns.svc.Config
 
 	// Check DC reachability on WinRM port
 	if cfg.DomainController != nil && *cfg.DomainController != "" {

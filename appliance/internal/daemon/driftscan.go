@@ -52,7 +52,8 @@ const (
 // critical services stopped, BitLocker, SMB signing, etc.
 // Linux: firewall rules, SSH hardening, failed services, disk space, SUID, etc.
 type driftScanner struct {
-	daemon *Daemon
+	svc    *Services // interfaces for decoupled access
+	daemon *Daemon   // for healing pipeline, evidence, deployer, etc.
 
 	mu           sync.Mutex
 	lastScanTime time.Time
@@ -63,13 +64,13 @@ type driftScanner struct {
 	linuxRunning      int32 // atomic guard
 }
 
-func newDriftScanner(d *Daemon) *driftScanner {
-	return &driftScanner{daemon: d}
+func newDriftScanner(svc *Services, d *Daemon) *driftScanner {
+	return &driftScanner{svc: svc, daemon: d}
 }
 
 // isCheckDisabled returns true if the given check type has been disabled in site drift config.
 func (ds *driftScanner) isCheckDisabled(checkType string) bool {
-	return ds.daemon.state.IsDisabled(checkType)
+	return ds.svc.Checks.IsDisabled(checkType)
 }
 
 // ForceScan runs both Windows and Linux drift scans immediately,
@@ -81,7 +82,7 @@ func (ds *driftScanner) ForceScan(ctx context.Context) map[string]interface{} {
 	linuxDone := false
 
 	// Run Windows scan if configured
-	cfg := ds.daemon.config
+	cfg := ds.svc.Config
 	if cfg.WorkstationEnabled && cfg.DomainController != nil && *cfg.DomainController != "" {
 		if atomic.CompareAndSwapInt32(&ds.running, 0, 1) {
 			ds.mu.Lock()
@@ -139,7 +140,7 @@ func (ds *driftScanner) runDriftScanIfNeeded(ctx context.Context) {
 
 // scanWindowsTargets enumerates known Windows targets and checks each for drift.
 func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
-	cfg := ds.daemon.config
+	cfg := ds.svc.Config
 	if cfg.DomainController == nil || *cfg.DomainController == "" {
 		return
 	}
@@ -148,7 +149,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 	}
 
 	// Build target list: DC + any deployed workstations
-	dcWS := ds.daemon.probeWinRM(*cfg.DomainController)
+	dcWS := ds.svc.Targets.ProbeWinRMPort(*cfg.DomainController)
 	targets := []scanTarget{
 		{
 			hostname: *cfg.DomainController,
@@ -170,17 +171,17 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		ds.daemon.deployer.mu.Lock()
 		for hostname := range ds.daemon.deployer.deployed {
 			// If a Go agent is connected for this host, skip WinRM — push covers it
-			if ds.daemon.registry != nil && ds.daemon.registry.HasAgentForHost(hostname) {
+			if ds.svc.Registry != nil && ds.svc.Registry.HasAgentForHost(hostname) {
 				log.Printf("[driftscan] Skipping WinRM for %s (covered by Go agent)", hostname)
 				continue
 			}
-			ws := ds.daemon.probeWinRM(hostname)
+			ws := ds.svc.Targets.ProbeWinRMPort(hostname)
 			// Use per-workstation credentials if available.
 			// Try hostname first, then resolved IP (credentials may be stored under IP).
 			wsUser := *cfg.DCUsername
 			wsPass := *cfg.DCPassword
 			connectHost := hostname
-			if wt, ok := ds.daemon.LookupWinTarget(hostname); ok && wt.Role != "domain_admin" {
+			if wt, ok := ds.svc.Targets.LookupWinTarget(hostname); ok && wt.Role != "domain_admin" {
 				wsUser = wt.Username
 				wsPass = wt.Password
 				connectHost = wt.Hostname // use the IP from credential if available
@@ -188,7 +189,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 				// Resolve hostname to IP and retry lookup
 				if addrs, err := net.DefaultResolver.LookupHost(ctx, hostname); err == nil && len(addrs) > 0 {
 					for _, addr := range addrs {
-						if wt2, ok2 := ds.daemon.LookupWinTarget(addr); ok2 && wt2.Role != "domain_admin" {
+						if wt2, ok2 := ds.svc.Targets.LookupWinTarget(addr); ok2 && wt2.Role != "domain_admin" {
 							wsUser = wt2.Username
 							wsPass = wt2.Password
 							connectHost = addr
@@ -520,7 +521,7 @@ $result.DangerousInboundRules = $dangerousRules
 $result | ConvertTo-Json -Depth 3 -Compress
 `
 
-	scanResult := ds.daemon.winrmExec.Execute(t.target, script, "DRIFT-SCAN", "driftscan", 30, 0, 15.0, nil)
+	scanResult := ds.svc.WinRM.Execute(t.target, script, "DRIFT-SCAN", "driftscan", 30, 0, 15.0, nil)
 	if !scanResult.Success {
 		// Try via DC proxy for workstations
 		if t.label == "WS" {
@@ -756,7 +757,7 @@ func (ds *driftScanner) evaluateWindowsFindings(state *windowsScanState, t scanT
 			"1.1.1.1": true, "1.0.0.1": true, "9.9.9.9": true,
 		}
 		// Also allow the DC IP as DNS
-		cfg := ds.daemon.config
+		cfg := ds.svc.Config
 		if cfg.DomainController != nil {
 			knownDNS[*cfg.DomainController] = true
 		}
@@ -994,12 +995,12 @@ func (ds *driftScanner) evaluateWindowsFindings(state *windowsScanState, t scanT
 
 // checkTargetViaDCProxy runs the drift scan on a workstation via the DC using Invoke-Command.
 func (ds *driftScanner) checkTargetViaDCProxy(ctx context.Context, t scanTarget) []driftFinding {
-	cfg := ds.daemon.config
+	cfg := ds.svc.Config
 	if cfg.DomainController == nil || *cfg.DomainController == "" {
 		return nil
 	}
 
-	dcWS := ds.daemon.probeWinRM(*cfg.DomainController)
+	dcWS := ds.svc.Targets.ProbeWinRMPort(*cfg.DomainController)
 	dcTarget := &winrm.Target{
 		Hostname:  *cfg.DomainController,
 		Port:      dcWS.Port,
@@ -1067,7 +1068,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		escapePSString(t.hostname),
 	)
 
-	scanResult := ds.daemon.winrmExec.Execute(dcTarget, proxyScript, "DRIFT-SCAN-PROXY", "driftscan", 60, 0, 30.0, nil)
+	scanResult := ds.svc.WinRM.Execute(dcTarget, proxyScript, "DRIFT-SCAN-PROXY", "driftscan", 60, 0, 30.0, nil)
 	if !scanResult.Success {
 		log.Printf("[driftscan] DC proxy scan failed for %s: %s", t.hostname, scanResult.Error)
 		return nil
@@ -1107,10 +1108,10 @@ $result | ConvertTo-Json -Depth 3 -Compress
 // - But the workstation has its own local admin credentials in the cred store
 func (ds *driftScanner) checkTargetDirectFallback(ctx context.Context, t scanTarget) []driftFinding {
 	// Look up per-workstation credentials
-	wt, ok := ds.daemon.LookupWinTarget(t.hostname)
+	wt, ok := ds.svc.Targets.LookupWinTarget(t.hostname)
 	if !ok {
 		// Try by IP from the original target
-		wt, ok = ds.daemon.LookupWinTarget(t.target.Hostname)
+		wt, ok = ds.svc.Targets.LookupWinTarget(t.target.Hostname)
 	}
 	if !ok || wt.Username == "" {
 		log.Printf("[driftscan] No workstation-specific credentials for %s, cannot fallback", t.hostname)
@@ -1118,7 +1119,7 @@ func (ds *driftScanner) checkTargetDirectFallback(ctx context.Context, t scanTar
 	}
 
 	// Build a new target with workstation-specific credentials
-	ws := ds.daemon.probeWinRM(wt.Hostname)
+	ws := ds.svc.Targets.ProbeWinRMPort(wt.Hostname)
 	directTarget := scanTarget{
 		hostname: t.hostname,
 		label:    "WS-DIRECT",
@@ -1146,7 +1147,7 @@ func (ds *driftScanner) runLinuxScanIfNeeded(ctx context.Context) {
 	defer atomic.StoreInt32(&ds.linuxRunning, 0)
 
 	// Check if we have targets — don't burn the interval timer on an empty scan
-	hasTargets := len(ds.daemon.state.GetLinuxTargets()) > 0
+	hasTargets := len(ds.svc.Targets.GetLinuxTargets()) > 0
 
 	ds.linuxMu.Lock()
 	since := time.Since(ds.lastLinuxScanTime)
@@ -1182,11 +1183,11 @@ func (ds *driftScanner) reportDrift(f *driftFinding) {
 	}
 
 	// If the daemon has DC credentials, include them for healing
-	if ds.daemon.config.DCUsername != nil {
-		metadata["winrm_username"] = *ds.daemon.config.DCUsername
+	if ds.svc.Config.DCUsername != nil {
+		metadata["winrm_username"] = *ds.svc.Config.DCUsername
 	}
-	if ds.daemon.config.DCPassword != nil {
-		metadata["winrm_password"] = *ds.daemon.config.DCPassword
+	if ds.svc.Config.DCPassword != nil {
+		metadata["winrm_password"] = *ds.svc.Config.DCPassword
 	}
 
 	req := grpcserver.HealRequest{

@@ -57,7 +57,8 @@ const (
 //  4. DC Proxy: WMI process creation to enable PSRemoting, then retry
 //  5. Escalate to operator after maxConsecutiveFailures (default 3)
 type autoDeployer struct {
-	daemon *Daemon
+	svc    *Services // interfaces for decoupled access
+	daemon *Daemon   // for deploy methods, binary paths, etc.
 
 	mu           sync.Mutex
 	deployed     map[string]time.Time // hostname → last successful deploy time
@@ -87,8 +88,9 @@ type autoDeployer struct {
 
 const maxConsecutiveFailures = 3 // Escalate after this many failures
 
-func newAutoDeployer(d *Daemon) *autoDeployer {
+func newAutoDeployer(svc *Services, d *Daemon) *autoDeployer {
 	return &autoDeployer{
+		svc:          svc,
 		daemon:       d,
 		deployed:     make(map[string]time.Time),
 		lastCheck:    make(map[string]time.Time),
@@ -213,7 +215,7 @@ func (a *autoDeployer) ensureLocalBinary(ctx context.Context, osType string) err
 	// path is still set even when the file is missing — use it as the target
 
 	// Download from Central Command
-	apiEndpoint := a.daemon.config.APIEndpoint
+	apiEndpoint := a.svc.Config.APIEndpoint
 	if apiEndpoint == "" {
 		apiEndpoint = "https://api.osiriscare.net"
 	}

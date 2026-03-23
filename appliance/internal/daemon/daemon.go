@@ -31,7 +31,7 @@ import (
 )
 
 // Version is set at build time.
-var Version = "0.3.26"
+var Version = "0.3.27"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {
@@ -231,13 +231,13 @@ func New(cfg *Config) *Daemon {
 	}
 
 	// Initialize auto-deployer for zero-friction agent spread
-	d.deployer = newAutoDeployer(d)
+	d.deployer = newAutoDeployer(d.svc, d)
 
 	// Wire the AD hostnames callback now that deployer exists
 	d.state.SetADHostnamesFunc(d.deployer.getADHostnames)
 
 	// Initialize drift scanner for periodic security checks
-	d.scanner = newDriftScanner(d)
+	d.scanner = newDriftScanner(d.svc, d)
 
 	// Override run_drift order stub with real handler that triggers scanner
 	d.orderProc.RegisterHandler("run_drift", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
@@ -269,10 +269,10 @@ func New(cfg *Config) *Daemon {
 	})
 
 	// Initialize network scanner for port/reachability checks
-	d.netScan = newNetScanner(d)
+	d.netScan = newNetScanner(d.svc, d)
 
 	// Initialize self-healer for agent heartbeat monitoring + auto-redeploy
-	d.selfHealer = newSelfHealer(d)
+	d.selfHealer = newSelfHealer(d.svc, d)
 
 	// Initialize evidence submitter for compliance pipeline
 	if cfg.EnableEvidenceUpload {

@@ -25,13 +25,15 @@ type agentHealthEntry struct {
 
 // selfHealer monitors agent heartbeats and auto-redeploys dead agents.
 type selfHealer struct {
-	daemon  *Daemon
+	svc     *Services // interfaces for decoupled access
+	daemon  *Daemon   // for deploy methods, scanner, credentials, etc.
 	agents  map[string]*agentHealthEntry // keyed by hostname
 	lastRun time.Time
 }
 
-func newSelfHealer(d *Daemon) *selfHealer {
+func newSelfHealer(svc *Services, d *Daemon) *selfHealer {
 	return &selfHealer{
+		svc:    svc,
 		daemon: d,
 		agents: make(map[string]*agentHealthEntry),
 	}

@@ -278,7 +278,7 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 	var scannedHosts []string
 
 	// Remote Linux targets from checkin response
-	targets := ds.daemon.state.GetLinuxTargets()
+	targets := ds.svc.Targets.GetLinuxTargets()
 
 	for _, lt := range targets {
 		select {
@@ -345,7 +345,7 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 
 // scanLinuxRemote scans a remote Linux target via SSH.
 func (ds *driftScanner) scanLinuxRemote(ctx context.Context, target *sshexec.Target, label string) []driftFinding {
-	result := ds.daemon.sshExec.Execute(
+	result := ds.svc.SSH.Execute(
 		ctx, target, linuxScanScript,
 		"LINUX-DRIFT-SCAN", "driftscan",
 		60, 1, 15.0, true, nil,

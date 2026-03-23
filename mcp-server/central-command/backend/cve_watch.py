@@ -639,41 +639,196 @@ async def _match_cves_to_fleet(pool) -> int:
     return matched
 
 
+def _parse_cpe23(cpe_str: str) -> Optional[Dict[str, str]]:
+    """Parse a CPE 2.3 URI into its components.
+
+    Format: cpe:2.3:part:vendor:product:version:update:edition:language:sw_edition:target_sw:target_hw:other
+    Returns dict with keys: part, vendor, product, version, update, edition, language,
+    sw_edition, target_sw, target_hw, other. Returns None if not a valid CPE 2.3 string.
+    """
+    if not cpe_str or not cpe_str.startswith("cpe:2.3:"):
+        return None
+    parts = cpe_str.split(":")
+    if len(parts) < 5:
+        return None
+    fields = ["cpe", "version_tag", "part", "vendor", "product", "version",
+              "update", "edition", "language", "sw_edition", "target_sw",
+              "target_hw", "other"]
+    result = {}
+    for i, name in enumerate(fields):
+        if i < len(parts):
+            result[name] = parts[i]
+        else:
+            result[name] = "*"
+    return result
+
+
+def _compare_versions(v1: str, v2: str) -> int:
+    """Compare two version strings numerically where possible.
+
+    Returns -1 if v1 < v2, 0 if equal, 1 if v1 > v2.
+    Splits on '.' and compares each segment numerically (falling back to string).
+    """
+    def _normalize(v: str) -> list:
+        segments = []
+        for s in v.split("."):
+            try:
+                segments.append((0, int(s)))
+            except ValueError:
+                segments.append((1, s))
+        return segments
+
+    p1 = _normalize(v1)
+    p2 = _normalize(v2)
+
+    # Pad shorter list with zeros
+    max_len = max(len(p1), len(p2))
+    while len(p1) < max_len:
+        p1.append((0, 0))
+    while len(p2) < max_len:
+        p2.append((0, 0))
+
+    for a, b in zip(p1, p2):
+        if a[0] != b[0]:
+            # Mixed numeric/string — compare as strings
+            sa = str(a[1])
+            sb = str(b[1])
+            if sa < sb:
+                return -1
+            elif sa > sb:
+                return 1
+        else:
+            if a[1] < b[1]:
+                return -1
+            elif a[1] > b[1]:
+                return 1
+    return 0
+
+
+def _version_in_range(
+    version: str,
+    start_incl: Optional[str] = None,
+    end_excl: Optional[str] = None,
+    end_incl: Optional[str] = None,
+) -> bool:
+    """Check if a version falls within the specified range.
+
+    Args:
+        version: The version to test.
+        start_incl: Minimum version (inclusive). None means no lower bound.
+        end_excl: Maximum version (exclusive). None means no upper bound.
+        end_incl: Maximum version (inclusive). None means no upper bound.
+
+    Returns True if the version is within the range.
+    """
+    if start_incl and _compare_versions(version, start_incl) < 0:
+        return False
+    if end_excl and _compare_versions(version, end_excl) >= 0:
+        return False
+    if end_incl and _compare_versions(version, end_incl) > 0:
+        return False
+    return True
+
+
+# Maps CPE vendor:product keywords to the appliance metadata field that holds
+# the relevant version.  None means "match any appliance" (presence-only check).
+_CPE_PRODUCT_MAP: Dict[str, Optional[str]] = {
+    "microsoft:windows_server": None,
+    "microsoft:windows_10": None,
+    "microsoft:windows_11": None,
+    "canonical:ubuntu": None,
+    "openssh:openssh": None,
+    "python:python": "agent_version",
+    "nix:nixos": "nixos_version",
+    "nixos": "nixos_version",
+}
+
+
 def _cpe_matches_appliance(affected_cpes: list, appliance: dict) -> bool:
     """Check if any affected CPE matches an appliance's software profile.
 
-    Simple keyword matching — maps CPE vendor:product to appliance metadata.
-    A more sophisticated implementation would parse CPE version ranges.
+    Two-phase matching:
+    1. Parse CPE 2.3 format and compare vendor:product + version/version-range.
+    2. Fallback to keyword heuristics for CPEs that don't parse cleanly.
+
+    Version-aware: if the CPE specifies a concrete version or version range
+    (versionStartIncluding / versionEndExcluding / versionEndIncluding),
+    the appliance's actual version must fall within that range.  If the CPE
+    version is '*' (any) and no range fields are present, the match is
+    presence-only (same as before).
     """
     for cpe_match in affected_cpes:
-        criteria = cpe_match.get("criteria", "").lower()
+        criteria = cpe_match.get("criteria", "")
+        criteria_lower = criteria.lower()
 
-        # Windows Server
-        if "microsoft:windows_server" in criteria:
-            return True  # All Windows targets are potentially affected
+        # ------------------------------------------------------------------
+        # Phase 1: structured CPE 2.3 parsing
+        # ------------------------------------------------------------------
+        parsed = _parse_cpe23(criteria_lower)
+        if parsed:
+            cpe_vendor = parsed.get("vendor", "*")
+            cpe_product = parsed.get("product", "*")
+            cpe_version = parsed.get("version", "*")
+            vendor_product = f"{cpe_vendor}:{cpe_product}"
 
-        # Windows 10/11 workstations
-        if "microsoft:windows_10" in criteria or "microsoft:windows_11" in criteria:
-            return True
+            # Version range fields from NVD match data
+            v_start_incl = cpe_match.get("versionStartIncluding")
+            v_end_excl = cpe_match.get("versionEndExcluding")
+            v_end_incl = cpe_match.get("versionEndIncluding")
+            has_range = any(v is not None for v in (v_start_incl, v_end_excl, v_end_incl))
 
-        # Ubuntu
-        if "canonical:ubuntu" in criteria:
-            return True
+            # Try to match vendor:product against our known product map
+            matched_field = None
+            product_matched = False
+            for pattern, field in _CPE_PRODUCT_MAP.items():
+                if pattern in vendor_product or pattern in criteria_lower:
+                    product_matched = True
+                    matched_field = field
+                    break
 
-        # OpenSSH (affects all Linux targets)
-        if "openssh" in criteria:
-            return True
+            if product_matched:
+                # If the mapped field is None, it's a presence-only product
+                # (e.g. Windows Server) — we still apply version filtering.
+                appliance_version = None
+                if matched_field:
+                    appliance_version = appliance.get(matched_field, "")
+                    if not appliance_version:
+                        continue  # Appliance doesn't have this software
 
-        # Python
-        if "python:python" in criteria:
-            agent_version = appliance.get("agent_version", "")
-            if agent_version:
-                return True
+                # Apply version filtering
+                if has_range:
+                    if appliance_version:
+                        if _version_in_range(appliance_version, v_start_incl, v_end_excl, v_end_incl):
+                            return True
+                    else:
+                        # Presence-only product with a version range —
+                        # we can't verify, so match conservatively
+                        return True
+                elif cpe_version != "*":
+                    # Specific version in the CPE itself (no range fields)
+                    if appliance_version:
+                        if _compare_versions(appliance_version, cpe_version) == 0:
+                            return True
+                    else:
+                        # Presence-only product with specific version —
+                        # can't verify exact version, skip this match
+                        continue
+                else:
+                    # Wildcard version, no range — any version matches
+                    return True
 
-        # NixOS
-        if "nix:nixos" in criteria or "nixos" in criteria:
-            if appliance.get("nixos_version"):
-                return True
+                continue  # Product matched but version didn't — try next CPE
+
+        # ------------------------------------------------------------------
+        # Phase 2: keyword fallback (for non-standard CPE strings)
+        # ------------------------------------------------------------------
+        for pattern, field in _CPE_PRODUCT_MAP.items():
+            if pattern in criteria_lower:
+                if field is None:
+                    return True
+                if appliance.get(field):
+                    return True
+                break
 
     return False
 

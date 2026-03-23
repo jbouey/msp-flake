@@ -306,7 +306,7 @@ func (ds *driftScanner) scanMacOSRemote(ctx context.Context, target *sshexec.Tar
 		probeConn.Close()
 	}
 
-	result := ds.daemon.sshExec.Execute(
+	result := ds.svc.SSH.Execute(
 		ctx, target, macosScanScript,
 		"MACOS-DRIFT-SCAN", "driftscan",
 		60, 1, 15.0, true, nil,

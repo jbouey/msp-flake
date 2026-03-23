@@ -82,7 +82,7 @@ try {
 $events | ConvertTo-Json -Compress -Depth 2
 `, windowsSecurityEventIDs, maxDeviceLogsPerHost)
 
-	result := ds.daemon.winrmExec.Execute(t.target, script, "EVENTLOG", "devicelogs", 30, 0, 10.0, nil)
+	result := ds.svc.WinRM.Execute(t.target, script, "EVENTLOG", "devicelogs", 30, 0, 10.0, nil)
 	if !result.Success {
 		return nil
 	}
