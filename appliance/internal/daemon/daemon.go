@@ -30,8 +30,9 @@ import (
 	"github.com/osiriscare/appliance/internal/winrm"
 )
 
-// Version is set at build time.
-var Version = "0.3.27"
+// Version is set at build time via -ldflags.
+// Default "dev" indicates an untagged development build.
+var Version = "dev"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {

@@ -1,7 +1,9 @@
-.PHONY: proto build test vet lint clean
+.PHONY: proto build build-linux build-windows test vet lint clean
 
 PROTO_DIR := ../proto
 OUT_DIR := proto
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS := -s -w -X github.com/osiriscare/appliance/internal/daemon.Version=$(VERSION)
 
 proto:
 	protoc \
@@ -11,9 +13,19 @@ proto:
 		$(PROTO_DIR)/compliance.proto
 
 build: proto
-	go build ./cmd/grpc-server/
-	go build ./cmd/appliance-daemon/
-	go build ./cmd/checkin-receiver/
+	go build -ldflags="$(LDFLAGS)" ./cmd/grpc-server/
+	go build -ldflags="$(LDFLAGS)" ./cmd/appliance-daemon/
+	go build -ldflags="$(LDFLAGS)" ./cmd/checkin-receiver/
+
+build-linux:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS)" \
+		-o bin/appliance-daemon ./cmd/appliance-daemon/
+
+build-windows:
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+		-ldflags="$(LDFLAGS)" \
+		-o bin/appliance-daemon.exe ./cmd/appliance-daemon/
 
 test:
 	go test ./... -v -count=1
@@ -26,4 +38,5 @@ lint:
 
 clean:
 	rm -f $(OUT_DIR)/*.pb.go
+	rm -rf bin/
 	go clean ./...

@@ -2,15 +2,19 @@
 package transport
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -84,12 +88,36 @@ func (c *GRPCClient) connect(ctx context.Context) error {
 	var opts []grpc.DialOption
 
 	if err != nil || tlsConfig == nil {
-		// No certs yet — connect with TLS (skip verify) for certificate enrollment.
-		// The server may have TLS enabled, so plain insecure won't work.
-		log.Println("[gRPC] No TLS certs found, connecting with TLS (skip verify) for enrollment")
-		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			InsecureSkipVerify: true,
-		})))
+		// No certs yet — connect with TLS for certificate enrollment.
+		// Use TOFU (Trust On First Use): accept the server cert on first
+		// connection and pin its SHA-256 fingerprint. On subsequent
+		// connections (reconnect/renewal), verify the pinned fingerprint.
+		fpPath := certFingerprintPath(c.config.DataDir)
+		enrollTLS := &tls.Config{
+			InsecureSkipVerify: true, // We verify manually via VerifyConnection
+			VerifyConnection: func(cs tls.ConnectionState) error {
+				if len(cs.PeerCertificates) == 0 {
+					return fmt.Errorf("no peer certificates presented")
+				}
+				actual := sha256.Sum256(cs.PeerCertificates[0].Raw)
+				pinned, pinErr := loadCertFingerprint(fpPath)
+				if pinErr != nil {
+					// First connection — TOFU: accept and pin
+					log.Printf("[transport] TOFU: pinning appliance cert fingerprint: %x", actual)
+					if saveErr := saveCertFingerprint(fpPath, actual[:]); saveErr != nil {
+						log.Printf("[transport] WARNING: failed to save cert pin: %v", saveErr)
+					}
+					return nil
+				}
+				// Subsequent connection — verify pin
+				if !bytes.Equal(actual[:], pinned) {
+					return fmt.Errorf("certificate fingerprint mismatch — expected %x, got %x (possible MITM)", pinned, actual[:])
+				}
+				return nil
+			},
+		}
+		log.Println("[gRPC] No TLS certs found, connecting with TLS (TOFU pinning) for enrollment")
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(enrollTLS)))
 		c.needsCerts = true
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
@@ -584,6 +612,25 @@ func getOSVersion() string {
 	// On Windows, read version from registry or RtlGetVersion
 	// For cross-compiled builds, return what we know
 	return "Windows/" + runtime.GOARCH
+}
+
+// certFingerprintPath returns the path to the pinned cert fingerprint file.
+func certFingerprintPath(dataDir string) string {
+	return filepath.Join(dataDir, "appliance_cert_pin.hex")
+}
+
+// saveCertFingerprint writes a SHA-256 fingerprint to disk as hex.
+func saveCertFingerprint(path string, fingerprint []byte) error {
+	return os.WriteFile(path, []byte(hex.EncodeToString(fingerprint)), 0600)
+}
+
+// loadCertFingerprint reads a previously pinned SHA-256 fingerprint.
+func loadCertFingerprint(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return hex.DecodeString(strings.TrimSpace(string(data)))
 }
 
 func getMACAddress() string {

@@ -226,7 +226,8 @@ func (a *autoDeployer) ensureLocalBinary(ctx context.Context, osType string) err
 	if err != nil {
 		return fmt.Errorf("build download request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("download binary: %w", err)
 	}

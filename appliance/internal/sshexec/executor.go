@@ -174,7 +174,8 @@ func (e *Executor) executeOnce(ctx context.Context, target *Target, script strin
 	var cmd string
 	if useSudo && target.Username != "root" {
 		if target.SudoPassword != nil && *target.SudoPassword != "" {
-			cmd = fmt.Sprintf(`echo '%s' | sudo -S bash -c "$(echo %s | base64 -d)"`, *target.SudoPassword, encoded)
+			escapedPass := shellEscapeSingleQuote(*target.SudoPassword)
+			cmd = fmt.Sprintf(`echo '%s' | sudo -S bash -c "$(echo %s | base64 -d)"`, escapedPass, encoded)
 		} else {
 			cmd = fmt.Sprintf(`sudo bash -c "$(echo %s | base64 -d)"`, encoded)
 		}
@@ -399,6 +400,13 @@ func (e *Executor) CloseAll() {
 }
 
 // --- Helpers ---
+
+// shellEscapeSingleQuote escapes a string for safe use inside single quotes
+// in POSIX shell. The standard technique ends the current single-quoted string,
+// inserts an escaped literal single quote, then re-opens the single-quoted string.
+func shellEscapeSingleQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "'\\''")
+}
 
 func (e *Executor) buildSSHConfig(target *Target) (*ssh.ClientConfig, error) {
 	username := target.Username

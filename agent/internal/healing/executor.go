@@ -6,12 +6,18 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	pb "github.com/osiriscare/agent/proto"
 )
+
+// bitlockerKeyDir is the secure local directory for recovery keys.
+// Overridable in tests.
+var bitlockerKeyDir = filepath.Join(os.Getenv("PROGRAMDATA"), "OsirisCare", "recovery-keys")
 
 // Execute runs a HealCommand and returns the result.
 func Execute(ctx context.Context, cmd *pb.HealCommand) *Result {
@@ -255,14 +261,30 @@ Write-Output "PROTECTOR_ID=$($rp.KeyProtectorId)"
 		}
 	}
 
-	artifacts := make(map[string]string)
+	var recoveryKey, protectorID string
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "RECOVERY_KEY=") {
-			artifacts["recovery_key"] = strings.TrimPrefix(line, "RECOVERY_KEY=")
+			recoveryKey = strings.TrimPrefix(line, "RECOVERY_KEY=")
 		}
 		if strings.HasPrefix(line, "PROTECTOR_ID=") {
-			artifacts["protector_id"] = strings.TrimPrefix(line, "PROTECTOR_ID=")
+			protectorID = strings.TrimPrefix(line, "PROTECTOR_ID=")
+		}
+	}
+
+	artifacts := make(map[string]string)
+	artifacts["protector_id"] = protectorID
+
+	// Never send the recovery key over gRPC — store it locally with
+	// restrictive permissions and record only a redacted placeholder
+	// in the artifacts that get transmitted to the appliance.
+	if recoveryKey != "" {
+		if err := saveBitLockerKey(protectorID, recoveryKey); err != nil {
+			log.Printf("[heal] WARNING: failed to save BitLocker recovery key locally: %v", err)
+			artifacts["recovery_key"] = "[REDACTED — local save failed]"
+		} else {
+			log.Printf("[heal] BitLocker recovery key generated and saved locally (protector %s)", protectorID)
+			artifacts["recovery_key"] = "[REDACTED — stored locally on endpoint]"
 		}
 	}
 
@@ -272,4 +294,19 @@ Write-Output "PROTECTOR_ID=$($rp.KeyProtectorId)"
 		Success:   true,
 		Artifacts: artifacts,
 	}
+}
+
+// saveBitLockerKey writes a recovery key to a secure local file (0600).
+func saveBitLockerKey(protectorID, key string) error {
+	if err := os.MkdirAll(bitlockerKeyDir, 0700); err != nil {
+		return fmt.Errorf("create key dir: %w", err)
+	}
+	// Sanitise protector ID for filename (strip braces)
+	safe := strings.NewReplacer("{", "", "}", "", "/", "_", "\\", "_").Replace(protectorID)
+	if safe == "" {
+		safe = "unknown"
+	}
+	path := filepath.Join(bitlockerKeyDir, safe+".key")
+	content := fmt.Sprintf("Protector: %s\nRecoveryKey: %s\n", protectorID, key)
+	return os.WriteFile(path, []byte(content), 0600)
 }

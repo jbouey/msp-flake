@@ -2,10 +2,16 @@
 package transport
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -27,11 +33,13 @@ var ErrQueueFull = fmt.Errorf("offline queue is full")
 
 // OfflineQueue stores events when the appliance is unreachable.
 // Uses SQLite with WAL mode for durability.
+// Payloads are encrypted at rest with AES-256-GCM when a cert key is available.
 type OfflineQueue struct {
-	db       *sql.DB
-	mu       sync.Mutex
-	maxSize  int
-	maxAge   time.Duration
+	db          *sql.DB
+	mu          sync.Mutex
+	maxSize     int
+	maxAge      time.Duration
+	certKeyPath string // path to agent TLS private key (for deriving encryption key)
 }
 
 // QueuedEvent represents an event stored in the offline queue
@@ -45,8 +53,9 @@ type QueuedEvent struct {
 
 // QueueOptions configures the offline queue
 type QueueOptions struct {
-	MaxSize int           // Maximum number of events (0 = use default)
-	MaxAge  time.Duration // Maximum age before pruning (0 = use default)
+	MaxSize     int           // Maximum number of events (0 = use default)
+	MaxAge      time.Duration // Maximum age before pruning (0 = use default)
+	CertKeyPath string        // Path to agent TLS key for payload encryption (optional)
 }
 
 // NewOfflineQueue creates a new offline queue backed by SQLite
@@ -72,7 +81,7 @@ func NewOfflineQueueWithOptions(dataDir string, opts QueueOptions) (*OfflineQueu
 		return nil, fmt.Errorf("failed to open queue database: %w", err)
 	}
 
-	// Create table if not exists
+	// Create table if not exists (encrypted column added for at-rest encryption)
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,6 +96,9 @@ func NewOfflineQueueWithOptions(dataDir string, opts QueueOptions) (*OfflineQueu
 		return nil, fmt.Errorf("failed to create events table: %w", err)
 	}
 
+	// Add encrypted column if it doesn't exist (migration for existing DBs)
+	_, _ = db.Exec(`ALTER TABLE events ADD COLUMN encrypted INTEGER DEFAULT 0`)
+
 	// Create index for efficient dequeue
 	_, err = db.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at)
@@ -97,13 +109,15 @@ func NewOfflineQueueWithOptions(dataDir string, opts QueueOptions) (*OfflineQueu
 	}
 
 	return &OfflineQueue{
-		db:      db,
-		maxSize: opts.MaxSize,
-		maxAge:  opts.MaxAge,
+		db:          db,
+		maxSize:     opts.MaxSize,
+		maxAge:      opts.MaxAge,
+		certKeyPath: opts.CertKeyPath,
 	}, nil
 }
 
-// Enqueue adds an event to the offline queue
+// Enqueue adds an event to the offline queue.
+// If a cert key is available, the payload is encrypted at rest with AES-256-GCM.
 func (q *OfflineQueue) Enqueue(event *pb.DriftEvent) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -118,9 +132,21 @@ func (q *OfflineQueue) Enqueue(event *pb.DriftEvent) error {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
+	encrypted := 0
+	key, keyErr := deriveQueueKey(q.certKeyPath)
+	if keyErr == nil {
+		enc, encErr := encryptPayload(key, payload)
+		if encErr == nil {
+			payload = enc
+			encrypted = 1
+		} else {
+			log.Printf("[OfflineQueue] WARNING: encryption failed, storing plaintext: %v", encErr)
+		}
+	}
+
 	_, err = q.db.Exec(
-		"INSERT INTO events (event_type, payload) VALUES (?, ?)",
-		"drift", payload,
+		"INSERT INTO events (event_type, payload, encrypted) VALUES (?, ?, ?)",
+		"drift", payload, encrypted,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to enqueue event: %w", err)
@@ -129,7 +155,8 @@ func (q *OfflineQueue) Enqueue(event *pb.DriftEvent) error {
 	return nil
 }
 
-// EnqueueRaw adds a raw event to the queue
+// EnqueueRaw adds a raw event to the queue.
+// Encrypts at rest when a cert key is available.
 func (q *OfflineQueue) EnqueueRaw(eventType string, payload []byte) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -139,9 +166,19 @@ func (q *OfflineQueue) EnqueueRaw(eventType string, payload []byte) error {
 		return err
 	}
 
+	encrypted := 0
+	key, keyErr := deriveQueueKey(q.certKeyPath)
+	if keyErr == nil {
+		enc, encErr := encryptPayload(key, payload)
+		if encErr == nil {
+			payload = enc
+			encrypted = 1
+		}
+	}
+
 	_, err := q.db.Exec(
-		"INSERT INTO events (event_type, payload) VALUES (?, ?)",
-		eventType, payload,
+		"INSERT INTO events (event_type, payload, encrypted) VALUES (?, ?, ?)",
+		eventType, payload, encrypted,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to enqueue event: %w", err)
@@ -186,14 +223,15 @@ func (q *OfflineQueue) enforceLimit() error {
 	return nil
 }
 
-// Dequeue retrieves and removes the oldest event from the queue
+// Dequeue retrieves and removes the oldest event from the queue.
+// Decrypts the payload if it was stored encrypted.
 func (q *OfflineQueue) Dequeue() (*pb.DriftEvent, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	// Get oldest event
 	row := q.db.QueryRow(`
-		SELECT id, payload FROM events
+		SELECT id, payload, COALESCE(encrypted, 0) FROM events
 		WHERE event_type = 'drift'
 		ORDER BY created_at ASC
 		LIMIT 1
@@ -201,7 +239,8 @@ func (q *OfflineQueue) Dequeue() (*pb.DriftEvent, bool) {
 
 	var id int64
 	var payload []byte
-	if err := row.Scan(&id, &payload); err != nil {
+	var encrypted int
+	if err := row.Scan(&id, &payload, &encrypted); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, false
 		}
@@ -214,6 +253,21 @@ func (q *OfflineQueue) Dequeue() (*pb.DriftEvent, bool) {
 		return nil, false
 	}
 
+	// Decrypt if needed
+	if encrypted == 1 {
+		key, keyErr := deriveQueueKey(q.certKeyPath)
+		if keyErr != nil {
+			log.Printf("[OfflineQueue] Cannot decrypt event %d: cert key unavailable: %v", id, keyErr)
+			return nil, false
+		}
+		dec, decErr := decryptPayload(key, payload)
+		if decErr != nil {
+			log.Printf("[OfflineQueue] Cannot decrypt event %d: %v", id, decErr)
+			return nil, false
+		}
+		payload = dec
+	}
+
 	// Unmarshal event
 	var event pb.DriftEvent
 	if err := json.Unmarshal(payload, &event); err != nil {
@@ -223,13 +277,14 @@ func (q *OfflineQueue) Dequeue() (*pb.DriftEvent, bool) {
 	return &event, true
 }
 
-// DequeueAll retrieves and removes all events up to a limit
+// DequeueAll retrieves and removes all events up to a limit.
+// Decrypts encrypted payloads before returning.
 func (q *OfflineQueue) DequeueAll(limit int) ([]*pb.DriftEvent, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	rows, err := q.db.Query(`
-		SELECT id, payload FROM events
+		SELECT id, payload, COALESCE(encrypted, 0) FROM events
 		WHERE event_type = 'drift'
 		ORDER BY created_at ASC
 		LIMIT ?
@@ -239,14 +294,31 @@ func (q *OfflineQueue) DequeueAll(limit int) ([]*pb.DriftEvent, error) {
 	}
 	defer rows.Close()
 
+	// Pre-derive key once for decryption (may be nil if cert not yet available)
+	queueKey, _ := deriveQueueKey(q.certKeyPath)
+
 	var events []*pb.DriftEvent
 	var ids []int64
 
 	for rows.Next() {
 		var id int64
 		var payload []byte
-		if err := rows.Scan(&id, &payload); err != nil {
+		var encrypted int
+		if err := rows.Scan(&id, &payload, &encrypted); err != nil {
 			continue
+		}
+
+		if encrypted == 1 {
+			if queueKey == nil {
+				log.Printf("[OfflineQueue] Skipping encrypted event %d: no key available", id)
+				continue
+			}
+			dec, decErr := decryptPayload(queueKey, payload)
+			if decErr != nil {
+				log.Printf("[OfflineQueue] Skipping event %d: decrypt failed: %v", id, decErr)
+				continue
+			}
+			payload = dec
 		}
 
 		var event pb.DriftEvent
@@ -346,7 +418,105 @@ func (q *OfflineQueue) Stats() QueueStats {
 	return stats
 }
 
+// SetCertKeyPath updates the cert key path after enrollment completes.
+// This lets the queue start encrypting new events once the agent has certs.
+func (q *OfflineQueue) SetCertKeyPath(path string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.certKeyPath = path
+}
+
+// UpgradePlaintextEvents re-encrypts any plaintext events in the queue.
+// Call after enrollment when a cert key becomes available.
+func (q *OfflineQueue) UpgradePlaintextEvents() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	key, err := deriveQueueKey(q.certKeyPath)
+	if err != nil {
+		return 0
+	}
+
+	rows, err := q.db.Query(`SELECT id, payload FROM events WHERE COALESCE(encrypted, 0) = 0`)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+
+	upgraded := 0
+	for rows.Next() {
+		var id int64
+		var payload []byte
+		if err := rows.Scan(&id, &payload); err != nil {
+			continue
+		}
+		enc, err := encryptPayload(key, payload)
+		if err != nil {
+			continue
+		}
+		if _, err := q.db.Exec(`UPDATE events SET payload = ?, encrypted = 1 WHERE id = ?`, enc, id); err != nil {
+			continue
+		}
+		upgraded++
+	}
+
+	if upgraded > 0 {
+		log.Printf("[OfflineQueue] Upgraded %d plaintext events to encrypted", upgraded)
+	}
+	return upgraded
+}
+
 // Close closes the database connection
 func (q *OfflineQueue) Close() error {
 	return q.db.Close()
+}
+
+// --- AES-256-GCM payload encryption ---
+
+// deriveQueueKey derives a 32-byte AES key from the agent's TLS private key file.
+func deriveQueueKey(certKeyPath string) ([]byte, error) {
+	if certKeyPath == "" {
+		return nil, fmt.Errorf("no cert key path configured")
+	}
+	keyData, err := os.ReadFile(certKeyPath)
+	if err != nil {
+		return nil, err
+	}
+	hash := sha256.Sum256(keyData)
+	return hash[:], nil
+}
+
+// encryptPayload encrypts plaintext with AES-256-GCM.
+// Returns nonce || ciphertext.
+func encryptPayload(key, plaintext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+// decryptPayload decrypts an AES-256-GCM payload (nonce || ciphertext).
+func decryptPayload(key, ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+	return gcm.Open(nil, ciphertext[:nonceSize], ciphertext[nonceSize:], nil)
 }
