@@ -494,6 +494,15 @@ Pre-flight failures show in UI: "Deploy blocked: 95% disk full" or "Requires mac
 
 **Files:** `mcp-server/app/main.py` (encrypt on save, decrypt on deliver), migration for encrypted format
 
+### 5F-pre — SSSD/AD-Joined Linux Detection (Phase 3)
+
+Linux machines joined to AD via SSSD/realmd/Winbind get a computer account in AD. Detection:
+- **AD cross-reference:** If `Get-ADComputer` returns a Linux hostname (OS contains "Linux"), mark `ad_joined = true` → auto-deploy path (SSH with domain creds or service account)
+- **Kerberos probe:** Port 88 open on the host suggests Kerberos client (likely domain-joined)
+- **SSSD fingerprint:** After SSH connect, check for `/etc/sssd/sssd.conf` or `realm list` output
+- Enables auto-deploy for enterprise clients (500+ seats) where Linux is domain-managed
+- Small clinics (1-50 providers) will almost never hit this path — their Linux is standalone
+
 ### 5F — Network Topology Awareness (Phase 3)
 
 **Detection:**
