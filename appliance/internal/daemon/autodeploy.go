@@ -5,10 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,6 +43,10 @@ const (
 
 	// DC proxy temp path for staging binaries
 	dcTempDir = `C:\Windows\Temp`
+
+	// Staggered deployment — batches of 3 with 30s gaps between batches
+	deployBatchSize = 3
+	deployBatchGap  = 30 * time.Second
 )
 
 // autoDeployer manages automatic Go agent deployment to discovered workstations.
@@ -85,35 +92,161 @@ func newAutoDeployer(d *Daemon) *autoDeployer {
 	}
 }
 
-// processPendingDeploys handles "Take Over" deploys from Central Command.
-// Called after each successful checkin when the response includes pending_deploys.
+// processPendingDeploys handles "Take Over" deploys from Central Command in
+// priority-sorted batches. Servers are deployed first, then workstations, then
+// everything else. Batches are deployBatchSize wide with a deployBatchGap pause
+// between them to avoid saturating slow clinic DSL/cable links.
 func (a *autoDeployer) processPendingDeploys(ctx context.Context, deploys []PendingDeploy, siteID string) []DeployResult {
-	var results []DeployResult
-	for _, deploy := range deploys {
-		result := DeployResult{DeviceID: deploy.DeviceID}
+	// Sort by priority: servers first, then workstations, then other
+	sortDeploysByPriority(deploys)
 
-		var err error
-		switch deploy.DeployMethod {
-		case "ssh":
-			err = a.daemon.deployViaSSH(ctx, deploy, siteID)
-		case "winrm":
-			// Reuse existing WinRM deploy infrastructure
-			err = fmt.Errorf("winrm auto-deploy not yet implemented for standalone devices")
-		default:
-			err = fmt.Errorf("unknown deploy method: %s", deploy.DeployMethod)
+	// Pre-cache binaries for all unique OS types before starting
+	seen := make(map[string]bool)
+	for _, d := range deploys {
+		if d.DeployMethod == "ssh" && !seen[d.OSType] {
+			seen[d.OSType] = true
+			if err := a.ensureLocalBinary(ctx, d.OSType); err != nil {
+				log.Printf("[autodeploy] Warning: could not cache binary for os=%s: %v", d.OSType, err)
+			}
 		}
-
-		if err != nil {
-			result.Status = "failed"
-			result.Error = err.Error()
-			log.Printf("[autodeploy] deploy failed: device=%s hostname=%s error=%v", deploy.DeviceID, deploy.Hostname, err)
-		} else {
-			result.Status = "success"
-			log.Printf("[autodeploy] deploy succeeded: device=%s hostname=%s os=%s", deploy.DeviceID, deploy.Hostname, deploy.OSType)
-		}
-		results = append(results, result)
 	}
-	return results
+
+	totalBatches := (len(deploys) + deployBatchSize - 1) / deployBatchSize
+	var allResults []DeployResult
+
+	for i := 0; i < len(deploys); i += deployBatchSize {
+		end := i + deployBatchSize
+		if end > len(deploys) {
+			end = len(deploys)
+		}
+		batch := deploys[i:end]
+		batchNum := (i / deployBatchSize) + 1
+
+		log.Printf("[autodeploy] Deploying batch %d/%d (%d devices)", batchNum, totalBatches, len(batch))
+
+		// Deploy batch sequentially (each deploy takes a minute or so)
+		for _, deploy := range batch {
+			result := DeployResult{DeviceID: deploy.DeviceID}
+
+			// Pre-flight: verify target is reachable and ready before deploying
+			preflight := runPreFlightChecks(ctx, a.daemon, deploy)
+			if !preflight.Passed {
+				result.Status = "failed"
+				result.Error = "Pre-flight failed: " + strings.Join(preflight.Blockers, "; ")
+				log.Printf("[autodeploy] Pre-flight failed for %s: %v", deploy.Hostname, preflight.Blockers)
+				allResults = append(allResults, result)
+				continue
+			}
+			if len(preflight.Warnings) > 0 {
+				log.Printf("[autodeploy] Pre-flight warnings for %s: %v", deploy.Hostname, preflight.Warnings)
+			}
+
+			var err error
+			switch deploy.DeployMethod {
+			case "ssh":
+				err = a.daemon.deployViaSSH(ctx, deploy, siteID)
+			case "winrm":
+				err = fmt.Errorf("winrm auto-deploy not yet implemented for standalone devices")
+			default:
+				err = fmt.Errorf("unknown deploy method: %s", deploy.DeployMethod)
+			}
+
+			if err != nil {
+				result.Status = "failed"
+				result.Error = err.Error()
+				log.Printf("[autodeploy] Deploy failed: %s — %v", deploy.Hostname, err)
+			} else {
+				result.Status = "success"
+				log.Printf("[autodeploy] Deploy succeeded: %s (%s)", deploy.Hostname, deploy.OSType)
+			}
+			allResults = append(allResults, result)
+		}
+
+		// Gap between batches (except after the last one)
+		if end < len(deploys) {
+			log.Printf("[autodeploy] Batch complete, waiting %v before next batch...", deployBatchGap)
+			select {
+			case <-ctx.Done():
+				return allResults
+			case <-time.After(deployBatchGap):
+			}
+		}
+	}
+	return allResults
+}
+
+// sortDeploysByPriority sorts deploys: servers first (priority 0), then everything else (priority 1).
+func sortDeploysByPriority(deploys []PendingDeploy) {
+	sort.SliceStable(deploys, func(i, j int) bool {
+		return deployPriority(deploys[i]) < deployPriority(deploys[j])
+	})
+}
+
+// deployPriority returns a numeric priority for a deploy (lower = earlier).
+// Servers and domain controllers are priority 0; all other hosts are priority 1.
+func deployPriority(d PendingDeploy) int {
+	hostname := strings.ToLower(d.Hostname)
+	switch {
+	case strings.Contains(hostname, "srv") ||
+		strings.Contains(hostname, "server") ||
+		strings.Contains(hostname, "dc"):
+		return 0 // servers and DCs first
+	default:
+		return 1 // everything else
+	}
+}
+
+// ensureLocalBinary downloads the agent binary for the given OS type if it is
+// not already cached on disk. The cache path is determined by getLocalBinaryPath.
+func (a *autoDeployer) ensureLocalBinary(ctx context.Context, osType string) error {
+	path, err := a.daemon.getLocalBinaryPath(osType)
+	if err == nil {
+		// getLocalBinaryPath already stat-checks the file; no error means it exists
+		return nil
+	}
+	// path is still set even when the file is missing — use it as the target
+
+	// Download from Central Command
+	apiEndpoint := a.daemon.config.APIEndpoint
+	if apiEndpoint == "" {
+		apiEndpoint = "https://api.osiriscare.net"
+	}
+	url := fmt.Sprintf("%s/updates/osiris-agent-%s-amd64", apiEndpoint, osType)
+	log.Printf("[autodeploy] Downloading agent binary from %s", url)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build download request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download binary: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download binary: status %d", resp.StatusCode)
+	}
+
+	// Ensure cache directory exists
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create binary cache dir: %w", err)
+	}
+
+	// Write to file
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create binary file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		return fmt.Errorf("write binary: %w", err)
+	}
+
+	log.Printf("[autodeploy] Cached agent binary at %s", path)
+	return nil
 }
 
 // runAutoDeployIfNeeded is called each daemon cycle. It checks if it's time
