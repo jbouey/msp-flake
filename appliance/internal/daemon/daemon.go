@@ -139,6 +139,9 @@ type Daemon struct {
 
 	// Pending deploy results to report on the next checkin
 	pendingDeployResults []DeployResult
+
+	// Self-healer: monitors agent heartbeats, auto-redeploys stale agents
+	selfHealer *selfHealer
 }
 
 // safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
@@ -282,6 +285,9 @@ func New(cfg *Config) *Daemon {
 
 	// Initialize network scanner for port/reachability checks
 	d.netScan = newNetScanner(d)
+
+	// Initialize self-healer for agent heartbeat monitoring + auto-redeploy
+	d.selfHealer = newSelfHealer(d)
 
 	// Initialize evidence submitter for compliance pipeline
 	if cfg.EnableEvidenceUpload {
@@ -472,6 +478,9 @@ func (d *Daemon) runCycle(ctx context.Context) {
 	if d.config.WorkstationEnabled && d.isSubscriptionActive() {
 		go d.deployer.runAutoDeployIfNeeded(ctx)
 	}
+
+	// Self-healing: watch for stale agent heartbeats and auto-redeploy.
+	go d.selfHealer.runSelfHealIfNeeded(ctx)
 
 	// Drift scanning: periodic security checks on Windows targets.
 	// Detects firewall disabled, rogue users, rogue tasks, stopped services.
@@ -681,6 +690,18 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		d.telemetry.DrainQueue()
 	}
 
+	// Update self-healer with current agent heartbeat data from gRPC registry
+	if agents := d.registry.AllAgents(); len(agents) > 0 {
+		agentInfos := make([]GoAgentInfo, 0, len(agents))
+		for _, a := range agents {
+			agentInfos = append(agentInfos, GoAgentInfo{
+				Hostname:      a.Hostname,
+				LastHeartbeat: a.LastHeartbeat,
+			})
+		}
+		d.selfHealer.updateFromCheckin(agentInfos)
+	}
+
 	// Persist state to disk for survival across restarts
 	d.saveState()
 }
@@ -793,6 +814,46 @@ func (d *Daemon) processOrders(ctx context.Context, rawOrders []map[string]inter
 			log.Printf("[daemon] Order %s failed: %s", r.OrderID, r.Error)
 		}
 	}
+}
+
+// HostCredentials holds the SSH/password credentials needed to redeploy an agent.
+type HostCredentials struct {
+	Username string
+	Password string
+	SSHKey   string
+}
+
+// findCredentialsForHost searches the daemon's stored linux and windows targets
+// for credentials matching the given hostname or IP address.
+// Returns nil if no matching credentials are found.
+func (d *Daemon) findCredentialsForHost(hostname, ip string) *HostCredentials {
+	// Check linux targets first (SSH key auth preferred)
+	d.linuxTargetsMu.RLock()
+	for _, t := range d.linuxTargets {
+		if t.Hostname == hostname || t.Hostname == ip {
+			creds := &HostCredentials{Username: t.Username}
+			if t.PrivateKey != "" {
+				creds.SSHKey = t.PrivateKey
+			}
+			if t.Password != "" {
+				creds.Password = t.Password
+			}
+			d.linuxTargetsMu.RUnlock()
+			return creds
+		}
+	}
+	d.linuxTargetsMu.RUnlock()
+
+	// Fall back to windows targets (WinRM password auth)
+	d.winTargetsMu.RLock()
+	defer d.winTargetsMu.RUnlock()
+	if t, ok := d.winTargets[hostname]; ok {
+		return &HostCredentials{Username: t.Username, Password: t.Password}
+	}
+	if t, ok := d.winTargets[ip]; ok {
+		return &HostCredentials{Username: t.Username, Password: t.Password}
+	}
+	return nil
 }
 
 // completeOrder reports order completion back to Central Command via HTTP POST.
