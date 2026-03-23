@@ -395,15 +395,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <p className="text-sm font-medium text-label-primary truncate">
               {user?.displayName || 'User'}
             </p>
+            {/* TODO: verify contrast ratio — text-label-tertiary on glass sidebar bg in dark mode */}
             <p className="text-[11px] text-label-tertiary capitalize">{user?.role || 'Guest'}</p>
           </div>
           {onLogout && (
             <button
               onClick={onLogout}
-              className="p-1.5 hover:bg-fill-tertiary rounded-ios-sm transition-colors"
+              className="p-1.5 hover:bg-fill-tertiary rounded-ios-sm transition-colors focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2"
               title="Sign out"
+              aria-label="Sign out"
             >
-              <svg className="w-4 h-4 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4 h-4 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
             </button>

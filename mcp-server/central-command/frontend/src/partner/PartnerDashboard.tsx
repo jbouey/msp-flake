@@ -9,6 +9,7 @@ import { PartnerLearning } from './PartnerLearning';
 import { PartnerEscalations } from './PartnerEscalations';
 import { PartnerDriftConfig } from './PartnerDriftConfig';
 import { PartnerOnboarding } from './PartnerOnboarding';
+import { InfoTip, WelcomeModal } from '../components/shared';
 
 interface Site {
   site_id: string;
@@ -55,6 +56,7 @@ export const PartnerDashboard: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [qrProvision, setQrProvision] = useState<Provision | null>(null);
   const [driftConfigSite, setDriftConfigSite] = useState<{ id: string; name: string } | null>(null);
+  const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem('osiriscare_partner_onboarded'));
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -210,6 +212,14 @@ export const PartnerDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50/80 page-enter">
+      <WelcomeModal
+        isOpen={showWelcome}
+        onClose={() => {
+          setShowWelcome(false);
+          localStorage.setItem('osiriscare_partner_onboarded', 'true');
+        }}
+        portalType="partner"
+      />
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-slate-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
@@ -229,15 +239,29 @@ export const PartnerDashboard: React.FC = () => {
               <p className="text-xs text-slate-500">Partner Dashboard</p>
             </div>
           </div>
-          <button
-            onClick={() => {
-              logout();
-              navigate('/partner/login');
-            }}
-            className="px-4 py-2 text-sm text-slate-500 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition"
-          >
-            Sign Out
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                localStorage.removeItem('osiriscare_partner_onboarded');
+                setShowWelcome(true);
+              }}
+              className="px-3 py-2 text-sm text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition"
+              title="Show Welcome Guide"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => {
+                logout();
+                navigate('/partner/login');
+              }}
+              className="px-4 py-2 text-sm text-slate-500 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
       </header>
 
@@ -249,7 +273,7 @@ export const PartnerDashboard: React.FC = () => {
               <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(79,70,229,0.12) 0%, rgba(124,58,237,0.08) 100%)' }}>
                 <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5" /></svg>
               </div>
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Total Sites</p>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Total Sites<InfoTip text="Client locations actively being monitored by your organization." /></p>
             </div>
             <p className="text-3xl font-bold text-slate-900 tabular-nums">{partner.site_count}</p>
           </div>
@@ -258,7 +282,7 @@ export const PartnerDashboard: React.FC = () => {
               <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(234,179,8,0.12) 0%, rgba(245,158,11,0.08) 100%)' }}>
                 <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
               </div>
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Pending</p>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Pending<InfoTip text="Provision codes created but not yet claimed by an appliance." /></p>
             </div>
             <p className="text-3xl font-bold text-yellow-600 tabular-nums">{partner.provisions.pending}</p>
           </div>
@@ -267,7 +291,7 @@ export const PartnerDashboard: React.FC = () => {
               <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.12) 0%, rgba(22,163,74,0.08) 100%)' }}>
                 <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
               </div>
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Claimed</p>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Claimed<InfoTip text="Provision codes successfully activated by appliances on-site." /></p>
             </div>
             <p className="text-3xl font-bold text-green-600 tabular-nums">{partner.provisions.claimed}</p>
           </div>
@@ -276,7 +300,7 @@ export const PartnerDashboard: React.FC = () => {
               <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${primaryColor}1F 0%, ${primaryColor}14 100%)` }}>
                 <svg className="w-5 h-5" style={{ color: primaryColor }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
               </div>
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Revenue Share</p>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Revenue Share<InfoTip text="Your percentage of recurring revenue from managed client sites." /></p>
             </div>
             <p className="text-3xl font-bold tabular-nums" style={{ color: primaryColor }}>
               {partner.revenue_share_percent}%
@@ -287,10 +311,10 @@ export const PartnerDashboard: React.FC = () => {
 
       {/* Tabs */}
       <div className="max-w-7xl mx-auto px-6">
-        <div className="flex gap-4 border-b">
+        <div className="flex gap-4 border-b overflow-x-auto -mx-6 px-6 min-w-0">
           <button
             onClick={() => setActiveTab('sites')}
-            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'sites'
                 ? 'border-indigo-600 text-indigo-600'
                 : 'border-transparent text-slate-500 hover:text-indigo-600'
@@ -300,7 +324,7 @@ export const PartnerDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('onboarding')}
-            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'onboarding'
                 ? 'border-indigo-600 text-indigo-600'
                 : 'border-transparent text-slate-500 hover:text-indigo-600'
@@ -310,7 +334,7 @@ export const PartnerDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('provisions')}
-            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'provisions'
                 ? 'border-indigo-600 text-indigo-600'
                 : 'border-transparent text-slate-500 hover:text-indigo-600'
@@ -320,7 +344,7 @@ export const PartnerDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('billing')}
-            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'billing'
                 ? 'border-indigo-600 text-indigo-600'
                 : 'border-transparent text-slate-500 hover:text-indigo-600'
@@ -330,7 +354,7 @@ export const PartnerDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('compliance')}
-            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'compliance'
                 ? 'border-indigo-600 text-indigo-600'
                 : 'border-transparent text-slate-500 hover:text-indigo-600'
@@ -340,7 +364,7 @@ export const PartnerDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('exceptions')}
-            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'exceptions'
                 ? 'border-indigo-600 text-indigo-600'
                 : 'border-transparent text-slate-500 hover:text-indigo-600'
@@ -350,7 +374,7 @@ export const PartnerDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('escalations')}
-            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'escalations'
                 ? 'border-indigo-600 text-indigo-600'
                 : 'border-transparent text-slate-500 hover:text-indigo-600'
@@ -360,7 +384,7 @@ export const PartnerDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('learning')}
-            className={`px-4 py-3 font-medium transition border-b-2 -mb-px ${
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'learning'
                 ? 'border-indigo-600 text-indigo-600'
                 : 'border-transparent text-slate-500 hover:text-indigo-600'
@@ -370,7 +394,7 @@ export const PartnerDashboard: React.FC = () => {
           </button>
           <button
             onClick={() => navigate('/partner/security')}
-            className="px-4 py-3 font-medium transition border-b-2 -mb-px border-transparent text-slate-500 hover:text-indigo-600"
+            className="px-4 py-3 font-medium transition border-b-2 -mb-px border-transparent text-slate-500 hover:text-indigo-600 whitespace-nowrap min-h-[44px]"
           >
             Security
           </button>
@@ -411,46 +435,72 @@ export const PartnerDashboard: React.FC = () => {
                 </button>
               </div>
             ) : (
-              <table className="w-full">
-                <thead className="bg-slate-50 border-b">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Site</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Tier</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Appliances</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Last Check-in</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200">
+              <>
+                {/* Mobile card view */}
+                <div className="md:hidden space-y-2 p-4">
                   {sites.map((site) => (
-                    <tr key={site.site_id} className="hover:bg-indigo-50/50">
-                      <td className="px-6 py-4">
-                        <div>
-                          <p className="font-medium text-slate-900">{site.clinic_name}</p>
-                          <p className="text-sm text-slate-500">{site.site_id}</p>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(site.status)}`}>
+                    <div
+                      key={site.site_id}
+                      className="rounded-xl border border-slate-200 p-4 hover:bg-indigo-50/50 transition cursor-pointer"
+                      onClick={() => setDriftConfigSite({ id: site.site_id, name: site.clinic_name })}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-sm font-semibold text-slate-900 truncate">{site.clinic_name}</h3>
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full flex-shrink-0 ml-2 ${getStatusColor(site.status)}`}>
                           {site.status}
                         </span>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-slate-600 capitalize">{site.tier}</td>
-                      <td className="px-6 py-4 text-sm text-slate-600">{site.appliance_count}</td>
-                      <td className="px-6 py-4 text-sm text-slate-600">{formatTime(site.last_checkin)}</td>
-                      <td className="px-6 py-4 text-right">
-                        <button
-                          onClick={() => setDriftConfigSite({ id: site.site_id, name: site.clinic_name })}
-                          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium transition"
-                        >
-                          Security Checks
-                        </button>
-                      </td>
-                    </tr>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
+                        <span>Appliances: {site.appliance_count}</span>
+                        <span>Last: {formatTime(site.last_checkin)}</span>
+                      </div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
+                </div>
+                {/* Desktop table view */}
+                <div className="hidden md:block">
+                  <table className="w-full">
+                    <thead className="bg-slate-50 border-b">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Site</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Tier<InfoTip text="Standard: basic monitoring. Professional: full auto-healing. Enterprise: custom rules and dedicated support." /></th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Appliances</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Last Check-in</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {sites.map((site) => (
+                        <tr key={site.site_id} className="hover:bg-indigo-50/50">
+                          <td className="px-6 py-4">
+                            <div>
+                              <p className="font-medium text-slate-900">{site.clinic_name}</p>
+                              <p className="text-sm text-slate-500">{site.site_id}</p>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(site.status)}`}>
+                              {site.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600 capitalize">{site.tier}</td>
+                          <td className="px-6 py-4 text-sm text-slate-600">{site.appliance_count}</td>
+                          <td className="px-6 py-4 text-sm text-slate-600">{formatTime(site.last_checkin)}</td>
+                          <td className="px-6 py-4 text-right">
+                            <button
+                              onClick={() => setDriftConfigSite({ id: site.site_id, name: site.clinic_name })}
+                              className="text-indigo-600 hover:text-indigo-800 text-sm font-medium transition"
+                            >
+                              Security Checks
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </div>
         )}

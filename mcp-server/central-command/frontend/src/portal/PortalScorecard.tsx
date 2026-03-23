@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import { IncidentList } from './components';
+import { InfoTip } from '../components/shared';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -151,7 +152,7 @@ const HeroScore: React.FC<{ site: PortalSite; kpis: PortalKPIs; generatedAt: str
             <span className={`text-6xl font-bold ${grade.color}`}>{grade.letter}</span>
           </div>
           <span className={`text-2xl font-bold mt-2 ${grade.color}`}>{kpis.compliance_pct}%</span>
-          <span className="text-xs text-slate-500">Compliance Score</span>
+          <span className="text-xs text-slate-500">Compliance Score<InfoTip text="Based on automated check pass rates. A=90%+, B=80-89%, C=70-79%, D=60-69%, F=below 60%." /></span>
         </div>
       </div>
     </section>
@@ -163,6 +164,7 @@ const HeroScore: React.FC<{ site: PortalSite; kpis: PortalKPIs; generatedAt: str
 const CARD_GROUPS = [
   {
     title: 'Your Data Protection',
+    tip: 'Is data encrypted on your devices? Protects patient data if a device is lost or stolen.',
     ids: ['endpoint_drift', 'storage_posture'],
     fallbackText: 'Your systems are configured to protect data at rest and in transit.',
     icon: (
@@ -173,6 +175,7 @@ const CARD_GROUPS = [
   },
   {
     title: 'Your Backup Status',
+    tip: 'Are your systems being backed up? Required for disaster recovery.',
     ids: ['backup_success'],
     fallbackText: 'Your data backups are monitored for completeness and recoverability.',
     icon: (
@@ -184,6 +187,7 @@ const CARD_GROUPS = [
   },
   {
     title: 'Your System Security',
+    tip: 'Are your systems receiving security updates and properly configured? Prevents known vulnerabilities.',
     ids: ['patch_freshness', 'secrets_hygiene', 'git_protections'],
     fallbackText: 'Monitoring indicates patches applied, access controls configured, and encryption enabled. These are point-in-time observations.',
     icon: (
@@ -194,6 +198,7 @@ const CARD_GROUPS = [
   },
   {
     title: 'Your Access Controls',
+    tip: 'Are user accounts and passwords properly managed? Prevents unauthorized access to patient data.',
     ids: ['mfa_coverage', 'privileged_access'],
     fallbackText: 'User authentication and privileged access are monitored and enforced.',
     icon: (
@@ -233,7 +238,7 @@ const StatusCards: React.FC<{ controls: PortalControl[] }> = ({ controls }) => {
               <div className={iconColor}>{group.icon}</div>
               <span className={`text-xs px-2 py-1 rounded-full font-medium ${sl.bg}`}>{sl.label}</span>
             </div>
-            <h3 className="font-semibold text-slate-900 mb-1">{group.title}</h3>
+            <h3 className="font-semibold text-slate-900 mb-1">{group.title}{group.tip && <InfoTip text={group.tip} />}</h3>
             <p className="text-sm text-slate-600 leading-relaxed">{description}</p>
           </div>
         );
@@ -265,7 +270,7 @@ const BlockchainTrustStamp: React.FC<{ data: BlockchainStatus | null }> = ({ dat
           </svg>
         </div>
         <div className="flex-1">
-          <h3 className="font-semibold text-amber-900">Your compliance evidence is verified on the Bitcoin blockchain</h3>
+          <h3 className="font-semibold text-amber-900">Your compliance evidence is verified on the Bitcoin blockchain<InfoTip text="Your evidence records are anchored to the Bitcoin blockchain, proving they have not been altered since creation." /></h3>
           <p className="text-sm text-amber-800 mt-1">
             This means your records cannot be tampered with or backdated. Anyone can independently verify this.
           </p>
@@ -390,7 +395,7 @@ const AuditorDeepDive: React.FC<{
         {/* 4b: Evidence Chain Integrity */}
         {chain && (
           <div className="p-6 border-t border-slate-200">
-            <h3 className="font-semibold text-slate-900 mb-4">Evidence Chain Integrity</h3>
+            <h3 className="font-semibold text-slate-900 mb-4">Evidence Chain Integrity<InfoTip text="Cryptographically signed records of your system's security state at a point in time. Supports compliance documentation." /></h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div className="bg-slate-50 rounded-lg p-4 text-center">
                 <span className="text-2xl font-bold text-slate-900">{chain.chain_length.toLocaleString()}</span>

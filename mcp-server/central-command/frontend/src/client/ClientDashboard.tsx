@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
-import { OsirisCareLeaf } from '../components/shared';
+import { OsirisCareLeaf, WelcomeModal, InfoTip } from '../components/shared';
 import { ClientDriftConfig } from './ClientDriftConfig';
 import { ComplianceHealthInfographic } from './ComplianceHealthInfographic';
 import { DevicesAtRisk } from './DevicesAtRisk';
@@ -73,6 +73,7 @@ export const ClientDashboard: React.FC = () => {
   const [agentInfo, setAgentInfo] = useState<AgentInstallInfo | null>(null);
   const [agentSiteExpanded, setAgentSiteExpanded] = useState<string | null>(null);
   const [downloadingConfig, setDownloadingConfig] = useState<string | null>(null);
+  const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem('osiriscare_onboarded'));
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -254,6 +255,14 @@ export const ClientDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50/80 page-enter">
+      <WelcomeModal
+        isOpen={showWelcome}
+        onClose={() => {
+          setShowWelcome(false);
+          localStorage.setItem('osiriscare_onboarded', 'true');
+        }}
+        portalType="client"
+      />
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-slate-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -319,10 +328,11 @@ export const ClientDashboard: React.FC = () => {
                 </div>
                 <button
                   onClick={handleLogout}
-                  className="p-2 text-slate-500 hover:text-teal-600 rounded-lg hover:bg-teal-50"
+                  className="p-2 text-slate-500 hover:text-teal-600 rounded-lg hover:bg-teal-50 focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
                   title="Sign out"
+                  aria-label="Sign out"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                   </svg>
                 </button>
@@ -343,14 +353,14 @@ export const ClientDashboard: React.FC = () => {
         ) : (
         <>
         {/* KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {/* Compliance Score */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}>
                 <OsirisCareLeaf className="w-5 h-5" color="white" />
               </div>
-              <p className="text-sm font-medium text-slate-500">Compliance Score</p>
+              <p className="text-sm font-medium text-slate-500">Compliance Score<InfoTip text="Percentage of automated security checks passing. A high score means your systems are configured as expected." /></p>
             </div>
             <span className={`text-4xl font-bold tabular-nums ${getScoreColor(dashboard?.kpis.compliance_score || 0)}`}>
               {dashboard?.kpis.compliance_score.toFixed(1)}%
@@ -371,7 +381,7 @@ export const ClientDashboard: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className="text-sm font-medium text-slate-500">Controls Passed</p>
+              <p className="text-sm font-medium text-slate-500">Controls Passed<InfoTip text="Security configuration checks that are currently in the expected state." /></p>
             </div>
             <div className="flex items-end gap-2">
               <span className="text-4xl font-bold text-green-600 tabular-nums">{dashboard?.kpis.passed}</span>
@@ -388,7 +398,7 @@ export const ClientDashboard: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
               </div>
-              <p className="text-sm font-medium text-slate-500">Issues Detected</p>
+              <p className="text-sm font-medium text-slate-500">Issues Detected<InfoTip text="Settings that have drifted from the expected configuration and may need attention." /></p>
             </div>
             <div className="flex items-end gap-4">
               <div>
@@ -410,7 +420,7 @@ export const ClientDashboard: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                 </svg>
               </div>
-              <p className="text-sm font-medium text-slate-500">Sites Monitored</p>
+              <p className="text-sm font-medium text-slate-500">Sites Monitored<InfoTip text="Number of your practice locations with active compliance monitoring." /></p>
             </div>
             <span className="text-4xl font-bold text-slate-900 tabular-nums">{dashboard?.sites.length || 0}</span>
             <p className="mt-2 text-sm text-slate-500">

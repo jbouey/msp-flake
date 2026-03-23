@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GlassCard } from '../components/shared';
+import { GlassCard, InfoTip } from '../components/shared';
 import { HealthGauge } from '../components/fleet';
 import { IncidentTrendChart, FleetHealthMatrix, AttentionPanel, ResolutionBreakdown, TopIncidentTypes } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
@@ -71,7 +71,7 @@ export const Dashboard: React.FC = () => {
         <GlassCard padding="md">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Clients</p>
+              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Clients<InfoTip text="Total active sites being monitored." /></p>
               <p className="text-2xl font-bold mt-1 tabular-nums animate-count-up">
                 {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : stats?.total_clients ?? 0}
               </p>
@@ -90,7 +90,7 @@ export const Dashboard: React.FC = () => {
         <GlassCard padding="md">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Compliance</p>
+              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Compliance<InfoTip text="Average configuration check pass rate across all sites. Not a compliance certification." /></p>
               <p className="text-2xl font-bold text-health-healthy mt-1 tabular-nums animate-count-up">
                 {statsLoading ? <span className="skeleton inline-block w-12 h-7" /> : `${stats?.avg_compliance_score ?? 0}%`}
               </p>
@@ -103,7 +103,7 @@ export const Dashboard: React.FC = () => {
         <GlassCard padding="md">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Incidents 24h</p>
+              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Incidents 24h<InfoTip text="Configuration drift events detected in the last 24 hours." /></p>
               <p className="text-2xl font-bold mt-1 tabular-nums animate-count-up">
                 {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : stats?.incidents_24h ?? 0}
               </p>
@@ -122,7 +122,7 @@ export const Dashboard: React.FC = () => {
         <GlassCard padding="md">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">L1 Auto-Heal</p>
+              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">L1 Auto-Heal<InfoTip text="Percentage of incidents resolved automatically by deterministic rules, without human intervention." /></p>
               <p className="text-2xl font-bold text-ios-blue mt-1 tabular-nums animate-count-up">
                 {statsLoading ? <span className="skeleton inline-block w-12 h-7" /> : `${stats?.l1_resolution_rate ?? 0}%`}
               </p>
@@ -142,7 +142,7 @@ export const Dashboard: React.FC = () => {
         <GlassCard padding="md">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Drift Checks</p>
+              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Drift Checks<InfoTip text="Number of active security configuration checks running across all sites." /></p>
               <p className="text-2xl font-bold text-health-healthy mt-1 tabular-nums animate-count-up">
                 {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : `${stats?.active_drift_checks ?? 47} Active`}
               </p>
@@ -276,14 +276,14 @@ export const Dashboard: React.FC = () => {
           <h2 className="text-base font-semibold mb-4 text-label-primary">System Health</h2>
           <div className="space-y-3">
             {[
-              { label: 'Control Coverage', value: statsLoading ? null : `${stats?.avg_compliance_score ?? 0}%`, color: 'text-health-healthy' },
-              { label: 'Connectivity', value: statsLoading ? null : `${stats?.avg_connectivity_score ?? 0}%` },
-              { label: 'Appliances Online', value: statsLoading ? null : `${stats?.online_appliances ?? 0}/${stats?.total_appliances ?? 0}` },
-              { label: 'Incidents (7d)', value: statsLoading ? null : `${stats?.incidents_7d ?? 0}` },
-              { label: 'Incidents (30d)', value: statsLoading ? null : `${stats?.incidents_30d ?? 0}` },
+              { label: 'Control Coverage', value: statsLoading ? null : `${stats?.avg_compliance_score ?? 0}%`, color: 'text-health-healthy', tip: 'Percentage of security checks passing across all sites.' },
+              { label: 'Connectivity', value: statsLoading ? null : `${stats?.avg_connectivity_score ?? 0}%`, tip: 'How reliably appliances are checking in on schedule.' },
+              { label: 'Appliances Online', value: statsLoading ? null : `${stats?.online_appliances ?? 0}/${stats?.total_appliances ?? 0}`, tip: 'Appliances currently reporting in vs. total deployed.' },
+              { label: 'Incidents (7d)', value: statsLoading ? null : `${stats?.incidents_7d ?? 0}`, tip: 'Total configuration drift events in the past 7 days.' },
+              { label: 'Incidents (30d)', value: statsLoading ? null : `${stats?.incidents_30d ?? 0}`, tip: 'Total configuration drift events in the past 30 days.' },
             ].map((row) => (
               <div key={row.label} className="flex items-center justify-between py-0.5">
-                <span className="text-sm text-label-secondary">{row.label}</span>
+                <span className="text-sm text-label-secondary">{row.label}{row.tip && <InfoTip text={row.tip} />}</span>
                 {row.value !== null ? (
                   <span className={`text-sm font-semibold tabular-nums ${row.color || 'text-label-primary'}`}>{row.value}</span>
                 ) : (
@@ -296,7 +296,7 @@ export const Dashboard: React.FC = () => {
 
         <GlassCard>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-label-primary">Learning Loop</h2>
+            <h2 className="text-base font-semibold text-label-primary">Learning Loop<InfoTip text="The system learns from AI-assisted fixes and promotes them to instant automatic rules." /></h2>
             <button
               onClick={() => navigate('/learning')}
               className="text-xs text-accent-primary font-medium hover:underline"
@@ -306,13 +306,13 @@ export const Dashboard: React.FC = () => {
           </div>
           <div className="space-y-3">
             {[
-              { label: 'L1 Rules', value: learningLoading ? null : `${learning?.total_l1_rules ?? 0}`, color: 'text-ios-blue' },
-              { label: 'L2 Decisions (30d)', value: learningLoading ? null : `${learning?.total_l2_decisions_30d ?? 0}`, color: 'text-ios-purple' },
-              { label: 'Awaiting Promotion', value: learningLoading ? null : `${learning?.patterns_awaiting_promotion ?? 0}`, color: 'text-health-warning' },
-              { label: 'Success Rate', value: learningLoading ? null : `${learning?.promotion_success_rate ?? 0}%`, color: 'text-health-healthy' },
+              { label: 'L1 Rules', value: learningLoading ? null : `${learning?.total_l1_rules ?? 0}`, color: 'text-ios-blue', tip: 'Instant automatic fixes. No human needed, resolves in under a second.' },
+              { label: 'L2 Decisions (30d)', value: learningLoading ? null : `${learning?.total_l2_decisions_30d ?? 0}`, color: 'text-ios-purple', tip: 'AI-assisted resolutions from the past 30 days.' },
+              { label: 'Awaiting Promotion', value: learningLoading ? null : `${learning?.patterns_awaiting_promotion ?? 0}`, color: 'text-health-warning', tip: 'AI fixes ready to become instant automatic rules after review.' },
+              { label: 'Success Rate', value: learningLoading ? null : `${learning?.promotion_success_rate ?? 0}%`, color: 'text-health-healthy', tip: 'Percentage of promoted rules that successfully resolve incidents.' },
             ].map((row) => (
               <div key={row.label} className="flex items-center justify-between py-0.5">
-                <span className="text-sm text-label-secondary">{row.label}</span>
+                <span className="text-sm text-label-secondary">{row.label}{row.tip && <InfoTip text={row.tip} />}</span>
                 {row.value !== null ? (
                   <span className={`text-sm font-semibold tabular-nums ${row.color}`}>{row.value}</span>
                 ) : (

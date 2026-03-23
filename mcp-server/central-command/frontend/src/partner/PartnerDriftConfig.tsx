@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePartner } from './PartnerContext';
+import { InfoTip } from '../components/shared';
 
 interface DriftCheckConfig {
   check_type: string;
@@ -73,6 +74,59 @@ const CHECK_TYPE_LABELS: Record<string, string> = {
   macos_admin_users: 'Admin User Count',
   macos_disk_space: 'Disk Space',
   macos_cert_expiry: 'Certificate Expiry',
+};
+
+const CHECK_TYPE_TIPS: Record<string, string> = {
+  // Windows
+  firewall_status: 'Monitors whether the host firewall is enabled. A failure means the system is exposed to network threats.',
+  windows_defender: 'Checks if antivirus protection is active. A failure means malware could go undetected.',
+  windows_update: 'Verifies the Windows Update service is running. A failure means security patches may not install.',
+  audit_logging: 'Checks if security events are being recorded. Required for audit trails.',
+  rogue_admin_users: 'Detects unauthorized administrator accounts. Extra admins increase breach risk.',
+  rogue_scheduled_tasks: 'Finds unexpected scheduled tasks that could indicate malware or unauthorized activity.',
+  agent_status: 'Verifies the monitoring agent is running. A failure means this device is not being monitored.',
+  bitlocker_status: 'Checks if disk encryption is active. Protects patient data if a device is lost or stolen.',
+  smb_signing: 'Verifies network file sharing is signed. Prevents tampering with data in transit.',
+  smb1_protocol: 'Checks that the old, insecure SMBv1 protocol is disabled. SMBv1 has known vulnerabilities.',
+  screen_lock_policy: 'Verifies screens lock automatically after inactivity. Prevents unauthorized access.',
+  defender_exclusions: 'Monitors antivirus exclusions for suspicious entries that could hide malware.',
+  dns_config: 'Checks DNS settings are correct. Wrong DNS can redirect users to malicious sites.',
+  network_profile: 'Verifies the network is set to the correct profile. Public profiles have weaker protections.',
+  password_policy: 'Checks that password rules meet security standards. Weak passwords are easy to guess.',
+  rdp_nla: 'Verifies Remote Desktop requires authentication before connecting. Prevents unauthorized remote access.',
+  guest_account: 'Checks that the Guest account is disabled. Guest accounts bypass normal access controls.',
+  service_dns: 'Monitors Active Directory DNS service health. DNS failures break authentication.',
+  service_netlogon: 'Monitors Active Directory login service. Failures prevent users from signing in.',
+  wmi_event_persistence: 'Detects malware that hides in Windows Management events to survive reboots.',
+  registry_run_persistence: 'Checks for unauthorized programs set to run at startup via the registry.',
+  audit_policy: 'Verifies security audit policies are properly configured for compliance logging.',
+  defender_cloud_protection: 'Checks cloud-based threat detection is active. Catches new threats faster.',
+  spooler_service: 'Checks Print Spooler on domain controllers. Should be disabled to prevent known attacks.',
+  // Linux
+  linux_firewall: 'Checks if the Linux firewall is active. A failure means the system is exposed.',
+  linux_ssh_root: 'Verifies root SSH login is disabled. Direct root access is a security risk.',
+  linux_ssh_password: 'Checks if password-based SSH is disabled. Key-based auth is more secure.',
+  linux_failed_services: 'Detects crashed or failed system services that may affect security.',
+  linux_disk_space: 'Monitors available disk space. Full disks can cause logging and backup failures.',
+  linux_suid: 'Checks for unexpected privileged binaries. Unauthorized SUID files can be exploited.',
+  linux_unattended_upgrades: 'Verifies automatic security updates are enabled. Unpatched systems are vulnerable.',
+  linux_audit: 'Checks the audit logging daemon is active. Required for compliance event tracking.',
+  linux_ntp: 'Verifies time synchronization is active. Incorrect time breaks audit log accuracy.',
+  linux_cert_expiry: 'Monitors SSL certificate expiration. Expired certs cause outages and security warnings.',
+  // macOS
+  macos_filevault: 'Checks if FileVault disk encryption is active. Protects data if a Mac is lost.',
+  macos_gatekeeper: 'Verifies only trusted software can run. Prevents malicious app installation.',
+  macos_sip: 'Checks System Integrity Protection is on. Prevents malware from modifying system files.',
+  macos_firewall: 'Monitors whether the macOS firewall is enabled and blocking unauthorized connections.',
+  macos_auto_update: 'Verifies automatic software updates are enabled. Keeps security patches current.',
+  macos_screen_lock: 'Checks that the screen locks automatically. Prevents unauthorized access when unattended.',
+  macos_remote_login: 'Monitors SSH access settings. Unrestricted remote login increases attack surface.',
+  macos_file_sharing: 'Checks if file sharing is enabled. Unnecessary sharing exposes data.',
+  macos_time_machine: 'Verifies Time Machine backup is active. Required for disaster recovery.',
+  macos_ntp_sync: 'Checks time synchronization. Accurate time is needed for audit log integrity.',
+  macos_admin_users: 'Monitors the number of admin accounts. Too many admins increases risk.',
+  macos_disk_space: 'Monitors available disk space. Full disks can cause backup and logging failures.',
+  macos_cert_expiry: 'Monitors SSL certificate expiration dates. Expired certs cause outages.',
 };
 
 function getCsrfToken(): string | null {
@@ -271,34 +325,43 @@ export const PartnerDriftConfig: React.FC<PartnerDriftConfigProps> = ({ siteId, 
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {group.checks.map(check => (
-                  <button
-                    key={check.check_type}
-                    onClick={() => toggleCheck(check.check_type)}
-                    className={`flex items-center gap-3 p-3 rounded-lg border transition text-left ${
-                      check.enabled
-                        ? 'border-green-200 bg-green-50 hover:bg-green-100'
-                        : 'border-slate-200 bg-white hover:bg-slate-50'
-                    } ${dirty[check.check_type] ? 'ring-2 ring-indigo-300' : ''}`}
-                  >
-                    <div className={`w-8 h-5 rounded-full relative transition-colors flex-shrink-0 ${
-                      check.enabled ? 'bg-green-500' : 'bg-slate-300'
-                    }`}>
-                      <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
-                        check.enabled ? 'left-3.5' : 'left-0.5'
-                      }`} />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-slate-900 truncate">
-                        {CHECK_TYPE_LABELS[check.check_type] || check.check_type}
+              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-2">
+                {group.checks.map(check => {
+                  const checkLabel = CHECK_TYPE_LABELS[check.check_type] || check.check_type;
+                  return (
+                    <label
+                      key={check.check_type}
+                      className={`flex items-center gap-3 p-3 rounded-lg border transition cursor-pointer ${
+                        check.enabled
+                          ? 'border-green-200 bg-green-50 hover:bg-green-100'
+                          : 'border-slate-200 bg-white hover:bg-slate-50'
+                      } ${dirty[check.check_type] ? 'ring-2 ring-indigo-300' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={check.enabled}
+                        onChange={() => toggleCheck(check.check_type)}
+                        className="sr-only"
+                        aria-label={`Enable ${checkLabel}`}
+                      />
+                      <div className={`w-8 h-5 rounded-full relative transition-colors flex-shrink-0 ${
+                        check.enabled ? 'bg-green-500' : 'bg-slate-300'
+                      }`} aria-hidden="true">
+                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
+                          check.enabled ? 'left-3.5' : 'left-0.5'
+                        }`} />
                       </div>
-                      {check.notes && (
-                        <div className="text-xs text-slate-500 truncate">{check.notes}</div>
-                      )}
-                    </div>
-                  </button>
-                ))}
+                      <div className="min-w-0">
+                        <span className="text-sm font-medium text-slate-900 truncate block">
+                          {checkLabel}{CHECK_TYPE_TIPS[check.check_type] && <InfoTip text={CHECK_TYPE_TIPS[check.check_type]} />}
+                        </span>
+                        {check.notes && (
+                          <span className="text-xs text-slate-500 truncate block">{check.notes}</span>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
               </div>
             </div>
           );

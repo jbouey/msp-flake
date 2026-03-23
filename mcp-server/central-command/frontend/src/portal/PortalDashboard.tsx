@@ -251,23 +251,41 @@ export const PortalDashboard: React.FC = () => {
         </section>
 
         {/* Controls Summary Bar */}
-        <section className="mb-6">
+        <section className="mb-6" aria-label="Controls summary">
           <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between">
             <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-green-500" />
+              <div className="flex items-center gap-2"
+                role="meter"
+                aria-valuenow={data.kpis.controls_passing ?? 0}
+                aria-valuemin={0}
+                aria-valuemax={(data.kpis.controls_passing ?? 0) + (data.kpis.controls_warning ?? 0) + (data.kpis.controls_failing ?? 0)}
+                aria-label={`${data.kpis.controls_passing ?? 0} controls passing`}
+              >
+                <span className="w-3 h-3 rounded-full bg-green-500" aria-hidden="true" />
                 <span className="text-sm text-slate-600">
                   <strong className="text-slate-900">{data.kpis.controls_passing ?? 0}</strong> Passing
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-orange-500" />
+              <div className="flex items-center gap-2"
+                role="meter"
+                aria-valuenow={data.kpis.controls_warning ?? 0}
+                aria-valuemin={0}
+                aria-valuemax={(data.kpis.controls_passing ?? 0) + (data.kpis.controls_warning ?? 0) + (data.kpis.controls_failing ?? 0)}
+                aria-label={`${data.kpis.controls_warning ?? 0} controls warning`}
+              >
+                <span className="w-3 h-3 rounded-full bg-orange-500" aria-hidden="true" />
                 <span className="text-sm text-slate-600">
                   <strong className="text-slate-900">{data.kpis.controls_warning ?? 0}</strong> Warning
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-red-500" />
+              <div className="flex items-center gap-2"
+                role="meter"
+                aria-valuenow={data.kpis.controls_failing ?? 0}
+                aria-valuemin={0}
+                aria-valuemax={(data.kpis.controls_passing ?? 0) + (data.kpis.controls_warning ?? 0) + (data.kpis.controls_failing ?? 0)}
+                aria-label={`${data.kpis.controls_failing ?? 0} controls failing`}
+              >
+                <span className="w-3 h-3 rounded-full bg-red-500" aria-hidden="true" />
                 <span className="text-sm text-slate-600">
                   <strong className="text-slate-900">{data.kpis.controls_failing ?? 0}</strong> Failing
                 </span>

@@ -812,6 +812,19 @@ export const ClientSettings: React.FC = () => {
             )}
           </div>
         )}
+
+        {/* Help */}
+        <div className="mt-10 pt-6 border-t border-slate-200">
+          <button
+            onClick={() => {
+              localStorage.removeItem('osiriscare_onboarded');
+              window.location.reload();
+            }}
+            className="text-sm text-slate-500 hover:text-teal-600 transition-colors"
+          >
+            Show Welcome Guide Again
+          </button>
+        </div>
       </main>
     </div>
   );

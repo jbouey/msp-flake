@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from './ClientContext';
-import { OsirisCareLeaf } from '../components/shared';
+import { OsirisCareLeaf, InfoTip } from '../components/shared';
 import { SRAWizard } from './compliance/SRAWizard';
 import { PolicyLibrary } from './compliance/PolicyLibrary';
 import { TrainingTracker } from './compliance/TrainingTracker';
@@ -29,6 +29,19 @@ interface Overview {
 }
 
 type ModuleTab = 'overview' | 'sra' | 'policies' | 'training' | 'baas' | 'ir-plan' | 'contingency' | 'workforce' | 'physical' | 'officers' | 'gap-analysis';
+
+const MODULE_TIPS: Record<string, string> = {
+  sra: 'Identifies risks to patient data so you can address them before they become problems.',
+  policies: 'Written rules your practice follows to protect patient information.',
+  training: 'Tracks whether staff have completed required HIPAA awareness training.',
+  baas: 'Agreements with vendors who handle patient data on your behalf.',
+  'ir-plan': 'Your plan for responding to a data breach or security incident.',
+  contingency: 'How your practice recovers data and operations after a disruption.',
+  workforce: 'Controls who can access patient data and how accounts are managed.',
+  physical: 'Physical protections for devices and areas where patient data is accessed.',
+  officers: 'People designated as responsible for your privacy and security programs.',
+  'gap-analysis': 'Shows where your compliance program needs improvement.',
+};
 
 const MODULE_CONFIG: { key: ModuleTab; label: string; icon: string; color: string }[] = [
   { key: 'sra', label: 'Risk Assessment', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z', color: 'teal' },
@@ -235,7 +248,7 @@ export const ClientCompliance: React.FC = () => {
                     </svg>
                   </div>
                   <div>
-                    <h2 className="text-2xl font-bold text-slate-900">Configuration Monitoring Score</h2>
+                    <h2 className="text-2xl font-bold text-slate-900">Configuration Monitoring Score<InfoTip text="Measures how many automated security checks are passing. A high score means your systems are configured as expected." /></h2>
                     <p className="text-slate-500 mt-1">This score measures automated check pass rates and does not constitute compliance certification.</p>
                   </div>
                 </div>
@@ -263,7 +276,7 @@ export const ClientCompliance: React.FC = () => {
                         {status.label}
                       </span>
                     </div>
-                    <h3 className="font-semibold text-slate-900 text-sm">{mod.label}</h3>
+                    <h3 className="font-semibold text-slate-900 text-sm">{mod.label}{MODULE_TIPS[mod.key] && <InfoTip text={MODULE_TIPS[mod.key]} />}</h3>
                   </button>
                 );
               })}

@@ -59,6 +59,11 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
     <div
       className={`border-2 rounded-xl p-4 ${config.border} ${config.bg} cursor-pointer transition-all hover:shadow-md`}
       onClick={() => setExpanded(!expanded)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(!expanded); } }}
+      aria-expanded={expanded}
+      aria-label={`${displayName}: ${config.label}`}
     >
       {/* Header */}
       <div className="flex justify-between items-start mb-2">

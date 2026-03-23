@@ -603,8 +603,8 @@ function ExceptionDetailsModal({
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-xl font-bold">Exception Details</h3>
-            <button onClick={onClose} className="text-slate-500 hover:text-indigo-600">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <button onClick={onClose} className="text-slate-500 hover:text-indigo-600" aria-label="Close exception details">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>

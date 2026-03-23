@@ -54,6 +54,7 @@
   --bg-tertiary: rgba(28, 28, 30, 0.72);
   --label-primary: #FFFFFF;
   --label-secondary: rgba(235, 235, 245, 0.6);
+  /* TODO: verify contrast ratio — #98989D on #000000 bg is ~4.0:1, below WCAG AA 4.5:1 for normal text */
   --label-tertiary: #98989D;
   --fill-primary: rgba(60, 188, 180, 0.18);
   --fill-secondary: rgba(60, 188, 180, 0.12);

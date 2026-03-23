@@ -52,7 +52,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
                 className="p-1.5 rounded-ios-sm text-label-tertiary hover:text-label-primary hover:bg-fill-secondary transition-all"
                 aria-label="Close modal"
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                 </svg>
               </button>

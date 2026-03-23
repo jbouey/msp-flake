@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { usePartner } from './PartnerContext';
+import { InfoTip } from '../components/shared';
 
 interface EscalationTicket {
   id: string;
@@ -315,25 +316,25 @@ export const PartnerEscalations: React.FC = () => {
       {/* SLA Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Open</p>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Open<InfoTip text="Issues escalated to your team that need attention." /></p>
           <p className="text-2xl font-bold text-red-600 tabular-nums">{counts?.open_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Acknowledged</p>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Acknowledged<InfoTip text="Tickets your team has seen and accepted responsibility for." /></p>
           <p className="text-2xl font-bold text-blue-600 tabular-nums">{counts?.acknowledged_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Resolved</p>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Resolved<InfoTip text="Issues that have been fixed and closed." /></p>
           <p className="text-2xl font-bold text-green-600 tabular-nums">{counts?.resolved_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">SLA Breached</p>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">SLA Breached<InfoTip text="Tickets that exceeded the agreed response time." /></p>
           <p className={`text-2xl font-bold tabular-nums ${(counts?.sla_breached_count ?? 0) > 0 ? 'text-red-600' : 'text-slate-400'}`}>
             {counts?.sla_breached_count ?? 0}
           </p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Avg Response</p>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Avg Response<InfoTip text="Average time between ticket creation and first acknowledgment." /></p>
           <p className="text-2xl font-bold text-slate-700 tabular-nums">
             {slaMetrics ? formatMinutes(slaMetrics.avg_response_minutes) : '-'}
           </p>
@@ -374,92 +375,157 @@ export const PartnerEscalations: React.FC = () => {
             </p>
           </div>
         ) : (
-          <table className="w-full">
-            <thead className="bg-slate-50 border-b">
-              <tr>
-                <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Priority</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Title</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Site</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">SLA</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Age</th>
-                <th className="px-5 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
+          <>
+            {/* Mobile card view */}
+            <div className="md:hidden space-y-2 p-4">
               {tickets.map(ticket => {
                 const sla = slaTimeRemaining(ticket);
                 return (
-                  <tr key={ticket.id} className="hover:bg-indigo-50/30 transition">
-                    <td className="px-5 py-4">
-                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${priorityColor(ticket.priority)}`}>
-                        {ticket.priority}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <button
-                        onClick={() => setSelectedTicket(ticket)}
-                        className="text-left hover:text-indigo-600 transition"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <p className="font-medium text-slate-900 text-sm">{ticket.title}</p>
-                          {(ticket.recurrence_count ?? 0) > 0 && (
-                            <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-700">
-                              x{ticket.recurrence_count}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{ticket.summary}</p>
-                      </button>
-                    </td>
-                    <td className="px-5 py-4 text-sm text-slate-600">{ticket.site_name || ticket.site_id}</td>
-                    <td className="px-5 py-4">
-                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColor(ticket.status)}`}>
+                  <div
+                    key={ticket.id}
+                    className="rounded-xl border border-slate-200 p-4 hover:bg-indigo-50/30 transition cursor-pointer"
+                    onClick={() => setSelectedTicket(ticket)}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full flex-shrink-0 ${priorityColor(ticket.priority)}`}>
+                          {ticket.priority}
+                        </span>
+                        <h3 className="text-sm font-semibold text-slate-900 truncate">{ticket.title}</h3>
+                        {(ticket.recurrence_count ?? 0) > 0 && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-700 flex-shrink-0">
+                            x{ticket.recurrence_count}
+                          </span>
+                        )}
+                      </div>
+                      <span className={`px-2 py-1 text-xs font-medium rounded-full flex-shrink-0 ml-2 ${statusColor(ticket.status)}`}>
                         {ticket.status}
                       </span>
-                    </td>
-                    <td className="px-5 py-4">
-                      {sla && (
-                        <span className={`text-xs font-medium ${sla === 'BREACHED' ? 'text-red-600' : 'text-amber-600'}`}>
-                          {sla}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-4 text-sm text-slate-500 tabular-nums">{formatAge(ticket.created_at)}</td>
-                    <td className="px-5 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                    </div>
+                    <p className="text-xs text-slate-500 line-clamp-1 mb-2">{ticket.summary}</p>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3 text-xs text-slate-500">
+                        <span>{ticket.site_name || ticket.site_id}</span>
+                        <span className="tabular-nums">{formatAge(ticket.created_at)}</span>
+                        {sla && (
+                          <span className={`font-medium ${sla === 'BREACHED' ? 'text-red-600' : 'text-amber-600'}`}>
+                            {sla}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5">
                         {ticket.status === 'open' && (
                           <button
-                            onClick={() => { setSelectedTicket(ticket); setShowAckModal(true); }}
-                            className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition"
+                            onClick={(e) => { e.stopPropagation(); setSelectedTicket(ticket); setShowAckModal(true); }}
+                            className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition min-h-[44px] min-w-[44px] flex items-center justify-center"
                           >
-                            Acknowledge
+                            Ack
                           </button>
                         )}
                         {(ticket.status === 'open' || ticket.status === 'acknowledged') && (
                           <button
-                            onClick={() => { setSelectedTicket(ticket); setShowResolveModal(true); }}
-                            className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition"
+                            onClick={(e) => { e.stopPropagation(); setSelectedTicket(ticket); setShowResolveModal(true); }}
+                            className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition min-h-[44px] min-w-[44px] flex items-center justify-center"
                           >
                             Resolve
                           </button>
                         )}
-                        {ticket.status !== 'escalated_to_l4' && (ticket.recurrence_count ?? 0) > 0 && (
-                          <button
-                            onClick={() => { setSelectedTicket(ticket); setShowL4Modal(true); }}
-                            className="px-3 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition"
-                            title="Recurring issue — escalate to Central Command"
-                          >
-                            L4
-                          </button>
-                        )}
                       </div>
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
+            </div>
+            {/* Desktop table view */}
+            <div className="hidden md:block">
+              <table className="w-full">
+                <thead className="bg-slate-50 border-b">
+                  <tr>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Priority</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Title</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Site</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">SLA<InfoTip text="Time remaining before this ticket requires acknowledgment per your service agreement." /></th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Age</th>
+                    <th className="px-5 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {tickets.map(ticket => {
+                    const sla = slaTimeRemaining(ticket);
+                    return (
+                      <tr key={ticket.id} className="hover:bg-indigo-50/30 transition">
+                        <td className="px-5 py-4">
+                          <span className={`px-2 py-1 text-xs font-semibold rounded-full ${priorityColor(ticket.priority)}`}>
+                            {ticket.priority}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4">
+                          <button
+                            onClick={() => setSelectedTicket(ticket)}
+                            className="text-left hover:text-indigo-600 transition"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <p className="font-medium text-slate-900 text-sm">{ticket.title}</p>
+                              {(ticket.recurrence_count ?? 0) > 0 && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-700">
+                                  x{ticket.recurrence_count}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{ticket.summary}</p>
+                          </button>
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-600">{ticket.site_name || ticket.site_id}</td>
+                        <td className="px-5 py-4">
+                          <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColor(ticket.status)}`}>
+                            {ticket.status}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4">
+                          {sla && (
+                            <span className={`text-xs font-medium ${sla === 'BREACHED' ? 'text-red-600' : 'text-amber-600'}`}>
+                              {sla}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-500 tabular-nums">{formatAge(ticket.created_at)}</td>
+                        <td className="px-5 py-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            {ticket.status === 'open' && (
+                              <button
+                                onClick={() => { setSelectedTicket(ticket); setShowAckModal(true); }}
+                                className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition"
+                              >
+                                Acknowledge
+                              </button>
+                            )}
+                            {(ticket.status === 'open' || ticket.status === 'acknowledged') && (
+                              <button
+                                onClick={() => { setSelectedTicket(ticket); setShowResolveModal(true); }}
+                                className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition"
+                              >
+                                Resolve
+                              </button>
+                            )}
+                            {ticket.status !== 'escalated_to_l4' && (ticket.recurrence_count ?? 0) > 0 && (
+                              <button
+                                onClick={() => { setSelectedTicket(ticket); setShowL4Modal(true); }}
+                                className="px-3 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition"
+                                title="Recurring issue — escalate to Central Command"
+                              >
+                                L4
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 

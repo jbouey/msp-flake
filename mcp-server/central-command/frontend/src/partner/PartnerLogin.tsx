@@ -294,13 +294,19 @@ export const PartnerLogin: React.FC = () => {
                   autoComplete="one-time-code"
                   autoFocus
                   required
+                  aria-label="6-digit verification code"
+                  aria-required="true"
+                  aria-describedby="totp-help"
                   className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-300 outline-none transition text-center text-2xl font-mono tracking-[0.3em]"
                 />
+                <p id="totp-help" className="text-xs text-label-tertiary mt-1">
+                  Enter the 6-digit code from your authenticator app
+                </p>
               </div>
               <button
                 type="submit"
                 disabled={!totpCode.trim() || mfaLoading}
-                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
+                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2 focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
                 style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)', boxShadow: '0 4px 14px rgba(79, 70, 229, 0.35)' }}
               >
                 {mfaLoading ? (
@@ -426,9 +432,9 @@ export const PartnerLogin: React.FC = () => {
                   type="button"
                   onClick={() => handleOAuthLogin('microsoft')}
                   disabled={oauthLoading !== null}
-                  className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl hover:bg-indigo-50/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl hover:bg-indigo-50/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
                 >
-                  <svg className="w-5 h-5" viewBox="0 0 21 21">
+                  <svg className="w-5 h-5" viewBox="0 0 21 21" aria-hidden="true">
                     <rect fill="#f25022" x="1" y="1" width="9" height="9"/>
                     <rect fill="#7fba00" x="11" y="1" width="9" height="9"/>
                     <rect fill="#05a6f0" x="1" y="11" width="9" height="9"/>
@@ -445,9 +451,9 @@ export const PartnerLogin: React.FC = () => {
                   type="button"
                   onClick={() => handleOAuthLogin('google')}
                   disabled={oauthLoading !== null}
-                  className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl hover:bg-indigo-50/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl hover:bg-indigo-50/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
                 >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                     <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
                     <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
@@ -471,11 +477,13 @@ export const PartnerLogin: React.FC = () => {
           )}
 
           {/* Login mode tabs */}
-          <div className="flex rounded-lg bg-slate-100 p-1 mb-4">
+          <div className="flex rounded-lg bg-slate-100 p-1 mb-4" role="tablist">
             <button
               type="button"
+              role="tab"
+              aria-selected={loginMode === 'email'}
               onClick={() => setLoginMode('email')}
-              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 ${
                 loginMode === 'email'
                   ? 'bg-white text-slate-900 shadow-sm'
                   : 'text-slate-500 hover:text-slate-700'
@@ -485,8 +493,10 @@ export const PartnerLogin: React.FC = () => {
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={loginMode === 'apikey'}
               onClick={() => setLoginMode('apikey')}
-              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 ${
                 loginMode === 'apikey'
                   ? 'bg-white text-slate-900 shadow-sm'
                   : 'text-slate-500 hover:text-slate-700'
@@ -529,7 +539,7 @@ export const PartnerLogin: React.FC = () => {
               <button
                 type="submit"
                 disabled={!loginEmail.trim() || !loginPassword.trim()}
-                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110"
+                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
                 style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)', boxShadow: '0 4px 14px rgba(79, 70, 229, 0.35)' }}
               >
                 Sign In
@@ -554,7 +564,7 @@ export const PartnerLogin: React.FC = () => {
               <button
                 type="submit"
                 disabled={!apiKey.trim()}
-                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110"
+                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
                 style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)', boxShadow: '0 4px 14px rgba(79, 70, 229, 0.35)' }}
               >
                 Sign In

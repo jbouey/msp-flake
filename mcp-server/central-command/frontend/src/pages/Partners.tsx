@@ -425,8 +425,8 @@ const PartnerDetailView: React.FC<{
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start gap-4">
-        <button onClick={onBack} className="p-2 mt-1 rounded-ios-sm hover:bg-fill-secondary transition-colors">
-          <svg className="w-5 h-5 text-label-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <button onClick={onBack} className="p-2 mt-1 rounded-ios-sm hover:bg-fill-secondary transition-colors" aria-label="Go back">
+          <svg className="w-5 h-5 text-label-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>

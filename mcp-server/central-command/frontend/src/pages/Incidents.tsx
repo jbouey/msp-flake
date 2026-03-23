@@ -311,7 +311,7 @@ export const Incidents: React.FC = () => {
       <GlassCard>
         <div className="flex flex-col gap-4 mb-6">
           {/* Header row */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-label-primary tracking-tight">Incidents</h1>
               <p className="text-sm text-label-tertiary mt-1">
@@ -321,7 +321,7 @@ export const Incidents: React.FC = () => {
               </p>
             </div>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-shrink-0">
               <button
                 onClick={() => setFilter('all')}
                 className={`px-3 py-1.5 text-sm font-medium rounded-ios-sm transition-colors ${

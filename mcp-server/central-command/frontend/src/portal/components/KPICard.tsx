@@ -28,7 +28,14 @@ export const KPICard: React.FC<KPICardProps> = ({ label, value, unit, status, de
   };
 
   return (
-    <div className={`rounded-xl border p-6 ${bgColors[status]}`}>
+    <div
+      className={`rounded-xl border p-6 ${bgColors[status]}`}
+      role="meter"
+      aria-valuenow={value}
+      aria-valuemin={0}
+      aria-valuemax={unit === '%' ? 100 : undefined}
+      aria-label={`${label}: ${typeof value === 'number' ? value.toFixed(value % 1 === 0 ? 0 : 1) : value}${unit}`}
+    >
       <div className="flex justify-between items-start">
         <div className={`text-4xl font-bold ${colors[status]}`}>
           {typeof value === 'number' ? value.toFixed(value % 1 === 0 ? 0 : 1) : value}{unit}

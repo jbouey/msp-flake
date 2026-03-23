@@ -48,10 +48,10 @@ export const Header: React.FC<HeaderProps> = ({
         {onMenuToggle && (
           <button
             onClick={onMenuToggle}
-            className="p-1.5 -ml-1.5 rounded-ios-sm hover:bg-fill-tertiary transition-colors lg:hidden"
+            className="p-1.5 -ml-1.5 rounded-ios-sm hover:bg-fill-tertiary transition-colors lg:hidden focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2"
             aria-label="Toggle menu"
           >
-            <svg className="w-5 h-5 text-label-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-5 h-5 text-label-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
@@ -112,7 +112,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onRefresh}
               disabled={refreshing}
-              className="p-1.5 rounded-ios-sm hover:bg-fill-tertiary transition-colors disabled:opacity-50"
+              className="p-1.5 rounded-ios-sm hover:bg-fill-tertiary transition-colors disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2"
               aria-label="Refresh"
             >
               <svg
@@ -120,6 +120,7 @@ export const Header: React.FC<HeaderProps> = ({
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
+                aria-hidden="true"
               >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>

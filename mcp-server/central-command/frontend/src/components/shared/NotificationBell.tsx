@@ -142,7 +142,7 @@ export const NotificationBell: React.FC = () => {
       <button
         ref={buttonRef}
         onClick={() => setOpen((prev) => !prev)}
-        className="relative p-1.5 rounded-ios-sm hover:bg-fill-tertiary transition-colors"
+        className="relative p-1.5 rounded-ios-sm hover:bg-fill-tertiary transition-colors focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2"
         aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
       >
         <svg
@@ -151,6 +151,7 @@ export const NotificationBell: React.FC = () => {
           viewBox="0 0 24 24"
           stroke="currentColor"
           strokeWidth={1.5}
+          aria-hidden="true"
         >
           <path
             strokeLinecap="round"
