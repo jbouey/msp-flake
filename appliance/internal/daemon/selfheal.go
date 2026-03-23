@@ -82,9 +82,18 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 			continue // already escalated, don't retry
 		}
 
+		// Guard against zero-time heartbeats (never heartbeated)
+		if entry.LastHeartbeat.IsZero() {
+			log.Printf("[selfheal] Agent %s has never heartbeated — treating as stale", hostname)
+		} else {
+			staleDuration := time.Since(entry.LastHeartbeat)
+			if staleDuration < agentStaleTimeout {
+				continue // agent is healthy
+			}
+		}
 		staleDuration := time.Since(entry.LastHeartbeat)
-		if staleDuration < agentStaleTimeout {
-			continue // agent is healthy
+		if entry.LastHeartbeat.IsZero() {
+			staleDuration = agentStaleTimeout + time.Minute // treat as just past threshold
 		}
 
 		log.Printf("[selfheal] Agent %s stale for %v, checking...", hostname, staleDuration.Round(time.Second))
@@ -121,9 +130,25 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 		log.Printf("[selfheal] Attempting redeploy #%d for %s", entry.DeployAttempts, hostname)
 
 		// Look up stored credentials for this host.
+		// Try hostname, then IP, then case-insensitive hostname match,
+		// then fall back to domain_admin credentials (can reach any domain host).
 		creds := sh.daemon.findCredentialsForHost(hostname, entry.IPAddress)
+		if creds == nil && entry.IPAddress != "" {
+			// Try reverse: maybe credentials are stored by IP
+			creds = sh.daemon.findCredentialsForHost(entry.IPAddress, hostname)
+		}
 		if creds == nil {
-			log.Printf("[selfheal] No credentials for %s — cannot redeploy", hostname)
+			// Fall back to domain_admin credentials (works for any domain-joined host)
+			if sh.svc.Config.DCUsername != nil && sh.svc.Config.DCPassword != nil {
+				creds = &HostCredentials{
+					Username: *sh.svc.Config.DCUsername,
+					Password: *sh.svc.Config.DCPassword,
+				}
+				log.Printf("[selfheal] Using domain admin credentials for %s redeploy", hostname)
+			}
+		}
+		if creds == nil {
+			log.Printf("[selfheal] No credentials for %s (tried hostname, IP %s, domain admin) — cannot redeploy", hostname, entry.IPAddress)
 			continue
 		}
 
