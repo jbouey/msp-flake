@@ -633,6 +633,11 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		}
 	}
 
+	// Apply WireGuard tunnel config if Central Command provisioned it
+	if resp.Wireguard != nil {
+		applyWireguardConfig(resp.Wireguard)
+	}
+
 	// Drain queued telemetry entries (network is known-good after successful checkin)
 	if d.telemetry != nil {
 		d.telemetry.DrainQueue()

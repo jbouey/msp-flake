@@ -195,6 +195,93 @@
   };
 
   # ============================================================================
+  # WireGuard Management Tunnel
+  # ============================================================================
+
+  # WireGuard key generation on first boot
+  systemd.services.wireguard-keygen = {
+    description = "Generate WireGuard keypair on first boot";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "appliance-daemon.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = pkgs.writeShellScript "wg-keygen" ''
+        WG_DIR=/var/lib/msp/wireguard
+        mkdir -p $WG_DIR
+        chmod 700 $WG_DIR
+
+        if [ ! -f "$WG_DIR/private.key" ]; then
+          ${pkgs.wireguard-tools}/bin/wg genkey > "$WG_DIR/private.key"
+          chmod 600 "$WG_DIR/private.key"
+          ${pkgs.wireguard-tools}/bin/wg pubkey < "$WG_DIR/private.key" > "$WG_DIR/public.key"
+          echo "WireGuard keypair generated"
+        else
+          echo "WireGuard keypair already exists"
+        fi
+      '';
+    };
+  };
+
+  # WireGuard tunnel setup (activated after provisioning writes config.json)
+  systemd.services.wireguard-tunnel = {
+    description = "OsirisCare WireGuard management tunnel";
+    after = [ "network-online.target" "wireguard-keygen.service" ];
+    wants = [ "network-online.target" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = pkgs.writeShellScript "wg-tunnel-up" ''
+        WG_DIR=/var/lib/msp/wireguard
+        CONFIG="$WG_DIR/config.json"
+
+        # Wait for provisioning to write config
+        if [ ! -f "$CONFIG" ]; then
+          echo "WireGuard config not yet provisioned — skipping"
+          exit 0
+        fi
+
+        # Parse config.json
+        HUB_PUBKEY=$(${pkgs.jq}/bin/jq -r '.hub_pubkey' "$CONFIG")
+        HUB_ENDPOINT=$(${pkgs.jq}/bin/jq -r '.hub_endpoint' "$CONFIG")
+        MY_IP=$(${pkgs.jq}/bin/jq -r '.my_ip' "$CONFIG")
+        PRIVATE_KEY=$(cat "$WG_DIR/private.key")
+
+        if [ -z "$HUB_PUBKEY" ] || [ "$HUB_PUBKEY" = "null" ]; then
+          echo "WireGuard config incomplete — skipping"
+          exit 0
+        fi
+
+        # Create WireGuard interface
+        ${pkgs.iproute2}/bin/ip link add wg0 type wireguard 2>/dev/null || true
+        ${pkgs.iproute2}/bin/ip addr flush dev wg0 2>/dev/null || true
+        ${pkgs.iproute2}/bin/ip addr add "$MY_IP/24" dev wg0
+
+        # Configure WireGuard
+        ${pkgs.wireguard-tools}/bin/wg set wg0 \
+          private-key "$WG_DIR/private.key" \
+          peer "$HUB_PUBKEY" \
+          endpoint "$HUB_ENDPOINT" \
+          allowed-ips "10.100.0.0/24" \
+          persistent-keepalive 25
+
+        ${pkgs.iproute2}/bin/ip link set wg0 up
+
+        echo "WireGuard tunnel up: $MY_IP -> $HUB_ENDPOINT"
+      '';
+      ExecStop = pkgs.writeShellScript "wg-tunnel-down" ''
+        ${pkgs.iproute2}/bin/ip link del wg0 2>/dev/null || true
+      '';
+      Restart = "on-failure";
+      RestartSec = 30;
+    };
+  };
+
+  # Open WireGuard port
+  networking.firewall.allowedUDPPorts = [ 51820 ];
+
+  # ============================================================================
   # Rebuild Safety Watchdog
   # ============================================================================
   # Separate from compliance-agent so it works even if the agent is broken.

@@ -1,0 +1,6 @@
+[Unit]
+Description=Reload WireGuard peers
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'wg syncconf wg0 <(cat /opt/mcp-server/wireguard/wg0.conf /opt/mcp-server/wireguard/peers/*.conf 2>/dev/null)'

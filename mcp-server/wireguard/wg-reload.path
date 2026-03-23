@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch for WireGuard peer config changes
+
+[Path]
+PathModified=/opt/mcp-server/wireguard/peers
+
+[Install]
+WantedBy=multi-user.target

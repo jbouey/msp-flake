@@ -11,12 +11,16 @@ This module provides endpoints that are called by appliances during
 initial setup, independent of the partner API.
 """
 
+import logging
 import os
 import secrets
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_mac(mac: str) -> str:
@@ -29,6 +33,16 @@ from .tenant_middleware import admin_connection
 
 # API endpoint from environment variable
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.osiriscare.net")
+
+# WireGuard hub configuration
+WG_PEER_DIR = os.getenv("WG_PEER_DIR", "/opt/mcp-server/wireguard/peers")
+WG_HUB_ENDPOINT = os.getenv("WG_HUB_ENDPOINT", "178.156.162.116:51820")
+WG_HUB_PUBKEY = ""
+try:
+    with open(os.getenv("WG_HUB_PUBKEY_FILE", "/opt/mcp-server/wireguard/hub.pub")) as f:
+        WG_HUB_PUBKEY = f.read().strip()
+except FileNotFoundError:
+    logger.warning("WireGuard hub public key not found — WireGuard provisioning disabled")
 
 router = APIRouter(prefix="/api/provision", tags=["provisioning"])
 
@@ -44,6 +58,7 @@ class ProvisionClaimRequest(BaseModel):
     hostname: Optional[str] = None
     hardware_id: Optional[str] = None  # SMBIOS/DMI hardware UUID
     public_key: Optional[str] = None  # Appliance's public key for secure comms
+    wg_pubkey: Optional[str] = None  # WireGuard public key (Curve25519)
 
 
 class ProvisionClaimResponse(BaseModel):
@@ -56,6 +71,10 @@ class ProvisionClaimResponse(BaseModel):
     partner: dict  # Branding info
     config: dict  # Initial configuration
     message: str
+    # WireGuard VPN fields (present only when wg_pubkey was provided in request)
+    wg_hub_pubkey: Optional[str] = None
+    wg_hub_endpoint: Optional[str] = None
+    wg_ip: Optional[str] = None
 
 
 class ProvisionStatusRequest(BaseModel):
@@ -72,6 +91,57 @@ class HeartbeatRequest(BaseModel):
     hostname: Optional[str] = None
     ip_address: Optional[str] = None
     status: str = "provisioning"
+
+
+# =============================================================================
+# WIREGUARD HELPERS
+# =============================================================================
+
+async def _allocate_wg_ip(conn) -> str:
+    """Allocate the next available WireGuard VPN IP."""
+    result = await conn.fetchval(
+        "SELECT wg_ip FROM sites WHERE wg_ip IS NOT NULL ORDER BY wg_ip DESC LIMIT 1"
+    )
+    if result:
+        parts = result.split('.')
+        next_octet = int(parts[3]) + 1
+        if next_octet > 254:
+            raise ValueError("WireGuard IP pool exhausted")
+        return f"10.100.0.{next_octet}"
+    return "10.100.0.2"  # First appliance (10.100.0.1 is the hub)
+
+
+async def _add_wg_peer(site_id: str, pubkey: str, vpn_ip: str) -> bool:
+    """Add a WireGuard peer config file for the hub.
+
+    Writes a peer config fragment to WG_PEER_DIR (a Docker-mounted volume).
+    A systemd path unit on the host watches the directory and runs
+    `wg syncconf` to apply changes without restarting the tunnel.
+    """
+    peer_file = os.path.join(WG_PEER_DIR, f"{site_id}.conf")
+
+    peer_config = (
+        f"[Peer]\n"
+        f"# {site_id}\n"
+        f"PublicKey = {pubkey}\n"
+        f"AllowedIPs = {vpn_ip}/32\n"
+    )
+
+    try:
+        os.makedirs(WG_PEER_DIR, exist_ok=True)
+        with open(peer_file, 'w') as f:
+            f.write(peer_config)
+
+        # Touch a reload flag so the host-side systemd path unit triggers wg syncconf
+        flag_file = os.path.join(WG_PEER_DIR, ".reload")
+        with open(flag_file, 'w') as f:
+            f.write(str(time.time()))
+
+        logger.info(f"WireGuard peer config written for {site_id} ({vpn_ip})")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to write WireGuard peer config for {site_id}: {e}")
+        return False
 
 
 # =============================================================================
@@ -219,6 +289,32 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
             provision['id']
         )
 
+        # WireGuard VPN provisioning (optional — only when appliance sends a pubkey)
+        wg_response = {}
+        if claim.wg_pubkey and WG_HUB_PUBKEY:
+            try:
+                vpn_ip = await _allocate_wg_ip(conn)
+                peer_ok = await _add_wg_peer(site_id, claim.wg_pubkey, vpn_ip)
+                if peer_ok:
+                    await conn.execute(
+                        "UPDATE sites SET wg_pubkey = $1, wg_ip = $2 WHERE site_id = $3",
+                        claim.wg_pubkey, vpn_ip, site_id
+                    )
+                    wg_response = {
+                        "wg_hub_pubkey": WG_HUB_PUBKEY,
+                        "wg_hub_endpoint": WG_HUB_ENDPOINT,
+                        "wg_ip": vpn_ip,
+                    }
+                    logger.info(f"WireGuard provisioned for {site_id}: {vpn_ip}")
+                else:
+                    logger.warning(f"WireGuard peer file write failed for {site_id}, skipping VPN setup")
+            except ValueError as e:
+                logger.error(f"WireGuard IP allocation failed: {e}")
+            except Exception as e:
+                logger.error(f"WireGuard provisioning error for {site_id}: {e}")
+        elif claim.wg_pubkey and not WG_HUB_PUBKEY:
+            logger.warning(f"Appliance {site_id} sent wg_pubkey but hub key not configured")
+
         # Build initial config
         config = {
             "api_endpoint": API_BASE_URL,
@@ -247,7 +343,8 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
                 "logo_url": partner['logo_url'],
             },
             config=config,
-            message="Appliance provisioned successfully. Run initial discovery."
+            message="Appliance provisioned successfully. Run initial discovery.",
+            **wg_response,
         )
 
 

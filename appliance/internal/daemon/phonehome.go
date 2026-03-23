@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -170,6 +171,7 @@ type CheckinRequest struct {
 	NixOSVersion        string           `json:"nixos_version"`
 	HasLocalCredentials bool             `json:"has_local_credentials"`
 	AgentPublicKey      string           `json:"agent_public_key,omitempty"`
+	WgPubKey            string           `json:"wg_pubkey,omitempty"`
 	ConnectedAgents     []ConnectedAgent        `json:"connected_agents,omitempty"`
 	DiscoveryResults    map[string]interface{}   `json:"discovery_results,omitempty"`
 	EncryptionPublicKey string                   `json:"encryption_public_key,omitempty"`
@@ -187,6 +189,13 @@ type ConnectedAgent struct {
 	DriftCount    int64  `json:"drift_count"`
 	ChecksPassed  int64  `json:"checks_passed"`
 	ChecksTotal   int64  `json:"checks_total"`
+}
+
+// WireguardConfig holds the hub-side WireGuard parameters delivered by Central Command.
+type WireguardConfig struct {
+	HubPubKey   string `json:"hub_pubkey"`
+	HubEndpoint string `json:"hub_endpoint"`
+	MyIP        string `json:"my_ip"`
 }
 
 // CheckinResponse is what Central Command returns.
@@ -208,6 +217,7 @@ type CheckinResponse struct {
 	DisabledChecks       []string                 `json:"disabled_checks"`
 	EncryptedCredentials map[string]interface{}   `json:"encrypted_credentials,omitempty"`
 	PendingDeploys       []PendingDeploy          `json:"pending_deploys,omitempty"`
+	Wireguard            *WireguardConfig         `json:"wireguard,omitempty"`
 }
 
 // Checkin sends a phone-home checkin to Central Command.
@@ -314,6 +324,7 @@ func SystemInfo(cfg *Config, version string) CheckinRequest {
 	ips := getIPAddresses()
 	uptime := getUptimeSeconds()
 	nixVer := getNixOSVersion()
+	wgPub := getWireGuardPubKey()
 
 	return CheckinRequest{
 		SiteID:        cfg.SiteID,
@@ -323,6 +334,7 @@ func SystemInfo(cfg *Config, version string) CheckinRequest {
 		UptimeSeconds: uptime,
 		AgentVersion:  version,
 		NixOSVersion:  nixVer,
+		WgPubKey:      wgPub,
 	}
 }
 
@@ -398,6 +410,80 @@ func getNixOSVersion() string {
 		}
 	}
 	return "unknown"
+}
+
+// getWireGuardPubKey reads the appliance's WireGuard public key if available.
+func getWireGuardPubKey() string {
+	data, err := os.ReadFile("/var/lib/msp/wireguard/public.key")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// applyWireguardConfig writes the hub-side WireGuard parameters to disk and
+// restarts the wireguard-tunnel systemd service so the tunnel comes up.
+func applyWireguardConfig(wg *WireguardConfig) {
+	if wg == nil || wg.HubPubKey == "" || wg.HubEndpoint == "" || wg.MyIP == "" {
+		return
+	}
+
+	configDir := "/var/lib/msp/wireguard"
+	configPath := filepath.Join(configDir, "config.json")
+
+	// Read existing config to avoid unnecessary restarts
+	if existing, err := os.ReadFile(configPath); err == nil {
+		var old WireguardConfig
+		if json.Unmarshal(existing, &old) == nil {
+			if old.HubPubKey == wg.HubPubKey && old.HubEndpoint == wg.HubEndpoint && old.MyIP == wg.MyIP {
+				return // config unchanged, skip restart
+			}
+		}
+	}
+
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		log.Printf("[wireguard] Failed to create config directory: %v", err)
+		return
+	}
+
+	data, err := json.MarshalIndent(map[string]string{
+		"hub_pubkey":   wg.HubPubKey,
+		"hub_endpoint": wg.HubEndpoint,
+		"my_ip":        wg.MyIP,
+	}, "", "  ")
+	if err != nil {
+		log.Printf("[wireguard] Failed to marshal config: %v", err)
+		return
+	}
+
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		log.Printf("[wireguard] Failed to write config: %v", err)
+		return
+	}
+
+	// Restart the wireguard-tunnel systemd service
+	cmd := execCommand("systemctl", "restart", "wireguard-tunnel")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("[wireguard] Failed to restart tunnel service: %v (%s)", err, string(out))
+	} else {
+		log.Printf("[wireguard] Config written, tunnel restarting: %s -> %s", wg.MyIP, wg.HubEndpoint)
+	}
+}
+
+// execCommand is a variable so tests can replace it.
+var execCommand = execCommandFunc
+
+func execCommandFunc(name string, args ...string) *execCmd {
+	return &execCmd{cmd: exec.Command(name, args...)}
+}
+
+// execCmd wraps exec.Cmd to allow test substitution.
+type execCmd struct {
+	cmd *exec.Cmd
+}
+
+func (c *execCmd) CombinedOutput() ([]byte, error) {
+	return c.cmd.CombinedOutput()
 }
 
 // Ensure x509 import is referenced (used by VerifyPeerCertificate callback signature).

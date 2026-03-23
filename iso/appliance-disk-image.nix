@@ -447,6 +447,7 @@ EOF
     vim curl htop
     iproute2 iputils dnsutils
     nmap arp-scan
+    wireguard-tools
     compliance-agent appliance-daemon-go network-scanner local-portal
     jq yq
   ];
