@@ -57,6 +57,11 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
   const rateColor = summary.compliance_rate >= 80 ? 'text-health-healthy' :
                     summary.compliance_rate >= 50 ? 'text-health-warning' : 'text-health-critical';
 
+  const coveragePct = summary.network_coverage_pct ?? 0;
+  const coverageColor = coveragePct >= 90 ? 'text-emerald-400' :
+                        coveragePct >= 70 ? 'text-yellow-400' : 'text-red-400';
+  const unmanagedCount = summary.unmanaged_device_count ?? 0;
+
   return (
     <GlassCard className="p-6 mb-6">
       <h2 className="text-lg font-semibold text-label-primary mb-4">Device Inventory Summary</h2>
@@ -68,6 +73,19 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
             {summary.compliance_rate.toFixed(0)}%
           </div>
           <div className="text-sm text-label-secondary">Compliance</div>
+        </div>
+
+        {/* Network Coverage */}
+        <div className="text-center">
+          <div className={`text-3xl font-bold ${coverageColor}`}>
+            {coveragePct.toFixed(0)}%
+          </div>
+          <div className="text-sm text-label-secondary">Coverage</div>
+          {unmanagedCount > 0 && (
+            <div className="text-xs text-label-tertiary mt-0.5">
+              {unmanagedCount} unmanaged
+            </div>
+          )}
         </div>
 
         {/* Total devices */}

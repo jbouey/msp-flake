@@ -3422,6 +3422,20 @@ async def get_admin_compliance_health(
               AND started_at > NOW() - INTERVAL '30 days'
         """, site_id)
 
+        # Network coverage score
+        coverage_row = await conn.fetchrow("""
+            SELECT
+                COUNT(*) FILTER (WHERE device_status = 'agent_active') as agent_active,
+                COUNT(*) FILTER (WHERE device_status NOT IN ('ignored', 'archived')) as total_non_ignored
+            FROM discovered_devices
+            WHERE site_id = $1
+        """, site_id)
+
+        agent_active = coverage_row["agent_active"] or 0
+        total_non_ignored = coverage_row["total_non_ignored"] or 0
+        network_coverage_pct = round((agent_active / total_non_ignored * 100), 1) if total_non_ignored > 0 else 0.0
+        unmanaged_count = total_non_ignored - agent_active
+
         return {
             "site_id": site_id,
             "clinic_name": site["clinic_name"],
@@ -3445,6 +3459,8 @@ async def get_admin_compliance_health(
                 "auto_healed": healing["auto_healed"] if healing else 0,
                 "pending": healing["pending"] if healing else 0,
             },
+            "network_coverage_pct": network_coverage_pct,
+            "unmanaged_device_count": unmanaged_count,
         }
 
 

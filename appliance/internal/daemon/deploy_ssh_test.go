@@ -55,6 +55,42 @@ func TestBuildInstallScript_MacOSConfigJSON(t *testing.T) {
 	}
 }
 
+func TestBuildUninstallScript_Linux(t *testing.T) {
+	script := buildUninstallScript("linux")
+	if !strings.Contains(script, "systemctl stop") {
+		t.Error("Linux uninstall should stop systemd service")
+	}
+	if !strings.Contains(script, "rm -rf /opt/osiriscare") {
+		t.Error("Linux uninstall should remove /opt/osiriscare")
+	}
+	if !strings.Contains(script, "rm -rf /var/lib/osiriscare") {
+		t.Error("Linux uninstall should remove /var/lib/osiriscare")
+	}
+	if !strings.Contains(script, "UNINSTALL_SUCCESS") {
+		t.Error("Linux uninstall should output UNINSTALL_SUCCESS")
+	}
+}
+
+func TestBuildUninstallScript_MacOS(t *testing.T) {
+	script := buildUninstallScript("macos")
+	if !strings.Contains(script, "launchctl unload") {
+		t.Error("macOS uninstall should unload launchd plist")
+	}
+	if !strings.Contains(script, "rm -rf /Library/OsirisCare") {
+		t.Error("macOS uninstall should remove /Library/OsirisCare")
+	}
+	if !strings.Contains(script, "UNINSTALL_SUCCESS") {
+		t.Error("macOS uninstall should output UNINSTALL_SUCCESS")
+	}
+}
+
+func TestBuildUninstallScript_Unknown(t *testing.T) {
+	script := buildUninstallScript("freebsd")
+	if !strings.Contains(script, "UNINSTALL_UNSUPPORTED_OS") {
+		t.Error("Unknown OS should return UNINSTALL_UNSUPPORTED_OS")
+	}
+}
+
 func TestGetLocalBinaryPath_Linux(t *testing.T) {
 	d := &Daemon{
 		config: &Config{StateDir: "/var/lib/msp"},

@@ -1634,6 +1634,8 @@ export interface SiteDeviceSummary {
     agents_enrolled: number;
     credentials_configured: number;
   };
+  network_coverage_pct?: number;
+  unmanaged_device_count?: number;
 }
 
 export const devicesApi = {

@@ -1006,6 +1006,22 @@ export const SiteDetail: React.FC = () => {
     queryFn: fleetUpdatesApi.getStats,
     staleTime: 60_000,
   });
+  const { data: coverageData } = useQuery<{
+    network_coverage_pct: number;
+    unmanaged_device_count: number;
+  }>({
+    queryKey: ['compliance-health-coverage', siteId],
+    queryFn: async () => {
+      const res = await fetch(`/api/dashboard/sites/${siteId}/compliance-health`, {
+        credentials: 'same-origin',
+      });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!siteId,
+    staleTime: 60_000,
+    retry: false,
+  });
   const latestVersion = fleetStats?.releases.latest_version ?? null;
   const addCredential = useAddCredential();
   const createOrder = useCreateApplianceOrder();
@@ -1457,6 +1473,30 @@ export const SiteDetail: React.FC = () => {
 
         {/* Sidebar */}
         <div className="space-y-6">
+          {/* Network Coverage Score */}
+          {coverageData !== null && coverageData !== undefined && (
+            <GlassCard>
+              <h2 className="text-lg font-semibold mb-3">Network Coverage</h2>
+              <div className="bg-white/5 rounded-lg p-4">
+                <div className="text-sm text-label-secondary mb-1">Agent Coverage</div>
+                <div className={`text-2xl font-bold ${
+                  (coverageData.network_coverage_pct ?? 0) >= 90
+                    ? 'text-emerald-400'
+                    : (coverageData.network_coverage_pct ?? 0) >= 70
+                      ? 'text-yellow-400'
+                      : 'text-red-400'
+                }`}>
+                  {coverageData.network_coverage_pct ?? 0}%
+                </div>
+                <div className="text-xs text-label-tertiary mt-1">
+                  {(coverageData.unmanaged_device_count ?? 0) > 0
+                    ? `${coverageData.unmanaged_device_count} unmanaged device${coverageData.unmanaged_device_count > 1 ? 's' : ''}`
+                    : 'All devices managed'}
+                </div>
+              </div>
+            </GlassCard>
+          )}
+
           {/* Onboarding Progress */}
           <GlassCard>
             <h2 className="text-lg font-semibold mb-4">Onboarding Progress</h2>

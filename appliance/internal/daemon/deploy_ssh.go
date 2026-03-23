@@ -225,6 +225,50 @@ echo "OsirisCare agent installed and started"
 `, binaryPath, configJSON)
 }
 
+// uninstallViaSSH removes the Go agent from a Linux or macOS host over SSH.
+func (d *Daemon) uninstallViaSSH(ctx context.Context, target *sshexec.Target, osType string) error {
+	script := buildUninstallScript(osType)
+	result := d.sshExec.Execute(ctx, target, script, "remove-agent", "uninstall", 60, 0, 0, true, nil)
+	if !result.Success {
+		return fmt.Errorf("uninstall: %s", result.Error)
+	}
+	stdout, _ := result.Output["stdout"].(string)
+	if !strings.Contains(stdout, "UNINSTALL_SUCCESS") {
+		return fmt.Errorf("uninstall: script did not emit UNINSTALL_SUCCESS (stdout: %s)", stdout)
+	}
+	return nil
+}
+
+// buildUninstallScript generates platform-specific uninstall commands.
+func buildUninstallScript(osType string) string {
+	switch osType {
+	case "linux":
+		return `
+set -e
+sudo systemctl stop osiriscare-agent 2>/dev/null || true
+sudo systemctl disable osiriscare-agent 2>/dev/null || true
+sudo rm -f /etc/systemd/system/osiriscare-agent.service
+sudo systemctl daemon-reload
+sudo rm -f /etc/osiriscare.json
+sudo rm -rf /opt/osiriscare
+sudo rm -rf /var/lib/osiriscare
+echo "UNINSTALL_SUCCESS"
+`
+	case "macos":
+		return `
+set -e
+sudo launchctl unload /Library/LaunchDaemons/net.osiriscare.agent.plist 2>/dev/null || true
+sudo rm -f /Library/LaunchDaemons/net.osiriscare.agent.plist
+sudo rm -rf /Library/OsirisCare
+sudo rm -rf "/Library/Application Support/OsirisCare"
+sudo rm -rf /Library/Logs/OsirisCare
+echo "UNINSTALL_SUCCESS"
+`
+	default:
+		return "echo UNINSTALL_UNSUPPORTED_OS; exit 1"
+	}
+}
+
 // getLocalBinaryPath returns the path to the cached agent binary for the given OS type.
 // Returns the path (even if the file is missing) alongside any error, so callers
 // can include the expected path in diagnostics.
@@ -244,4 +288,62 @@ func (d *Daemon) getLocalBinaryPath(osType string) (string, error) {
 		return path, fmt.Errorf("agent binary not found at %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// handleRemoveAgent handles a "remove_agent" fleet order.
+// It looks up credentials for the target host and runs the uninstall script via SSH.
+func (d *Daemon) handleRemoveAgent(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	hostname, _ := params["hostname"].(string)
+	ipAddress, _ := params["ip_address"].(string)
+	osType, _ := params["os_type"].(string)
+
+	if hostname == "" && ipAddress == "" {
+		return nil, fmt.Errorf("remove_agent: hostname or ip_address is required")
+	}
+	if osType == "" {
+		return nil, fmt.Errorf("remove_agent: os_type is required (linux or macos)")
+	}
+
+	// Resolve connection address: prefer IP, fall back to hostname
+	connectAddr := ipAddress
+	if connectAddr == "" {
+		connectAddr = hostname
+	}
+
+	// Look up stored credentials for this host
+	creds := d.findCredentialsForHost(hostname, ipAddress)
+	if creds == nil {
+		return nil, fmt.Errorf("remove_agent: no credentials found for host %q / %q", hostname, ipAddress)
+	}
+
+	target := &sshexec.Target{
+		Hostname:       connectAddr,
+		Port:           22,
+		Username:       creds.Username,
+		ConnectTimeout: 30,
+		CommandTimeout: 60,
+	}
+	if creds.SSHKey != "" {
+		target.PrivateKey = &creds.SSHKey
+	} else if creds.Password != "" {
+		pw := creds.Password
+		target.Password = &pw
+	}
+
+	label := hostname
+	if label == "" {
+		label = ipAddress
+	}
+	log.Printf("[remove-agent] Uninstalling agent from %s (%s)", label, osType)
+
+	if err := d.uninstallViaSSH(ctx, target, osType); err != nil {
+		return nil, fmt.Errorf("remove_agent: %w", err)
+	}
+
+	log.Printf("[remove-agent] Agent removed successfully from %s", label)
+	return map[string]interface{}{
+		"status":   "removed",
+		"hostname": label,
+		"os_type":  osType,
+	}, nil
 }
