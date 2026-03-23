@@ -37,6 +37,64 @@ type discoveredDevice struct {
 	HasAgent      bool   `json:"has_agent"`
 }
 
+// rogueDetector tracks known MACs and detects new (rogue) devices.
+type rogueDetector struct {
+	knownMACs     map[string]time.Time // MAC → first seen
+	baselineUntil time.Time            // suppress alerts during first 24h
+	alertCount    int                  // rate limit counter
+	alertWindow   time.Time            // rate limit window start
+	mu            sync.Mutex
+}
+
+func newRogueDetector() *rogueDetector {
+	return &rogueDetector{
+		knownMACs:     make(map[string]time.Time),
+		baselineUntil: time.Now().Add(24 * time.Hour),
+		alertWindow:   time.Now(),
+	}
+}
+
+// checkForRogues compares current devices against known MACs.
+// Returns newly-seen devices (potential rogues).
+// Suppressed during baseline period (first 24h) and rate-limited to 10/hour.
+func (rd *rogueDetector) checkForRogues(devices []discoveredDevice) []discoveredDevice {
+	rd.mu.Lock()
+	defer rd.mu.Unlock()
+
+	// Suppress during baseline period (first 24h after boot), but still learn MACs
+	if time.Now().Before(rd.baselineUntil) {
+		for _, d := range devices {
+			if d.MACAddress != "" {
+				rd.knownMACs[d.MACAddress] = time.Now()
+			}
+		}
+		return nil
+	}
+
+	// Reset rate limit window every hour
+	if time.Since(rd.alertWindow) > time.Hour {
+		rd.alertCount = 0
+		rd.alertWindow = time.Now()
+	}
+
+	var rogues []discoveredDevice
+	for _, d := range devices {
+		if d.MACAddress == "" {
+			continue
+		}
+		if _, known := rd.knownMACs[d.MACAddress]; !known {
+			// New MAC — learn it regardless of rate limit
+			rd.knownMACs[d.MACAddress] = time.Now()
+			// Only alert if under rate limit
+			if rd.alertCount < 10 {
+				rogues = append(rogues, d)
+				rd.alertCount++
+			}
+		}
+	}
+	return rogues
+}
+
 // netScanner periodically checks network-level security:
 // - Appliance listening ports (detect unexpected services)
 // - Host reachability (known hosts responsive on expected ports)
@@ -50,12 +108,18 @@ type netScanner struct {
 	running      int32
 
 	// Last discovered devices from ARP table
-	devicesMu       sync.Mutex
-	discoveredDevs  []discoveredDevice
+	devicesMu      sync.Mutex
+	discoveredDevs []discoveredDevice
+
+	// Rogue device detection
+	rogueDetector *rogueDetector
 }
 
 func newNetScanner(d *Daemon) *netScanner {
-	return &netScanner{daemon: d}
+	return &netScanner{
+		daemon:        d,
+		rogueDetector: newRogueDetector(),
+	}
 }
 
 // runNetScanIfNeeded runs a network scan if the interval has elapsed.
@@ -145,6 +209,30 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 	ns.devicesMu.Lock()
 	ns.discoveredDevs = devices
 	ns.devicesMu.Unlock()
+
+	// Check for rogue (previously unseen) devices and report as drift findings
+	rogues := ns.rogueDetector.checkForRogues(devices)
+	for _, r := range rogues {
+		ns.reportNetDrift(&driftFinding{
+			Hostname:     r.Hostname,
+			CheckType:    "NETWORK-ROGUE-DEVICE",
+			Expected:     "No unknown devices on network",
+			Actual:       fmt.Sprintf("New device: %s (%s) MAC=%s", r.Hostname, r.IPAddress, r.MACAddress),
+			HIPAAControl: "164.312(a)(1)",
+			Severity:     "medium",
+			Details: map[string]string{
+				"ip_address":  r.IPAddress,
+				"mac_address": r.MACAddress,
+				"hostname":    r.Hostname,
+				"os_type":     r.OSType,
+				"probe_ssh":   fmt.Sprintf("%v", r.ProbeSSH),
+				"probe_winrm": fmt.Sprintf("%v", r.ProbeWinRM),
+			},
+		})
+	}
+	if len(rogues) > 0 {
+		log.Printf("[netscan] Rogue devices detected: %d new MACs", len(rogues))
+	}
 
 	log.Printf("[netscan] Scan complete: findings=%d, arp_devices=%d", len(findings), len(devices))
 }
