@@ -113,7 +113,6 @@ export const PartnerEscalations: React.FC = () => {
       }
     } catch (e) {
       setError('Network error loading escalations');
-      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -198,21 +197,21 @@ export const PartnerEscalations: React.FC = () => {
 
   const priorityColor = (p: string) => {
     switch (p) {
-      case 'critical': return 'bg-red-100 text-red-800';
-      case 'high': return 'bg-orange-100 text-orange-800';
-      case 'medium': return 'bg-yellow-100 text-yellow-800';
-      case 'low': return 'bg-slate-100 text-slate-600';
-      default: return 'bg-slate-100 text-slate-600';
+      case 'critical': return 'bg-health-critical/10 text-health-critical';
+      case 'high': return 'bg-ios-orange/10 text-ios-orange';
+      case 'medium': return 'bg-health-warning/10 text-health-warning';
+      case 'low': return 'bg-fill-secondary text-label-tertiary';
+      default: return 'bg-fill-secondary text-label-tertiary';
     }
   };
 
   const statusColor = (s: string) => {
     switch (s) {
-      case 'open': return 'bg-red-100 text-red-700';
-      case 'acknowledged': return 'bg-blue-100 text-blue-700';
-      case 'resolved': return 'bg-green-100 text-green-700';
-      case 'escalated_to_l4': return 'bg-purple-100 text-purple-700';
-      default: return 'bg-slate-100 text-slate-600';
+      case 'open': return 'bg-health-critical/10 text-health-critical';
+      case 'acknowledged': return 'bg-ios-blue/10 text-ios-blue';
+      case 'resolved': return 'bg-health-healthy/10 text-health-healthy';
+      case 'escalated_to_l4': return 'bg-ios-purple/10 text-ios-purple';
+      default: return 'bg-fill-secondary text-label-tertiary';
     }
   };
 
@@ -231,11 +230,11 @@ export const PartnerEscalations: React.FC = () => {
 
   const severityColor = (s: string) => {
     switch (s) {
-      case 'critical': return 'bg-red-600 text-white';
-      case 'high': return 'bg-orange-500 text-white';
-      case 'medium': return 'bg-yellow-500 text-white';
-      case 'low': return 'bg-slate-400 text-white';
-      default: return 'bg-slate-400 text-white';
+      case 'critical': return 'bg-health-critical text-white';
+      case 'high': return 'bg-ios-orange text-white';
+      case 'medium': return 'bg-health-warning text-white';
+      case 'low': return 'bg-label-tertiary text-white';
+      default: return 'bg-label-tertiary text-white';
     }
   };
 
@@ -293,13 +292,13 @@ export const PartnerEscalations: React.FC = () => {
     <div className="space-y-6">
       {/* Feedback banners */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 flex justify-between">
+        <div className="bg-health-critical/10 border border-health-critical/20 rounded-xl px-4 py-3 text-sm text-health-critical flex justify-between">
           {error}
-          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600">x</button>
+          <button onClick={() => setError(null)} className="text-health-critical/60 hover:text-health-critical">x</button>
         </div>
       )}
       {success && (
-        <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-700">
+        <div className="bg-health-healthy/10 border border-health-healthy/20 rounded-xl px-4 py-3 text-sm text-health-healthy">
           {success}
         </div>
       )}
@@ -308,19 +307,19 @@ export const PartnerEscalations: React.FC = () => {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Open<InfoTip text="Issues escalated to your team that need attention." /></p>
-          <p className="text-2xl font-bold text-red-600 tabular-nums">{counts?.open_count ?? 0}</p>
+          <p className="text-2xl font-bold text-health-critical tabular-nums">{counts?.open_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Acknowledged<InfoTip text="Tickets your team has seen and accepted responsibility for." /></p>
-          <p className="text-2xl font-bold text-blue-600 tabular-nums">{counts?.acknowledged_count ?? 0}</p>
+          <p className="text-2xl font-bold text-ios-blue tabular-nums">{counts?.acknowledged_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Resolved<InfoTip text="Issues that have been fixed and closed." /></p>
-          <p className="text-2xl font-bold text-green-600 tabular-nums">{counts?.resolved_count ?? 0}</p>
+          <p className="text-2xl font-bold text-health-healthy tabular-nums">{counts?.resolved_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">SLA Breached<InfoTip text="Tickets that exceeded the agreed response time." /></p>
-          <p className={`text-2xl font-bold tabular-nums ${(counts?.sla_breached_count ?? 0) > 0 ? 'text-red-600' : 'text-slate-400'}`}>
+          <p className={`text-2xl font-bold tabular-nums ${(counts?.sla_breached_count ?? 0) > 0 ? 'text-health-critical' : 'text-label-tertiary'}`}>
             {counts?.sla_breached_count ?? 0}
           </p>
         </div>
@@ -353,8 +352,8 @@ export const PartnerEscalations: React.FC = () => {
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         {tickets.length === 0 ? (
           <div className="p-12 text-center">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-16 h-16 bg-health-healthy/10 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-health-healthy" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
@@ -399,7 +398,7 @@ export const PartnerEscalations: React.FC = () => {
                         <span>{ticket.site_name || ticket.site_id}</span>
                         <span className="tabular-nums">{formatTimeAgo(ticket.created_at)}</span>
                         {sla && (
-                          <span className={`font-medium ${sla === 'BREACHED' ? 'text-red-600' : 'text-amber-600'}`}>
+                          <span className={`font-medium ${sla === 'BREACHED' ? 'text-health-critical' : 'text-health-warning'}`}>
                             {sla}
                           </span>
                         )}
@@ -408,7 +407,7 @@ export const PartnerEscalations: React.FC = () => {
                         {ticket.status === 'open' && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setSelectedTicket(ticket); setShowAckModal(true); }}
-                            className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition min-h-[44px] min-w-[44px] flex items-center justify-center"
+                            className="px-3 py-1.5 text-xs font-medium bg-ios-blue/10 text-ios-blue rounded-lg hover:bg-ios-blue/20 transition min-h-[44px] min-w-[44px] flex items-center justify-center"
                           >
                             Ack
                           </button>
@@ -416,7 +415,7 @@ export const PartnerEscalations: React.FC = () => {
                         {(ticket.status === 'open' || ticket.status === 'acknowledged') && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setSelectedTicket(ticket); setShowResolveModal(true); }}
-                            className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition min-h-[44px] min-w-[44px] flex items-center justify-center"
+                            className="px-3 py-1.5 text-xs font-medium bg-health-healthy/10 text-health-healthy rounded-lg hover:bg-health-healthy/20 transition min-h-[44px] min-w-[44px] flex items-center justify-center"
                           >
                             Resolve
                           </button>
@@ -475,7 +474,7 @@ export const PartnerEscalations: React.FC = () => {
                         </td>
                         <td className="px-5 py-4">
                           {sla && (
-                            <span className={`text-xs font-medium ${sla === 'BREACHED' ? 'text-red-600' : 'text-amber-600'}`}>
+                            <span className={`text-xs font-medium ${sla === 'BREACHED' ? 'text-health-critical' : 'text-health-warning'}`}>
                               {sla}
                             </span>
                           )}
@@ -486,7 +485,7 @@ export const PartnerEscalations: React.FC = () => {
                             {ticket.status === 'open' && (
                               <button
                                 onClick={() => { setSelectedTicket(ticket); setShowAckModal(true); }}
-                                className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition"
+                                className="px-3 py-1.5 text-xs font-medium bg-ios-blue/10 text-ios-blue rounded-lg hover:bg-ios-blue/20 transition"
                               >
                                 Acknowledge
                               </button>
@@ -494,7 +493,7 @@ export const PartnerEscalations: React.FC = () => {
                             {(ticket.status === 'open' || ticket.status === 'acknowledged') && (
                               <button
                                 onClick={() => { setSelectedTicket(ticket); setShowResolveModal(true); }}
-                                className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition"
+                                className="px-3 py-1.5 text-xs font-medium bg-health-healthy/10 text-health-healthy rounded-lg hover:bg-health-healthy/20 transition"
                               >
                                 Resolve
                               </button>
@@ -534,7 +533,7 @@ export const PartnerEscalations: React.FC = () => {
                     {selectedTicket.status}
                   </span>
                   {selectedTicket.sla_breached && (
-                    <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-red-600 text-white">SLA BREACHED</span>
+                    <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-health-critical text-white">SLA BREACHED</span>
                   )}
                 </div>
                 <h3 className="text-lg font-semibold text-slate-900">{selectedTicket.title}</h3>
@@ -658,7 +657,7 @@ export const PartnerEscalations: React.FC = () => {
               {selectedTicket.status === 'open' && (
                 <button
                   onClick={() => setShowAckModal(true)}
-                  className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                  className="px-4 py-2 text-sm font-medium bg-ios-blue text-white rounded-lg hover:bg-ios-blue/90 transition"
                 >
                   Acknowledge
                 </button>
@@ -666,7 +665,7 @@ export const PartnerEscalations: React.FC = () => {
               {selectedTicket.status !== 'resolved' && selectedTicket.status !== 'escalated_to_l4' && (
                 <button
                   onClick={() => setShowResolveModal(true)}
-                  className="px-4 py-2 text-sm font-medium bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                  className="px-4 py-2 text-sm font-medium bg-health-healthy text-white rounded-lg hover:bg-health-healthy/90 transition"
                 >
                   Resolve
                 </button>
@@ -721,7 +720,7 @@ export const PartnerEscalations: React.FC = () => {
               <button
                 onClick={handleAcknowledge}
                 disabled={submitting || !ackBy.trim()}
-                className="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
+                className="px-4 py-2 bg-ios-blue text-white font-medium rounded-lg hover:bg-ios-blue/90 disabled:opacity-50 transition"
               >
                 {submitting ? 'Acknowledging...' : 'Acknowledge'}
               </button>
@@ -769,7 +768,7 @@ export const PartnerEscalations: React.FC = () => {
               <button
                 onClick={handleResolve}
                 disabled={submitting || !resolveBy.trim() || !resolutionNotes.trim()}
-                className="px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition"
+                className="px-4 py-2 bg-health-healthy text-white font-medium rounded-lg hover:bg-health-healthy/90 disabled:opacity-50 transition"
               >
                 {submitting ? 'Resolving...' : 'Resolve & Notify Client'}
               </button>

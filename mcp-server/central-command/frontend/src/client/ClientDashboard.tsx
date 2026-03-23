@@ -120,8 +120,8 @@ export const ClientDashboard: React.FC = () => {
         const data = await response.json();
         setNotifications(data.notifications || []);
       }
-    } catch (e) {
-      console.error('Failed to fetch notifications:', e);
+    } catch {
+      // Notification fetch failed silently — non-critical
     }
   };
 
@@ -134,8 +134,8 @@ export const ClientDashboard: React.FC = () => {
         const data = await response.json();
         setAgentInfo(data);
       }
-    } catch (e) {
-      console.error('Failed to fetch agent info:', e);
+    } catch {
+      // Agent info fetch failed silently — non-critical
     }
   };
 
@@ -154,8 +154,8 @@ export const ClientDashboard: React.FC = () => {
         a.click();
         URL.revokeObjectURL(url);
       }
-    } catch (e) {
-      console.error('Config download failed:', e);
+    } catch {
+      // Config download failed silently
     } finally {
       setDownloadingConfig(null);
     }
@@ -175,8 +175,8 @@ export const ClientDashboard: React.FC = () => {
         a.click();
         URL.revokeObjectURL(url);
       }
-    } catch (e) {
-      console.error('Script download failed:', e);
+    } catch {
+      // Script download failed silently
     }
   };
 
@@ -194,8 +194,8 @@ export const ClientDashboard: React.FC = () => {
         a.click();
         URL.revokeObjectURL(url);
       }
-    } catch (e) {
-      console.error('Mobileconfig download failed:', e);
+    } catch {
+      // Mobileconfig download failed silently
     }
   };
 
@@ -222,8 +222,8 @@ export const ClientDashboard: React.FC = () => {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 bg-red-100 rounded-full mx-auto mb-4 flex items-center justify-center">
-            <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="w-16 h-16 bg-health-critical/10 rounded-full mx-auto mb-4 flex items-center justify-center">
+            <svg className="w-8 h-8 text-health-critical" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
@@ -367,15 +367,15 @@ export const ClientDashboard: React.FC = () => {
           {/* Checks Passed */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center">
-                <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="w-10 h-10 rounded-xl bg-health-healthy/10 flex items-center justify-center">
+                <svg className="w-5 h-5 text-health-healthy" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
               <p className="text-sm font-medium text-slate-500">Controls Passed<InfoTip text="Security configuration checks that are currently in the expected state." /></p>
             </div>
             <div className="flex items-end gap-2">
-              <span className="text-4xl font-bold text-green-600 tabular-nums">{dashboard?.kpis.passed}</span>
+              <span className="text-4xl font-bold text-health-healthy tabular-nums">{dashboard?.kpis.passed}</span>
               <span className="text-slate-500 mb-1 tabular-nums">/ {dashboard?.kpis.total_checks}</span>
             </div>
             <p className="mt-2 text-sm text-slate-500">Last 24 hours</p>
@@ -384,8 +384,8 @@ export const ClientDashboard: React.FC = () => {
           {/* Issues */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center">
-                <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="w-10 h-10 rounded-xl bg-health-critical/10 flex items-center justify-center">
+                <svg className="w-5 h-5 text-health-critical" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
               </div>
@@ -393,11 +393,11 @@ export const ClientDashboard: React.FC = () => {
             </div>
             <div className="flex items-end gap-4">
               <div>
-                <span className="text-4xl font-bold text-red-600 tabular-nums">{dashboard?.kpis.failed}</span>
+                <span className="text-4xl font-bold text-health-critical tabular-nums">{dashboard?.kpis.failed}</span>
                 <p className="text-xs text-slate-500">Failed</p>
               </div>
               <div>
-                <span className="text-2xl font-bold text-yellow-600 tabular-nums">{dashboard?.kpis.warnings}</span>
+                <span className="text-2xl font-bold text-health-warning tabular-nums">{dashboard?.kpis.warnings}</span>
                 <p className="text-xs text-slate-500">Warnings</p>
               </div>
             </div>
@@ -659,7 +659,7 @@ export const ClientDashboard: React.FC = () => {
                         }
                       </p>
                     </div>
-                    <span className={`px-3 py-1 text-xs font-medium rounded-full ${site.tier === 'essential' ? 'bg-blue-100 text-blue-700' : site.tier === 'professional' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700'}`}>
+                    <span className={`px-3 py-1 text-xs font-medium rounded-full ${site.tier === 'essential' ? 'bg-ios-blue/10 text-ios-blue' : site.tier === 'professional' ? 'bg-ios-purple/10 text-ios-purple' : 'bg-fill-secondary text-label-secondary'}`}>
                       {site.tier || 'Standard'}
                     </span>
                     <button

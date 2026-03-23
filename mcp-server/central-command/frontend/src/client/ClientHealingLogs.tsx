@@ -104,8 +104,8 @@ export const ClientHealingLogs: React.FC = () => {
         setLogsTotal(data.total || 0);
         setLogsOffset(offset);
       }
-    } catch (e) {
-      console.error('Failed to fetch healing logs:', e);
+    } catch {
+      // Healing log fetch failed silently
     } finally {
       setLogsLoading(false);
     }
@@ -121,8 +121,8 @@ export const ClientHealingLogs: React.FC = () => {
         const data = await res.json();
         setCandidates(data.candidates || []);
       }
-    } catch (e) {
-      console.error('Failed to fetch promotion candidates:', e);
+    } catch {
+      // Promotion candidates fetch failed silently
     } finally {
       setCandidatesLoading(false);
     }
@@ -158,8 +158,8 @@ export const ClientHealingLogs: React.FC = () => {
         setForwardNotes('');
         setTimeout(() => setForwardSuccess(null), 3000);
       }
-    } catch (e) {
-      console.error('Failed to forward candidate:', e);
+    } catch {
+      // Forward candidate failed silently
     } finally {
       setForwarding(false);
     }
@@ -191,8 +191,8 @@ export const ClientHealingLogs: React.FC = () => {
         const err = await res.json().catch(() => ({ detail: 'Approval failed' }));
         alert(err.detail || 'Failed to approve');
       }
-    } catch (e) {
-      console.error('Failed to approve candidate:', e);
+    } catch {
+      // Approve candidate failed silently
     } finally {
       setApproving(false);
     }
@@ -222,8 +222,8 @@ export const ClientHealingLogs: React.FC = () => {
         const err = await res.json().catch(() => ({ detail: 'Rejection failed' }));
         alert(err.detail || 'Failed to reject');
       }
-    } catch (e) {
-      console.error('Failed to reject candidate:', e);
+    } catch {
+      // Reject candidate failed silently
     } finally {
       setRejecting(false);
     }
@@ -231,14 +231,14 @@ export const ClientHealingLogs: React.FC = () => {
 
   const getLevelBadge = (level: string | null) => {
     const styles: Record<string, string> = {
-      L1: 'bg-blue-100 text-blue-700',
-      L2: 'bg-purple-100 text-purple-700',
-      L3: 'bg-orange-100 text-orange-700',
+      L1: 'bg-ios-blue/10 text-ios-blue',
+      L2: 'bg-ios-purple/10 text-ios-purple',
+      L3: 'bg-ios-orange/10 text-ios-orange',
     };
     const key = level?.toUpperCase() || '';
     return (
       <span
-        className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${styles[key] || 'bg-slate-100 text-slate-600'}`}
+        className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${styles[key] || 'bg-fill-secondary text-label-tertiary'}`}
       >
         {level || '—'}
       </span>
@@ -247,14 +247,14 @@ export const ClientHealingLogs: React.FC = () => {
 
   const getStatusBadge = (success: boolean) =>
     success ? (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-health-healthy/10 text-health-healthy">
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
         </svg>
         Healed
       </span>
     ) : (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-700">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-health-critical/10 text-health-critical">
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
         </svg>
@@ -264,8 +264,8 @@ export const ClientHealingLogs: React.FC = () => {
 
   const getApprovalBadge = (status: string) => {
     const map: Record<string, { bg: string; label: string }> = {
-      approved: { bg: 'bg-green-100 text-green-700', label: 'Approved' },
-      rejected: { bg: 'bg-red-100 text-red-700', label: 'Rejected' },
+      approved: { bg: 'bg-health-healthy/10 text-health-healthy', label: 'Approved' },
+      rejected: { bg: 'bg-health-critical/10 text-health-critical', label: 'Rejected' },
       client_forwarded: { bg: 'bg-teal-100 text-teal-700', label: 'Forwarded' },
     };
     const info = map[status];
@@ -487,7 +487,7 @@ export const ClientHealingLogs: React.FC = () => {
                           <div className="flex items-center gap-2">
                             {getApprovalBadge(c.approval_status)}
                             {c.client_endorsed && (
-                              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700">
+                              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-health-healthy/10 text-health-healthy">
                                 Forwarded
                               </span>
                             )}
@@ -543,7 +543,7 @@ export const ClientHealingLogs: React.FC = () => {
                                   setApproveNotes('');
                                   setRejectingId(null);
                                 }}
-                                className="flex-1 py-2 px-4 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+                                className="flex-1 py-2 px-4 bg-health-healthy text-white text-sm font-medium rounded-lg hover:bg-health-healthy/90 transition-colors"
                               >
                                 Approve & Deploy
                               </button>
@@ -553,7 +553,7 @@ export const ClientHealingLogs: React.FC = () => {
                                   setRejectReason('');
                                   setApprovingId(null);
                                 }}
-                                className="py-2 px-4 text-sm font-medium rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors"
+                                className="py-2 px-4 text-sm font-medium rounded-lg border border-health-critical/20 text-health-critical hover:bg-health-critical/10 transition-colors"
                               >
                                 Reject
                               </button>
@@ -583,13 +583,13 @@ export const ClientHealingLogs: React.FC = () => {
                         )}
 
                         {approveSuccess === c.id && (
-                          <div className="text-center py-2 text-sm text-green-600 font-medium">
+                          <div className="text-center py-2 text-sm text-health-healthy font-medium">
                             Approved — rule will deploy on next sync
                           </div>
                         )}
 
                         {justForwarded && (
-                          <div className="text-center py-2 text-sm text-green-600 font-medium">
+                          <div className="text-center py-2 text-sm text-health-healthy font-medium">
                             Forwarded successfully
                           </div>
                         )}
@@ -631,8 +631,8 @@ export const ClientHealingLogs: React.FC = () => {
 
                       {/* Inline approve form (full_coverage) */}
                       {approvingId === c.id && (
-                        <div className="border-t border-green-100 bg-green-50/50 p-4">
-                          <p className="text-xs font-medium text-green-800 mb-2">
+                        <div className="border-t border-health-healthy/20 bg-health-healthy/5 p-4">
+                          <p className="text-xs font-medium text-health-healthy mb-2">
                             This will create an L1 rule for your site. The pattern will be auto-healed on future occurrences.
                           </p>
                           <label className="block text-xs font-medium text-slate-600 mb-1.5">
@@ -643,13 +643,13 @@ export const ClientHealingLogs: React.FC = () => {
                             onChange={(e) => setApproveNotes(e.target.value)}
                             placeholder="Reason for approval..."
                             rows={2}
-                            className="w-full px-3 py-2 text-sm border border-green-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-400"
+                            className="w-full px-3 py-2 text-sm border border-health-healthy/20 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-health-healthy/30 focus:border-health-healthy"
                           />
                           <div className="flex gap-2 mt-2">
                             <button
                               onClick={() => handleApprove(c.id)}
                               disabled={approving}
-                              className="flex-1 py-2 px-4 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+                              className="flex-1 py-2 px-4 bg-health-healthy text-white text-sm font-medium rounded-lg hover:bg-health-healthy/90 disabled:opacity-50 transition-colors"
                             >
                               {approving ? 'Approving...' : 'Confirm Approval'}
                             </button>
@@ -668,7 +668,7 @@ export const ClientHealingLogs: React.FC = () => {
 
                       {/* Inline reject form (full_coverage) */}
                       {rejectingId === c.id && (
-                        <div className="border-t border-red-100 bg-red-50/50 p-4">
+                        <div className="border-t border-health-critical/20 bg-health-critical/5 p-4">
                           <label className="block text-xs font-medium text-slate-600 mb-1.5">
                             Reason for rejection
                           </label>
@@ -677,13 +677,13 @@ export const ClientHealingLogs: React.FC = () => {
                             onChange={(e) => setRejectReason(e.target.value)}
                             placeholder="Why is this pattern not suitable for auto-healing?"
                             rows={2}
-                            className="w-full px-3 py-2 text-sm border border-red-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-400"
+                            className="w-full px-3 py-2 text-sm border border-health-critical/20 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-health-critical/30 focus:border-health-critical"
                           />
                           <div className="flex gap-2 mt-2">
                             <button
                               onClick={() => handleReject(c.id)}
                               disabled={rejecting || !rejectReason.trim()}
-                              className="flex-1 py-2 px-4 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                              className="flex-1 py-2 px-4 bg-health-critical text-white text-sm font-medium rounded-lg hover:bg-health-critical/90 disabled:opacity-50 transition-colors"
                             >
                               {rejecting ? 'Rejecting...' : 'Confirm Rejection'}
                             </button>

@@ -156,26 +156,26 @@ export const ClientEscalations: React.FC = () => {
 
   const priorityColor = (p: string) => {
     switch (p) {
-      case 'critical': return 'bg-red-100 text-red-800';
-      case 'high': return 'bg-orange-100 text-orange-800';
-      case 'medium': return 'bg-yellow-100 text-yellow-800';
-      default: return 'bg-slate-100 text-slate-600';
+      case 'critical': return 'bg-health-critical/10 text-health-critical';
+      case 'high': return 'bg-ios-orange/10 text-ios-orange';
+      case 'medium': return 'bg-health-warning/10 text-health-warning';
+      default: return 'bg-fill-secondary text-label-tertiary';
     }
   };
   const statusColor = (s: string) => {
     switch (s) {
-      case 'open': return 'bg-red-100 text-red-700';
-      case 'acknowledged': return 'bg-blue-100 text-blue-700';
-      case 'resolved': return 'bg-green-100 text-green-700';
-      default: return 'bg-slate-100 text-slate-600';
+      case 'open': return 'bg-health-critical/10 text-health-critical';
+      case 'acknowledged': return 'bg-ios-blue/10 text-ios-blue';
+      case 'resolved': return 'bg-health-healthy/10 text-health-healthy';
+      default: return 'bg-fill-secondary text-label-tertiary';
     }
   };
   const severityColor = (s: string) => {
     switch (s) {
-      case 'critical': return 'bg-red-600 text-white';
-      case 'high': return 'bg-orange-500 text-white';
-      case 'medium': return 'bg-yellow-500 text-white';
-      default: return 'bg-slate-400 text-white';
+      case 'critical': return 'bg-health-critical text-white';
+      case 'high': return 'bg-ios-orange text-white';
+      case 'medium': return 'bg-health-warning text-white';
+      default: return 'bg-label-tertiary text-white';
     }
   };
 
@@ -210,13 +210,13 @@ export const ClientEscalations: React.FC = () => {
   return (
     <div className="space-y-6">
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 flex justify-between">
+        <div className="bg-health-critical/10 border border-health-critical/20 rounded-xl px-4 py-3 text-sm text-health-critical flex justify-between">
           {error}
-          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600">x</button>
+          <button onClick={() => setError(null)} className="text-health-critical/60 hover:text-health-critical">x</button>
         </div>
       )}
       {success && (
-        <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-700">{success}</div>
+        <div className="bg-health-healthy/10 border border-health-healthy/20 rounded-xl px-4 py-3 text-sm text-health-healthy">{success}</div>
       )}
 
       {/* Header with prefs toggle */}
@@ -289,19 +289,19 @@ export const ClientEscalations: React.FC = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Open</p>
-          <p className="text-2xl font-bold text-red-600 tabular-nums">{counts?.open_count ?? 0}</p>
+          <p className="text-2xl font-bold text-health-critical tabular-nums">{counts?.open_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Acknowledged</p>
-          <p className="text-2xl font-bold text-blue-600 tabular-nums">{counts?.acknowledged_count ?? 0}</p>
+          <p className="text-2xl font-bold text-ios-blue tabular-nums">{counts?.acknowledged_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Resolved</p>
-          <p className="text-2xl font-bold text-green-600 tabular-nums">{counts?.resolved_count ?? 0}</p>
+          <p className="text-2xl font-bold text-health-healthy tabular-nums">{counts?.resolved_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">SLA Breached</p>
-          <p className={`text-2xl font-bold tabular-nums ${(counts?.sla_breached_count ?? 0) > 0 ? 'text-red-600' : 'text-slate-400'}`}>
+          <p className={`text-2xl font-bold tabular-nums ${(counts?.sla_breached_count ?? 0) > 0 ? 'text-health-critical' : 'text-label-tertiary'}`}>
             {counts?.sla_breached_count ?? 0}
           </p>
         </div>
@@ -322,8 +322,8 @@ export const ClientEscalations: React.FC = () => {
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         {tickets.length === 0 ? (
           <div className="p-12 text-center">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-16 h-16 bg-health-healthy/10 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-health-healthy" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
@@ -370,12 +370,12 @@ export const ClientEscalations: React.FC = () => {
                     <div className="flex items-center justify-end gap-2">
                       {ticket.status === 'open' && (
                         <button onClick={() => handleAcknowledge(ticket.id)}
-                          className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition"
+                          className="px-3 py-1.5 text-xs font-medium bg-ios-blue/10 text-ios-blue rounded-lg hover:bg-ios-blue/20 transition"
                         >Acknowledge</button>
                       )}
                       {ticket.status !== 'resolved' && (
                         <button onClick={() => { setSelectedTicket(ticket); setShowResolveModal(true); }}
-                          className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition"
+                          className="px-3 py-1.5 text-xs font-medium bg-health-healthy/10 text-health-healthy rounded-lg hover:bg-health-healthy/20 transition"
                         >Resolve</button>
                       )}
                     </div>
@@ -467,11 +467,11 @@ export const ClientEscalations: React.FC = () => {
               )}
 
               {selectedTicket.resolution_notes && (
-                <div className="bg-green-50 rounded-lg p-3">
-                  <p className="text-xs font-medium text-green-600 uppercase mb-1">Resolution</p>
-                  <p className="text-sm text-green-800">{selectedTicket.resolution_notes}</p>
+                <div className="bg-health-healthy/10 rounded-lg p-3">
+                  <p className="text-xs font-medium text-health-healthy uppercase mb-1">Resolution</p>
+                  <p className="text-sm text-health-healthy">{selectedTicket.resolution_notes}</p>
                   {selectedTicket.resolved_by && (
-                    <p className="text-xs text-green-600 mt-1">Resolved by {selectedTicket.resolved_by} on {new Date(selectedTicket.resolved_at!).toLocaleString()}</p>
+                    <p className="text-xs text-health-healthy mt-1">Resolved by {selectedTicket.resolved_by} on {new Date(selectedTicket.resolved_at!).toLocaleString()}</p>
                   )}
                 </div>
               )}
@@ -503,12 +503,12 @@ export const ClientEscalations: React.FC = () => {
             <div className="flex gap-2 justify-end mt-6 pt-4 border-t">
               {selectedTicket.status === 'open' && (
                 <button onClick={() => handleAcknowledge(selectedTicket.id)}
-                  className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                  className="px-4 py-2 text-sm font-medium bg-ios-blue text-white rounded-lg hover:bg-ios-blue/90 transition"
                 >Acknowledge</button>
               )}
               {selectedTicket.status !== 'resolved' && (
                 <button onClick={() => setShowResolveModal(true)}
-                  className="px-4 py-2 text-sm font-medium bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                  className="px-4 py-2 text-sm font-medium bg-health-healthy text-white rounded-lg hover:bg-health-healthy/90 transition"
                 >Resolve</button>
               )}
               <button onClick={() => setSelectedTicket(null)} className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900 transition">Close</button>
@@ -536,7 +536,7 @@ export const ClientEscalations: React.FC = () => {
             <div className="flex gap-3 justify-end mt-4">
               <button onClick={() => { setShowResolveModal(false); setResolutionNotes(''); }} className="px-4 py-2 text-slate-600 hover:text-slate-900 transition">Cancel</button>
               <button onClick={handleResolve} disabled={submitting || !resolutionNotes.trim()}
-                className="px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition"
+                className="px-4 py-2 bg-health-healthy text-white font-medium rounded-lg hover:bg-health-healthy/90 disabled:opacity-50 transition"
               >{submitting ? 'Resolving...' : 'Resolve'}</button>
             </div>
           </div>

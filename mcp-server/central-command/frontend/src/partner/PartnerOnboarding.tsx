@@ -63,8 +63,8 @@ export const PartnerOnboarding: React.FC = () => {
       if (res.ok) {
         setData(await res.json());
       }
-    } catch (e) {
-      console.error('Failed to load onboarding data', e);
+    } catch {
+      // Onboarding data load failed — page will show loading state
     } finally {
       setLoading(false);
     }
@@ -85,8 +85,8 @@ export const PartnerOnboarding: React.FC = () => {
       if (res.ok) {
         setTimeout(loadData, 3000);
       }
-    } catch (e) {
-      console.error('Failed to trigger checkin', e);
+    } catch {
+      // Trigger checkin failed silently — non-critical
     } finally {
       setTriggeringCheckin(null);
     }

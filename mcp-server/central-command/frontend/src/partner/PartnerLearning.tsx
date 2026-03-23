@@ -111,8 +111,7 @@ export const PartnerLearning: React.FC = () => {
         const data = await rulesRes.json();
         setPromotedRules(data.rules || []);
       }
-    } catch (e) {
-      console.error('Failed to load learning data', e);
+    } catch {
       setError('Failed to load learning data');
     } finally {
       setLoading(false);
@@ -311,15 +310,15 @@ export const PartnerLearning: React.FC = () => {
     switch (status) {
       case 'approved':
       case 'active':
-        return 'bg-green-100 text-green-800';
+        return 'bg-health-healthy/10 text-health-healthy';
       case 'pending':
       case 'not_submitted':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-health-warning/10 text-health-warning';
       case 'rejected':
       case 'disabled':
-        return 'bg-red-100 text-red-800';
+        return 'bg-health-critical/10 text-health-critical';
       default:
-        return 'bg-slate-100 text-slate-800';
+        return 'bg-fill-secondary text-label-secondary';
     }
   };
 
@@ -345,15 +344,15 @@ export const PartnerLearning: React.FC = () => {
     <div className="space-y-6">
       {/* Alerts */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center justify-between">
+        <div className="bg-health-critical/10 border border-health-critical/20 text-health-critical px-4 py-3 rounded-lg flex items-center justify-between">
           <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">&times;</button>
+          <button onClick={() => setError(null)} className="text-health-critical/60 hover:text-health-critical">&times;</button>
         </div>
       )}
       {success && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center justify-between">
+        <div className="bg-health-healthy/10 border border-health-healthy/20 text-health-healthy px-4 py-3 rounded-lg flex items-center justify-between">
           <span>{success}</span>
-          <button onClick={() => setSuccess(null)} className="text-green-500 hover:text-green-700">&times;</button>
+          <button onClick={() => setSuccess(null)} className="text-health-healthy/60 hover:text-health-healthy">&times;</button>
         </div>
       )}
 
@@ -362,11 +361,11 @@ export const PartnerLearning: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
             <p className="text-sm text-slate-500">Pending Candidates</p>
-            <p className="text-2xl font-bold text-yellow-600 tabular-nums">{stats.pending_candidates}</p>
+            <p className="text-2xl font-bold text-health-warning tabular-nums">{stats.pending_candidates}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
             <p className="text-sm text-slate-500">Active L1 Rules</p>
-            <p className="text-2xl font-bold text-green-600 tabular-nums">{stats.active_promoted_rules}</p>
+            <p className="text-2xl font-bold text-health-healthy tabular-nums">{stats.active_promoted_rules}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
             <p className="text-sm text-slate-500">L1 Resolution Rate</p>
@@ -374,7 +373,7 @@ export const PartnerLearning: React.FC = () => {
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
             <p className="text-sm text-slate-500">Avg Success Rate</p>
-            <p className="text-2xl font-bold text-blue-600 tabular-nums">{formatPercentage(stats.avg_success_rate)}</p>
+            <p className="text-2xl font-bold text-ios-blue tabular-nums">{formatPercentage(stats.avg_success_rate)}</p>
           </div>
         </div>
       )}
@@ -408,13 +407,13 @@ export const PartnerLearning: React.FC = () => {
               <button
                 onClick={handleBulkApprove}
                 disabled={bulkApproving}
-                className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition"
+                className="px-4 py-1.5 bg-health-healthy text-white text-sm font-medium rounded-lg hover:bg-health-healthy/90 disabled:opacity-50 transition"
               >
                 {bulkApproving ? 'Approving...' : `Approve Selected (${selectedIds.size})`}
               </button>
               <button
                 onClick={() => setShowBulkRejectModal(true)}
-                className="px-4 py-1.5 bg-red-100 text-red-700 text-sm font-medium rounded-lg hover:bg-red-200 transition"
+                className="px-4 py-1.5 bg-health-critical/10 text-health-critical text-sm font-medium rounded-lg hover:bg-health-critical/20 transition"
               >
                 Reject Selected ({selectedIds.size})
               </button>
@@ -513,9 +512,9 @@ export const PartnerLearning: React.FC = () => {
                   </td>
                   <td className="px-4 py-4">
                     <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                      candidate.success_rate >= 0.95 ? 'bg-green-100 text-green-800' :
-                      candidate.success_rate >= 0.90 ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-red-100 text-red-800'
+                      candidate.success_rate >= 0.95 ? 'bg-health-healthy/10 text-health-healthy' :
+                      candidate.success_rate >= 0.90 ? 'bg-health-warning/10 text-health-warning' :
+                      'bg-health-critical/10 text-health-critical'
                     }`}>
                       {formatPercentage(candidate.success_rate)}
                     </span>
@@ -533,7 +532,7 @@ export const PartnerLearning: React.FC = () => {
                             setSelectedCandidate(candidate);
                             setShowApproveModal(true);
                           }}
-                          className="px-3 py-1 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700 transition"
+                          className="px-3 py-1 bg-health-healthy text-white text-sm font-medium rounded hover:bg-health-healthy/90 transition"
                         >
                           Approve
                         </button>
@@ -542,7 +541,7 @@ export const PartnerLearning: React.FC = () => {
                             setSelectedCandidate(candidate);
                             setShowRejectModal(true);
                           }}
-                          className="px-3 py-1 bg-red-100 text-red-700 text-sm font-medium rounded hover:bg-red-200 transition"
+                          className="px-3 py-1 bg-health-critical/10 text-health-critical text-sm font-medium rounded hover:bg-health-critical/20 transition"
                         >
                           Reject
                         </button>
@@ -618,8 +617,8 @@ export const PartnerLearning: React.FC = () => {
                         onClick={() => handleToggleRuleStatus(rule)}
                         className={`px-3 py-1 text-sm font-medium rounded transition ${
                           rule.status === 'active'
-                            ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                            : 'bg-green-100 text-green-700 hover:bg-green-200'
+                            ? 'bg-health-critical/10 text-health-critical hover:bg-health-critical/20'
+                            : 'bg-health-healthy/10 text-health-healthy hover:bg-health-healthy/20'
                         }`}
                       >
                         {rule.status === 'active' ? 'Disable' : 'Enable'}
@@ -653,7 +652,7 @@ export const PartnerLearning: React.FC = () => {
                 </div>
                 <div className="bg-slate-50 rounded-lg p-4">
                   <p className="text-sm text-slate-500">Success Rate</p>
-                  <p className="text-lg font-semibold text-green-600">{formatPercentage(selectedCandidate.success_rate)}</p>
+                  <p className="text-lg font-semibold text-health-healthy">{formatPercentage(selectedCandidate.success_rate)}</p>
                 </div>
               </div>
 
@@ -695,7 +694,7 @@ export const PartnerLearning: React.FC = () => {
               <button
                 onClick={handleApprove}
                 disabled={approving}
-                className="px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition"
+                className="px-4 py-2 bg-health-healthy text-white font-medium rounded-lg hover:bg-health-healthy/90 disabled:opacity-50 transition"
               >
                 {approving ? 'Approving...' : 'Approve & Deploy'}
               </button>
@@ -735,7 +734,7 @@ export const PartnerLearning: React.FC = () => {
               <button
                 onClick={handleReject}
                 disabled={approving || !rejectReason}
-                className="px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 transition"
+                className="px-4 py-2 bg-health-critical text-white font-medium rounded-lg hover:bg-health-critical/90 disabled:opacity-50 transition"
               >
                 {approving ? 'Rejecting...' : 'Reject'}
               </button>
@@ -779,7 +778,7 @@ export const PartnerLearning: React.FC = () => {
               <button
                 onClick={handleBulkReject}
                 disabled={bulkRejecting || !bulkRejectReason.trim()}
-                className="px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 transition"
+                className="px-4 py-2 bg-health-critical text-white font-medium rounded-lg hover:bg-health-critical/90 disabled:opacity-50 transition"
               >
                 {bulkRejecting ? 'Rejecting...' : `Reject ${selectedIds.size} Patterns`}
               </button>

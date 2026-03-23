@@ -124,13 +124,13 @@ const UserRow: React.FC<{
             <>
               <button
                 onClick={() => onToggleStatus(user)}
-                className={`text-xs ${user.status === 'active' ? 'text-yellow-500' : 'text-green-500'} hover:underline`}
+                className={`text-xs ${user.status === 'active' ? 'text-health-warning' : 'text-health-healthy'} hover:underline`}
               >
                 {user.status === 'active' ? 'Disable' : 'Enable'}
               </button>
               <button
                 onClick={() => onDelete(user)}
-                className="text-xs text-red-500 hover:underline"
+                className="text-xs text-health-critical hover:underline"
               >
                 Delete
               </button>
@@ -180,7 +180,7 @@ const InviteRow: React.FC<{
           </button>
           <button
             onClick={() => onRevoke(invite)}
-            className="text-xs text-red-500 hover:underline"
+            className="text-xs text-health-critical hover:underline"
           >
             Revoke
           </button>
@@ -264,7 +264,7 @@ const InviteUserModal: React.FC<{
           </div>
 
           {error && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+            <div className="p-3 bg-health-critical/10 border border-health-critical/20 rounded-lg text-health-critical text-sm">
               {error}
             </div>
           )}
@@ -383,7 +383,7 @@ const EditUserModal: React.FC<{
           </div>
 
           {error && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+            <div className="p-3 bg-health-critical/10 border border-health-critical/20 rounded-lg text-health-critical text-sm">
               {error}
             </div>
           )}
@@ -453,7 +453,7 @@ const ResetPasswordModal: React.FC<{
               required
             />
             {password && !passwordValid && (
-              <p className="text-xs text-red-400 mt-1">Password must be at least 12 characters</p>
+              <p className="text-xs text-health-critical mt-1">Password must be at least 12 characters</p>
             )}
           </div>
 
@@ -469,12 +469,12 @@ const ResetPasswordModal: React.FC<{
               required
             />
             {confirmPassword && !passwordsMatch && (
-              <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
+              <p className="text-xs text-health-critical mt-1">Passwords do not match</p>
             )}
           </div>
 
           {error && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+            <div className="p-3 bg-health-critical/10 border border-health-critical/20 rounded-lg text-health-critical text-sm">
               {error}
             </div>
           )}
@@ -566,16 +566,16 @@ const ChangePasswordModal: React.FC<{
             />
             {newPassword && (
               <div className="mt-2 space-y-1">
-                <p className={`text-xs ${newPassword.length >= 12 ? 'text-green-400' : 'text-red-400'}`}>
+                <p className={`text-xs ${newPassword.length >= 12 ? 'text-health-healthy' : 'text-health-critical'}`}>
                   {newPassword.length >= 12 ? '\u2713' : '\u2717'} At least 12 characters ({newPassword.length}/12)
                 </p>
-                <p className={`text-xs ${hasUpper ? 'text-green-400' : 'text-label-tertiary'}`}>
+                <p className={`text-xs ${hasUpper ? 'text-health-healthy' : 'text-label-tertiary'}`}>
                   {hasUpper ? '\u2713' : '\u2717'} Uppercase letter
                 </p>
-                <p className={`text-xs ${hasLower ? 'text-green-400' : 'text-label-tertiary'}`}>
+                <p className={`text-xs ${hasLower ? 'text-health-healthy' : 'text-label-tertiary'}`}>
                   {hasLower ? '\u2713' : '\u2717'} Lowercase letter
                 </p>
-                <p className={`text-xs ${hasNumber ? 'text-green-400' : 'text-label-tertiary'}`}>
+                <p className={`text-xs ${hasNumber ? 'text-health-healthy' : 'text-label-tertiary'}`}>
                   {hasNumber ? '\u2713' : '\u2717'} Number
                 </p>
               </div>
@@ -594,12 +594,12 @@ const ChangePasswordModal: React.FC<{
               required
             />
             {confirmPassword && !passwordsMatch && (
-              <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
+              <p className="text-xs text-health-critical mt-1">Passwords do not match</p>
             )}
           </div>
 
           {error && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+            <div className="p-3 bg-health-critical/10 border border-health-critical/20 rounded-lg text-health-critical text-sm">
               {error}
             </div>
           )}
@@ -687,7 +687,7 @@ const SessionsTab: React.FC = () => {
         {sessions.length > 1 && (
           <button
             onClick={handleRevokeAll}
-            className="text-xs text-red-500 hover:underline"
+            className="text-xs text-health-critical hover:underline"
           >
             Revoke All Other Sessions
           </button>
@@ -695,7 +695,7 @@ const SessionsTab: React.FC = () => {
       </div>
 
       {error && (
-        <div className="mx-4 mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+        <div className="mx-4 mt-3 p-3 bg-health-critical/10 border border-health-critical/20 rounded-lg text-health-critical text-sm">
           {error}
         </div>
       )}
@@ -738,7 +738,7 @@ const SessionsTab: React.FC = () => {
                   ) : (
                     <button
                       onClick={() => handleRevoke(session.id)}
-                      className="text-xs text-red-500 hover:underline"
+                      className="text-xs text-health-critical hover:underline"
                     >
                       Revoke
                     </button>
@@ -788,7 +788,7 @@ const AuditLogTab: React.FC = () => {
   return (
     <GlassCard>
       {error && (
-        <div className="mx-4 mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+        <div className="mx-4 mt-3 p-3 bg-health-critical/10 border border-health-critical/20 rounded-lg text-health-critical text-sm">
           {error}
         </div>
       )}
@@ -924,13 +924,13 @@ const SecurityTab: React.FC = () => {
       <h3 className="text-lg font-semibold text-label-primary mb-4">Two-Factor Authentication</h3>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+        <div className="mb-4 p-3 bg-health-critical/10 border border-health-critical/20 rounded-lg text-health-critical text-sm">
           {error}
         </div>
       )}
 
       {successMsg && (
-        <div className="mb-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-green-400 text-sm">
+        <div className="mb-4 p-3 bg-health-healthy/10 border border-health-healthy/20 rounded-lg text-health-healthy text-sm">
           {successMsg}
         </div>
       )}
@@ -979,7 +979,7 @@ const SecurityTab: React.FC = () => {
               2. Save your backup codes
             </h4>
             <div className="p-3 bg-fill-secondary border border-separator-default rounded-lg">
-              <p className="text-xs text-yellow-400 mb-2">
+              <p className="text-xs text-health-warning mb-2">
                 Save these codes in a safe place. Each code can only be used once.
               </p>
               <div className="grid grid-cols-2 gap-2">
@@ -1051,7 +1051,7 @@ const SecurityTab: React.FC = () => {
             setShowDisable(true);
             setSuccessMsg(null);
           }}
-          className="px-4 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/30 transition-colors"
+          className="px-4 py-2 bg-health-critical/20 text-health-critical border border-health-critical/30 rounded-lg hover:bg-health-critical/30 transition-colors"
         >
           Disable 2FA
         </button>
@@ -1077,7 +1077,7 @@ const SecurityTab: React.FC = () => {
           <div className="flex gap-3">
             <button
               type="submit"
-              className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
+              className="px-4 py-2 bg-health-critical text-white rounded-lg hover:bg-health-critical/90 transition-colors disabled:opacity-50"
               disabled={disabling || !disablePassword}
             >
               {disabling ? <Spinner size="sm" /> : 'Confirm Disable'}
@@ -1179,15 +1179,15 @@ const AllAccountsTab: React.FC = () => {
           <p className="text-xs text-label-tertiary">Total</p>
         </GlassCard>
         <GlassCard className="p-3 text-center">
-          <p className="text-xl font-bold text-red-400">{stats.admin || 0}</p>
+          <p className="text-xl font-bold text-health-critical">{stats.admin || 0}</p>
           <p className="text-xs text-label-tertiary">Admin</p>
         </GlassCard>
         <GlassCard className="p-3 text-center">
-          <p className="text-xl font-bold text-yellow-400">{stats.partner || 0}</p>
+          <p className="text-xl font-bold text-health-warning">{stats.partner || 0}</p>
           <p className="text-xs text-label-tertiary">Partner</p>
         </GlassCard>
         <GlassCard className="p-3 text-center">
-          <p className="text-xl font-bold text-green-400">{stats.client || 0}</p>
+          <p className="text-xl font-bold text-health-healthy">{stats.client || 0}</p>
           <p className="text-xs text-label-tertiary">Client</p>
         </GlassCard>
         <GlassCard className="p-3 text-center">
@@ -1260,7 +1260,7 @@ const AllAccountsTab: React.FC = () => {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm ${
-                          acct.account_type === 'admin' ? 'bg-red-500' : acct.account_type === 'partner' ? 'bg-yellow-500' : 'bg-green-500'
+                          acct.account_type === 'admin' ? 'bg-health-critical' : acct.account_type === 'partner' ? 'bg-health-warning' : 'bg-health-healthy'
                         }`}>
                           {(acct.name || '?').charAt(0).toUpperCase()}
                         </div>
@@ -1528,7 +1528,7 @@ export default function Users() {
       </div>
 
       {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400">
+        <div className="p-4 bg-health-critical/10 border border-health-critical/20 rounded-lg text-health-critical">
           {error}
         </div>
       )}
@@ -1541,7 +1541,7 @@ export default function Users() {
         </GlassCard>
         <GlassCard className="p-4">
           <p className="text-label-tertiary text-sm">Active</p>
-          <p className="text-2xl font-bold text-green-400">
+          <p className="text-2xl font-bold text-health-healthy">
             {users.filter(u => u.status === 'active').length}
           </p>
         </GlassCard>
@@ -1553,7 +1553,7 @@ export default function Users() {
         </GlassCard>
         <GlassCard className="p-4">
           <p className="text-label-tertiary text-sm">Pending Invites</p>
-          <p className="text-2xl font-bold text-yellow-400">{invites.length}</p>
+          <p className="text-2xl font-bold text-health-warning">{invites.length}</p>
         </GlassCard>
       </div>
 

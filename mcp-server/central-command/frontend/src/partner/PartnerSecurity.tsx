@@ -71,8 +71,8 @@ export const PartnerSecurity: React.FC = () => {
         const data = await response.json();
         setTotpEnabled(!!data.totp_enabled);
       }
-    } catch (e) {
-      console.error('Failed to check TOTP status:', e);
+    } catch {
+      // TOTP status check failed — leave default state
     } finally {
       setLoading(false);
     }

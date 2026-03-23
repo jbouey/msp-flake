@@ -75,13 +75,13 @@ interface BlockchainStatus {
 
 const VerificationStatusBadge: React.FC<{ status: VerificationResult['status'] }> = ({ status }) => {
   const colors: Record<string, string> = {
-    valid: 'bg-green-100 text-green-800 border-green-200',
-    verified: 'bg-green-100 text-green-800 border-green-200',
-    invalid: 'bg-red-100 text-red-800 border-red-200',
-    broken: 'bg-red-100 text-red-800 border-red-200',
-    signature_invalid: 'bg-orange-100 text-orange-800 border-orange-200',
-    empty: 'bg-slate-100 text-slate-800 border-slate-200',
-    error: 'bg-red-100 text-red-800 border-red-200',
+    valid: 'bg-health-healthy/10 text-health-healthy border-health-healthy/20',
+    verified: 'bg-health-healthy/10 text-health-healthy border-health-healthy/20',
+    invalid: 'bg-health-critical/10 text-health-critical border-health-critical/20',
+    broken: 'bg-health-critical/10 text-health-critical border-health-critical/20',
+    signature_invalid: 'bg-ios-orange/10 text-ios-orange border-ios-orange/20',
+    empty: 'bg-fill-secondary text-label-secondary border-separator-light',
+    error: 'bg-health-critical/10 text-health-critical border-health-critical/20',
   };
   const labels: Record<string, string> = {
     valid: 'Chain Valid',
@@ -112,10 +112,10 @@ const VerificationStatusBadge: React.FC<{ status: VerificationResult['status'] }
 
 const OtsBadge: React.FC<{ status: string; block?: number | null }> = ({ status, block }) => {
   const config: Record<string, { bg: string; label: string }> = {
-    anchored: { bg: 'bg-amber-100 text-amber-800', label: 'Bitcoin Anchored' },
-    verified: { bg: 'bg-green-100 text-green-800', label: 'Bitcoin Verified' },
-    pending: { bg: 'bg-blue-100 text-blue-700', label: 'Pending' },
-    none: { bg: 'bg-slate-100 text-slate-500', label: 'No Proof' },
+    anchored: { bg: 'bg-health-warning/10 text-health-warning', label: 'Bitcoin Anchored' },
+    verified: { bg: 'bg-health-healthy/10 text-health-healthy', label: 'Bitcoin Verified' },
+    pending: { bg: 'bg-ios-blue/10 text-ios-blue', label: 'Pending' },
+    none: { bg: 'bg-fill-secondary text-label-tertiary', label: 'No Proof' },
   };
   const c = config[status] || config.none;
   return (
@@ -165,7 +165,7 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
             )}
             {/* Timeline dot */}
             <div className={`absolute left-0 top-2 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold
-              ${isGenesis ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
+              ${isGenesis ? 'bg-ios-blue/10 text-ios-blue' : 'bg-health-healthy/10 text-health-healthy'}`}>
               {isGenesis ? 'G' : bundles.length - index}
             </div>
 
@@ -180,7 +180,7 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
                 </div>
                 <div className="flex items-center gap-2">
                   {bundle.signed && (
-                    <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded flex items-center gap-1" title="Ed25519 signed">
+                    <span className="text-xs bg-health-healthy/10 text-health-healthy px-2 py-1 rounded flex items-center gap-1" title="Ed25519 signed">
                       <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                       </svg>
@@ -188,7 +188,7 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
                     </span>
                   )}
                   <OtsBadge status={bundle.ots_status || 'none'} block={bundle.bitcoin_block} />
-                  <span className={`text-xs px-2 py-1 rounded ${bundle.check_result === 'pass' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  <span className={`text-xs px-2 py-1 rounded ${bundle.check_result === 'pass' ? 'bg-health-healthy/10 text-health-healthy' : 'bg-health-critical/10 text-health-critical'}`}>
                     {bundle.check_result}
                   </span>
                 </div>
@@ -260,7 +260,7 @@ const BlockchainSection: React.FC<{ data: BlockchainStatus }> = ({ data }) => {
       {/* Stats grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-slate-50 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-amber-600">{anchored.toLocaleString()}</span>
+          <span className="text-3xl font-bold text-health-warning">{anchored.toLocaleString()}</span>
           <p className="text-sm text-slate-500 mt-1">Bitcoin Anchored</p>
         </div>
         <div className="bg-slate-50 rounded-lg p-4 text-center">
@@ -268,7 +268,7 @@ const BlockchainSection: React.FC<{ data: BlockchainStatus }> = ({ data }) => {
           <p className="text-sm text-slate-500 mt-1">Total Proofs</p>
         </div>
         <div className="bg-slate-50 rounded-lg p-4 text-center">
-          <span className="text-3xl font-bold text-green-600">{bc.anchor_rate_pct}%</span>
+          <span className="text-3xl font-bold text-health-healthy">{bc.anchor_rate_pct}%</span>
           <p className="text-sm text-slate-500 mt-1">Anchor Rate</p>
         </div>
         <div className="bg-slate-50 rounded-lg p-4 text-center">
@@ -504,8 +504,8 @@ export const PortalVerify: React.FC = () => {
           </div>
 
           {(verification?.status === 'valid' || verification?.status === 'verified') && (
-            <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6">
-              <p className="text-green-800">
+            <div className="bg-health-healthy/10 border border-health-healthy/20 rounded-xl p-4 mb-6">
+              <p className="text-health-healthy">
                 All {verification.chain_length} evidence bundles form a valid cryptographic chain.
                 Each bundle's hash correctly references its predecessor, ensuring no tampering has occurred.
                 {verification.signatures_total !== null && verification.signatures_total > 0 && (
@@ -518,8 +518,8 @@ export const PortalVerify: React.FC = () => {
           )}
 
           {(verification?.status === 'invalid' || verification?.status === 'broken') && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
-              <p className="text-red-800">
+            <div className="bg-health-critical/10 border border-health-critical/20 rounded-xl p-4 mb-6">
+              <p className="text-health-critical">
                 Chain integrity verification failed at bundle: <code className="font-mono">{verification.bundle_id}</code>
                 <br />
                 <span className="text-sm">{verification.error}</span>
@@ -528,8 +528,8 @@ export const PortalVerify: React.FC = () => {
           )}
 
           {verification?.status === 'signature_invalid' && (
-            <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6">
-              <p className="text-orange-800">
+            <div className="bg-ios-orange/10 border border-ios-orange/20 rounded-xl p-4 mb-6">
+              <p className="text-ios-orange">
                 Ed25519 signature verification failed at bundle: <code className="font-mono">{verification.bundle_id}</code>
                 <br />
                 <span className="text-sm">{verification.error}</span>
@@ -558,7 +558,7 @@ export const PortalVerify: React.FC = () => {
                 <p className="text-sm text-slate-500 mt-1">Total Bundles</p>
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
-                <span className="text-3xl font-bold text-green-600">
+                <span className="text-3xl font-bold text-health-healthy">
                   {verification.signatures_valid ?? 0}
                 </span>
                 <p className="text-sm text-slate-500 mt-1">Signed Bundles</p>

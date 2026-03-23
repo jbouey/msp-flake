@@ -90,8 +90,8 @@ export const PartnerProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
         return true;
       }
-    } catch (e) {
-      console.error('Session check failed:', e);
+    } catch {
+      // Session check failed — fall back to API key auth
     }
     return false;
   };
@@ -138,8 +138,8 @@ export const PartnerProvider: React.FC<{ children: ReactNode }> = ({ children })
         method: 'POST',
         credentials: 'include',
       });
-    } catch (e) {
-      console.error('Logout request failed:', e);
+    } catch {
+      // Logout request failed — clear local state anyway
     }
 
     setPartner(null);

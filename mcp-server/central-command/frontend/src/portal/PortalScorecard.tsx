@@ -113,9 +113,9 @@ const worstStatus = (statuses: Array<'pass' | 'warn' | 'fail'>): 'pass' | 'warn'
 };
 
 const statusLabel: Record<string, { label: string; bg: string }> = {
-  pass: { label: 'Protected', bg: 'bg-green-100 text-green-800' },
-  warn: { label: 'Attention Needed', bg: 'bg-orange-100 text-orange-800' },
-  fail: { label: 'Action Required', bg: 'bg-red-100 text-red-800' },
+  pass: { label: 'Protected', bg: 'bg-health-healthy/10 text-health-healthy' },
+  warn: { label: 'Attention Needed', bg: 'bg-ios-orange/10 text-ios-orange' },
+  fail: { label: 'Action Required', bg: 'bg-health-critical/10 text-health-critical' },
 };
 
 // ─── Section 1: Hero Score ───────────────────────────────────────────────────
@@ -130,7 +130,7 @@ const HeroScore: React.FC<{ site: PortalSite; kpis: PortalKPIs; generatedAt: str
           <div className="flex items-center gap-3 mb-2">
             <h1 className="text-2xl font-bold text-slate-900">{site.name}</h1>
             <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-              site.status === 'online' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+              site.status === 'online' ? 'bg-health-healthy/10 text-health-healthy' : 'bg-health-critical/10 text-health-critical'
             }`}>
               {site.status === 'online' ? 'Online' : 'Offline'}
             </span>
@@ -368,9 +368,9 @@ const AuditorDeepDive: React.FC<{
               </thead>
               <tbody>
                 {controls.map((c) => {
-                  const statusBg = c.status === 'pass' ? 'bg-green-100 text-green-800'
-                    : c.status === 'warn' ? 'bg-orange-100 text-orange-800'
-                    : 'bg-red-100 text-red-800';
+                  const statusBg = c.status === 'pass' ? 'bg-health-healthy/10 text-health-healthy'
+                    : c.status === 'warn' ? 'bg-ios-orange/10 text-ios-orange'
+                    : 'bg-health-critical/10 text-health-critical';
                   return (
                     <tr key={c.rule_id} className="border-b border-slate-100 even:bg-slate-50">
                       <td className="py-2 pr-4 font-mono text-xs">{c.hipaa_controls?.join(', ') || '--'}</td>
@@ -404,13 +404,13 @@ const AuditorDeepDive: React.FC<{
                 <p className="text-xs text-slate-500 mt-1">Evidence Bundles</p>
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
-                <span className={`text-2xl font-bold ${chain.status === 'valid' ? 'text-green-600' : 'text-red-600'}`}>
+                <span className={`text-2xl font-bold ${chain.status === 'valid' ? 'text-health-healthy' : 'text-health-critical'}`}>
                   {chain.status === 'valid' ? 'Valid' : 'Broken'}
                 </span>
                 <p className="text-xs text-slate-500 mt-1">Chain Status</p>
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
-                <span className="text-2xl font-bold text-green-600">{chain.signatures_valid.toLocaleString()}</span>
+                <span className="text-2xl font-bold text-health-healthy">{chain.signatures_valid.toLocaleString()}</span>
                 <p className="text-xs text-slate-500 mt-1">Valid Signatures</p>
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">

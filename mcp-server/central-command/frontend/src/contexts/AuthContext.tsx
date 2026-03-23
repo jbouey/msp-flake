@@ -75,8 +75,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } else {
           setUser(null);
         }
-      } catch (error) {
-        console.error('Session validation failed:', error);
+      } catch {
+        // Session validation failed — user will be treated as unauthenticated
       } finally {
         setIsLoading(false);
       }
@@ -95,8 +95,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const data = await response.json();
         setAuditLogs(data.logs || []);
       }
-    } catch (error) {
-      console.error('Failed to fetch audit logs:', error);
+    } catch {
+      // Audit log fetch failed silently — non-critical
     }
   };
 
@@ -124,8 +124,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       return { success: false, error: data.error || 'Invalid username or password' };
-    } catch (error) {
-      console.error('Login failed:', error);
+    } catch {
       return { success: false, error: 'Network error. Please try again.' };
     }
   };
@@ -136,8 +135,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         method: 'POST',
         credentials: 'same-origin',
       });
-    } catch (error) {
-      console.error('Logout request failed:', error);
+    } catch {
+      // Logout request failed — clear local state anyway
     }
 
     clearLegacyToken();
@@ -163,8 +162,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             displayName: userData.displayName,
           });
         }
-      } catch (error) {
-        console.error('OAuth session validation failed:', error);
+      } catch {
+        // OAuth session validation failed — user will remain unauthenticated
       }
     };
     validateAndSetUser();
@@ -180,8 +179,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const data = await response.json();
         setOauthIdentities(data.identities || []);
       }
-    } catch (error) {
-      console.error('Failed to fetch OAuth identities:', error);
+    } catch {
+      // OAuth identity fetch failed silently — non-critical
     }
   };
 

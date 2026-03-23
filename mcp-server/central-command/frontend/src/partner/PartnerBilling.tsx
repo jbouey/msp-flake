@@ -108,7 +108,6 @@ export const PartnerBilling: React.FC = () => {
       }
     } catch (e) {
       setError('Failed to load billing information');
-      console.error('Billing fetch error:', e);
     } finally {
       setLoading(false);
     }
@@ -232,18 +231,18 @@ export const PartnerBilling: React.FC = () => {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active':
-        return 'bg-green-100 text-green-800';
+        return 'bg-health-healthy/10 text-health-healthy';
       case 'trialing':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-ios-blue/10 text-ios-blue';
       case 'past_due':
-        return 'bg-red-100 text-red-800';
+        return 'bg-health-critical/10 text-health-critical';
       case 'canceling':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-health-warning/10 text-health-warning';
       case 'canceled':
       case 'none':
-        return 'bg-slate-100 text-slate-800';
+        return 'bg-fill-secondary text-label-secondary';
       default:
-        return 'bg-slate-100 text-slate-800';
+        return 'bg-fill-secondary text-label-secondary';
     }
   };
 
@@ -259,12 +258,12 @@ export const PartnerBilling: React.FC = () => {
     <div className="space-y-6">
       {/* Error Banner */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
-          <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="bg-health-critical/10 border border-health-critical/20 rounded-lg p-4 flex items-center gap-3">
+          <svg className="w-5 h-5 text-health-critical flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <p className="text-red-700">{error}</p>
-          <button onClick={() => setError(null)} className="ml-auto text-red-500 hover:text-red-700">
+          <p className="text-health-critical">{error}</p>
+          <button onClick={() => setError(null)} className="ml-auto text-health-critical/60 hover:text-health-critical">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -322,21 +321,21 @@ export const PartnerBilling: React.FC = () => {
 
               {/* Cancellation Notice */}
               {billingStatus.subscription.cancel_at_period_end && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="bg-health-warning/10 border border-health-warning/20 rounded-lg p-4">
                   <div className="flex items-center gap-3">
-                    <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5 text-health-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
                     <div>
-                      <p className="font-medium text-yellow-800">Subscription Canceling</p>
-                      <p className="text-sm text-yellow-700">
+                      <p className="font-medium text-health-warning">Subscription Canceling</p>
+                      <p className="text-sm text-health-warning/80">
                         Your subscription will end on {formatDate(billingStatus.subscription.current_period_end)}.
                       </p>
                     </div>
                     <button
                       onClick={handleReactivate}
                       disabled={actionLoading}
-                      className="ml-auto px-4 py-2 bg-yellow-600 text-white font-medium rounded-lg hover:bg-yellow-700 disabled:opacity-50 transition"
+                      className="ml-auto px-4 py-2 bg-health-warning text-white font-medium rounded-lg hover:bg-health-warning/90 disabled:opacity-50 transition"
                     >
                       Reactivate
                     </button>
@@ -357,7 +356,7 @@ export const PartnerBilling: React.FC = () => {
                   <button
                     onClick={handleCancelSubscription}
                     disabled={actionLoading}
-                    className="px-4 py-2 text-red-600 hover:text-red-800 font-medium transition"
+                    className="px-4 py-2 text-health-critical hover:text-health-critical/80 font-medium transition"
                   >
                     Cancel Subscription
                   </button>
@@ -377,14 +376,14 @@ export const PartnerBilling: React.FC = () => {
               {billingConfig && (
                 <>
                   {/* Value Comparison Banner */}
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+                  <div className="bg-health-healthy/10 border border-health-healthy/20 rounded-lg p-4 mb-6">
                     <div className="flex items-center gap-3">
-                      <svg className="w-6 h-6 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-6 h-6 text-health-healthy flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                       <div>
-                        <p className="font-medium text-green-800">Save up to 80% vs. Traditional MSP + Compliance</p>
-                        <p className="text-sm text-green-700">
+                        <p className="font-medium text-health-healthy">Save up to 80% vs. Traditional MSP + Compliance</p>
+                        <p className="text-sm text-health-healthy/80">
                           Traditional cost: ~${billingConfig.value_comparison.total_traditional?.monthly.toLocaleString()}/mo per site
                         </p>
                       </div>
@@ -417,7 +416,7 @@ export const PartnerBilling: React.FC = () => {
                         <ul className="space-y-2 mb-6">
                           {tier.features.slice(0, 5).map((feature, i) => (
                             <li key={i} className="flex items-center gap-2 text-sm text-slate-600">
-                              <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <svg className="w-4 h-4 text-health-healthy flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                               </svg>
                               {feature}
@@ -487,7 +486,7 @@ export const PartnerBilling: React.FC = () => {
                   </p>
                 </div>
                 {method.is_default && (
-                  <span className="px-2 py-1 text-xs font-medium text-green-700 bg-green-100 rounded">
+                  <span className="px-2 py-1 text-xs font-medium text-health-healthy bg-health-healthy/10 rounded">
                     Default
                   </span>
                 )}
@@ -527,10 +526,10 @@ export const PartnerBilling: React.FC = () => {
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 text-xs font-medium rounded-full ${
                         invoice.status === 'paid'
-                          ? 'bg-green-100 text-green-800'
+                          ? 'bg-health-healthy/10 text-health-healthy'
                           : invoice.status === 'open'
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-slate-100 text-slate-800'
+                          ? 'bg-health-warning/10 text-health-warning'
+                          : 'bg-fill-secondary text-label-secondary'
                       }`}>
                         {invoice.status}
                       </span>
