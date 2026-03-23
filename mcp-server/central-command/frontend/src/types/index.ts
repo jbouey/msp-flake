@@ -210,8 +210,8 @@ export interface LearningStatus {
   total_l2_decisions_30d: number;
   patterns_awaiting_promotion: number;
   recently_promoted_count: number;
-  promotion_success_rate: number;
-  l1_resolution_rate: number;
+  promotion_success_rate: number | null;
+  l1_resolution_rate: number | null;
   l2_resolution_rate: number;
 }
 

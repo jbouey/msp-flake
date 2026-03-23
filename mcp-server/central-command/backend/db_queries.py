@@ -86,7 +86,7 @@ async def get_fleet_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
         if total > 0:
             l1_rate = (l1 / total) * 100
         else:
-            l1_rate = 100.0
+            l1_rate = None  # No incidents — no data to compute from
         
         # Determine status based on open incidents
         if row.open_incidents and row.open_incidents > 3:
@@ -100,9 +100,9 @@ async def get_fleet_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
             "site_id": row.site_id,
             "name": row.name or row.site_id,
             "appliance_count": 1,  # Each row is one appliance
-            "overall_health": min(100, l1_rate + 10),
-            "connectivity": 100.0 if row.last_checkin and row.last_checkin > datetime.now(timezone.utc) - timedelta(hours=1) else 50.0,
-            "compliance": l1_rate,
+            "overall_health": round(l1_rate, 1) if l1_rate is not None else None,
+            "connectivity": 100.0 if row.last_checkin and row.last_checkin > datetime.now(timezone.utc) - timedelta(hours=1) else (0.0 if not row.last_checkin else 50.0),
+            "compliance": round(l1_rate, 1) if l1_rate is not None else None,
             "status": status,
             "last_seen": row.last_checkin,
         })
@@ -1317,8 +1317,8 @@ async def get_portal_kpis(db: AsyncSession, site_id: str) -> Dict[str, Any]:
     return {
         "compliance_pct": round(overall_score, 1),
         "patch_mttr_hours": round(patch_mttr_hours, 1),
-        "mfa_coverage_pct": 100.0,  # Would need separate MFA tracking
-        "backup_success_rate": float(scores.get("backup") or 100),
+        "mfa_coverage_pct": None,  # Not yet tracked — requires separate MFA audit
+        "backup_success_rate": float(scores.get("backup")) if scores.get("backup") is not None else None,
         "auto_fixes_24h": auto_fixes_24h,
         "controls_passing": controls_passing,
         "controls_warning": controls_warning,
@@ -1626,11 +1626,11 @@ async def get_healing_metrics_for_site(db: AsyncSession, site_id: str) -> Dict[s
     # Calculate rates
     total_incidents = inc_row.total if inc_row else 0
     resolved_incidents = inc_row.resolved if inc_row else 0
-    healing_rate = (resolved_incidents / total_incidents * 100) if total_incidents > 0 else 100.0
+    healing_rate = (resolved_incidents / total_incidents * 100) if total_incidents > 0 else None
 
     total_orders = ord_row.total if ord_row else 0
     completed_orders = ord_row.completed if ord_row else 0
-    order_rate = (completed_orders / total_orders * 100) if total_orders > 0 else 100.0
+    order_rate = (completed_orders / total_orders * 100) if total_orders > 0 else None
 
     return {
         "healing_success_rate": round(healing_rate, 1),
@@ -1725,11 +1725,11 @@ async def get_global_healing_metrics(db: AsyncSession) -> Dict[str, Any]:
 
     total_incidents = inc_row.total if inc_row else 0
     resolved_incidents = inc_row.resolved if inc_row else 0
-    healing_rate = (resolved_incidents / total_incidents * 100) if total_incidents > 0 else 100.0
+    healing_rate = (resolved_incidents / total_incidents * 100) if total_incidents > 0 else None
 
     total_orders = ord_row.total if ord_row else 0
     completed_orders = ord_row.completed if ord_row else 0
-    order_rate = (completed_orders / total_orders * 100) if total_orders > 0 else 100.0
+    order_rate = (completed_orders / total_orders * 100) if total_orders > 0 else None
 
     return {
         "healing_success_rate": round(healing_rate, 1),

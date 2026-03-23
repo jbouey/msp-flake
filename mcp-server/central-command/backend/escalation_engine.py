@@ -287,7 +287,11 @@ This is an automated notification from OsirisCare Compliance Platform.
 
     try:
         if not SMTP_PASS:
-            logger.warning("SMTP password not configured, email skipped")
+            logger.error(
+                "ESCALATION EMAIL NOT DELIVERED — SMTP_PASSWORD not configured. "
+                "Escalation for '%s' was NOT sent to recipients.",
+                payload.get('title', 'unknown')
+            )
             return {"status": "skipped", "reason": "SMTP not configured"}
 
         def _send_smtp(message):

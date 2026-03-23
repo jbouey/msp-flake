@@ -211,6 +211,140 @@ async def prometheus_metrics():
             except Exception:
                 logger.exception("metrics: log entries query failed")
 
+            # --- Learning system metrics (gauge) ---
+            try:
+                row = await conn.fetchrow("""
+                    SELECT
+                        (SELECT COUNT(*) FROM aggregated_pattern_stats
+                         WHERE promotion_eligible = true) as eligible_patterns,
+                        (SELECT COUNT(*) FROM learning_promotion_candidates
+                         WHERE approval_status = 'pending') as pending_promotions,
+                        (SELECT COUNT(*) FROM learning_promotion_candidates
+                         WHERE approval_status = 'approved'
+                           AND approved_at > NOW() - INTERVAL '30 days') as recent_promotions
+                """)
+                sections.append(_gauge(
+                    "osiriscare_learning_eligible_patterns",
+                    "Patterns eligible for L2-to-L1 promotion",
+                    [({}, float(row["eligible_patterns"]))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_learning_pending_promotions",
+                    "Promotion candidates awaiting approval",
+                    [({}, float(row["pending_promotions"]))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_learning_recent_promotions",
+                    "Promotions approved in last 30 days",
+                    [({}, float(row["recent_promotions"]))],
+                ))
+            except Exception:
+                logger.exception("metrics: learning system query failed")
+
+            # --- Escalation queue metrics (gauge) ---
+            try:
+                rows = await conn.fetch("""
+                    SELECT status, COUNT(*) as cnt,
+                           EXTRACT(EPOCH FROM AVG(NOW() - created_at)) as avg_age_secs
+                    FROM escalation_tickets
+                    WHERE status NOT IN ('resolved', 'closed')
+                    GROUP BY status
+                """)
+                ticket_values = []
+                age_values = []
+                for row in rows:
+                    ticket_values.append(({"status": row["status"]}, float(row["cnt"])))
+                    age_values.append(({"status": row["status"]}, float(row["avg_age_secs"] or 0)))
+                if ticket_values:
+                    sections.append(_gauge(
+                        "osiriscare_escalation_tickets_open",
+                        "Open escalation tickets by status",
+                        ticket_values,
+                    ))
+                    sections.append(_gauge(
+                        "osiriscare_escalation_ticket_age_seconds",
+                        "Average age of open escalation tickets in seconds",
+                        age_values,
+                    ))
+            except Exception:
+                logger.exception("metrics: escalation queue query failed")
+
+            # --- Device discovery metrics (gauge) ---
+            try:
+                row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) as total_devices,
+                        COUNT(*) FILTER (WHERE last_seen > NOW() - INTERVAL '24 hours') as active_24h,
+                        COUNT(*) FILTER (WHERE last_seen < NOW() - INTERVAL '7 days') as stale_7d
+                    FROM discovered_devices
+                """)
+                sections.append(_gauge(
+                    "osiriscare_discovered_devices_total",
+                    "Total discovered devices",
+                    [({}, float(row["total_devices"]))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_discovered_devices_active_24h",
+                    "Devices seen in last 24 hours",
+                    [({}, float(row["active_24h"]))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_discovered_devices_stale_7d",
+                    "Devices not seen in over 7 days",
+                    [({}, float(row["stale_7d"]))],
+                ))
+            except Exception:
+                logger.exception("metrics: device discovery query failed")
+
+            # --- CVE watch metrics (gauge) ---
+            try:
+                row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) as total_cves,
+                        COUNT(*) FILTER (WHERE severity = 'critical') as critical_cves,
+                        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') as new_7d
+                    FROM cve_entries
+                """)
+                sections.append(_gauge(
+                    "osiriscare_cve_total",
+                    "Total tracked CVEs",
+                    [({}, float(row["total_cves"]))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_cve_critical",
+                    "Critical severity CVEs",
+                    [({}, float(row["critical_cves"]))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_cve_new_7d",
+                    "CVEs discovered in last 7 days",
+                    [({}, float(row["new_7d"]))],
+                ))
+            except Exception:
+                logger.exception("metrics: CVE watch query failed")
+
+            # --- Pattern sync health (gauge) ---
+            try:
+                row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE sync_status = 'success') as success,
+                        COUNT(*) FILTER (WHERE sync_status = 'partial') as partial,
+                        COUNT(*) FILTER (WHERE sync_status = 'failed') as failed
+                    FROM appliance_pattern_sync
+                    WHERE synced_at > NOW() - INTERVAL '24 hours'
+                """)
+                sections.append(_gauge(
+                    "osiriscare_pattern_sync_24h",
+                    "Pattern sync results in last 24 hours",
+                    [
+                        ({"status": "success"}, float(row["success"])),
+                        ({"status": "partial"}, float(row["partial"])),
+                        ({"status": "failed"}, float(row["failed"])),
+                    ],
+                ))
+            except Exception:
+                logger.exception("metrics: pattern sync query failed")
+
     except Exception:
         logger.exception("metrics: database connection failed")
         return PlainTextResponse(

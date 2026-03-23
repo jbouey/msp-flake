@@ -69,9 +69,7 @@ func newDriftScanner(d *Daemon) *driftScanner {
 
 // isCheckDisabled returns true if the given check type has been disabled in site drift config.
 func (ds *driftScanner) isCheckDisabled(checkType string) bool {
-	ds.daemon.disabledChecksMu.RLock()
-	defer ds.daemon.disabledChecksMu.RUnlock()
-	return ds.daemon.disabledChecks[checkType]
+	return ds.daemon.state.IsDisabled(checkType)
 }
 
 // ForceScan runs both Windows and Linux drift scans immediately,
@@ -1148,9 +1146,7 @@ func (ds *driftScanner) runLinuxScanIfNeeded(ctx context.Context) {
 	defer atomic.StoreInt32(&ds.linuxRunning, 0)
 
 	// Check if we have targets — don't burn the interval timer on an empty scan
-	ds.daemon.linuxTargetsMu.RLock()
-	hasTargets := len(ds.daemon.linuxTargets) > 0
-	ds.daemon.linuxTargetsMu.RUnlock()
+	hasTargets := len(ds.daemon.state.GetLinuxTargets()) > 0
 
 	ds.linuxMu.Lock()
 	since := time.Since(ds.lastLinuxScanTime)

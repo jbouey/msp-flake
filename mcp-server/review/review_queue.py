@@ -8,11 +8,80 @@ Every LLM-generated runbook must be reviewed, tested, and explicitly approved
 by a human before it can be used for remediation.
 """
 
+import os
+import ssl
+import smtplib
+import logging
+import time as _time
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 from ..schemas.execution_result import ExecutionResult
+
+logger = logging.getLogger(__name__)
+
+# SMTP Configuration (shared with email_alerts.py via env vars)
+SMTP_HOST = os.getenv("SMTP_HOST", "mail.privateemail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SMTP_FROM", "alerts@osiriscare.net")
+ALERT_EMAIL = os.getenv("ALERT_EMAIL", "administrator@osiriscare.net")
+
+
+def _escape_html(text: str) -> str:
+    """Escape HTML special characters."""
+    return (str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+def _send_review_email(subject: str, text_body: str, html_body: str) -> bool:
+    """Send a review notification email.
+
+    Args:
+        subject: Email subject line
+        text_body: Plain text version of the email
+        html_body: HTML version of the email
+
+    Returns:
+        True if sent successfully, False otherwise
+    """
+    if not (SMTP_USER and SMTP_PASSWORD):
+        logger.warning("SMTP not configured (SMTP_USER/SMTP_PASSWORD not set) - review email not sent: %s", subject)
+        return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = ALERT_EMAIL
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            context = ssl.create_default_context()
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+                server.starttls(context=context)
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.sendmail(SMTP_FROM, ALERT_EMAIL, msg.as_string())
+            logger.info("Review email sent: %s", subject)
+            return True
+        except (smtplib.SMTPException, OSError) as smtp_err:
+            if attempt < max_retries - 1:
+                logger.warning("SMTP attempt %d/%d failed: %s", attempt + 1, max_retries, smtp_err)
+                _time.sleep(2)  # 2s backoff
+            else:
+                logger.error("Failed to send review email after %d attempts: %s", max_retries, smtp_err)
+                return False
+
+    return False
 
 
 class ReviewStatus(str, Enum):
@@ -418,23 +487,105 @@ class ReviewQueue:
 
     async def _notify_reviewer(self, item: ReviewQueueItem) -> None:
         """
-        Notify human that review is needed
-
-        TODO: Implement notification system (email, Slack, etc.)
+        Notify human that review is needed via DB record and email.
         """
-        # Placeholder for notification system
+        review_url = "https://dashboard.osiriscare.net/admin/learning"
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        # Log to database (existing behavior)
         notification = {
             "type": "review_needed",
             "runbook_id": item.runbook_id,
             "priority": item.priority.value,
             "reason": item.reason,
             "created_at": item.created_at.isoformat(),
-            "review_url": f"https://mcp.yourcompany.com/review/{item.runbook_id}"
+            "review_url": review_url,
         }
-
-        # TODO: Send via email/Slack/webhook
-        # For now, just log to database
         await self.db.notifications.insert_one(notification)
+
+        # Send email notification
+        subject = f"[REVIEW NEEDED] Runbook {item.runbook_id} requires approval"
+
+        priority_upper = item.priority.value.upper()
+        priority_colors = {
+            "HIGH": ("#dc2626", "#ea580c"),
+            "MEDIUM": ("#f59e0b", "#eab308"),
+            "LOW": ("#3b82f6", "#6366f1"),
+        }
+        color_start, color_end = priority_colors.get(priority_upper, ("#f59e0b", "#eab308"))
+
+        text_body = f"""REVIEW NEEDED - OsirisCare Central Command
+{'=' * 44}
+
+Runbook:  {item.runbook_id}
+Priority: {priority_upper}
+Time:     {timestamp}
+
+Reason:
+{item.reason}
+
+Please review this runbook and approve or reject it:
+{review_url}
+
+---
+This is an automated alert from OsirisCare Central Command.
+Dashboard: https://dashboard.osiriscare.net
+"""
+
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, {color_start}, {color_end}); color: white; padding: 20px; border-radius: 8px 8px 0 0; }}
+        .header h1 {{ margin: 0; font-size: 22px; }}
+        .header .badge {{ display: inline-block; background: rgba(255,255,255,0.2); padding: 2px 10px; border-radius: 12px; font-size: 13px; margin-top: 6px; }}
+        .content {{ background: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; }}
+        .field {{ margin-bottom: 12px; }}
+        .field-label {{ font-weight: 600; color: #6b7280; font-size: 12px; text-transform: uppercase; }}
+        .field-value {{ color: #111827; }}
+        .reason-box {{ background: white; padding: 16px; border-radius: 8px; border-left: 4px solid {color_start}; margin-top: 16px; }}
+        .footer {{ padding: 16px 20px; background: #f3f4f6; border-radius: 0 0 8px 8px; font-size: 12px; color: #6b7280; }}
+        .button {{ display: inline-block; background: #3b82f6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; margin-top: 16px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Review Needed</h1>
+            <span class="badge">{priority_upper} PRIORITY</span>
+        </div>
+        <div class="content">
+            <div class="field">
+                <div class="field-label">Runbook ID</div>
+                <div class="field-value" style="font-size: 18px; font-weight: 600;">{_escape_html(item.runbook_id)}</div>
+            </div>
+            <div class="field">
+                <div class="field-label">Priority</div>
+                <div class="field-value">{_escape_html(priority_upper)}</div>
+            </div>
+            <div class="field">
+                <div class="field-label">Time</div>
+                <div class="field-value">{timestamp}</div>
+            </div>
+            <div class="reason-box">
+                <div class="field-label">Reason for Review</div>
+                <div class="field-value" style="margin-top: 4px;">{_escape_html(item.reason)}</div>
+            </div>
+            <a href="{review_url}" class="button">Review in Dashboard</a>
+        </div>
+        <div class="footer">
+            This is an automated alert from OsirisCare Central Command.<br>
+            <a href="https://dashboard.osiriscare.net">dashboard.osiriscare.net</a>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+        _send_review_email(subject, text_body, html_body)
 
     async def _notify_approval(
         self,
@@ -443,19 +594,100 @@ class ReviewQueue:
         notes: Optional[str]
     ) -> None:
         """
-        Notify stakeholders of runbook approval
-
-        TODO: Implement notification system
+        Notify stakeholders of runbook approval via DB record and email.
         """
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        # Log to database (existing behavior)
         notification = {
             "type": "runbook_approved",
             "runbook_id": runbook_id,
             "reviewed_by": reviewer,
             "notes": notes,
-            "approved_at": datetime.utcnow().isoformat()
+            "approved_at": datetime.now(timezone.utc).isoformat(),
         }
-
         await self.db.notifications.insert_one(notification)
+
+        # Send email notification
+        subject = f"[APPROVED] Runbook {runbook_id} approved by {reviewer}"
+
+        notes_text = notes if notes else "No additional notes."
+
+        text_body = f"""RUNBOOK APPROVED - OsirisCare Central Command
+{'=' * 44}
+
+Runbook:  {runbook_id}
+Approved: {timestamp}
+Reviewer: {reviewer}
+
+Notes:
+{notes_text}
+
+The runbook has been activated and is now available for production use.
+
+---
+This is an automated alert from OsirisCare Central Command.
+Dashboard: https://dashboard.osiriscare.net
+"""
+
+        notes_html = ""
+        if notes:
+            notes_html = f"""
+            <div style="background: white; padding: 16px; border-radius: 8px; border-left: 4px solid #059669; margin-top: 16px;">
+                <div class="field-label">Approval Notes</div>
+                <div class="field-value" style="margin-top: 4px;">{_escape_html(notes)}</div>
+            </div>"""
+
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #059669, #047857); color: white; padding: 20px; border-radius: 8px 8px 0 0; }}
+        .header h1 {{ margin: 0; font-size: 22px; }}
+        .header .badge {{ display: inline-block; background: rgba(255,255,255,0.2); padding: 2px 10px; border-radius: 12px; font-size: 13px; margin-top: 6px; }}
+        .content {{ background: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; }}
+        .field {{ margin-bottom: 12px; }}
+        .field-label {{ font-weight: 600; color: #6b7280; font-size: 12px; text-transform: uppercase; }}
+        .field-value {{ color: #111827; }}
+        .footer {{ padding: 16px 20px; background: #f3f4f6; border-radius: 0 0 8px 8px; font-size: 12px; color: #6b7280; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Runbook Approved</h1>
+            <span class="badge">ACTIVATED</span>
+        </div>
+        <div class="content">
+            <div class="field">
+                <div class="field-label">Runbook ID</div>
+                <div class="field-value" style="font-size: 18px; font-weight: 600;">{_escape_html(runbook_id)}</div>
+            </div>
+            <div class="field">
+                <div class="field-label">Approved By</div>
+                <div class="field-value">{_escape_html(reviewer)}</div>
+            </div>
+            <div class="field">
+                <div class="field-label">Approved At</div>
+                <div class="field-value">{timestamp}</div>
+            </div>{notes_html}
+            <div style="background: #ecfdf5; padding: 12px 16px; border-radius: 8px; margin-top: 16px; color: #065f46;">
+                This runbook has been activated and is now available for production remediation.
+            </div>
+        </div>
+        <div class="footer">
+            This is an automated alert from OsirisCare Central Command.<br>
+            <a href="https://dashboard.osiriscare.net">dashboard.osiriscare.net</a>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+        _send_review_email(subject, text_body, html_body)
 
     async def cleanup_old_items(self, days: int = 90) -> int:
         """

@@ -559,11 +559,11 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
 
     OTS_MAGIC = b'\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94'
 
-    # Expire proofs older than 7 days (calendars prune after ~7 days)
+    # Fail proofs older than 7 days (calendars prune after ~7 days)
     await db.execute(text("""
         UPDATE ots_proofs
-        SET status = 'expired',
-            error = 'Calendar retention exceeded - proof too old to upgrade'
+        SET status = 'failed',
+            error = 'Calendar retention exceeded - proof never received Bitcoin attestation within 7 days'
         WHERE status = 'pending'
         AND submitted_at < NOW() - INTERVAL '7 days'
     """))

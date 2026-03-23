@@ -49,7 +49,10 @@ def send_invite_email(
         True if email sent successfully, False otherwise
     """
     if not is_email_configured():
-        logger.warning("Email not configured - skipping invite email")
+        logger.error(
+            "EMAIL NOT CONFIGURED — invite email for %s CANNOT BE DELIVERED. "
+            "Set SMTP_USER and SMTP_PASSWORD environment variables.", to_email
+        )
         return False
 
     invite_url = f"{DASHBOARD_URL}/set-password?token={invite_token}"
@@ -173,7 +176,7 @@ async def send_email(to_email: str, subject: str, body: str) -> bool:
         True if email sent successfully, False otherwise
     """
     if not is_email_configured():
-        logger.warning("Email not configured - skipping email")
+        logger.error("EMAIL NOT CONFIGURED — email to %s cannot be delivered", to_email)
         return False
 
     try:
@@ -212,7 +215,7 @@ def send_password_reset_email(
         True if email sent successfully, False otherwise
     """
     if not is_email_configured():
-        logger.warning("Email not configured - skipping password reset email")
+        logger.error("EMAIL NOT CONFIGURED — password reset for %s cannot be delivered", to_email)
         return False
 
     reset_url = f"{DASHBOARD_URL}/reset-password?token={reset_token}"

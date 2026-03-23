@@ -3,7 +3,6 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -27,62 +26,9 @@ type PersistedState struct {
 	SavedAt            time.Time                    `json:"saved_at"`
 }
 
-// statePath returns the full path to the state file.
-func (d *Daemon) statePath() string {
-	return filepath.Join(d.config.StateDir, stateFileName)
-}
-
-// saveState persists critical in-memory state to disk.
-// Uses atomic write (tmp + rename) for crash safety.
+// saveState delegates to StateManager.SaveToDisk.
 func (d *Daemon) saveState() {
-	d.linuxTargetsMu.RLock()
-	targets := make([]linuxTarget, len(d.linuxTargets))
-	copy(targets, d.linuxTargets)
-	d.linuxTargetsMu.RUnlock()
-
-	d.l2ModeMu.RLock()
-	l2 := d.l2Mode
-	d.l2ModeMu.RUnlock()
-
-	d.subscriptionMu.RLock()
-	sub := d.subscriptionStatus
-	d.subscriptionMu.RUnlock()
-
-	// Snapshot cooldown state
-	d.cooldownMu.Lock()
-	cooldowns := make(map[string]persistedCooldown, len(d.cooldowns))
-	for k, v := range d.cooldowns {
-		cooldowns[k] = persistedCooldown{
-			LastSeen:    v.lastSeen,
-			Count:       v.count,
-			CooldownDur: v.cooldownDur,
-		}
-	}
-	d.cooldownMu.Unlock()
-
-	state := PersistedState{
-		LinuxTargets:       targets,
-		L2Mode:             l2,
-		SubscriptionStatus: sub,
-		Cooldowns:          cooldowns,
-		SavedAt:            time.Now(),
-	}
-
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		log.Printf("[daemon] Failed to marshal state: %v", err)
-		return
-	}
-
-	path := d.statePath()
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		log.Printf("[daemon] Failed to write state file: %v", err)
-		return
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		log.Printf("[daemon] Failed to rename state file: %v", err)
-	}
+	d.state.SaveToDisk(d.config.StateDir)
 }
 
 // loadState restores persisted state from disk.

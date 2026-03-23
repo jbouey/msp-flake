@@ -59,7 +59,7 @@ from .models import (
     L2DecisionResponse,
     L2ConfigResponse,
 )
-from .fleet import get_mock_fleet_overview, get_mock_client_detail
+from .fleet import get_fleet_overview as _get_real_fleet_overview, get_client_detail as _get_real_client_detail
 from .tenant_middleware import admin_connection
 from .metrics import calculate_health_from_raw
 from .db_queries import (
@@ -1964,7 +1964,7 @@ async def execute_command(request: CommandRequest):
 
     # Parse command
     if command == "status all":
-        fleet = get_mock_fleet_overview()
+        fleet = await _get_real_fleet_overview()
         return CommandResponse(
             command=request.command,
             command_type="fleet_overview",
@@ -1977,7 +1977,7 @@ async def execute_command(request: CommandRequest):
 
     if command.startswith("status "):
         site_id = command.replace("status ", "").strip()
-        detail = get_mock_client_detail(site_id)
+        detail = await _get_real_client_detail(site_id)
         if detail:
             return CommandResponse(
                 command=request.command,

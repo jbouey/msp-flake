@@ -114,7 +114,15 @@ async def send_magic_link_email(to_email: str, site_name: str, magic_link: str) 
         True if email sent successfully, False otherwise
     """
     if not SENDGRID_AVAILABLE or not SENDGRID_API_KEY:
-        logger.warning(f"Email not configured - magic link generated for {site_name} (token redacted)")
+        # Try SMTP fallback before giving up
+        smtp_user = os.environ.get("SMTP_USER")
+        smtp_pass = os.environ.get("SMTP_PASSWORD")
+        if smtp_user and smtp_pass:
+            return _send_magic_link_smtp(to_email, site_name, magic_link, smtp_user, smtp_pass)
+        logger.error(
+            f"EMAIL NOT CONFIGURED — magic link for {site_name} CANNOT BE DELIVERED. "
+            f"Set SENDGRID_API_KEY or SMTP_USER/SMTP_PASSWORD to enable email."
+        )
         return False
 
     try:
@@ -164,6 +172,58 @@ async def send_magic_link_email(to_email: str, site_name: str, magic_link: str) 
         return False
 
 
+def _send_magic_link_smtp(to_email: str, site_name: str, magic_link: str,
+                          smtp_user: str, smtp_pass: str) -> bool:
+    """SMTP fallback for magic link delivery when SendGrid is not configured."""
+    import ssl
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    smtp_host = os.environ.get("SMTP_HOST", "mail.privateemail.com")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    from_addr = os.environ.get("SMTP_FROM", "noreply@osiriscare.net")
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"Your {site_name} Compliance Dashboard Access"
+    msg["From"] = from_addr
+    msg["To"] = to_email
+
+    text = (
+        f"Access your compliance dashboard for {site_name}:\n\n"
+        f"{magic_link}\n\n"
+        f"This link expires in 60 minutes."
+    )
+    html = (
+        f'<p>Click below to access your compliance dashboard for <strong>{site_name}</strong>.</p>'
+        f'<p><a href="{magic_link}" style="background:#3182ce;color:white;padding:14px 32px;'
+        f'border-radius:8px;text-decoration:none;font-weight:600;display:inline-block;">'
+        f'Access Dashboard</a></p>'
+        f'<p style="color:#718096;font-size:14px;">This link expires in 60 minutes.</p>'
+    )
+    msg.attach(MIMEText(text, "plain"))
+    msg.attach(MIMEText(html, "html"))
+
+    for attempt in range(2):
+        try:
+            context = ssl.create_default_context()
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+                server.starttls(context=context)
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(from_addr, to_email, msg.as_string())
+            logger.info(f"Magic link email sent via SMTP to {redact_email(to_email)}")
+            return True
+        except (smtplib.SMTPException, OSError) as e:
+            if attempt == 0:
+                logger.warning(f"SMTP attempt 1 failed for magic link: {e}")
+                import time
+                time.sleep(2)
+            else:
+                logger.error(f"SMTP magic link delivery failed after 2 attempts: {e}")
+                return False
+    return False
+
+
 # =============================================================================
 # MODELS
 # =============================================================================
@@ -172,7 +232,7 @@ class PortalKPIs(BaseModel):
     """KPI metrics for portal display."""
     compliance_pct: float = 0.0
     patch_mttr_hours: float = 0.0
-    mfa_coverage_pct: float = 100.0
+    mfa_coverage_pct: Optional[float] = None
     backup_success_rate: float = 100.0
     auto_fixes_24h: int = 0
     controls_passing: int = 0
@@ -975,7 +1035,7 @@ async def get_portal_data(
         # Calculate status from pass rate
         pass_rate = result.get("pass_rate")
         if pass_rate is None:
-            status = "pass"  # No data = not yet monitored
+            status = "unknown"  # No data — not yet monitored
         elif pass_rate >= 90:
             status = "pass"
         elif pass_rate >= 50:

@@ -86,9 +86,9 @@ func (ds *driftScanner) RunAppDiscovery(ctx context.Context, params map[string]i
 		"assets":       allAssets,
 	}
 
-	ds.daemon.discoveryMu.Lock()
-	ds.daemon.discoveryResults = results
-	ds.daemon.discoveryMu.Unlock()
+	for k, v := range results {
+		ds.daemon.state.AddDiscoveryResult(k, v)
+	}
 
 	totalAssets := 0
 	for _, items := range allAssets {

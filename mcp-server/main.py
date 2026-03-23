@@ -2520,6 +2520,7 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
     """
     accepted = 0
     merged = 0
+    failed = 0
 
     for stat in request.pattern_stats:
         try:
@@ -2628,23 +2629,26 @@ async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = De
             logger.warning(f"Failed to sync pattern {stat.pattern_signature}: {e}")
             # Rollback to clear the aborted transaction state
             await db.rollback()
+            failed += 1
             continue
 
-    # Record sync event
+    # Record sync event with honest status
+    sync_status = 'success' if failed == 0 else ('partial' if accepted + merged > 0 else 'failed')
     try:
         await db.execute(text("""
             INSERT INTO appliance_pattern_sync (appliance_id, site_id, synced_at, patterns_received, patterns_merged, sync_status)
-            VALUES (:appliance_id, :site_id, NOW(), :received, :merged, 'success')
+            VALUES (:appliance_id, :site_id, NOW(), :received, :merged, :status)
             ON CONFLICT (appliance_id) DO UPDATE SET
                 synced_at = NOW(),
                 patterns_received = :received,
                 patterns_merged = :merged,
-                sync_status = 'success'
+                sync_status = :status
         """), {
             "appliance_id": request.appliance_id,
             "site_id": request.site_id,
             "received": len(request.pattern_stats),
             "merged": merged,
+            "status": sync_status,
         })
         await db.commit()
     except Exception as e:
@@ -4242,17 +4246,33 @@ async def get_learning_status(db: AsyncSession = Depends(get_db)):
         l1_count = (total_incidents - (row.total_l2_decisions_30d or 0))
         l1_rate = max(0, min(100, l1_count * 100.0 / total_incidents))
 
+        # Compute real promotion success rate from post-promotion telemetry
+        promo_result = await db.execute(text("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE et.success = true) as successful
+            FROM execution_telemetry et
+            WHERE et.created_at > NOW() - INTERVAL '30 days'
+        """))
+        promo_row = promo_result.fetchone()
+        promo_total = promo_row.total if promo_row else 0
+        if promo_total > 0:
+            promo_success_rate = round((promo_row.successful / promo_total) * 100, 1)
+        else:
+            promo_success_rate = None  # No telemetry data — don't fake it
+
         return {
             "total_l1_rules": row.total_l1_rules,
             "total_l2_decisions_30d": row.total_l2_decisions_30d or 0,
             "l1_resolution_rate": round(l1_rate, 1),
-            "promotion_success_rate": 100.0,  # TODO: compute from post-promotion telemetry
+            "promotion_success_rate": promo_success_rate,
             "total_promotions_90d": row.total_promotions_90d or 0,
         }
     except Exception as e:
         logger.error(f"Failed to get learning status: {e}")
-        return {"total_l1_rules": 0, "total_l2_decisions_30d": 0,
-                "l1_resolution_rate": 0, "promotion_success_rate": 0}
+        return {"error": "database_unavailable", "total_l1_rules": None,
+                "total_l2_decisions_30d": None, "l1_resolution_rate": None,
+                "promotion_success_rate": None}
 
 
 @app.get("/api/learning/coverage-gaps")

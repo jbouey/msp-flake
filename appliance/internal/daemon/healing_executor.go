@@ -222,9 +222,8 @@ func (d *Daemon) buildHealingWinRMTarget(hostID string) *winrm.Target {
 // buildHealingSSHTarget creates an SSH target for Linux/macOS healing.
 // Looks up credentials from linuxTargets first, falls back to root@22.
 func (d *Daemon) buildHealingSSHTarget(hostID string) *sshexec.Target {
-	d.linuxTargetsMu.RLock()
-	defer d.linuxTargetsMu.RUnlock()
-	for _, lt := range d.linuxTargets {
+	targets := d.state.GetLinuxTargets()
+	for _, lt := range targets {
 		if lt.Hostname == hostID {
 			port := lt.Port
 			if port == 0 {
@@ -373,9 +372,7 @@ func (d *Daemon) isKnownTarget(hostname, platform string) bool {
 		return false
 
 	case "linux":
-		d.linuxTargetsMu.RLock()
-		defer d.linuxTargetsMu.RUnlock()
-		for _, lt := range d.linuxTargets {
+		for _, lt := range d.state.GetLinuxTargets() {
 			if lt.Hostname == hostname {
 				return true
 			}

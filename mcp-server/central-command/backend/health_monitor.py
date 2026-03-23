@@ -17,13 +17,17 @@ logger = logging.getLogger("health_monitor")
 
 
 async def health_monitor_loop():
-    """Background loop: detect offline appliances and notify.
+    """Background loop: detect offline appliances, stuck queues, and notify.
 
     Thresholds:
     - 15 min without checkin: mark offline_since
     - 30 min: send warning notification (once)
     - 2 hours: escalate to critical notification (once)
     - On next checkin: clear offline_since + offline_notified (done in sites.py)
+
+    Stuck queue detection (every pass):
+    - Escalation tickets open >24h without update
+    - Integration syncs failed in last hour
     """
     await asyncio.sleep(180)  # Wait 3 min after startup for pool to be ready
     logger.info("Health monitor started")
@@ -35,6 +39,13 @@ async def health_monitor_loop():
             raise
         except Exception as e:
             logger.error(f"Health monitor error: {e}", exc_info=True)
+
+        try:
+            await _check_stuck_queues()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Stuck queue check error: {e}", exc_info=True)
 
         await asyncio.sleep(300)  # Every 5 minutes
 
@@ -251,3 +262,103 @@ async def _send_recovery_notification(conn, site_id: str, appliance_id: str, hos
         f"Appliance {hostname} has recovered and is checking in again.",
         json.dumps({"appliance_id": appliance_id, "hostname": hostname}),
     )
+
+
+async def _check_stuck_queues():
+    """Detect stuck escalation tickets and failed integration syncs.
+
+    Alerts once per stuck item per 24h window (deduped via notifications table).
+    """
+    import json
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # --- Escalation tickets stuck >24h ---
+        try:
+            stuck_tickets = await conn.fetch("""
+                SELECT id, site_id, title, severity, created_at,
+                       EXTRACT(EPOCH FROM NOW() - created_at) / 3600 as hours_open
+                FROM escalation_tickets
+                WHERE status NOT IN ('resolved', 'closed')
+                  AND created_at < NOW() - INTERVAL '24 hours'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM notifications n
+                      WHERE n.category = 'stuck_escalation'
+                        AND n.metadata::jsonb->>'ticket_id' = escalation_tickets.id::text
+                        AND n.created_at > NOW() - INTERVAL '24 hours'
+                  )
+            """)
+
+            for ticket in stuck_tickets:
+                hours = round(ticket["hours_open"], 1)
+                title = f"Escalation ticket stuck for {hours}h: {ticket['title']}"
+                message = (
+                    f"Escalation ticket #{ticket['id']} has been open for {hours} hours "
+                    f"without resolution. Original severity: {ticket['severity']}. "
+                    f"Review and resolve at the L4 queue."
+                )
+                await conn.execute("""
+                    INSERT INTO notifications (site_id, severity, category, title, message, metadata)
+                    VALUES ($1, 'warning', 'stuck_escalation', $2, $3, $4::jsonb)
+                """,
+                    ticket["site_id"],
+                    title,
+                    message,
+                    json.dumps({"ticket_id": str(ticket["id"]), "hours_open": hours}),
+                )
+                logger.warning(f"Stuck escalation: {title}")
+
+                # Send email alert
+                try:
+                    send_critical_alert(
+                        title=title,
+                        message=message,
+                        site_id=ticket["site_id"],
+                        category="stuck_escalation",
+                        severity="warning",
+                        recommended_action="Check the L4 escalation queue in the admin dashboard.",
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send stuck escalation email: {e}")
+
+            if stuck_tickets:
+                logger.warning(f"Found {len(stuck_tickets)} stuck escalation ticket(s)")
+        except Exception:
+            logger.exception("Stuck queue check: escalation query failed")
+
+        # --- Integration sync failures in last hour ---
+        try:
+            failed_syncs = await conn.fetch("""
+                SELECT id, integration_type, error_message, created_at
+                FROM integration_sync_log
+                WHERE status = 'failed'
+                  AND created_at > NOW() - INTERVAL '1 hour'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM notifications n
+                      WHERE n.category = 'integration_sync_failure'
+                        AND n.metadata::jsonb->>'sync_id' = integration_sync_log.id::text
+                        AND n.created_at > NOW() - INTERVAL '1 hour'
+                  )
+            """)
+
+            for sync in failed_syncs:
+                title = f"Integration sync failed: {sync['integration_type']}"
+                message = f"Sync error: {sync['error_message'] or 'Unknown error'}"
+                await conn.execute("""
+                    INSERT INTO notifications (severity, category, title, message, metadata)
+                    VALUES ('warning', 'integration_sync_failure', $1, $2, $3::jsonb)
+                """,
+                    title,
+                    message,
+                    json.dumps({"sync_id": str(sync["id"]), "type": sync["integration_type"]}),
+                )
+                logger.warning(f"Integration sync failure: {title}")
+
+            if failed_syncs:
+                logger.warning(f"Found {len(failed_syncs)} integration sync failure(s)")
+        except Exception:
+            # Table may not exist yet — not critical
+            logger.debug("Stuck queue check: integration sync query failed (table may not exist)")

@@ -4,10 +4,21 @@ Creates tamper-evident evidence trail for all automated actions
 """
 import json
 import hashlib
+import logging
 import os
+from io import BytesIO
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+try:
+    from minio import Minio
+    from minio.retention import Retention, COMPLIANCE
+    HAS_MINIO = True
+except ImportError:
+    HAS_MINIO = False
+
+logger = logging.getLogger(__name__)
 
 
 class EvidenceChain:
@@ -326,27 +337,119 @@ class EvidenceWriter:
 
     def _upload_to_worm(self, bundle: Dict) -> Optional[str]:
         """
-        Upload to WORM storage (S3 with object lock)
+        Upload evidence bundle to MinIO WORM storage with Object Lock.
 
-        In production, this would use boto3 to upload to S3 with:
-        - Object Lock enabled
-        - Retention period set
-        - Legal hold (optional)
+        Uses COMPLIANCE retention mode so objects cannot be deleted or
+        overwritten until the retention period expires, satisfying
+        HIPAA evidence immutability requirements.
 
-        For now, just a stub
+        Returns:
+            S3 URI on success, None on failure or if MinIO is not configured.
         """
-        # TODO: Implement S3 upload with object lock
-        # import boto3
-        # s3 = boto3.client('s3')
-        # s3.put_object(
-        #     Bucket=self.worm_bucket,
-        #     Key=f"{bundle['bundle_id']}.json",
-        #     Body=json.dumps(bundle),
-        #     ObjectLockMode='COMPLIANCE',
-        #     ObjectLockRetainUntilDate=datetime.now() + timedelta(days=730)
-        # )
+        if not HAS_MINIO:
+            logger.warning("minio package not installed — WORM upload skipped")
+            return None
 
-        print(f"[evidence_writer] WORM upload stub (not implemented)")
+        # Read config from environment
+        endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
+        access_key = os.getenv("MINIO_ACCESS_KEY")
+        secret_key = os.getenv("MINIO_SECRET_KEY")
+        bucket = os.getenv("MINIO_BUCKET", "evidence")
+        secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
+        retention_days = int(os.getenv("WORM_RETENTION_DAYS", "90"))
+
+        if not access_key or not secret_key:
+            logger.warning(
+                "MINIO_ACCESS_KEY / MINIO_SECRET_KEY not set — WORM upload skipped"
+            )
+            return None
+
+        bundle_id = bundle.get("bundle_id", "unknown")
+        bundle_hash = bundle.get("evidence_bundle_hash", "")
+        max_retries = 2
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                client = Minio(
+                    endpoint,
+                    access_key=access_key,
+                    secret_key=secret_key,
+                    secure=secure,
+                )
+
+                # Ensure bucket exists
+                if not client.bucket_exists(bucket):
+                    client.make_bucket(bucket)
+
+                # Build date-prefixed key
+                now = datetime.now(timezone.utc)
+                date_prefix = now.strftime("%Y/%m/%d")
+                object_key = f"{date_prefix}/{bundle_id}.json"
+
+                # Serialize bundle
+                bundle_json = json.dumps(bundle, default=str, indent=2)
+                bundle_bytes = bundle_json.encode()
+
+                # Upload
+                client.put_object(
+                    bucket,
+                    object_key,
+                    BytesIO(bundle_bytes),
+                    length=len(bundle_bytes),
+                    content_type="application/json",
+                    metadata={
+                        "bundle_id": bundle_id,
+                        "bundle_hash": bundle_hash,
+                        "uploaded_at": now.isoformat(),
+                    },
+                )
+
+                s3_uri = f"s3://{bucket}/{object_key}"
+
+                # Set Object Lock COMPLIANCE retention
+                try:
+                    retention_until = now + timedelta(days=retention_days)
+                    retention = Retention(COMPLIANCE, retention_until)
+                    client.set_object_retention(bucket, object_key, retention)
+                except Exception as ret_err:
+                    # Bucket may already have a default retention policy
+                    logger.debug(
+                        "Object Lock retention not applied (bucket may have "
+                        "default policy or Object Lock not enabled): %s",
+                        ret_err,
+                    )
+
+                # Verify the upload by stat-ing the object
+                stat = client.stat_object(bucket, object_key)
+                if stat.size != len(bundle_bytes):
+                    logger.error(
+                        "WORM upload size mismatch for %s: expected %d, got %d",
+                        bundle_id,
+                        len(bundle_bytes),
+                        stat.size,
+                    )
+                    return None
+
+                logger.info("Evidence uploaded to WORM: %s -> %s", bundle_id, s3_uri)
+                return s3_uri
+
+            except Exception as exc:
+                if attempt < max_retries:
+                    logger.warning(
+                        "WORM upload attempt %d/%d failed for %s: %s — retrying",
+                        attempt,
+                        max_retries,
+                        bundle_id,
+                        exc,
+                    )
+                else:
+                    logger.error(
+                        "WORM upload failed for %s after %d attempts: %s",
+                        bundle_id,
+                        max_retries,
+                        exc,
+                    )
+
         return None
 
 

@@ -13,8 +13,8 @@ interface PortalSite {
 interface PortalKPIs {
   compliance_pct: number;
   patch_mttr_hours: number;
-  mfa_coverage_pct: number;
-  backup_success_rate: number;
+  mfa_coverage_pct: number | null;
+  backup_success_rate: number | null;
   auto_fixes_24h: number;
   controls_passing: number;
   controls_warning: number;

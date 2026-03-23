@@ -190,12 +190,19 @@ type HandlerFunc func(ctx context.Context, params map[string]interface{}) (map[s
 type CompletionCallback func(ctx context.Context, orderID string, success bool, result map[string]interface{}, errMsg string) error
 
 // Processor dispatches and executes orders.
+// AgentCounter provides a read-only view of connected agent count.
+// Implemented by grpcserver.AgentRegistry; optional dependency for sensor_status handler.
+type AgentCounter interface {
+	ConnectedCount() int
+}
+
 type Processor struct {
-	handlers    map[string]HandlerFunc
-	onComplete  CompletionCallback
-	stateDir    string
-	verifier    *crypto.OrderVerifier
-	applianceID string // This appliance's ID (from checkin response)
+	handlers     map[string]HandlerFunc
+	onComplete   CompletionCallback
+	stateDir     string
+	verifier     *crypto.OrderVerifier
+	applianceID  string // This appliance's ID (from checkin response)
+	agentCounter AgentCounter // Optional: set via SetAgentCounter for real sensor counts
 
 	// Nonce replay protection: tracks used nonces to prevent replay attacks
 	nonceMu    sync.Mutex
@@ -250,6 +257,12 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 // This allows subsystems (healing engine, drift checker, etc.) to inject their handlers.
 func (p *Processor) RegisterHandler(orderType string, handler HandlerFunc) {
 	p.handlers[orderType] = handler
+}
+
+// SetAgentCounter sets the agent counter used by handleSensorStatus to report
+// real connected agent counts. If not set, sensor_status returns "registry_unavailable".
+func (p *Processor) SetAgentCounter(ac AgentCounter) {
+	p.agentCounter = ac
 }
 
 // SetServerPublicKey sets the Ed25519 public key used to verify order signatures.
@@ -797,10 +810,10 @@ func (p *Processor) handleDeploySensor(_ context.Context, params map[string]inte
 		return nil, fmt.Errorf("hostname is required")
 	}
 
-	// Sensor deployment is handled by the WinRM executor with deploy script
 	return map[string]interface{}{
-		"status":   "deploy_triggered",
+		"status":   "not_implemented",
 		"hostname": hostname,
+		"error":    "sensor deployment via fleet orders is not yet implemented",
 	}, nil
 }
 
@@ -811,8 +824,9 @@ func (p *Processor) handleRemoveSensor(_ context.Context, params map[string]inte
 	}
 
 	return map[string]interface{}{
-		"status":   "remove_triggered",
+		"status":   "not_implemented",
 		"hostname": hostname,
+		"error":    "sensor removal via fleet orders is not yet implemented",
 	}, nil
 }
 
@@ -823,8 +837,9 @@ func (p *Processor) handleDeployLinuxSensor(_ context.Context, params map[string
 	}
 
 	return map[string]interface{}{
-		"status":   "deploy_triggered",
+		"status":   "not_implemented",
 		"hostname": hostname,
+		"error":    "sensor deployment via fleet orders is not yet implemented",
 	}, nil
 }
 
@@ -835,16 +850,24 @@ func (p *Processor) handleRemoveLinuxSensor(_ context.Context, params map[string
 	}
 
 	return map[string]interface{}{
-		"status":   "remove_triggered",
+		"status":   "not_implemented",
 		"hostname": hostname,
+		"error":    "sensor removal via fleet orders is not yet implemented",
 	}, nil
 }
 
 func (p *Processor) handleSensorStatus(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
-	// Sensor status is gathered from the registry
+	if p.agentCounter == nil {
+		return map[string]interface{}{
+			"status": "registry_unavailable",
+			"error":  "agent registry is not configured",
+		}, nil
+	}
+
+	count := p.agentCounter.ConnectedCount()
 	return map[string]interface{}{
-		"status":              "collected",
-		"total_active_sensors": 0,
+		"status":               "collected",
+		"total_active_sensors": count,
 	}, nil
 }
 

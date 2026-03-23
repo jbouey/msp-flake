@@ -1,6 +1,6 @@
 {
-  "session": 183,
-  "updated": "2026-03-23T00:21:52.262091Z",
+  "session": 185,
+  "updated": "2026-03-23T08:19:58.844812Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -32,10 +32,18 @@
   },
   "current_blocker": "None. All systems operational. Auto-discovery + auto-deploy system implemented (Phase 1-3). Pending: daemon rebuild + deploy to test on live appliance.",
   "auto_discovery_system": {
-    "phase1_core": "complete — probing, auto-deploy, Take Over UI, rogue alerting, lifecycle state machine",
-    "phase2_reliability": "complete — self-healing, staggered deploy, pre-flight checks",
-    "phase3_polish": "complete — SSSD detection, topology, coverage score, remote uninstall, credential encryption",
-    "new_go_files": ["probes.go", "classify.go", "deploy_ssh.go", "lifecycle.go", "selfheal.go", "preflight.go", "topology.go"],
+    "phase1_core": "complete \u2014 probing, auto-deploy, Take Over UI, rogue alerting, lifecycle state machine",
+    "phase2_reliability": "complete \u2014 self-healing, staggered deploy, pre-flight checks",
+    "phase3_polish": "complete \u2014 SSSD detection, topology, coverage score, remote uninstall, credential encryption",
+    "new_go_files": [
+      "probes.go",
+      "classify.go",
+      "deploy_ssh.go",
+      "lifecycle.go",
+      "selfheal.go",
+      "preflight.go",
+      "topology.go"
+    ],
     "migration": "096_device_discovery_autodeploy.sql",
     "commits": 22
   },
@@ -90,9 +98,56 @@
     "Appliances (.241, .254) reclassified from unknown to appliance"
   ],
   "test_results": {
-    "python_backend": "211 passed (8 new org hardening), 0 failures",
+    "python_backend": "1161 passed (115 new Tier-2 tests: escalation_engine 57, cve_watch 74, device_sync 27, billing 32), 0 failures",
     "go_daemon": "17 packages passed, 0 failures",
     "frontend": "tsc + eslint 0 errors 0 warnings"
+  },
+  "production_hardening_session_184": {
+    "tier1_fake_metrics_fixed": [
+      "promotion_success_rate: real DB query (was hardcoded 100.0)",
+      "mfa_coverage_pct: null when untracked (was hardcoded 100.0)",
+      "backup_success_rate: null when no data (was default 100)",
+      "l1_resolution_rate: null when no incidents (was 100.0)",
+      "overall_health: removed +10 inflation",
+      "connectivity: 0% for never-connected (was 50%)",
+      "healing/order rates: null when no data (was 100.0)",
+      "portal compliance: unknown when no data (was pass)",
+      "pattern sync: honest success/partial/failed status (was always success)",
+      "learning error: returns error key (was indistinguishable zeros)"
+    ],
+    "tier1_broken_features_fixed": [
+      "evidence WORM: real MinIO upload with Object Lock (was stub)",
+      "review queue: email notifications on review+approval (was TODO)",
+      "fleet CLI: real DB queries (was hardcoded demo data)",
+      "portal magic links: SMTP fallback + loud error (was silent skip)",
+      "email invites/resets: error-level logging (was warning-level skip)",
+      "escalation emails: error-level logging (was warning-level skip)",
+      "OTS proofs: failed status (was misleading expired)"
+    ],
+    "tier1_go_daemon_fixed": [
+      "sensor deploy/remove stubs: return not_implemented (was fake success)",
+      "sensor status: queries real agent registry (was hardcoded 0)"
+    ],
+    "tier2_tests_added": [
+      "test_escalation_engine.py: 57 tests (notification dispatch, ticket creation, channel selection)",
+      "test_device_sync.py: 27 tests (upsert, OUI lookup, archiving, IPv4 cast)",
+      "test_cve_watch.py: 74 tests (NVD sync, CPE matching, severity, fleet matching)",
+      "test_billing.py: 32 tests (Stripe CRUD, webhooks, dedup, availability)"
+    ],
+    "tier3_monitoring_added": [
+      "Prometheus: +8 new metric families (learning, escalation, device, CVE, pattern sync)",
+      "Health monitor: stuck escalation ticket alerting (>24h open)",
+      "Health monitor: integration sync failure detection"
+    ],
+    "tier3_remaining": [
+      "OAuth connector health checks (Okta, Azure, Google)"
+    ],
+    "tier4_remaining": [
+      "Go daemon Services interface extraction",
+      "Integration tests for concurrent scan+heal",
+      "Circuit breaker for Central Command unreachable",
+      "State manager consolidation"
+    ]
   },
   "fleet_update_commands": {
     "clear_tls_pins": "ssh root@192.168.88.241 'rm /var/lib/msp/server_cert_pin.hex' && ssh root@192.168.88.254 'rm /var/lib/msp/server_cert_pin.hex'",
@@ -162,35 +217,5 @@
     "reason": "Source of stale .247 address poison, freed iMac RAM",
     "date": "2026-03-22"
   },
-  "completed_this_session": [
-    "Device API 500 fix (IPv4Address cast) \u2014 deployed via CI/CD",
-    "Push-first scan priority wired into driftscan.go",
-    "Post-deploy gRPC connection verification with WinRM diagnostic",
-    "update_agent fleet order implemented (was stub)",
-    "NETLOGON UNC fallback + size mismatch detection + WinRM b64 fallback",
-    "configure_workstation_agent fleet order \u2014 full agent lifecycle",
-    "VM appliance deprecated (test-appliance-lab-b3c40c \u2192 inactive)",
-    "Go agent deployed to NVWS01 \u2014 push architecture proven on Windows",
-    "Go agent deployed to NVDC01 \u2014 immediate heal commands flowing",
-    "Go agent deployed to iMac as launchd daemon (macOS 11.7, Go 1.22 compat)",
-    "Agent check result sync to Central Command go_agents table",
-    "Site decommission feature: export + deactivate + audit trail + frontend modal",
-    "macOS build compat: Makefile uses Go 1.22 for darwin (Big Sur support)",
-    "agent/DEPLOY.md production deployment guide",
-    "agent/packaging/deploy.sh universal SSH deploy script",
-    "agent/packaging/linux/osiriscare-agent.service systemd unit",
-    "OpenClaw DNS fixed (Cloudflare proxied \u2192 DNS only for Caddy auto-TLS)",
-    "OpenClaw workspace files downloaded to ~/Downloads/openclaw-workspace/",
-    "Claude Code workspace setup prompt for daughter",
-    "L2 guardrails fix: execute_runbook + configure_screen_lock added to allowlist",
-    "Fleet sidebar hides inactive/decommissioned sites",
-    "Stale workstation cleanup: dedup IP-only entries, expire 7d/30d, Go agent sync to workstations table",
-    "Agent sends ALL check results (pass+fail) for accurate compliance percentage",
-    "Go agent compliance data across all portals: partner sites/orgs, client dashboard/sites, admin fleet/health",
-    "Compliance health scoring blends Go agent data with bundle data (weighted average)",
-    "Dashboard drift checks: dynamic count from DB instead of hardcoded 6",
-    "GlobalStats: active_drift_checks + total_go_agents fields",
-    "Stale incidents resolved for deprecated VM site",
-    "OpenClaw gateway restarted after self-update crash"
-  ]
+  "completed_this_session": []
 }

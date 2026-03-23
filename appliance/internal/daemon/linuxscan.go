@@ -278,10 +278,7 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 	var scannedHosts []string
 
 	// Remote Linux targets from checkin response
-	ds.daemon.linuxTargetsMu.RLock()
-	targets := make([]linuxTarget, len(ds.daemon.linuxTargets))
-	copy(targets, ds.daemon.linuxTargets)
-	ds.daemon.linuxTargetsMu.RUnlock()
+	targets := ds.daemon.state.GetLinuxTargets()
 
 	for _, lt := range targets {
 		select {

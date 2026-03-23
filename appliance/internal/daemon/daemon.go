@@ -85,25 +85,11 @@ type Daemon struct {
 	// Incident reporter: sends drift findings to POST /incidents for dashboard display
 	incidents *incidentReporter
 
-	// Drift report cooldown: prevents excessive incident creation
-	cooldownMu sync.Mutex
-	cooldowns  map[string]*driftCooldown // key: "hostname:check_type"
+	// StateManager holds all mutex-protected state (cooldowns, targets, L2 mode, etc.)
+	state *StateManager
 
-	// Linux targets from checkin response
-	linuxTargetsMu sync.RWMutex
-	linuxTargets   []linuxTarget
-
-	// All Windows targets by hostname (for per-workstation credential lookup)
-	winTargetsMu sync.RWMutex
-	winTargets   map[string]winTarget
-
-	// L2 mode: "auto" (execute immediately), "manual" (queue for approval), "disabled" (L1 only)
-	l2ModeMu sync.RWMutex
-	l2Mode   string
-
-	// Subscription status: gates healing operations
-	subscriptionMu     sync.RWMutex
-	subscriptionStatus string // "active", "trialing", "past_due", "canceled", "none"
+	// Services bundles interfaces for subsystem access (set in New, RunCtx updated in Run)
+	svc *Services
 
 	// Run context: cancelled on daemon shutdown, propagated to healing operations
 	runCtx    context.Context
@@ -115,30 +101,11 @@ type Daemon struct {
 	// Healing journal: crash-safe tracking of in-flight healing operations
 	healJournal *HealingJournal
 
-	// gpoFixDone tracks whether the GPO firewall fix has been applied per DC.
-	// key = DC hostname, value = true
-	gpoFixDone sync.Map
-
-	// WinRM port cache: probed once per host, 5986 (SSL) preferred, 5985 (HTTP) fallback
-	winrmMu    sync.Mutex
-	winrmCache map[string]winrmSettings
-
 	// Agent binary version cache for self-update endpoint
 	agentVersionCache *agentVersionCache
 
-	// Pending app discovery results to send in next checkin
-	discoveryMu      sync.Mutex
-	discoveryResults map[string]interface{}
-
-	// Drift check types disabled by site config (received from checkin response)
-	disabledChecks   map[string]bool
-	disabledChecksMu sync.RWMutex
-
 	// Log shipper: tails journald and ships batches to Central Command
 	logShipper *logshipper.Shipper
-
-	// Pending deploy results to report on the next checkin
-	pendingDeployResults []DeployResult
 
 	// Self-healer: monitors agent heartbeats, auto-redeploys stale agents
 	selfHealer *selfHealer
@@ -162,20 +129,16 @@ func (d *Daemon) safeGo(name string, f func()) {
 // isSubscriptionActive returns true if healing should be allowed.
 // Active and trialing subscriptions allow healing; all other states suppress it.
 func (d *Daemon) isSubscriptionActive() bool {
-	d.subscriptionMu.RLock()
-	defer d.subscriptionMu.RUnlock()
-	return d.subscriptionStatus == "" || d.subscriptionStatus == "active" || d.subscriptionStatus == "trialing"
+	return d.state.IsSubscriptionActive()
 }
 
 // New creates a new daemon with the given configuration.
 func New(cfg *Config) *Daemon {
 	d := &Daemon{
-		config:    cfg,
-		phoneCli:  NewPhoneHomeClient(cfg),
-		registry:  grpcserver.NewAgentRegistryPersistent(cfg.StateDir),
-		cooldowns:      make(map[string]*driftCooldown),
-		winTargets:     make(map[string]winTarget),
-		disabledChecks: make(map[string]bool),
+		config:   cfg,
+		phoneCli: NewPhoneHomeClient(cfg),
+		registry: grpcserver.NewAgentRegistryPersistent(cfg.StateDir),
+		state:    NewStateManager(),
 	}
 
 	// Initialize WinRM and SSH executors (must be before L1 engine)
@@ -252,9 +215,26 @@ func New(cfg *Config) *Daemon {
 
 	// Initialize order processor with completion callback
 	d.orderProc = orders.NewProcessor(cfg.StateDir, d.completeOrder)
+	d.orderProc.SetAgentCounter(d.registry)
+
+	// Build Services struct for subsystem injection (RunCtx set in Run())
+	d.svc = &Services{
+		Config:    cfg,
+		Targets:   d.state,
+		Cooldowns: d.state,
+		Checks:    d.state,
+		Incidents: d.incidents,
+		WinRM:     d.winrmExec,
+		SSH:       d.sshExec,
+		Registry:  d.registry,
+		SiteID:    cfg.SiteID,
+	}
 
 	// Initialize auto-deployer for zero-friction agent spread
 	d.deployer = newAutoDeployer(d)
+
+	// Wire the AD hostnames callback now that deployer exists
+	d.state.SetADHostnamesFunc(d.deployer.getADHostnames)
 
 	// Initialize drift scanner for periodic security checks
 	d.scanner = newDriftScanner(d)
@@ -308,30 +288,9 @@ func New(cfg *Config) *Daemon {
 		}
 	}
 
-	// Restore persisted state from prior session (linux targets, L2 mode)
-	if saved, err := loadState(cfg.StateDir); err != nil {
+	// Restore persisted state from prior session (linux targets, L2 mode, cooldowns)
+	if err := d.state.LoadFromDisk(cfg.StateDir); err != nil {
 		log.Printf("[daemon] Failed to load persisted state: %v", err)
-	} else if saved != nil {
-		d.linuxTargets = saved.LinuxTargets
-		d.l2Mode = saved.L2Mode
-		d.subscriptionStatus = saved.SubscriptionStatus
-
-		// Restore cooldowns, pruning any that have expired during downtime
-		now := time.Now()
-		restored := 0
-		for k, pc := range saved.Cooldowns {
-			if now.Sub(pc.LastSeen) < cooldownCleanup {
-				d.cooldowns[k] = &driftCooldown{
-					lastSeen:    pc.LastSeen,
-					count:       pc.Count,
-					cooldownDur: pc.CooldownDur,
-				}
-				restored++
-			}
-		}
-
-		log.Printf("[daemon] Restored state from disk: %d linux_targets, l2=%s, sub=%s, cooldowns=%d (saved %s ago)",
-			len(saved.LinuxTargets), saved.L2Mode, saved.SubscriptionStatus, restored, time.Since(saved.SavedAt).Round(time.Second))
 	}
 
 	return d
@@ -340,6 +299,7 @@ func New(cfg *Config) *Daemon {
 // Run starts the daemon and blocks until the context is cancelled.
 func (d *Daemon) Run(ctx context.Context) error {
 	d.runCtx, d.runCancel = context.WithCancel(ctx)
+	d.svc.RunCtx = d.runCtx
 	log.Printf("[daemon] OsirisCare Appliance Daemon v%s starting", Version)
 	l2Mode := "disabled"
 	if d.l2Planner != nil {
@@ -536,12 +496,9 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	}
 
 	// Include pending app discovery results (one-shot: cleared after send)
-	d.discoveryMu.Lock()
-	if d.discoveryResults != nil {
-		req.DiscoveryResults = d.discoveryResults
-		d.discoveryResults = nil
+	if dr := d.state.DrainDiscoveryResults(); dr != nil {
+		req.DiscoveryResults = dr
 	}
-	d.discoveryMu.Unlock()
 
 	// Include encryption public key for credential envelope encryption
 	if d.envelopeKP != nil {
@@ -549,9 +506,8 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	}
 
 	// Include deploy results from previous cycle (cleared after send)
-	if len(d.pendingDeployResults) > 0 {
-		req.DeployResults = d.pendingDeployResults
-		d.pendingDeployResults = nil
+	if dr := d.state.DrainDeployResults(); len(dr) > 0 {
+		req.DeployResults = dr
 	}
 
 	resp, err := d.phoneCli.Checkin(ctx, &req)
@@ -628,34 +584,22 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	// Store Linux targets from checkin response
 	if len(resp.LinuxTargets) > 0 {
 		parsed := parseLinuxTargets(resp.LinuxTargets)
-		d.linuxTargetsMu.Lock()
-		d.linuxTargets = parsed
-		d.linuxTargetsMu.Unlock()
+		d.state.SetLinuxTargets(parsed)
 	}
 
 	// Store Windows targets (DC credentials) from checkin response
 	if len(resp.WindowsTargets) > 0 {
-		d.loadWindowsTargets(resp.WindowsTargets)
+		d.state.LoadWindowsTargets(resp.WindowsTargets, d.config)
 	}
 
 	// Store L2 healing mode from checkin response
 	if resp.L2Mode != "" {
-		d.l2ModeMu.Lock()
-		if d.l2Mode != resp.L2Mode {
-			log.Printf("[daemon] L2 mode changed: %s → %s", d.l2Mode, resp.L2Mode)
-		}
-		d.l2Mode = resp.L2Mode
-		d.l2ModeMu.Unlock()
+		d.state.SetL2Mode(resp.L2Mode)
 	}
 
 	// Store subscription status for healing gating
 	if resp.SubscriptionStatus != "" {
-		d.subscriptionMu.Lock()
-		if d.subscriptionStatus != resp.SubscriptionStatus {
-			log.Printf("[daemon] Subscription status changed: %s → %s", d.subscriptionStatus, resp.SubscriptionStatus)
-		}
-		d.subscriptionStatus = resp.SubscriptionStatus
-		d.subscriptionMu.Unlock()
+		d.state.SetSubscriptionStatus(resp.SubscriptionStatus)
 	}
 
 	// Update disabled drift checks from site config
@@ -664,18 +608,14 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		for _, ct := range resp.DisabledChecks {
 			newMap[ct] = true
 		}
-		d.disabledChecksMu.Lock()
-		d.disabledChecks = newMap
-		d.disabledChecksMu.Unlock()
+		d.state.SetDisabledChecks(newMap)
 		log.Printf("[daemon] Disabled drift checks updated: %v", resp.DisabledChecks)
 	} else {
 		// Clear any previously disabled checks if server sends empty list
-		d.disabledChecksMu.Lock()
-		if len(d.disabledChecks) > 0 {
-			d.disabledChecks = make(map[string]bool)
+		if len(d.state.GetDisabledChecks()) > 0 {
+			d.state.SetDisabledChecks(make(map[string]bool))
 			log.Printf("[daemon] Disabled drift checks cleared")
 		}
-		d.disabledChecksMu.Unlock()
 	}
 
 	// Process pending orders via order processor
@@ -687,7 +627,9 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	if len(resp.PendingDeploys) > 0 {
 		log.Printf("[daemon] Received %d pending deploys", len(resp.PendingDeploys))
 		results := d.deployer.processPendingDeploys(ctx, resp.PendingDeploys, d.config.SiteID)
-		d.pendingDeployResults = results
+		for _, r := range results {
+			d.state.AddDeployResult(r)
+		}
 	}
 
 	// Drain queued telemetry entries (network is known-good after successful checkin)
@@ -711,70 +653,9 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	d.saveState()
 }
 
-// loadWindowsTargets extracts DC/workstation credentials from the checkin response
-// and populates the daemon config so drift scanning and auto-deploy can use WinRM.
-// Prefers the domain_admin role target as DC; falls back to first valid target.
-// Also stores all targets for per-workstation credential lookup.
-func (d *Daemon) loadWindowsTargets(targets []map[string]interface{}) {
-	var dcHost, dcUser, dcPass string
-	allTargets := make(map[string]winTarget, len(targets))
-
-	// Two passes: first look for domain_admin, then fall back to first valid
-	for _, t := range targets {
-		hostname := maputil.String(t, "hostname")
-		username := maputil.String(t, "username")
-		password := maputil.String(t, "password")
-		role := maputil.String(t, "role")
-		useSSL := maputil.Bool(t, "use_ssl")
-		if hostname == "" || username == "" {
-			continue
-		}
-
-		allTargets[hostname] = winTarget{
-			Hostname: hostname,
-			Username: username,
-			Password: password,
-			UseSSL:   useSSL,
-			Role:     role,
-		}
-
-		if role == "domain_admin" {
-			dcHost, dcUser, dcPass = hostname, username, password
-		}
-		// Remember first valid as fallback
-		if dcHost == "" {
-			dcHost, dcUser, dcPass = hostname, username, password
-		}
-	}
-
-	// Store all targets for per-workstation lookup
-	d.winTargetsMu.Lock()
-	d.winTargets = allTargets
-	d.winTargetsMu.Unlock()
-
-	if dcHost == "" {
-		return
-	}
-
-	prev := ""
-	if d.config.DomainController != nil {
-		prev = *d.config.DomainController
-	}
-	d.config.DomainController = &dcHost
-	d.config.DCUsername = &dcUser
-	d.config.DCPassword = &dcPass
-
-	if prev != dcHost {
-		log.Printf("[daemon] Windows credentials loaded: dc=%s user=%s targets=%d", dcHost, dcUser, len(allTargets))
-	}
-}
-
-// LookupWinTarget returns workstation-specific credentials if available.
+// LookupWinTarget delegates to StateManager.
 func (d *Daemon) LookupWinTarget(hostname string) (winTarget, bool) {
-	d.winTargetsMu.RLock()
-	defer d.winTargetsMu.RUnlock()
-	t, ok := d.winTargets[hostname]
-	return t, ok
+	return d.state.LookupWinTarget(hostname)
 }
 
 // processOrders converts raw checkin order maps to Order structs and dispatches them.
@@ -828,37 +709,9 @@ type HostCredentials struct {
 	SSHKey   string
 }
 
-// findCredentialsForHost searches the daemon's stored linux and windows targets
-// for credentials matching the given hostname or IP address.
-// Returns nil if no matching credentials are found.
+// findCredentialsForHost delegates to StateManager.
 func (d *Daemon) findCredentialsForHost(hostname, ip string) *HostCredentials {
-	// Check linux targets first (SSH key auth preferred)
-	d.linuxTargetsMu.RLock()
-	for _, t := range d.linuxTargets {
-		if t.Hostname == hostname || t.Hostname == ip {
-			creds := &HostCredentials{Username: t.Username}
-			if t.PrivateKey != "" {
-				creds.SSHKey = t.PrivateKey
-			}
-			if t.Password != "" {
-				creds.Password = t.Password
-			}
-			d.linuxTargetsMu.RUnlock()
-			return creds
-		}
-	}
-	d.linuxTargetsMu.RUnlock()
-
-	// Fall back to windows targets (WinRM password auth)
-	d.winTargetsMu.RLock()
-	defer d.winTargetsMu.RUnlock()
-	if t, ok := d.winTargets[hostname]; ok {
-		return &HostCredentials{Username: t.Username, Password: t.Password}
-	}
-	if t, ok := d.winTargets[ip]; ok {
-		return &HostCredentials{Username: t.Username, Password: t.Password}
-	}
-	return nil
+	return d.state.FindCredentialsForHost(hostname, ip)
 }
 
 // completeOrder reports order completion back to Central Command via HTTP POST.
@@ -928,37 +781,9 @@ type winrmSettings struct {
 	UseSSL bool
 }
 
-// probeWinRM checks which WinRM port is available on a host.
-// Prefers 5986 (HTTPS), falls back to 5985 (HTTP).
+// probeWinRM delegates to StateManager.
 func (d *Daemon) probeWinRM(hostname string) winrmSettings {
-	d.winrmMu.Lock()
-	if d.winrmCache == nil {
-		d.winrmCache = make(map[string]winrmSettings)
-	}
-	if cached, ok := d.winrmCache[hostname]; ok {
-		d.winrmMu.Unlock()
-		return cached
-	}
-	d.winrmMu.Unlock()
-
-	result := winrmSettings{Port: 5986, UseSSL: true} // default
-	dialer := net.Dialer{Timeout: 3 * time.Second}
-	conn, err := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", hostname, 5986))
-	if err == nil {
-		conn.Close()
-	} else {
-		conn2, err2 := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", hostname, 5985))
-		if err2 == nil {
-			conn2.Close()
-			result = winrmSettings{Port: 5985, UseSSL: false}
-			log.Printf("[daemon] WinRM: %s using HTTP (5985) — HTTPS unavailable", hostname)
-		}
-	}
-
-	d.winrmMu.Lock()
-	d.winrmCache[hostname] = result
-	d.winrmMu.Unlock()
-	return result
+	return d.state.ProbeWinRMPort(hostname)
 }
 
 // serveAgentFiles serves the agent binary directory over HTTP for DC downloads
@@ -1108,9 +933,7 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 	}
 
 	// Check L2 mode: "disabled" skips L2, "manual" generates plan but escalates for approval
-	d.l2ModeMu.RLock()
-	l2Mode := d.l2Mode
-	d.l2ModeMu.RUnlock()
+	l2Mode := d.state.GetL2Mode()
 	if l2Mode == "" {
 		l2Mode = "auto" // Default if not yet received from checkin
 	}
@@ -1491,7 +1314,7 @@ func (d *Daemon) fixFirewallGPO(triggerHost string) {
 	dc := *d.config.DomainController
 
 	// Only fix once per DC
-	if _, done := d.gpoFixDone.LoadOrStore(dc, true); done {
+	if _, done := d.state.gpoFixDone.LoadOrStore(dc, true); done {
 		return
 	}
 
@@ -1580,7 +1403,7 @@ $Result | ConvertTo-Json -Depth 3
 	} else {
 		log.Printf("[daemon] GPO firewall fix failed on %s: %s", dc, result.Error)
 		// Allow retry on next occurrence
-		d.gpoFixDone.Delete(dc)
+		d.state.gpoFixDone.Delete(dc)
 	}
 }
 
@@ -1609,62 +1432,12 @@ const (
 	cooldownCleanup = 2 * time.Hour    // Entries older than this are removed
 )
 
-// shouldSuppressDrift checks if a drift report should be suppressed due to cooldown.
-// Returns true if the drift should be suppressed (still in cooldown).
-// Implements flap detection: if >3 drift events for the same key within 30 minutes,
-// extends cooldown to 1 hour.
+// shouldSuppressDrift delegates to StateManager.
 func (d *Daemon) shouldSuppressDrift(key string) bool {
-	d.cooldownMu.Lock()
-	defer d.cooldownMu.Unlock()
-
-	now := time.Now()
-
-	// Proactive cleanup of stale entries every call (cheap: map iteration)
-	for k, entry := range d.cooldowns {
-		if now.Sub(entry.lastSeen) > cooldownCleanup {
-			delete(d.cooldowns, k)
-		}
-	}
-
-	entry, exists := d.cooldowns[key]
-	if !exists {
-		// First time seeing this drift — allow it, start tracking
-		d.cooldowns[key] = &driftCooldown{
-			lastSeen:    now,
-			count:       1,
-			cooldownDur: defaultCooldown,
-		}
-		return false
-	}
-
-	elapsed := now.Sub(entry.lastSeen)
-
-	// Still in cooldown — suppress
-	if elapsed < entry.cooldownDur {
-		// Count flap occurrences
-		if elapsed < flapWindow {
-			entry.count++
-			if entry.count >= flapThreshold {
-				entry.cooldownDur = flapCooldown
-				log.Printf("[daemon] Flap detected for %s (%d in %v), cooldown extended to %v",
-					key, entry.count, elapsed.Round(time.Second), flapCooldown)
-			}
-		}
-		return true
-	}
-
-	// Cooldown expired — allow, reset tracking
-	entry.lastSeen = now
-	entry.count = 1
-	entry.cooldownDur = defaultCooldown
-	return false
+	return d.state.ShouldSuppress(key)
 }
 
-// getADHostnames returns a copy of the cached AD host set from the auto-deployer.
-// Returns nil if no AD enumeration has completed or there is no deployer.
+// getADHostnames delegates to StateManager.
 func (d *Daemon) getADHostnames() map[string]bool {
-	if d.deployer == nil {
-		return nil
-	}
-	return d.deployer.getADHostnames()
+	return d.state.GetADHostnames()
 }

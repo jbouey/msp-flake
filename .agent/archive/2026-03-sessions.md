@@ -1185,3 +1185,195 @@ Major frontend design pass covering glassmorphism, dark mode fixes, new shared c
 [truncated...]
 
 ---
+
+## 2026-03-09-session-163-L2-pipeline-fix-incidents-SQL-join-fixes.md
+
+# Session 163 - L2 Pipeline Fix + Incidents SQL Join Fixes
+
+**Date:** 2026-03-09
+**Started:** 12:54
+**Previous Session:** 162
+**Status:** Complete
+
+---
+
+## Goals
+
+- [x] Fix site detail page not loading (SQL errors)
+- [x] Fix L2 bypass — failed L1 orders skipping L2
+- [x] L2 planner dynamic runbook loading
+- [x] Add missing L1 rules for common incident types
+- [x] Kick off chaos lab execution
+- [ ] Shut down ws01 VM (iMac unreachable)
+- [ ] Verify L2 fallback end-to-end with real incident
+
+---
+
+## Progress
+
+### Completed
+
+1. **Fixed 5 SQL queries** in `routes.py` referencing `i.site_id` (column doesn't exist on `incidents` table). All now join through `appliances` table. Commit `e542c99`.
+2. **Added L2 fallback** in `sites.py` order completion handler. Failed L1 healing orders now try L2 LLM planner before escalating to L3. Commit `5ded789`.
+3. **Dynamic runbook loading** in `l2_planner.py`. DB has 88 runbooks but `AVAILABLE_RUNBOOKS` only had 10. Added `_load_dynamic_runbooks()` with 5-min TTL cache. Commit `dbdd23b`.
+4. **Added 8 L1 rules** directly to VPS DB: bitlocker, bitlocker_status, screen_lock, security_audit, winrm, service_status, rdp_nla, password_policy.
+5. **Cleaned up duplicate** workstation entry for 192.168.88.250.
+6. All 3 commits deployed via CI/CD.
+
+### Blocked
+
+- iMac (192.168.88.50) unreachable all session — couldn't shut down ws01 VM or fully test chaos lab
+- WinRM timeouts due to iMac RAM pressure
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `mcp-server/central-command/backend/routes.py` | Fixed 5 SQL queries joining incidents→appliances for site_id |
+| `mcp-server/central-command/backend/sites.py` | Added L2 fallback on failed L1 healing orders |
+| `mcp-server/central-command/backend/l2_planner.py` | Dynamic runbook loading from DB with TTL cache |
+
+---
+
+## Next Session
+
+[truncated...]
+
+---
+
+## 2026-03-09-session-164-Compliance health infographic, lead swarm automation, daemon v0.3.20 fleet deploy.md
+
+# Session 164 - Compliance Health Infographic, Lead Swarm Automation, Daemon V0.3.20 Fleet Deploy
+
+**Date:** 2026-03-09
+**Started:** 23:29
+**Previous Session:** 163
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-09-session-164-Compliance-health-infographic-lead-swarm-daemon-deploy.md
+
+# Session 164 — Compliance Health Infographic, Lead Swarm Automation, Daemon v0.3.20
+
+**Date:** 2026-03-09/10
+**Focus:** Client portal UX, sales automation, fleet deploy
+
+## Completed
+
+### 1. OpenClaw Lead Swarm Automation
+- Made 4 scripts executable on OpenClaw server (178.156.243.221)
+- Installed cron job: `0 6 * * *` daily at 6AM
+- Installed Python dependencies: `anthropic`, `openai`, `requests`
+- Set API keys in `.env`: Apollo, Anthropic (from OpenClaw auth-profiles), Hunter.io, Brave Search
+- **Rewrote `fetch_daily_leads.py`** — Apollo free plan blocks search API despite claimed upgrade
+  - New sources: HHS breach portal CSV + Brave Search API + Hunter.io email enrichment
+  - Rotates through NEPA regions and practice types daily
+  - Deduplicates and enriches leads with email addresses
+- Fixed `generate_emails.py`: updated model to `claude-haiku-4-5-20251001`, fixed body parser
+- Fixed `daily_lead_swarm.sh`: added `.env` sourcing, piped scan results to email generator
+- **Full pipeline tested end-to-end**: 9 leads fetched → scanned → 9 personalized emails generated
+
+### 2. Compliance Health Infographic (Client Portal)
+- **Backend**: New `GET /api/client/sites/{site_id}/compliance-health` endpoint in `client_portal.py`
+  - Returns 8-category breakdown, overall score, pass/fail/warn counts, 30-day trend, healing stats
+  - Respects disabled drift checks per site
+- **Frontend**: `ComplianceHealthInfographic.tsx` (612 lines)
+  - Animated circular gauge with shield icon (ease-out cubic animation)
+  - Outer 8-segment category ring (colored arcs per category health)
+  - 8 category cards with icons, labels, progress bars
+  - 30-day sparkline trend with up/down indicator
+  - Auto-healing impact card with rate bar
+  - "Protected by OsirisCare" status badge
+  - Site selector dropdown for multi-site orgs
+  - Loading skeleton + empty state
+  - All using existing glassmorphism design system
+- TypeScript clean, ESLint clean, production build succeeds
+
+### 3. Daemon v0.3.20 Fleet Deploy
+- Bumped version `0.3.18` → `0.3.20` in `daemon.go`
+- Built Linux binary (16MB, CGO_ENABLED=0)
+- Uploaded to VPS at `/opt/mcp-server/static/releases/appliance-daemon-linux`
+- **Fixed fleet order URL**: old order pointed to `dashboard.osiriscare.net/static/` (wrong path)
+- New fleet order `c1ef5242` active, expires in 48h, URL: `api.osiriscare.net/releases/`
+- SHA256: `77848f1004dce10f7f54d84bf457e4be67b7c07f813205ec896090b3d278df95`
+- Commit `aece44c` pushed → CI/CD deploying backend + frontend
+
+## Issues Found
+- **Apollo API**: Key `Pj5tgmb3bHI4NA_Spk3KVA` still returns "free plan" error despite user upgrading to Basic. Regenerated key didn't help. Workaround: use Brave Search + Hunter.io instead.
+- **HHS breach CSV**: Primary URL returns 404. Fallback URL added but also returns 404. May need manual CSV download or different data source.
+- **Old fleet order**: Failed because binary URL was wrong path (`/static/` vs `/releases/`). Cancelled and recreated.
+
+
+[truncated...]
+
+---
+
+## 2026-03-09-session-165-L4-escalation-infographic-clickthrough-incident-category-filters.md
+
+# Session 165 - L4 Escalation Infographic Clickthrough Incident Category Filters
+
+**Date:** 2026-03-09
+**Started:** 23:55
+**Previous Session:** 164
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
