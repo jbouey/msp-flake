@@ -67,6 +67,11 @@ type autoDeployer struct {
 	agentLoaded  bool
 	running      int32 // atomic guard: 1 = cycle in progress
 
+	// AD hostname/IP cache for cross-referencing netscan devices.
+	// Keys are IPs (when available) or hostnames of AD computer objects.
+	// Updated after each successful EnumerateAll call.
+	adKnownHosts map[string]bool
+
 	// Track which hosts need DC proxy (avoid retrying direct NTLM every cycle)
 	needsProxy sync.Map // hostname → true
 
@@ -84,11 +89,12 @@ const maxConsecutiveFailures = 3 // Escalate after this many failures
 
 func newAutoDeployer(d *Daemon) *autoDeployer {
 	return &autoDeployer{
-		daemon:    d,
-		deployed:  make(map[string]time.Time),
-		lastCheck: make(map[string]time.Time),
-		failures:  make(map[string]int),
-		escalated: make(map[string]time.Time),
+		daemon:       d,
+		deployed:     make(map[string]time.Time),
+		lastCheck:    make(map[string]time.Time),
+		failures:     make(map[string]int),
+		escalated:    make(map[string]time.Time),
+		adKnownHosts: make(map[string]bool),
 	}
 }
 
@@ -553,16 +559,43 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 	}
 	enumerator := discovery.NewADEnumerator(dc, username, password, "", executor)
 
-	// Enumerate workstations from AD
-	_, workstations, err := enumerator.EnumerateAll(ctx)
+	// Enumerate ALL computer objects from AD (including Linux) in one WinRM call.
+	// We split manually so we can build the AD host cache before continuing.
+	allComputers, err := enumerator.EnumerateAllComputers(ctx)
 	if err != nil {
 		log.Printf("[autodeploy] AD enumeration failed: %v", err)
 		return
 	}
 
+	// Split into servers and workstations (same logic as EnumerateAll).
+	var workstations []discovery.ADComputer
+	for _, c := range allComputers {
+		if c.IsWorkstation {
+			workstations = append(workstations, c)
+		}
+	}
+
+	// Build the AD host cache from all computer objects (servers, workstations, Linux, etc.).
+	// Keys are IPs (preferred) and hostnames — used by netscan to cross-reference discovered devices.
+	adHosts := make(map[string]bool, len(allComputers)*2)
+	for _, c := range allComputers {
+		if c.IPAddress != nil && *c.IPAddress != "" {
+			adHosts[*c.IPAddress] = true
+		}
+		if c.Hostname != "" {
+			adHosts[c.Hostname] = true
+		}
+		if c.FQDN != "" {
+			adHosts[c.FQDN] = true
+		}
+	}
+
 	ad.mu.Lock()
 	ad.lastEnumTime = time.Now()
+	ad.adKnownHosts = adHosts
 	ad.mu.Unlock()
+
+	log.Printf("[autodeploy] AD host cache updated: %d computer objects, %d entries", len(allComputers), len(adHosts))
 
 	if len(workstations) == 0 {
 		log.Printf("[autodeploy] No workstations found in AD")
@@ -1848,4 +1881,20 @@ func (e *adScriptExec) RunScript(_ context.Context, hostname, script, username, 
 	}
 	stdout := maputil.String(result.Output, "std_out")
 	return stdout, nil
+}
+
+// getADHostnames returns a copy of the cached AD host set (IPs + hostnames).
+// Used by the netscan to cross-reference ARP-discovered devices against AD.
+// Returns nil if no enumeration has completed yet.
+func (a *autoDeployer) getADHostnames() map[string]bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.adKnownHosts) == 0 {
+		return nil
+	}
+	result := make(map[string]bool, len(a.adKnownHosts))
+	for k, v := range a.adKnownHosts {
+		result[k] = v
+	}
+	return result
 }

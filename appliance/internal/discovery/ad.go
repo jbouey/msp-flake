@@ -121,6 +121,28 @@ func (e *ADEnumerator) EnumerateAll(ctx context.Context) ([]ADComputer, []ADComp
 	return servers, workstations, nil
 }
 
+// EnumerateAllComputers queries the DC and returns every computer object,
+// including Linux and other non-Windows systems that EnumerateAll would drop.
+// Use this when you need the full AD inventory (e.g. for cross-referencing
+// netscan results to detect AD-joined Linux machines).
+func (e *ADEnumerator) EnumerateAllComputers(ctx context.Context) ([]ADComputer, error) {
+	if e.executor == nil {
+		return nil, fmt.Errorf("no script executor configured")
+	}
+
+	output, err := e.executor.RunScript(ctx, e.domainController, adEnumScript, e.username, e.password, 120)
+	if err != nil {
+		return nil, fmt.Errorf("AD enumeration failed: %w", err)
+	}
+
+	computers, err := parseADOutput(output)
+	if err != nil {
+		return nil, fmt.Errorf("parse AD output: %w", err)
+	}
+
+	return computers, nil
+}
+
 // EnumerateWithConnectivity enumerates and tests WinRM reachability.
 func (e *ADEnumerator) EnumerateWithConnectivity(ctx context.Context, port int) (*EnumerationResult, error) {
 	servers, workstations, err := e.EnumerateAll(ctx)

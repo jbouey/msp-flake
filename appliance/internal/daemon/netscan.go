@@ -188,24 +188,33 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 	// 3. Discover devices from the ARP table (passive — reads kernel ARP cache)
 	devices := discoverARPDevices()
 
-	// Enrich with OS probes (SSH banner, WinRM check)
+	// Enrich with OS probes (SSH banner, WinRM check, Kerberos port)
 	if len(devices) > 0 {
 		ips := make([]string, len(devices))
 		for i, d := range devices {
 			ips[i] = d.IPAddress
 		}
 		probes := probeHosts(ctx, ips)
+
+		// Cross-reference with AD host cache to detect AD-joined Linux machines
+		adHostnames := ns.daemon.getADHostnames()
+
 		for i, p := range probes {
 			devices[i].OSType = p.OSType
 			devices[i].Distro = p.Distro
 			devices[i].OSFingerprint = p.OSFingerprint
 			devices[i].ProbeSSH = p.SSHOpen
 			devices[i].ProbeWinRM = p.WinRMOpen
+			if classifyADJoined(p, adHostnames) {
+				devices[i].ADJoined = true
+			}
 		}
-		log.Printf("[netscan] Probed %d devices: %d SSH, %d WinRM",
+		adJoinedCount := countTrue(devices, func(d discoveredDevice) bool { return d.ADJoined })
+		log.Printf("[netscan] Probed %d devices: %d SSH, %d WinRM, %d AD-joined",
 			len(devices),
 			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeSSH }),
-			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeWinRM }))
+			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeWinRM }),
+			adJoinedCount)
 	}
 
 	// Populate Subnet field for each device

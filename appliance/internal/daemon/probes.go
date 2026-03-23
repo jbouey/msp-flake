@@ -11,13 +11,14 @@ import (
 
 // ProbeResult holds the outcome of probing a single IP address.
 type ProbeResult struct {
-	IP           string
-	SSHBanner    string
-	SSHOpen      bool
-	WinRMOpen    bool
-	HTTPBanner   string
-	OSType       string // "linux", "windows", "macos", "unknown"
-	Distro       string // "ubuntu", "debian", "rhel", "centos", or ""
+	IP            string
+	SSHBanner     string
+	SSHOpen       bool
+	WinRMOpen     bool
+	KerberosOpen  bool
+	HTTPBanner    string
+	OSType        string // "linux", "windows", "macos", "unknown"
+	Distro        string // "ubuntu", "debian", "rhel", "centos", or ""
 	OSFingerprint string
 }
 
@@ -47,17 +48,26 @@ func grabSSHBanner(ctx context.Context, ip string, port int) (string, bool) {
 	return banner, true
 }
 
-// checkWinRM connects to port 5985 on the given IP.
+// checkPort connects to the given port on the given IP.
 // Returns true if the port accepts a TCP connection.
-func checkWinRM(ctx context.Context, ip string) bool {
+func checkPort(ctx context.Context, ip string, port int) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	dialer := net.Dialer{Timeout: 3 * time.Second}
-	addr := fmt.Sprintf("%s:%d", ip, 5985)
+	addr := fmt.Sprintf("%s:%d", ip, port)
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return false
 	}
 	conn.Close()
 	return true
+}
+
+// checkWinRM connects to port 5985 on the given IP.
+// Returns true if the port accepts a TCP connection.
+func checkWinRM(ctx context.Context, ip string) bool {
+	return checkPort(ctx, ip, 5985)
 }
 
 // parseSSHBanner parses an SSH banner string and returns (osType, distro).
@@ -124,7 +134,7 @@ func classifyFromProbes(r *ProbeResult) {
 	r.Distro = ""
 }
 
-// probeHost probes a single IP address for SSH and WinRM, then classifies OS.
+// probeHost probes a single IP address for SSH, WinRM, and Kerberos, then classifies OS.
 func probeHost(ctx context.Context, ip string) ProbeResult {
 	result := ProbeResult{IP: ip}
 
@@ -133,6 +143,7 @@ func probeHost(ctx context.Context, ip string) ProbeResult {
 	result.SSHBanner = banner
 
 	result.WinRMOpen = checkWinRM(ctx, ip)
+	result.KerberosOpen = checkPort(ctx, ip, 88)
 
 	classifyFromProbes(&result)
 

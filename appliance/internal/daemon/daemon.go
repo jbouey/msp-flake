@@ -283,6 +283,11 @@ func New(cfg *Config) *Daemon {
 		return d.handleConfigureWorkstationAgent(ctx, params)
 	})
 
+	// remove_agent: stop service, remove binary + data dirs from a Linux/macOS host via SSH
+	d.orderProc.RegisterHandler("remove_agent", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+		return d.handleRemoveAgent(ctx, params)
+	})
+
 	// Initialize network scanner for port/reachability checks
 	d.netScan = newNetScanner(d)
 
@@ -1653,4 +1658,13 @@ func (d *Daemon) shouldSuppressDrift(key string) bool {
 	entry.count = 1
 	entry.cooldownDur = defaultCooldown
 	return false
+}
+
+// getADHostnames returns a copy of the cached AD host set from the auto-deployer.
+// Returns nil if no AD enumeration has completed or there is no deployer.
+func (d *Daemon) getADHostnames() map[string]bool {
+	if d.deployer == nil {
+		return nil
+	}
+	return d.deployer.getADHostnames()
 }
