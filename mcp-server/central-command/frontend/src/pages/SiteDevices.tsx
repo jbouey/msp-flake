@@ -161,34 +161,45 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
 };
 
 /**
- * Agent coverage badge
+ * Coverage tier badge — driven by device_status
  */
-const coverageConfig: Record<string, { label: string; color: string; bg: string }> = {
-  agent: { label: 'Agent', color: 'text-emerald-400', bg: 'bg-emerald-500/15 border-emerald-500/30' },
-  remote: { label: 'Remote', color: 'text-blue-400', bg: 'bg-blue-500/15 border-blue-500/30' },
-  none: { label: 'Unmanaged', color: 'text-slate-500', bg: 'bg-slate-500/10 border-slate-500/20' },
+const coverageLevels: Record<string, { label: string; color: string; bg: string }> = {
+  agent_active: { label: 'Agent', color: 'text-emerald-400', bg: 'bg-emerald-500/15' },
+  deploying: { label: 'Deploying...', color: 'text-amber-400', bg: 'bg-amber-500/15' },
+  deploy_failed: { label: 'Failed', color: 'text-red-400', bg: 'bg-red-500/15' },
+  ad_managed: { label: 'AD — auto-deploy', color: 'text-blue-400', bg: 'bg-blue-500/15' },
+  take_over_available: { label: 'Take Over', color: 'text-yellow-400', bg: 'bg-yellow-500/15' },
+  pending_deploy: { label: 'Pending...', color: 'text-amber-400', bg: 'bg-amber-500/15' },
+  ignored: { label: 'Ignored', color: 'text-slate-500', bg: 'bg-slate-500/10' },
+  discovered: { label: 'New', color: 'text-slate-400', bg: 'bg-slate-500/10' },
+  probed: { label: 'Probed', color: 'text-slate-400', bg: 'bg-slate-500/10' },
+  agent_stale: { label: 'Stale', color: 'text-orange-400', bg: 'bg-orange-500/15' },
+  agent_offline: { label: 'Offline', color: 'text-red-400', bg: 'bg-red-500/15' },
+  archived: { label: 'Archived', color: 'text-slate-600', bg: 'bg-slate-500/10' },
 };
 
-const CoverageBadge: React.FC<{ coverage: DiscoveredDevice['agent_coverage'] }> = ({ coverage }) => {
-  const level = coverage?.level || 'none';
-  const config = coverageConfig[level] || coverageConfig.none;
-  const methods = coverage?.methods || [];
+const CoverageTierCell: React.FC<{
+  device: DiscoveredDevice;
+  onTakeOver: (device: DiscoveredDevice) => void;
+}> = ({ device, onTakeOver }) => {
+  const status = device.device_status || 'discovered';
+  const level = coverageLevels[status] || coverageLevels.discovered;
+
+  if (device.device_status === 'take_over_available') {
+    return (
+      <button
+        onClick={(e) => { e.stopPropagation(); onTakeOver(device); }}
+        className="px-2 py-1 text-xs font-medium rounded bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25 transition-colors"
+      >
+        Take Over
+      </button>
+    );
+  }
 
   return (
-    <div className="flex flex-col items-start gap-0.5">
-      <span
-        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-medium ${config.bg} ${config.color}`}
-        title={methods.length > 0 ? `Coverage: ${methods.join(', ')}` : 'No agent or remote management configured'}
-      >
-        <span className={`w-1.5 h-1.5 rounded-full ${level === 'agent' ? 'bg-emerald-400' : level === 'remote' ? 'bg-blue-400' : 'bg-slate-500'}`} />
-        {config.label}
-      </span>
-      {methods.length > 1 && (
-        <span className="text-[10px] text-label-tertiary ml-2">
-          {methods.filter(m => m !== 'agent').join(' + ')}
-        </span>
-      )}
-    </div>
+    <span className={`px-2 py-1 text-xs font-medium rounded ${level.bg} ${level.color}`}>
+      {level.label}
+    </span>
   );
 };
 
@@ -227,7 +238,8 @@ const DeviceRow: React.FC<{
   siteId: string;
   expanded: boolean;
   onToggle: () => void;
-}> = ({ device, siteId, expanded, onToggle }) => {
+  onTakeOver: (device: DiscoveredDevice) => void;
+}> = ({ device, siteId, expanded, onToggle, onTakeOver }) => {
   const typeConfig = deviceTypeConfig[device.device_type] || deviceTypeConfig.unknown;
   const complianceColor = complianceColors[device.compliance_status] || complianceColors.unknown;
   const [complianceData, setComplianceData] = useState<ComplianceDetail | null>(null);
@@ -312,7 +324,7 @@ const DeviceRow: React.FC<{
           </span>
         </td>
         <td className="px-4 py-3">
-          <CoverageBadge coverage={device.agent_coverage} />
+          <CoverageTierCell device={device} onTakeOver={onTakeOver} />
         </td>
         <td className="px-4 py-3 text-label-secondary text-sm">
           {formatRelativeTime(device.last_seen_at)}
@@ -502,11 +514,35 @@ const DeviceTable: React.FC<{
   siteId: string;
   onFilterChange: (filter: { type?: string; status?: string; includeMedical: boolean }) => void;
   filter: { type?: string; status?: string; includeMedical: boolean };
-}> = ({ devices, siteId, filter, onFilterChange }) => {
+  onTakeOver: (device: DiscoveredDevice) => void;
+}> = ({ devices, siteId, filter, onFilterChange, onTakeOver }) => {
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [showAll, setShowAll] = useState(false);
+
+  const MANAGED_STATUSES = ['agent_active', 'ad_managed', 'deploying', 'pending_deploy', 'agent_stale'];
+  const managedCount = devices.filter((d) => MANAGED_STATUSES.includes(d.device_status || '')).length;
+  const filteredDevices = showAll
+    ? devices
+    : devices.filter((d) => MANAGED_STATUSES.includes(d.device_status || ''));
 
   return (
     <GlassCard className="overflow-hidden">
+      {/* Managed / All toggle */}
+      <div className="flex items-center gap-2 px-4 pt-4 mb-0">
+        <button
+          onClick={() => setShowAll(false)}
+          className={`px-3 py-1 text-xs rounded ${!showAll ? 'bg-blue-500/20 text-blue-400' : 'text-slate-400 hover:text-slate-300'}`}
+        >
+          Managed ({managedCount})
+        </button>
+        <button
+          onClick={() => setShowAll(true)}
+          className={`px-3 py-1 text-xs rounded ${showAll ? 'bg-blue-500/20 text-blue-400' : 'text-slate-400 hover:text-slate-300'}`}
+        >
+          All Devices ({devices.length})
+        </button>
+      </div>
+
       {/* Filter bar */}
       <div className="flex flex-wrap gap-4 p-4 border-b border-glass-border items-center">
         {/* Type filter */}
@@ -575,20 +611,23 @@ const DeviceTable: React.FC<{
             </tr>
           </thead>
           <tbody>
-            {devices.length === 0 ? (
+            {filteredDevices.length === 0 ? (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-label-tertiary">
-                  No devices discovered yet. Devices will appear after the network scanner runs.
+                  {showAll
+                    ? 'No devices discovered yet. Devices will appear after the network scanner runs.'
+                    : 'No managed devices. Switch to "All Devices" to see discovered devices.'}
                 </td>
               </tr>
             ) : (
-              devices.map((device) => (
+              filteredDevices.map((device) => (
                 <DeviceRow
                   key={device.id}
                   device={device}
                   siteId={siteId}
                   expanded={expandedId === device.id}
                   onToggle={() => setExpandedId(expandedId === device.id ? null : device.id)}
+                  onTakeOver={onTakeOver}
                 />
               ))
             )}
@@ -610,6 +649,7 @@ export const SiteDevices: React.FC = () => {
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [showAddNetworkDevice, setShowAddNetworkDevice] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [takeOverDevice, setTakeOverDevice] = useState<DiscoveredDevice | null>(null);
 
   const { data: devicesData, isLoading: devicesLoading, error: devicesError } = useSiteDevices(
     siteId || null,
@@ -755,7 +795,27 @@ export const SiteDevices: React.FC = () => {
         siteId={siteId || ''}
         filter={filter}
         onFilterChange={setFilter}
+        onTakeOver={setTakeOverDevice}
       />
+
+      {/* Take Over modal */}
+      {takeOverDevice && siteId && (
+        <AddDeviceModal
+          isOpen={!!takeOverDevice}
+          siteId={siteId}
+          apiEndpoint={`/api/sites/${siteId}/devices/takeover`}
+          onSuccess={() => {
+            setTakeOverDevice(null);
+            window.location.reload();
+          }}
+          onClose={() => setTakeOverDevice(null)}
+          prefill={{
+            hostname: takeOverDevice.hostname || undefined,
+            ip_address: takeOverDevice.ip_address,
+            os_type: takeOverDevice.os_name || 'linux',
+          }}
+        />
+      )}
 
       {/* Neighboring network devices (collapsed by default) */}
       {neighborDevices.length > 0 && (

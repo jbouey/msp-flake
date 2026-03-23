@@ -3,21 +3,29 @@ import React, { useState } from 'react';
 interface AddDeviceModalProps {
   siteId: string;
   apiEndpoint: string; // e.g. "/api/sites/{id}/devices/manual" or "/api/portal/site/{id}/devices"
-  onSuccess: () => void;
+  onSuccess?: () => void;
   onClose: () => void;
+  isOpen?: boolean;
   portalMode?: boolean; // Light theme for portal
+  prefill?: {
+    hostname?: string;
+    ip_address?: string;
+    os_type?: string;
+  };
 }
 
 export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({
   apiEndpoint,
   onSuccess,
   onClose,
+  isOpen,
   portalMode = false,
+  prefill,
 }) => {
-  const [hostname, setHostname] = useState('');
-  const [ipAddress, setIpAddress] = useState('');
+  const [hostname, setHostname] = useState(prefill?.hostname || '');
+  const [ipAddress, setIpAddress] = useState(prefill?.ip_address || '');
   const [deviceType, setDeviceType] = useState('workstation');
-  const [osType, setOsType] = useState('linux');
+  const [osType, setOsType] = useState(prefill?.os_type || 'linux');
   const [sshUsername, setSshUsername] = useState('root');
   const [authMethod, setAuthMethod] = useState<'password' | 'key'>('password');
   const [sshPassword, setSshPassword] = useState('');
@@ -79,13 +87,15 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({
         throw new Error(data?.detail || `Failed (${res.status})`);
       }
 
-      onSuccess();
+      onSuccess?.();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to add device');
     } finally {
       setSubmitting(false);
     }
   };
+
+  if (isOpen === false) return null;
 
   // Theme-aware classes
   const cardBg = portalMode ? 'bg-background-secondary' : 'bg-background-secondary border border-separator-light';

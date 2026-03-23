@@ -1585,6 +1585,7 @@ export interface DiscoveredDevice {
     agent_status: string | null;
   } | null;
   managed_network: boolean;
+  device_status: string | null;
 }
 
 export interface DeviceCounts {
