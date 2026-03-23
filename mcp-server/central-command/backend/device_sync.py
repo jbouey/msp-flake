@@ -360,6 +360,18 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
     except Exception as e:
         logger.warning(f"Device→workstation linkage failed for {report.site_id}: {e}")
 
+    # Archive devices not seen in 30 days
+    try:
+        async with admin_connection(pool) as archive_conn:
+            await archive_conn.execute("""
+                UPDATE discovered_devices
+                SET device_status = 'archived'
+                WHERE last_seen_at < NOW() - INTERVAL '30 days'
+                    AND device_status NOT IN ('ignored', 'archived')
+            """)
+    except Exception as e:
+        logger.warning(f"Auto-archive sweep failed for {report.site_id}: {e}")
+
     status = "success"
     message = f"Synced {devices_created} new, {devices_updated} updated"
     if errors:
