@@ -176,16 +176,18 @@ async def get_fleet_overview() -> List[ClientOverview]:
     pool = await get_pool()
 
     async with admin_connection(pool) as conn:
-        # Get all unique sites with appliance counts
+        # Get all unique sites with appliance counts (exclude decommissioned)
         sites = await conn.fetch("""
             SELECT
-                site_id,
+                a.site_id,
                 COUNT(*) as appliance_count,
-                COUNT(*) FILTER (WHERE is_online = true) as online_count,
-                MAX(last_checkin) as last_checkin
-            FROM appliances
-            GROUP BY site_id
-            ORDER BY site_id
+                COUNT(*) FILTER (WHERE a.is_online = true) as online_count,
+                MAX(a.last_checkin) as last_checkin
+            FROM appliances a
+            JOIN sites s ON s.site_id = a.site_id
+            WHERE s.status != 'inactive'
+            GROUP BY a.site_id
+            ORDER BY a.site_id
         """)
 
         if not sites:
