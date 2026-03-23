@@ -13,19 +13,6 @@ import (
 	"github.com/osiriscare/appliance/internal/sshexec"
 )
 
-// PendingDeploy represents a device awaiting SSH-based agent deployment.
-type PendingDeploy struct {
-	DeviceID       string `json:"device_id"`
-	IPAddress      string `json:"ip_address"`
-	Hostname       string `json:"hostname"`
-	OSType         string `json:"os_type"`
-	DeployMethod   string `json:"deploy_method"`
-	Username       string `json:"username"`
-	Password       string `json:"password"`
-	SSHKey         string `json:"ssh_key,omitempty"`
-	AgentBinaryURL string `json:"agent_binary_url"`
-}
-
 // deployViaSSH deploys the OsirisCare agent to a Linux or macOS host over SSH.
 // It uploads the binary via base64-chunked transfer and then runs the install script.
 func (d *Daemon) deployViaSSH(ctx context.Context, deploy PendingDeploy, siteID string) error {

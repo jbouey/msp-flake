@@ -138,6 +138,27 @@ func (c *PhoneHomeClient) FetchPendingOrders(ctx context.Context, applianceID st
 	return result.Orders, nil
 }
 
+// PendingDeploy describes a device that needs agent deployment.
+type PendingDeploy struct {
+	DeviceID       string `json:"device_id"`
+	IPAddress      string `json:"ip_address"`
+	Hostname       string `json:"hostname"`
+	OSType         string `json:"os_type"`
+	DeployMethod   string `json:"deploy_method"` // "ssh" or "winrm"
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	SSHKey         string `json:"ssh_key,omitempty"`
+	AgentBinaryURL string `json:"agent_binary_url"`
+}
+
+// DeployResult reports the outcome of a deployment attempt.
+type DeployResult struct {
+	DeviceID string `json:"device_id"`
+	Status   string `json:"status"` // "success" or "failed"
+	AgentID  string `json:"agent_id,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
 // CheckinRequest is the payload sent to Central Command.
 type CheckinRequest struct {
 	SiteID              string           `json:"site_id"`
@@ -152,6 +173,7 @@ type CheckinRequest struct {
 	ConnectedAgents     []ConnectedAgent        `json:"connected_agents,omitempty"`
 	DiscoveryResults    map[string]interface{}   `json:"discovery_results,omitempty"`
 	EncryptionPublicKey string                   `json:"encryption_public_key,omitempty"`
+	DeployResults       []DeployResult           `json:"deploy_results,omitempty"`
 }
 
 // ConnectedAgent represents a Go agent connected to this appliance via gRPC.
@@ -185,6 +207,7 @@ type CheckinResponse struct {
 	SubscriptionStatus   string                   `json:"subscription_status"`
 	DisabledChecks       []string                 `json:"disabled_checks"`
 	EncryptedCredentials map[string]interface{}   `json:"encrypted_credentials,omitempty"`
+	PendingDeploys       []PendingDeploy          `json:"pending_deploys,omitempty"`
 }
 
 // Checkin sends a phone-home checkin to Central Command.

@@ -1757,6 +1757,7 @@ class ApplianceCheckin(BaseModel):
     connected_agents: Optional[list[ConnectedAgentInfo]] = None  # Go agents on this appliance
     discovery_results: Optional[Dict[str, Any]] = None  # App protection profile discovery results
     encryption_public_key: str = ""  # X25519 public key hex for credential envelope encryption
+    deploy_results: Optional[list[Dict[str, Any]]] = None  # Results from previous deploy attempts
 
 
 def normalize_mac(mac: str) -> str:
@@ -2212,6 +2213,23 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
 
     async with tenant_connection(pool, site_id=checkin.site_id) as conn:
       async with conn.transaction():
+        # === STEP 0: Process deploy results from previous checkin cycle ===
+        if checkin.deploy_results:
+            try:
+                async with conn.transaction():
+                    for result in checkin.deploy_results:
+                        new_status = "agent_active" if result.get("status") == "success" else "deploy_failed"
+                        await conn.execute("""
+                            UPDATE discovered_devices
+                            SET device_status = $1,
+                                agent_deploy_error = $2,
+                                deploy_attempts = deploy_attempts + 1
+                            WHERE site_id = $3 AND local_device_id = $4
+                        """, new_status, result.get("error"), checkin.site_id, result.get("device_id"))
+            except Exception as e:
+                import logging
+                logging.warning(f"Checkin {checkin.site_id}: failed to process deploy results: {e}")
+
         # === STEP 1: Find existing appliances with same MAC or hostname ===
         # Use FOR UPDATE to prevent concurrent check-ins from racing
         existing = await conn.fetch("""
@@ -2823,6 +2841,55 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         except Exception as e:
             logger.warning(f"Checkin {checkin.site_id}: credential envelope encryption failed, falling back to plaintext: {e}")
 
+    # === STEP 7c: Query devices pending deployment for this site ===
+    pending_deploys = []
+    try:
+        async with tenant_connection(pool, site_id=checkin.site_id) as deploy_conn:
+            pending_rows = await deploy_conn.fetch("""
+                SELECT dd.local_device_id, dd.ip_address, dd.hostname, dd.os_name,
+                       sc.encrypted_data, sc.credential_type
+                FROM discovered_devices dd
+                JOIN site_credentials sc ON sc.site_id = $1
+                    AND sc.credential_name LIKE dd.hostname || ' (%'
+                WHERE dd.site_id = $1
+                    AND dd.device_status = 'pending_deploy'
+                LIMIT 5
+            """, checkin.site_id)
+
+            for row in pending_rows:
+                try:
+                    import json as _json
+                    raw = row["encrypted_data"]
+                    if isinstance(raw, (bytes, bytearray)):
+                        raw = raw.decode("utf-8")
+                    cred_data = _json.loads(raw)
+                    os_name = row["os_name"] or "linux"
+                    pending_deploys.append({
+                        "device_id": row["local_device_id"],
+                        "ip_address": row["ip_address"],
+                        "hostname": row["hostname"],
+                        "os_type": os_name,
+                        "deploy_method": "ssh" if row["credential_type"] in ("ssh_key", "ssh_password") else "winrm",
+                        "username": cred_data.get("username", ""),
+                        "password": cred_data.get("password", ""),
+                        "ssh_key": cred_data.get("private_key", ""),
+                        "agent_binary_url": f"https://api.osiriscare.net/updates/osiris-agent-{os_name}-amd64",
+                    })
+                except Exception:
+                    continue
+
+            # Transition matched devices to 'deploying'
+            if pending_deploys:
+                device_ids = [p["device_id"] for p in pending_deploys]
+                await deploy_conn.execute("""
+                    UPDATE discovered_devices SET device_status = 'deploying',
+                        agent_deploy_attempted_at = NOW()
+                    WHERE site_id = $1 AND local_device_id = ANY($2::text[])
+                """, checkin.site_id, device_ids)
+    except Exception as e:
+        import logging
+        logging.warning(f"Checkin {checkin.site_id}: pending deploys lookup failed: {e}")
+
     return {
         "status": "ok",
         "appliance_id": canonical_id,
@@ -2840,6 +2907,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         "trigger_immediate_scan": trigger_immediate_scan,
         "billing_hold": billing_hold,
         "billing_status": billing_status,
+        "pending_deploys": pending_deploys,
     }
 
 
