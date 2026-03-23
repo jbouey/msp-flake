@@ -59,6 +59,14 @@ class DeviceSyncEntry(BaseModel):
     last_seen_at: datetime
     last_scan_at: Optional[datetime] = None
 
+    # Probe fields (populated by Go daemon network probe)
+    os_fingerprint: Optional[str] = None
+    distro: Optional[str] = None
+    probe_ssh: Optional[bool] = None
+    probe_winrm: Optional[bool] = None
+    probe_snmp: Optional[bool] = None
+    ad_joined: Optional[bool] = None
+
 
 class DeviceSyncReport(BaseModel):
     """Batch device sync report from an appliance."""
@@ -136,6 +144,13 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
 
                 if existing:
                     device_db_id = existing["id"]
+                    # Determine last_probe_at: set to NOW() if any probe field is present
+                    has_probe_data = any(
+                        v is not None for v in [
+                            device.probe_ssh, device.probe_winrm,
+                            device.probe_snmp, device.ad_joined,
+                        ]
+                    )
                     # Update existing device
                     await conn.execute(
                         """
@@ -154,6 +169,12 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                             discovery_source = $14,
                             last_seen_at = $15,
                             last_scan_at = $16,
+                            os_fingerprint = COALESCE($17, os_fingerprint),
+                            distro = COALESCE($18, distro),
+                            probe_ssh = COALESCE($19, probe_ssh),
+                            probe_winrm = COALESCE($20, probe_winrm),
+                            ad_joined = COALESCE($21, ad_joined),
+                            last_probe_at = CASE WHEN $22 THEN NOW() ELSE last_probe_at END,
                             sync_updated_at = NOW()
                         WHERE appliance_id = $1 AND local_device_id = $2
                         """,
@@ -173,10 +194,22 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                         device.discovery_source,
                         device.last_seen_at,
                         device.last_scan_at,
+                        device.os_fingerprint,
+                        device.distro,
+                        device.probe_ssh,
+                        device.probe_winrm,
+                        device.ad_joined,
+                        has_probe_data,
                     )
                     devices_updated += 1
                 else:
                     # Insert new device
+                    has_probe_data = any(
+                        v is not None for v in [
+                            device.probe_ssh, device.probe_winrm,
+                            device.probe_snmp, device.ad_joined,
+                        ]
+                    )
                     device_db_id = await conn.fetchval(
                         """
                         INSERT INTO discovered_devices (
@@ -185,10 +218,15 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                             medical_device, scan_policy, manually_opted_in,
                             compliance_status, open_ports, discovery_source,
                             first_seen_at, last_seen_at, last_scan_at,
+                            os_fingerprint, distro, probe_ssh, probe_winrm, ad_joined,
+                            last_probe_at,
                             sync_created_at, sync_updated_at
                         ) VALUES (
                             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                            $12, $13, $14, $15, $16, $17, NOW(), NOW()
+                            $12, $13, $14, $15, $16, $17,
+                            $18, $19, $20, $21, $22,
+                            CASE WHEN $23 THEN NOW() ELSE NULL END,
+                            NOW(), NOW()
                         )
                         RETURNING id
                         """,
@@ -209,8 +247,54 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                         device.first_seen_at,
                         device.last_seen_at,
                         device.last_scan_at,
+                        device.os_fingerprint,
+                        device.distro,
+                        device.probe_ssh,
+                        device.probe_winrm,
+                        device.ad_joined,
+                        has_probe_data,
                     )
                     devices_created += 1
+
+                # Auto-classify device_status based on probe results.
+                # Only update if current status is 'discovered' or null
+                # (never overwrite managed states).
+                MANAGED_STATES = ('agent_active', 'deploying', 'pending_deploy', 'ignored')
+                current_status_row = await conn.fetchrow(
+                    "SELECT device_status FROM discovered_devices WHERE id = $1",
+                    device_db_id,
+                )
+                current_status = current_status_row["device_status"] if current_status_row else None
+                if current_status not in MANAGED_STATES:
+                    new_device_status: Optional[str] = None
+                    if device.ad_joined:
+                        # Check for active go_agent coverage
+                        agent_active = await conn.fetchval(
+                            """
+                            SELECT COUNT(*) FROM go_agents
+                            WHERE site_id = $1
+                            AND (hostname = $2 OR ip_address::text = $3)
+                            AND status = 'active'
+                            """,
+                            report.site_id,
+                            device.hostname or "",
+                            device.ip_address,
+                        )
+                        if not agent_active:
+                            new_device_status = "ad_managed"
+                    elif device.probe_ssh or device.probe_winrm:
+                        new_device_status = "take_over_available"
+
+                    if new_device_status is not None:
+                        await conn.execute(
+                            """
+                            UPDATE discovered_devices
+                            SET device_status = $2, sync_updated_at = NOW()
+                            WHERE id = $1
+                            """,
+                            device_db_id,
+                            new_device_status,
+                        )
 
                 # Upsert compliance check details
                 for check in device.compliance_details:
