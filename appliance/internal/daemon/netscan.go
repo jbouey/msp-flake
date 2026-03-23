@@ -35,6 +35,8 @@ type discoveredDevice struct {
 	ProbeWinRM    bool   `json:"probe_winrm"`
 	ADJoined      bool   `json:"ad_joined"`
 	HasAgent      bool   `json:"has_agent"`
+	// Topology field
+	Subnet string `json:"subnet,omitempty"`
 }
 
 // rogueDetector tracks known MACs and detects new (rogue) devices.
@@ -204,6 +206,38 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 			len(devices),
 			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeSSH }),
 			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeWinRM }))
+	}
+
+	// Populate Subnet field for each device
+	for i := range devices {
+		devices[i].Subnet = getDeviceSubnet(devices[i].IPAddress)
+	}
+
+	// Subnet topology analysis
+	subnetGroups := groupBySubnet(devices)
+	if len(subnetGroups) > 1 {
+		log.Printf("[netscan] Multiple subnets detected: %d subnets", len(subnetGroups))
+		for _, g := range subnetGroups {
+			log.Printf("[netscan]   %s: %d devices", g.Subnet, len(g.Devices))
+		}
+
+		// Flag devices on unexpected subnets
+		unexpected := detectUnexpectedSubnets(subnetGroups)
+		for _, d := range unexpected {
+			ns.reportNetDrift(&driftFinding{
+				Hostname:     d.Hostname,
+				CheckType:    "NETWORK-UNEXPECTED-SUBNET",
+				Expected:     "Device on primary subnet",
+				Actual:       fmt.Sprintf("Device %s (%s) on unexpected subnet %s", d.Hostname, d.IPAddress, getDeviceSubnet(d.IPAddress)),
+				HIPAAControl: "164.312(a)(1)",
+				Severity:     "low",
+				Details: map[string]string{
+					"ip_address":  d.IPAddress,
+					"mac_address": d.MACAddress,
+					"subnet":      getDeviceSubnet(d.IPAddress),
+				},
+			})
+		}
 	}
 
 	ns.devicesMu.Lock()
