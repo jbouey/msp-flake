@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	netScanInterval = 15 * time.Minute
+	netScanInterval = 3 * time.Minute
 	portTimeout     = 3 * time.Second
 )
 
@@ -27,6 +27,14 @@ type discoveredDevice struct {
 	MACAddress string `json:"mac_address"`
 	Hostname   string `json:"hostname,omitempty"`
 	Interface  string `json:"interface,omitempty"`
+	// Probe fields
+	OSType        string `json:"os_type,omitempty"`
+	Distro        string `json:"distro,omitempty"`
+	OSFingerprint string `json:"os_fingerprint,omitempty"`
+	ProbeSSH      bool   `json:"probe_ssh"`
+	ProbeWinRM    bool   `json:"probe_winrm"`
+	ADJoined      bool   `json:"ad_joined"`
+	HasAgent      bool   `json:"has_agent"`
 }
 
 // netScanner periodically checks network-level security:
@@ -113,6 +121,27 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 
 	// 3. Discover devices from the ARP table (passive — reads kernel ARP cache)
 	devices := discoverARPDevices()
+
+	// Enrich with OS probes (SSH banner, WinRM check)
+	if len(devices) > 0 {
+		ips := make([]string, len(devices))
+		for i, d := range devices {
+			ips[i] = d.IPAddress
+		}
+		probes := probeHosts(ctx, ips)
+		for i, p := range probes {
+			devices[i].OSType = p.OSType
+			devices[i].Distro = p.Distro
+			devices[i].OSFingerprint = p.OSFingerprint
+			devices[i].ProbeSSH = p.SSHOpen
+			devices[i].ProbeWinRM = p.WinRMOpen
+		}
+		log.Printf("[netscan] Probed %d devices: %d SSH, %d WinRM",
+			len(devices),
+			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeSSH }),
+			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeWinRM }))
+	}
+
 	ns.devicesMu.Lock()
 	ns.discoveredDevs = devices
 	ns.devicesMu.Unlock()
@@ -408,6 +437,17 @@ func resolveHostnames(devices []discoveredDevice) {
 	if resolved > 0 {
 		log.Printf("[netscan] Resolved %d/%d device hostnames via reverse DNS", resolved, len(devices))
 	}
+}
+
+// countTrue counts devices satisfying fn.
+func countTrue(devices []discoveredDevice, fn func(discoveredDevice) bool) int {
+	n := 0
+	for _, d := range devices {
+		if fn(d) {
+			n++
+		}
+	}
+	return n
 }
 
 // reportNetDrift sends a network finding through the healing pipeline.
