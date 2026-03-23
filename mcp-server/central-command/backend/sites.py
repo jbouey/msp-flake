@@ -968,6 +968,30 @@ async def add_manual_device(site_id: str, device: ManualDeviceAdd, user: dict = 
     return await _add_manual_device(pool, site_id, device)
 
 
+@router.post("/{site_id}/devices/takeover")
+async def take_over_device(
+    site_id: str,
+    device: ManualDeviceAdd,
+    user: dict = Depends(require_operator),
+):
+    """Save credentials and trigger agent deployment for a discovered device."""
+    pool = await get_pool()
+    # Reuse existing credential + device creation logic
+    result = await _add_manual_device(pool, site_id, device)
+
+    # Set device_status to pending_deploy on the discovered device
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE discovered_devices
+            SET device_status = 'pending_deploy'
+            WHERE site_id = $1 AND (
+                ip_address = $2 OR hostname = $3
+            ) AND device_status NOT IN ('agent_active', 'deploying', 'ignored')
+        """, site_id, device.ip_address, device.hostname)
+
+    return result
+
+
 async def _add_network_device(pool, site_id: str, device: NetworkDeviceAdd) -> dict:
     """Register a network device (switch/router/AP/firewall) for read-only monitoring.
     Credentials stay server-side. Daemon gets detection-only config."""
