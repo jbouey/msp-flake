@@ -3,8 +3,8 @@
  */
 
 import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi } from '../utils/api';
-import type { Site, SiteDetail, OrderType, OrderStatus, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi, vpnApi } from '../utils/api';
+import type { Site, SiteDetail, OrderType, OrderStatus, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice, VPNStatus } from '../utils/api';
 import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, StatsDeltas, LearningStatus, PromotionCandidate, PromotionHistory, CoverageGap, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory, FleetPostureSite, IncidentTrendsResponse, IncidentBreakdownResponse, AttentionRequiredResponse } from '../types';
 import { useWebSocketStatus } from './useWebSocket';
 
@@ -1076,5 +1076,36 @@ export function useAttentionRequired() {
     queryKey: ['attention-required'],
     queryFn: commandCenterApi.getAttentionRequired,
     ...defaults,
+  });
+}
+
+// =============================================================================
+// VPN MANAGEMENT HOOKS
+// =============================================================================
+
+/**
+ * Hook for fetching VPN fleet status with real-time WireGuard data
+ */
+export function useVPNStatus() {
+  return useQuery<VPNStatus>({
+    queryKey: ['vpn', 'status'],
+    queryFn: vpnApi.getStatus,
+    refetchInterval: 30000, // Auto-refresh every 30s
+    staleTime: 15000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * Hook for rotating a WireGuard key on a site's appliance
+ */
+export function useRotateVPNKey() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (siteId: string) => vpnApi.rotateKey(siteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vpn'] });
+    },
+    onError: (error) => logMutationError('rotateVPNKey', error),
   });
 }

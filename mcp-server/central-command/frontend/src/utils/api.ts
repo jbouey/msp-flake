@@ -1972,4 +1972,35 @@ export const logsApi = {
   },
 };
 
+// =============================================================================
+// VPN MANAGEMENT API
+// =============================================================================
+
+export interface VPNPeer {
+  site_id: string;
+  clinic_name: string;
+  site_status: string;
+  wg_ip: string;
+  wg_pubkey: string | null;
+  connected: boolean;
+  last_handshake: string | null;
+  bytes_received: number;
+  bytes_sent: number;
+  endpoint: string | null;
+  last_checkin: string | null;
+  agent_version: string | null;
+}
+
+export interface VPNStatus {
+  peers: VPNPeer[];
+  total: number;
+  connected: number;
+  disconnected: number;
+}
+
+export const vpnApi = {
+  getStatus: () => fetchApi<VPNStatus>('/vpn/status'),
+  rotateKey: (siteId: string) => fetchApi<{ status: string; order_id: string }>(`/vpn/${siteId}/rotate-key`, { method: 'POST' }),
+};
+
 export { ApiError };

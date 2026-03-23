@@ -79,6 +79,9 @@ export {
   useIncidentTrends,
   useIncidentBreakdown,
   useAttentionRequired,
+  // VPN Management hooks
+  useVPNStatus,
+  useRotateVPNKey,
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';

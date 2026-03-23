@@ -53,6 +53,7 @@ const OrgDashboard = lazy(() => import('./pages/OrgDashboard').then(m => ({ defa
 const ProtectionProfiles = lazy(() => import('./pages/ProtectionProfiles').then(m => ({ default: m.ProtectionProfiles })));
 const ProtectionProfileView = lazy(() => import('./pages/ProtectionProfiles').then(m => ({ default: m.ProtectionProfileView })));
 const DriftConfig = lazy(() => import('./pages/DriftConfig'));
+const VPNManagement = lazy(() => import('./pages/VPNManagement'));
 
 // Detect if serving from marketing domain (www.osiriscare.net or osiriscare.net)
 const isLandingSite = typeof window !== 'undefined' &&
@@ -185,6 +186,7 @@ const pageTitles: Record<string, string> = {
   '/runbook-config': 'Runbook Configuration',
   '/learning': 'Learning Loop',
   '/fleet-updates': 'Fleet Updates',
+  '/vpn': 'VPN Management',
   '/cve-watch': 'CVE Watch',
   '/compliance-library': 'Compliance Library',
   '/reports': 'Reports',
@@ -330,6 +332,7 @@ const AppLayout: React.FC = () => {
               <Route path="/settings" element={<Settings />} />
               <Route path="/settings/oauth" element={<AdminOAuthSettings />} />
               <Route path="/fleet-updates" element={<FleetUpdates />} />
+              <Route path="/vpn" element={<VPNManagement />} />
               <Route path="/cve-watch" element={<CVEWatch />} />
               <Route path="/compliance-library" element={<ComplianceLibrary />} />
               <Route path="/docs" element={<Documentation />} />

@@ -4460,3 +4460,131 @@ async def decommission_site(
         "actions": actions_taken,
         "decommissioned_at": now.isoformat(),
     }
+
+
+# =============================================================================
+# VPN MANAGEMENT ENDPOINTS
+# =============================================================================
+
+
+async def _get_hub_peer_status() -> dict:
+    """Query WireGuard hub for real-time peer status.
+
+    Reads a JSON status file written by a cron job on the VPS host.
+    The mcp-server container has /opt/mcp-server/wireguard mounted.
+    """
+    import os
+    peers = {}
+
+    try:
+        status_file = "/opt/mcp-server/wireguard/status.json"
+        if os.path.exists(status_file):
+            with open(status_file) as f:
+                data = json.load(f)
+            for peer in data.get("peers", []):
+                ip = peer.get("allowed_ips", "").replace("/32", "")
+                hs = peer.get("last_handshake")
+                peers[ip] = {
+                    "last_handshake": datetime.fromisoformat(hs) if hs else None,
+                    "rx": peer.get("rx", 0),
+                    "tx": peer.get("tx", 0),
+                    "endpoint": peer.get("endpoint"),
+                }
+    except Exception as e:
+        logger.warning(f"Failed to read WireGuard hub status: {e}")
+
+    return peers
+
+
+@router.get("/vpn/status")
+async def get_vpn_status(user: dict = Depends(auth_module.require_auth)):
+    """Get WireGuard VPN fleet status with real-time handshake data."""
+    from .fleet import get_pool
+
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # Get all sites with WireGuard configured
+        sites = await conn.fetch("""
+            SELECT s.site_id, s.clinic_name, s.status, s.wg_ip, s.wg_pubkey,
+                   s.wg_connected_at, sa.last_checkin, sa.agent_version
+            FROM sites s
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+            WHERE s.wg_ip IS NOT NULL
+            ORDER BY s.clinic_name
+        """)
+
+        # Get real-time handshake data from hub
+        wg_peers = await _get_hub_peer_status()
+
+        result = []
+        for site in sites:
+            wg_ip = site["wg_ip"]
+            peer_data = wg_peers.get(wg_ip, {})
+
+            # Determine connection status from latest handshake
+            last_handshake = peer_data.get("last_handshake")
+            connected = False
+            if last_handshake:
+                connected = (datetime.now(timezone.utc) - last_handshake).total_seconds() < 300
+
+            result.append({
+                "site_id": site["site_id"],
+                "clinic_name": site["clinic_name"],
+                "site_status": site["status"],
+                "wg_ip": wg_ip,
+                "wg_pubkey": site["wg_pubkey"][:12] + "..." if site["wg_pubkey"] else None,
+                "connected": connected,
+                "last_handshake": last_handshake.isoformat() if last_handshake else None,
+                "bytes_received": peer_data.get("rx", 0),
+                "bytes_sent": peer_data.get("tx", 0),
+                "endpoint": peer_data.get("endpoint"),
+                "last_checkin": site["last_checkin"].isoformat() if site["last_checkin"] else None,
+                "agent_version": site["agent_version"],
+            })
+
+        # Count stats
+        total = len(result)
+        connected_count = sum(1 for r in result if r["connected"])
+
+        return {
+            "peers": result,
+            "total": total,
+            "connected": connected_count,
+            "disconnected": total - connected_count,
+        }
+
+
+@router.post("/vpn/{site_id}/rotate-key")
+async def rotate_vpn_key(site_id: str, user: dict = Depends(auth_module.require_auth)):
+    """Create a fleet order to rotate the WireGuard key on an appliance."""
+    import uuid
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        site = await conn.fetchrow(
+            "SELECT wg_ip FROM sites WHERE site_id = $1", site_id
+        )
+        if not site or not site["wg_ip"]:
+            raise HTTPException(status_code=400, detail="Site has no WireGuard configuration")
+
+        order_id = str(uuid.uuid4())
+        await conn.execute("""
+            INSERT INTO admin_orders (order_id, order_type, parameters, status, site_id, expires_at)
+            VALUES ($1, $2, '{}'::jsonb, $3, $4, NOW() + INTERVAL '24 hours')
+        """, order_id, "rotate_wg_key", "active", site_id)
+
+        # Audit trail
+        await conn.execute("""
+            INSERT INTO audit_log (event_type, actor, resource_type, resource_id, details)
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+        """,
+            "vpn.key_rotation_ordered",
+            user.get("username", "unknown"),
+            "site",
+            site_id,
+            json.dumps({"order_id": order_id}),
+        )
+
+    return {"status": "ordered", "order_id": order_id, "site_id": site_id}
