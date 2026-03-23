@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
+import { DisclaimerFooter } from '../components/composed';
 
 interface OrgUser {
   id: string;
@@ -825,6 +826,7 @@ export const ClientSettings: React.FC = () => {
             Show Welcome Guide Again
           </button>
         </div>
+        <DisclaimerFooter />
       </main>
     </div>
   );

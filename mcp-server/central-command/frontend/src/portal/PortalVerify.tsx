@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
+import { BRANDING } from '../constants';
 
 interface VerificationResult {
   status: 'valid' | 'invalid' | 'empty' | 'error' | 'verified' | 'broken' | 'signature_invalid';
@@ -72,7 +73,7 @@ interface BlockchainStatus {
   recent_anchors: BlockchainAnchor[];
 }
 
-const StatusBadge: React.FC<{ status: VerificationResult['status'] }> = ({ status }) => {
+const VerificationStatusBadge: React.FC<{ status: VerificationResult['status'] }> = ({ status }) => {
   const colors: Record<string, string> = {
     valid: 'bg-green-100 text-green-800 border-green-200',
     verified: 'bg-green-100 text-green-800 border-green-200',
@@ -499,7 +500,7 @@ export const PortalVerify: React.FC = () => {
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 mb-8">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold text-slate-900">Chain Integrity Status</h2>
-            {verification && <StatusBadge status={verification.status} />}
+            {verification && <VerificationStatusBadge status={verification.status} />}
           </div>
 
           {(verification?.status === 'valid' || verification?.status === 'verified') && (
@@ -655,7 +656,7 @@ export const PortalVerify: React.FC = () => {
           </p>
           <div className="mt-4 flex items-center justify-center gap-2">
             <span className="text-xs text-slate-300">Powered by</span>
-            <span className="text-sm font-semibold text-slate-500">OsirisCare</span>
+            <span className="text-sm font-semibold text-slate-500">{BRANDING.name}</span>
           </div>
         </footer>
       </main>

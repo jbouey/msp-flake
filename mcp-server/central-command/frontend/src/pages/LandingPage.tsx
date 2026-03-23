@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { OsirisCareLeaf } from '../components/shared';
+import { DISCLAIMERS, BRANDING } from '../constants';
 
 /* ─────────────────────────────────────────────────────────
    OsirisCare Landing Page
@@ -537,15 +538,10 @@ export const LandingPage: React.FC = () => {
           {/* Legal disclaimer */}
           <div className="border-t border-slate-100 pt-8">
             <p className="text-xs text-slate-400 leading-relaxed max-w-4xl font-body">
-              OsirisCare provides compliance monitoring and remediation tooling designed to
-              support HIPAA compliance programs. Use of OsirisCare does not constitute compliance
-              with HIPAA or any other regulatory framework. Organizations remain solely responsible
-              for their own compliance obligations, including risk assessments, policies, training,
-              and breach notification. All remediation actions require operator authorization.
-              OsirisCare is not a covered entity, business associate, or legal advisor.
+              {DISCLAIMERS.landing_legal}
             </p>
             <p className="text-xs text-slate-300 mt-4 font-body">
-              &copy; {new Date().getFullYear()} OsirisCare. All rights reserved.
+              &copy; {new Date().getFullYear()} {BRANDING.name}. All rights reserved.
             </p>
           </div>
         </div>

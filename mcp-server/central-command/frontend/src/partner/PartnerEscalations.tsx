@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { usePartner } from './PartnerContext';
 import { InfoTip } from '../components/shared';
+import { formatTimeAgo } from '../constants';
 
 interface EscalationTicket {
   id: string;
@@ -215,16 +216,6 @@ export const PartnerEscalations: React.FC = () => {
     }
   };
 
-  const formatAge = (dateStr: string) => {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return `${mins}m`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h`;
-    const days = Math.floor(hrs / 24);
-    return `${days}d`;
-  };
 
   const formatMinutes = (m: number) => {
     if (m < 60) return `${Math.round(m)}m`;
@@ -406,7 +397,7 @@ export const PartnerEscalations: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3 text-xs text-slate-500">
                         <span>{ticket.site_name || ticket.site_id}</span>
-                        <span className="tabular-nums">{formatAge(ticket.created_at)}</span>
+                        <span className="tabular-nums">{formatTimeAgo(ticket.created_at)}</span>
                         {sla && (
                           <span className={`font-medium ${sla === 'BREACHED' ? 'text-red-600' : 'text-amber-600'}`}>
                             {sla}
@@ -489,7 +480,7 @@ export const PartnerEscalations: React.FC = () => {
                             </span>
                           )}
                         </td>
-                        <td className="px-5 py-4 text-sm text-slate-500 tabular-nums">{formatAge(ticket.created_at)}</td>
+                        <td className="px-5 py-4 text-sm text-slate-500 tabular-nums">{formatTimeAgo(ticket.created_at)}</td>
                         <td className="px-5 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
                             {ticket.status === 'open' && (

@@ -10,6 +10,7 @@ import { PartnerEscalations } from './PartnerEscalations';
 import { PartnerDriftConfig } from './PartnerDriftConfig';
 import { PartnerOnboarding } from './PartnerOnboarding';
 import { InfoTip, WelcomeModal } from '../components/shared';
+import { formatTimeAgo } from '../constants';
 
 interface Site {
   site_id: string;
@@ -176,18 +177,6 @@ export const PartnerDashboard: React.FC = () => {
     });
   };
 
-  const formatTime = (dateStr: string | null) => {
-    if (!dateStr) return 'Never';
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const minutes = Math.floor(diff / 60000);
-
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
-    return formatDate(dateStr);
-  };
 
   if (isLoading || loading) {
     return (
@@ -452,7 +441,7 @@ export const PartnerDashboard: React.FC = () => {
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
                         <span>Appliances: {site.appliance_count}</span>
-                        <span>Last: {formatTime(site.last_checkin)}</span>
+                        <span>Last: {formatTimeAgo(site.last_checkin)}</span>
                       </div>
                     </div>
                   ))}
@@ -486,7 +475,7 @@ export const PartnerDashboard: React.FC = () => {
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-600 capitalize">{site.tier}</td>
                           <td className="px-6 py-4 text-sm text-slate-600">{site.appliance_count}</td>
-                          <td className="px-6 py-4 text-sm text-slate-600">{formatTime(site.last_checkin)}</td>
+                          <td className="px-6 py-4 text-sm text-slate-600">{formatTimeAgo(site.last_checkin)}</td>
                           <td className="px-6 py-4 text-right">
                             <button
                               onClick={() => setDriftConfigSite({ id: site.site_id, name: site.clinic_name })}

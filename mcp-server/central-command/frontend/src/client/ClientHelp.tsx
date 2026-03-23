@@ -604,7 +604,7 @@ export const ClientHelp: React.FC = () => {
               </div>
               <p className="text-slate-600 text-sm">
                 For portal questions or account help:<br />
-                <a href="mailto:support@osiriscare.net" className="text-teal-600 hover:underline">support@osiriscare.net</a>
+                <a href={`mailto:${BRANDING.support_email}`} className="text-teal-600 hover:underline">{BRANDING.support_email}</a>
               </p>
             </div>
           </div>

@@ -42,7 +42,7 @@ function ProviderIcon({ provider, size = 24 }: { provider: IntegrationProvider; 
 }
 
 // Status badge component
-function StatusBadge({ status }: { status: string }) {
+function IntegrationStatusBadge({ status }: { status: string }) {
   const statusConfig: Record<string, { label: string; color: string; bgColor: string }> = {
     active: { label: 'Active', color: '#16A34A', bgColor: '#DCFCE7' },
     connected: { label: 'Connected', color: '#16A34A', bgColor: '#DCFCE7' },
@@ -68,7 +68,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // Health badge component
-function HealthBadge({ health }: { health: { status: string; critical_count: number; high_count: number } }) {
+function IntegrationHealthBadge({ health }: { health: { status: string; critical_count: number; high_count: number } }) {
   const healthConfig: Record<string, { label: string; color: string; bgColor: string }> = {
     healthy: { label: 'Healthy', color: '#16A34A', bgColor: '#DCFCE7' },
     warning: { label: 'Warning', color: '#CA8A04', bgColor: '#FEF3C7' },
@@ -140,7 +140,7 @@ function IntegrationCard({
             <p className="text-sm text-slate-400">{info.name}</p>
           </div>
         </div>
-        <StatusBadge status={integration.status} />
+        <IntegrationStatusBadge status={integration.status} />
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-4">
@@ -150,7 +150,7 @@ function IntegrationCard({
         </div>
         <div>
           <p className="text-xs text-slate-500 uppercase">Health</p>
-          <HealthBadge health={integration.health} />
+          <IntegrationHealthBadge health={integration.health} />
         </div>
         <div>
           <p className="text-xs text-slate-500 uppercase">Last Sync</p>

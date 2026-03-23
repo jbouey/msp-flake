@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import { KPICard, ControlGrid, IncidentList, EvidenceDownloads } from './components';
 import { AddDeviceModal } from '../components/shared/AddDeviceModal';
+import { DISCLAIMERS, BRANDING } from '../constants';
 
 interface PortalSite {
   site_id: string;
@@ -384,24 +385,21 @@ export const PortalDashboard: React.FC = () => {
           {/* Liability Disclaimer */}
           <div className="mt-4 p-4 bg-slate-100 rounded-lg max-w-2xl mx-auto">
             <p className="text-xs text-slate-500 leading-relaxed">
-              <strong>Important:</strong> This system monitors configuration states and reports observations.
-              OsirisCare does not certify HIPAA compliance. Compliance determinations require qualified
-              assessment by authorized personnel. Contact your compliance officer for official guidance.
-              All metrics represent point-in-time observations, not guarantees of security or compliance status.
+              <strong>Important:</strong> {DISCLAIMERS.portal_detailed}
             </p>
           </div>
           <p className="mt-4 text-sm text-slate-400">
             Questions?{' '}
             <a
-              href="mailto:support@osiriscare.net"
+              href={`mailto:${BRANDING.support_email}`}
               className="text-blue-600 hover:underline"
             >
-              support@osiriscare.net
+              {BRANDING.support_email}
             </a>
           </p>
           <div className="mt-4 flex items-center justify-center gap-2">
             <span className="text-xs text-slate-300">Powered by</span>
-            <span className="text-sm font-semibold text-slate-500">OsirisCare</span>
+            <span className="text-sm font-semibold text-slate-500">{BRANDING.name}</span>
           </div>
         </footer>
       </main>

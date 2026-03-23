@@ -284,7 +284,7 @@ export function PartnerExceptionManagement({ sites }: { sites: Site[] }) {
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <StatusBadge exception={exc} />
+                    <ExceptionStatusBadge exception={exc} />
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
                     {exc.is_valid && (
@@ -375,7 +375,7 @@ function SummaryCard({ title, value, color }: { title: string; value: number; co
   );
 }
 
-function StatusBadge({ exception }: { exception: ComplianceException }) {
+function ExceptionStatusBadge({ exception }: { exception: ComplianceException }) {
   if (!exception.is_active) {
     return <span className="px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-600">Revoked</span>;
   }
@@ -618,7 +618,7 @@ function ExceptionDetailsModal({
               </div>
               <div>
                 <label className="text-sm text-slate-500">Status</label>
-                <p><StatusBadge exception={exception} /></p>
+                <p><ExceptionStatusBadge exception={exception} /></p>
               </div>
               <div>
                 <label className="text-sm text-slate-500">Scope</label>

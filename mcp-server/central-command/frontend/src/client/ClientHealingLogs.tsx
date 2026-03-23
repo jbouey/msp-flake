@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
+import { formatTimeAgo } from '../constants';
+import { DisclaimerFooter } from '../components/composed';
 
 interface HealingLog {
   execution_id: string;
@@ -37,18 +39,6 @@ type TabKey = 'logs' | 'candidates';
 
 const PAGE_SIZE = 25;
 
-function relativeTime(iso: string | null): string {
-  if (!iso) return '—';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
 
 function formatDuration(seconds: number | null): string {
   if (seconds === null || seconds === undefined) return '—';
@@ -417,7 +407,7 @@ export const ClientHealingLogs: React.FC = () => {
                               className="text-sm text-slate-500"
                               title={log.started_at ? new Date(log.started_at).toLocaleString() : ''}
                             >
-                              {relativeTime(log.started_at)}
+                              {formatTimeAgo(log.started_at)}
                             </span>
                           </td>
                         </tr>
@@ -716,6 +706,7 @@ export const ClientHealingLogs: React.FC = () => {
             )}
           </div>
         )}
+        <DisclaimerFooter />
       </main>
     </div>
   );

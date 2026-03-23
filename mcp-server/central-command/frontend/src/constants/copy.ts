@@ -115,6 +115,10 @@ export const DISCLAIMERS = {
   score: 'This score measures automated check pass rates and does not constitute compliance certification.',
   evidence: 'Cryptographically signed records of system configuration state. Supports compliance documentation but does not replace formal assessments.',
   blockchain: 'Bitcoin blockchain anchoring provides immutable timestamp verification that evidence records have not been altered since creation.',
+  portal_detailed: 'This system monitors configuration states and provides automated compliance observations. OsirisCare does not certify HIPAA compliance. Compliance determinations require qualified assessment by authorized personnel. Contact your compliance officer for official guidance. All metrics represent point-in-time observations, not guarantees of security or compliance status.',
+  evidence_chain: 'Evidence bundles are cryptographically signed and anchored to the Bitcoin blockchain for immutable timestamp verification. This provides independent proof that evidence records have not been altered since creation.',
+  landing_legal: 'OsirisCare provides automated compliance monitoring tools for healthcare organizations. Organizations remain solely responsible for their compliance programs, policies, and regulatory obligations.',
+  portal_login: 'This portal provides monitoring data only. OsirisCare does not certify compliance.',
 } as const;
 
 // =============================================================================
@@ -142,3 +146,24 @@ export const CATEGORY_LABELS: Record<string, string> = {
   access_control: 'Access Control',
   services: 'Services',
 };
+
+// =============================================================================
+// SRA CATEGORY LABELS
+// =============================================================================
+
+export const SRA_CATEGORY_LABELS = {
+  administrative: 'Administrative Safeguards',
+  physical: 'Physical Safeguards',
+  technical: 'Technical Safeguards',
+} as const;
+
+// =============================================================================
+// PHYSICAL SAFEGUARD LABELS
+// =============================================================================
+
+export const PHYSICAL_SAFEGUARD_LABELS = {
+  facility_access: 'Facility Access Controls',
+  workstation_use: 'Workstation Use',
+  workstation_security: 'Workstation Security',
+  device_controls: 'Device and Media Controls',
+} as const;

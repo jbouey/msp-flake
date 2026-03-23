@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { OsirisCareLeaf, InfoTip } from '../components/shared';
-import { DISCLAIMERS } from '../constants';
+import { DISCLAIMERS, getScoreStatus } from '../constants';
+import { DisclaimerFooter } from '../components/composed';
 import { SRAWizard } from './compliance/SRAWizard';
 import { PolicyLibrary } from './compliance/PolicyLibrary';
 import { TrainingTracker } from './compliance/TrainingTracker';
@@ -173,11 +174,6 @@ export const ClientCompliance: React.FC = () => {
     }
   };
 
-  const getReadinessColor = (score: number) => {
-    if (score >= 80) return 'text-green-600';
-    if (score >= 50) return 'text-yellow-600';
-    return 'text-red-600';
-  };
 
   if (isLoading || loading) {
     return (
@@ -240,7 +236,7 @@ export const ClientCompliance: React.FC = () => {
               <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 mb-8">
                 <div className="flex items-center gap-6">
                   <div className="w-24 h-24 rounded-full border-4 border-slate-100 flex items-center justify-center relative">
-                    <span className={`text-3xl font-bold ${getReadinessColor(overview.overall_readiness)}`}>
+                    <span className={`text-3xl font-bold ${getScoreStatus(overview.overall_readiness).color}`}>
                       {overview.overall_readiness}%
                     </span>
                     <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 100 100">
@@ -313,9 +309,7 @@ export const ClientCompliance: React.FC = () => {
           </>
         )}
 
-        <p className="text-[10px] text-label-tertiary text-center mt-8 max-w-2xl mx-auto leading-relaxed">
-          {DISCLAIMERS.footer}
-        </p>
+        <DisclaimerFooter />
       </main>
     </div>
   );

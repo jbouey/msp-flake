@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { CATEGORY_LABELS } from '../constants';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -56,11 +57,6 @@ function healthColor(score: number): string {
   if (score >= 50) return '#FF9500';
   return '#FF3B30';
 }
-
-const CATEGORY_LABELS: Record<string, string> = {
-  patching: 'Patching', antivirus: 'Antivirus', backup: 'Backup', logging: 'Logging',
-  firewall: 'Firewall', encryption: 'Encryption', access_control: 'Access', services: 'Services',
-};
 
 const CHECK_TYPE_LABELS: Record<string, string> = {
   nixos_generation: 'NixOS Patching', windows_update: 'Windows Updates', linux_patching: 'Linux Patching',

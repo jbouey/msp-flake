@@ -4,16 +4,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { organizationsApi } from '../utils/api';
 import type { OrgSite, OrgCredential, OrgHealth } from '../utils/api';
-import { formatTimeAgo } from '../constants';
+import { formatTimeAgo, getStatusConfig } from '../constants';
 
 const formatRelativeTime = formatTimeAgo;
 
 const StatusDot: React.FC<{ status: string }> = ({ status }) => {
-  const cls = status === 'online' ? 'status-dot-healthy'
-    : status === 'stale' ? 'status-dot-warning'
-    : status === 'offline' ? 'status-dot-critical'
-    : 'status-dot-neutral';
-  return <span className={`status-dot ${cls}`} />;
+  const { dotColor } = getStatusConfig(status);
+  return <span className={`inline-block w-2 h-2 rounded-full ${dotColor}`} />;
 };
 
 const ComplianceBar: React.FC<{ site: OrgSite }> = ({ site }) => {

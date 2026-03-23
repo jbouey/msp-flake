@@ -4,6 +4,7 @@ import { GlassCard, Spinner } from '../components/shared';
 import { HealthGauge } from '../components/fleet';
 import { IncidentRow } from '../components/incidents/IncidentRow';
 import { useClient, useIncidents } from '../hooks';
+import { formatTimeAgo } from '../constants';
 import type { CheckType, Appliance } from '../types';
 
 /**
@@ -27,18 +28,6 @@ export const ClientDetail: React.FC = () => {
     return { text: 'FAIL', color: 'text-health-critical' };
   };
 
-  const formatLastCheckin = (dateStr?: string): string => {
-    if (!dateStr) return 'Never';
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
-    return date.toLocaleDateString();
-  };
 
   if (isLoading) {
     return (
@@ -207,7 +196,7 @@ export const ClientDetail: React.FC = () => {
                   <div className="text-right text-xs text-label-tertiary">
                     <p>Last check-in</p>
                     <p className="font-medium text-label-secondary">
-                      {formatLastCheckin(appliance.last_checkin)}
+                      {formatTimeAgo(appliance.last_checkin)}
                     </p>
                   </div>
                   {appliance.health && (

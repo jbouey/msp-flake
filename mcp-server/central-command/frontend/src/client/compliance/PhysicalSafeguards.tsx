@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DocumentUpload } from './DocumentUpload';
+import { PHYSICAL_SAFEGUARD_LABELS } from '../../constants';
 
 interface SafeguardItem {
   category: string;
@@ -12,11 +13,12 @@ interface SafeguardItem {
   assessed_by: string | null;
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
-  facility_access: 'Facility Access Controls',
-  workstation_use: 'Workstation Use',
-  workstation_security: 'Workstation Security',
-  device_media: 'Device & Media Controls',
+// Map internal category keys to PHYSICAL_SAFEGUARD_LABELS keys
+const CATEGORY_LABEL_MAP: Record<string, string> = {
+  facility_access: PHYSICAL_SAFEGUARD_LABELS.facility_access,
+  workstation_use: PHYSICAL_SAFEGUARD_LABELS.workstation_use,
+  workstation_security: PHYSICAL_SAFEGUARD_LABELS.workstation_security,
+  device_media: PHYSICAL_SAFEGUARD_LABELS.device_controls,
 };
 
 const STATUS_OPTIONS = [
@@ -78,7 +80,7 @@ export const PhysicalSafeguards: React.FC<PhysicalSafeguardsProps> = ({ apiBase 
     await fetchData();
   };
 
-  const categories = Object.keys(CATEGORY_LABELS);
+  const categories = Object.keys(CATEGORY_LABEL_MAP);
   const totalItems = Object.keys(localItems).length;
   const assessed = Object.values(localItems).filter(i => i.status !== 'not_assessed').length;
   const compliant = Object.values(localItems).filter(i => i.status === 'compliant').length;
@@ -114,7 +116,7 @@ export const PhysicalSafeguards: React.FC<PhysicalSafeguardsProps> = ({ apiBase 
 
         return (
           <div key={cat} className="bg-white rounded-2xl border border-slate-100 p-6 mb-4">
-            <h3 className="font-semibold text-slate-900 mb-4">{CATEGORY_LABELS[cat]}</h3>
+            <h3 className="font-semibold text-slate-900 mb-4">{CATEGORY_LABEL_MAP[cat]}</h3>
             <div className="space-y-3">
               {catItems.map(([key, item]) => (
                 <div key={key} className="flex items-start gap-4 p-3 rounded-xl bg-slate-50/50 border border-slate-100">

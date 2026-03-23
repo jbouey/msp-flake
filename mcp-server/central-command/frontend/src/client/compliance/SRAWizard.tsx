@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { SRA_CATEGORY_LABELS } from '../../constants';
 
 interface Question {
   key: string;
@@ -44,11 +45,6 @@ const RESPONSE_OPTIONS = [
 ];
 
 const CATEGORIES = ['administrative', 'physical', 'technical'];
-const CATEGORY_LABELS: Record<string, string> = {
-  administrative: 'Administrative Safeguards',
-  physical: 'Physical Safeguards',
-  technical: 'Technical Safeguards',
-};
 
 interface SRAWizardProps {
   apiBase?: string;
@@ -416,7 +412,7 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
       {/* Question steps (1-3) */}
       {step >= 1 && step <= 3 && (
         <div>
-          <h2 className="text-xl font-bold text-slate-900 mb-2">{CATEGORY_LABELS[currentCategory]}</h2>
+          <h2 className="text-xl font-bold text-slate-900 mb-2">{SRA_CATEGORY_LABELS[currentCategory as keyof typeof SRA_CATEGORY_LABELS]}</h2>
           <p className="text-sm text-slate-500 mb-6">{categoryQuestions.length} questions in this section</p>
 
           <div className="space-y-4">

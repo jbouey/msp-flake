@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { getScoreStatus } from '../constants';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -61,11 +62,15 @@ const CATEGORIES: { key: keyof CategoryBreakdown; label: string; icon: string }[
 // ─── Color Helpers ──────────────────────────────────────────────────────────
 
 function scoreColor(score: number | null): string {
-  if (score === null) return '#8E8E93';
-  if (score >= 90) return '#34C759';
-  if (score >= 75) return '#14A89E';
-  if (score >= 50) return '#FF9500';
-  return '#FF3B30';
+  const status = getScoreStatus(score);
+  const hexMap: Record<string, string> = {
+    'text-health-healthy': '#34C759',
+    'text-health-warning': '#FF9500',
+    'text-ios-orange': '#FF9500',
+    'text-health-critical': '#FF3B30',
+    'text-label-tertiary': '#8E8E93',
+  };
+  return hexMap[status.color] || '#8E8E93';
 }
 
 function scoreLabel(score: number | null): string {

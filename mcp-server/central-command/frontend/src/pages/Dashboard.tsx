@@ -6,7 +6,7 @@ import { HealthGauge } from '../components/fleet';
 import { IncidentTrendChart, FleetHealthMatrix, AttentionPanel, ResolutionBreakdown, TopIncidentTypes } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
 import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFleetPosture } from '../hooks';
-import { METRIC_TOOLTIPS } from '../constants';
+import { METRIC_TOOLTIPS, getScoreStatus } from '../constants';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -148,18 +148,7 @@ export const Dashboard: React.FC = () => {
             ) : (
               <div className="space-y-1">
                 {worstSites.map((site) => {
-                  const scoreColor =
-                    site.compliance_score >= 80
-                      ? 'text-health-healthy'
-                      : site.compliance_score >= 50
-                        ? 'text-health-warning'
-                        : 'text-health-critical';
-                  const barColor =
-                    site.compliance_score >= 80
-                      ? 'bg-health-healthy'
-                      : site.compliance_score >= 50
-                        ? 'bg-health-warning'
-                        : 'bg-health-critical';
+                  const siteStatus = getScoreStatus(site.compliance_score);
                   const trendIcon =
                     site.trend === 'improving' ? (
                       <svg className="w-3 h-3 text-health-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -187,11 +176,11 @@ export const Dashboard: React.FC = () => {
                         <div className="flex items-center gap-2 mt-1.5">
                           <div className="flex-1 h-1.5 bg-fill-secondary rounded-full overflow-hidden">
                             <div
-                              className={`h-full rounded-full transition-all ${barColor}`}
+                              className={`h-full rounded-full transition-all ${siteStatus.dotColor}`}
                               style={{ width: `${Math.min(site.compliance_score, 100)}%` }}
                             />
                           </div>
-                          <span className={`text-xs font-semibold tabular-nums ${scoreColor}`}>
+                          <span className={`text-xs font-semibold tabular-nums ${siteStatus.color}`}>
                             {site.compliance_score}%
                           </span>
                         </div>

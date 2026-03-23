@@ -5,7 +5,8 @@ import { OsirisCareLeaf, WelcomeModal, InfoTip } from '../components/shared';
 import { ClientDriftConfig } from './ClientDriftConfig';
 import { ComplianceHealthInfographic } from './ComplianceHealthInfographic';
 import { DevicesAtRisk } from './DevicesAtRisk';
-import { DISCLAIMERS, BRANDING } from '../constants';
+import { getScoreStatus } from '../constants';
+import { DisclaimerFooter } from '../components/composed';
 
 interface Site {
   site_id: string;
@@ -203,17 +204,6 @@ export const ClientDashboard: React.FC = () => {
     navigate('/client/login');
   };
 
-  const getScoreColor = (score: number) => {
-    if (score >= 95) return 'text-green-600';
-    if (score >= 80) return 'text-yellow-600';
-    return 'text-red-600';
-  };
-
-  const getScoreBg = (score: number) => {
-    if (score >= 95) return 'bg-green-100';
-    if (score >= 80) return 'bg-yellow-100';
-    return 'bg-red-100';
-  };
 
   if (isLoading || loading) {
     return (
@@ -363,12 +353,12 @@ export const ClientDashboard: React.FC = () => {
               </div>
               <p className="text-sm font-medium text-slate-500">Compliance Score<InfoTip text="Percentage of automated security checks passing. A high score means your systems are configured as expected." /></p>
             </div>
-            <span className={`text-4xl font-bold tabular-nums ${getScoreColor(dashboard?.kpis.compliance_score || 0)}`}>
+            <span className={`text-4xl font-bold tabular-nums ${getScoreStatus(dashboard?.kpis.compliance_score || 0).color}`}>
               {dashboard?.kpis.compliance_score.toFixed(1)}%
             </span>
-            <div className={`mt-4 h-2 rounded-full ${getScoreBg(dashboard?.kpis.compliance_score || 0)}`}>
+            <div className={`mt-4 h-2 rounded-full ${getScoreStatus(dashboard?.kpis.compliance_score || 0).bgColor}`}>
               <div
-                className={`h-full rounded-full transition-all ${dashboard?.kpis.compliance_score && dashboard.kpis.compliance_score >= 95 ? 'bg-green-500' : dashboard?.kpis.compliance_score && dashboard.kpis.compliance_score >= 80 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                className={`h-full rounded-full transition-all ${getScoreStatus(dashboard?.kpis.compliance_score || 0).dotColor}`}
                 style={{ width: `${dashboard?.kpis.compliance_score || 0}%` }}
               />
             </div>
@@ -818,16 +808,9 @@ export const ClientDashboard: React.FC = () => {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-200/60 mt-12 py-6">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <p className="text-center text-sm text-slate-400">
-            Powered by {BRANDING.name} {BRANDING.tagline}
-          </p>
-          <p className="text-[10px] text-label-tertiary text-center mt-4 max-w-2xl mx-auto leading-relaxed">
-            {DISCLAIMERS.footer}
-          </p>
-        </div>
-      </footer>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <DisclaimerFooter />
+      </div>
     </div>
   );
 };

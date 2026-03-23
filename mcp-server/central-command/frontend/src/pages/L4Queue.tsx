@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { GlassCard, Spinner } from '../components/shared';
+import { formatTimeAgo } from '../constants';
 
 interface L4Ticket {
   id: string;
@@ -34,15 +35,6 @@ function getCsrfToken(): string {
   return match ? decodeURIComponent(match[1]) : '';
 }
 
-function formatAge(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
 
 export const L4Queue: React.FC = () => {
   const [tickets, setTickets] = useState<L4Ticket[]>([]);
@@ -227,7 +219,7 @@ export const L4Queue: React.FC = () => {
                       by {ticket.partner_name || 'Partner'}
                     </p>
                     <p className="text-xs text-label-quaternary mt-0.5">
-                      {formatAge(ticket.l4_escalated_at)}
+                      {formatTimeAgo(ticket.l4_escalated_at)}
                     </p>
                   </div>
                 </div>

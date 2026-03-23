@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
-import { DISCLAIMERS } from '../constants';
+import { DisclaimerFooter } from '../components/composed';
 
 interface EvidenceBundle {
   id: string;
@@ -253,9 +253,7 @@ export const ClientEvidence: React.FC = () => {
           )}
         </div>
 
-        <p className="text-[10px] text-label-tertiary text-center mt-8 max-w-2xl mx-auto leading-relaxed">
-          {DISCLAIMERS.footer}
-        </p>
+        <DisclaimerFooter />
       </main>
     </div>
   );

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
-import { DISCLAIMERS } from '../constants';
+import { getScoreStatus } from '../constants';
+import { DisclaimerFooter } from '../components/composed';
 
 interface MonthlyReport {
   id: string;
@@ -119,17 +120,6 @@ export const ClientReports: React.FC = () => {
     }
   };
 
-  const getScoreColor = (score: number) => {
-    if (score >= 90) return 'text-green-600';
-    if (score >= 70) return 'text-yellow-600';
-    return 'text-red-600';
-  };
-
-  const getScoreBg = (score: number) => {
-    if (score >= 90) return 'bg-green-100 text-green-700';
-    if (score >= 70) return 'bg-yellow-100 text-yellow-700';
-    return 'bg-red-100 text-red-700';
-  };
 
   const getResultBadge = (result: string) => {
     if (result === 'pass') return 'bg-green-100 text-green-700';
@@ -202,7 +192,7 @@ export const ClientReports: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider">Current Compliance Score</h2>
-                    <p className={`text-5xl font-bold mt-2 tabular-nums ${getScoreColor(snapshot.overall_score)}`}>
+                    <p className={`text-5xl font-bold mt-2 tabular-nums ${getScoreStatus(snapshot.overall_score).color}`}>
                       {snapshot.overall_score.toFixed(1)}%
                     </p>
                     <p className="text-sm text-slate-500 mt-1">
@@ -255,7 +245,7 @@ export const ClientReports: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-6">
                           <span className="text-sm text-slate-600">{site.passed}/{site.total} passed</span>
-                          <span className={`px-3 py-1 text-sm font-semibold rounded-full tabular-nums ${getScoreBg(site.score)}`}>
+                          <span className={`px-3 py-1 text-sm font-semibold rounded-full tabular-nums ${getScoreStatus(site.score).bgColor} ${getScoreStatus(site.score).color}`}>
                             {site.score.toFixed(1)}%
                           </span>
                         </div>
@@ -343,7 +333,7 @@ export const ClientReports: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-8">
                       <div className="text-right">
-                        <p className={`text-2xl font-bold ${getScoreColor(report.compliance_score)}`}>
+                        <p className={`text-2xl font-bold ${getScoreStatus(report.compliance_score).color}`}>
                           <span className="tabular-nums">{report.compliance_score.toFixed(1)}%</span>
                         </p>
                         <p className="text-xs text-slate-500">Compliance Score</p>
@@ -372,9 +362,7 @@ export const ClientReports: React.FC = () => {
           </div>
         )}
 
-        <p className="text-[10px] text-label-tertiary text-center mt-8 max-w-2xl mx-auto leading-relaxed">
-          {DISCLAIMERS.footer}
-        </p>
+        <DisclaimerFooter />
       </main>
     </div>
   );

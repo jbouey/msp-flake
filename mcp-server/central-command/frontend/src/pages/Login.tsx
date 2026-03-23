@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSearchParams } from 'react-router-dom';
 import { OsirisCareLeaf } from '../components/shared';
+import { BRANDING } from '../constants';
 
 interface LoginProps {
   onSuccess: () => void;
@@ -147,7 +148,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
           >
             <OsirisCareLeaf className="w-8 h-8" color="white" />
           </div>
-          <h1 className="text-2xl font-bold text-label-primary tracking-tight">OsirisCare</h1>
+          <h1 className="text-2xl font-bold text-label-primary tracking-tight">{BRANDING.name}</h1>
           <p className="text-label-tertiary text-sm mt-1">MSP compliance dashboard</p>
         </div>
 

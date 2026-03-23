@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useClient } from './ClientContext';
+import { formatTimeAgo } from '../constants';
+import { DisclaimerFooter } from '../components/composed';
 
 interface EscalationTicket {
   id: string;
@@ -176,14 +178,7 @@ export const ClientEscalations: React.FC = () => {
       default: return 'bg-slate-400 text-white';
     }
   };
-  const formatAge = (d: string) => {
-    const m = Math.floor((Date.now() - new Date(d).getTime()) / 60000);
-    if (m < 1) return 'Just now';
-    if (m < 60) return `${m}m`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h`;
-    return `${Math.floor(h / 24)}d`;
-  };
+
   const incidentLabel = (t: string) => t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
   const extractDetails = (raw: Record<string, unknown> | null) => {
@@ -370,7 +365,7 @@ export const ClientEscalations: React.FC = () => {
                   <td className="px-5 py-4">
                     <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColor(ticket.status)}`}>{ticket.status}</span>
                   </td>
-                  <td className="px-5 py-4 text-sm text-slate-500 tabular-nums">{formatAge(ticket.created_at)}</td>
+                  <td className="px-5 py-4 text-sm text-slate-500 tabular-nums">{formatTimeAgo(ticket.created_at)}</td>
                   <td className="px-5 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {ticket.status === 'open' && (
@@ -547,6 +542,7 @@ export const ClientEscalations: React.FC = () => {
           </div>
         </div>
       )}
+      <DisclaimerFooter />
     </div>
   );
 };

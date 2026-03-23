@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GlassCard } from '../components/shared';
-// StatusBadge from composed available for future migration of fleet-specific status badges
+// FleetStatusBadge from composed available for future migration of fleet-specific status badges
 import { fleetUpdatesApi, type FleetRelease, type FleetRollout, type FleetStats, type FleetOrder } from '../utils/api';
 import { formatTimeAgo } from '../constants';
 
-// Local FleetStatusBadge preserves the fleet-specific color scheme
-const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
+// Local FleetFleetStatusBadge preserves the fleet-specific color scheme
+const FleetStatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const colors: Record<string, string> = {
     active: 'bg-accent-primary text-white',
     in_progress: 'bg-accent-primary text-white',
@@ -263,7 +263,7 @@ export const FleetUpdates: React.FC = () => {
                 <div key={order.id} className="p-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <StatusBadge status={order.status} />
+                      <FleetStatusBadge status={order.status} />
                       <span className="font-medium text-label-primary">
                         {ORDER_TYPE_LABELS[order.order_type] || order.order_type}
                       </span>
@@ -362,7 +362,7 @@ export const FleetUpdates: React.FC = () => {
                         {ORDER_TYPE_LABELS[order.order_type] || order.order_type}
                       </td>
                       <td className="px-4 py-3">
-                        <StatusBadge status={order.status} />
+                        <FleetStatusBadge status={order.status} />
                       </td>
                       <td className="px-4 py-3 text-label-secondary font-mono text-sm">
                         {params.version || '-'}
@@ -398,7 +398,7 @@ export const FleetUpdates: React.FC = () => {
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <span className="font-medium text-label-primary">{rollout.name || rollout.version}</span>
-                  <span className="ml-2"><StatusBadge status={rollout.status} /></span>
+                  <span className="ml-2"><FleetStatusBadge status={rollout.status} /></span>
                 </div>
                 <div className="flex gap-2">
                   {rollout.status === 'in_progress' && (
@@ -568,7 +568,7 @@ export const FleetUpdates: React.FC = () => {
             <div key={rollout.id} className="flex items-center justify-between px-4 py-3 border-b border-separator last:border-0">
               <div>
                 <span className="font-medium text-label-primary">{rollout.name || rollout.version}</span>
-                <span className="ml-2"><StatusBadge status={rollout.status} /></span>
+                <span className="ml-2"><FleetStatusBadge status={rollout.status} /></span>
                 <div className="text-sm text-label-tertiary">
                   {rollout.completed_at ? new Date(rollout.completed_at).toLocaleString() : '-'}
                 </div>

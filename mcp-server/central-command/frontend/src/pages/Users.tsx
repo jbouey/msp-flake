@@ -50,7 +50,7 @@ const RoleBadge: React.FC<{ role: string }> = ({ role }) => {
 /**
  * Status badge component
  */
-const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
+const UserStatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const variants: Record<string, 'default' | 'success' | 'warning' | 'error'> = {
     active: 'success',
     disabled: 'error',
@@ -104,7 +104,7 @@ const UserRow: React.FC<{
       </td>
       <td className="px-4 py-3 text-sm text-label-secondary">{user.email || '-'}</td>
       <td className="px-4 py-3"><RoleBadge role={user.role} /></td>
-      <td className="px-4 py-3"><StatusBadge status={user.status} /></td>
+      <td className="px-4 py-3"><UserStatusBadge status={user.status} /></td>
       <td className="px-4 py-3 text-sm text-label-tertiary">{formatDate(user.last_login)}</td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
@@ -164,7 +164,7 @@ const InviteRow: React.FC<{
       </td>
       <td className="px-4 py-3"><RoleBadge role={invite.role} /></td>
       <td className="px-4 py-3">
-        <StatusBadge status={isExpired ? 'expired' : invite.status} />
+        <UserStatusBadge status={isExpired ? 'expired' : invite.status} />
       </td>
       <td className="px-4 py-3 text-sm text-label-tertiary">
         {invite.invited_by_name || 'Unknown'}
@@ -1271,7 +1271,7 @@ const AllAccountsTab: React.FC = () => {
                     <td className="px-4 py-3"><AccountTypeBadge type={acct.account_type} /></td>
                     <td className="px-4 py-3 text-sm text-label-secondary">{acct.org}</td>
                     <td className="px-4 py-3"><RoleBadge role={acct.role} /></td>
-                    <td className="px-4 py-3"><StatusBadge status={acct.status} /></td>
+                    <td className="px-4 py-3"><UserStatusBadge status={acct.status} /></td>
                     <td className="px-4 py-3">
                       {acct.mfa_enabled ? (
                         <span className="text-health-healthy text-sm">Enabled</span>

@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import { IncidentList } from './components';
 import { InfoTip } from '../components/shared';
-import { DISCLAIMERS } from '../constants';
+import { DISCLAIMERS, BRANDING } from '../constants';
+import { DisclaimerFooter } from '../components/composed';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -592,16 +593,12 @@ export const PortalScorecard: React.FC = () => {
         {/* Footer */}
         <footer className="mt-8 pt-6 border-t border-slate-200 text-center">
           <p className="text-xs text-slate-400 max-w-2xl mx-auto">
-            This scorecard is generated from real-time compliance monitoring data. Evidence bundles are
-            cryptographically signed and hash-chained. Bitcoin blockchain anchors provide independent,
-            immutable timestamp anchoring that independently verifies evidence generation time. For questions, contact your compliance administrator.
+            {DISCLAIMERS.evidence_chain}
           </p>
-          <p className="text-[10px] text-label-tertiary text-center mt-8 max-w-2xl mx-auto leading-relaxed">
-            {DISCLAIMERS.footer}
-          </p>
+          <DisclaimerFooter />
           <div className="mt-4 flex items-center justify-center gap-2">
             <span className="text-xs text-slate-300">Powered by</span>
-            <span className="text-sm font-semibold text-slate-500">OsirisCare</span>
+            <span className="text-sm font-semibold text-slate-500">{BRANDING.name}</span>
           </div>
         </footer>
       </main>

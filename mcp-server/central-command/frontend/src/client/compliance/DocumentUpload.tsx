@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { formatTimeAgo, formatBytes } from '../../constants';
 
 interface Document {
   id: string;
@@ -22,23 +23,6 @@ const ALLOWED_EXTENSIONS = ['pdf', 'doc', 'docx'];
 const MAX_SIZE = 25 * 1024 * 1024;
 const DEFAULT_MAX_DOCS = 3;
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
 
 function mimeIcon(mime: string): string {
   if (mime.includes('pdf')) return 'M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z';
@@ -280,7 +264,7 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-slate-900 truncate">{doc.file_name}</p>
                 <p className="text-xs text-slate-400">
-                  {formatBytes(doc.size_bytes)} &middot; {relativeTime(doc.created_at)}
+                  {formatBytes(doc.size_bytes)} &middot; {formatTimeAgo(doc.created_at)}
                   {doc.description && <> &middot; {doc.description}</>}
                   {doc.uploaded_by_email && <> &middot; {doc.uploaded_by_email}</>}
                 </p>
