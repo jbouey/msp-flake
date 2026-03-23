@@ -544,7 +544,7 @@ async def list_sites(
             LEFT JOIN sites s ON s.site_id = sa.site_id
             LEFT JOIN client_orgs co ON co.id = s.client_org_id
         """
-        where_clauses = []
+        where_clauses = ["COALESCE(s.status, 'pending') != 'inactive'"]
         args = []
         arg_idx = 1
 
