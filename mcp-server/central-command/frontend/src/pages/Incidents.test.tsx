@@ -5,11 +5,12 @@ import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WebSocketContext } from '../hooks/useWebSocket';
+import { ToastProvider } from '../components/shared';
 
 // Mock the API module — must match the full shape used by hooks
 vi.mock('../utils/api', () => ({
   fleetApi: { getFleet: vi.fn(), getClient: vi.fn() },
-  incidentApi: { getIncidents: vi.fn(), getEvents: vi.fn() },
+  incidentApi: { getIncidents: vi.fn(), getEvents: vi.fn(), getIncident: vi.fn(), resolve: vi.fn(), escalate: vi.fn(), suppress: vi.fn() },
   statsApi: { getGlobalStats: vi.fn() },
   learningApi: { getStatus: vi.fn(), getCandidates: vi.fn(), getCoverageGaps: vi.fn(), getHistory: vi.fn(), promote: vi.fn(), reject: vi.fn() },
   runbookApi: { getRunbooks: vi.fn(), getRunbook: vi.fn(), getExecutions: vi.fn() },
@@ -51,7 +52,9 @@ function createWrapper() {
       React.createElement(
         WebSocketContext.Provider,
         { value: { connected: false } },
-        React.createElement(QueryClientProvider, { client: queryClient }, children)
+        React.createElement(QueryClientProvider, { client: queryClient },
+          React.createElement(ToastProvider, null, children)
+        )
       )
     );
 }
