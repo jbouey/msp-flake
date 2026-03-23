@@ -807,6 +807,13 @@ export const SiteDevices: React.FC = () => {
       {/* Summary */}
       {summary && <SummaryCard summary={summary} />}
 
+      {/* Stale credential warning */}
+      {summary && (summary.stale_credentials_count ?? 0) > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-2 mb-4 text-sm text-amber-400">
+          {summary.stale_credentials_count} credential{(summary.stale_credentials_count ?? 0) > 1 ? 's' : ''} older than 90 days — consider rotating
+        </div>
+      )}
+
       {/* Protected network devices */}
       <DeviceTable
         devices={devices}

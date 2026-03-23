@@ -17,6 +17,7 @@ from enum import Enum
 from .fleet import get_pool
 from .auth import require_auth, require_operator, require_admin
 from .tenant_middleware import tenant_connection, admin_connection
+from .credential_crypto import encrypt_credential, decrypt_credential
 from .websocket_manager import broadcast_event
 from .fleet_updates import get_fleet_orders_for_appliance, record_fleet_order_completion
 from .order_signing import sign_admin_order
@@ -692,9 +693,17 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
         """, site_id)
 
         credentials = []
+        stale_credentials_count = 0
         for cred in cred_rows:
             try:
-                cred_data = json.loads(cred['encrypted_data']) if cred['encrypted_data'] else {}
+                cred_data = json.loads(decrypt_credential(cred['encrypted_data'])) if cred['encrypted_data'] else {}
+                # Flag credentials older than 90 days as stale
+                is_stale = False
+                if cred['created_at']:
+                    age_days = (datetime.now(timezone.utc) - cred['created_at'].replace(tzinfo=timezone.utc)).days
+                    if age_days > 90:
+                        is_stale = True
+                        stale_credentials_count += 1
                 credentials.append({
                     'id': str(cred['id']),
                     'credential_type': cred['credential_type'],
@@ -703,6 +712,7 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
                     'username': cred_data.get('username', ''),
                     'domain': cred_data.get('domain', ''),
                     'created_at': cred['created_at'].isoformat() if cred['created_at'] else None,
+                    'is_stale': is_stale,
                     # NOTE: password intentionally NOT returned
                 })
             except (json.JSONDecodeError, TypeError):
@@ -770,6 +780,7 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
             'org_name': site_row['org_name'] if site_row else None,
             'appliances': appliances,
             'credentials': credentials,
+            'stale_credentials_count': stale_credentials_count,
         }
 
 
@@ -816,7 +827,7 @@ async def add_credential(site_id: str, cred: CredentialCreate, user: dict = Depe
                 INSERT INTO site_credentials (site_id, credential_type, credential_name, encrypted_data)
                 VALUES ($1, $2, $3, $4)
                 RETURNING id, created_at
-            """, site_id, cred.credential_type, cred.credential_name, cred_data.encode())
+            """, site_id, cred.credential_type, cred.credential_name, encrypt_credential(cred_data))
 
             return {
                 'id': str(row['id']),
@@ -926,7 +937,7 @@ async def _add_manual_device(pool, site_id: str, device: ManualDeviceAdd) -> dic
                 INSERT INTO site_credentials (site_id, credential_type, credential_name, encrypted_data)
                 VALUES ($1, $2, $3, $4)
                 RETURNING id, created_at
-            """, site_id, cred_type, cred_name, cred_data.encode())
+            """, site_id, cred_type, cred_name, encrypt_credential(cred_data))
 
             credential_id = str(row['id'])
 
@@ -1050,7 +1061,7 @@ async def _add_network_device(pool, site_id: str, device: NetworkDeviceAdd) -> d
                 INSERT INTO site_credentials (site_id, credential_type, credential_name, encrypted_data)
                 VALUES ($1, $2, $3, $4)
                 RETURNING id, created_at
-            """, site_id, cred_type, cred_name, cred_data.encode())
+            """, site_id, cred_type, cred_name, encrypt_credential(cred_data))
 
             credential_id = str(row['id'])
 
@@ -1977,14 +1988,14 @@ async def submit_domain_credentials(
             INSERT INTO site_credentials (
                 site_id, credential_type, credential_name, encrypted_data,
                 created_at
-            ) VALUES ($1, $2, $3, $4::jsonb, $5)
-            ON CONFLICT (site_id, credential_type, credential_name) 
-            DO UPDATE SET encrypted_data = $4::jsonb, updated_at = $5
+            ) VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (site_id, credential_type, credential_name)
+            DO UPDATE SET encrypted_data = $4, updated_at = $5
         """,
             site_id,
             creds.credential_type,
             f"domain_{creds.domain_name}",
-            json.dumps(credential_data),
+            encrypt_credential(json.dumps(credential_data)),
             now,
         )
 
@@ -2142,12 +2153,9 @@ async def get_domain_credentials(site_id: str, user: dict = Depends(require_oper
 
         if not cred or not cred['encrypted_data']:
             return None
-        
-        # Return credentials (should be decrypted in production)
-        cred_data = cred['encrypted_data']
-        if isinstance(cred_data, str):
-            cred_data = json.loads(cred_data)
-        
+
+        cred_data = json.loads(decrypt_credential(cred['encrypted_data']))
+
         return {
             "username": cred_data.get('username', ''),
             "password": cred_data.get('password', ''),
@@ -2670,10 +2678,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                     if cred['encrypted_data']:
                         try:
                             raw = cred['encrypted_data']
-                            # encrypted_data is bytea — decode if needed
-                            if isinstance(raw, (bytes, bytearray)):
-                                raw = raw.decode('utf-8')
-                            cred_data = json.loads(raw)
+                            # Decrypt (handles both Fernet-encrypted and legacy plaintext)
+                            cred_data = json.loads(decrypt_credential(raw))
                             hostname = cred_data.get('host') or cred_data.get('target_host')
                             username = cred_data.get('username', '')
                             password = cred_data.get('password', '')
@@ -2712,9 +2718,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                     if cred['encrypted_data']:
                         try:
                             raw = cred['encrypted_data']
-                            if isinstance(raw, (bytes, bytearray)):
-                                raw = raw.decode('utf-8')
-                            cred_data = json.loads(raw)
+                            # Decrypt (handles both Fernet-encrypted and legacy plaintext)
+                            cred_data = json.loads(decrypt_credential(raw))
                             hostname = cred_data.get('host') or cred_data.get('target_host')
                             target_entry = {
                                 "hostname": hostname,
@@ -2882,11 +2887,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
 
             for row in pending_rows:
                 try:
-                    import json as _json
                     raw = row["encrypted_data"]
-                    if isinstance(raw, (bytes, bytearray)):
-                        raw = raw.decode("utf-8")
-                    cred_data = _json.loads(raw)
+                    # Decrypt (handles both Fernet-encrypted and legacy plaintext)
+                    cred_data = json.loads(decrypt_credential(raw))
                     os_name = row["os_name"] or "linux"
                     pending_deploys.append({
                         "device_id": row["local_device_id"],

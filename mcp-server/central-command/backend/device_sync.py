@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
 from .oui_lookup import get_manufacturer_hint
+from .credential_crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
 
@@ -454,9 +455,7 @@ async def get_site_devices(
             raw = c["encrypted_data"]
             if raw:
                 try:
-                    if isinstance(raw, (bytes, bytearray)):
-                        raw = raw.decode("utf-8")
-                    cd = json.loads(raw)
+                    cd = json.loads(decrypt_credential(raw))
                     host = cd.get("host") or cd.get("target_host")
                     if host:
                         cred_hosts.setdefault(host, []).append(c["credential_type"])
@@ -698,6 +697,14 @@ async def get_site_device_summary(site_id: str) -> dict:
             site_id,
         ) or 0
 
+        # Stale credentials: created more than 90 days ago
+        stale_creds_count = await conn.fetchval("""
+            SELECT COUNT(*)
+            FROM site_credentials
+            WHERE site_id = $1
+            AND created_at < NOW() - INTERVAL '90 days'
+        """, site_id) or 0
+
         # Network coverage score: devices with agent_active / total non-ignored devices
         coverage_row = await conn.fetchrow("""
             SELECT
@@ -737,6 +744,7 @@ async def get_site_device_summary(site_id: str) -> dict:
         },
         "network_coverage_pct": network_coverage_pct,
         "unmanaged_device_count": unmanaged_count,
+        "stale_credentials_count": stale_creds_count,
     }
 
 

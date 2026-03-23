@@ -1636,6 +1636,7 @@ export interface SiteDeviceSummary {
   };
   network_coverage_pct?: number;
   unmanaged_device_count?: number;
+  stale_credentials_count?: number;
 }
 
 export const devicesApi = {
