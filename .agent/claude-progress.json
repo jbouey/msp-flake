@@ -1,6 +1,6 @@
 {
   "session": 183,
-  "updated": "2026-03-22T16:11:53.408523Z",
+  "updated": "2026-03-23T00:21:52.262091Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -27,9 +27,18 @@
     "l4_escalation": "partner_escalate_to_l4_admin_queue_recurrence_detection_migration_077",
     "portal_auth": "email_password_login_all_portals_totp_2fa_all_portals_security_hardened",
     "macos_scanning": "scan_timer_fixed_wol_added_credential_delivery_fixed_pending_tls_pin_clear",
-    "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api"
+    "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
+    "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "None. All systems operational. v0.3.26 deployed. 3 Go agents live (NVDC01, NVWS01, iMac). Push-first architecture production.",
+  "current_blocker": "None. All systems operational. Auto-discovery + auto-deploy system implemented (Phase 1-3). Pending: daemon rebuild + deploy to test on live appliance.",
+  "auto_discovery_system": {
+    "phase1_core": "complete — probing, auto-deploy, Take Over UI, rogue alerting, lifecycle state machine",
+    "phase2_reliability": "complete — self-healing, staggered deploy, pre-flight checks",
+    "phase3_polish": "complete — SSSD detection, topology, coverage score, remote uninstall, credential encryption",
+    "new_go_files": ["probes.go", "classify.go", "deploy_ssh.go", "lifecycle.go", "selfheal.go", "preflight.go", "topology.go"],
+    "migration": "096_device_discovery_autodeploy.sql",
+    "commits": 22
+  },
   "architecture_decision": {
     "approach": "Golden flake + nixos-install",
     "rationale": "DD disk images cause hardware-specific failures (ESP timeouts, firmware mismatches). nixos-install from flake works on any x86_64 hardware.",
@@ -172,6 +181,16 @@
     "agent/packaging/linux/osiriscare-agent.service systemd unit",
     "OpenClaw DNS fixed (Cloudflare proxied \u2192 DNS only for Caddy auto-TLS)",
     "OpenClaw workspace files downloaded to ~/Downloads/openclaw-workspace/",
-    "Claude Code workspace setup prompt for daughter"
+    "Claude Code workspace setup prompt for daughter",
+    "L2 guardrails fix: execute_runbook + configure_screen_lock added to allowlist",
+    "Fleet sidebar hides inactive/decommissioned sites",
+    "Stale workstation cleanup: dedup IP-only entries, expire 7d/30d, Go agent sync to workstations table",
+    "Agent sends ALL check results (pass+fail) for accurate compliance percentage",
+    "Go agent compliance data across all portals: partner sites/orgs, client dashboard/sites, admin fleet/health",
+    "Compliance health scoring blends Go agent data with bundle data (weighted average)",
+    "Dashboard drift checks: dynamic count from DB instead of hardcoded 6",
+    "GlobalStats: active_drift_checks + total_go_agents fields",
+    "Stale incidents resolved for deprecated VM site",
+    "OpenClaw gateway restarted after self-update crash"
   ]
 }

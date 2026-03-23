@@ -1,9 +1,9 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-02-07 (Session 99)
-**Agent Version:** v1.0.57
+**Last Updated:** 2026-03-22 (Session 183)
+**Go Daemon:** v0.3.26 (appliance) | Go Agents on NVDC01, NVWS01, iMac
 **ISO Version:** installer-v8-dialog-tui (deployed to physical appliance)
-**Go Agent:** Deployed to all 3 VMs (DC, WS, SRV), gRPC verified working, 24 tests
+**Python Agent:** Deprecated — Go daemon is production agent
 
 ## Overview
 
@@ -87,18 +87,18 @@
 
 ## Lab Network (North Valley Clinic Test)
 
-**Updated:** Session 41 (2026-01-16)
+**Updated:** Session 183 (2026-03-22)
 
 ```
 192.168.88.0/24 - North Valley Lab Network (iMac VirtualBox host)
 ├── 192.168.88.1   - Gateway/Router (MikroTik)
-├── 192.168.88.50  - iMac (VirtualBox host) - jrelly@
-├── 192.168.88.244 - NVSRV01 (Windows Server 2022 Core, domain member)
-├── 192.168.88.246 - osiriscare-appliance (HP T640 Physical)
-├── 192.168.88.247 - osiriscare-appliance-vm (VirtualBox, test-appliance-lab)
-├── 192.168.88.250 - NVDC01 (Windows Server 2019 DC)
-└── 192.168.88.251 - NVWS01 (Windows 10 Workstation)
+├── 192.168.88.50  - iMac (VirtualBox host, Go Agent) - jrelly@
+├── 192.168.88.241 - osiriscare-appliance (HP T640 Physical, Go Daemon v0.3.26)
+├── 192.168.88.250 - NVDC01 (Windows Server 2019 DC, Go Agent)
+└── 192.168.88.251 - NVWS01 (Windows 10 Workstation, Go Agent)
 ```
+
+**Deprecated:** VM appliance (.254) decommissioned Session 183. NVSRV01 (.244) inactive.
 
 ### AD Domain
 
@@ -117,32 +117,44 @@ The physical appliance at 192.168.88.246 uses svc.monitoring to:
 
 ---
 
-## Go Agent Architecture (Workstation Scale)
+## Go Agent Architecture (Push-First)
 
-Go Agents provide lightweight, push-based compliance monitoring for Windows workstations.
+Go Agents provide lightweight, push-based compliance monitoring across Windows, macOS, and Linux.
 
-### Problem
-WinRM polling limits scalability to ~15 workstations per appliance due to connection overhead.
+### Architecture
 
-### Solution
-Go Agents use gRPC to push compliance data directly to the appliance, enabling 25-50 workstations per site.
+Two tiers of Go binaries:
+1. **Go Daemon** (`appliance-daemon`) — runs on NixOS appliance, manages site-level scanning, WinRM fallback, fleet orders, healing pipeline
+2. **Go Agents** (`osiris-agent`) — lightweight per-host agents that push compliance data directly to Central Command via HTTPS
 
 ```
-Windows Workstations                  NixOS Appliance
-┌─────────────────┐                  ┌─────────────────────┐
-│  Go Agent       │     gRPC        │  Python Agent       │
-│  osiris-agent.  │────────────────>│  - gRPC Server      │
-│  exe            │     :50051      │  - Sensor API :8080 │
-├─────────────────┤                 │  - Three-tier heal  │
-│  6 WMI Checks   │                 └─────────────────────┘
-│  SQLite Queue   │                          │
-│  RMM Detection  │                          │ HTTPS
-└─────────────────┘                          ▼
-                                    ┌─────────────────────┐
-                                    │  Central Command    │
-                                    │  api.osiriscare.net │
-                                    └─────────────────────┘
+Go Agents (per-host)                 NixOS Appliance (Go Daemon v0.3.26)
+┌─────────────────┐                  ┌─────────────────────────────┐
+│  osiris-agent   │    HTTPS         │  appliance-daemon           │
+│  (Win/Mac/Linux)│───────────────>  │  - Checkin + phone-home     │
+├─────────────────┤  Push checks     │  - WinRM fallback scanning  │
+│  6 WMI Checks   │  to Central      │  - Fleet order execution    │
+│  SQLite Queue   │  Command         │  - L1/L2/L3 healing         │
+│  RMM Detection  │                  │  - Evidence chain           │
+└─────────────────┘                  │  - AD discovery + WoL       │
+                                     └──────────────┬──────────────┘
+                                                    │ HTTPS
+                                                    ▼
+                                     ┌─────────────────────────────┐
+                                     │  Central Command            │
+                                     │  api.osiriscare.net         │
+                                     │  (go_agents table tracks    │
+                                     │   per-host compliance data) │
+                                     └─────────────────────────────┘
 ```
+
+### Deployed Go Agents
+
+| Host | Agent ID | Platform | Deploy Method |
+|------|----------|----------|---------------|
+| NVDC01 (.250) | go-NVDC01-c2a2b3d8 | Windows Server 2019 | Fleet order (configure_workstation_agent) |
+| NVWS01 (.251) | go-NVWS01-b2c70cd6 | Windows 10 | Fleet order (configure_workstation_agent) |
+| iMac (.50) | go-MaCs-iMac.local-9235ea2c | macOS 11.7 | SSH + launchd daemon |
 
 ### Go Agent Checks
 
@@ -175,21 +187,14 @@ Windows Workstations                  NixOS Appliance
 
 ### Current Status
 
-- **Binary:** Built locally (`osiris-agent.exe`, 16.6 MB)
-- **gRPC Port:** Configured in ISO v37 (port 50051)
-- **gRPC Implementation:** COMPLETE (Session 45)
-  - Python server: `ComplianceAgentServicer` inherits from generated servicer
-  - Go client: Uses `pb.NewComplianceAgentClient` with generated types
-  - 5 RPC methods: Register, ReportDrift (streaming), ReportHealing, Heartbeat, ReportRMMStatus
-- **Registry Queries:** COMPLETE (Session 47)
-  - `GetRegistryDWORD()`, `GetRegistryString()`, `RegistryKeyExists()` via WMI StdRegProv
-  - Windows implementation using COM/OLE (go-ole library)
-  - Non-Windows stubs for cross-platform builds
-- **Offline Queue:** SQLite with WAL mode
-  - MaxSize: 10,000 events (configurable)
-  - MaxAge: 7 days (auto-prune)
-  - QueueStats for monitoring
-- **Tests:** 24 tests (checks, transport, wmi packages)
+- **Daemon:** v0.3.26, Go, 17 test packages passing
+- **Agent:** Cross-platform (Windows .exe, macOS/Linux binary), Go 1.22+ compat
+- **Push-first scanning:** Daemon skips WinRM for hosts with active Go agents
+- **Fleet orders:** Ed25519-signed, auto-recovery on failure, configure_workstation_agent lifecycle
+- **Offline queue:** SQLite WAL, 10K events max, 7-day auto-prune
+- **WinRM fallback:** 3-tier (DC admin → DC proxy → local admin direct)
+- **macOS scanning:** 14 checks (FileVault, Gatekeeper, SIP, Firewall, etc.)
+- **Windows Event Logs:** 22 HIPAA-relevant event IDs, on-prem only
 
 ---
 
@@ -197,25 +202,27 @@ Windows Workstations                  NixOS Appliance
 
 ```
 MSP-PLATFORM/
+├── appliance/
+│   └── appliance-daemon/     # Go daemon (production agent)
+│       ├── cmd/daemon/       # Main entry point
+│       ├── internal/         # Scanning, healing, fleet, WinRM
+│       └── Makefile          # Build for linux/darwin/windows
+├── agent/                    # Go per-host agent (osiris-agent)
+│   ├── osiris-agent/         # Agent source
+│   └── packaging/            # Deploy scripts, systemd/launchd units
 ├── packages/
-│   └── compliance-agent/     # Python agent (main work area)
-│       ├── src/compliance_agent/
-│       ├── tests/
-│       └── venv/
+│   └── compliance-agent/     # Python agent (DEPRECATED)
 ├── modules/                  # NixOS modules
 │   └── compliance-agent.nix
-├── mcp-server/              # Central MCP server
-│   ├── central-command/     # Dashboard & API
-│   │   ├── backend/         # FastAPI (Python)
-│   │   └── frontend/        # React + Vite
+├── mcp-server/              # Central Command
+│   ├── central-command/     # Dashboard frontend (React + Vite)
 │   ├── app/                 # Production Docker app
 │   │   ├── main.py          # FastAPI application
-│   │   └── dashboard_api/   # Sites, phone-home, etc.
+│   │   └── dashboard_api/   # Routes, models, services
 │   ├── docker-compose.yml   # Production stack
 │   └── Caddyfile            # Reverse proxy config
+├── iso/                     # Appliance ISO + disk image configs
 ├── terraform/               # Infrastructure as Code
-│   ├── modules/
-│   └── clients/
 └── docs/                    # This directory
 ```
 

@@ -64,37 +64,40 @@ mcp-server/
 
 ## Current Implementation Status
 
-**Phase:** Phase 13 - Zero-Touch Update System
-**Agent Version:** v1.0.57
+**Phase:** Production — Push-First Architecture
+**Go Daemon:** v0.3.26 (appliance) | 3 Go Agents deployed (NVDC01, NVWS01, iMac)
 **ISO Version:** installer-v8-dialog-tui (deployed to physical appliance)
+**Updated:** 2026-03-22 (Session 183)
 
 **Deliverables:**
 - ✅ NixOS Compliance Agent - Production flake with 27 options
 - ✅ Pull-Only Architecture - No listening sockets, outbound mTLS
-- ✅ Dual Deployment Modes - Reseller and direct with toggles
-- ✅ 10 Guardrails Locked - All safety controls implemented
-- ✅ VM Integration Tests - 7 test cases
-- ✅ Agent Core - Full implementation with three-tier healing
-- ✅ Tiered Remediation - L1/L2/L3 remediation operational
-- ✅ A/B Partition Updates - Health gate, GRUB config, auto-rollback
-- ✅ Fleet Updates UI - Release management, staged rollouts
-- ✅ Go Agent - Deployed to all 3 Windows VMs (DC, WS, SRV)
-- ✅ Partner Portal - OAuth authentication, domain whitelisting
-- ✅ Learning System - Data flywheel operational
+- ✅ Go Daemon - Production agent (replaced Python agent), full L1/L2/L3 healing
+- ✅ Go Agents - Push-first per-host compliance (Windows, macOS, Linux)
+- ✅ Fleet Orders - Ed25519-signed, auto-recovery, configure_workstation_agent lifecycle
+- ✅ Three-Tier Healing - L1 deterministic (112 rules) → L2 LLM → L3 human → L4 admin
+- ✅ Partner Portal - OAuth + email/password + TOTP 2FA
+- ✅ Client Portal - Email/password + magic link + TOTP 2FA
+- ✅ Learning System - Data flywheel with post-promotion monitoring + rollback
+- ✅ Evidence Pipeline - WORM storage, OTS proofs (2705 anchored), compliance packets
+- ✅ WinRM + macOS Scanning - 3-tier WinRM fallback, 14 macOS checks, event log analysis
+- ✅ Site Decommission - Export + deactivate + audit trail + frontend modal
+- ✅ Org Consolidation - Health endpoint, PHI boundary, partner org view
+- ✅ RLS Tenant Isolation - 28 tables, GUC-based, PgBouncer transaction pooling
+- ✅ Prometheus Metrics - /metrics endpoint with 7 gauges/counters
 
 **Key Files:**
-- `flake-compliance.nix` - Main flake (production)
-- `modules/compliance-agent.nix` - NixOS module (546 lines, 27 options)
-- `packages/compliance-agent/` - Agent implementation (834 tests)
-- `agent/` - Go agent for Windows workstations (24 tests)
-- `iso/` - Appliance ISO build configs
-- `mcp-server/central-command/` - Dashboard and API
+- `appliance/appliance-daemon/` - Go daemon (production agent)
+- `agent/osiris-agent/` - Go per-host agent
+- `iso/appliance-disk-image.nix` - Installed system config (what nixos-rebuild uses)
+- `mcp-server/app/main.py` - FastAPI application entry point
+- `mcp-server/app/dashboard_api/` - Routes, models, services
 
-**Current Milestone:** Phase 13 Zero-Touch Updates
-- ✅ A/B partition system implemented
-- ✅ Fleet Updates UI deployed
-- ⏳ Test remote ISO update via Fleet Updates
-- ⏳ Test partner OAuth domain whitelisting
+**Next Priorities:**
+- First paying pilot client onboarding
+- Compliance packet PDF generation improvements
+- Partner white-label customization
+- Multi-site fleet scaling (5+ sites)
 
 ## Quick Checklist: This Week
 
