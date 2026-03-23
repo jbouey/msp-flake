@@ -97,9 +97,11 @@ else
     file_sharing="off"
 fi
 
-# 9. Time Machine — last backup recency
+# 9. Time Machine — last backup recency + disk accessibility + integrity
 tm_status="unknown"
 tm_last_epoch=0
+tm_disk_accessible="unknown"
+tm_integrity="not_tested"
 tm_last=$(tmutil latestbackup 2>/dev/null)
 if [ -n "$tm_last" ] && [ "$tm_last" != "" ]; then
     # Extract date from backup path (format: /path/YYYY-MM-DD-HHMMSS)
@@ -122,9 +124,47 @@ if [ -n "$tm_last" ] && [ "$tm_last" != "" ]; then
     else
         tm_status="current"
     fi
+
+    # Check if backup disk is accessible (verify the backup path exists and is readable)
+    if [ -d "$tm_last" ]; then
+        tm_disk_accessible="yes"
+    else
+        # Try to check the destination info via tmutil
+        tm_dest=$(tmutil destinationinfo 2>/dev/null)
+        if echo "$tm_dest" | grep -q "Mount Point"; then
+            mount_point=$(echo "$tm_dest" | grep "Mount Point" | head -1 | sed 's/.*: //')
+            if [ -d "$mount_point" ]; then
+                tm_disk_accessible="yes"
+            else
+                tm_disk_accessible="unmounted"
+            fi
+        else
+            tm_disk_accessible="no_destination"
+        fi
+    fi
+
+    # Quick integrity check via tmutil verifychecksum (if available, runs fast on latest only)
+    if command -v tmutil >/dev/null 2>&1 && [ "$tm_disk_accessible" = "yes" ]; then
+        # verifychecksum is only available on macOS 12.3+, non-blocking quick check
+        tm_verify=$(tmutil verifychecksum "$tm_last" 2>&1)
+        if [ $? -eq 0 ]; then
+            tm_integrity="passed"
+        elif echo "$tm_verify" | grep -qi "not recognized\|unknown\|invalid"; then
+            tm_integrity="not_available"
+        else
+            tm_integrity="failed"
+        fi
+    fi
 else
     # No backup found
     tm_status="no_backup"
+    # Still check if a TM destination is configured
+    tm_dest=$(tmutil destinationinfo 2>/dev/null)
+    if echo "$tm_dest" | grep -q "Mount Point"; then
+        tm_disk_accessible="yes_but_no_backup"
+    else
+        tm_disk_accessible="no_destination"
+    fi
 fi
 
 # 10. NTP
@@ -205,6 +245,8 @@ print(json.dumps({
     'remote_login': '$remote_login',
     'file_sharing': '$file_sharing',
     'time_machine': '$tm_status',
+    'tm_disk_accessible': '$tm_disk_accessible',
+    'tm_integrity': '$tm_integrity',
     'ntp': '$ntp_status',
     'open_ports': '$open_ports_list',
     'open_port_count': $open_port_count,
@@ -227,8 +269,10 @@ type macosScanState struct {
 	ScreenLockDelay int    `json:"screen_lock_delay"`
 	RemoteLogin     string `json:"remote_login"`
 	FileSharing     string `json:"file_sharing"`
-	TimeMachine     string `json:"time_machine"`
-	NTP             string `json:"ntp"`
+	TimeMachine       string `json:"time_machine"`
+	TMDiskAccessible  string `json:"tm_disk_accessible"`
+	TMIntegrity       string `json:"tm_integrity"`
+	NTP               string `json:"ntp"`
 	OpenPorts       string `json:"open_ports"`
 	OpenPortCount   int    `json:"open_port_count"`
 	AdminUsers      string `json:"admin_users"`
@@ -443,7 +487,7 @@ func (ds *driftScanner) parseMacOSFindings(output, hostname string) []driftFindi
 		})
 	}
 
-	// 9. Time Machine — stale backup (>7 days)
+	// 9. Time Machine — stale backup (>7 days), disk accessibility, integrity
 	if state.TimeMachine == "no_backup" {
 		findings = append(findings, driftFinding{
 			Hostname:     hostname,
@@ -452,6 +496,10 @@ func (ds *driftScanner) parseMacOSFindings(output, hostname string) []driftFindi
 			Actual:       "no_backup",
 			HIPAAControl: "164.308(a)(7)(ii)(A)",
 			Severity:     "medium",
+			Details: map[string]string{
+				"disk_accessible": state.TMDiskAccessible,
+				"integrity":       state.TMIntegrity,
+			},
 		})
 	} else if strings.HasPrefix(state.TimeMachine, "stale_") {
 		findings = append(findings, driftFinding{
@@ -461,6 +509,40 @@ func (ds *driftScanner) parseMacOSFindings(output, hostname string) []driftFindi
 			Actual:       state.TimeMachine,
 			HIPAAControl: "164.308(a)(7)(ii)(A)",
 			Severity:     "medium",
+			Details: map[string]string{
+				"disk_accessible": state.TMDiskAccessible,
+				"integrity":       state.TMIntegrity,
+			},
+		})
+	}
+
+	// 9b. Time Machine backup disk not accessible
+	if state.TMDiskAccessible == "unmounted" || state.TMDiskAccessible == "no_destination" {
+		findings = append(findings, driftFinding{
+			Hostname:     hostname,
+			CheckType:    "macos_time_machine",
+			Expected:     "backup_disk_accessible",
+			Actual:       fmt.Sprintf("disk_%s", state.TMDiskAccessible),
+			HIPAAControl: "164.308(a)(7)(ii)(A)",
+			Severity:     "high",
+			Details: map[string]string{
+				"disk_accessible": state.TMDiskAccessible,
+			},
+		})
+	}
+
+	// 9c. Time Machine integrity check failed
+	if state.TMIntegrity == "failed" {
+		findings = append(findings, driftFinding{
+			Hostname:     hostname,
+			CheckType:    "macos_time_machine",
+			Expected:     "integrity_passed",
+			Actual:       "integrity_failed",
+			HIPAAControl: "164.308(a)(7)(ii)(A)",
+			Severity:     "high",
+			Details: map[string]string{
+				"integrity": state.TMIntegrity,
+			},
 		})
 	}
 

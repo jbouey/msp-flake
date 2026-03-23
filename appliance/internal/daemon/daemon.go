@@ -74,6 +74,9 @@ type Daemon struct {
 	// Drift scanner: periodic security checks on Windows + Linux targets
 	scanner *driftScanner
 
+	// Threat detector: cross-host event correlation (brute force, ransomware indicators)
+	threatDet *threatDetector
+
 	// Network scanner: periodic port/reachability checks
 	netScan *netScanner
 
@@ -243,6 +246,9 @@ func New(cfg *Config) *Daemon {
 
 	// Initialize drift scanner for periodic security checks
 	d.scanner = newDriftScanner(d.svc, d)
+
+	// Initialize threat detector for cross-host event correlation
+	d.threatDet = newThreatDetector(d.svc, d)
 
 	// Override run_drift order stub with real handler that triggers scanner
 	d.orderProc.RegisterHandler("run_drift", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {

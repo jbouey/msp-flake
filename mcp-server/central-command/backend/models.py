@@ -452,6 +452,7 @@ class GlobalStats(BaseModel):
     total_go_agents: int = 0
     l2_resolution_rate: float
     l3_escalation_rate: float
+    active_threats: int = 0
     computed_at: Optional[str] = None
 
 

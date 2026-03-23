@@ -1628,6 +1628,7 @@ async def get_global_stats(db: AsyncSession = Depends(get_db)):
     # Get Go agent stats and drift check count from asyncpg pool
     total_go_agents = 0
     active_drift_checks = 47  # default: all known check types
+    active_threats = 0
     try:
         from .fleet import get_pool
         from .tenant_middleware import admin_connection
@@ -1645,6 +1646,15 @@ async def get_global_stats(db: AsyncSession = Depends(get_db)):
             """)
             if drift_row and drift_row["cnt"] > 0:
                 active_drift_checks = drift_row["cnt"]
+
+            # Count active threats (ransomware/brute force, critical, unresolved)
+            threat_row = await conn.fetchrow("""
+                SELECT COUNT(*) as cnt FROM incidents
+                WHERE check_type IN ('ransomware_indicator', 'brute_force_detected')
+                  AND severity = 'critical'
+                  AND status != 'resolved'
+            """)
+            active_threats = threat_row["cnt"] if threat_row else 0
     except Exception:
         pass
 
@@ -1662,6 +1672,7 @@ async def get_global_stats(db: AsyncSession = Depends(get_db)):
         l3_escalation_rate=stats.get("l3_escalation_rate", 0.0),
         active_drift_checks=active_drift_checks,
         total_go_agents=total_go_agents,
+        active_threats=active_threats,
         computed_at=datetime.now(timezone.utc).isoformat(),
     )
 

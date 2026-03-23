@@ -235,8 +235,19 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 	log.Printf("[driftscan] Scan complete: targets=%d, drifts_found=%d",
 		len(targets), len(allFindings))
 
-	// Collect and analyze compliance-relevant Windows Event Logs (on-prem only)
-	go ds.collectAndAnalyzeDeviceLogs(ctx, targets)
+	// Collect and analyze compliance-relevant Windows Event Logs (on-prem only).
+	// Device logs are also fed into the threat detector for cross-host correlation
+	// (brute force detection, ransomware indicators).
+	go func() {
+		logEntries := ds.collectAndAnalyzeDeviceLogs(ctx, targets)
+		if ds.daemon.threatDet != nil && len(logEntries) > 0 {
+			ds.daemon.threatDet.analyze(ctx, logEntries)
+		}
+		// Run VSS shadow copy check for ransomware detection
+		if ds.daemon.threatDet != nil {
+			ds.daemon.threatDet.analyzeVSS(ctx, targets)
+		}
+	}()
 
 	// Submit evidence bundle to Central Command
 	if ds.daemon.evidenceSubmitter != nil && len(scannedHosts) > 0 {
@@ -339,11 +350,29 @@ $result.RogueTasks = $rogueTasks
 $agent = Get-Service OsirisCareAgent -EA SilentlyContinue
 $result.AgentStatus = if ($agent) { $agent.Status.ToString() } else { "NotInstalled" }
 
-# 8. BitLocker status (system drive)
+# 8. BitLocker status (all volumes)
 $result.BitLocker = "NotAvailable"
+$result.BitLockerVolumes = @()
 try {
-    $bl = Get-BitLockerVolume -MountPoint "C:" -EA Stop
-    $result.BitLocker = $bl.ProtectionStatus.ToString()
+    $allVols = Get-BitLockerVolume -EA Stop
+    if ($allVols) {
+        $volResults = @()
+        foreach ($vol in $allVols) {
+            $volResults += @{
+                MountPoint = $vol.MountPoint
+                ProtectionStatus = $vol.ProtectionStatus.ToString()
+                EncryptionPercentage = $vol.EncryptionPercentage
+            }
+        }
+        $result.BitLockerVolumes = $volResults
+        # Legacy single-value: "On" if ALL volumes protected, else first unprotected status
+        $unprotected = $allVols | Where-Object { $_.ProtectionStatus -ne 'On' -and $_.ProtectionStatus -ne 1 }
+        if ($unprotected) {
+            $result.BitLocker = $unprotected[0].ProtectionStatus.ToString()
+        } else {
+            $result.BitLocker = "On"
+        }
+    }
 } catch {}
 
 # 9. SMB signing
@@ -518,6 +547,71 @@ try {
 } catch {}
 $result.DangerousInboundRules = $dangerousRules
 
+# 25. Backup verification — VSS snapshots + Windows Server Backup + System Restore
+$backup = @{
+    backup_tool = "none"
+    last_backup = ""
+    backup_age_days = -1
+    backup_status = "missing"
+    restore_test = "not_tested"
+    details = ""
+}
+try {
+    # Check VSS shadow copies
+    $vssOutput = vssadmin list shadows 2>$null
+    $vssCount = ($vssOutput | Select-String 'Shadow Copy ID').Count
+    if ($vssCount -gt 0) {
+        $backup.backup_tool = "vss"
+        $backup.backup_status = "current"
+        $backup.details = "$vssCount shadow copies"
+        # Get most recent shadow copy date
+        $dates = $vssOutput | Select-String 'creation time:\s*(.+)' | ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() }
+        if ($dates) {
+            $latest = $dates | Sort-Object -Descending | Select-Object -First 1
+            try {
+                $latestDate = [DateTime]::Parse($latest)
+                $backup.last_backup = $latestDate.ToUniversalTime().ToString('o')
+                $ageDays = [math]::Round(((Get-Date) - $latestDate).TotalDays, 1)
+                $backup.backup_age_days = $ageDays
+                if ($ageDays -gt 7) { $backup.backup_status = "stale" }
+            } catch {}
+        }
+    }
+} catch {}
+
+# Windows Server Backup (if available)
+try {
+    $wbSummary = Get-WBSummary -EA Stop
+    if ($wbSummary) {
+        $backup.backup_tool = "wbadmin"
+        $lastSuccess = $wbSummary.LastSuccessfulBackupTime
+        if ($lastSuccess -and $lastSuccess -ne [DateTime]::MinValue) {
+            $backup.last_backup = $lastSuccess.ToUniversalTime().ToString('o')
+            $ageDays = [math]::Round(((Get-Date) - $lastSuccess).TotalDays, 1)
+            $backup.backup_age_days = $ageDays
+            $backup.backup_status = if ($ageDays -le 7) { "current" } else { "stale" }
+            $backup.details = "Last WSB: $lastSuccess"
+        }
+    }
+} catch {}
+
+# System Restore points (fallback)
+if ($backup.backup_tool -eq "none") {
+    try {
+        $rp = Get-ComputerRestorePoint -EA Stop | Sort-Object SequenceNumber -Descending | Select-Object -First 1
+        if ($rp) {
+            $backup.backup_tool = "system_restore"
+            $rpDate = [Management.ManagementDateTimeConverter]::ToDateTime($rp.CreationTime)
+            $backup.last_backup = $rpDate.ToUniversalTime().ToString('o')
+            $ageDays = [math]::Round(((Get-Date) - $rpDate).TotalDays, 1)
+            $backup.backup_age_days = $ageDays
+            $backup.backup_status = if ($ageDays -le 7) { "current" } else { "stale" }
+            $backup.details = "Restore point: $($rp.Description)"
+        }
+    } catch {}
+}
+$result.BackupVerification = $backup
+
 $result | ConvertTo-Json -Depth 3 -Compress
 `
 
@@ -557,9 +651,14 @@ type windowsScanState struct {
 		Path  string `json:"Path"`
 		State string `json:"State"`
 	} `json:"RogueTasks"`
-	AgentStatus        string            `json:"AgentStatus"`
-	BitLocker          string            `json:"BitLocker"`
-	SMBSigning         string            `json:"SMBSigning"`
+	AgentStatus    string `json:"AgentStatus"`
+	BitLocker      string `json:"BitLocker"`
+	BitLockerVolumes []struct {
+		MountPoint           string `json:"MountPoint"`
+		ProtectionStatus     string `json:"ProtectionStatus"`
+		EncryptionPercentage int    `json:"EncryptionPercentage"`
+	} `json:"BitLockerVolumes"`
+	SMBSigning string `json:"SMBSigning"`
 	SMB1               string            `json:"SMB1"`
 	ScreenLock         string            `json:"ScreenLock"`
 	DefenderExclusions flexStringSlice   `json:"DefenderExclusions"`
@@ -591,6 +690,14 @@ type windowsScanState struct {
 		Port     string `json:"Port"`
 		Protocol string `json:"Protocol"`
 	} `json:"DangerousInboundRules"`
+	BackupVerification struct {
+		BackupTool    string  `json:"backup_tool"`
+		LastBackup    string  `json:"last_backup"`
+		BackupAgeDays float64 `json:"backup_age_days"`
+		BackupStatus  string  `json:"backup_status"`
+		RestoreTest   string  `json:"restore_test"`
+		Details       string  `json:"details"`
+	} `json:"BackupVerification"`
 }
 
 // evaluateWindowsFindings converts a parsed Windows scan state into drift findings.
@@ -689,8 +796,27 @@ func (ds *driftScanner) evaluateWindowsFindings(state *windowsScanState, t scanT
 		})
 	}
 
-	// 8. BitLocker — must be "On" for HIPAA encryption at rest
-	if state.BitLocker != "NotAvailable" && state.BitLocker != "On" && state.BitLocker != "1" {
+	// 8. BitLocker — ALL mounted volumes must be encrypted for HIPAA encryption at rest
+	if len(state.BitLockerVolumes) > 0 {
+		unprotected := []string{}
+		for _, vol := range state.BitLockerVolumes {
+			if vol.ProtectionStatus != "On" && vol.ProtectionStatus != "1" {
+				unprotected = append(unprotected, fmt.Sprintf("%s(%s)", vol.MountPoint, vol.ProtectionStatus))
+			}
+		}
+		if len(unprotected) > 0 {
+			findings = append(findings, driftFinding{
+				Hostname:     t.hostname,
+				CheckType:    "bitlocker_status",
+				Expected:     "On (all volumes)",
+				Actual:       fmt.Sprintf("%d/%d unprotected: %s", len(unprotected), len(state.BitLockerVolumes), strings.Join(unprotected, ", ")),
+				HIPAAControl: "164.312(a)(2)(iv)",
+				Severity:     "critical",
+				Details:      map[string]string{"unprotected_volumes": strings.Join(unprotected, ","), "total_volumes": fmt.Sprintf("%d", len(state.BitLockerVolumes))},
+			})
+		}
+	} else if state.BitLocker != "NotAvailable" && state.BitLocker != "On" && state.BitLocker != "1" {
+		// Fallback for older PowerShell without Get-BitLockerVolume array support
 		findings = append(findings, driftFinding{
 			Hostname:     t.hostname,
 			CheckType:    "bitlocker_status",
@@ -972,6 +1098,40 @@ func (ds *driftScanner) evaluateWindowsFindings(state *windowsScanState, t scanT
 			HIPAAControl: "164.312(e)(1)",
 			Severity:     "high",
 			Details:      map[string]string{"rules": strings.Join(ruleNames, ",")},
+		})
+	}
+
+	// 25. Backup verification — must have recent backup (within 7 days)
+	bv := state.BackupVerification
+	if bv.BackupStatus == "missing" || bv.BackupTool == "none" {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "backup_verification",
+			Expected:     "backup_within_7d",
+			Actual:       "no backup found",
+			HIPAAControl: "164.308(a)(7)(ii)(A)",
+			Severity:     "high",
+			Details: map[string]string{
+				"backup_tool":   bv.BackupTool,
+				"backup_status": bv.BackupStatus,
+				"restore_test":  bv.RestoreTest,
+			},
+		})
+	} else if bv.BackupStatus == "stale" {
+		findings = append(findings, driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "backup_verification",
+			Expected:     "backup_within_7d",
+			Actual:       fmt.Sprintf("last backup %.1f days ago (%s)", bv.BackupAgeDays, bv.BackupTool),
+			HIPAAControl: "164.308(a)(7)(ii)(A)",
+			Severity:     "medium",
+			Details: map[string]string{
+				"backup_tool":     bv.BackupTool,
+				"backup_status":   bv.BackupStatus,
+				"backup_age_days": fmt.Sprintf("%.1f", bv.BackupAgeDays),
+				"last_backup":     bv.LastBackup,
+				"restore_test":    bv.RestoreTest,
+			},
 		})
 	}
 

@@ -56,6 +56,7 @@ from dashboard_api.compliance_frameworks import router as compliance_frameworks_
 from dashboard_api.fleet_updates import router as fleet_updates_router
 from dashboard_api.device_sync import device_sync_router
 from dashboard_api.log_ingest import router as log_ingest_router
+from dashboard_api.security_events import router as security_events_router
 from dashboard_api.email_alerts import create_notification_with_email
 from dashboard_api.health_monitor import health_monitor_loop
 from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
@@ -1217,6 +1218,7 @@ app.include_router(notifications_router)  # Partner notifications + L3 escalatio
 app.include_router(compliance_frameworks_router)  # Multi-framework compliance management (admin)
 app.include_router(compliance_partner_router)  # Partner compliance defaults + site compliance
 app.include_router(log_ingest_router)  # Centralized log aggregation from appliances
+app.include_router(security_events_router)  # WORM archival of sanitized security events
 app.include_router(metrics_router)  # Prometheus-compatible metrics endpoint
 
 # WebSocket endpoint for real-time event push

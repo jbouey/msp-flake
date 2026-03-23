@@ -338,6 +338,7 @@ export interface GlobalStats {
   l3_escalation_rate: number;
   active_drift_checks: number;
   total_go_agents: number;
+  active_threats: number;
 }
 
 export interface StatsDeltas {

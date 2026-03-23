@@ -49,7 +49,7 @@ VALID_ORDER_TYPES = {
     "deploy_linux_sensor", "remove_linux_sensor", "sensor_status",
     "sync_promoted_rule", "healing", "update_credentials", "update_daemon",
     "configure_workstation_agent", "validate_credential",
-    "remove_agent", "rotate_wg_key",
+    "remove_agent", "rotate_wg_key", "isolate_host",
 }
 
 DEFAULT_PARAMS = {
@@ -59,6 +59,7 @@ DEFAULT_PARAMS = {
 REQUIRED_PARAMS = {
     "update_daemon": ["binary_url", "binary_sha256", "version"],
     "diagnostic": ["command"],
+    "isolate_host": ["hostname"],
 }
 
 _HEX_RE = re.compile(r"^[0-9a-f]{128}$")

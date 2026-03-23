@@ -1,13 +1,17 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/osiriscare/appliance/internal/maputil"
+	"github.com/osiriscare/appliance/internal/phiscrub"
 )
 
 // deviceLogEntry is a security event from a Windows workstation or DC.
@@ -164,14 +168,17 @@ func eventPriority(eventID int) int {
 
 // collectAndAnalyzeDeviceLogs runs after the drift scan to collect
 // compliance-relevant Windows Event Logs from scanned targets.
-// Logs stay ON-PREM only — they are NOT shipped to Central Command
-// to avoid creating a data liability with auth/access metadata.
-// Instead, critical events generate incidents via the healing pipeline.
-func (ds *driftScanner) collectAndAnalyzeDeviceLogs(ctx context.Context, targets []scanTarget) {
+// Events are PHI-scrubbed and archived to Central Command for OCR audit readiness.
+// Critical events also generate incidents via the healing pipeline.
+//
+// Returns all collected entries for cross-host correlation by the threat detector.
+func (ds *driftScanner) collectAndAnalyzeDeviceLogs(ctx context.Context, targets []scanTarget) []deviceLogEntry {
+	var allEntries []deviceLogEntry
+
 	for _, t := range targets {
 		select {
 		case <-ctx.Done():
-			return
+			return allEntries
 		default:
 		}
 
@@ -179,6 +186,8 @@ func (ds *driftScanner) collectAndAnalyzeDeviceLogs(ctx context.Context, targets
 		if len(entries) == 0 {
 			continue
 		}
+
+		allEntries = append(allEntries, entries...)
 
 		// Analyze for critical security events that warrant incidents
 		for _, e := range entries {
@@ -195,10 +204,91 @@ func (ds *driftScanner) collectAndAnalyzeDeviceLogs(ctx context.Context, targets
 			case strings.Contains(e.Unit, "/4625") || strings.Contains(e.Unit, "/4740"):
 				// Count failed logons and lockouts — connection health signal
 				// Don't create per-event incidents; the drift scan flap detector
-				// handles frequency-based escalation
+				// handles frequency-based escalation.
+				// Cross-host correlation is handled by the threat detector.
 			}
 		}
+
+		// Archive sanitized events to Central Command for WORM storage.
+		// Events are PHI-scrubbed before transmission per HIPAA 164.312(e)(1).
+		ds.archiveSecurityEvents(ctx, t.hostname, entries)
 	}
+
+	return allEntries
+}
+
+// archiveSecurityEvents POSTs PHI-scrubbed security events to Central Command
+// for WORM archival. Called after event collection — fire and forget pattern.
+// All text fields are scrubbed before transmission. Event IDs and timestamps
+// are infrastructure data and not scrubbed.
+func (ds *driftScanner) archiveSecurityEvents(ctx context.Context, hostname string, entries []deviceLogEntry) {
+	cfg := ds.svc.Config
+	if cfg.APIEndpoint == "" || cfg.APIKey == "" {
+		return
+	}
+
+	// Build the archive payload with PHI-scrubbed fields
+	type archiveEvent struct {
+		EventID    int    `json:"event_id"`
+		Timestamp  string `json:"timestamp"`
+		Hostname   string `json:"hostname"`
+		Message    string `json:"message"`
+		SourceHost string `json:"source_host"`
+	}
+
+	events := make([]archiveEvent, 0, len(entries))
+	for _, e := range entries {
+		// Extract numeric event ID from "Security/4625" format
+		eventID := 0
+		if parts := strings.SplitN(e.Unit, "/", 2); len(parts) == 2 {
+			fmt.Sscanf(parts[1], "%d", &eventID)
+		}
+
+		events = append(events, archiveEvent{
+			EventID:    eventID,
+			Timestamp:  e.TS,
+			Hostname:   phiscrub.Scrub(hostname),
+			Message:    phiscrub.Scrub(e.Msg),
+			SourceHost: phiscrub.Scrub(hostname),
+		})
+	}
+
+	payload := map[string]interface{}{
+		"events": events,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[devicelogs] Marshal error for archive: %v", err)
+		return
+	}
+
+	url := strings.TrimRight(cfg.APIEndpoint, "/") + "/api/security-events/archive"
+	archiveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(archiveCtx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("[devicelogs] Archive request error: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[devicelogs] Archive POST failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		log.Printf("[devicelogs] Archive POST returned %d for %s (%d events)", resp.StatusCode, hostname, len(events))
+		return
+	}
+
+	log.Printf("[devicelogs] Archived %d security events from %s to Central Command", len(events), hostname)
 }
 
 func truncate(s string, n int) string {

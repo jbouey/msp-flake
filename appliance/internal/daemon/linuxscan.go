@@ -203,6 +203,156 @@ done
 cert_issues=${cert_issues%,}
 [ -z "$cert_issues" ] && cert_issues="ok"
 
+# 16. Backup status — check common Linux backup tools
+backup_tool="none"
+backup_last=""
+backup_age_days=-1
+backup_status="missing"
+backup_details=""
+
+# Check restic (if binary exists and RESTIC_REPOSITORY is set or common paths)
+if command -v restic >/dev/null 2>&1; then
+    for repo in /var/backups/restic /backup/restic /srv/backup; do
+        if [ -d "$repo" ]; then
+            snap_json=$(restic -r "$repo" snapshots --latest 1 --json 2>/dev/null)
+            if [ -n "$snap_json" ] && echo "$snap_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['time'])" 2>/dev/null; then
+                backup_tool="restic"
+                backup_last=$(echo "$snap_json" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['time'])" 2>/dev/null)
+                backup_details="repo:$repo"
+                break
+            fi
+        fi
+    done
+fi
+
+# Check borg (if binary exists)
+if [ "$backup_tool" = "none" ] && command -v borg >/dev/null 2>&1; then
+    for repo in /var/backups/borg /backup/borg /srv/backup; do
+        if [ -d "$repo" ]; then
+            borg_json=$(borg list --last 1 --json "$repo" 2>/dev/null)
+            if [ -n "$borg_json" ] && echo "$borg_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['archives'][0]['start'])" 2>/dev/null; then
+                backup_tool="borg"
+                backup_last=$(echo "$borg_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['archives'][0]['start'])" 2>/dev/null)
+                backup_details="repo:$repo"
+                break
+            fi
+        fi
+    done
+fi
+
+# Check rsnapshot (look for latest snapshot directory)
+if [ "$backup_tool" = "none" ]; then
+    for snapdir in /var/cache/rsnapshot /backup/rsnapshot /.snapshots; do
+        if [ -d "$snapdir" ]; then
+            latest=$(ls -1td "$snapdir"/*/ 2>/dev/null | head -1)
+            if [ -n "$latest" ]; then
+                backup_tool="rsnapshot"
+                # Get mtime of the latest snapshot dir
+                snap_epoch=$(stat -c '%Y' "$latest" 2>/dev/null || stat -f '%m' "$latest" 2>/dev/null)
+                if [ -n "$snap_epoch" ]; then
+                    backup_last=$(date -u -d "@$snap_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -r "$snap_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+                fi
+                backup_details="dir:$latest"
+                break
+            fi
+        fi
+    done
+fi
+
+# Generic: check /var/backups for recent files
+if [ "$backup_tool" = "none" ] && [ -d /var/backups ]; then
+    recent_backup=$(find /var/backups -type f -mtime -7 2>/dev/null | head -1)
+    if [ -n "$recent_backup" ]; then
+        backup_tool="generic"
+        snap_epoch=$(stat -c '%Y' "$recent_backup" 2>/dev/null || stat -f '%m' "$recent_backup" 2>/dev/null)
+        if [ -n "$snap_epoch" ]; then
+            backup_last=$(date -u -d "@$snap_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -r "$snap_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+        fi
+        backup_details="file:$recent_backup"
+    fi
+fi
+
+# Calculate age if we have a last backup timestamp
+if [ -n "$backup_last" ]; then
+    backup_epoch=$(date -u -d "$backup_last" '+%s' 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$backup_last" '+%s' 2>/dev/null)
+    now_epoch=$(date '+%s')
+    if [ -n "$backup_epoch" ] && [ "$backup_epoch" -gt 0 ] 2>/dev/null; then
+        age_secs=$((now_epoch - backup_epoch))
+        backup_age_days=$((age_secs / 86400))
+        if [ "$backup_age_days" -le 7 ]; then
+            backup_status="current"
+        else
+            backup_status="stale"
+        fi
+    else
+        backup_status="current"
+        backup_age_days=0
+    fi
+fi
+
+# Sanitize
+backup_age_days=$(echo "$backup_age_days" | head -1 | tr -dc '0-9-'); [ -z "$backup_age_days" ] && backup_age_days=-1
+
+# 17. Disk encryption — LUKS/dm-crypt check
+# Detect if mounted block devices sit on encrypted volumes
+encryption_status="unknown"
+unencrypted_mounts=""
+if command -v lsblk >/dev/null 2>&1; then
+    # Get JSON block device layout
+    lsblk_json=$(lsblk -o NAME,TYPE,FSTYPE,MOUNTPOINT -J 2>/dev/null)
+    if [ -n "$lsblk_json" ]; then
+        # Use python3 to parse: find mounted devices not on LUKS
+        unencrypted_mounts=$(python3 -c "
+import json, sys
+try:
+    data = json.loads('''$lsblk_json''')
+    devices = data.get('blockdevices', [])
+    # Collect all LUKS parent device names
+    luks_children = set()
+    def find_luks(devs, parent_is_luks=False):
+        for d in devs:
+            is_luks = d.get('fstype') == 'crypto_LUKS'
+            children = d.get('children', [])
+            if is_luks:
+                for c in children:
+                    luks_children.add(c.get('name', ''))
+                    for gc in c.get('children', []):
+                        luks_children.add(gc.get('name', ''))
+            if parent_is_luks:
+                luks_children.add(d.get('name', ''))
+            find_luks(children, parent_is_luks or is_luks)
+    find_luks(devices)
+
+    # Find mounted partitions not under LUKS (exclude tmpfs, swap, devtmpfs, boot)
+    unenc = []
+    def check_mounted(devs, depth=0):
+        for d in devs:
+            mp = d.get('mountpoint', '') or ''
+            fstype = d.get('fstype', '') or ''
+            name = d.get('name', '')
+            children = d.get('children', [])
+            if mp and mp != '[SWAP]' and fstype not in ('tmpfs', 'devtmpfs', 'sysfs', 'proc', 'efivarfs', 'vfat'):
+                if mp in ('/boot', '/boot/efi', '/boot/EFI'):
+                    pass  # boot partitions are typically unencrypted
+                elif name not in luks_children:
+                    unenc.append(f'{name}:{mp}')
+            check_mounted(children, depth+1)
+    check_mounted(devices)
+    print(','.join(unenc) if unenc else 'ok')
+except Exception as e:
+    print('check_error')
+" 2>/dev/null)
+        [ -z "$unencrypted_mounts" ] && unencrypted_mounts="check_error"
+        if [ "$unencrypted_mounts" = "ok" ]; then
+            encryption_status="encrypted"
+        elif [ "$unencrypted_mounts" = "check_error" ]; then
+            encryption_status="unknown"
+        else
+            encryption_status="unencrypted"
+        fi
+    fi
+fi
+
 # Sanitize all numeric vars to prevent Python syntax errors
 fw_rules=$(echo "$fw_rules" | head -1 | tr -dc '0-9'); [ -z "$fw_rules" ] && fw_rules=0
 failed_count=$(echo "$failed_count" | head -1 | tr -dc '0-9'); [ -z "$failed_count" ] && failed_count=0
@@ -226,7 +376,9 @@ print(json.dumps({
     'auto_update': '$auto_update',
     'log_forwarding': '$log_fwd',
     'cron': '$cron_jobs',
-    'cert_expiry': '$cert_issues'
+    'cert_expiry': '$cert_issues',
+    'backup': {'tool': '$backup_tool', 'last_backup': '$backup_last', 'age_days': $backup_age_days, 'status': '$backup_status', 'details': '$backup_details'},
+    'encryption': {'status': '$encryption_status', 'unencrypted_mounts': '$unencrypted_mounts'}
 }))
 "
 `
@@ -266,6 +418,17 @@ type linuxScanState struct {
 	LogForwarding  string `json:"log_forwarding"`
 	Cron           string `json:"cron"`
 	CertExpiry     string `json:"cert_expiry"`
+	Backup struct {
+		Tool       string `json:"tool"`
+		LastBackup string `json:"last_backup"`
+		AgeDays    int    `json:"age_days"`
+		Status     string `json:"status"`
+		Details    string `json:"details"`
+	} `json:"backup"`
+	Encryption struct {
+		Status           string `json:"status"`
+		UnencryptedMounts string `json:"unencrypted_mounts"`
+	} `json:"encryption"`
 }
 
 // scanLinuxTargets scans all Linux targets for security drift.
@@ -593,6 +756,50 @@ func (ds *driftScanner) parseLinuxFindings(output, hostname string) []driftFindi
 			Actual:       state.CertExpiry,
 			HIPAAControl: "164.312(e)(2)(ii)",
 			Severity:     "high",
+		})
+	}
+
+	// 16. Backup status — must have recent backup (within 7 days)
+	if state.Backup.Status == "missing" || state.Backup.Tool == "none" {
+		findings = append(findings, driftFinding{
+			Hostname:     hostname,
+			CheckType:    "linux_backup_status",
+			Expected:     "backup_within_7d",
+			Actual:       "no backup found",
+			HIPAAControl: "164.308(a)(7)(ii)(A)",
+			Severity:     "medium",
+			Details: map[string]string{
+				"backup_tool":   state.Backup.Tool,
+				"backup_status": state.Backup.Status,
+			},
+		})
+	} else if state.Backup.Status == "stale" {
+		findings = append(findings, driftFinding{
+			Hostname:     hostname,
+			CheckType:    "linux_backup_status",
+			Expected:     "backup_within_7d",
+			Actual:       fmt.Sprintf("last backup %d days ago (%s)", state.Backup.AgeDays, state.Backup.Tool),
+			HIPAAControl: "164.308(a)(7)(ii)(A)",
+			Severity:     "medium",
+			Details: map[string]string{
+				"backup_tool":   state.Backup.Tool,
+				"backup_status": state.Backup.Status,
+				"backup_age":    fmt.Sprintf("%d", state.Backup.AgeDays),
+				"last_backup":   state.Backup.LastBackup,
+			},
+		})
+	}
+
+	// 17. Disk encryption — LUKS/dm-crypt required for HIPAA encryption at rest
+	if state.Encryption.Status == "unencrypted" && state.Encryption.UnencryptedMounts != "" {
+		findings = append(findings, driftFinding{
+			Hostname:     hostname,
+			CheckType:    "linux_encryption",
+			Expected:     "all volumes encrypted (LUKS/dm-crypt)",
+			Actual:       fmt.Sprintf("unencrypted: %s", state.Encryption.UnencryptedMounts),
+			HIPAAControl: "164.312(a)(2)(iv)",
+			Severity:     "critical",
+			Details:      map[string]string{"unencrypted_mounts": state.Encryption.UnencryptedMounts},
 		})
 	}
 

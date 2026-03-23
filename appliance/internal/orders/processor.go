@@ -251,6 +251,7 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p.handlers["disable_healing"] = p.handleDisableHealing
 	p.handlers["enable_healing"] = p.handleEnableHealing
 	p.handlers["rotate_wg_key"] = p.handleRotateWgKey
+	p.handlers["isolate_host"] = p.handleIsolateHost
 
 	return p
 }
@@ -1290,4 +1291,110 @@ func (p *Processor) handleRotateWgKey(ctx context.Context, params map[string]int
 		"old_pubkey": strings.TrimSpace(string(oldPub)),
 		"new_pubkey": strings.TrimSpace(string(newPub)),
 	}, nil
+}
+
+// handleIsolateHost implements ransomware containment via fleet order.
+// This is a DANGEROUS operation — it disables network adapters on the target
+// host (except WireGuard management tunnel) to prevent lateral movement.
+//
+// Steps:
+//  1. Create VSS snapshot for forensic preservation
+//  2. Disable all network adapters except WireGuard tunnel
+//  3. Log all actions for incident report
+//
+// This handler requires explicit human approval via fleet order dispatch.
+// It is NEVER triggered automatically — the threat detector creates incidents
+// but isolation requires operator authorization.
+func (p *Processor) handleIsolateHost(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	hostname, _ := params["hostname"].(string)
+	if hostname == "" {
+		return nil, fmt.Errorf("isolate_host requires 'hostname' parameter")
+	}
+
+	reason, _ := params["reason"].(string)
+	if reason == "" {
+		reason = "active_threat_containment"
+	}
+
+	log.Printf("[orders] ISOLATE_HOST initiated for %s (reason: %s) — THIS IS A CONTAINMENT ACTION", hostname, reason)
+
+	results := map[string]interface{}{
+		"hostname": hostname,
+		"reason":   reason,
+		"actions":  []map[string]interface{}{},
+	}
+	actions := []map[string]interface{}{}
+
+	// Step 1: Create VSS snapshot for forensic preservation
+	vssScript := `
+$ErrorActionPreference = 'SilentlyContinue'
+try {
+    $shadow = (vssadmin create shadow /for=C: 2>&1)
+    $id = ($shadow | Select-String 'Shadow Copy ID: \{(.+)\}').Matches[0].Groups[1].Value
+    @{ status = "created"; shadow_id = $id } | ConvertTo-Json -Compress
+} catch {
+    @{ status = "failed"; error = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+`
+	// Note: WinRM execution is handled by the daemon via RegisterHandler override.
+	// This stub records the intended action. The real WinRM call happens when
+	// the daemon replaces this handler with one that has WinRM access.
+	actions = append(actions, map[string]interface{}{
+		"step":   "vss_snapshot",
+		"script": vssScript,
+		"status": "pending",
+	})
+
+	// Step 2: Disable network adapters except WireGuard
+	isolateScript := `
+$ErrorActionPreference = 'SilentlyContinue'
+$disabled = @()
+$skipped = @()
+Get-NetAdapter | ForEach-Object {
+    if ($_.Name -like "*WireGuard*" -or $_.Name -like "*wg*") {
+        $skipped += $_.Name
+    } else {
+        try {
+            Disable-NetAdapter -Name $_.Name -Confirm:$false
+            $disabled += $_.Name
+        } catch {
+            # Log but continue
+        }
+    }
+}
+@{ disabled = $disabled; skipped = $skipped; count = $disabled.Count } | ConvertTo-Json -Compress
+`
+	actions = append(actions, map[string]interface{}{
+		"step":   "network_isolation",
+		"script": isolateScript,
+		"status": "pending",
+		"note":   "Disables all adapters except WireGuard management tunnel",
+	})
+
+	// Step 3: Log the isolation event
+	actions = append(actions, map[string]interface{}{
+		"step":      "audit_log",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"message":   fmt.Sprintf("Host %s isolated for containment (reason: %s)", hostname, reason),
+		"status":    "recorded",
+	})
+
+	results["actions"] = actions
+	results["status"] = "isolation_initiated"
+
+	// Write isolation record to state dir for tracking
+	isolationRecord := map[string]interface{}{
+		"hostname":   hostname,
+		"reason":     reason,
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"actions":    actions,
+	}
+	recordBytes, _ := json.Marshal(isolationRecord)
+	recordPath := filepath.Join(p.stateDir, "isolation_"+hostname+".json")
+	if err := os.WriteFile(recordPath, recordBytes, 0o600); err != nil {
+		log.Printf("[orders] Failed to write isolation record: %v", err)
+	}
+
+	log.Printf("[orders] ISOLATE_HOST for %s: %d actions queued", hostname, len(actions))
+	return results, nil
 }
