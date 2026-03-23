@@ -172,6 +172,8 @@ type CheckinRequest struct {
 	HasLocalCredentials bool             `json:"has_local_credentials"`
 	AgentPublicKey      string           `json:"agent_public_key,omitempty"`
 	WgPubKey            string           `json:"wg_pubkey,omitempty"`
+	WgConnected         bool             `json:"wg_connected,omitempty"`
+	WgIP                string           `json:"wg_ip,omitempty"`
 	ConnectedAgents     []ConnectedAgent        `json:"connected_agents,omitempty"`
 	DiscoveryResults    map[string]interface{}   `json:"discovery_results,omitempty"`
 	EncryptionPublicKey string                   `json:"encryption_public_key,omitempty"`

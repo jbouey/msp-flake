@@ -110,6 +110,9 @@ type Daemon struct {
 
 	// Self-healer: monitors agent heartbeats, auto-redeploys stale agents
 	selfHealer *selfHealer
+
+	// WireGuard tunnel monitor: tracks connection state transitions
+	wgMon *wgMonitor
 }
 
 // safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
@@ -275,6 +278,9 @@ func New(cfg *Config) *Daemon {
 	// Initialize self-healer for agent heartbeat monitoring + auto-redeploy
 	d.selfHealer = newSelfHealer(d.svc, d)
 
+	// Initialize WireGuard tunnel monitor for audit logging
+	d.wgMon = &wgMonitor{}
+
 	// Initialize evidence submitter for compliance pipeline
 	if cfg.EnableEvidenceUpload {
 		sigKey, pubHex, err := evidence.LoadOrCreateSigningKey(cfg.SigningKeyPath())
@@ -382,6 +388,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.logShipper.Run(ctx)
 		})
 	}
+
+	// Start WireGuard tunnel monitor (checks every 5 minutes, logs state transitions)
+	d.safeGo("wireguardMonitor", func() {
+		d.runWireGuardMonitor(ctx)
+	})
 
 	// Initial checkin
 	d.runCheckin(ctx)
@@ -499,6 +510,14 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	// Include pending app discovery results (one-shot: cleared after send)
 	if dr := d.state.DrainDiscoveryResults(); dr != nil {
 		req.DiscoveryResults = dr
+	}
+
+	// Include WireGuard tunnel status in checkin
+	if wgIP := getWireGuardIP(); wgIP != "" {
+		req.WgIP = wgIP
+		if wgSt := checkWireGuardStatus(); wgSt != nil {
+			req.WgConnected = wgSt.Connected
+		}
 	}
 
 	// Include encryption public key for credential envelope encryption

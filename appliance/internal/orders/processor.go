@@ -10,6 +10,7 @@
 package orders
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -249,6 +250,7 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p.handlers["validate_credential"] = p.handleValidateCredential
 	p.handlers["disable_healing"] = p.handleDisableHealing
 	p.handlers["enable_healing"] = p.handleEnableHealing
+	p.handlers["rotate_wg_key"] = p.handleRotateWgKey
 
 	return p
 }
@@ -1238,5 +1240,54 @@ func (p *Processor) handleEnableHealing(ctx context.Context, params map[string]i
 	return map[string]interface{}{
 		"healing_enabled": true,
 		"reason":          reason,
+	}, nil
+}
+
+// handleRotateWgKey generates a new WireGuard keypair, replaces the existing
+// key files, and restarts the WireGuard tunnel. The new public key will be
+// sent to Central Command on the next checkin.
+func (p *Processor) handleRotateWgKey(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	wgDir := filepath.Join(p.stateDir, "wireguard")
+
+	// Read old public key for the result (best-effort)
+	oldPub, _ := os.ReadFile(filepath.Join(wgDir, "public.key"))
+
+	// Generate new private key
+	genKey := exec.CommandContext(ctx, "wg", "genkey")
+	privKey, err := genKey.Output()
+	if err != nil {
+		return nil, fmt.Errorf("generate WireGuard key: %w", err)
+	}
+	privKey = bytes.TrimSpace(privKey)
+
+	// Write new private key (0600 permissions — root only)
+	if err := os.WriteFile(filepath.Join(wgDir, "private.key"), privKey, 0o600); err != nil {
+		return nil, fmt.Errorf("write WireGuard private key: %w", err)
+	}
+
+	// Derive public key from the new private key
+	pubCmd := exec.CommandContext(ctx, "wg", "pubkey")
+	pubCmd.Stdin = bytes.NewReader(privKey)
+	newPub, err := pubCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("derive WireGuard public key: %w", err)
+	}
+	newPub = bytes.TrimSpace(newPub)
+
+	if err := os.WriteFile(filepath.Join(wgDir, "public.key"), newPub, 0o600); err != nil {
+		return nil, fmt.Errorf("write WireGuard public key: %w", err)
+	}
+
+	// Restart the WireGuard tunnel to pick up the new key
+	restartCmd := exec.CommandContext(ctx, "systemctl", "restart", "wireguard-tunnel")
+	if restartErr := restartCmd.Run(); restartErr != nil {
+		log.Printf("[orders] WireGuard tunnel restart failed (key was rotated): %v", restartErr)
+	}
+
+	log.Printf("[orders] WireGuard key rotated successfully")
+	return map[string]interface{}{
+		"status":     "rotated",
+		"old_pubkey": strings.TrimSpace(string(oldPub)),
+		"new_pubkey": strings.TrimSpace(string(newPub)),
 	}, nil
 }

@@ -731,7 +731,8 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
         site_row = await conn.fetchrow("""
             SELECT s.clinic_name, s.contact_name, s.contact_email, s.contact_phone,
                    s.address, s.notes, s.tier, s.onboarding_stage, s.healing_tier,
-                   s.client_org_id, co.name as org_name
+                   s.client_org_id, co.name as org_name,
+                   s.wg_ip, s.wg_connected_at
             FROM sites s
             LEFT JOIN client_orgs co ON co.id = s.client_org_id
             WHERE s.site_id = $1
@@ -778,6 +779,8 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
             },
             'client_org_id': str(site_row['client_org_id']) if site_row and site_row['client_org_id'] else None,
             'org_name': site_row['org_name'] if site_row else None,
+            'wg_ip': site_row['wg_ip'] if site_row else None,
+            'wg_connected_at': site_row['wg_connected_at'].isoformat() if site_row and site_row['wg_connected_at'] else None,
             'appliances': appliances,
             'credentials': credentials,
             'stale_credentials_count': stale_credentials_count,
@@ -1793,6 +1796,8 @@ class ApplianceCheckin(BaseModel):
     discovery_results: Optional[Dict[str, Any]] = None  # App protection profile discovery results
     encryption_public_key: str = ""  # X25519 public key hex for credential envelope encryption
     deploy_results: Optional[list[Dict[str, Any]]] = None  # Results from previous deploy attempts
+    wg_connected: bool = False  # Whether WireGuard tunnel is active
+    wg_ip: Optional[str] = None  # WireGuard VPN IP (10.100.0.x)
 
 
 def normalize_mac(mac: str) -> str:
@@ -2386,6 +2391,18 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
             except Exception as e:
                 import logging
                 logging.warning(f"Failed to register agent public key: {e}")
+
+        # === STEP 3.6b: Update WireGuard VPN status ===
+        if checkin.wg_connected and checkin.wg_ip:
+            try:
+                async with conn.transaction():
+                    await conn.execute(
+                        "UPDATE sites SET wg_connected_at = NOW(), wg_ip = $1 WHERE site_id = $2",
+                        checkin.wg_ip, checkin.site_id
+                    )
+            except Exception as e:
+                import logging
+                logging.warning(f"Checkin {checkin.site_id}: WireGuard status update failed: {e}")
 
         # === STEP 3.7: Sync connected Go agents to go_agents table ===
         # Use a savepoint so failures here don't poison the outer transaction

@@ -49,7 +49,7 @@ VALID_ORDER_TYPES = {
     "deploy_linux_sensor", "remove_linux_sensor", "sensor_status",
     "sync_promoted_rule", "healing", "update_credentials", "update_daemon",
     "configure_workstation_agent", "validate_credential",
-    "remove_agent",
+    "remove_agent", "rotate_wg_key",
 }
 
 DEFAULT_PARAMS = {

@@ -1023,6 +1023,15 @@ export const SiteDetail: React.FC = () => {
     retry: false,
   });
   const latestVersion = fleetStats?.releases.latest_version ?? null;
+
+  // WireGuard VPN connection status — connected if handshake within last 5 minutes
+  const isWgConnected = (() => {
+    if (!site?.wg_connected_at) return false;
+    const connectedAt = new Date(site.wg_connected_at);
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+    return connectedAt > fiveMinAgo;
+  })();
+
   const addCredential = useAddCredential();
   const createOrder = useCreateApplianceOrder();
   const broadcastOrder = useBroadcastOrder();
@@ -1216,6 +1225,14 @@ export const SiteDetail: React.FC = () => {
               <Badge variant={site.live_status === 'online' ? 'success' : site.live_status === 'offline' ? 'error' : 'default'}>
                 {site.live_status}
               </Badge>
+              {site.wg_ip && (
+                <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
+                  isWgConnected ? 'bg-health-healthy/10 text-health-healthy' : 'bg-fill-secondary text-label-tertiary'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${isWgConnected ? 'bg-health-healthy' : 'bg-label-tertiary'}`} />
+                  VPN {site.wg_ip}
+                </span>
+              )}
             </div>
             <p className="text-label-tertiary text-sm mt-0.5">{site.site_id}</p>
           </div>

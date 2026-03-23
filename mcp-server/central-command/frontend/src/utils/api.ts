@@ -394,6 +394,8 @@ export interface Site {
   appliance_count: number;
   client_org_id?: string | null;
   org_name?: string | null;
+  wg_ip?: string | null;
+  wg_connected_at?: string | null;
 }
 
 export interface Organization {

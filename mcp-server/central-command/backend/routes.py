@@ -4321,7 +4321,7 @@ async def decommission_site(
     async with admin_connection(pool) as conn:
         # 1. Validate site exists and is not already inactive
         site = await conn.fetchrow(
-            "SELECT site_id, clinic_name, status FROM sites WHERE site_id = $1",
+            "SELECT site_id, clinic_name, status, wg_ip FROM sites WHERE site_id = $1",
             site_id,
         )
         if not site:
@@ -4404,6 +4404,25 @@ async def decommission_site(
             now,
         )
         actions_taken.append("Site status set to inactive")
+
+        # 5b. Remove WireGuard peer config if this site had a VPN IP
+        wg_ip = site.get("wg_ip") if site else None
+        if wg_ip:
+            try:
+                import os
+                from .provisioning import WG_PEER_DIR
+                peer_file = os.path.join(WG_PEER_DIR, f"{site_id}.conf")
+                if os.path.exists(peer_file):
+                    os.remove(peer_file)
+                    # Touch reload flag for systemd path unit to trigger wg syncconf
+                    import time as _time
+                    reload_flag = os.path.join(WG_PEER_DIR, ".reload")
+                    with open(reload_flag, 'w') as f:
+                        f.write(str(_time.time()))
+                    actions_taken.append("WireGuard peer config removed")
+                    logger.info(f"WireGuard peer removed for decommissioned site {site_id}")
+            except Exception as e:
+                logger.warning(f"Failed to remove WireGuard peer for {site_id}: {e}")
 
         # 6. Audit trail
         await conn.execute("""
