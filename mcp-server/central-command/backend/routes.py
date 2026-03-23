@@ -3699,7 +3699,7 @@ async def get_admin_compliance_health(
                 COUNT(*) FILTER (WHERE resolution_level = 'L3' OR success = false) as pending
             FROM execution_telemetry
             WHERE site_id = $1
-              AND started_at > NOW() - INTERVAL '30 days'
+              AND created_at > NOW() - INTERVAL '30 days'
         """, site_id)
 
         # Network coverage score

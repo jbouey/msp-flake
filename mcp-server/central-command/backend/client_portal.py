@@ -876,7 +876,7 @@ async def get_site_compliance_health(
                 COUNT(*) FILTER (WHERE resolution_level = 'L3' OR success = false) as pending
             FROM execution_telemetry
             WHERE site_id = $1
-              AND started_at > NOW() - INTERVAL '30 days'
+              AND created_at > NOW() - INTERVAL '30 days'
         """, site_id)
 
         return {
@@ -1544,7 +1544,7 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
                 COUNT(*) FILTER (WHERE status = 'pending' OR status = 'escalated') as pending
             FROM execution_telemetry
             WHERE site_id = ANY($1)
-              AND started_at > NOW() - INTERVAL '30 days'
+              AND created_at > NOW() - INTERVAL '30 days'
         """, site_ids)
 
         # Per-site breakdown
