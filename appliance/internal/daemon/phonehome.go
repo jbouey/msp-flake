@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/osiriscare/appliance/internal/phiscrub"
 )
 
 // PhoneHomeClient handles communication with Central Command.
@@ -320,8 +322,10 @@ func classifyConnectivityError(err error) string {
 }
 
 // SystemInfo gathers system information for the checkin request.
+// Hostname is PHI-scrubbed to remove patient-identifying patterns.
+// Infrastructure identifiers (site_id, IPs, MACs, version, WG key) are NOT scrubbed.
 func SystemInfo(cfg *Config, version string) CheckinRequest {
-	hostname := getHostname()
+	hostname := phiscrub.Scrub(getHostname())
 	mac := getMACAddress()
 	ips := getIPAddresses()
 	uptime := getUptimeSeconds()

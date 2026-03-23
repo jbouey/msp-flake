@@ -14,6 +14,7 @@ import (
 
 	"github.com/osiriscare/appliance/internal/evidence"
 	"github.com/osiriscare/appliance/internal/grpcserver"
+	"github.com/osiriscare/appliance/internal/phiscrub"
 )
 
 const (
@@ -584,20 +585,22 @@ func countTrue(devices []discoveredDevice, fn func(discoveredDevice) bool) int {
 }
 
 // reportNetDrift sends a network finding through the healing pipeline.
+// All text fields that could contain PHI are scrubbed before egress.
 func (ns *netScanner) reportNetDrift(f *driftFinding) {
+	// Scrub details map values — may contain discovered hostnames or device info
 	metadata := map[string]string{
 		"platform": "network",
 		"source":   "netscan",
 	}
 	for k, v := range f.Details {
-		metadata[k] = v
+		metadata[k] = phiscrub.Scrub(v)
 	}
 
 	req := grpcserver.HealRequest{
-		Hostname:     f.Hostname,
+		Hostname:     phiscrub.Scrub(f.Hostname),
 		CheckType:    f.CheckType,
-		Expected:     f.Expected,
-		Actual:       f.Actual,
+		Expected:     phiscrub.Scrub(f.Expected),
+		Actual:       phiscrub.Scrub(f.Actual),
 		HIPAAControl: f.HIPAAControl,
 		AgentID:      "netscan",
 		Metadata:     metadata,

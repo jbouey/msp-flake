@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/osiriscare/appliance/internal/phiscrub"
 )
 
 // DriftFinding represents a single drift condition found during scanning.
@@ -127,17 +129,20 @@ func (s *Submitter) buildAndSubmitForTypes(ctx context.Context, findings []Drift
 	nonCompliant := 0
 
 	for _, host := range scannedHosts {
+		// Scrub hostname before it enters the evidence bundle
+		scrubbedHost := phiscrub.Scrub(host)
 		for _, ct := range checkTypes {
 			key := host + ":" + ct
 			check := map[string]any{
 				"check":    ct,
-				"hostname": host,
+				"hostname": scrubbedHost,
 			}
 
 			if f, found := driftMap[key]; found {
 				check["status"] = "fail"
-				check["expected"] = f.Expected
-				check["actual"] = f.Actual
+				// Scrub expected/actual values — may contain raw command output with PHI
+				check["expected"] = phiscrub.Scrub(f.Expected)
+				check["actual"] = phiscrub.Scrub(f.Actual)
 				if f.HIPAAControl != "" {
 					check["hipaa_control"] = f.HIPAAControl
 				}

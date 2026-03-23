@@ -25,6 +25,7 @@ import (
 	"github.com/osiriscare/appliance/internal/maputil"
 	"github.com/osiriscare/appliance/internal/l2planner"
 	"github.com/osiriscare/appliance/internal/orders"
+	"github.com/osiriscare/appliance/internal/phiscrub"
 	"github.com/osiriscare/appliance/internal/sdnotify"
 	"github.com/osiriscare/appliance/internal/sshexec"
 	"github.com/osiriscare/appliance/internal/winrm"
@@ -491,11 +492,12 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	}
 
 	// Include connected Go agent data for sync to Central Command
+	// Agent hostnames are PHI-scrubbed; AgentID/version are infrastructure identifiers.
 	if agents := d.registry.AllAgents(); len(agents) > 0 {
 		for _, a := range agents {
 			req.ConnectedAgents = append(req.ConnectedAgents, ConnectedAgent{
 				AgentID:       a.AgentID,
-				Hostname:      a.Hostname,
+				Hostname:      phiscrub.Scrub(a.Hostname),
 				AgentVersion:  a.AgentVersion,
 				Tier:          int(a.Tier),
 				ConnectedAt:   a.ConnectedAt.UTC().Format(time.RFC3339),
@@ -508,8 +510,9 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	}
 
 	// Include pending app discovery results (one-shot: cleared after send)
+	// Scrub all string values in the discovery map for PHI before transmission.
 	if dr := d.state.DrainDiscoveryResults(); dr != nil {
-		req.DiscoveryResults = dr
+		req.DiscoveryResults = phiscrub.ScrubMap(dr)
 	}
 
 	// Include WireGuard tunnel status in checkin

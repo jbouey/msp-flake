@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/osiriscare/appliance/internal/phiscrub"
 )
 
 // incidentReporter sends drift findings to Central Command's POST /incidents
@@ -44,12 +46,20 @@ type incidentPayload struct {
 
 // ReportDriftIncident sends a drift finding to the backend incidents table.
 // Designed to be called as `go reporter.ReportDriftIncident(...)` — fire and forget.
+// All text fields are PHI-scrubbed before transmission per HIPAA §164.312(e)(1).
 func (r *incidentReporter) ReportDriftIncident(
 	hostname, checkType, expected, actual, hipaaControl, severity, platform string,
 ) {
 	if r == nil {
 		return
 	}
+
+	// Scrub all text fields before sending to Central Command.
+	// Do NOT scrub siteID (infrastructure), checkType (enum), severity (enum),
+	// hipaaControl (standard reference), or platform (enum).
+	hostname = phiscrub.Scrub(hostname)
+	expected = phiscrub.Scrub(expected)
+	actual = phiscrub.Scrub(actual)
 
 	hipaaControls := []string{}
 	if hipaaControl != "" {
@@ -109,12 +119,17 @@ func (r *incidentReporter) ReportDriftIncident(
 
 // ReportHealed notifies the backend that an incident was resolved.
 // Called after successful L1/L2 healing.
+// Hostname is PHI-scrubbed before transmission.
 func (r *incidentReporter) ReportHealed(
 	hostname, checkType, resolutionTier, ruleID string,
 ) {
 	if r == nil {
 		return
 	}
+
+	// Scrub hostname (may contain patient identifiers).
+	// checkType, resolutionTier, ruleID are infrastructure enums — not scrubbed.
+	hostname = phiscrub.Scrub(hostname)
 
 	payload := map[string]interface{}{
 		"site_id":         r.siteID,

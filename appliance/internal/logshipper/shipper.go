@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/osiriscare/appliance/internal/phiscrub"
 )
 
 // journalEntry maps to journalctl --output=json fields.
@@ -190,6 +192,8 @@ func (s *Shipper) readJournal(ctx context.Context) ([]logEntry, string, error) {
 		if len(msg) > 8192 {
 			msg = msg[:8192]
 		}
+		// Scrub PHI from log messages before shipping to Central Command
+		msg = phiscrub.Scrub(msg)
 
 		entries = append(entries, logEntry{
 			TS:   ts,
@@ -207,7 +211,7 @@ func (s *Shipper) readJournal(ctx context.Context) ([]logEntry, string, error) {
 func (s *Shipper) postBatch(ctx context.Context, entries []logEntry) error {
 	payload := map[string]interface{}{
 		"site_id":  s.cfg.SiteID,
-		"hostname": s.cfg.Hostname,
+		"hostname": phiscrub.Scrub(s.cfg.Hostname),
 		"batch":    entries,
 	}
 
@@ -266,21 +270,21 @@ func (s *Shipper) ShipRemoteEntries(ctx context.Context, hostname string, entrie
 		return nil
 	}
 
-	// Convert to wire format
+	// Convert to wire format with PHI scrubbing on all messages
 	batch := make([]logEntry, len(entries))
 	for i, e := range entries {
 		batch[i] = logEntry{
 			TS:   e.TS,
 			Unit: e.Unit,
 			Pri:  e.Pri,
-			Msg:  e.Msg,
+			Msg:  phiscrub.Scrub(e.Msg),
 		}
 	}
 
-	// Ship with the remote device's hostname
+	// Ship with the remote device's hostname (scrubbed for patient patterns)
 	payload := map[string]interface{}{
 		"site_id":  s.cfg.SiteID,
-		"hostname": hostname,
+		"hostname": phiscrub.Scrub(hostname),
 		"batch":    batch,
 	}
 
