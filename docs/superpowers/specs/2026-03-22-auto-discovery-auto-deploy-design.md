@@ -1,7 +1,7 @@
 # Auto-Discovery + Auto-Deploy Agent System
 
 **Date:** 2026-03-22
-**Status:** Draft
+**Status:** Reviewed (v2 — review fixes applied)
 **Session:** 183 (brainstorm) → 184 (implementation)
 
 ## Problem
@@ -14,24 +14,25 @@ Clinic networks are messy. Random computers, personal devices, printers, IoT dev
 
 ```
 Subnet 192.168.88.0/24
-┌──────────────────────────────────────────────────────────┐
-│  ARP Watcher (passive, real-time)                        │
-│  + Active Sweep (every 3 min, probes SSH/WinRM/SNMP)     │
-│  + AD Enumeration (existing, domain-joined machines)      │
-└──────────────────────┬───────────────────────────────────┘
-                       │ discovered_devices[] in checkin
+┌──────────────────────────────────────────────────────────────┐
+│  ARP Cache Poll (passive, /proc/net/arp, every 3 min)        │
+│  + Active Sweep (every 10 min, probes SSH/WinRM)             │
+│  + AD Enumeration (existing, domain-joined machines)          │
+└──────────────────────┬───────────────────────────────────────┘
+                       │ POST /api/devices/sync (existing endpoint)
                        ▼
-┌──────────────────────────────────────────────────────────┐
-│  Central Command                                         │
-│  - Upserts discovered_devices with probe results         │
-│  - Marks AD-joined devices for auto-deploy               │
-│  - Returns pending_deploys[] in checkin response         │
-└──────────────────────┬───────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Central Command                                             │
+│  - Upserts discovered_devices with probe results             │
+│  - AD-joined + no agent = daemon auto-deploys autonomously   │
+│  - Non-AD "Take Over" = creds saved, pending_deploys in      │
+│    checkin response for daemon to execute                     │
+└──────────────────────┬───────────────────────────────────────┘
                        │
            ┌───────────┼───────────┐
            ▼           ▼           ▼
     AD-joined Win   "Take Over"   Ignored/Tagged
-    (auto-deploy)   (admin creds)  (inventory only)
+    (daemon auto)   (admin creds)  (inventory only)
            │           │
            ▼           ▼
     Go Agent deployed + pushing checks to Central Command
@@ -53,32 +54,34 @@ Subnet 192.168.88.0/24
 
 ### Current State
 
-- ARP scan runs every 15 minutes, reads `/proc/net/arp` passively
-- AD enumeration via PowerShell over WinRM on domain controller
-- OUI lookup for manufacturer hints (500+ prefixes)
-- No active probing, no OS fingerprinting, no real-time detection
+- ARP scan runs every 15 minutes, reads `/proc/net/arp` passively (`netscan.go:308-411`)
+- AD enumeration via PowerShell over WinRM (`appliance/internal/discovery/ad.go`)
+- OUI lookup for manufacturer hints (500+ prefixes in `oui_lookup.py`)
+- Device data sent to Central Command via `POST /api/devices/sync` (separate from checkin)
+- No active probing, no OS fingerprinting beyond AD data
 
 ### New Design
 
 Two-layer discovery loop in the Go daemon (`appliance/internal/daemon/`):
 
-**Layer 1 — ARP Watcher (passive, real-time):**
-- Persistent goroutine monitors ARP broadcasts on the LAN
-- Catches devices the instant they join the network
-- Feeds into the same `discoveredDevice` struct as the existing ARP scan
-- Minimal CPU/network overhead — purely passive listener
+**Layer 1 — Enhanced ARP + DNS (passive, every 3 minutes):**
+- Reads `/proc/net/arp` (existing approach — no raw sockets needed, works under `ProtectSystem=strict`)
+- Increased frequency from 15 min to 3 min for faster detection
+- Reverse DNS lookup on all discovered IPs (existing in `resolveHostnames()`)
+- Cross-references with `go_agents` heartbeat data to mark `has_agent`
 
-**Layer 2 — Active Sweep (every 3 minutes):**
-- Probes the entire /24 subnet (or configured range)
+**Layer 2 — Active Probe Sweep (every 10 minutes, configurable):**
+- Probes IPs found in ARP cache (not blind /24 sweep — only hosts known to be alive)
+- Configurable subnet range override for environments with static IPs
 - For each live IP, runs OS fingerprinting probes:
 
 | Probe | Port | What It Reveals |
 |-------|------|-----------------|
 | SSH banner grab | 22 | Linux distro + version, or macOS ("Apple") |
 | WinRM check | 5985 | Windows (version from HTTP response headers) |
-| SNMP query | 161 | Network gear, managed printers, UPS |
 | HTTP header | 80/443 | Embedded web UIs (printers, IoT, medical) |
 
+- SNMP probing (port 161) is **opt-in** via site config — can trigger IDS/IPS alerts on managed firewalls
 - Combines with existing OUI lookup (MAC → manufacturer → device class hint)
 - Skips the appliance's own IP and known infrastructure (gateway, DNS)
 
@@ -88,42 +91,50 @@ SSH banner contains "Ubuntu"         → os_type: "linux", distro: "ubuntu"
 SSH banner contains "Debian"         → os_type: "linux", distro: "debian"
 SSH banner contains "Apple"          → os_type: "macos"
 WinRM responds                       → os_type: "windows"
-SNMP sysDescr matches printer OIDs   → os_type: "network", device_tag: "printer"
-HTTP response from known medical UIs → os_type: "medical"
+HTTP response from known medical UIs → device_tag: "medical"
+HTTP response from known printer UIs → device_tag: "printer"
 None of the above                    → os_type: "unknown"
 ```
 
-**Reported to Central Command in each checkin:**
+**Reported to Central Command via existing `POST /api/devices/sync`:**
+
+The existing `DeviceSyncEntry` model is extended with new fields. The daemon already sends device data through this endpoint (not through checkin). New probe fields are added to the sync payload:
+
 ```json
 {
-  "discovered_devices": [
+  "devices": [
     {
+      "device_id": "arp-08:00:27:xx:xx:xx",
       "ip_address": "192.168.88.239",
       "mac_address": "08:00:27:xx:xx:xx",
       "hostname": "northvalley-linux",
+      "device_type": "workstation",
+      "os_name": "linux",
+      "os_version": "Ubuntu 22.04",
+      "discovery_source": "arp",
+      "compliance_status": "unknown",
       "os_fingerprint": "OpenSSH_8.9p1 Ubuntu-3ubuntu0.6",
-      "os_type": "linux",
-      "distro": "ubuntu",
       "probe_ssh": true,
       "probe_winrm": false,
-      "probe_snmp": false,
       "ad_joined": false,
       "has_agent": false,
-      "first_seen": "2026-03-22T12:00:00Z",
-      "last_seen": "2026-03-22T17:30:00Z"
+      "first_seen_at": "2026-03-22T12:00:00Z",
+      "last_seen_at": "2026-03-22T17:30:00Z"
     }
   ]
 }
 ```
 
+**Note on device identity:** `device_id` uses MAC address (`arp-{mac}`) rather than IP address to handle DHCP lease changes. The existing `_add_manual_device()` uses `manual-{ip}` which is fragile — we should migrate to MAC-based IDs where available. For manually added devices without a known MAC, IP-based ID remains as fallback.
+
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `appliance/internal/daemon/netscan.go` | Add active sweep + ARP watcher goroutine |
-| `appliance/internal/daemon/probes.go` | New file: SSH/WinRM/SNMP/HTTP probe functions |
+| `appliance/internal/daemon/netscan.go` | Increase ARP frequency to 3 min, add probe sweep goroutine |
+| `appliance/internal/daemon/probes.go` | New file: SSH banner, WinRM, HTTP probe functions |
 | `appliance/internal/daemon/classify.go` | New file: OS classification from probe results |
-| `mcp-server/app/dashboard_api/device_sync.py` | Accept new probe fields in sync payload |
+| `mcp-server/app/dashboard_api/device_sync.py` | Extend `DeviceSyncEntry` with probe fields, accept new columns |
 
 ---
 
@@ -131,39 +142,54 @@ None of the above                    → os_type: "unknown"
 
 Three deployment paths based on device classification:
 
-### Path 1 — AD-Joined Windows (Automatic, Zero-Click)
+### Path 1 — AD-Joined Windows (Daemon-Autonomous, Zero-Click)
+
+**This extends the existing `autodeploy.go` (630 lines)** which already:
+- Enumerates AD via `appliance/internal/discovery/ad.go`
+- Tests WinRM reachability on discovered machines
+- Deploys agents via WinRM with NETLOGON UNC fallback
+- Caches agent binary as base64 in memory (`agentB64` field)
+- Operates autonomously — no Central Command authorization needed
+
+**What's new:**
+- Cross-reference AD-discovered hosts with `go_agents` heartbeat data (from checkin response)
+- Skip deployment to hosts that already have an active agent (prevents re-deploy on every cycle)
+- Report deployment status back to Central Command in device sync payload
+- Cache binary to local filesystem (not just memory) for SSH deploy path reuse
 
 ```
-AD enumeration discovers machine
-  → Cross-reference with go_agents table
-  → No active agent? Mark deploy_status = "pending"
-  → Daemon uses existing domain/service account creds (from checkin windows_targets)
-  → Runs configure_workstation_agent logic directly (no fleet order)
-  → Downloads binary from https://api.osiriscare.net/updates/
-  → Deploys via WinRM (NETLOGON UNC fallback if HTTP blocked)
-  → Agent starts, pushes checks within 60 seconds
-  → deploy_status = "success"
+Existing autodeploy.go cycle runs
+  → AD enumeration discovers machines (already implemented)
+  → Cross-reference with go_agents data from last checkin
+  → Host has no active agent AND is WinRM-reachable?
+  → Deploy using existing WinRM fallback chain (already implemented)
+  → Report deploy result in next device sync
 ```
 
-No admin intervention needed. Domain credentials already exist in `site_credentials`.
+**No new server-controlled deploy path for AD-joined machines.** The daemon remains autonomous for AD targets — this is the proven architecture.
 
 ### Path 2 — Manual "Take Over" (Linux/Mac/Standalone Windows)
+
+For non-AD devices, Central Command mediates because the daemon doesn't have credentials:
 
 ```
 Device appears in UI as "Discovered — Unmanaged"
   → Admin clicks "Take Over" button on device row
   → Modal pre-fills hostname, IP, MAC, detected OS
   → Admin enters: username + password/SSH key
-  → Backend saves credentials + sets deploy_requested = true
-  → Next checkin (within 60s): daemon receives pending_deploys[]
-  → Daemon connects via SSH (Linux/Mac) or WinRM (standalone Windows)
-  → Uploads agent binary, installs service:
+  → Backend saves credentials to site_credentials table
+  → Backend sets agent_deploy_status = "pending" on discovered_devices
+  → Next checkin (within 60s): daemon receives pending_deploys[] in response
+  → Daemon connects via SSH (reusing infrastructure from linuxscan.go/macosscan.go)
+  → Uploads agent binary from local cache, installs service:
       - Linux: systemd unit (osiriscare-agent.service)
       - macOS: launchd plist (com.osiriscare.agent.plist)
-      - Windows: Windows service via sc.exe
-  → Agent starts, pushes checks within 60 seconds
-  → deploy_status = "success"
+      - Standalone Windows: Windows service via WinRM
+  → Reports deploy result in next device sync
+  → agent_deploy_status updated to "success" or "failed"
 ```
+
+**SSH implementation note:** The daemon already has SSH client infrastructure in `linuxscan.go` and `macosscan.go` (connection pooling, key auth, password auth, known_hosts via TOFU). The new `deploy_ssh.go` reuses this — it's essentially "connect via SSH, SCP binary, run install commands" using the same SSH client pool.
 
 ### Path 3 — Ignore/Tag (Inventory Only)
 
@@ -177,28 +203,86 @@ Admin sees unknown device (printer, IoT, personal laptop)
 
 ### Deployment Status Tracking
 
-New fields on `discovered_devices`:
-- `agent_deploy_status`: `none` → `pending` → `deploying` → `success` | `failed`
+Single unified `device_status` field on `discovered_devices` that combines lifecycle and deploy state (see Section 5G for full state machine):
+
+- `discovered` — just found on network, not yet probed
+- `probed` — OS fingerprinted, awaiting classification
+- `ad_managed` — AD-joined, daemon will auto-deploy
+- `deploying` — deployment in progress
+- `agent_active` — Go agent running and reporting
+- `agent_stale` — agent heartbeat missed (>10 min)
+- `take_over_available` — non-AD, awaiting admin credentials
+- `pending_deploy` — admin provided creds, waiting for daemon
+- `deploy_failed` — deployment failed (see `agent_deploy_error`)
+- `ignored` — admin explicitly dismissed
+- `archived` — not seen in 30+ days
+
+Plus supporting fields:
 - `agent_deploy_error`: failure reason text
 - `agent_deploy_attempted_at`: timestamp of last attempt
+- `deploy_attempts`: retry counter
 
-Daemon reports deploy results in next checkin. Frontend polls device list to show live status.
+### Take Over Sequence Diagram
+
+```
+Admin            Frontend           Backend API        Database         Daemon (checkin)
+  │                  │                   │                │                   │
+  │ Click "Take Over"│                   │                │                   │
+  │─────────────────>│                   │                │                   │
+  │                  │ POST /sites/{id}/ │                │                   │
+  │                  │ devices/takeover  │                │                   │
+  │                  │──────────────────>│                │                   │
+  │                  │                   │ INSERT creds   │                   │
+  │                  │                   │───────────────>│                   │
+  │                  │                   │ UPDATE device  │                   │
+  │                  │                   │ status=pending │                   │
+  │                  │                   │───────────────>│                   │
+  │                  │   200 OK          │                │                   │
+  │                  │<──────────────────│                │                   │
+  │  "Deploying..."  │                   │                │                   │
+  │<─────────────────│                   │                │                   │
+  │                  │                   │                │  POST /checkin    │
+  │                  │                   │                │<──────────────────│
+  │                  │                   │ Query pending  │                   │
+  │                  │                   │ deploys        │                   │
+  │                  │                   │───────────────>│                   │
+  │                  │                   │ Return pending │                   │
+  │                  │                   │ _deploys[]     │                   │
+  │                  │                   │──────────────────────────────────>│
+  │                  │                   │                │                   │
+  │                  │                   │                │   SSH connect +   │
+  │                  │                   │                │   deploy binary   │
+  │                  │                   │                │   ───────────>    │
+  │                  │                   │                │                   │
+  │                  │                   │                │  POST /devices/   │
+  │                  │                   │                │  sync (result)    │
+  │                  │                   │                │<──────────────────│
+  │                  │                   │ UPDATE device  │                   │
+  │                  │                   │ status=active  │                   │
+  │                  │                   │───────────────>│                   │
+  │                  │ Poll GET devices  │                │                   │
+  │                  │──────────────────>│                │                   │
+  │  "Agent Active"  │                   │                │                   │
+  │<─────────────────│                   │                │                   │
+```
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `appliance/internal/daemon/autodeploy.go` | New file: auto-deploy orchestrator |
-| `appliance/internal/daemon/deploy_ssh.go` | New file: SSH-based Linux/macOS deployment |
-| `appliance/internal/daemon/deploy_winrm.go` | Extract from orders.go, reuse for auto-deploy |
-| `mcp-server/app/main.py` | Add `pending_deploys` to checkin response |
-| `mcp-server/app/dashboard_api/sites.py` | "Take Over" endpoint saves creds + sets pending |
+| `appliance/internal/daemon/autodeploy.go` | Extend: cross-ref go_agents, report deploy status, local binary cache |
+| `appliance/internal/daemon/deploy_ssh.go` | New: SSH-based Linux/macOS deploy (reuses SSH pool from linuxscan.go) |
+| `appliance/internal/daemon/phonehome.go` | Extend CheckinRequest with deploy_results, parse pending_deploys |
+| `mcp-server/app/main.py` | Add `pending_deploys` to checkin response (query pending devices) |
+| `mcp-server/app/dashboard_api/sites.py` | New "Take Over" endpoint: save creds + set pending status |
 
 ---
 
 ## Section 3: UI — Discovered Devices + Take Over Flow
 
 ### SiteDevices.tsx Changes
+
+All frontend paths are relative to `mcp-server/central-command/frontend/src/`.
 
 **New coverage tier column:**
 
@@ -207,7 +291,7 @@ Daemon reports deploy results in next checkin. Frontend polls device list to sho
 | Agent Active | Green dot + "Agent" | Go agent pushing checks |
 | Deploying... | Spinner + "Deploying" | Deploy in progress |
 | Deploy Failed | Red dot + "Failed" + retry | Error on hover |
-| AD Managed | Blue dot + "AD — auto-deploy" | Queued for auto-deploy |
+| AD Managed | Blue dot + "AD — auto-deploy" | Daemon will handle |
 | Discovered | Yellow dot + "Take Over" button | Needs credentials |
 | Ignored | Gray dot + "Ignored" | Admin dismissed |
 
@@ -216,7 +300,7 @@ Daemon reports deploy results in next checkin. Frontend polls device list to sho
 - Admin enters: username + password or SSH key
 - OS type auto-selected from fingerprint (editable if wrong)
 - "Deploy Agent" button saves creds AND triggers deploy
-- Modal stays open showing progress: Connecting → Uploading → Installing → Verifying → Done
+- Modal stays open, polls device status: Connecting → Uploading → Installing → Verifying → Done
 
 **Network Inventory filter:**
 - Toggle: "Managed" (has agent or AD) vs "All Devices" (includes printers, unknown, ignored)
@@ -231,60 +315,75 @@ Daemon reports deploy results in next checkin. Frontend polls device list to sho
 
 | File | Change |
 |------|--------|
-| `frontend/src/pages/SiteDevices.tsx` | Coverage tier column, filter toggle, bulk actions |
-| `frontend/src/components/shared/AddDeviceModal.tsx` | Pre-fill from probe data, deploy progress |
-| `frontend/src/components/shared/DeployProgress.tsx` | New: step-by-step deploy status display |
+| `pages/SiteDevices.tsx` | Coverage tier column, filter toggle, bulk actions |
+| `components/shared/AddDeviceModal.tsx` | Pre-fill from probe data, deploy progress polling |
+| `components/shared/DeployProgress.tsx` | New: step-by-step deploy status display |
 
 ---
 
 ## Section 4: Data Model Changes
 
-### Migration (new)
+### Migration (next sequential number after current latest)
 
 ```sql
 -- Extend discovered_devices for probing + auto-deploy
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS os_fingerprint TEXT;
-ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS os_type TEXT;
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS distro TEXT;
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS probe_ssh BOOLEAN DEFAULT FALSE;
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS probe_winrm BOOLEAN DEFAULT FALSE;
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS probe_snmp BOOLEAN DEFAULT FALSE;
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS ad_joined BOOLEAN DEFAULT FALSE;
-ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS agent_deploy_status TEXT DEFAULT 'none';
+ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS device_status TEXT DEFAULT 'discovered';
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS agent_deploy_error TEXT;
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS agent_deploy_attempted_at TIMESTAMPTZ;
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS deploy_attempts INTEGER DEFAULT 0;
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS device_tag TEXT;
 ALTER TABLE discovered_devices ADD COLUMN IF NOT EXISTS last_probe_at TIMESTAMPTZ;
 
+-- Note: os_name already exists on the table and is reused for os_type classification.
+-- os_name stores the OS family ('linux', 'macos', 'windows') from probe classification.
+-- os_version stores the specific version string ('Ubuntu 22.04', 'macOS 11.7').
+-- The new distro column stores Linux-specific distribution ('ubuntu', 'debian', 'rhel').
+
+-- Migrate legacy agent_deploy_status data if any exists
+-- (unified into device_status field — see Section 5G)
+
 -- Index for finding devices needing deployment
 CREATE INDEX IF NOT EXISTS idx_discovered_devices_deploy_status
-ON discovered_devices (agent_deploy_status) WHERE agent_deploy_status IN ('pending', 'deploying');
+ON discovered_devices (device_status) WHERE device_status IN ('pending_deploy', 'deploying', 'ad_managed');
 
 -- Index for finding unmanaged devices
 CREATE INDEX IF NOT EXISTS idx_discovered_devices_unmanaged
-ON discovered_devices (site_id, device_tag) WHERE device_tag IS NULL AND agent_deploy_status = 'none';
+ON discovered_devices (site_id, device_tag) WHERE device_tag IS NULL AND device_status = 'take_over_available';
 ```
 
 ### Checkin Response — New `pending_deploys` Array
+
+Only used for Path 2 (Take Over) devices where Central Command has credentials the daemon doesn't:
 
 ```json
 {
   "pending_deploys": [
     {
-      "device_id": "manual-192.168.88.239",
+      "device_id": "arp-08:00:27:xx:xx:xx",
       "ip_address": "192.168.88.239",
       "hostname": "northvalley-linux",
       "os_type": "linux",
-      "username": "admin",
-      "password": "...",
-      "ssh_key": "...",
       "deploy_method": "ssh",
+      "credential_ref": 42,
+      "encrypted_credentials": "<age-encrypted JSON blob>",
       "agent_binary_url": "https://api.osiriscare.net/updates/osiris-agent-linux-amd64"
     }
   ]
 }
 ```
+
+**Credential security (Phase 1 requirement — not deferred to Phase 3):**
+- Credentials are encrypted with the appliance's age public key before inclusion in the response
+- Daemon decrypts with its local age private key (already available for SOPS)
+- Credentials are never persisted to daemon disk — used in-memory only
+- Response logging explicitly excludes `pending_deploys` and `encrypted_credentials` fields
+- This mirrors the existing `windows_targets` credential delivery but with actual encryption
 
 ### Checkin Request — Deploy Status Reporting
 
@@ -292,7 +391,7 @@ ON discovered_devices (site_id, device_tag) WHERE device_tag IS NULL AND agent_d
 {
   "deploy_results": [
     {
-      "device_id": "manual-192.168.88.239",
+      "device_id": "arp-08:00:27:xx:xx:xx",
       "status": "success",
       "agent_id": "go-northvalley-linux-a1b2c3d4",
       "error": null
@@ -300,6 +399,15 @@ ON discovered_devices (site_id, device_tag) WHERE device_tag IS NULL AND agent_d
   ]
 }
 ```
+
+Backend processes `deploy_results` and updates `device_status` on `discovered_devices`.
+
+### Device Sync — Extended Payload
+
+The existing `POST /api/devices/sync` endpoint accepts the new probe fields. Backend `device_sync.py` upserts with:
+- `os_fingerprint`, `probe_ssh`, `probe_winrm`, `ad_joined` from daemon probes
+- `device_status` transitions based on probe results + go_agents cross-reference
+- MAC-based `device_id` (`arp-{mac}`) for stable identity across DHCP changes
 
 No changes to `go_agents` table — once deployed, agents register themselves via existing heartbeat flow.
 
@@ -314,23 +422,30 @@ New device on subnet that wasn't previously seen triggers an automatic incident.
 **Severity classification:**
 - Unknown device with open ports → `high` (potential attack vector on healthcare network)
 - New device matching consumer OUI (iPhone, Ring, etc.) → `medium` (personal device)
-- Device with MAC address changes → `critical` (possible MAC spoofing)
+- Device with MAC address that was previously associated with different IP → `info` (DHCP change, not rogue)
+- Known MAC appearing with different hostname → `medium` (possible compromise)
+
+**Suppression rules (to prevent noise):**
+- Same MAC returning with different IP = DHCP change, NOT a rogue device. Suppress.
+- First 24 hours after daemon boot = baseline establishment. Discovery-only, no rogue alerts.
+- Devices matching `device_tag` (printer, iot, personal) are exempt from rogue alerting.
+- Rate limit: max 10 rogue alerts per hour per site to prevent alert storms on guest WiFi.
 
 **Implementation:**
 - New incident type: `NETWORK-ROGUE-DEVICE`
-- L1 rule auto-creates incident on first sighting of unknown device
+- L1 rule auto-creates incident on first sighting of truly unknown MAC
 - Admin reviews: take over, tag, or ignore
 - Feeds into compliance packets: "Network perimeter integrity — X rogue devices detected this period"
 
-**Files:** `appliance/internal/daemon/autodeploy.go` (trigger), `mcp-server/app/main.py` (L1 rule)
+**Files:** `appliance/internal/daemon/netscan.go` (detection + suppression), `mcp-server/app/main.py` (L1 rule)
 
 ### 5B — Agent Self-Healing (Phase 2)
 
-Daemon monitors agent heartbeats via `go_agents.last_heartbeat`.
+Daemon monitors agent heartbeats via `go_agents` data received in checkin response.
 
 **Escalation ladder:**
 1. Agent silent for 10 minutes → daemon probes via SSH/WinRM health check
-2. Agent process dead → auto-redeploy using stored credentials
+2. Agent process dead → auto-redeploy using stored credentials (AD creds for domain machines, or re-request from Central Command for Take Over devices)
 3. Agent binary corrupted or old version → auto-update via deploy pipeline
 4. `deploy_attempts` counter tracks retries — after 3 failed redeploys, escalate to L3 human ticket
 
@@ -346,7 +461,7 @@ Clinic networks often run on slow DSL/cable links. Blasting 10 deploys simultane
 - Deploy in batches of 3 (configurable via site-level `deploy_concurrency`)
 - 30-second gap between batches
 - Priority order: servers → workstations → everything else
-- Binary download cached on appliance — uploaded to each target from local cache, not re-downloaded per host
+- **Phase 1 prerequisite:** Binary cached to local filesystem on appliance (not just base64 in memory). Downloaded once from Central Command, uploaded to each target from local cache.
 
 **Files:** `appliance/internal/daemon/autodeploy.go` (batch scheduler)
 
@@ -368,15 +483,16 @@ Pre-flight failures show in UI: "Deploy blocked: 95% disk full" or "Requires mac
 
 ### 5E — Credential Encryption at Rest (Phase 3)
 
-**Current:** credentials stored as JSON bytes in `site_credentials.encrypted_data` (not actually encrypted).
+**Note:** Phase 1 handles credentials-in-transit encryption via age keys (see Section 4). Phase 3 extends this to at-rest encryption in the database.
+
+**Current:** credentials stored as JSON bytes in `site_credentials.encrypted_data` (misleading name — not actually encrypted).
 
 **Enhancement:**
-- Encrypt with age key before storage (reuse existing SOPS/age infrastructure)
-- Decrypt only at checkin delivery time (server-side)
-- Daemon receives decrypted creds in checkin response (TLS in transit), uses them, never persists to disk
+- Encrypt with age public key before database storage
+- Decrypt only at checkin delivery time (server-side, using age private key)
 - Credential age tracking: if SSH password creds are >90 days old, flag in UI as "stale credentials"
 
-**Files:** `mcp-server/app/main.py` (encrypt on save, decrypt on deliver), migration for key storage
+**Files:** `mcp-server/app/main.py` (encrypt on save, decrypt on deliver), migration for encrypted format
 
 ### 5F — Network Topology Awareness (Phase 3)
 
@@ -393,26 +509,42 @@ Pre-flight failures show in UI: "Deploy blocked: 95% disk full" or "Requires mac
 
 ### 5G — Device Lifecycle State Machine (Phase 1)
 
-Clean state transitions with timestamps:
+Unified `device_status` field — replaces the separate `agent_deploy_status` from the original design. Single source of truth for device state.
 
 ```
 discovered → probed → [ad_managed | take_over_available | ignored]
                               ↓              ↓
-                        auto_deploying   pending_deploy
+                        deploying       pending_deploy → deploying
                               ↓              ↓
                          agent_active    agent_active
                               ↓              ↓
-                         [agent_stale → auto_redeploy → agent_active]
+                         [agent_stale → auto_redeploy (Phase 2)]
                               ↓
                          agent_offline → incident_created
+                              ↓
+                         archived (30+ days unseen)
 ```
 
-**Lifecycle rules:**
-- Device not seen in 7 days → status `offline`, incident created
-- Device not seen in 30 days → auto-archived (visible in history, removed from active list)
-- Device reappears → status restored, incident auto-resolved
+**State transition rules:**
+- `discovered` → `probed`: OS fingerprint obtained from active sweep
+- `probed` → `ad_managed`: device found in AD enumeration results
+- `probed` → `take_over_available`: not in AD, has SSH or WinRM open
+- `probed` → `ignored`: admin tags as printer/iot/personal
+- `ad_managed` → `deploying`: daemon begins auto-deploy
+- `take_over_available` → `pending_deploy`: admin provides credentials
+- `pending_deploy` → `deploying`: daemon picks up from checkin
+- `deploying` → `agent_active`: agent heartbeat received
+- `deploying` → `deploy_failed`: deploy error (see `agent_deploy_error`)
+- `agent_active` → `agent_stale`: no heartbeat for 10+ minutes
+- Any state → `archived`: not seen on network for 30+ days
+- `archived` → `discovered`: device reappears on network
 
-**Files:** `appliance/internal/daemon/lifecycle.go` (new), `device_sync.py` (archive logic)
+**Lifecycle rules:**
+- Device not seen in 7 days → incident created (possible hardware removal)
+- Device not seen in 30 days → auto-archived (visible in history, removed from active list)
+- Device reappears → status restored to `discovered`, re-probed, incident auto-resolved
+
+**Files:** `appliance/internal/daemon/lifecycle.go` (new), `mcp-server/app/dashboard_api/device_sync.py` (archive logic)
 
 ### 5H — Compliance Coverage Score (Phase 3)
 
@@ -427,7 +559,7 @@ network_coverage_percentage = (devices with active agents) / (total non-ignored 
 - Target: 100% = all devices either have agent or are explicitly tagged/ignored
 - Unmanaged untagged devices drag the score down — incentivizes admin action
 
-**Files:** `_routes_impl.py` (calculation), `SiteDetail.tsx` (gauge), compliance packet generation
+**Files:** `mcp-server/app/dashboard_api/_routes_impl.py` (calculation), `mcp-server/central-command/frontend/src/pages/SiteDetail.tsx` (gauge), compliance packet generation
 
 ### 5I — Remote Uninstall (Phase 3)
 
@@ -439,6 +571,9 @@ Daemon connects via SSH/WinRM to target:
 3. Delete binary and data directory
 4. Report removal to Central Command
 5. `go_agents` record marked `removed`
+6. `discovered_devices.device_status` reverted to `take_over_available` or `ad_managed`
+
+**Partial deploy cleanup:** If a deploy partially completes (binary uploaded, service partially configured), the uninstall path cleans up artifacts before retrying. This runs automatically on `deploy_failed` before the next retry attempt.
 
 **Use cases:**
 - Device being decommissioned
@@ -452,16 +587,18 @@ Daemon connects via SSH/WinRM to target:
 ## Implementation Phases
 
 ### Phase 1 — Core Auto-Discover + Auto-Deploy
-Sections 1-4 + 5A (rogue alerting) + 5G (lifecycle state machine)
+Sections 1-4 + 5A (rogue alerting) + 5G (lifecycle state machine) + credential encryption in transit
 
 **Deliverables:**
-- Active subnet sweep with OS fingerprinting (3-min interval)
-- ARP watcher for real-time detection
-- Auto-deploy to AD-joined Windows devices (zero-click)
+- Enhanced ARP polling (3-min) + active probe sweep (10-min) with OS fingerprinting
+- Auto-deploy to AD-joined Windows devices (extending existing autodeploy.go)
 - "Take Over" UI flow for Linux/Mac/standalone Windows
-- Rogue device incident generation
-- Device lifecycle state machine with archive
+- SSH deploy path (reusing linuxscan.go/macosscan.go SSH infrastructure)
+- Rogue device incident generation with suppression rules
+- Unified device lifecycle state machine
+- Age-encrypted credential delivery in checkin response
 - DB migration for new discovered_devices columns
+- Local binary cache on appliance filesystem
 - Deploy northvalley-linux Ubuntu VM as first Linux agent
 
 ### Phase 2 — Reliability
@@ -473,22 +610,22 @@ Sections 1-4 + 5A (rogue alerting) + 5G (lifecycle state machine)
 - Pre-flight validation (disk, OS version, existing software)
 
 ### Phase 3 — Polish
-5E (credential encryption) + 5F (topology) + 5H (coverage score) + 5I (uninstall)
+5E (credential encryption at rest) + 5F (topology) + 5H (coverage score) + 5I (uninstall)
 
 **Deliverables:**
-- Age-encrypted credential storage
+- Age-encrypted credential storage in database
 - Multi-subnet awareness and UI grouping
 - Network coverage percentage metric
-- Remote agent uninstall capability
+- Remote agent uninstall + partial deploy cleanup
 
 ---
 
 ## Success Criteria
 
-1. Daemon discovers all 5 lab devices within 3 minutes of boot
-2. AD-joined NVDC01 and NVWS01 auto-deploy agents without admin action
+1. Daemon discovers all 5 lab devices within 10 minutes of boot (probe sweep cycle)
+2. AD-joined NVDC01 and NVWS01 recognized as `ad_managed`, auto-deploy skipped (already have agents)
 3. northvalley-linux appears in UI as "Discovered — Ubuntu" with "Take Over" button
 4. Admin enters SSH creds for northvalley-linux → agent deployed within 60 seconds
-5. Random new device plugged into network → rogue device incident within 3 minutes
-6. Agent process killed on any host → auto-redeployed within 10 minutes
-7. Network coverage score shows 100% when all devices managed or tagged
+5. Random new device plugged into network → rogue device incident within 10 minutes
+6. Agent process killed on any host → auto-redeployed within 10 minutes (Phase 2)
+7. Network coverage score shows 100% when all devices managed or tagged (Phase 3)
