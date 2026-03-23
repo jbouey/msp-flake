@@ -17,9 +17,11 @@ import {
  * Format relative time
  */
 function formatRelativeTime(dateString: string | null | undefined): string {
-  if (!dateString) return 'Never';
+  if (!dateString || dateString === '-infinity' || dateString === 'infinity') return 'Never';
 
   const date = new Date(dateString);
+  if (isNaN(date.getTime())) return 'Never';
+
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);

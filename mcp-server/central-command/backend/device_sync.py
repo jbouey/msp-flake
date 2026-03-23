@@ -275,7 +275,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                             SELECT COUNT(*) FROM go_agents
                             WHERE site_id = $1
                             AND (hostname = $2 OR ip_address::text = $3)
-                            AND status = 'active'
+                            AND status IN ('active', 'connected')
                             """,
                             report.site_id,
                             device.hostname or "",
