@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { GlassCard, Spinner, LevelBadge, useToast } from '../components/shared';
+import { StatusBadge } from '../components/composed';
 import { IncidentRow } from '../components/incidents/IncidentRow';
 import { useIncidents, useSites, useResolveIncident, useEscalateIncident, useSuppressIncident } from '../hooks';
 import { incidentApi } from '../utils/api';
 import type { Incident, IncidentDetail } from '../types';
 import { CHECK_TYPE_LABELS } from '../types';
+import { CATEGORY_LABELS } from '../constants';
 
 // Category -> check_types mapping (matches backend compliance-health endpoint)
 const CATEGORY_CHECK_TYPES: Record<string, string[]> = {
@@ -30,11 +32,6 @@ const CATEGORY_CHECK_TYPES: Record<string, string[]> = {
             'spooler_service', 'linux_failed_services', 'ntp_sync',
             'winrm', 'dns_config', 'net_dns_resolution',
             'net_expected_service', 'net_host_reachability'],
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-  patching: 'Patching', antivirus: 'Antivirus', backup: 'Backup', logging: 'Logging',
-  firewall: 'Firewall', encryption: 'Encryption', access_control: 'Access Control', services: 'Services',
 };
 
 /**
@@ -176,9 +173,7 @@ const IncidentDetailPanel: React.FC<{ incidentId: string; onClose: () => void }>
         {detail.resolved_at && (
           <span>Resolved: {new Date(detail.resolved_at).toLocaleString()}</span>
         )}
-        <span className={detail.resolved ? 'text-health-healthy font-medium' : 'text-health-warning font-medium'}>
-          {detail.resolved ? 'Resolved' : 'Active'}
-        </span>
+        <StatusBadge status={detail.resolved ? 'resolved' : 'resolving'} showDot={false} />
       </div>
     </div>
   );

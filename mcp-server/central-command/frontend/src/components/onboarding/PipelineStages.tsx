@@ -1,6 +1,7 @@
 import React from 'react';
 import { GlassCard } from '../shared';
 import type { OnboardingMetrics } from '../../types';
+import { STATUS_LABELS } from '../../constants';
 
 // Error Boundary for debugging
 class PipelineErrorBoundary extends React.Component<
@@ -55,7 +56,7 @@ const phase2Stages: StageConfig[] = [
   { key: 'connectivity', label: 'Connectivity', shortLabel: 'Conn' },
   { key: 'scanning', label: 'Scanning', shortLabel: 'Scan' },
   { key: 'baseline', label: 'Baseline', shortLabel: 'Base' },
-  { key: 'compliant', label: 'Baseline Complete', shortLabel: 'Base' },
+  { key: 'compliant', label: STATUS_LABELS.compliant, shortLabel: 'Base' },
   { key: 'active', label: 'Active', shortLabel: 'Live' },
 ];
 

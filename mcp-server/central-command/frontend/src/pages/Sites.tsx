@@ -1,64 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard, Spinner, Badge } from '../components/shared';
+import { StatusBadge } from '../components/composed';
 import { useSites, useCreateSite } from '../hooks';
 import type { Site } from '../utils/api';
+import { formatTimeAgo } from '../constants';
 
-/**
- * Status indicator component
- */
-const StatusBadge: React.FC<{ status: Site['live_status'] }> = ({ status }) => {
-  const dotClass: Record<Site['live_status'], string> = {
-    online: 'status-dot status-dot-healthy',
-    stale: 'status-dot status-dot-warning',
-    offline: 'status-dot status-dot-critical',
-    pending: 'status-dot status-dot-neutral',
-  };
-
-  const textClass: Record<Site['live_status'], string> = {
-    online: 'text-health-healthy',
-    stale: 'text-health-warning',
-    offline: 'text-health-critical',
-    pending: 'text-label-tertiary',
-  };
-
-  const labels: Record<Site['live_status'], string> = {
-    online: 'Online',
-    stale: 'Stale',
-    offline: 'Offline',
-    pending: 'Pending',
-  };
-
-  return (
-    <span className="inline-flex items-center gap-2 text-sm">
-      <span className={dotClass[status] || dotClass.pending} />
-      <span className={`font-medium ${textClass[status] || textClass.pending}`}>
-        {labels[status] || 'Pending'}
-      </span>
-    </span>
-  );
-};
-
-/**
- * Format relative time
- */
-function formatRelativeTime(dateString: string | null): string {
-  if (!dateString) return 'Never';
-
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} min ago`;
-
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
-}
+// Alias for backward compatibility within this file
+const formatRelativeTime = formatTimeAgo;
 
 /**
  * Site row component

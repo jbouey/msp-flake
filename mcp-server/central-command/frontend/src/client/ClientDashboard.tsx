@@ -5,6 +5,7 @@ import { OsirisCareLeaf, WelcomeModal, InfoTip } from '../components/shared';
 import { ClientDriftConfig } from './ClientDriftConfig';
 import { ComplianceHealthInfographic } from './ComplianceHealthInfographic';
 import { DevicesAtRisk } from './DevicesAtRisk';
+import { DISCLAIMERS, BRANDING } from '../constants';
 
 interface Site {
   site_id: string;
@@ -820,10 +821,10 @@ export const ClientDashboard: React.FC = () => {
       <footer className="border-t border-slate-200/60 mt-12 py-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <p className="text-center text-sm text-slate-400">
-            Powered by OsirisCare HIPAA Compliance Monitoring Platform
+            Powered by {BRANDING.name} {BRANDING.tagline}
           </p>
           <p className="text-[10px] text-label-tertiary text-center mt-4 max-w-2xl mx-auto leading-relaxed">
-            OsirisCare provides automated compliance monitoring and does not constitute legal advice, HIPAA certification, or a guarantee of regulatory compliance. All metrics represent point-in-time observations. Consult qualified compliance professionals for formal assessments.
+            {DISCLAIMERS.footer}
           </p>
         </div>
       </footer>

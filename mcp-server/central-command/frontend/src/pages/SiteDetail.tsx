@@ -3,38 +3,22 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge, ActionDropdown, EmptyState, OnboardingChecklist } from '../components/shared';
 import type { ActionItem } from '../components/shared';
+import { StatusBadge } from '../components/composed';
 import { DeploymentProgress } from '../components/deployment';
 import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier, useUpdateL2Mode } from '../hooks';
 import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
 import { fleetUpdatesApi, decommissionApi, type FleetStats } from '../utils/api';
 import { ComplianceHealthInfographic } from '../client/ComplianceHealthInfographic';
 import { DevicesAtRisk } from '../client/DevicesAtRisk';
+import { formatTimeAgo } from '../constants';
 
 function getCsrfToken(): string {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : '';
 }
 
-/**
- * Format relative time
- */
-function formatRelativeTime(dateString: string | null): string {
-  if (!dateString) return 'Never';
-
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} min ago`;
-
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
-}
+// formatRelativeTime replaced by centralized formatTimeAgo from constants
+const formatRelativeTime = formatTimeAgo;
 
 /**
  * Format uptime
@@ -147,9 +131,7 @@ const ApplianceCard: React.FC<{
             {appliance.hostname || appliance.appliance_id}
           </h3>
         </div>
-        <Badge variant={appliance.live_status === 'online' ? 'success' : 'default'}>
-          {appliance.live_status}
-        </Badge>
+        <StatusBadge status={appliance.live_status} />
       </div>
 
       <div className="grid grid-cols-2 gap-3 text-sm">

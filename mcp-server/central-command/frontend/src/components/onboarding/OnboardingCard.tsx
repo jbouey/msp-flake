@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
 import { GlassCard } from '../shared';
 import type { OnboardingClient, OnboardingStage } from '../../types';
+import { STATUS_LABELS } from '../../constants';
 
 interface OnboardingCardProps {
   client: OnboardingClient;
@@ -8,19 +9,19 @@ interface OnboardingCardProps {
 }
 
 const stageLabels: Record<OnboardingStage, string> = {
-  lead: 'Lead',
-  discovery: 'Discovery',
-  proposal: 'Proposal',
-  contract: 'Contract',
-  intake: 'Intake',
-  creds: 'Credentials',
-  shipped: 'Shipped',
-  received: 'Received',
-  connectivity: 'Connectivity',
-  scanning: 'Scanning',
-  baseline: 'Baseline',
-  compliant: 'Baseline Complete',
-  active: 'Active',
+  lead: STATUS_LABELS.lead,
+  discovery: STATUS_LABELS.discovery,
+  proposal: STATUS_LABELS.proposal,
+  contract: STATUS_LABELS.contract,
+  intake: STATUS_LABELS.intake,
+  creds: STATUS_LABELS.creds,
+  shipped: STATUS_LABELS.shipped,
+  received: STATUS_LABELS.received,
+  connectivity: STATUS_LABELS.connectivity,
+  scanning: STATUS_LABELS.scanning,
+  baseline: STATUS_LABELS.baseline,
+  compliant: STATUS_LABELS.compliant,
+  active: STATUS_LABELS.active,
 };
 
 const getStagePhase = (stage: OnboardingStage): number => {

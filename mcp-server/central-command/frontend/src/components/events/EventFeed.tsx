@@ -2,6 +2,7 @@ import React from 'react';
 import { GlassCard, SkeletonText } from '../shared';
 import { CHECK_TYPE_LABELS } from '../../types';
 import type { ComplianceEvent } from '../../types';
+import { formatTimeAgo } from '../../constants';
 
 interface EventFeedProps {
   events: ComplianceEvent[];
@@ -18,20 +19,6 @@ const outcomeColors: Record<string, string> = {
   warning: 'bg-yellow-100 text-yellow-800',
   error: 'bg-red-200 text-red-900',
   unknown: 'bg-blue-50 text-blue-600',
-};
-
-const formatTimeAgo = (dateStr: string): string => {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffMins < 1) return 'just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${diffDays}d ago`;
 };
 
 export const EventFeed: React.FC<EventFeedProps> = ({

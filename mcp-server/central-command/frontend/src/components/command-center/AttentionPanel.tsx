@@ -3,18 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { GlassCard, Spinner } from '../shared';
 import { useAttentionRequired } from '../../hooks';
 import type { AttentionItem } from '../../types';
-
-function formatTimeAgo(timestamp: string | null): string {
-  if (!timestamp) return '';
-  const now = Date.now();
-  const then = new Date(timestamp).getTime();
-  const diffMin = Math.floor((now - then) / 60000);
-  if (diffMin < 1) return 'just now';
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHrs = Math.floor(diffMin / 60);
-  if (diffHrs < 24) return `${diffHrs}h ago`;
-  return `${Math.floor(diffHrs / 24)}d ago`;
-}
+import { formatTimeAgo } from '../../constants';
 
 const typeIcons: Record<string, React.ReactNode> = {
   l3_escalation: (

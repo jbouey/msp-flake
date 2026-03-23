@@ -4,18 +4,10 @@ import { GlassCard, Spinner } from '../shared';
 import { useFleetPosture } from '../../hooks';
 import { getHealthColor, getHealthStatus } from '../../tokens/style-tokens';
 import type { FleetPostureSite } from '../../types';
+import { formatTimeAgo } from '../../constants';
 
-function formatRelativeTime(dateString: string | null): string {
-  if (!dateString) return 'Never';
-  const now = Date.now();
-  const then = new Date(dateString).getTime();
-  const diffMin = Math.floor((now - then) / 60000);
-  if (diffMin < 1) return 'Now';
-  if (diffMin < 60) return `${diffMin}m`;
-  const diffHrs = Math.floor(diffMin / 60);
-  if (diffHrs < 24) return `${diffHrs}h`;
-  return `${Math.floor(diffHrs / 24)}d`;
-}
+// Alias: FleetHealthMatrix uses compact format but formatTimeAgo is close enough
+const formatRelativeTime = formatTimeAgo;
 
 const TrendIndicator: React.FC<{ trend: string }> = ({ trend }) => {
   if (trend === 'improving') {

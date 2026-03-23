@@ -2,6 +2,7 @@ import React, { memo } from 'react';
 import { LevelBadge } from '../shared';
 import { CHECK_TYPE_LABELS } from '../../types';
 import type { Incident } from '../../types';
+import { formatTimeAgo } from '../../constants';
 
 interface IncidentRowProps {
   incident: Incident;
@@ -13,21 +14,8 @@ interface IncidentRowProps {
   actionLoading?: string | null;
 }
 
-const formatTime = (dateStr: string): string => {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-};
+// formatTime replaced by centralized formatTimeAgo from constants
+const formatTime = formatTimeAgo;
 
 const formatTimeShort = (dateStr: string): string => {
   const date = new Date(dateStr);

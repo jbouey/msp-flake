@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
+import { DISCLAIMERS } from '../constants';
 
 interface EvidenceBundle {
   id: string;
@@ -253,7 +254,7 @@ export const ClientEvidence: React.FC = () => {
         </div>
 
         <p className="text-[10px] text-label-tertiary text-center mt-8 max-w-2xl mx-auto leading-relaxed">
-          OsirisCare provides automated compliance monitoring and does not constitute legal advice, HIPAA certification, or a guarantee of regulatory compliance. All metrics represent point-in-time observations. Consult qualified compliance professionals for formal assessments.
+          {DISCLAIMERS.footer}
         </p>
       </main>
     </div>

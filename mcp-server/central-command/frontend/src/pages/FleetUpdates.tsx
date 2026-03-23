@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GlassCard } from '../components/shared';
+// StatusBadge from composed available for future migration of fleet-specific status badges
 import { fleetUpdatesApi, type FleetRelease, type FleetRollout, type FleetStats, type FleetOrder } from '../utils/api';
+import { formatTimeAgo } from '../constants';
 
+// Local FleetStatusBadge preserves the fleet-specific color scheme
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const colors: Record<string, string> = {
     active: 'bg-accent-primary text-white',
@@ -46,18 +49,7 @@ const ProgressBar: React.FC<{ progress: FleetRollout['progress'] }> = ({ progres
   );
 };
 
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
-}
+const formatRelativeTime = formatTimeAgo;
 
 const ORDER_TYPE_LABELS: Record<string, string> = {
   update_daemon: 'Daemon Update',

@@ -2,29 +2,9 @@ import React, { useState } from 'react';
 import { GlassCard, StatCard, Spinner } from '../components/shared';
 import { useVPNStatus, useRotateVPNKey } from '../hooks';
 import type { VPNPeer } from '../utils/api';
+import { formatTimeAgo, formatBytes } from '../constants';
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const k = 1024;
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  const value = bytes / Math.pow(k, i);
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
-}
-
-function formatRelativeTime(isoString: string): string {
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSecs = Math.floor(diffMs / 1000);
-  if (diffSecs < 60) return `${diffSecs}s ago`;
-  const diffMins = Math.floor(diffSecs / 60);
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
-}
+const formatRelativeTime = formatTimeAgo;
 
 const ConnectionDot: React.FC<{ connected: boolean }> = ({ connected }) => (
   <span

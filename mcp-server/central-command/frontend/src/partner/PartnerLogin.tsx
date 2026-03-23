@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { usePartner } from './PartnerContext';
+import { BRANDING } from '../constants';
 
 interface OAuthProviders {
   microsoft: boolean;
@@ -342,7 +343,7 @@ export const PartnerLogin: React.FC = () => {
           </div>
 
           <p className="mt-8 text-center text-sm text-indigo-300/60">
-            Powered by OsirisCare HIPAA Compliance Monitoring Platform
+            {`Powered by ${BRANDING.name} ${BRANDING.tagline}`}
           </p>
         </div>
       </div>
@@ -657,7 +658,7 @@ export const PartnerLogin: React.FC = () => {
 
         {/* Footer */}
         <p className="mt-8 text-center text-sm text-indigo-300/60">
-          Powered by OsirisCare HIPAA Compliance Monitoring Platform
+          {`Powered by ${BRANDING.name} ${BRANDING.tagline}`}
         </p>
       </div>
     </div>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { OsirisCareLeaf } from '../components/shared';
+import { BRANDING } from '../constants';
 
 export const ClientLogin: React.FC = () => {
   const navigate = useNavigate();
@@ -204,7 +205,7 @@ export const ClientLogin: React.FC = () => {
           </div>
 
           <p className="mt-8 text-center text-sm text-teal-300/60">
-            Powered by OsirisCare HIPAA Compliance Monitoring Platform
+            {`Powered by ${BRANDING.name} ${BRANDING.tagline}`}
           </p>
         </div>
       </div>
@@ -415,7 +416,7 @@ export const ClientLogin: React.FC = () => {
 
         {/* Footer */}
         <p className="mt-8 text-center text-sm text-teal-300/60">
-          Powered by OsirisCare HIPAA Compliance Monitoring Platform
+          {`Powered by ${BRANDING.name} ${BRANDING.tagline}`}
         </p>
       </div>
     </div>

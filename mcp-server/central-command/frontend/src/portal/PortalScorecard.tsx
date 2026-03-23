@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import { IncidentList } from './components';
 import { InfoTip } from '../components/shared';
+import { DISCLAIMERS } from '../constants';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -596,7 +597,7 @@ export const PortalScorecard: React.FC = () => {
             immutable timestamp anchoring that independently verifies evidence generation time. For questions, contact your compliance administrator.
           </p>
           <p className="text-[10px] text-label-tertiary text-center mt-8 max-w-2xl mx-auto leading-relaxed">
-            OsirisCare provides automated compliance monitoring and does not constitute legal advice, HIPAA certification, or a guarantee of regulatory compliance. All metrics represent point-in-time observations. Consult qualified compliance professionals for formal assessments.
+            {DISCLAIMERS.footer}
           </p>
           <div className="mt-4 flex items-center justify-center gap-2">
             <span className="text-xs text-slate-300">Powered by</span>

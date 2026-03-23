@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { OsirisCareLeaf } from '../components/shared';
+import { BRANDING } from '../constants';
 
 interface HelpSection {
   id: string;
@@ -686,7 +687,7 @@ export const ClientHelp: React.FC = () => {
 
         {/* Footer */}
         <div className="mt-8 text-center text-white/60 text-sm">
-          <p>Powered by OsirisCare HIPAA Compliance Monitoring Platform</p>
+          <p>Powered by {BRANDING.name} {BRANDING.tagline}</p>
         </div>
       </main>
     </div>

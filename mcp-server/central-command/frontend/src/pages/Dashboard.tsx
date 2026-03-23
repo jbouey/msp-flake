@@ -1,51 +1,12 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard, InfoTip } from '../components/shared';
+import { MetricCard } from '../components/composed';
 import { HealthGauge } from '../components/fleet';
 import { IncidentTrendChart, FleetHealthMatrix, AttentionPanel, ResolutionBreakdown, TopIncidentTypes } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
 import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFleetPosture } from '../hooks';
-
-/**
- * Renders a week-over-week delta indicator with directional arrow.
- * positive = good for compliance/L1 rate, bad for incidents (inverted).
- */
-const DeltaIndicator: React.FC<{
-  value: number;
-  suffix?: string;
-  invertColor?: boolean;
-}> = ({ value, suffix = '', invertColor = false }) => {
-  if (value === 0) {
-    return (
-      <span className="text-xs font-medium text-label-tertiary tabular-nums">
-        0{suffix} vs last week
-      </span>
-    );
-  }
-
-  const isPositive = value > 0;
-  // For incidents, positive delta (more incidents) is bad — invert the color
-  const isGood = invertColor ? !isPositive : isPositive;
-
-  return (
-    <span className={`text-xs font-medium tabular-nums ${isGood ? 'text-health-healthy' : 'text-health-critical'}`}>
-      <svg
-        className="w-3 h-3 inline-block mr-0.5 -mt-px"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth={2.5}
-      >
-        {isPositive ? (
-          <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
-        ) : (
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        )}
-      </svg>
-      {isPositive ? '+' : ''}{typeof value === 'number' && !Number.isInteger(value) ? value.toFixed(1) : value}{suffix} vs last week
-    </span>
-  );
-};
+import { METRIC_TOOLTIPS } from '../constants';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -84,96 +45,80 @@ export const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* KPI row */}
+      {/* KPI row -- uses MetricCard with auto-resolved tooltips from METRIC_TOOLTIPS */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 stagger-list">
-        <GlassCard padding="md">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Clients<InfoTip text="Total active sites being monitored." /></p>
-              <p className="text-2xl font-bold mt-1 tabular-nums animate-count-up">
-                {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : stats?.total_clients ?? 0}
-              </p>
-              {deltas && <DeltaIndicator value={deltas.clients_delta} />}
-            </div>
-            <div
-              className="w-9 h-9 rounded-ios-md flex items-center justify-center bg-ios-blue/15 text-ios-blue"
-            >
-              <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-              </svg>
-            </div>
-          </div>
-        </GlassCard>
+        <MetricCard
+          metric="clients"
+          label="Clients"
+          value={stats?.total_clients ?? 0}
+          loading={statsLoading}
+          delta={deltas?.clients_delta}
+          icon={
+            <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+            </svg>
+          }
+          iconColor="text-ios-blue"
+        />
 
-        <GlassCard padding="md">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Compliance<InfoTip text="Average configuration check pass rate across all sites. Not a compliance certification." /></p>
-              <p className="text-2xl font-bold text-health-healthy mt-1 tabular-nums animate-count-up">
-                {statsLoading ? <span className="skeleton inline-block w-12 h-7" /> : `${stats?.avg_compliance_score ?? 0}%`}
-              </p>
-              {deltas && <DeltaIndicator value={deltas.compliance_delta} suffix="%" />}
-            </div>
-            <HealthGauge score={stats?.avg_compliance_score ?? 0} size="sm" showLabel={false} />
-          </div>
-        </GlassCard>
+        <MetricCard
+          metric="compliance_score"
+          label="Compliance"
+          value={stats?.avg_compliance_score ?? 0}
+          suffix="%"
+          loading={statsLoading}
+          delta={deltas?.compliance_delta}
+          deltaSuffix="%"
+          valueColor="text-health-healthy"
+        >
+          <HealthGauge score={stats?.avg_compliance_score ?? 0} size="sm" showLabel={false} />
+        </MetricCard>
 
-        <GlassCard padding="md">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Incidents 24h<InfoTip text="Configuration drift events detected in the last 24 hours." /></p>
-              <p className="text-2xl font-bold mt-1 tabular-nums animate-count-up">
-                {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : stats?.incidents_24h ?? 0}
-              </p>
-              {deltas && <DeltaIndicator value={deltas.incidents_24h_delta} invertColor />}
-            </div>
-            <div
-              className="w-9 h-9 rounded-ios-md flex items-center justify-center bg-ios-orange/15 text-ios-orange"
-            >
-              <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </div>
-          </div>
-        </GlassCard>
+        <MetricCard
+          metric="incidents_24h"
+          label="Incidents 24h"
+          value={stats?.incidents_24h ?? 0}
+          loading={statsLoading}
+          delta={deltas?.incidents_24h_delta}
+          deltaInvert
+          icon={
+            <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          }
+          iconColor="text-ios-orange"
+        />
 
-        <GlassCard padding="md">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">L1 Auto-Heal<InfoTip text="Percentage of incidents resolved automatically by deterministic rules, without human intervention." /></p>
-              <p className="text-2xl font-bold text-ios-blue mt-1 tabular-nums animate-count-up">
-                {statsLoading ? <span className="skeleton inline-block w-12 h-7" /> : `${stats?.l1_resolution_rate ?? 0}%`}
-              </p>
-              {deltas && <DeltaIndicator value={deltas.l1_rate_delta} suffix="%" />}
-            </div>
-            <div
-              className="w-9 h-9 rounded-ios-md flex items-center justify-center bg-ios-blue/15 text-ios-blue"
-            >
-              <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-          </div>
-        </GlassCard>
+        <MetricCard
+          metric="l1_rate"
+          label="L1 Auto-Heal"
+          value={stats?.l1_resolution_rate ?? 0}
+          suffix="%"
+          loading={statsLoading}
+          delta={deltas?.l1_rate_delta}
+          deltaSuffix="%"
+          valueColor="text-ios-blue"
+          icon={
+            <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+          iconColor="text-ios-blue"
+        />
 
-        {/* Drift Detection */}
-        <GlassCard padding="md">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-label-tertiary text-[10px] font-semibold uppercase tracking-wider">Drift Checks<InfoTip text="Number of active security configuration checks running across all sites." /></p>
-              <p className="text-2xl font-bold text-health-healthy mt-1 tabular-nums animate-count-up">
-                {statsLoading ? <span className="skeleton inline-block w-8 h-7" /> : `${stats?.active_drift_checks ?? 47} Active`}
-              </p>
-            </div>
-            <div
-              className="w-9 h-9 rounded-ios-md flex items-center justify-center bg-health-healthy/15 text-health-healthy"
-            >
-              <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-              </svg>
-            </div>
-          </div>
-        </GlassCard>
+        <MetricCard
+          metric="drift_checks"
+          label="Drift Checks"
+          value={statsLoading ? null : `${stats?.active_drift_checks ?? 47} Active`}
+          loading={statsLoading}
+          icon={
+            <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+            </svg>
+          }
+          iconColor="text-health-healthy"
+          valueColor="text-health-healthy"
+        />
       </div>
 
       {/* Attention + Worst Sites + Incident trend */}
@@ -199,7 +144,7 @@ export const Dashboard: React.FC = () => {
                 ))}
               </div>
             ) : worstSites.length === 0 ? (
-              <p className="text-sm text-label-tertiary py-4 text-center">All sites healthy — nothing needs attention</p>
+              <p className="text-sm text-label-tertiary py-4 text-center">All sites healthy -- nothing needs attention</p>
             ) : (
               <div className="space-y-1">
                 {worstSites.map((site) => {
@@ -294,11 +239,11 @@ export const Dashboard: React.FC = () => {
           <h2 className="text-base font-semibold mb-4 text-label-primary">System Health</h2>
           <div className="space-y-3">
             {[
-              { label: 'Control Coverage', value: statsLoading ? null : `${stats?.avg_compliance_score ?? 0}%`, color: 'text-health-healthy', tip: 'Percentage of security checks passing across all sites.' },
-              { label: 'Connectivity', value: statsLoading ? null : `${stats?.avg_connectivity_score ?? 0}%`, tip: 'How reliably appliances are checking in on schedule.' },
-              { label: 'Appliances Online', value: statsLoading ? null : `${stats?.online_appliances ?? 0}/${stats?.total_appliances ?? 0}`, tip: 'Appliances currently reporting in vs. total deployed.' },
-              { label: 'Incidents (7d)', value: statsLoading ? null : `${stats?.incidents_7d ?? 0}`, tip: 'Total configuration drift events in the past 7 days.' },
-              { label: 'Incidents (30d)', value: statsLoading ? null : `${stats?.incidents_30d ?? 0}`, tip: 'Total configuration drift events in the past 30 days.' },
+              { label: 'Control Coverage', value: statsLoading ? null : `${stats?.avg_compliance_score ?? 0}%`, color: 'text-health-healthy', tip: METRIC_TOOLTIPS.control_coverage },
+              { label: 'Connectivity', value: statsLoading ? null : `${stats?.avg_connectivity_score ?? 0}%`, tip: METRIC_TOOLTIPS.connectivity },
+              { label: 'Appliances Online', value: statsLoading ? null : `${stats?.online_appliances ?? 0}/${stats?.total_appliances ?? 0}`, tip: METRIC_TOOLTIPS.appliances_online },
+              { label: 'Incidents (7d)', value: statsLoading ? null : `${stats?.incidents_7d ?? 0}`, tip: METRIC_TOOLTIPS.incidents_7d },
+              { label: 'Incidents (30d)', value: statsLoading ? null : `${stats?.incidents_30d ?? 0}`, tip: METRIC_TOOLTIPS.incidents_30d },
             ].map((row) => (
               <div key={row.label} className="flex items-center justify-between py-0.5">
                 <span className="text-sm text-label-secondary">{row.label}{row.tip && <InfoTip text={row.tip} />}</span>
@@ -314,7 +259,7 @@ export const Dashboard: React.FC = () => {
 
         <GlassCard>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-label-primary">Learning Loop<InfoTip text="The system learns from AI-assisted fixes and promotes them to instant automatic rules." /></h2>
+            <h2 className="text-base font-semibold text-label-primary">Learning Loop<InfoTip text={METRIC_TOOLTIPS.learning_loop} /></h2>
             <button
               onClick={() => navigate('/learning')}
               className="text-xs text-accent-primary font-medium hover:underline"
@@ -324,10 +269,10 @@ export const Dashboard: React.FC = () => {
           </div>
           <div className="space-y-3">
             {[
-              { label: 'L1 Rules', value: learningLoading ? null : `${learning?.total_l1_rules ?? 0}`, color: 'text-ios-blue', tip: 'Instant automatic fixes. No human needed, resolves in under a second.' },
-              { label: 'L2 Decisions (30d)', value: learningLoading ? null : `${learning?.total_l2_decisions_30d ?? 0}`, color: 'text-ios-purple', tip: 'AI-assisted resolutions from the past 30 days.' },
-              { label: 'Awaiting Promotion', value: learningLoading ? null : `${learning?.patterns_awaiting_promotion ?? 0}`, color: 'text-health-warning', tip: 'AI fixes ready to become instant automatic rules after review.' },
-              { label: 'Success Rate', value: learningLoading ? null : `${learning?.promotion_success_rate ?? 0}%`, color: 'text-health-healthy', tip: 'Percentage of promoted rules that successfully resolve incidents.' },
+              { label: 'L1 Rules', value: learningLoading ? null : `${learning?.total_l1_rules ?? 0}`, color: 'text-ios-blue', tip: METRIC_TOOLTIPS.l1_rules },
+              { label: 'L2 Decisions (30d)', value: learningLoading ? null : `${learning?.total_l2_decisions_30d ?? 0}`, color: 'text-ios-purple', tip: METRIC_TOOLTIPS.l2_decisions },
+              { label: 'Awaiting Promotion', value: learningLoading ? null : `${learning?.patterns_awaiting_promotion ?? 0}`, color: 'text-health-warning', tip: METRIC_TOOLTIPS.awaiting_promotion },
+              { label: 'Success Rate', value: learningLoading ? null : `${learning?.promotion_success_rate ?? 0}%`, color: 'text-health-healthy', tip: METRIC_TOOLTIPS.promotion_success },
             ].map((row) => (
               <div key={row.label} className="flex items-center justify-between py-0.5">
                 <span className="text-sm text-label-secondary">{row.label}{row.tip && <InfoTip text={row.tip} />}</span>

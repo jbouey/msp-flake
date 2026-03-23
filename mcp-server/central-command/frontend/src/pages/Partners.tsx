@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { GlassCard, Spinner, Badge } from '../components/shared';
+import { formatTimeAgo } from '../constants';
 
 // Read CSRF token from cookie for state-changing requests
 function getCsrfToken(): string {
@@ -138,16 +139,7 @@ function formatDate(dateString: string): string {
   });
 }
 
-function formatRelativeTime(dateString: string | null): string {
-  if (!dateString) return 'Never';
-  const diffMs = Date.now() - new Date(dateString).getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${Math.floor(diffHours / 24)}d ago`;
-}
+const formatRelativeTime = formatTimeAgo;
 
 // ============================================================================
 // Partner Row

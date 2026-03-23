@@ -6,27 +6,9 @@ import { AddNetworkDeviceModal } from '../components/shared/AddNetworkDeviceModa
 import { useSiteDevices, useSiteDeviceSummary } from '../hooks';
 import type { DiscoveredDevice, SiteDeviceSummary as DeviceSummaryType } from '../utils/api';
 import { CHECK_TYPE_LABELS } from '../types';
+import { formatTimeAgo } from '../constants';
 
-/**
- * Format relative time
- */
-function formatRelativeTime(dateString: string | null | undefined): string {
-  if (!dateString) return 'Never';
-
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} min ago`;
-
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
-}
+const formatRelativeTime = formatTimeAgo;
 
 /**
  * Device type icons and labels

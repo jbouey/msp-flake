@@ -4,20 +4,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { organizationsApi } from '../utils/api';
 import type { Organization } from '../utils/api';
+import { formatTimeAgo } from '../constants';
 
-function formatRelativeTime(dateString: string | null): string {
-  if (!dateString) return 'Never';
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} min ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
-}
+const formatRelativeTime = formatTimeAgo;
 
 const ComplianceBadge: React.FC<{ score: number }> = ({ score }) => {
   const variant = score >= 80 ? 'success' : score >= 50 ? 'warning' : score > 0 ? 'error' : 'default';
