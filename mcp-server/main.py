@@ -553,6 +553,25 @@ async def general_exception_handler(request: Request, exc: Exception):
 # Main
 # ============================================================================
 
+# Re-exports for backward compatibility (tests import from main)
+from dashboard_api.agent_api import (  # noqa: F401, E402
+    CheckinRequest, IncidentReport, DriftReport, OrderRequest,
+    OrderAcknowledgement, EvidenceSubmission, PatternReportInput,
+    PatternStatsRequest, PatternStatSync, PromotedRuleResponse,
+    ExecutionTelemetryInput, L2PlanRequest, ApplianceCheckinRequest,
+    submit_evidence, list_evidence, report_incident,
+)
+from dashboard_api.learning_api_main import (  # noqa: F401, E402
+    PromotionReportRequest, PromotionApprovalRequest,
+)
+from dashboard_api.background_tasks import (  # noqa: F401, E402
+    _flywheel_promotion_loop,
+)
+from dashboard_api.shared import (  # noqa: F401, E402
+    get_db, sign_data, get_public_key_hex, get_all_public_keys_hex,
+    check_rate_limit, require_appliance_bearer,
+)
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
