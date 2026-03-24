@@ -565,7 +565,7 @@ from dashboard_api.learning_api_main import (  # noqa: F401, E402
     PromotionReportRequest, PromotionApprovalRequest,
 )
 from dashboard_api.background_tasks import (  # noqa: F401, E402
-    _flywheel_promotion_loop,
+    flywheel_promotion_loop as _flywheel_promotion_loop,
 )
 from dashboard_api.shared import (  # noqa: F401, E402
     get_db, sign_data, get_public_key_hex, get_all_public_keys_hex,
