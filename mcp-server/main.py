@@ -1242,6 +1242,53 @@ if _agent_packages_dir.exists():
     app.mount("/agent-packages", StaticFiles(directory=str(_agent_packages_dir)), name="agent-packages")
 
 # ============================================================================
+# Authentication Dependencies
+# ============================================================================
+
+# Import admin dashboard auth (cookie-based sessions)
+from dashboard_api.auth import require_auth
+
+
+async def require_appliance_bearer(request: Request) -> str:
+    """Validate appliance Bearer token from Authorization header.
+
+    Unlike require_appliance_auth in sites.py (which reads the request body
+    to extract site_id), this dependency only validates that the Bearer token
+    is a valid API key in the api_keys table. It returns the site_id
+    associated with the key.
+
+    This is suitable for main.py endpoints where FastAPI/Pydantic already
+    parses the request body.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+    api_key = auth_header[7:]  # Strip "Bearer "
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Empty API key")
+
+    # Hash the key and look it up in the api_keys table
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+
+    async with async_session() as db:
+        result = await db.execute(
+            text("""
+                SELECT ak.site_id FROM api_keys ak
+                WHERE ak.key_hash = :key_hash AND ak.active = true
+                LIMIT 1
+            """),
+            {"key_hash": key_hash}
+        )
+        row = result.fetchone()
+
+    if row:
+        return row.site_id
+
+    raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+# ============================================================================
 # Endpoints
 # ============================================================================
 
@@ -1321,7 +1368,7 @@ async def health():
     return JSONResponse(content=checks, status_code=status_code)
 
 @app.post("/checkin")
-async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """
     Appliance check-in endpoint.
     Registers or updates appliance, returns pending orders.
@@ -1471,7 +1518,7 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
     }
 
 @app.get("/orders/{site_id}")
-async def get_orders(site_id: str, db: AsyncSession = Depends(get_db)):
+async def get_orders(site_id: str, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """Get pending orders for an appliance."""
     # Rate limit check
     allowed, remaining = await check_rate_limit(site_id, "orders")
@@ -1511,7 +1558,7 @@ async def get_orders(site_id: str, db: AsyncSession = Depends(get_db)):
     return {"site_id": site_id, "orders": orders, "count": len(orders)}
 
 @app.post("/orders/acknowledge")
-async def acknowledge_order(req: OrderAcknowledgement, db: AsyncSession = Depends(get_db)):
+async def acknowledge_order(req: OrderAcknowledgement, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """Acknowledge receipt of an order."""
     now = datetime.now(timezone.utc)
     
@@ -1540,7 +1587,7 @@ async def acknowledge_order(req: OrderAcknowledgement, db: AsyncSession = Depend
     return {"status": "acknowledged", "order_id": req.order_id, "timestamp": now.isoformat()}
 
 @app.post("/incidents")
-async def report_incident(incident: IncidentReport, request: Request, db: AsyncSession = Depends(get_db)):
+async def report_incident(incident: IncidentReport, request: Request, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """
     Report an incident from an appliance.
     Creates an order for remediation if a matching runbook is found.
@@ -1961,18 +2008,19 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             notification_category = "escalation" if resolution_tier == "L3" else "incident"
 
             dedup_check = await db.execute(
-                text(f"""
+                text("""
                     SELECT id FROM notifications
                     WHERE site_id = :site_id
                     AND category = :category
                     AND title LIKE :title_pattern
-                    AND created_at > NOW() - INTERVAL '{dedup_hours} hours'
+                    AND created_at > NOW() - :dedup_hours * INTERVAL '1 hour'
                     LIMIT 1
                 """),
                 {
                     "site_id": incident.site_id,
                     "category": notification_category,
-                    "title_pattern": f"%{incident.incident_type}%"
+                    "title_pattern": f"%{incident.incident_type}%",
+                    "dedup_hours": dedup_hours,
                 }
             )
             existing = dedup_check.fetchone()
@@ -2029,7 +2077,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     }
 
 @app.post("/incidents/{incident_id}/resolve")
-async def resolve_incident(incident_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def resolve_incident(incident_id: str, request: Request, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """Mark an incident as resolved after successful healing."""
     body = await request.json()
     resolution_tier = body.get("resolution_tier", "L1")
@@ -2057,7 +2105,7 @@ async def resolve_incident(incident_id: str, request: Request, db: AsyncSession 
 
 
 @app.post("/incidents/resolve")
-async def resolve_incident_by_type(request: Request, db: AsyncSession = Depends(get_db)):
+async def resolve_incident_by_type(request: Request, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """
     Resolve the latest open incident matching site_id + host_id + check_type.
     Used by the Go daemon which reports incidents fire-and-forget and doesn't
@@ -2119,7 +2167,7 @@ async def resolve_incident_by_type(request: Request, db: AsyncSession = Depends(
 
 
 @app.post("/drift")
-async def report_drift(drift: DriftReport, db: AsyncSession = Depends(get_db)):
+async def report_drift(drift: DriftReport, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """Report drift detection results."""
     # Rate limit check
     allowed, remaining = await check_rate_limit(drift.site_id, "drift")
@@ -2155,7 +2203,7 @@ async def report_drift(drift: DriftReport, db: AsyncSession = Depends(get_db)):
     return await report_incident(incident, FakeRequestObj(), db)
 
 @app.post("/evidence")
-async def submit_evidence(evidence: EvidenceSubmission, db: AsyncSession = Depends(get_db)):
+async def submit_evidence(evidence: EvidenceSubmission, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """Submit evidence bundle from appliance."""
     # Rate limit check
     allowed, remaining = await check_rate_limit(evidence.site_id, "evidence")
@@ -2339,7 +2387,8 @@ async def list_evidence(
     site_id: str,
     limit: int = 50,
     offset: int = 0,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """List evidence bundles for an appliance."""
     result = await db.execute(
@@ -2388,7 +2437,7 @@ class PatternReportInput(BaseModel):
 
 
 @app.post("/agent/patterns")
-async def report_agent_pattern(report: PatternReportInput, db: AsyncSession = Depends(get_db)):
+async def report_agent_pattern(report: PatternReportInput, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """Receive pattern report from agent after successful healing.
 
     This endpoint is called by appliances after L1/L2 healing succeeds.
@@ -2512,7 +2561,7 @@ class PatternStatsRequest(BaseModel):
 
 
 @app.post("/api/agent/sync/pattern-stats")
-async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = Depends(get_db)):
+async def sync_pattern_stats(request: PatternStatsRequest, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """
     Receive pattern statistics from agent for cross-appliance aggregation.
 
@@ -2679,7 +2728,8 @@ class PromotedRuleResponse(BaseModel):
 async def get_promoted_rules(
     site_id: str,
     since: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """
     Return server-approved promoted rules for agent deployment.
@@ -2737,7 +2787,7 @@ class ExecutionTelemetryInput(BaseModel):
 
 
 @app.post("/api/agent/executions")
-async def report_execution_telemetry(request: ExecutionTelemetryInput, db: AsyncSession = Depends(get_db)):
+async def report_execution_telemetry(request: ExecutionTelemetryInput, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """
     Receive rich execution telemetry from agents for learning engine.
 
@@ -2884,7 +2934,7 @@ class L2PlanRequest(BaseModel):
 
 
 @app.post("/api/agent/l2/plan")
-async def agent_l2_plan(request: L2PlanRequest, db: AsyncSession = Depends(get_db)):
+async def agent_l2_plan(request: L2PlanRequest, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """
     L2 LLM planner endpoint for appliance daemons.
 
@@ -2982,7 +3032,8 @@ async def upload_evidence_worm(
     x_bundle_hash: str = Header(..., alias="X-Bundle-Hash"),
     x_signature_hash: str = Header(None, alias="X-Signature-Hash"),
     authorization: str = Header(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """
     WORM Evidence Upload Proxy Endpoint.
@@ -3223,7 +3274,7 @@ async def upload_evidence_worm(
 
 
 @app.get("/runbooks")
-async def list_runbooks():
+async def list_runbooks(user: dict = Depends(require_auth)):
     """List available runbooks."""
     runbooks = []
     for rb_id, rb in RUNBOOKS.items():
@@ -3255,7 +3306,7 @@ async def list_runbooks():
     return {"runbooks": runbooks, "count": len(runbooks)}
 
 @app.get("/stats")
-async def get_stats(db: AsyncSession = Depends(get_db)):
+async def get_stats(db: AsyncSession = Depends(get_db), user: dict = Depends(require_auth)):
     """Get server statistics."""
     stats = {}
     
@@ -3340,7 +3391,7 @@ if __name__ == "__main__":
 # =============================================================================
 
 @app.get("/agent/sync")
-async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """
     Return L1 rules for agents to sync.
 
@@ -3935,7 +3986,8 @@ class PromotionReportRequest(BaseModel):
 @app.post("/api/learning/promotion-report")
 async def receive_promotion_report(
     req: PromotionReportRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """
     Receive promotion reports from appliance learning systems.
@@ -4228,7 +4280,7 @@ async def _notify_site_owner_promotion(
 
 
 @app.get("/api/learning/status")
-async def get_learning_status(db: AsyncSession = Depends(get_db)):
+async def get_learning_status(db: AsyncSession = Depends(get_db), user: dict = Depends(require_auth)):
     """Get learning loop summary stats for dashboard."""
     try:
         result = await db.execute(text("""
@@ -4278,7 +4330,7 @@ async def get_learning_status(db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/api/learning/coverage-gaps")
-async def get_learning_coverage_gaps(db: AsyncSession = Depends(get_db)):
+async def get_learning_coverage_gaps(db: AsyncSession = Depends(get_db), user: dict = Depends(require_auth)):
     """Get check_types seen in telemetry that lack L1 rules."""
     try:
         result = await db.execute(text("""
@@ -4322,7 +4374,8 @@ async def get_learning_coverage_gaps(db: AsyncSession = Depends(get_db)):
 async def get_promotion_candidates(
     site_id: Optional[str] = None,
     status: str = "pending",
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
 ):
     """Get promotion candidates for dashboard display."""
     try:
@@ -4388,7 +4441,8 @@ async def review_promotion_candidate(
     candidate_id: str,
     req: PromotionApprovalRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
 ):
     """
     Approve or reject a promotion candidate.
@@ -4396,10 +4450,7 @@ async def review_promotion_candidate(
     Site owners can approve patterns to be promoted to L1 deterministic rules.
     """
     try:
-        # Get current user from session
-        current_user = await get_current_user_from_session(request, db)
-        if not current_user:
-            return JSONResponse(status_code=401, content={"error": "Not authenticated"})
+        current_user = user
 
         # Verify the candidate exists
         result = await db.execute(
@@ -4480,7 +4531,7 @@ async def review_promotion_candidate(
 
 
 @app.get("/api/learning/history")
-async def get_learning_history(limit: int = 20, db: AsyncSession = Depends(get_db)):
+async def get_learning_history(limit: int = 20, db: AsyncSession = Depends(get_db), user: dict = Depends(require_auth)):
     """Get recently promoted L2->L1 patterns for the dashboard timeline."""
     try:
         result = await db.execute(text("""
@@ -4527,7 +4578,8 @@ async def get_learning_history(limit: int = 20, db: AsyncSession = Depends(get_d
 async def get_approved_promotions(
     site_id: str,
     since: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """
     Get approved promotions for an appliance to apply.
@@ -4594,7 +4646,7 @@ class ApplianceCheckinRequest(BaseModel):
     queue_depth: Optional[int] = 0
 
 @app.post("/api/appliances/checkin")
-async def appliances_checkin(req: ApplianceCheckinRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def appliances_checkin(req: ApplianceCheckinRequest, request: Request, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """Appliance agent checkin endpoint - updates site_appliances table.
 
     NOTE: This endpoint is typically overridden by the dashboard_api router.
@@ -4712,7 +4764,7 @@ BACKUP_STATUS_FILE = Path("/opt/backups/status/latest.json")
 
 
 @app.get("/api/backup/status")
-async def get_backup_status():
+async def get_backup_status(user: dict = Depends(require_auth)):
     """Get current backup status for dashboard."""
     if not BACKUP_STATUS_FILE.exists():
         return {
@@ -4752,7 +4804,7 @@ SNAPSHOT_STATUS_FILE = Path("/opt/backups/status/hetzner-snapshot.json")
 
 
 @app.get("/api/snapshot/status")
-async def get_snapshot_status():
+async def get_snapshot_status(user: dict = Depends(require_auth)):
     """Get Hetzner Cloud snapshot status."""
     if not SNAPSHOT_STATUS_FILE.exists():
         return {
@@ -4768,7 +4820,7 @@ async def get_snapshot_status():
 
 
 @app.get("/api/snapshot/list")
-async def list_snapshots():
+async def list_snapshots(user: dict = Depends(require_auth)):
     """List all Hetzner Cloud snapshots."""
     import subprocess
     

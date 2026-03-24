@@ -153,10 +153,7 @@ def decrypt_secret(ciphertext: bytes) -> str:
 
 async def get_db_session():
     """Get database session."""
-    try:
-        from main import async_session
-    except ImportError:
-        from server import async_session
+    from main import async_session
     return async_session
 
 
@@ -165,19 +162,15 @@ async def get_redis_client():
     try:
         from main import redis_client
         return redis_client
-    except ImportError:
-        try:
-            from server import redis_client
-            return redis_client
-        except (ImportError, AttributeError):
-            # SECURITY: In production, Redis is required for OAuth state management
-            if os.getenv("ENVIRONMENT", "development") == "production":
-                raise RuntimeError(
-                    "Redis is required for OAuth in production. "
-                    "Configure REDIS_URL environment variable."
-                )
-            logger.warning("Redis not available, using in-memory state store (dev mode only)")
-            return None
+    except (ImportError, AttributeError):
+        # SECURITY: In production, Redis is required for OAuth state management
+        if os.getenv("ENVIRONMENT", "development") == "production":
+            raise RuntimeError(
+                "Redis is required for OAuth in production. "
+                "Configure REDIS_URL environment variable."
+            )
+        logger.warning("Redis not available, using in-memory state store (dev mode only)")
+        return None
 
 
 # =============================================================================

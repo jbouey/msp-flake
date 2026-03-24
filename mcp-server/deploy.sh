@@ -20,8 +20,8 @@ scp -P ${SSH_PORT} runbooks/*.yaml ${SSH_HOST}:/var/lib/mcp-server/runbooks/
 echo "✓ Runbooks deployed"
 
 # Copy server code
-echo "[2/3] Copying server.py..."
-scp -P ${SSH_PORT} server.py ${SSH_HOST}:/var/lib/mcp-server/server.py
+echo "[2/3] Copying main.py..."
+scp -P ${SSH_PORT} main.py ${SSH_HOST}:/var/lib/mcp-server/main.py
 echo "✓ Server code deployed"
 
 # Update systemd service and restart
@@ -33,7 +33,7 @@ mkdir -p /etc/systemd/system/mcp-server.service.d
 cat > /etc/systemd/system/mcp-server.service.d/override.conf << 'SERVICE'
 [Service]
 ExecStart=
-ExecStart=/usr/bin/env python3 /var/lib/mcp-server/server.py
+ExecStart=/usr/bin/env python3 /var/lib/mcp-server/main.py
 WorkingDirectory=/var/lib/mcp-server
 SERVICE
 

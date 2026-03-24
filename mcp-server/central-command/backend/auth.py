@@ -708,19 +708,14 @@ async def require_auth(request: Request) -> Dict[str, Any]:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get database session - try multiple import paths for flexibility
+    # Get database session
     try:
         from main import async_session
     except ImportError:
-        # Fallback: try importing from the server module's globals
-        import sys
-        if 'server' in sys.modules and hasattr(sys.modules['server'], 'async_session'):
-            async_session = sys.modules['server'].async_session
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail="Database session not configured",
-            )
+        raise HTTPException(
+            status_code=500,
+            detail="Database session not configured",
+        )
 
     async with async_session() as db:
         user = await validate_session(db, token)

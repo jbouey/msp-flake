@@ -380,11 +380,14 @@ async def get_partner_activity_stats(
         idx += 1
 
     async with admin_connection(pool) as conn:
+        # Parameterize the interval to prevent SQL injection
+        params.append(since_hours)
+        since_param_idx = idx
         row = await conn.fetchrow(
             f"""
             SELECT
                 COUNT(*) as total,
-                COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '{since_hours} hours') as recent,
+                COUNT(*) FILTER (WHERE created_at > NOW() - ${since_param_idx} * INTERVAL '1 hour') as recent,
                 COUNT(*) FILTER (WHERE event_category = 'auth') as auth_events,
                 COUNT(DISTINCT partner_id) as unique_partners
             FROM partner_activity_log

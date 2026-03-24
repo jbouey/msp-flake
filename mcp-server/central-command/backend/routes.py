@@ -1912,20 +1912,22 @@ async def get_incident_trends(
     try:
         if window == "24h":
             bucket = "hour"
-            interval = "24 hours"
+            interval_hours = 24
             trunc = "date_trunc('hour', i.reported_at)"
         elif window == "7d":
             bucket = "day"
-            interval = "7 days"
+            interval_hours = 168  # 7 * 24
             trunc = "date_trunc('day', i.reported_at)"
         else:
             bucket = "day"
-            interval = "30 days"
+            interval_hours = 720  # 30 * 24
             trunc = "date_trunc('day', i.reported_at)"
 
         site_join = "JOIN appliances a ON a.id = i.appliance_id" if site_id else ""
         site_filter = "AND a.site_id = :site_id" if site_id else ""
-        params = {"site_id": site_id} if site_id else {}
+        params = {"interval_hours": interval_hours}
+        if site_id:
+            params["site_id"] = site_id
 
         result = await db.execute(text(f"""
             SELECT
@@ -1937,7 +1939,7 @@ async def get_incident_trends(
                 COUNT(*) as total
             FROM incidents i
             {site_join}
-            WHERE i.reported_at > NOW() - INTERVAL '{interval}'
+            WHERE i.reported_at > NOW() - :interval_hours * INTERVAL '1 hour'
             {site_filter}
             GROUP BY bucket
             ORDER BY bucket ASC
@@ -1970,15 +1972,17 @@ async def get_incident_breakdown(
     """Aggregate incident breakdown: tier counts, top types, MTTR by tier."""
     try:
         if window == "24h":
-            interval = "24 hours"
+            interval_hours = 24
         elif window == "7d":
-            interval = "7 days"
+            interval_hours = 168  # 7 * 24
         else:
-            interval = "30 days"
+            interval_hours = 720  # 30 * 24
 
         site_join = "JOIN appliances a ON a.id = i.appliance_id" if site_id else ""
         site_filter = "AND a.site_id = :site_id" if site_id else ""
-        params = {"site_id": site_id} if site_id else {}
+        params = {"interval_hours": interval_hours}
+        if site_id:
+            params["site_id"] = site_id
 
         # Tier counts
         tier_result = await db.execute(text(f"""
@@ -1991,7 +1995,7 @@ async def get_incident_breakdown(
                 COUNT(*) as total
             FROM incidents i
             {site_join}
-            WHERE i.reported_at > NOW() - INTERVAL '{interval}'
+            WHERE i.reported_at > NOW() - :interval_hours * INTERVAL '1 hour'
             {site_filter}
         """), params)
         tier = tier_result.fetchone()
@@ -2006,7 +2010,7 @@ async def get_incident_breakdown(
                 COUNT(*) FILTER (WHERE i.resolution_tier = 'L3') as l3
             FROM incidents i
             {site_join}
-            WHERE i.reported_at > NOW() - INTERVAL '{interval}'
+            WHERE i.reported_at > NOW() - :interval_hours * INTERVAL '1 hour'
             {site_filter}
             GROUP BY COALESCE(i.incident_type, i.check_type, 'unknown')
             ORDER BY count DESC
@@ -2022,7 +2026,7 @@ async def get_incident_breakdown(
                 COUNT(*) as resolved_count
             FROM incidents i
             {site_join}
-            WHERE i.reported_at > NOW() - INTERVAL '{interval}'
+            WHERE i.reported_at > NOW() - :interval_hours * INTERVAL '1 hour'
             AND i.status = 'resolved'
             AND i.resolved_at IS NOT NULL
             {site_filter}

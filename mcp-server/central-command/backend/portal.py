@@ -407,13 +407,9 @@ async def get_redis_client():
     try:
         from main import redis_client
         return redis_client
-    except ImportError:
-        try:
-            from server import redis_client
-            return redis_client
-        except (ImportError, AttributeError):
-            logger.warning("Redis not available, using in-memory session store")
-            return None
+    except (ImportError, AttributeError):
+        logger.warning("Redis not available, using in-memory session store")
+        return None
 
 
 class PortalSessionManager:
