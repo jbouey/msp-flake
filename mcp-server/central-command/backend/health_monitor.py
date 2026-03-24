@@ -47,6 +47,13 @@ async def health_monitor_loop():
         except Exception as e:
             logger.error(f"Stuck queue check error: {e}", exc_info=True)
 
+        try:
+            await _check_oauth_health()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"OAuth health check error: {e}", exc_info=True)
+
         await asyncio.sleep(300)  # Every 5 minutes
 
 
@@ -362,3 +369,121 @@ async def _check_stuck_queues():
         except Exception:
             # Table may not exist yet — not critical
             logger.debug("Stuck queue check: integration sync query failed (table may not exist)")
+
+
+OAUTH_PROVIDERS = ("google_workspace", "okta", "azure_ad", "microsoft_graph")
+
+
+async def _check_oauth_health():
+    """Check health of OAuth integrations and update health_status column.
+
+    Evaluates three conditions for each connected OAuth integration:
+    - Token expired: access_token_expires_at < now
+    - Consecutive failures >= 3
+    - Stale sync: last_sync_success_at is NULL or > 24h ago
+
+    Any condition triggers a status change. Multiple bad signals → unhealthy.
+    Single bad signal → degraded. All clear → healthy.
+    Creates deduped notifications for degraded/unhealthy transitions.
+    """
+    import json
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+    stale_threshold = now - timedelta(hours=24)
+
+    async with admin_connection(pool) as conn:
+        try:
+            rows = await conn.fetch("""
+                SELECT id, site_id, provider, name, health_status,
+                       access_token_expires_at, consecutive_failures,
+                       last_sync_success_at
+                FROM integrations
+                WHERE status = 'connected'
+                  AND provider = ANY($1)
+            """, list(OAUTH_PROVIDERS))
+        except Exception:
+            logger.debug("OAuth health check: integrations query failed (table may not exist)")
+            return
+
+        updated = 0
+        for row in rows:
+            problems = []
+
+            # Check token expiry
+            if row["access_token_expires_at"] and row["access_token_expires_at"] < now:
+                problems.append("token_expired")
+
+            # Check consecutive failures
+            failures = row["consecutive_failures"] or 0
+            if failures >= 3:
+                problems.append(f"{failures}_consecutive_failures")
+
+            # Check stale sync
+            if row["last_sync_success_at"] is None or row["last_sync_success_at"] < stale_threshold:
+                problems.append("stale_sync")
+
+            # Determine new status
+            if len(problems) >= 2:
+                new_status = "unhealthy"
+            elif len(problems) == 1:
+                new_status = "degraded"
+            else:
+                new_status = "healthy"
+
+            old_status = row["health_status"] or "unknown"
+            if new_status == old_status:
+                continue
+
+            # Update health_status
+            await conn.execute("""
+                UPDATE integrations SET health_status = $1 WHERE id = $2
+            """, new_status, row["id"])
+            updated += 1
+
+            if new_status == "healthy":
+                # Recovery — log it but no notification needed
+                logger.info(
+                    f"OAuth integration recovered: {row['name']} ({row['provider']}) → healthy"
+                )
+                continue
+
+            # Send notification for degraded/unhealthy (deduped: once per 24h per integration)
+            existing = await conn.fetchval("""
+                SELECT 1 FROM notifications
+                WHERE category = 'oauth_health'
+                  AND metadata::jsonb->>'integration_id' = $1
+                  AND created_at > $2
+                LIMIT 1
+            """, str(row["id"]), stale_threshold)
+
+            if existing:
+                continue
+
+            severity = "critical" if new_status == "unhealthy" else "warning"
+            title = f"OAuth integration {new_status}: {row['name']}"
+            message = (
+                f"Integration {row['name']} ({row['provider']}) is {new_status}. "
+                f"Issues: {', '.join(problems)}."
+            )
+
+            await conn.execute("""
+                INSERT INTO notifications (site_id, severity, category, title, message, metadata)
+                VALUES ($1, $2, 'oauth_health', $3, $4, $5::jsonb)
+            """,
+                str(row["site_id"]),
+                severity,
+                title,
+                message,
+                json.dumps({
+                    "integration_id": str(row["id"]),
+                    "provider": row["provider"],
+                    "problems": problems,
+                }),
+            )
+            logger.warning(f"[{severity}] {title}")
+
+        if updated:
+            logger.info(f"OAuth health check: updated {updated} integration(s)")
