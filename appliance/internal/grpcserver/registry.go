@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,8 +26,25 @@ type AgentState struct {
 	ChecksPassed  atomic.Int64
 	ChecksTotal   atomic.Int64
 	AgentVersion  string
+	OSVersion     string // e.g. "Windows 10", "Darwin 21.6.0", "Linux 5.15"
+	IPAddress     string // peer address from gRPC connection
 	RMMAgents     []*pb.RMMAgent
 	pendingCmds   []*pb.HealCommand
+}
+
+// OSType derives the OS type ("windows", "macos", "linux") from the os_version string.
+func (a *AgentState) OSType() string {
+	v := strings.ToLower(a.OSVersion)
+	switch {
+	case strings.Contains(v, "windows"):
+		return "windows"
+	case strings.Contains(v, "darwin"), strings.Contains(v, "macos"):
+		return "macos"
+	case strings.Contains(v, "linux"):
+		return "linux"
+	default:
+		return ""
+	}
 }
 
 // AgentRegistry tracks connected Go agents with command queue support.

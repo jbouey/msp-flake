@@ -154,7 +154,7 @@ func (a *autoDeployer) processPendingDeploys(ctx context.Context, deploys []Pend
 			case "ssh":
 				err = a.daemon.deployViaSSH(ctx, deploy, siteID)
 			case "winrm":
-				err = fmt.Errorf("winrm auto-deploy not yet implemented for standalone devices")
+				err = a.DeployWindowsAgentByHostname(ctx, deploy.Hostname, deploy.IPAddress)
 			default:
 				err = fmt.Errorf("unknown deploy method: %s", deploy.DeployMethod)
 			}
@@ -1850,6 +1850,20 @@ if ($svc.Status -ne "Running") {
 		return fmt.Errorf("service install failed: %s", svcResult.Error)
 	}
 	return nil
+}
+
+// DeployWindowsAgentByHostname deploys the Go agent to a Windows host via WinRM.
+// This is the entry point for selfheal — it constructs a minimal ADComputer and
+// delegates to deployWithFallback which handles direct WinRM + DC proxy fallback.
+func (ad *autoDeployer) DeployWindowsAgentByHostname(ctx context.Context, hostname, ipAddress string) error {
+	ip := ipAddress
+	ws := &discovery.ADComputer{
+		Hostname:      hostname,
+		IPAddress:     &ip,
+		OSName:        "Windows",
+		IsWorkstation: true,
+	}
+	return ad.deployWithFallback(ctx, ws)
 }
 
 // adScriptExec adapts the WinRM executor to the discovery.ScriptExecutor interface.

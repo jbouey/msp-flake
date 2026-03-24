@@ -677,6 +677,8 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		for _, a := range agents {
 			agentInfos = append(agentInfos, GoAgentInfo{
 				Hostname:      a.Hostname,
+				IPAddress:     a.IPAddress,
+				OSType:        a.OSType(),
 				LastHeartbeat: a.LastHeartbeat,
 			})
 		}

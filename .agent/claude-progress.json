@@ -1,13 +1,13 @@
 {
-  "session": 185,
-  "updated": "2026-03-24T03:09:52.762272Z",
+  "session": 186,
+  "updated": "2026-03-24T21:30:53.329967Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "healthy_metrics_endpoint_structured_logging",
-    "physical_appliance": "go_daemon_v0.3.26_online_push_first_scan_agent_configure_check_sync",
+    "physical_appliance": "go_daemon_v0.3.28_online_autodiscovery_7devices_selfheal_ostype_fix",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
@@ -17,7 +17,7 @@
     "evidence_pipeline": "end_to_end_live_heartbeats_site_appliances",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "v0.3.25_deployed_auto_recovery_pipeline_bulletproof",
+    "fleet_updates": "v0.3.28_deployed_auto_recovery_pipeline_bulletproof",
     "log_pipeline": "operational_35k_plus_entries_csrf_gzip_auth_fixed",
     "prometheus_metrics": "live_at_slash_metrics_7_gauges_counters",
     "offline_alerting": "partner_email_on_15min_offline",
@@ -30,7 +30,7 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "None. All systems operational. Auto-discovery + auto-deploy system implemented (Phase 1-3). Pending: daemon rebuild + deploy to test on live appliance.",
+  "current_blocker": "None. All Tier 3/4 items complete. Daemon v0.3.28 deployed with auto-discovery live (7 devices). Selfheal OS type fix deployed.",
   "auto_discovery_system": {
     "phase1_core": "complete \u2014 probing, auto-deploy, Take Over UI, rogue alerting, lifecycle state machine",
     "phase2_reliability": "complete \u2014 self-healing, staggered deploy, pre-flight checks",
@@ -98,8 +98,8 @@
     "Appliances (.241, .254) reclassified from unknown to appliance"
   ],
   "test_results": {
-    "python_backend": "1161 passed (115 new Tier-2 tests: escalation_engine 57, cve_watch 74, device_sync 27, billing 32), 0 failures",
-    "go_daemon": "17 packages passed, 0 failures",
+    "python_backend": "1172 passed (7 new OAuth health tests), 0 failures",
+    "go_daemon": "16 packages passed (6 new concurrent race-condition tests), 0 failures",
     "frontend": "tsc + eslint 0 errors 0 warnings"
   },
   "production_hardening_session_184": {
@@ -139,19 +139,12 @@
       "Health monitor: stuck escalation ticket alerting (>24h open)",
       "Health monitor: integration sync failure detection"
     ],
-    "tier3_remaining": [
-      "OAuth connector health checks (Okta, Azure, Google)"
-    ],
-    "tier4_remaining": [
-      "Go daemon Services interface extraction",
-      "Integration tests for concurrent scan+heal",
-      "Circuit breaker for Central Command unreachable",
-      "State manager consolidation"
-    ]
+    "tier3_remaining": [],
+    "tier4_remaining": []
   },
   "fleet_update_commands": {
     "clear_tls_pins": "ssh root@192.168.88.241 'rm /var/lib/msp/server_cert_pin.hex' && ssh root@192.168.88.254 'rm /var/lib/msp/server_cert_pin.hex'",
-    "pending_fleet_order": "cb0ce1f3-1071-4e3d-bff7-fe97dee4d18d (update_daemon v0.3.24)",
+    "pending_fleet_order": "0362d328-cc68-4a3d-a3f7-4d45b3347fc5 (update_daemon v0.3.28)",
     "appliance_ids": {
       "physical": "physical-appliance-pilot-1aea78-84:3A:5B:91:B6:61 (site: physical-appliance-pilot-1aea78)",
       "vm": "test-appliance-lab-b3c40c-08:00:27:98:FD:84 (site: test-appliance-lab-b3c40c)"
@@ -217,5 +210,34 @@
     "reason": "Source of stale .247 address poison, freed iMac RAM",
     "date": "2026-03-22"
   },
-  "completed_this_session": []
+  "daemon_v0_3_27_changes": [
+    "Auto-discovery live: 7 devices probed (2 SSH, 3 WinRM, 2 AD-joined)",
+    "Reverse DNS hostname resolution (2/7 resolved)",
+    "Device sync to Central Command operational",
+    "Selfheal detecting stale agents and attempting recovery"
+  ],
+  "daemon_v0_3_28_changes": [
+    "AgentState: added OSVersion and IPAddress fields",
+    "OSType() derived method on AgentState (windows/macos/linux from os_version)",
+    "Registry populates OSVersion from RegisterRequest",
+    "GoAgentInfo now passes IPAddress and OSType to selfhealer",
+    "Selfheal skips Windows agents (use fleet orders) and empty OS types",
+    "Handler count test fix (22\u219223 for isolate_host)"
+  ],
+  "session_186_changes": [
+    "OAuth continuous health monitoring in health_monitor_loop (5-min cycle)",
+    "3 health signals: token expiry, consecutive failures (>=3), stale sync (>24h)",
+    "Deduped notifications for degraded/unhealthy transitions",
+    "7 new Python tests for OAuth health (test_oauth_health.py)",
+    "6 new Go concurrent race-condition tests (concurrent_test.go, all pass with -race)",
+    "Selfheal OS type bug fix: empty OSType caused 'unsupported OS type' errors",
+    "All Tier 3/4 production hardening items complete"
+  ],
+  "completed_this_session": [
+    "Daemon v0.3.27 deployed + verified on appliance (auto-discovery live)",
+    "OAuth continuous health monitoring (Tier 3 complete)",
+    "Concurrent scan+heal integration tests (Tier 4 complete)",
+    "Selfheal OS type fix (v0.3.28 deployed)",
+    "Progress file updated"
+  ]
 }

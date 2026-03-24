@@ -207,6 +207,7 @@ func (s *servicer) Register(_ context.Context, req *pb.RegisterRequest) (*pb.Reg
 		Tier:          pb.CapabilityTier_MONITOR_ONLY,
 		ConnectedAt:   now,
 		LastHeartbeat: now,
+		OSVersion:     req.OsVersion,
 	}
 	s.registry.Register(state)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"time"
 )
 
@@ -99,9 +100,21 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 		log.Printf("[selfheal] Agent %s stale for %v, checking...", hostname, staleDuration.Round(time.Second))
 
 		// Probe: is the host reachable at all?
-		probe := probeHost(ctx, entry.IPAddress)
+		probeAddr := entry.IPAddress
+		if probeAddr == "" {
+			// Try DNS resolution of hostname
+			if addrs, err := net.LookupHost(hostname); err == nil && len(addrs) > 0 {
+				probeAddr = addrs[0]
+				entry.IPAddress = probeAddr
+				log.Printf("[selfheal] Resolved %s → %s", hostname, probeAddr)
+			} else {
+				log.Printf("[selfheal] Agent %s has no IP and DNS lookup failed — skipping", hostname)
+				continue
+			}
+		}
+		probe := probeHost(ctx, probeAddr)
 		if !probe.SSHOpen && !probe.WinRMOpen {
-			log.Printf("[selfheal] Host %s unreachable — skipping (host may be powered off)", hostname)
+			log.Printf("[selfheal] Host %s (%s) unreachable — skipping (host may be powered off)", hostname, probeAddr)
 			continue
 		}
 
@@ -127,48 +140,65 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 			continue
 		}
 
-		log.Printf("[selfheal] Attempting redeploy #%d for %s", entry.DeployAttempts, hostname)
-
-		// Look up stored credentials for this host.
-		// Try hostname, then IP, then case-insensitive hostname match,
-		// then fall back to domain_admin credentials (can reach any domain host).
-		creds := sh.daemon.findCredentialsForHost(hostname, entry.IPAddress)
-		if creds == nil && entry.IPAddress != "" {
-			// Try reverse: maybe credentials are stored by IP
-			creds = sh.daemon.findCredentialsForHost(entry.IPAddress, hostname)
-		}
-		if creds == nil {
-			// Fall back to domain_admin credentials (works for any domain-joined host)
-			if sh.svc.Config.DCUsername != nil && sh.svc.Config.DCPassword != nil {
-				creds = &HostCredentials{
-					Username: *sh.svc.Config.DCUsername,
-					Password: *sh.svc.Config.DCPassword,
-				}
-				log.Printf("[selfheal] Using domain admin credentials for %s redeploy", hostname)
+		// Infer OS type from probe results if not set (pre-v0.3.28 agents).
+		// Check WinRM first — Windows hosts may also have SSH (from the Go agent).
+		if entry.OSType == "" {
+			if probe.WinRMOpen {
+				entry.OSType = "windows"
+				log.Printf("[selfheal] Inferred OS type 'windows' for %s (WinRM open)", hostname)
+			} else if probe.SSHOpen {
+				entry.OSType = "linux" // could be macOS, but SSH deploy handles both
+				log.Printf("[selfheal] Inferred OS type 'linux' for %s (SSH open)", hostname)
+			} else {
+				log.Printf("[selfheal] Agent %s has no OS type and no open ports — skipping", hostname)
+				continue
 			}
 		}
-		if creds == nil {
-			log.Printf("[selfheal] No credentials for %s (tried hostname, IP %s, domain admin) — cannot redeploy", hostname, entry.IPAddress)
-			continue
+
+		log.Printf("[selfheal] Attempting redeploy #%d for %s (os=%s)", entry.DeployAttempts, hostname, entry.OSType)
+
+		var err error
+		if entry.OSType == "windows" {
+			// Windows: WinRM deploy via autodeploy's fallback chain (direct → DC proxy)
+			err = sh.daemon.deployer.DeployWindowsAgentByHostname(ctx, hostname, entry.IPAddress)
+		} else {
+			// Linux/macOS: SSH deploy
+			creds := sh.daemon.findCredentialsForHost(hostname, entry.IPAddress)
+			if creds == nil && entry.IPAddress != "" {
+				creds = sh.daemon.findCredentialsForHost(entry.IPAddress, hostname)
+			}
+			if creds == nil {
+				if sh.svc.Config.DCUsername != nil && sh.svc.Config.DCPassword != nil {
+					creds = &HostCredentials{
+						Username: *sh.svc.Config.DCUsername,
+						Password: *sh.svc.Config.DCPassword,
+					}
+					log.Printf("[selfheal] Using domain admin credentials for %s redeploy", hostname)
+				}
+			}
+			if creds == nil {
+				log.Printf("[selfheal] No credentials for %s (tried hostname, IP %s, domain admin) — cannot redeploy", hostname, entry.IPAddress)
+				continue
+			}
+
+			deploy := PendingDeploy{
+				DeviceID:     fmt.Sprintf("selfheal-%s", hostname),
+				IPAddress:    entry.IPAddress,
+				Hostname:     hostname,
+				OSType:       entry.OSType,
+				DeployMethod: "ssh",
+				Username:     creds.Username,
+				Password:     creds.Password,
+				SSHKey:       creds.SSHKey,
+			}
+			err = sh.daemon.deployViaSSH(ctx, deploy, sh.daemon.config.SiteID)
 		}
 
-		deploy := PendingDeploy{
-			DeviceID:     fmt.Sprintf("selfheal-%s", hostname),
-			IPAddress:    entry.IPAddress,
-			Hostname:     hostname,
-			OSType:       entry.OSType,
-			DeployMethod: "ssh",
-			Username:     creds.Username,
-			Password:     creds.Password,
-			SSHKey:       creds.SSHKey,
-		}
-
-		err := sh.daemon.deployViaSSH(ctx, deploy, sh.daemon.config.SiteID)
 		if err != nil {
 			log.Printf("[selfheal] Redeploy failed for %s: %v", hostname, err)
 		} else {
 			log.Printf("[selfheal] Redeploy succeeded for %s", hostname)
-			entry.DeployAttempts = 0 // reset counter on success
+			entry.DeployAttempts = 0
 		}
 	}
 }
