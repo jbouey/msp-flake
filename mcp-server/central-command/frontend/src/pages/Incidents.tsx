@@ -167,6 +167,45 @@ const IncidentDetailPanel: React.FC<{ incidentId: string; onClose: () => void }>
         </div>
       )}
 
+      {/* Remediation state */}
+      {(detail.remediation_attempts > 0 || detail.remediation_exhausted) && (
+        <div className={`rounded-lg p-4 ${detail.remediation_exhausted ? 'bg-health-critical/5 border border-health-critical/20' : 'bg-ios-orange/5 border border-ios-orange/20'}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <h4 className="text-xs font-medium text-label-tertiary uppercase">Remediation State</h4>
+            {detail.remediation_exhausted && (
+              <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-health-critical/10 text-health-critical rounded">
+                Budget Exhausted
+              </span>
+            )}
+          </div>
+          <div className="text-sm text-label-secondary mb-2">
+            {detail.remediation_attempts} attempt{detail.remediation_attempts !== 1 ? 's' : ''} total
+            {detail.remediation_exhausted && ' — manual intervention required'}
+          </div>
+          {detail.remediation_history && detail.remediation_history.length > 0 && (
+            <div className="space-y-1.5">
+              {detail.remediation_history.map((entry, idx) => (
+                <div key={idx} className="flex items-center gap-2 text-xs">
+                  <span className={`w-6 text-center font-mono font-semibold ${
+                    entry.tier === 'L1' ? 'text-accent-primary' : entry.tier === 'L2' ? 'text-ios-orange' : 'text-health-critical'
+                  }`}>{entry.tier}</span>
+                  <span className={`px-1.5 py-0.5 rounded ${
+                    entry.result === 'order_created' ? 'bg-health-healthy/10 text-health-healthy' : 'bg-label-tertiary/10 text-label-tertiary'
+                  }`}>{entry.result}</span>
+                  {entry.runbook_id && (
+                    <span className="text-label-tertiary font-mono">{entry.runbook_id}</span>
+                  )}
+                  {entry.confidence !== undefined && entry.confidence !== null && (
+                    <span className="text-label-tertiary">{(entry.confidence * 100).toFixed(0)}%</span>
+                  )}
+                  <span className="text-label-tertiary ml-auto">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Status and timestamps */}
       <div className="flex items-center gap-4 text-xs text-label-tertiary pt-2 border-t border-separator-light">
         <span>Created: {new Date(detail.created_at).toLocaleString()}</span>

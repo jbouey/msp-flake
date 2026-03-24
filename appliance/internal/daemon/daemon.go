@@ -918,6 +918,14 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 		d.safeGo("reportDriftIncident", func() { d.incidents.ReportDriftIncident(req.Hostname, req.CheckType, req.Expected, req.Actual, req.HIPAAControl, severity, platform) })
 	}
 
+	// Check healing exhaustion: if L1 has failed too many times for this key,
+	// skip L1 and let the server-side pipeline handle escalation.
+	if d.state.IsHealingExhausted(cooldownKey) {
+		log.Printf("[daemon] L1 healing exhausted for %s/%s (%d+ failed attempts), skipping to server-side escalation",
+			req.Hostname, req.CheckType, maxHealingAttempts)
+		return
+	}
+
 	// L1: Deterministic matching
 	match := d.l1Engine.Match(incidentID, req.CheckType, severity, data)
 	if match != nil {
@@ -940,6 +948,9 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 			log.Printf("[daemon] L1 healed %s/%s via %s in %dms",
 				req.Hostname, req.CheckType, match.Rule.ID, result.DurationMs)
 
+			// Reset exhaustion counter on success
+			d.state.ResetHealingExhaustion(cooldownKey)
+
 			if d.telemetry != nil {
 				d.safeGo("telemetryL1", func() { d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, true, "", result.DurationMs) })
 			}
@@ -956,8 +967,11 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 			}
 		} else {
 			d.healJournal.FinishHealing(incidentID, false, result.Error)
-			log.Printf("[daemon] L1 execution failed for %s/%s: %s",
-				req.Hostname, req.CheckType, result.Error)
+
+			// Track L1 failure for exhaustion
+			failCount := d.state.RecordHealingFailure(cooldownKey)
+			log.Printf("[daemon] L1 execution failed for %s/%s: %s (attempt %d/%d)",
+				req.Hostname, req.CheckType, result.Error, failCount, maxHealingAttempts)
 
 			if d.telemetry != nil {
 				d.safeGo("telemetryL1Fail", func() { d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, false, result.Error, result.DurationMs) })

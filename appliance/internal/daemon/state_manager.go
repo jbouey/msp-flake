@@ -12,6 +12,14 @@ import (
 	"github.com/osiriscare/appliance/internal/maputil"
 )
 
+// healingExhaustion tracks per-key L1 failure counts for the remediation state machine.
+// After maxHealingAttempts failed L1 heals for the same hostname:check_type,
+// L1 is skipped and the incident is forwarded to the server for L2/L3 handling.
+type healingExhaustion struct {
+	failCount int
+	lastFail  time.Time
+}
+
 // StateManager holds all mutex-protected state that was formerly embedded in
 // Daemon. It implements TargetProvider, CooldownManager, and CheckConfig so
 // subsystems can access state through narrow interfaces.
@@ -19,6 +27,10 @@ type StateManager struct {
 	// Drift report cooldown: prevents excessive incident creation
 	cooldownMu sync.Mutex
 	cooldowns  map[string]*driftCooldown // key: "hostname:check_type"
+
+	// Healing exhaustion: tracks failed L1 attempts per key
+	exhaustionMu sync.Mutex
+	exhaustion   map[string]*healingExhaustion // key: "hostname:check_type"
 
 	// Linux targets from checkin response
 	linuxTargetsMu sync.RWMutex
@@ -65,6 +77,7 @@ type StateManager struct {
 func NewStateManager() *StateManager {
 	return &StateManager{
 		cooldowns:      make(map[string]*driftCooldown),
+		exhaustion:     make(map[string]*healingExhaustion),
 		winTargets:     make(map[string]winTarget),
 		disabledChecks: make(map[string]bool),
 	}
@@ -236,6 +249,58 @@ func (sm *StateManager) ShouldSuppress(key string) bool {
 	entry.count = 1
 	entry.cooldownDur = defaultCooldown
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// Healing exhaustion tracking
+// ---------------------------------------------------------------------------
+
+const maxHealingAttempts = 3        // Budget: after 3 failed L1 heals, skip L1
+const exhaustionWindow = 24 * time.Hour // Reset exhaustion counter after 24h of no failures
+
+// IsHealingExhausted returns true if the given key has failed L1 healing
+// maxHealingAttempts times. The caller should skip L1 and let the server
+// handle escalation.
+func (sm *StateManager) IsHealingExhausted(key string) bool {
+	sm.exhaustionMu.Lock()
+	defer sm.exhaustionMu.Unlock()
+
+	entry, ok := sm.exhaustion[key]
+	if !ok {
+		return false
+	}
+
+	// Reset if the last failure was long ago
+	if time.Since(entry.lastFail) > exhaustionWindow {
+		delete(sm.exhaustion, key)
+		return false
+	}
+
+	return entry.failCount >= maxHealingAttempts
+}
+
+// RecordHealingFailure increments the failure count for a key.
+// Returns the new failure count.
+func (sm *StateManager) RecordHealingFailure(key string) int {
+	sm.exhaustionMu.Lock()
+	defer sm.exhaustionMu.Unlock()
+
+	entry, ok := sm.exhaustion[key]
+	if !ok || time.Since(entry.lastFail) > exhaustionWindow {
+		sm.exhaustion[key] = &healingExhaustion{failCount: 1, lastFail: time.Now()}
+		return 1
+	}
+
+	entry.failCount++
+	entry.lastFail = time.Now()
+	return entry.failCount
+}
+
+// ResetHealingExhaustion clears the failure count for a key (called on success).
+func (sm *StateManager) ResetHealingExhaustion(key string) {
+	sm.exhaustionMu.Lock()
+	defer sm.exhaustionMu.Unlock()
+	delete(sm.exhaustion, key)
 }
 
 // ---------------------------------------------------------------------------

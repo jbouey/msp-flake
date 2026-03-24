@@ -519,6 +519,8 @@ async def get_incidents(
             resolved=i["resolved"],
             resolved_at=i.get("resolved_at"),
             hipaa_controls=i.get("hipaa_controls", []),
+            remediation_attempts=i.get("remediation_attempts", 0),
+            remediation_exhausted=i.get("remediation_exhausted", False),
             created_at=i["created_at"],
         )
         for i in incidents
@@ -558,6 +560,9 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
         evidence_hash=None,
         runbook_executed=None,
         execution_log=None,
+        remediation_attempts=getattr(row, 'remediation_attempts', None) or 0,
+        remediation_exhausted=getattr(row, 'remediation_exhausted', None) or False,
+        remediation_history=getattr(row, 'remediation_history', None) or [],
         created_at=row.created_at,
     )
 

@@ -171,6 +171,8 @@ class Incident(BaseModel):
     resolved: bool = False
     resolved_at: Optional[datetime] = None
     hipaa_controls: List[str] = []
+    remediation_attempts: int = 0
+    remediation_exhausted: bool = False
     created_at: datetime
 
 
@@ -191,6 +193,9 @@ class IncidentDetail(BaseModel):
     evidence_hash: Optional[str] = None
     runbook_executed: Optional[str] = None
     execution_log: Optional[str] = None
+    remediation_attempts: int = 0
+    remediation_exhausted: bool = False
+    remediation_history: List[Dict[str, Any]] = []
     created_at: datetime
 
 

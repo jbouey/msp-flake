@@ -1633,7 +1633,8 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     # for the same check (e.g. windows_update, linux_unattended_upgrades).
     existing_check = await db.execute(
         text("""
-            SELECT id, status FROM incidents
+            SELECT id, status, remediation_attempts, remediation_exhausted, context_hash
+            FROM incidents
             WHERE appliance_id = :appliance_id
             AND incident_type = :incident_type
             AND (
@@ -1651,6 +1652,19 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     if existing_incident:
         existing_id = str(existing_incident[0])
         existing_status = existing_incident[1]
+
+        # Check if this incident has exhausted its remediation budget
+        if existing_incident[3]:  # remediation_exhausted
+            logger.info(f"Incident {existing_id} exhausted after {existing_incident[2]} attempts, skipping",
+                        site_id=incident.site_id, incident_type=incident.incident_type)
+            return {
+                "status": "exhausted",
+                "incident_id": existing_id,
+                "resolution_tier": None,
+                "order_id": None,
+                "runbook_id": None,
+                "timestamp": now.isoformat()
+            }
 
         # If previously resolved but drift recurred, reopen instead of creating new
         if existing_status == 'resolved':
@@ -1706,6 +1720,11 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     # Try to find matching runbook via L1 rules (DB-backed, includes flywheel promotions)
     runbook_id = None
     resolution_tier = None
+
+    # Compute context hash for remediation state tracking (prevents duplicate L2 calls)
+    MAX_REMEDIATION_ATTEMPTS = 3
+    context_str = f"{incident.incident_type}:{incident.host_id}:{json.dumps(incident.details, sort_keys=True)}"
+    context_hash = hashlib.sha256(context_str.encode()).hexdigest()[:16]
 
     # Chronic drift detection: if this incident_type has been resolved 5+ times
     # in 7 days for this appliance, L1 healing isn't working. Escalate to L3.
@@ -1852,6 +1871,24 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                     order_id=order_id,
                     runbook_id=runbook_id,
                     tier=resolution_tier)
+
+        # Record L1 remediation attempt
+        l1_attempt = json.dumps({
+            "tier": "L1",
+            "runbook_id": runbook_id,
+            "result": "order_created",
+            "timestamp": now.isoformat(),
+        })
+        await db.execute(
+            text("""
+                UPDATE incidents SET
+                    remediation_attempts = COALESCE(remediation_attempts, 0) + 1,
+                    remediation_history = COALESCE(remediation_history, '[]'::jsonb) || :attempt::jsonb,
+                    context_hash = :hash
+                WHERE id = :id
+            """),
+            {"id": incident_id, "attempt": l1_attempt, "hash": context_hash}
+        )
     elif resolution_tier == "L3":
         # L1 rule matched an escalation-only runbook (ESC-*) — skip L2, go straight to L3
         await db.execute(
@@ -1870,8 +1907,63 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
         # No L1 match — try L2 LLM planner before escalating to L3
         from dashboard_api.l2_planner import analyze_incident, record_l2_decision, is_l2_available
 
+        # Check previous remediation state for this incident type on this appliance.
+        # This catches the case where a previous incident for the same type was
+        # created recently (within 48h) but fell outside the dedup window.
+        prev_state_check = await db.execute(
+            text("""
+                SELECT remediation_attempts, context_hash, remediation_history
+                FROM incidents
+                WHERE appliance_id = :appliance_id
+                AND incident_type = :incident_type
+                AND id != :current_id
+                AND created_at > NOW() - INTERVAL '7 days'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """),
+            {"appliance_id": appliance_id, "incident_type": incident.incident_type, "current_id": incident_id}
+        )
+        prev_state = prev_state_check.fetchone()
+        prev_attempts = prev_state[0] if prev_state else 0
+        prev_hash = prev_state[1] if prev_state else None
+        prev_history = prev_state[2] if prev_state else []
+
+        # Rule 1: Never call L2 with identical context
+        # If context hash matches a previous attempt and we've already tried, skip L2
+        skip_l2 = False
+        if prev_hash == context_hash and prev_attempts > 0:
+            logger.info(f"Incident context unchanged (hash={context_hash}), skipping redundant L2 call",
+                        site_id=incident.site_id, incident_type=incident.incident_type,
+                        prev_attempts=prev_attempts)
+            skip_l2 = True
+
+        # Rule 2: Check attempt budget (carried forward from previous incidents)
+        if prev_attempts >= MAX_REMEDIATION_ATTEMPTS:
+            logger.info(f"Remediation budget exhausted ({prev_attempts} prior attempts), marking exhausted",
+                        site_id=incident.site_id, incident_type=incident.incident_type)
+            skip_l2 = True
+            # Mark this new incident as exhausted immediately
+            await db.execute(
+                text("""
+                    UPDATE incidents SET
+                        remediation_attempts = :attempts,
+                        remediation_history = :history::jsonb,
+                        remediation_exhausted = true,
+                        context_hash = :hash,
+                        resolution_tier = 'L3',
+                        status = 'escalated'
+                    WHERE id = :id
+                """),
+                {
+                    "id": incident_id,
+                    "attempts": prev_attempts,
+                    "history": json.dumps(prev_history if isinstance(prev_history, list) else []),
+                    "hash": context_hash,
+                }
+            )
+
         l2_succeeded = False
-        if is_l2_available():
+        if not skip_l2 and is_l2_available():
             try:
                 logger.info("No L1 match, trying L2 planner",
                             site_id=incident.site_id,
@@ -1892,11 +1984,17 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                 except Exception as e:
                     logger.error(f"Failed to record L2 decision: {e}")
 
+                # Determine L2 result for attempt tracking
+                l2_result = "no_action"
+                l2_runbook = getattr(decision, 'runbook_id', None)
+                l2_confidence = getattr(decision, 'confidence', None)
+
                 # If L2 found a runbook with sufficient confidence, create an order
                 if decision.runbook_id and decision.confidence >= 0.6 and not decision.requires_human_review:
                     runbook_id = decision.runbook_id
                     resolution_tier = "L2"
                     l2_succeeded = True
+                    l2_result = "order_created"
 
                     order_id = hashlib.sha256(
                         f"{incident.site_id}{incident_id}{now.isoformat()}".encode()
@@ -1965,17 +2063,53 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                                 runbook_id=decision.runbook_id if decision else None,
                                 confidence=decision.confidence if decision else None,
                                 requires_review=decision.requires_human_review if decision else None)
+
+                # Record L2 attempt in remediation history
+                new_attempts = prev_attempts + 1
+                l2_attempt = json.dumps({
+                    "tier": "L2",
+                    "runbook_id": l2_runbook,
+                    "result": l2_result,
+                    "confidence": l2_confidence,
+                    "timestamp": now.isoformat(),
+                })
+                is_exhausted = new_attempts >= MAX_REMEDIATION_ATTEMPTS
+
+                await db.execute(
+                    text("""
+                        UPDATE incidents SET
+                            remediation_attempts = :attempts,
+                            remediation_history = COALESCE(remediation_history, '[]'::jsonb) || :attempt::jsonb,
+                            remediation_exhausted = :exhausted,
+                            context_hash = :hash
+                        WHERE id = :id
+                    """),
+                    {
+                        "id": incident_id,
+                        "attempts": new_attempts,
+                        "attempt": l2_attempt,
+                        "exhausted": is_exhausted,
+                        "hash": context_hash,
+                    }
+                )
+
+                # Rule 2: If budget exhausted after this attempt, force L3 escalation
+                if is_exhausted and not l2_succeeded:
+                    resolution_tier = "L3"
+                    logger.warning(f"Remediation budget exhausted after {new_attempts} attempts — escalating to L3",
+                                   site_id=incident.site_id, incident_type=incident.incident_type)
+
             except Exception as e:
                 logger.error(f"L2 planner failed: {e}",
                              site_id=incident.site_id,
                              incident_type=incident.incident_type)
-        else:
+        elif not skip_l2:
             logger.warning("L2 not available (no API key configured)",
                            site_id=incident.site_id,
                            incident_type=incident.incident_type)
 
         if not l2_succeeded:
-            # L2 failed or unavailable — escalate to L3
+            # L2 failed, unavailable, or skipped — escalate to L3
             resolution_tier = "L3"
             await db.execute(
                 text("""

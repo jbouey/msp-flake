@@ -133,6 +133,8 @@ export interface Incident {
   resolved: boolean;
   resolved_at?: string;
   hipaa_controls: string[];
+  remediation_attempts: number;
+  remediation_exhausted: boolean;
   created_at: string;
 }
 
@@ -143,6 +145,13 @@ export interface IncidentDetail extends Incident {
   evidence_hash?: string;
   runbook_executed?: string;
   execution_log?: string;
+  remediation_history: Array<{
+    tier: string;
+    runbook_id?: string;
+    result: string;
+    confidence?: number;
+    timestamp: string;
+  }>;
 }
 
 // =============================================================================

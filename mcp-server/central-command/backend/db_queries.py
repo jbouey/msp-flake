@@ -130,7 +130,9 @@ async def get_incidents_from_db(
             i.status,
             i.resolved_at,
             i.hipaa_controls,
-            i.reported_at as created_at
+            i.reported_at as created_at,
+            COALESCE(i.remediation_attempts, 0) as remediation_attempts,
+            COALESCE(i.remediation_exhausted, false) as remediation_exhausted
         FROM incidents i
         JOIN appliances a ON a.id = i.appliance_id
         WHERE 1=1
@@ -167,6 +169,8 @@ async def get_incidents_from_db(
         "resolved_at": row.resolved_at,
         "hipaa_controls": row.hipaa_controls or [],
         "created_at": row.created_at,
+        "remediation_attempts": row.remediation_attempts,
+        "remediation_exhausted": row.remediation_exhausted,
     } for row in rows]
 
 

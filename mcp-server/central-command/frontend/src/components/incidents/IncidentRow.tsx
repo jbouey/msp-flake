@@ -136,13 +136,24 @@ export const IncidentRow: React.FC<IncidentRowProps> = memo(({
         )}
       </div>
 
-      {/* Resolution level */}
-      <div className="w-20 flex-shrink-0">
-        {incident.resolution_level ? (
-          <LevelBadge level={incident.resolution_level} showLabel />
-        ) : (
-          <span className="text-xs text-label-tertiary">Pending</span>
-        )}
+      {/* Resolution level + remediation state */}
+      <div className="w-24 flex-shrink-0">
+        <div className="flex items-center gap-1">
+          {incident.resolution_level ? (
+            <LevelBadge level={incident.resolution_level} showLabel />
+          ) : (
+            <span className="text-xs text-label-tertiary">Pending</span>
+          )}
+        </div>
+        {incident.remediation_exhausted ? (
+          <span className="inline-block mt-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-health-critical/10 text-health-critical rounded">
+            Exhausted
+          </span>
+        ) : incident.remediation_attempts > 0 ? (
+          <span className="inline-block mt-0.5 text-[10px] text-label-tertiary">
+            {incident.remediation_attempts} attempt{incident.remediation_attempts !== 1 ? 's' : ''}
+          </span>
+        ) : null}
       </div>
 
       {/* Inline action buttons */}
