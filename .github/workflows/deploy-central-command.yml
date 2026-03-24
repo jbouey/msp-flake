@@ -96,11 +96,10 @@ jobs:
             mcp-server/central-command/backend/ \
             ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/dashboard_api_mount/
 
-      - name: Deploy main.py and server.py
+      - name: Deploy main.py
         run: |
           rsync -avz \
             mcp-server/main.py \
-            mcp-server/server.py \
             ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/app/
 
       - name: Deploy frontend
