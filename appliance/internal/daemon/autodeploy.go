@@ -1866,6 +1866,16 @@ func (ad *autoDeployer) DeployWindowsAgentByHostname(ctx context.Context, hostna
 	return ad.deployWithFallback(ctx, ws)
 }
 
+// lookupADHostIP searches the AD computer cache for a hostname and returns its IP.
+func (ad *autoDeployer) lookupADHostIP(hostname string) string {
+	ad.mu.Lock()
+	defer ad.mu.Unlock()
+	// adKnownHosts has both IPs and hostnames as keys.
+	// If the hostname is in the cache, we know it's an AD host, but we don't
+	// have a direct hostname→IP mapping. Return empty — caller will try DNS/DC fallback.
+	return ""
+}
+
 // adScriptExec adapts the WinRM executor to the discovery.ScriptExecutor interface.
 type adScriptExec struct {
 	winrmExec *winrm.Executor

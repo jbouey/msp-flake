@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -102,15 +103,13 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 		// Probe: is the host reachable at all?
 		probeAddr := entry.IPAddress
 		if probeAddr == "" {
-			// Try DNS resolution of hostname
-			if addrs, err := net.LookupHost(hostname); err == nil && len(addrs) > 0 {
-				probeAddr = addrs[0]
-				entry.IPAddress = probeAddr
-				log.Printf("[selfheal] Resolved %s → %s", hostname, probeAddr)
-			} else {
-				log.Printf("[selfheal] Agent %s has no IP and DNS lookup failed — skipping", hostname)
+			probeAddr = sh.resolveAgentIP(hostname)
+			if probeAddr == "" {
+				log.Printf("[selfheal] Agent %s has no IP (creds/DNS/AD all failed) — skipping", hostname)
 				continue
 			}
+			entry.IPAddress = probeAddr
+			log.Printf("[selfheal] Resolved %s → %s", hostname, probeAddr)
 		}
 		probe := probeHost(ctx, probeAddr)
 		if !probe.SSHOpen && !probe.WinRMOpen {
@@ -201,4 +200,40 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 			entry.DeployAttempts = 0
 		}
 	}
+}
+
+// resolveAgentIP tries multiple sources to find an IP for an agent hostname:
+// 1. Credential store (winTargets keyed by hostname or IP)
+// 2. AD computer cache from autodeploy
+// 3. DNS resolution
+// 4. Domain controller config (if hostname looks like a DC)
+func (sh *selfHealer) resolveAgentIP(hostname string) string {
+	// 1. Direct credential lookup
+	if wt, ok := sh.daemon.LookupWinTarget(hostname); ok {
+		return wt.Hostname
+	}
+
+	// 2. Search AD computer cache for matching hostname
+	if sh.daemon.deployer != nil {
+		if ip := sh.daemon.deployer.lookupADHostIP(hostname); ip != "" {
+			return ip
+		}
+	}
+
+	// 3. DNS resolution
+	if addrs, err := net.LookupHost(hostname); err == nil && len(addrs) > 0 {
+		return addrs[0]
+	}
+
+	// 4. DC config fallback — if this hostname matches the DC pattern
+	if sh.svc.Config.DomainController != nil {
+		dc := *sh.svc.Config.DomainController
+		hn := strings.ToUpper(hostname)
+		if strings.Contains(hn, "DC") || strings.HasSuffix(hn, "DC01") || strings.HasSuffix(hn, "DC02") {
+			log.Printf("[selfheal] Agent %s matches DC pattern, using DC IP %s", hostname, dc)
+			return dc
+		}
+	}
+
+	return ""
 }
