@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OsirisCare — HIPAA Compliance Platform</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
+  :root {
+    --primary: #0f172a;
+    --accent: #3b82f6;
+    --accent2: #8b5cf6;
+    --accent3: #06b6d4;
+    --success: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --bg: #ffffff;
+    --surface: #f8fafc;
+    --border: #e2e8f0;
+    --text: #0f172a;
+    --text2: #475569;
+    --text3: #94a3b8;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  @page {
+    size: A4 landscape;
+    margin: 0;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .slide {
+    width: 297mm;
+    height: 210mm;
+    padding: 28px 36px;
+    page-break-after: always;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .slide:last-child { page-break-after: avoid; }
+
+  /* ── COVER SLIDE ── */
+  .slide-cover {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #0f172a 100%);
+    color: white;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+  .slide-cover .logo-mark {
+    width: 80px; height: 80px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 36px; font-weight: 800; color: white;
+    margin: 0 auto 24px;
+    box-shadow: 0 0 60px rgba(59,130,246,0.3);
+  }
+  .slide-cover h1 {
+    font-size: 48px; font-weight: 800; letter-spacing: -1px;
+    margin-bottom: 8px;
+  }
+  .slide-cover h1 span { color: var(--accent); }
+  .slide-cover .tagline {
+    font-size: 20px; font-weight: 300; color: #94a3b8;
+    margin-bottom: 40px; max-width: 600px;
+  }
+  .slide-cover .meta {
+    font-size: 13px; color: #64748b;
+    position: absolute; bottom: 28px;
+  }
+  .cover-stats {
+    display: flex; gap: 48px; margin-top: 32px;
+  }
+  .cover-stat {
+    text-align: center;
+  }
+  .cover-stat .val {
+    font-size: 36px; font-weight: 800; color: var(--accent);
+  }
+  .cover-stat .label {
+    font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px;
+  }
+
+  /* ── COMMON ── */
+  .slide-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 20px; flex-shrink: 0;
+  }
+  .slide-header h2 {
+    font-size: 26px; font-weight: 700; letter-spacing: -0.5px;
+  }
+  .slide-header .slide-num {
+    font-size: 12px; color: var(--text3); font-weight: 600;
+    background: var(--surface); border-radius: 20px; padding: 4px 14px;
+  }
+  .slide-body { flex: 1; display: flex; flex-direction: column; }
+  .slide-footer {
+    font-size: 10px; color: var(--text3); text-align: center;
+    padding-top: 8px; flex-shrink: 0;
+  }
+
+  /* ── GRID LAYOUTS ── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; flex: 1; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; flex: 1; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 14px; }
+
+  /* ── CARDS ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .card-accent {
+    border-left: 3px solid var(--accent);
+  }
+  .card h3 {
+    font-size: 14px; font-weight: 700; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card p, .card li {
+    font-size: 12px; color: var(--text2); line-height: 1.6;
+  }
+  .card ul { padding-left: 16px; }
+
+  .icon-circle {
+    width: 28px; height: 28px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0;
+  }
+  .ic-blue { background: #dbeafe; color: #2563eb; }
+  .ic-purple { background: #ede9fe; color: #7c3aed; }
+  .ic-cyan { background: #cffafe; color: #0891b2; }
+  .ic-green { background: #d1fae5; color: #059669; }
+  .ic-amber { background: #fef3c7; color: #d97706; }
+  .ic-red { background: #fee2e2; color: #dc2626; }
+
+  /* ── STAT BLOCKS ── */
+  .stat-block {
+    text-align: center; padding: 16px;
+    background: var(--surface); border-radius: 12px;
+    border: 1px solid var(--border);
+  }
+  .stat-block .val {
+    font-size: 32px; font-weight: 800; line-height: 1;
+  }
+  .stat-block .label {
+    font-size: 11px; color: var(--text3); margin-top: 4px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .stat-block .sub {
+    font-size: 11px; color: var(--text2); margin-top: 4px;
+  }
+
+  /* ── PIPELINE DIAGRAM ── */
+  .pipeline {
+    display: flex; align-items: stretch; gap: 0; flex: 1;
+  }
+  .pipe-stage {
+    flex: 1; padding: 16px; position: relative;
+    display: flex; flex-direction: column; justify-content: center;
+    text-align: center;
+  }
+  .pipe-stage::after {
+    content: '';
+    position: absolute; right: -12px; top: 50%; transform: translateY(-50%);
+    width: 0; height: 0;
+    border-top: 18px solid transparent;
+    border-bottom: 18px solid transparent;
+    z-index: 2;
+  }
+  .pipe-stage:last-child::after { display: none; }
+  .pipe-l1 { background: #dbeafe; border-radius: 12px 0 0 12px; }
+  .pipe-l1::after { border-left: 12px solid #dbeafe; }
+  .pipe-l2 { background: #ede9fe; }
+  .pipe-l2::after { border-left: 12px solid #ede9fe; }
+  .pipe-l3 { background: #fef3c7; }
+  .pipe-l3::after { border-left: 12px solid #fef3c7; }
+  .pipe-l4 { background: #fee2e2; border-radius: 0 12px 12px 0; }
+  .pipe-flywheel { background: #d1fae5; border-radius: 12px; margin-left: 12px; flex: 0.6; }
+
+  .pipe-stage .tier {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; opacity: 0.6; margin-bottom: 4px;
+  }
+  .pipe-stage .name {
+    font-size: 16px; font-weight: 700; margin-bottom: 6px;
+  }
+  .pipe-stage .pct {
+    font-size: 28px; font-weight: 800; line-height: 1;
+  }
+  .pipe-stage .detail {
+    font-size: 10px; color: inherit; opacity: 0.7; margin-top: 4px;
+  }
+
+  /* ── ARCHITECTURE DIAGRAM ── */
+  .arch-row {
+    display: flex; gap: 12px; align-items: stretch; margin-bottom: 12px;
+  }
+  .arch-box {
+    border-radius: 10px; padding: 14px 16px;
+    border: 1.5px solid var(--border);
+    display: flex; flex-direction: column;
+  }
+  .arch-box .label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; opacity: 0.5; margin-bottom: 4px;
+  }
+  .arch-box .name {
+    font-size: 14px; font-weight: 700;
+  }
+  .arch-box .desc {
+    font-size: 10px; color: var(--text2); margin-top: 2px;
+  }
+  .arch-appliance { background: #eff6ff; border-color: #93c5fd; flex: 1; }
+  .arch-central { background: #faf5ff; border-color: #c4b5fd; flex: 2; }
+  .arch-portal { background: #ecfdf5; border-color: #6ee7b7; flex: 1; }
+  .arch-data { background: #f0f9ff; border-color: #7dd3fc; flex: 1; }
+  .arch-evidence { background: #fefce8; border-color: #fde047; flex: 1; }
+  .arch-arrow {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; color: var(--text3); padding: 0 4px;
+  }
+
+  /* ── COMPLIANCE TABLE ── */
+  .comp-table {
+    width: 100%; border-collapse: collapse; font-size: 11px;
+  }
+  .comp-table th {
+    background: var(--primary); color: white; padding: 8px 12px;
+    text-align: left; font-weight: 600; font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .comp-table th:first-child { border-radius: 8px 0 0 0; }
+  .comp-table th:last-child { border-radius: 0 8px 0 0; }
+  .comp-table td {
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+  }
+  .comp-table tr:nth-child(even) { background: var(--surface); }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 600;
+  }
+  .badge-green { background: #d1fae5; color: #065f46; }
+  .badge-amber { background: #fef3c7; color: #92400e; }
+  .badge-blue { background: #dbeafe; color: #1e40af; }
+
+  /* ── EVIDENCE CHAIN ── */
+  .chain-flow {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px; background: var(--surface); border-radius: 12px;
+    border: 1px solid var(--border); margin-bottom: 12px;
+  }
+  .chain-node {
+    flex: 1; text-align: center; padding: 10px;
+    background: white; border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .chain-node .step { font-size: 10px; color: var(--text3); font-weight: 600; }
+  .chain-node .title { font-size: 12px; font-weight: 700; margin: 2px 0; }
+  .chain-node .desc { font-size: 9px; color: var(--text2); }
+  .chain-arrow { font-size: 16px; color: var(--accent); flex-shrink: 0; }
+
+  /* ── DONUT CHARTS (CSS) ── */
+  .donut-wrap {
+    display: flex; align-items: center; gap: 16px;
+  }
+  .donut {
+    width: 100px; height: 100px; border-radius: 50%;
+    position: relative; flex-shrink: 0;
+  }
+  .donut-center {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    font-size: 20px; font-weight: 800; color: var(--text);
+  }
+  .donut-legend { font-size: 11px; }
+  .donut-legend .item {
+    display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+  }
+  .donut-legend .dot {
+    width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0;
+  }
+
+  /* ── BAR CHART (CSS) ── */
+  .bar-chart { flex: 1; }
+  .bar-row {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+  }
+  .bar-label { font-size: 11px; font-weight: 600; width: 90px; text-align: right; }
+  .bar-track {
+    flex: 1; height: 22px; background: #e2e8f0; border-radius: 6px; overflow: hidden;
+    position: relative;
+  }
+  .bar-fill {
+    height: 100%; border-radius: 6px; display: flex;
+    align-items: center; padding-left: 8px;
+    font-size: 10px; font-weight: 700; color: white;
+    min-width: 30px;
+  }
+
+  /* ── PRICING ── */
+  .pricing-card {
+    border-radius: 12px; padding: 20px; text-align: center;
+    border: 2px solid var(--border); background: white;
+    display: flex; flex-direction: column;
+  }
+  .pricing-card.featured {
+    border-color: var(--accent); background: linear-gradient(180deg, #eff6ff, white);
+  }
+  .pricing-card .tier-name {
+    font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--text3); margin-bottom: 8px;
+  }
+  .pricing-card .price {
+    font-size: 36px; font-weight: 800; color: var(--text);
+  }
+  .pricing-card .price span { font-size: 14px; font-weight: 400; color: var(--text3); }
+  .pricing-card .desc {
+    font-size: 11px; color: var(--text2); margin: 8px 0 16px;
+  }
+  .pricing-card ul {
+    text-align: left; list-style: none; padding: 0; flex: 1;
+  }
+  .pricing-card li {
+    font-size: 11px; padding: 4px 0; color: var(--text2);
+    display: flex; gap: 6px; align-items: baseline;
+  }
+  .pricing-card li::before {
+    content: '\2713'; color: var(--success); font-weight: 700; flex-shrink: 0;
+  }
+
+  .sub-section {
+    font-size: 13px; font-weight: 700; color: var(--text3);
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 8px; margin-top: 4px;
+  }
+
+  .phi-zone {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; border-radius: 8px; margin-bottom: 8px;
+  }
+  .phi-zone .zone-icon { font-size: 20px; flex-shrink: 0; }
+  .phi-zone .zone-label { font-size: 13px; font-weight: 700; }
+  .phi-zone .zone-desc { font-size: 10px; color: var(--text2); }
+  .zone-safe { background: #d1fae5; }
+  .zone-caution { background: #fef3c7; }
+  .zone-never { background: #fee2e2; }
+
+  .watermark {
+    position: absolute; bottom: 12px; right: 24px;
+    font-size: 10px; color: var(--text3); font-weight: 500;
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════ SLIDE 1: COVER ════════════════════ -->
+<div class="slide slide-cover">
+  <div class="logo-mark">O</div>
+  <h1>Osiris<span>Care</span></h1>
+  <div class="tagline">
+    Evidence-Grade HIPAA Compliance for Healthcare SMBs
+  </div>
+  <div class="cover-stats">
+    <div class="cover-stat">
+      <div class="val">75%</div>
+      <div class="label">Lower Cost vs. Traditional MSP</div>
+    </div>
+    <div class="cover-stat">
+      <div class="val">Zero</div>
+      <div class="label">PHI Processed</div>
+    </div>
+    <div class="cover-stat">
+      <div class="val">&lt;100ms</div>
+      <div class="label">L1 Response Time</div>
+    </div>
+    <div class="cover-stat">
+      <div class="val">27</div>
+      <div class="label">Tables with RLS</div>
+    </div>
+  </div>
+  <div class="meta">Confidential Executive Briefing &mdash; March 2026</div>
+</div>
+
+<!-- ════════════════════ SLIDE 2: PROBLEM + VALUE ════════════════════ -->
+<div class="slide">
+  <div class="slide-header">
+    <h2>The Problem We Solve</h2>
+    <span class="slide-num">02</span>
+  </div>
+  <div class="slide-body">
+    <div class="grid-2" style="margin-bottom: 16px;">
+      <div>
+        <div class="sub-section">Healthcare IT Today</div>
+        <div class="card" style="margin-bottom: 10px; border-left: 3px solid var(--danger);">
+          <h3><span class="icon-circle ic-red">!</span> Compliance is Manual</h3>
+          <p>Small practices (1-50 providers) rely on spreadsheets and annual audits. Drift goes undetected between reviews. Average cost of a HIPAA breach for small entities: <strong>$1.5M</strong>.</p>
+        </div>
+        <div class="card" style="margin-bottom: 10px; border-left: 3px solid var(--warn);">
+          <h3><span class="icon-circle ic-amber">$</span> MSPs are Expensive</h3>
+          <p>Traditional managed services charge $5,000-15,000/mo for compliance monitoring. Most small practices can't afford it. They operate on trust, not evidence.</p>
+        </div>
+        <div class="card" style="border-left: 3px solid var(--danger);">
+          <h3><span class="icon-circle ic-red">?</span> No Proof of Compliance</h3>
+          <p>When auditors arrive, practices can't prove they were compliant last Tuesday. No cryptographic evidence, no chain of custody, no timestamps.</p>
+        </div>
+      </div>
+      <div>
+        <div class="sub-section">OsirisCare Approach</div>
+        <div class="card" style="margin-bottom: 10px; border-left: 3px solid var(--success);">
+          <h3><span class="icon-circle ic-green">&#x2713;</span> Continuous Attestation</h3>
+          <p>On-premises appliance runs drift checks every 60 seconds. Compliance state is captured, signed, and anchored to the Bitcoin blockchain. <strong>Evidence exists whether you look or not.</strong></p>
+        </div>
+        <div class="card" style="margin-bottom: 10px; border-left: 3px solid var(--accent);">
+          <h3><span class="icon-circle ic-blue">&#x21BB;</span> Three-Tier Auto-Healing</h3>
+          <p>70-80% of incidents resolved in &lt;100ms by deterministic rules. LLM planner handles edge cases. Humans only see what machines can't fix.</p>
+        </div>
+        <div class="card" style="border-left: 3px solid var(--accent2);">
+          <h3><span class="icon-circle ic-purple">&#x1F512;</span> Zero PHI Exposure</h3>
+          <p>12-pattern scrubber runs on-appliance before any data leaves the practice. Central platform sees compliance metadata only. <strong>Architecturally impossible to leak PHI.</strong></p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer">OsirisCare &mdash; Evidence-Grade HIPAA Compliance</div>
+  <div class="watermark">osiriscare.net</div>
+</div>
+
+<!-- ════════════════════ SLIDE 3: ARCHITECTURE ════════════════════ -->
+<div class="slide">
+  <div class="slide-header">
+    <h2>System Architecture</h2>
+    <span class="slide-num">03</span>
+  </div>
+  <div class="slide-body">
+    <!-- Row 1: Client Site -->
+    <div class="sub-section">Client Practice (On-Premises)</div>
+    <div class="arch-row">
+      <div class="arch-appliance" style="flex: 2;">
+        <div class="label">NixOS Appliance</div>
+        <div class="name">Compliance Agent</div>
+        <div class="desc">Deterministic OS &bull; Drift scanning &bull; WinRM/SSH &bull; PHI scrubber &bull; Evidence signing (Ed25519)</div>
+      </div>
+      <div class="arch-arrow">&rarr;</div>
+      <div class="arch-box" style="flex: 1; background: #fff7ed; border-color: #fdba74;">
+        <div class="label">Scanned Assets</div>
+        <div class="name">Windows + Linux Fleet</div>
+        <div class="desc">Workstations &bull; Servers &bull; Domain Controller &bull; 25-50 devices per site</div>
+      </div>
+    </div>
+
+    <!-- Arrow down -->
+    <div style="text-align: center; font-size: 20px; color: var(--text3); margin: 4px 0;">&#x2193; HTTPS (TLS 1.3) &mdash; checkin every 60s &#x2193;</div>
+
+    <!-- Row 2: Central Command -->
+    <div class="sub-section">Central Command (Hetzner VPS, EU)</div>
+    <div class="arch-row">
+      <div class="arch-central">
+        <div class="label">Application Layer</div>
+        <div class="name">FastAPI Backend</div>
+        <div class="desc">Incident pipeline &bull; L1/L2/L3 routing &bull; Fleet management &bull; Partner/Client/Admin portals</div>
+      </div>
+      <div class="arch-data">
+        <div class="label">Data Layer</div>
+        <div class="name">PostgreSQL + Redis</div>
+        <div class="desc">27-table RLS &bull; PgBouncer &bull; Session cache &bull; Rate limiting</div>
+      </div>
+      <div class="arch-evidence">
+        <div class="label">Evidence Layer</div>
+        <div class="name">MinIO WORM + OTS</div>
+        <div class="desc">90-day Object Lock &bull; Ed25519 signatures &bull; Bitcoin anchoring</div>
+      </div>
+    </div>
+
+    <!-- Row 3: Portals -->
+    <div style="text-align: center; font-size: 20px; color: var(--text3); margin: 4px 0;">&#x2193;</div>
+    <div class="sub-section">User Portals</div>
+    <div class="arch-row">
+      <div class="arch-portal">
+        <div class="label">Admin Dashboard</div>
+        <div class="name">Central Command</div>
+        <div class="desc">Fleet overview &bull; L4 queue &bull; Global analytics</div>
+      </div>
+      <div class="arch-portal">
+        <div class="label">Partner Portal</div>
+        <div class="name">MSP / IT Provider</div>
+        <div class="desc">L3 tickets &bull; SLA tracking &bull; Site management</div>
+      </div>
+      <div class="arch-portal">
+        <div class="label">Client Portal</div>
+        <div class="name">Practice Staff</div>
+        <div class="desc">Compliance score &bull; Incident history &bull; Evidence export</div>
+      </div>
+      <div class="arch-portal" style="background: #fdf4ff; border-color: #e879f9;">
+        <div class="label">Companion Portal</div>
+        <div class="name">Compliance Officer</div>
+        <div class="desc">HIPAA modules &bull; Cross-org view &bull; Audit prep</div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer">OsirisCare &mdash; Evidence-Grade HIPAA Compliance</div>
+  <div class="watermark">osiriscare.net</div>
+</div>
+
+<!-- ════════════════════ SLIDE 4: THREE-TIER HEALING ════════════════════ -->
+<div class="slide">
+  <div class="slide-header">
+    <h2>Three-Tier Auto-Healing Pipeline</h2>
+    <span class="slide-num">04</span>
+  </div>
+  <div class="slide-body">
+    <div class="pipeline" style="margin-bottom: 16px;">
+      <div class="pipe-stage pipe-l1">
+        <div class="tier">Tier 1</div>
+        <div class="name">Deterministic</div>
+        <div class="pct">75%</div>
+        <div class="detail">&lt;100ms &bull; $0 cost</div>
+        <div class="detail">70+ pattern-matched rules</div>
+      </div>
+      <div class="pipe-stage pipe-l2">
+        <div class="tier">Tier 2</div>
+        <div class="name">LLM Planner</div>
+        <div class="pct">20%</div>
+        <div class="detail">2-5s &bull; ~$0.001</div>
+        <div class="detail">Claude API + 88 runbooks</div>
+      </div>
+      <div class="pipe-stage pipe-l3">
+        <div class="tier">Tier 3</div>
+        <div class="name">Human Escalation</div>
+        <div class="pct">5%</div>
+        <div class="detail">Partner portal ticket</div>
+        <div class="detail">SLA tracking + notifications</div>
+      </div>
+      <div class="pipe-stage pipe-l4">
+        <div class="tier">Tier 4</div>
+        <div class="name">Central Command</div>
+        <div class="pct">&lt;1%</div>
+        <div class="detail">Partner escalates up</div>
+        <div class="detail">Admin resolution</div>
+      </div>
+      <div class="pipe-stage pipe-flywheel">
+        <div class="tier">Flywheel</div>
+        <div class="name">L2 &rarr; L1</div>
+        <div class="pct">&#x21BB;</div>
+        <div class="detail">Successful L2 patterns</div>
+        <div class="detail">auto-promote to L1</div>
+      </div>
+    </div>
+
+    <div class="grid-3">
+      <div class="card card-accent">
+        <h3>How L1 Works</h3>
+        <ul>
+          <li>Pattern-matched rules synced from Central Command hourly</li>
+          <li>Incident type maps to runbook steps</li>
+          <li>Daemon executes via WinRM (Windows) or SSH (Linux)</li>
+          <li>Resolution recorded with evidence bundle</li>
+          <li>No external API calls &mdash; zero latency, zero cost</li>
+        </ul>
+      </div>
+      <div class="card" style="border-left: 3px solid var(--accent2);">
+        <h3>How L2 Works</h3>
+        <ul>
+          <li>Anthropic Claude API analyzes incident metadata</li>
+          <li>Selects from 88 pre-approved runbooks (not arbitrary commands)</li>
+          <li>Confidence threshold: &ge;0.6 for auto-remediation</li>
+          <li>Below threshold &rarr; escalates to L3</li>
+          <li>Successful patterns promoted to L1 via Data Flywheel</li>
+        </ul>
+      </div>
+      <div class="card" style="border-left: 3px solid var(--warn);">
+        <h3>How L3/L4 Works</h3>
+        <ul>
+          <li>Ticket created in <code>escalation_tickets</code> table</li>
+          <li>Routed to partner based on site ownership</li>
+          <li>Multi-channel notifications: email, Slack, PagerDuty, Teams</li>
+          <li>SLA tracking with breach detection</li>
+          <li>Partner can resolve or escalate to L4 (Central Command)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer">OsirisCare &mdash; Evidence-Grade HIPAA Compliance</div>
+  <div class="watermark">osiriscare.net</div>
+</div>
+
+<!-- ════════════════════ SLIDE 5: EVIDENCE CHAIN ════════════════════ -->
+<div class="slide">
+  <div class="slide-header">
+    <h2>Evidence Chain &amp; Cryptographic Proof</h2>
+    <span class="slide-num">05</span>
+  </div>
+  <div class="slide-body">
+    <div class="chain-flow">
+      <div class="chain-node">
+        <div class="step">Step 1</div>
+        <div class="title">Drift Scan</div>
+        <div class="desc">Appliance runs compliance checks against Windows/Linux fleet</div>
+      </div>
+      <div class="chain-arrow">&rarr;</div>
+      <div class="chain-node">
+        <div class="step">Step 2</div>
+        <div class="title">PHI Scrub</div>
+        <div class="desc">12-pattern regex strips any PHI before data leaves practice</div>
+      </div>
+      <div class="chain-arrow">&rarr;</div>
+      <div class="chain-node">
+        <div class="step">Step 3</div>
+        <div class="title">Ed25519 Sign</div>
+        <div class="desc">Bundle signed with appliance private key &mdash; tamper-evident</div>
+      </div>
+      <div class="chain-arrow">&rarr;</div>
+      <div class="chain-node">
+        <div class="step">Step 4</div>
+        <div class="title">Hash Chain</div>
+        <div class="desc">Previous bundle hash embedded &mdash; append-only integrity</div>
+      </div>
+      <div class="chain-arrow">&rarr;</div>
+      <div class="chain-node">
+        <div class="step">Step 5</div>
+        <div class="title">WORM Store</div>
+        <div class="desc">MinIO Object Lock &mdash; 90-day immutable retention</div>
+      </div>
+      <div class="chain-arrow">&rarr;</div>
+      <div class="chain-node" style="background: #fefce8;">
+        <div class="step">Step 6</div>
+        <div class="title">Bitcoin Anchor</div>
+        <div class="desc">OpenTimestamps proof &mdash; independently verifiable forever</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div>
+        <div class="sub-section">What This Means for Auditors</div>
+        <div class="card" style="margin-bottom: 10px;">
+          <h3><span class="icon-circle ic-green">&#x2713;</span> Provable Compliance State</h3>
+          <p>Every compliance check result is cryptographically signed and timestamped. An auditor can verify that a practice was compliant at 2:47 PM on any given day &mdash; without trusting OsirisCare infrastructure.</p>
+        </div>
+        <div class="card">
+          <h3><span class="icon-circle ic-blue">&#x1F517;</span> Independent Verification</h3>
+          <p>OpenTimestamps proofs are anchored to the Bitcoin blockchain. Anyone with the proof file can verify the timestamp independently &mdash; no API keys, no vendor lock-in, no trust assumptions.</p>
+        </div>
+      </div>
+      <div>
+        <div class="sub-section">Production Numbers</div>
+        <div class="grid-2" style="gap: 10px; margin-bottom: 10px;">
+          <div class="stat-block">
+            <div class="val" style="color: var(--accent);">222K+</div>
+            <div class="label">Evidence Bundles</div>
+            <div class="sub">Signed &amp; stored</div>
+          </div>
+          <div class="stat-block">
+            <div class="val" style="color: var(--accent2);">121K+</div>
+            <div class="label">BTC Anchored</div>
+            <div class="sub">Independently verifiable</div>
+          </div>
+        </div>
+        <div class="grid-2" style="gap: 10px;">
+          <div class="stat-block">
+            <div class="val" style="color: var(--success);">6</div>
+            <div class="label">Core Drift Checks</div>
+            <div class="sub">Patching, backup, firewall, logging, AV, encryption</div>
+          </div>
+          <div class="stat-block">
+            <div class="val" style="color: var(--accent3);">47</div>
+            <div class="label">Configurable Checks</div>
+            <div class="sub">Per-site enable/disable</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer">OsirisCare &mdash; Evidence-Grade HIPAA Compliance</div>
+  <div class="watermark">osiriscare.net</div>
+</div>
+
+<!-- ════════════════════ SLIDE 6: HIPAA CONTROLS ════════════════════ -->
+<div class="slide">
+  <div class="slide-header">
+    <h2>HIPAA Control Mapping</h2>
+    <span class="slide-num">06</span>
+  </div>
+  <div class="slide-body">
+    <table class="comp-table">
+      <thead>
+        <tr>
+          <th style="width: 22%;">HIPAA Requirement</th>
+          <th style="width: 12%;">Citation</th>
+          <th style="width: 36%;">OsirisCare Implementation</th>
+          <th style="width: 15%;">Evidence</th>
+          <th style="width: 15%;">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Risk Analysis</strong></td>
+          <td>&sect;164.308(a)(1)(ii)(A)</td>
+          <td>10-asset risk matrix with threats, controls, residual risk scores</td>
+          <td>RISK_ANALYSIS.md</td>
+          <td><span class="badge badge-green">Implemented</span></td>
+        </tr>
+        <tr>
+          <td><strong>Access Control</strong></td>
+          <td>&sect;164.312(a)(1)</td>
+          <td>bcrypt-12, TOTP 2FA, 15-min idle timeout, RBAC (4 roles)</td>
+          <td>Audit log</td>
+          <td><span class="badge badge-green">Implemented</span></td>
+        </tr>
+        <tr>
+          <td><strong>Audit Controls</strong></td>
+          <td>&sect;164.312(b)</td>
+          <td>6 append-only audit tables with immutability triggers</td>
+          <td>DB triggers</td>
+          <td><span class="badge badge-green">Implemented</span></td>
+        </tr>
+        <tr>
+          <td><strong>Integrity Controls</strong></td>
+          <td>&sect;164.312(c)(1)</td>
+          <td>Ed25519 signatures, HMAC-SHA256 chain, OpenTimestamps</td>
+          <td>Evidence bundles</td>
+          <td><span class="badge badge-green">Implemented</span></td>
+        </tr>
+        <tr>
+          <td><strong>Transmission Security</strong></td>
+          <td>&sect;164.312(e)(1)</td>
+          <td>TLS 1.3 via Caddy, auto-renewed Let's Encrypt certificates</td>
+          <td>TLS config</td>
+          <td><span class="badge badge-green">Implemented</span></td>
+        </tr>
+        <tr>
+          <td><strong>Automatic Logoff</strong></td>
+          <td>&sect;164.312(a)(2)(iii)</td>
+          <td>15-minute session idle timeout across all portals</td>
+          <td>Session mgmt</td>
+          <td><span class="badge badge-green">Implemented</span></td>
+        </tr>
+        <tr>
+          <td><strong>Data Backup</strong></td>
+          <td>&sect;164.308(a)(7)(ii)(A)</td>
+          <td>Continuous drift check for backup job completion &amp; encryption status</td>
+          <td>Drift checks</td>
+          <td><span class="badge badge-green">Implemented</span></td>
+        </tr>
+        <tr>
+          <td><strong>Breach Notification</strong></td>
+          <td>&sect;164.400-414</td>
+          <td>8-step incident response runbook, 48-hour notification SLA</td>
+          <td>BREACH_RUNBOOK.md</td>
+          <td><span class="badge badge-green">Implemented</span></td>
+        </tr>
+        <tr>
+          <td><strong>BAA / Sub-Processors</strong></td>
+          <td>&sect;164.502(e)</td>
+          <td>9 sub-processors documented, BAA exhibit ready</td>
+          <td>BAA_SUBPROCESSORS.md</td>
+          <td><span class="badge badge-green">Implemented</span></td>
+        </tr>
+        <tr>
+          <td><strong>Encryption at Rest</strong></td>
+          <td>&sect;164.312(a)(2)(iv)</td>
+          <td>WORM storage encrypted; VPS disk encryption pending</td>
+          <td>MinIO config</td>
+          <td><span class="badge badge-amber">Partial</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="slide-footer">OsirisCare &mdash; Evidence-Grade HIPAA Compliance</div>
+  <div class="watermark">osiriscare.net</div>
+</div>
+
+<!-- ════════════════════ SLIDE 7: PHI DATA BOUNDARY ════════════════════ -->
+<div class="slide">
+  <div class="slide-header">
+    <h2>PHI Data Boundary &amp; Security</h2>
+    <span class="slide-num">07</span>
+  </div>
+  <div class="slide-body">
+    <div class="grid-2">
+      <div>
+        <div class="sub-section">Data Zones</div>
+        <div class="phi-zone zone-safe">
+          <div class="zone-icon">&#x2705;</div>
+          <div>
+            <div class="zone-label">System Metadata &mdash; Ingested</div>
+            <div class="zone-desc">Syslog, SSH events, package hashes, backup status, firewall rules, disk encryption state. No patient data. Always safe.</div>
+          </div>
+        </div>
+        <div class="phi-zone zone-caution">
+          <div class="zone-icon">&#x26A0;&#xFE0F;</div>
+          <div>
+            <div class="zone-label">Application Logs &mdash; Scrubbed</div>
+            <div class="zone-desc">EHR audit logs, access events. 12-pattern PHI scrubber runs on-appliance. Matched patterns replaced with [REDACTED] + one-way hash.</div>
+          </div>
+        </div>
+        <div class="phi-zone zone-never">
+          <div class="zone-icon">&#x1F6D1;</div>
+          <div>
+            <div class="zone-label">Clinical Data &mdash; Never Ingested</div>
+            <div class="zone-desc">Patient records, diagnoses, prescriptions, lab results, treatment plans. Architecturally excluded. Never transmitted. Never stored.</div>
+          </div>
+        </div>
+
+        <div class="sub-section" style="margin-top: 14px;">12-Pattern PHI Scrubber</div>
+        <div class="card" style="font-size: 11px; color: var(--text2); padding: 12px;">
+          SSN &bull; MRN &bull; Patient Names &bull; DOB &bull; Credit Cards &bull; Email &bull; Phone &bull; Insurance ID &bull; Drug Names &bull; ICD-10/CPT Codes &bull; Lab Values &bull; Diagnosis Text
+        </div>
+      </div>
+      <div>
+        <div class="sub-section">Multi-Tenant Isolation</div>
+        <div class="stat-block" style="margin-bottom: 10px;">
+          <div class="val" style="color: var(--accent);">27</div>
+          <div class="label">Tables with Row-Level Security</div>
+          <div class="sub">RLS FORCE enabled &mdash; even table owners obey policies</div>
+        </div>
+
+        <div class="card" style="margin-bottom: 10px;">
+          <h3><span class="icon-circle ic-blue">&#x1F512;</span> How RLS Works</h3>
+          <p>Every query runs with a tenant context (<code>app.current_tenant</code>). PostgreSQL automatically filters rows to only the requesting site's data. Cross-tenant queries are physically impossible at the database layer.</p>
+        </div>
+
+        <div class="sub-section">Authentication Stack</div>
+        <div class="card">
+          <table style="width: 100%; font-size: 11px; border-collapse: collapse;">
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 4px 0; font-weight: 600;">Admin Portal</td>
+              <td style="padding: 4px 0;">Cookie + TOTP 2FA + RBAC</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 4px 0; font-weight: 600;">Partner Portal</td>
+              <td style="padding: 4px 0;">OAuth + Password + TOTP + API Key</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 4px 0; font-weight: 600;">Client Portal</td>
+              <td style="padding: 4px 0;">Password + Magic Link + TOTP</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 4px 0; font-weight: 600;">Appliances</td>
+              <td style="padding: 4px 0;">Ed25519 signed + API Key</td>
+            </tr>
+            <tr>
+              <td style="padding: 4px 0; font-weight: 600;">Fleet Orders</td>
+              <td style="padding: 4px 0;">Ed25519 signature + nonce replay protection</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer">OsirisCare &mdash; Evidence-Grade HIPAA Compliance</div>
+  <div class="watermark">osiriscare.net</div>
+</div>
+
+<!-- ════════════════════ SLIDE 8: AI / LLM ROLE ════════════════════ -->
+<div class="slide">
+  <div class="slide-header">
+    <h2>Role of AI in the Compliance Stack</h2>
+    <span class="slide-num">08</span>
+  </div>
+  <div class="slide-body">
+    <div class="grid-2">
+      <div>
+        <div class="sub-section">AI is a Component, Not the Product</div>
+        <div class="card" style="margin-bottom: 10px; border-left: 3px solid var(--accent2);">
+          <h3><span class="icon-circle ic-purple">&#x1F9E0;</span> L2 Incident Planner</h3>
+          <p>Claude API analyzes incident metadata and selects from 88 pre-approved runbooks. It does <strong>not</strong> generate arbitrary commands. Think of it as an intelligent router, not an autonomous agent.</p>
+          <ul style="margin-top: 8px;">
+            <li>Input: incident type, severity, system context (scrubbed)</li>
+            <li>Output: runbook_id + confidence score</li>
+            <li>Guardrail: &ge;0.6 confidence required for auto-execution</li>
+            <li>Below threshold: escalates to human (L3)</li>
+          </ul>
+        </div>
+        <div class="card" style="margin-bottom: 10px;">
+          <h3><span class="icon-circle ic-green">&#x21BB;</span> Data Flywheel</h3>
+          <p>When L2 patterns succeed 5+ times at 90%+ rate, they are promoted to L1 deterministic rules. The system gets smarter over time while <strong>reducing</strong> AI dependency.</p>
+        </div>
+        <div class="card">
+          <h3><span class="icon-circle ic-cyan">&#x1F6E1;</span> PHI Safeguards</h3>
+          <p>12-pattern scrubber runs <strong>before</strong> any data reaches Claude API. Even if scrubbing fails, the input is system metadata &mdash; check types, severity levels, hostnames. Not clinical data.</p>
+        </div>
+      </div>
+      <div>
+        <div class="sub-section">AI Decision Funnel</div>
+        <div style="margin-bottom: 16px;">
+          <div class="bar-chart">
+            <div class="bar-row">
+              <div class="bar-label">No AI (L1)</div>
+              <div class="bar-track">
+                <div class="bar-fill" style="width: 75%; background: linear-gradient(90deg, #3b82f6, #60a5fa);">75%</div>
+              </div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label">AI Assisted (L2)</div>
+              <div class="bar-track">
+                <div class="bar-fill" style="width: 20%; background: linear-gradient(90deg, #8b5cf6, #a78bfa);">20%</div>
+              </div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label">Human (L3)</div>
+              <div class="bar-track">
+                <div class="bar-fill" style="width: 5%; background: linear-gradient(90deg, #f59e0b, #fbbf24);">5%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-section">Key Differentiators</div>
+        <div class="card" style="margin-bottom: 10px;">
+          <h3>Runbook-Constrained</h3>
+          <p>The LLM selects from a fixed set of 88 runbooks. It cannot generate shell commands, modify configurations, or take actions outside the approved set. This is a <strong>selection problem</strong>, not a generation problem.</p>
+        </div>
+        <div class="card" style="margin-bottom: 10px;">
+          <h3>Self-Reducing AI Dependency</h3>
+          <p>The Data Flywheel continuously promotes L2 patterns to L1. As the system learns, AI calls decrease. The end state is a deterministic system that rarely needs LLM inference.</p>
+        </div>
+        <div class="card">
+          <h3>Cost Structure</h3>
+          <p>L1: $0/incident &bull; L2: ~$0.001/incident &bull; At 1,000 incidents/day, AI cost is &lt;$6/month total across all tenants.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer">OsirisCare &mdash; Evidence-Grade HIPAA Compliance</div>
+  <div class="watermark">osiriscare.net</div>
+</div>
+
+<!-- ════════════════════ SLIDE 9: UNIT ECONOMICS ════════════════════ -->
+<div class="slide">
+  <div class="slide-header">
+    <h2>Unit Economics &amp; Pricing</h2>
+    <span class="slide-num">09</span>
+  </div>
+  <div class="slide-body">
+    <div class="grid-3" style="margin-bottom: 20px;">
+      <div class="pricing-card">
+        <div class="tier-name">Starter</div>
+        <div class="price">$200<span>/mo</span></div>
+        <div class="desc">Solo practice &bull; 5-10 devices</div>
+        <ul>
+          <li>NixOS appliance (included)</li>
+          <li>6 core drift checks</li>
+          <li>L1 auto-healing</li>
+          <li>Evidence bundles + BTC anchoring</li>
+          <li>Client portal access</li>
+          <li>Email alerts</li>
+        </ul>
+      </div>
+      <div class="pricing-card featured">
+        <div class="tier-name">Professional</div>
+        <div class="price">$750<span>/mo</span></div>
+        <div class="desc">Group practice &bull; 10-25 devices</div>
+        <ul>
+          <li>Everything in Starter</li>
+          <li>L2 AI-assisted healing</li>
+          <li>47 configurable drift checks</li>
+          <li>Partner portal + SLA tracking</li>
+          <li>App protection profiles</li>
+          <li>Multi-channel notifications</li>
+          <li>Compliance officer portal</li>
+        </ul>
+      </div>
+      <div class="pricing-card">
+        <div class="tier-name">Enterprise</div>
+        <div class="price">$3,000<span>/mo</span></div>
+        <div class="desc">Multi-site &bull; 25-50 devices</div>
+        <ul>
+          <li>Everything in Professional</li>
+          <li>Multi-site management</li>
+          <li>Custom runbook authoring</li>
+          <li>L4 escalation queue</li>
+          <li>CVE watch integration</li>
+          <li>Custom compliance frameworks</li>
+          <li>Dedicated onboarding</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div>
+        <div class="sub-section">Platform Cost Structure</div>
+        <div class="card">
+          <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 0; font-weight: 600;">Hetzner VPS</td>
+              <td style="padding: 6px 0; text-align: right;">~$100/mo (shared)</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 0; font-weight: 600;">Anthropic API (L2)</td>
+              <td style="padding: 6px 0; text-align: right;">~$6/mo (all tenants)</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 0; font-weight: 600;">OpenTimestamps</td>
+              <td style="padding: 6px 0; text-align: right;">$0 (Bitcoin network)</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 0; font-weight: 600;">TLS / Let's Encrypt</td>
+              <td style="padding: 6px 0; text-align: right;">$0</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 0; font-weight: 600;">Appliance hardware</td>
+              <td style="padding: 6px 0; text-align: right;">~$200 one-time (HP T640)</td>
+            </tr>
+            <tr style="font-weight: 700;">
+              <td style="padding: 6px 0;">Total COGS / customer / year</td>
+              <td style="padding: 6px 0; text-align: right; color: var(--success);">&lt;$500</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="sub-section">Margin Profile</div>
+        <div class="grid-2" style="gap: 10px; margin-bottom: 10px;">
+          <div class="stat-block">
+            <div class="val" style="color: var(--success);">80%+</div>
+            <div class="label">Gross Margin</div>
+          </div>
+          <div class="stat-block">
+            <div class="val" style="color: var(--accent);">20</div>
+            <div class="label">Target Clients EOY</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Why It's Cheap</h3>
+          <p>NixOS is free. PostgreSQL is free. Bitcoin anchoring is free. L1 healing is free. The LLM is rarely called. The appliance is a $200 thin client. Everything expensive in traditional MSP compliance &mdash; human labor, proprietary tools, on-site visits &mdash; is replaced by deterministic automation.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer">OsirisCare &mdash; Evidence-Grade HIPAA Compliance</div>
+  <div class="watermark">osiriscare.net</div>
+</div>
+
+<!-- ════════════════════ SLIDE 10: CLOSING ════════════════════ -->
+<div class="slide slide-cover">
+  <div class="logo-mark">O</div>
+  <h1>Osiris<span>Care</span></h1>
+  <div class="tagline">
+    Compliance should be a property of the system, not a project.
+  </div>
+  <div class="cover-stats">
+    <div class="cover-stat">
+      <div class="val">222K+</div>
+      <div class="label">Evidence Bundles</div>
+    </div>
+    <div class="cover-stat">
+      <div class="val">88</div>
+      <div class="label">Runbooks</div>
+    </div>
+    <div class="cover-stat">
+      <div class="val">75%</div>
+      <div class="label">Auto-Healed (L1)</div>
+    </div>
+    <div class="cover-stat">
+      <div class="val">$200</div>
+      <div class="label">Starting Price</div>
+    </div>
+  </div>
+  <div style="margin-top: 48px;">
+    <div style="font-size: 16px; color: #64748b;">osiriscare.net</div>
+  </div>
+  <div class="meta">Confidential &mdash; March 2026</div>
+</div>
+
+</body>
+</html>
