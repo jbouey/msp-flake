@@ -224,7 +224,7 @@ export const Incidents: React.FC = () => {
   const urlCategory = searchParams.get('category') || '';
   const urlHostname = searchParams.get('hostname') || '';
 
-  const [filter, setFilter] = useState<'all' | 'active' | 'resolved'>('all');
+  const [filter, setFilter] = useState<'all' | 'active' | 'resolved'>('active');
   const [selectedSiteId, setSelectedSiteId] = useState<string>(urlSiteId);
   const [selectedLevel, setSelectedLevel] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>(urlCategory);
