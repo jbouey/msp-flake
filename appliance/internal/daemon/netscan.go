@@ -280,6 +280,9 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 		log.Printf("[netscan] Rogue devices detected: %d new MACs", len(rogues))
 	}
 
+	// Sync discovered devices (with probe data) to Central Command
+	ns.syncDiscoveredDevices(ctx, devices)
+
 	log.Printf("[netscan] Scan complete: findings=%d, arp_devices=%d", len(findings), len(devices))
 }
 
@@ -446,6 +449,84 @@ func (ns *netScanner) checkHostReachability(ctx context.Context, applianceHostna
 	}
 
 	return findings
+}
+
+// syncDiscoveredDevices sends the discovered device list (with probe data) to
+// Central Command via POST /api/devices/sync. This is what populates the
+// dashboard's device inventory with SSH/WinRM/AD status and OS fingerprints.
+func (ns *netScanner) syncDiscoveredDevices(ctx context.Context, devices []discoveredDevice) {
+	if len(devices) == 0 {
+		return
+	}
+
+	cfg := ns.svc.Config
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	entries := make([]deviceSyncEntry, 0, len(devices))
+	for _, d := range devices {
+		// Use MAC as the stable device ID (unique per device on the LAN)
+		deviceID := d.MACAddress
+		if deviceID == "" {
+			deviceID = d.IPAddress // fallback for devices without MAC
+		}
+
+		entry := deviceSyncEntry{
+			DeviceID:         deviceID,
+			Hostname:         d.Hostname,
+			IPAddress:        d.IPAddress,
+			MACAddress:       d.MACAddress,
+			DeviceType:       "unknown",
+			ComplianceStatus: "unknown",
+			DiscoverySource:  "arp",
+			FirstSeenAt:      now,
+			LastSeenAt:       now,
+			OpenPorts:        []int{},
+		}
+
+		// Populate probe fields
+		if d.ProbeSSH || d.ProbeWinRM || d.ADJoined {
+			entry.ProbeSSH = &d.ProbeSSH
+			entry.ProbeWinRM = &d.ProbeWinRM
+			entry.ADJoined = &d.ADJoined
+		}
+		if d.OSFingerprint != "" {
+			entry.OSFingerprint = d.OSFingerprint
+		}
+		if d.Distro != "" {
+			entry.Distro = d.Distro
+		}
+		if d.OSType != "" {
+			entry.OSName = d.OSType
+		}
+
+		// Build open_ports list from probe results
+		if d.ProbeSSH {
+			entry.OpenPorts = append(entry.OpenPorts, 22)
+		}
+		if d.ProbeWinRM {
+			entry.OpenPorts = append(entry.OpenPorts, 5985)
+		}
+
+		entries = append(entries, entry)
+	}
+
+	payload := &deviceSyncPayload{
+		ApplianceID:      ns.daemon.orderProc.ApplianceID(),
+		SiteID:           cfg.SiteID,
+		ScanTimestamp:    now,
+		Devices:          entries,
+		TotalDevices:     len(entries),
+		MonitoredDevices: len(entries),
+		ExcludedDevices:  0,
+		MedicalDevices:   0,
+		ComplianceRate:   0,
+	}
+
+	if err := ns.daemon.phoneCli.SyncDevices(ctx, payload); err != nil {
+		log.Printf("[netscan] Device sync failed: %v", err)
+	} else {
+		log.Printf("[netscan] Device sync OK: %d devices sent to Central Command", len(entries))
+	}
 }
 
 // DiscoveredDevices returns the most recent ARP-discovered device list.

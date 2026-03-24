@@ -274,6 +274,73 @@ func (c *PhoneHomeClient) Checkin(ctx context.Context, req *CheckinRequest) (*Ch
 	return &result, nil
 }
 
+// deviceSyncPayload is the JSON body sent to POST /api/devices/sync.
+type deviceSyncPayload struct {
+	ApplianceID      string                   `json:"appliance_id"`
+	SiteID           string                   `json:"site_id"`
+	ScanTimestamp    string                   `json:"scan_timestamp"`
+	Devices          []deviceSyncEntry        `json:"devices"`
+	TotalDevices     int                      `json:"total_devices"`
+	MonitoredDevices int                      `json:"monitored_devices"`
+	ExcludedDevices  int                      `json:"excluded_devices"`
+	MedicalDevices   int                      `json:"medical_devices"`
+	ComplianceRate   float64                  `json:"compliance_rate"`
+}
+
+// deviceSyncEntry is one device in the sync payload.
+type deviceSyncEntry struct {
+	DeviceID        string `json:"device_id"`
+	Hostname        string `json:"hostname,omitempty"`
+	IPAddress       string `json:"ip_address"`
+	MACAddress      string `json:"mac_address,omitempty"`
+	DeviceType      string `json:"device_type"`
+	OSName          string `json:"os_name,omitempty"`
+	ComplianceStatus string `json:"compliance_status"`
+	DiscoverySource string `json:"discovery_source"`
+	FirstSeenAt     string `json:"first_seen_at"`
+	LastSeenAt      string `json:"last_seen_at"`
+	OpenPorts       []int  `json:"open_ports"`
+
+	// Probe fields
+	OSFingerprint   string `json:"os_fingerprint,omitempty"`
+	Distro          string `json:"distro,omitempty"`
+	ProbeSSH        *bool  `json:"probe_ssh,omitempty"`
+	ProbeWinRM      *bool  `json:"probe_winrm,omitempty"`
+	ADJoined        *bool  `json:"ad_joined,omitempty"`
+}
+
+// SyncDevices sends discovered device inventory to Central Command.
+func (c *PhoneHomeClient) SyncDevices(ctx context.Context, payload *deviceSyncPayload) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal device sync: %w", err)
+	}
+
+	url := strings.TrimRight(c.config.APIEndpoint, "/") + "/api/devices/sync"
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+	httpReq.Header.Set("User-Agent", "OsirisCare-Appliance/Go")
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("device sync request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("device sync returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
 // classifyConnectivityError returns a human-readable classification of why a checkin failed.
 func classifyConnectivityError(err error) string {
 	if err == nil {

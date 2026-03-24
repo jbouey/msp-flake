@@ -297,6 +297,71 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                             new_device_status,
                         )
 
+                # Auto-classify device_type from probe data.
+                # Only classify if current type is 'unknown' or empty.
+                current_type = device.device_type or 'unknown'
+                if current_type == 'unknown':
+                    probe_ssh = device.probe_ssh or False
+                    probe_winrm = device.probe_winrm or False
+                    ad_joined = device.ad_joined or False
+                    os_fp = (device.os_fingerprint or '').lower()
+                    ports = device.open_ports or []
+
+                    new_type = 'unknown'
+                    if ad_joined and probe_winrm:
+                        # AD-joined Windows machine — check for DC/server ports
+                        if 'server' in os_fp or any(p in ports for p in [53, 88, 389, 636, 3268]):
+                            new_type = 'server'
+                        else:
+                            new_type = 'workstation'
+                    elif probe_winrm:
+                        new_type = 'workstation'
+                    elif probe_ssh:
+                        if any(kw in os_fp for kw in ('linux', 'ubuntu', 'nixos', 'debian', 'centos', 'rhel')):
+                            if any(p in ports for p in [80, 443, 3306, 5432]):
+                                new_type = 'server'
+                            else:
+                                new_type = 'workstation'
+                        elif any(kw in os_fp for kw in ('darwin', 'mac', 'apple')):
+                            new_type = 'workstation'
+                        else:
+                            new_type = 'workstation'
+                    elif 80 in ports or 443 in ports:
+                        if 161 in ports:
+                            new_type = 'network'
+                        else:
+                            new_type = 'server'
+                    elif any(p in ports for p in [9100, 515, 631]):
+                        new_type = 'printer'
+                    elif 161 in ports:
+                        new_type = 'network'
+
+                    if new_type != 'unknown':
+                        await conn.execute(
+                            "UPDATE discovered_devices SET device_type = $1, sync_updated_at = NOW() WHERE id = $2",
+                            new_type, device_db_id,
+                        )
+                        logger.info(
+                            "Auto-classified device %s (%s) as %s (ssh=%s winrm=%s ad=%s)",
+                            device.ip_address, device.hostname or "?",
+                            new_type, probe_ssh, probe_winrm, ad_joined,
+                        )
+
+                # Auto-populate os_name from OS fingerprint if currently empty.
+                if device.os_fingerprint:
+                    current_os_row = await conn.fetchrow(
+                        "SELECT os_name FROM discovered_devices WHERE id = $1",
+                        device_db_id,
+                    )
+                    current_os = current_os_row["os_name"] if current_os_row else None
+                    if not current_os:
+                        os_name = device.os_fingerprint.split('/')[0].strip()
+                        if os_name:
+                            await conn.execute(
+                                "UPDATE discovered_devices SET os_name = $1, sync_updated_at = NOW() WHERE id = $2",
+                                os_name, device_db_id,
+                            )
+
                 # Upsert compliance check details
                 for check in device.compliance_details:
                     details_json = check.details
