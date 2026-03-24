@@ -77,32 +77,32 @@ describe('Incidents', () => {
     expect(screen.getByText(/loading incidents/i)).toBeInTheDocument();
   });
 
-  it('renders incidents after data loads', async () => {
+  it('renders active incidents section after data loads', async () => {
     const mockIncidents = [
-      { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'service_stopped', severity: 'high', resolved: false, hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
-      { id: 2, site_id: 's1', hostname: 'ws01', check_type: 'backup_failed', severity: 'medium', resolved: true, resolved_at: '2026-03-01T01:00:00Z', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
+      { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'service_stopped', severity: 'high', resolved: false, status: 'open', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z', remediation_attempts: 0, remediation_exhausted: false },
+      { id: 2, site_id: 's1', hostname: 'ws01', check_type: 'backup_failed', severity: 'medium', resolved: true, status: 'resolved', resolved_at: '2026-03-01T01:00:00Z', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z', remediation_attempts: 0, remediation_exhausted: false },
     ];
     vi.mocked(incidentApi.getIncidents).mockResolvedValue(mockIncidents as any);
 
     render(<Incidents />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByTestId('incident-1')).toBeInTheDocument();
-      expect(screen.getByTestId('incident-2')).toBeInTheDocument();
+      expect(screen.getByText(/Active Threats/i)).toBeInTheDocument();
     });
   });
 
-  it('shows incident count in subtitle', async () => {
+  it('shows KPI summary cards', async () => {
     const mockIncidents = [
-      { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'svc', severity: 'high', resolved: false, hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
-      { id: 2, site_id: 's1', hostname: 'ws01', check_type: 'bak', severity: 'low', resolved: true, resolved_at: '2026-03-01T01:00:00Z', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
+      { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'svc', severity: 'high', resolved: false, status: 'open', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z', remediation_attempts: 0, remediation_exhausted: false },
+      { id: 2, site_id: 's1', hostname: 'ws01', check_type: 'bak', severity: 'low', resolved: true, status: 'resolved', resolved_at: '2026-03-01T01:00:00Z', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z', remediation_attempts: 0, remediation_exhausted: false },
     ];
     vi.mocked(incidentApi.getIncidents).mockResolvedValue(mockIncidents as any);
 
     render(<Incidents />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByText(/2 incidents/)).toBeInTheDocument();
+      expect(screen.getByText(/Active/i)).toBeInTheDocument();
+      expect(screen.getByText(/Total/i)).toBeInTheDocument();
     });
   });
 
@@ -116,55 +116,40 @@ describe('Incidents', () => {
     });
   });
 
-  it('renders filter buttons', async () => {
+  it('renders active threats section', async () => {
     const mockIncidents = [
-      { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'svc', severity: 'high', resolved: false, hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
-      { id: 2, site_id: 's1', hostname: 'ws01', check_type: 'bak', severity: 'low', resolved: true, resolved_at: '2026-03-01T01:00:00Z', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
-      { id: 3, site_id: 's1', hostname: 'ws02', check_type: 'fw', severity: 'high', resolved: false, hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
+      { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'svc', severity: 'high', resolved: false, status: 'open', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z', remediation_attempts: 0, remediation_exhausted: false },
+      { id: 2, site_id: 's1', hostname: 'ws01', check_type: 'bak', severity: 'low', resolved: true, status: 'resolved', resolved_at: '2026-03-01T01:00:00Z', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z', remediation_attempts: 0, remediation_exhausted: false },
     ];
     vi.mocked(incidentApi.getIncidents).mockResolvedValue(mockIncidents as any);
 
     render(<Incidents />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByText('All')).toBeInTheDocument();
-      // Active/Resolved counts are computed from returned data
-      expect(screen.getByText(/Active/)).toBeInTheDocument();
-      expect(screen.getByText(/Resolved/)).toBeInTheDocument();
+      expect(screen.getByText(/Active Threats/i)).toBeInTheDocument();
     });
   });
 
-  it('calls API with resolved=false when Active filter clicked', async () => {
-    const user = userEvent.setup();
+  it('shows all-clear when no active incidents', async () => {
     const mockIncidents = [
-      { id: 1, site_id: 's1', hostname: 'dc01', check_type: 'svc', severity: 'high', resolved: false, hipaa_controls: [], created_at: '2026-03-01T00:00:00Z' },
+      { id: 1, site_id: 's1', hostname: 'ws01', check_type: 'bak', severity: 'low', resolved: true, status: 'resolved', resolved_at: '2026-03-01T01:00:00Z', hipaa_controls: [], created_at: '2026-03-01T00:00:00Z', remediation_attempts: 0, remediation_exhausted: false },
     ];
     vi.mocked(incidentApi.getIncidents).mockResolvedValue(mockIncidents as any);
 
     render(<Incidents />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByTestId('incident-1')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText(/Active/));
-
-    // Server-side filtering: API called with resolved=false
-    await waitFor(() => {
-      const calls = vi.mocked(incidentApi.getIncidents).mock.calls;
-      const lastCall = calls[calls.length - 1]?.[0];
-      expect(lastCall).toMatchObject({ resolved: false });
+      expect(screen.getByText(/All clear/i)).toBeInTheDocument();
     });
   });
 
-  it('shows empty state message when no incidents exist', async () => {
+  it('shows empty state when no incidents at all', async () => {
     vi.mocked(incidentApi.getIncidents).mockResolvedValue([]);
 
     render(<Incidents />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByText(/no incidents to display/i)).toBeInTheDocument();
-      expect(screen.getByText(/all systems operating normally/i)).toBeInTheDocument();
+      expect(screen.getByText(/All clear/i)).toBeInTheDocument();
     });
   });
 
