@@ -560,6 +560,10 @@ from dashboard_api.agent_api import (  # noqa: F401, E402
     PatternStatsRequest, PatternStatSync, PromotedRuleResponse,
     ExecutionTelemetryInput, L2PlanRequest, ApplianceCheckinRequest,
     submit_evidence, list_evidence, report_incident,
+    checkin, appliances_checkin,
+)
+from dashboard_api.email_alerts import (  # noqa: F401, E402
+    create_notification_with_email,
 )
 from dashboard_api.learning_api_main import (  # noqa: F401, E402
     PromotionReportRequest, PromotionApprovalRequest,
