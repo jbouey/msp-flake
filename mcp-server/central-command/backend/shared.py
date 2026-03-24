@@ -102,6 +102,9 @@ async def check_rate_limit(site_id: str, action: str = "default") -> tuple:
     Check if request is rate limited.
     Returns (allowed, remaining_seconds).
     """
+    if redis_client is None:
+        return True, 0  # No Redis = no rate limiting (test/dev mode)
+
     key = f"rate:{site_id}:{action}"
 
     count = await redis_client.incr(key)
