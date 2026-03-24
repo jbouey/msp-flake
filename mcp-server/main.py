@@ -1635,8 +1635,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     # for the same check (e.g. windows_update, linux_unattended_upgrades).
     existing_check = await db.execute(
         text("""
-            SELECT id, status
-            FROM incidents
+            SELECT id, status FROM incidents
             WHERE appliance_id = :appliance_id
             AND incident_type = :incident_type
             AND (
