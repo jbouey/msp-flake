@@ -630,7 +630,8 @@ async def escalate_incident(
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
-            SELECT i.id, i.status, i.site_id, i.check_type, i.hostname,
+            SELECT i.id, i.status, i.site_id, i.check_type,
+                   i.details->>'hostname' AS hostname,
                    i.severity, i.appliance_id
             FROM incidents i
             WHERE i.id = $1
@@ -689,7 +690,8 @@ async def suppress_incident(
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
-            SELECT i.id, i.site_id, i.check_type, i.hostname
+            SELECT i.id, i.site_id, i.check_type,
+                   i.details->>'hostname' AS hostname
             FROM incidents i
             WHERE i.id = $1
         """, incident_id)
