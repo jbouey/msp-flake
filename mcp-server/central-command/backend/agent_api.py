@@ -1,0 +1,2273 @@
+"""
+Agent/Appliance-facing API endpoints.
+
+Extracted from main.py — all endpoints that compliance appliances
+and Go daemons call to report incidents, submit evidence, sync rules,
+report telemetry, and check in.
+"""
+
+import hashlib
+import json
+import os
+import re
+import secrets
+import uuid
+from datetime import datetime, timedelta, timezone
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import structlog
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
+from minio.retention import COMPLIANCE, Retention
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .shared import (
+    MINIO_BUCKET,
+    ORDER_TTL_SECONDS,
+    WORM_RETENTION_DAYS,
+    async_session,
+    check_rate_limit,
+    get_db,
+    get_minio_client,
+    get_public_key_hex,
+    require_appliance_bearer,
+    sign_data,
+)
+
+logger = structlog.get_logger()
+
+router = APIRouter(tags=["agent"])
+
+
+# ============================================================================
+# Pydantic Models
+# ============================================================================
+
+class CheckinRequest(BaseModel):
+    """Appliance check-in request."""
+    site_id: str = Field(..., min_length=1, max_length=255)
+    host_id: str = Field(..., min_length=1, max_length=255)
+    deployment_mode: str = Field(..., pattern="^(reseller|direct)$")
+    reseller_id: Optional[str] = None
+    policy_version: str = Field(default="1.0")
+    nixos_version: Optional[str] = None
+    agent_version: Optional[str] = None
+    public_key: Optional[str] = None
+
+
+class IncidentReport(BaseModel):
+    """Incident reported by appliance."""
+    site_id: str
+    host_id: str
+    incident_type: str
+    severity: str
+    check_type: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+    pre_state: Dict[str, Any] = Field(default_factory=dict)
+    hipaa_controls: Optional[List[str]] = None
+
+    @field_validator("severity")
+    @classmethod
+    def validate_severity(cls, v):
+        allowed = ["low", "medium", "high", "critical"]
+        if v.lower() not in allowed:
+            raise ValueError(f"severity must be one of {allowed}")
+        return v.lower()
+
+
+class DriftReport(BaseModel):
+    """Drift detection report from appliance."""
+    site_id: str
+    host_id: str
+    check_type: str
+    drifted: bool
+    pre_state: Dict[str, Any] = Field(default_factory=dict)
+    recommended_action: Optional[str] = None
+    severity: str = "medium"
+    hipaa_controls: Optional[List[str]] = None
+
+
+class OrderRequest(BaseModel):
+    """Request for pending orders."""
+    site_id: str
+    host_id: str
+
+
+class OrderAcknowledgement(BaseModel):
+    """Order acknowledgement from appliance."""
+    site_id: str
+    order_id: str
+
+
+class EvidenceSubmission(BaseModel):
+    """Evidence bundle submission."""
+    bundle_id: str
+    site_id: str
+    host_id: str
+    order_id: Optional[str] = None
+    check_type: str
+    outcome: str
+    pre_state: Dict[str, Any] = Field(default_factory=dict)
+    post_state: Dict[str, Any] = Field(default_factory=dict)
+    actions_taken: List[Dict[str, Any]] = Field(default_factory=list)
+    hipaa_controls: Optional[List[str]] = None
+    rollback_available: bool = False
+    rollback_generation: Optional[int] = None
+    timestamp_start: datetime
+    timestamp_end: datetime
+    policy_version: Optional[str] = None
+    nixos_revision: Optional[str] = None
+    ntp_offset_ms: Optional[int] = None
+    signature: str
+    error: Optional[str] = None
+
+    @field_validator("outcome")
+    @classmethod
+    def validate_outcome(cls, v):
+        allowed = ["success", "failed", "reverted", "deferred", "alert", "rejected", "expired"]
+        if v not in allowed:
+            raise ValueError(f"outcome must be one of {allowed}")
+        return v
+
+
+class PatternReportInput(BaseModel):
+    """Pattern report from agent after successful healing."""
+    site_id: str
+    check_type: str
+    issue_signature: str
+    resolution_steps: List[str]
+    success: bool
+    execution_time_ms: int
+    runbook_id: Optional[str] = None
+    reported_at: Optional[datetime] = None
+
+
+class PatternStatSync(BaseModel):
+    """Single pattern stat from agent."""
+    pattern_signature: str
+    total_occurrences: int
+    l1_resolutions: int
+    l2_resolutions: int
+    l3_resolutions: int
+    success_count: int
+    total_resolution_time_ms: float
+    last_seen: str
+    recommended_action: Optional[str] = None
+    promotion_eligible: bool = False
+
+
+class PatternStatsRequest(BaseModel):
+    """Batch pattern stats sync request from agent."""
+    site_id: str
+    appliance_id: str
+    synced_at: str
+    pattern_stats: List[PatternStatSync]
+
+
+class PromotedRuleResponse(BaseModel):
+    """Promoted rule for agent deployment."""
+    rule_id: str
+    pattern_signature: str
+    rule_yaml: str
+    promoted_at: str
+    promoted_by: str
+    source: str = "server_promoted"
+
+
+class ExecutionTelemetryInput(BaseModel):
+    """Execution telemetry from agent. Accepts both wrapped and flat formats."""
+    site_id: str
+    execution: Optional[dict] = None
+    reported_at: Optional[str] = None
+    model_config = {"extra": "allow"}
+
+
+class L2PlanRequest(BaseModel):
+    """L2 plan request from appliance daemon."""
+    incident_id: str
+    site_id: str
+    host_id: str
+    incident_type: str
+    severity: str = "medium"
+    raw_data: dict = {}
+    pattern_signature: str = ""
+    created_at: str = ""
+
+
+class ApplianceCheckinRequest(BaseModel):
+    """Appliance check-in from agent (uses different field names)."""
+    site_id: str
+    hostname: Optional[str] = None
+    mac_address: Optional[str] = None
+    ip_addresses: Optional[List[str]] = None
+    agent_version: Optional[str] = None
+    nixos_version: Optional[str] = None
+    uptime_seconds: Optional[int] = None
+    queue_depth: Optional[int] = 0
+
+
+# ============================================================================
+# Endpoints
+# ============================================================================
+
+@router.post("/checkin")
+async def checkin(
+    req: CheckinRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Appliance check-in endpoint. Registers or updates appliance, returns pending orders."""
+    allowed, remaining = await check_rate_limit(req.site_id, "checkin")
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limited. Try again in {remaining} seconds."
+        )
+
+    client_ip = request.client.host if request.client else None
+
+    result = await db.execute(
+        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        {"site_id": req.site_id}
+    )
+    existing = result.fetchone()
+
+    now = datetime.now(timezone.utc)
+
+    if existing:
+        await db.execute(
+            text("""
+                UPDATE appliances SET
+                    host_id = :host_id,
+                    deployment_mode = :deployment_mode,
+                    reseller_id = :reseller_id,
+                    policy_version = :policy_version,
+                    nixos_version = :nixos_version,
+                    agent_version = :agent_version,
+                    public_key = :public_key,
+                    ip_address = :ip_address,
+                    last_checkin = :last_checkin,
+                    updated_at = :updated_at
+                WHERE site_id = :site_id
+            """),
+            {
+                "site_id": req.site_id,
+                "host_id": req.host_id,
+                "deployment_mode": req.deployment_mode,
+                "reseller_id": req.reseller_id,
+                "policy_version": req.policy_version,
+                "nixos_version": req.nixos_version,
+                "agent_version": req.agent_version,
+                "public_key": req.public_key,
+                "ip_address": client_ip,
+                "last_checkin": now,
+                "updated_at": now
+            }
+        )
+        appliance_id = existing[0]
+        action = "updated"
+    else:
+        appliance_id = str(uuid.uuid4())
+        await db.execute(
+            text("""
+                INSERT INTO appliances (id, site_id, host_id, deployment_mode, reseller_id,
+                    policy_version, nixos_version, agent_version, public_key, ip_address,
+                    last_checkin, created_at, updated_at)
+                VALUES (:id, :site_id, :host_id, :deployment_mode, :reseller_id,
+                    :policy_version, :nixos_version, :agent_version, :public_key, :ip_address,
+                    :last_checkin, :created_at, :updated_at)
+            """),
+            {
+                "id": appliance_id,
+                "site_id": req.site_id,
+                "host_id": req.host_id,
+                "deployment_mode": req.deployment_mode,
+                "reseller_id": req.reseller_id,
+                "policy_version": req.policy_version,
+                "nixos_version": req.nixos_version,
+                "agent_version": req.agent_version,
+                "public_key": req.public_key,
+                "ip_address": client_ip,
+                "last_checkin": now,
+                "created_at": now,
+                "updated_at": now
+            }
+        )
+        action = "registered"
+
+    await db.commit()
+
+    await db.execute(
+        text("""
+            INSERT INTO audit_log (event_type, actor, resource_type, resource_id, details, ip_address)
+            VALUES (:event_type, :actor, :resource_type, :resource_id, :details, :ip_address)
+        """),
+        {
+            "event_type": f"appliance.{action}",
+            "actor": req.site_id,
+            "resource_type": "appliance",
+            "resource_id": appliance_id,
+            "details": json.dumps({"host_id": req.host_id, "agent_version": req.agent_version}),
+            "ip_address": client_ip
+        }
+    )
+    await db.commit()
+
+    result = await db.execute(
+        text("""
+            SELECT order_id, runbook_id, parameters, nonce, signature, ttl_seconds,
+                   issued_at, expires_at, signed_payload
+            FROM orders o
+            JOIN appliances a ON o.appliance_id = a.id
+            WHERE a.site_id = :site_id
+            AND o.status = 'pending'
+            AND o.expires_at > NOW()
+            ORDER BY o.issued_at ASC
+        """),
+        {"site_id": req.site_id}
+    )
+
+    orders = []
+    for row in result.fetchall():
+        orders.append({
+            "order_id": row[0],
+            "order_type": "healing",
+            "runbook_id": row[1],
+            "parameters": row[2],
+            "nonce": row[3],
+            "signature": row[4],
+            "ttl_seconds": row[5],
+            "issued_at": row[6].isoformat() if row[6] else None,
+            "expires_at": row[7].isoformat() if row[7] else None,
+            "signed_payload": row[8],
+        })
+
+    logger.info("Appliance checked in",
+                site_id=req.site_id,
+                action=action,
+                pending_orders=len(orders))
+
+    return {
+        "status": "ok",
+        "action": action,
+        "timestamp": now.isoformat(),
+        "server_public_key": get_public_key_hex(),
+        "pending_orders": orders
+    }
+
+
+@router.get("/orders/{site_id}")
+async def get_orders(
+    site_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Get pending orders for an appliance."""
+    allowed, remaining = await check_rate_limit(site_id, "orders")
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limited. Try again in {remaining} seconds."
+        )
+
+    result = await db.execute(
+        text("""
+            SELECT order_id, runbook_id, parameters, nonce, signature, ttl_seconds,
+                   issued_at, expires_at
+            FROM orders o
+            JOIN appliances a ON o.appliance_id = a.id
+            WHERE a.site_id = :site_id
+            AND o.status = 'pending'
+            AND o.expires_at > NOW()
+            ORDER BY o.issued_at ASC
+        """),
+        {"site_id": site_id}
+    )
+
+    orders = []
+    for row in result.fetchall():
+        orders.append({
+            "order_id": row[0],
+            "runbook_id": row[1],
+            "parameters": row[2],
+            "nonce": row[3],
+            "signature": row[4],
+            "ttl_seconds": row[5],
+            "issued_at": row[6].isoformat() if row[6] else None,
+            "expires_at": row[7].isoformat() if row[7] else None
+        })
+
+    return {"site_id": site_id, "orders": orders, "count": len(orders)}
+
+
+@router.post("/orders/acknowledge")
+async def acknowledge_order(
+    req: OrderAcknowledgement,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Acknowledge receipt of an order."""
+    now = datetime.now(timezone.utc)
+
+    result = await db.execute(
+        text("""
+            UPDATE orders SET
+                status = 'acknowledged',
+                acknowledged_at = :acknowledged_at
+            WHERE order_id = :order_id
+            AND status = 'pending'
+            RETURNING id
+        """),
+        {"order_id": req.order_id, "acknowledged_at": now}
+    )
+
+    if result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Order not found or already acknowledged: {req.order_id}"
+        )
+
+    await db.commit()
+
+    logger.info("Order acknowledged", site_id=req.site_id, order_id=req.order_id)
+
+    return {"status": "acknowledged", "order_id": req.order_id, "timestamp": now.isoformat()}
+
+
+@router.post("/incidents")
+async def report_incident(
+    incident: IncidentReport,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Report an incident from an appliance. Creates an order for remediation if a matching runbook is found."""
+    allowed, remaining = await check_rate_limit(incident.site_id, "incidents")
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limited. Try again in {remaining} seconds."
+        )
+
+    client_ip = request.client.host if request.client else None
+
+    result = await db.execute(
+        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        {"site_id": incident.site_id}
+    )
+    appliance = result.fetchone()
+
+    if not appliance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Appliance not registered: {incident.site_id}"
+        )
+
+    appliance_id = str(appliance[0])
+
+    canonical_result = await db.execute(
+        text("SELECT appliance_id FROM site_appliances WHERE site_id = :site_id ORDER BY last_checkin DESC NULLS LAST LIMIT 1"),
+        {"site_id": incident.site_id}
+    )
+    canonical_row = canonical_result.fetchone()
+    canonical_appliance_id = canonical_row[0] if canonical_row else appliance_id
+    now = datetime.now(timezone.utc)
+
+    # Deduplicate
+    existing_check = await db.execute(
+        text("""
+            SELECT id, status FROM incidents
+            WHERE appliance_id = :appliance_id
+            AND incident_type = :incident_type
+            AND (
+                (status IN ('open', 'resolving', 'escalated'))
+                OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '24 hours')
+            )
+            AND created_at > NOW() - INTERVAL '48 hours'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """),
+        {"appliance_id": appliance_id, "incident_type": incident.incident_type}
+    )
+    existing_incident = existing_check.fetchone()
+
+    if existing_incident:
+        existing_id = str(existing_incident[0])
+        existing_status = existing_incident[1]
+
+        if existing_status == 'resolved':
+            await db.execute(
+                text("""
+                    UPDATE incidents SET status = 'resolving', resolved_at = NULL
+                    WHERE id = :id
+                """),
+                {"id": existing_id}
+            )
+            await db.commit()
+            return {
+                "status": "reopened",
+                "incident_id": existing_id,
+                "resolution_tier": None,
+                "order_id": None,
+                "runbook_id": None,
+                "timestamp": now.isoformat()
+            }
+
+        return {
+            "status": "deduplicated",
+            "incident_id": existing_id,
+            "resolution_tier": None,
+            "order_id": None,
+            "runbook_id": None,
+            "timestamp": now.isoformat()
+        }
+
+    # Create incident record
+    incident_id = str(uuid.uuid4())
+    await db.execute(
+        text("""
+            INSERT INTO incidents (id, appliance_id, incident_type, severity, check_type,
+                details, pre_state, hipaa_controls, reported_at)
+            VALUES (:id, :appliance_id, :incident_type, :severity, :check_type,
+                :details, :pre_state, :hipaa_controls, :reported_at)
+        """),
+        {
+            "id": incident_id,
+            "appliance_id": appliance_id,
+            "incident_type": incident.incident_type,
+            "severity": incident.severity,
+            "check_type": incident.check_type,
+            "details": json.dumps({**incident.details, "hostname": incident.host_id}),
+            "pre_state": json.dumps(incident.pre_state),
+            "hipaa_controls": incident.hipaa_controls,
+            "reported_at": now
+        }
+    )
+
+    # Try L1 rules
+    runbook_id = None
+    resolution_tier = None
+
+    # Chronic drift detection
+    chronic_check = await db.execute(
+        text("""
+            SELECT COUNT(*) FROM incidents
+            WHERE appliance_id = :appliance_id
+            AND incident_type = :incident_type
+            AND status = 'resolved'
+            AND resolved_at > NOW() - INTERVAL '7 days'
+        """),
+        {"appliance_id": appliance_id, "incident_type": incident.incident_type}
+    )
+    chronic_count = chronic_check.scalar() or 0
+    if chronic_count >= 5:
+        resolution_tier = "L3"
+        logger.warning("Chronic drift detected — escalating to L3",
+                       site_id=incident.site_id,
+                       incident_type=incident.incident_type,
+                       resolved_count_7d=chronic_count)
+
+    # Step 1: Query l1_rules table
+    if resolution_tier != "L3":
+        l1_match = await db.execute(
+            text("""
+                SELECT runbook_id FROM l1_rules
+                WHERE enabled = true
+                AND incident_pattern->>'incident_type' = :incident_type
+                ORDER BY confidence DESC
+                LIMIT 1
+            """),
+            {"incident_type": incident.incident_type}
+        )
+        l1_row = l1_match.fetchone()
+    else:
+        l1_row = None
+
+    if l1_row:
+        matched_runbook = l1_row[0]
+        if matched_runbook.startswith("ESC-") or matched_runbook == "ESCALATE":
+            resolution_tier = "L3"
+            logger.info("L1 rule matched escalation runbook",
+                        site_id=incident.site_id,
+                        incident_type=incident.incident_type,
+                        runbook_id=matched_runbook)
+        else:
+            runbook_id = matched_runbook
+            resolution_tier = "L1"
+    else:
+        # Step 2: Fallback keyword matching
+        type_lower = incident.incident_type.lower()
+        check_type = incident.check_type or ""
+
+        runbook_map = {
+            "backup": "RB-BACKUP-001",
+            "certificate": "RB-CERT-001",
+            "cert": "RB-CERT-001",
+            "disk": "RB-DISK-001",
+            "storage": "RB-DISK-001",
+            "service": "RB-SERVICE-001",
+            "drift": "RB-DRIFT-001",
+            "configuration": "RB-DRIFT-001",
+            "firewall": "RB-FIREWALL-001",
+            "patching": "RB-PATCH-001",
+            "update": "RB-PATCH-001"
+        }
+
+        for keyword, rb_id in runbook_map.items():
+            if keyword in type_lower or keyword in check_type.lower():
+                runbook_id = rb_id
+                resolution_tier = "L1"
+                break
+
+    order_id = None
+
+    if runbook_id:
+        # Create signed order
+        order_id = hashlib.sha256(
+            f"{incident.site_id}{incident_id}{now.isoformat()}".encode()
+        ).hexdigest()[:16]
+
+        nonce = secrets.token_hex(16)
+        expires_at = now + timedelta(seconds=ORDER_TTL_SECONDS)
+
+        order_payload = json.dumps({
+            "order_id": order_id,
+            "runbook_id": runbook_id,
+            "parameters": {},
+            "nonce": nonce,
+            "issued_at": now.isoformat(),
+            "expires_at": expires_at.isoformat(),
+            "target_appliance_id": canonical_appliance_id,
+        }, sort_keys=True)
+
+        signature = sign_data(order_payload)
+
+        await db.execute(
+            text("""
+                INSERT INTO orders (order_id, appliance_id, runbook_id, parameters, nonce,
+                    signature, signed_payload, ttl_seconds, issued_at, expires_at)
+                VALUES (:order_id, :appliance_id, :runbook_id, :parameters, :nonce,
+                    :signature, :signed_payload, :ttl_seconds, :issued_at, :expires_at)
+            """),
+            {
+                "order_id": order_id,
+                "appliance_id": appliance_id,
+                "runbook_id": runbook_id,
+                "parameters": json.dumps({
+                    "runbook_id": runbook_id,
+                    "hostname": incident.host_id,
+                    "check_type": incident.check_type or incident.incident_type,
+                }),
+                "nonce": nonce,
+                "signature": signature,
+                "signed_payload": order_payload,
+                "ttl_seconds": ORDER_TTL_SECONDS,
+                "issued_at": now,
+                "expires_at": expires_at
+            }
+        )
+
+        await db.execute(
+            text("""
+                UPDATE incidents SET
+                    resolution_tier = :resolution_tier,
+                    order_id = (SELECT id FROM orders WHERE order_id = :order_id),
+                    status = 'resolving'
+                WHERE id = :incident_id
+            """),
+            {
+                "resolution_tier": resolution_tier,
+                "order_id": order_id,
+                "incident_id": incident_id
+            }
+        )
+
+        logger.info("Created remediation order",
+                    site_id=incident.site_id,
+                    incident_id=incident_id,
+                    order_id=order_id,
+                    runbook_id=runbook_id,
+                    tier=resolution_tier)
+    elif resolution_tier == "L3":
+        await db.execute(
+            text("""
+                UPDATE incidents SET
+                    resolution_tier = 'L3',
+                    status = 'escalated'
+                WHERE id = :incident_id
+            """),
+            {"incident_id": incident_id}
+        )
+        logger.info("L1 escalation rule -> L3",
+                     site_id=incident.site_id,
+                     incident_type=incident.incident_type)
+    else:
+        # No L1 match — try L2 LLM planner
+        from dashboard_api.l2_planner import analyze_incident as l2_analyze, record_l2_decision, is_l2_available
+
+        l2_succeeded = False
+        if is_l2_available():
+            try:
+                logger.info("No L1 match, trying L2 planner",
+                            site_id=incident.site_id,
+                            incident_type=incident.incident_type)
+
+                decision = await l2_analyze(
+                    incident_type=incident.incident_type,
+                    severity=incident.severity,
+                    check_type=incident.check_type or incident.incident_type,
+                    details=incident.details,
+                    pre_state=incident.pre_state,
+                    hipaa_controls=incident.hipaa_controls,
+                )
+
+                try:
+                    await record_l2_decision(db, incident_id, decision)
+                except Exception as e:
+                    logger.error(f"Failed to record L2 decision: {e}")
+
+                if decision.runbook_id and decision.confidence >= 0.6 and not decision.requires_human_review:
+                    runbook_id = decision.runbook_id
+                    resolution_tier = "L2"
+                    l2_succeeded = True
+
+                    order_id = hashlib.sha256(
+                        f"{incident.site_id}{incident_id}{now.isoformat()}".encode()
+                    ).hexdigest()[:16]
+
+                    nonce = secrets.token_hex(16)
+                    expires_at = now + timedelta(seconds=ORDER_TTL_SECONDS)
+
+                    order_payload = json.dumps({
+                        "order_id": order_id,
+                        "runbook_id": runbook_id,
+                        "parameters": {},
+                        "nonce": nonce,
+                        "issued_at": now.isoformat(),
+                        "expires_at": expires_at.isoformat(),
+                        "target_appliance_id": canonical_appliance_id,
+                    }, sort_keys=True)
+
+                    signature = sign_data(order_payload)
+
+                    await db.execute(
+                        text("""
+                            INSERT INTO orders (order_id, appliance_id, runbook_id, parameters, nonce,
+                                signature, signed_payload, ttl_seconds, issued_at, expires_at)
+                            VALUES (:order_id, :appliance_id, :runbook_id, :parameters, :nonce,
+                                :signature, :signed_payload, :ttl_seconds, :issued_at, :expires_at)
+                        """),
+                        {
+                            "order_id": order_id,
+                            "appliance_id": appliance_id,
+                            "runbook_id": runbook_id,
+                            "parameters": json.dumps({
+                                "runbook_id": runbook_id,
+                                "hostname": incident.host_id,
+                                "check_type": incident.check_type or incident.incident_type,
+                            }),
+                            "nonce": nonce,
+                            "signature": signature,
+                            "signed_payload": order_payload,
+                            "ttl_seconds": ORDER_TTL_SECONDS,
+                            "issued_at": now,
+                            "expires_at": expires_at
+                        }
+                    )
+
+                    await db.execute(
+                        text("""
+                            UPDATE incidents SET
+                                resolution_tier = 'L2',
+                                order_id = (SELECT id FROM orders WHERE order_id = :order_id),
+                                status = 'resolving'
+                            WHERE id = :incident_id
+                        """),
+                        {"order_id": order_id, "incident_id": incident_id}
+                    )
+
+                    logger.info("L2 planner matched runbook",
+                                site_id=incident.site_id,
+                                incident_type=incident.incident_type,
+                                runbook_id=runbook_id,
+                                confidence=decision.confidence)
+                else:
+                    logger.info("L2 planner could not resolve — escalating to L3",
+                                site_id=incident.site_id,
+                                incident_type=incident.incident_type,
+                                runbook_id=decision.runbook_id if decision else None,
+                                confidence=decision.confidence if decision else None,
+                                requires_review=decision.requires_human_review if decision else None)
+            except Exception as e:
+                logger.error(f"L2 planner failed: {e}",
+                             site_id=incident.site_id,
+                             incident_type=incident.incident_type)
+        else:
+            logger.warning("L2 not available (no API key configured)",
+                           site_id=incident.site_id,
+                           incident_type=incident.incident_type)
+
+        if not l2_succeeded:
+            resolution_tier = "L3"
+            await db.execute(
+                text("""
+                    UPDATE incidents SET
+                        resolution_tier = 'L3',
+                        status = 'escalated'
+                    WHERE id = :incident_id
+                """),
+                {"incident_id": incident_id}
+            )
+            logger.warning("Escalated to L3",
+                           site_id=incident.site_id,
+                           incident_type=incident.incident_type)
+
+    await db.commit()
+
+    # Create notification for critical/high severity OR L3 escalations
+    severity_map = {"critical": "critical", "high": "warning", "medium": "warning", "low": "info"}
+    notification_severity = severity_map.get(incident.severity, "info")
+
+    should_notify = incident.severity in ("critical", "high") or resolution_tier == "L3"
+
+    if should_notify:
+        try:
+            from dashboard_api.email_alerts import create_notification_with_email
+
+            dedup_hours = 24 if resolution_tier == "L3" else 4
+            notification_category = "escalation" if resolution_tier == "L3" else "incident"
+
+            dedup_check = await db.execute(
+                text("""
+                    SELECT id FROM notifications
+                    WHERE site_id = :site_id
+                    AND category = :category
+                    AND title LIKE :title_pattern
+                    AND created_at > NOW() - :dedup_hours * INTERVAL '1 hour'
+                    LIMIT 1
+                """),
+                {
+                    "site_id": incident.site_id,
+                    "category": notification_category,
+                    "title_pattern": f"%{incident.incident_type}%",
+                    "dedup_hours": dedup_hours,
+                }
+            )
+            existing = dedup_check.fetchone()
+
+            if not existing:
+                if resolution_tier == "L3":
+                    notification_severity = "critical"
+
+                if resolution_tier == "L3":
+                    l3_title = f"[L3] {incident.incident_type}"
+                    if incident.host_id:
+                        l3_title += f" - {incident.host_id}"
+
+                    l3_message = (
+                        f"{incident.incident_type} on {incident.site_id} "
+                        f"could not be auto-remediated and requires human review."
+                    )
+                else:
+                    l3_title = f"{incident.severity.upper()}: {incident.incident_type}"
+                    l3_message = f"Incident {incident.incident_type} on {incident.site_id}. Resolution: {resolution_tier}"
+
+                await create_notification_with_email(
+                    db=db,
+                    severity=notification_severity,
+                    category=notification_category,
+                    title=l3_title,
+                    message=l3_message,
+                    site_id=incident.site_id,
+                    appliance_id=appliance_id,
+                    metadata={
+                        "incident_id": incident_id,
+                        "check_type": incident.check_type,
+                        "resolution_tier": resolution_tier,
+                        "order_id": order_id
+                    },
+                    host_id=incident.host_id if resolution_tier == "L3" else None,
+                    incident_severity=incident.severity if resolution_tier == "L3" else None,
+                    check_type=incident.check_type if resolution_tier == "L3" else None,
+                    details=incident.details if resolution_tier == "L3" else None,
+                    hipaa_controls=incident.hipaa_controls if resolution_tier == "L3" else None,
+                )
+        except Exception as e:
+            logger.error(f"Failed to create notification: {e}")
+
+    return {
+        "status": "received",
+        "incident_id": incident_id,
+        "resolution_tier": resolution_tier,
+        "order_id": order_id,
+        "runbook_id": runbook_id,
+        "timestamp": now.isoformat()
+    }
+
+
+@router.post("/incidents/{incident_id}/resolve")
+async def resolve_incident(
+    incident_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Mark an incident as resolved after successful healing."""
+    body = await request.json()
+    resolution_tier = body.get("resolution_tier", "L1")
+    action_taken = body.get("action_taken", "")
+
+    result = await db.execute(
+        text("""
+            UPDATE incidents SET
+                resolved_at = NOW(),
+                status = 'resolved',
+                resolution_tier = COALESCE(:resolution_tier, resolution_tier)
+            WHERE id = :incident_id
+            AND resolved_at IS NULL
+            RETURNING id
+        """),
+        {"incident_id": incident_id, "resolution_tier": resolution_tier}
+    )
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found or already resolved")
+
+    await db.commit()
+    logger.info("Incident resolved", incident_id=incident_id, tier=resolution_tier, action=action_taken)
+    return {"status": "resolved", "incident_id": incident_id}
+
+
+@router.post("/incidents/resolve")
+async def resolve_incident_by_type(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Resolve the latest open incident matching site_id + host_id + check_type."""
+    body = await request.json()
+    site_id = body.get("site_id")
+    host_id = body.get("host_id")
+    check_type = body.get("check_type")
+    resolution_tier = body.get("resolution_tier", "L1")
+    runbook_id = body.get("runbook_id", "")
+
+    if not site_id or not host_id or not check_type:
+        raise HTTPException(status_code=400, detail="site_id, host_id, and check_type are required")
+
+    app_result = await db.execute(
+        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        {"site_id": site_id}
+    )
+    appliance = app_result.fetchone()
+    if not appliance:
+        raise HTTPException(status_code=404, detail=f"Appliance not found: {site_id}")
+
+    appliance_id = str(appliance[0])
+
+    result = await db.execute(
+        text("""
+            UPDATE incidents SET
+                resolved_at = NOW(),
+                status = 'resolved',
+                resolution_tier = :resolution_tier
+            WHERE id = (
+                SELECT id FROM incidents
+                WHERE appliance_id = :appliance_id
+                AND incident_type = :check_type
+                AND status IN ('open', 'resolving', 'escalated')
+                ORDER BY created_at DESC
+                LIMIT 1
+            )
+            RETURNING id
+        """),
+        {
+            "appliance_id": appliance_id,
+            "check_type": check_type,
+            "resolution_tier": resolution_tier,
+        }
+    )
+
+    row = result.fetchone()
+    if not row:
+        return {"status": "no_match", "message": "No open incident found to resolve"}
+
+    await db.commit()
+    logger.info("Incident resolved by type", site_id=site_id, host_id=host_id,
+                check_type=check_type, tier=resolution_tier, incident_id=str(row[0]))
+    return {"status": "resolved", "incident_id": str(row[0])}
+
+
+@router.post("/drift")
+async def report_drift(
+    drift: DriftReport,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Report drift detection results."""
+    allowed, remaining = await check_rate_limit(drift.site_id, "drift")
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limited. Try again in {remaining} seconds."
+        )
+
+    if not drift.drifted:
+        logger.debug("No drift detected", site_id=drift.site_id, check_type=drift.check_type)
+        return {"status": "ok", "drifted": False, "action": "none"}
+
+    # Convert to incident
+    incident = IncidentReport(
+        site_id=drift.site_id,
+        host_id=drift.host_id,
+        incident_type=f"drift:{drift.check_type}",
+        severity=drift.severity,
+        check_type=drift.check_type,
+        details={"drifted": True, "recommended_action": drift.recommended_action},
+        pre_state=drift.pre_state,
+        hipaa_controls=drift.hipaa_controls
+    )
+
+    class FakeRequestObj:
+        client = None
+
+    return await report_incident(incident, FakeRequestObj(), db)
+
+
+@router.post("/evidence")
+async def submit_evidence(
+    evidence: EvidenceSubmission,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Submit evidence bundle from appliance."""
+    allowed, remaining = await check_rate_limit(evidence.site_id, "evidence")
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limited. Try again in {remaining} seconds."
+        )
+
+    result = await db.execute(
+        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        {"site_id": evidence.site_id}
+    )
+    appliance = result.fetchone()
+
+    if not appliance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Appliance not registered: {evidence.site_id}"
+        )
+
+    appliance_id = str(appliance[0])
+    now = datetime.now(timezone.utc)
+
+    order_uuid = None
+    if evidence.order_id:
+        result = await db.execute(
+            text("SELECT id FROM orders WHERE order_id = :order_id"),
+            {"order_id": evidence.order_id}
+        )
+        order_row = result.fetchone()
+        if order_row:
+            order_uuid = order_row[0]
+
+            await db.execute(
+                text("""
+                    UPDATE orders SET
+                        status = :status,
+                        completed_at = :completed_at,
+                        result = :result
+                    WHERE order_id = :order_id
+                """),
+                {
+                    "status": "completed" if evidence.outcome == "success" else "failed",
+                    "completed_at": now,
+                    "result": json.dumps({"outcome": evidence.outcome, "error": evidence.error}),
+                    "order_id": evidence.order_id
+                }
+            )
+
+    evidence_id = str(uuid.uuid4())
+    duration = (evidence.timestamp_end - evidence.timestamp_start).total_seconds()
+
+    await db.execute(
+        text("""
+            INSERT INTO evidence_bundles (id, bundle_id, appliance_id, order_id,
+                check_type, outcome, pre_state, post_state, actions_taken,
+                policy_version, nixos_revision, ntp_offset_ms, hipaa_controls,
+                rollback_available, rollback_generation, timestamp_start, timestamp_end,
+                signature, error)
+            VALUES (:id, :bundle_id, :appliance_id, :order_id,
+                :check_type, :outcome, :pre_state, :post_state, :actions_taken,
+                :policy_version, :nixos_revision, :ntp_offset_ms, :hipaa_controls,
+                :rollback_available, :rollback_generation, :timestamp_start, :timestamp_end,
+                :signature, :error)
+        """),
+        {
+            "id": evidence_id,
+            "bundle_id": evidence.bundle_id,
+            "appliance_id": appliance_id,
+            "order_id": order_uuid,
+            "check_type": evidence.check_type,
+            "outcome": evidence.outcome,
+            "pre_state": json.dumps(evidence.pre_state),
+            "post_state": json.dumps(evidence.post_state),
+            "actions_taken": json.dumps(evidence.actions_taken),
+            "policy_version": evidence.policy_version,
+            "nixos_revision": evidence.nixos_revision,
+            "ntp_offset_ms": evidence.ntp_offset_ms,
+            "hipaa_controls": evidence.hipaa_controls,
+            "rollback_available": evidence.rollback_available,
+            "rollback_generation": evidence.rollback_generation,
+            "timestamp_start": evidence.timestamp_start,
+            "timestamp_end": evidence.timestamp_end,
+            "signature": evidence.signature,
+            "error": evidence.error
+        }
+    )
+
+    await db.commit()
+
+    # Upload to MinIO (WORM storage)
+    minio_client = get_minio_client()
+    s3_uri = None
+    try:
+        evidence_json = json.dumps({
+            "bundle_id": evidence.bundle_id,
+            "site_id": evidence.site_id,
+            "host_id": evidence.host_id,
+            "check_type": evidence.check_type,
+            "outcome": evidence.outcome,
+            "pre_state": evidence.pre_state,
+            "post_state": evidence.post_state,
+            "actions_taken": evidence.actions_taken,
+            "timestamp_start": evidence.timestamp_start.isoformat(),
+            "timestamp_end": evidence.timestamp_end.isoformat(),
+            "duration_seconds": duration,
+            "hipaa_controls": evidence.hipaa_controls,
+            "signature": evidence.signature
+        }, indent=2)
+
+        object_name = f"{evidence.site_id}/{evidence.timestamp_start.strftime('%Y/%m/%d')}/{evidence.bundle_id}.json"
+
+        data = BytesIO(evidence_json.encode())
+
+        minio_client.put_object(
+            MINIO_BUCKET,
+            object_name,
+            data,
+            length=len(evidence_json),
+            content_type="application/json"
+        )
+
+        s3_uri = f"s3://{MINIO_BUCKET}/{object_name}"
+
+        try:
+            retention_until = now + timedelta(days=WORM_RETENTION_DAYS)
+            retention = Retention(COMPLIANCE, retention_until)
+            minio_client.set_object_retention(MINIO_BUCKET, object_name, retention)
+            logger.info("Set WORM retention on evidence",
+                       bundle_id=evidence.bundle_id,
+                       retention_until=retention_until.isoformat())
+        except Exception as e:
+            logger.warning("Could not set Object Lock retention",
+                          bundle_id=evidence.bundle_id,
+                          error=str(e))
+
+        await db.execute(
+            text("""
+                UPDATE evidence_bundles SET
+                    s3_uri = :s3_uri,
+                    s3_uploaded_at = :s3_uploaded_at
+                WHERE bundle_id = :bundle_id
+            """),
+            {"s3_uri": s3_uri, "s3_uploaded_at": now, "bundle_id": evidence.bundle_id}
+        )
+        await db.commit()
+
+        logger.info("Evidence uploaded to WORM storage",
+                    bundle_id=evidence.bundle_id,
+                    s3_uri=s3_uri)
+
+    except Exception as e:
+        logger.error("Failed to upload evidence to MinIO",
+                     bundle_id=evidence.bundle_id,
+                     error=str(e))
+
+    logger.info("Evidence bundle received",
+                site_id=evidence.site_id,
+                bundle_id=evidence.bundle_id,
+                check_type=evidence.check_type,
+                outcome=evidence.outcome)
+
+    return {
+        "status": "received",
+        "bundle_id": evidence.bundle_id,
+        "evidence_id": evidence_id,
+        "s3_uri": s3_uri,
+        "timestamp": now.isoformat()
+    }
+
+
+@router.get("/evidence/{site_id}")
+async def list_evidence(
+    site_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """List evidence bundles for an appliance."""
+    result = await db.execute(
+        text("""
+            SELECT e.bundle_id, e.check_type, e.outcome, e.timestamp_start, e.timestamp_end,
+                   e.hipaa_controls, e.s3_uri, e.signature
+            FROM evidence_bundles e
+            JOIN appliances a ON e.appliance_id = a.id
+            WHERE a.site_id = :site_id
+            ORDER BY e.timestamp_start DESC
+            LIMIT :limit OFFSET :offset
+        """),
+        {"site_id": site_id, "limit": limit, "offset": offset}
+    )
+
+    bundles = []
+    for row in result.fetchall():
+        bundles.append({
+            "bundle_id": row[0],
+            "check_type": row[1],
+            "outcome": row[2],
+            "timestamp_start": row[3].isoformat() if row[3] else None,
+            "timestamp_end": row[4].isoformat() if row[4] else None,
+            "hipaa_controls": row[5],
+            "s3_uri": row[6],
+            "signature": row[7][:32] + "..." if row[7] else None
+        })
+
+    return {"site_id": site_id, "evidence": bundles, "count": len(bundles)}
+
+
+@router.post("/agent/patterns")
+async def report_agent_pattern(
+    report: PatternReportInput,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Receive pattern report from agent after successful healing."""
+    pattern_signature = f"{report.check_type}:{report.issue_signature}"
+    pattern_id = hashlib.sha256(pattern_signature.encode()).hexdigest()[:16]
+
+    result = await db.execute(
+        text("SELECT pattern_id, occurrences, success_count, failure_count FROM patterns WHERE pattern_id = :pid"),
+        {"pid": pattern_id}
+    )
+    existing = result.fetchone()
+
+    if existing:
+        occurrences = existing.occurrences + 1
+        success_count = existing.success_count + (1 if report.success else 0)
+        failure_count = existing.failure_count + (0 if report.success else 1)
+
+        await db.execute(text("""
+            UPDATE patterns
+            SET occurrences = :occ,
+                success_count = :sc,
+                failure_count = :fc,
+                last_seen = NOW()
+            WHERE pattern_id = :pid
+        """), {
+            "pid": pattern_id,
+            "occ": occurrences,
+            "sc": success_count,
+            "fc": failure_count,
+        })
+        await db.commit()
+
+        success_rate = (success_count / occurrences) * 100 if occurrences > 0 else 0.0
+        logger.info(f"Pattern updated: {pattern_id} (occurrences: {occurrences}, success_rate: {success_rate:.1f}%)")
+        return {
+            "pattern_id": pattern_id,
+            "status": "updated",
+            "occurrences": occurrences,
+            "success_rate": success_rate,
+        }
+    else:
+        occurrences = 1
+        success_count = 1 if report.success else 0
+        failure_count = 0 if report.success else 1
+
+        runbook_id = report.runbook_id or f"AUTO-{report.check_type.upper()}"
+
+        await db.execute(text("""
+            INSERT INTO patterns (
+                pattern_id, pattern_signature, description, incident_type, runbook_id,
+                occurrences, success_count, failure_count,
+                avg_resolution_time_ms, total_resolution_time_ms,
+                status, first_seen, last_seen, created_at
+            ) VALUES (
+                :pid, :sig, :desc, :itype, :rid,
+                :occ, :sc, :fc,
+                :avg_time, :total_time,
+                'pending', NOW(), NOW(), NOW()
+            )
+        """), {
+            "pid": pattern_id,
+            "sig": pattern_signature,
+            "desc": f"Auto-detected pattern from {report.site_id}",
+            "itype": report.check_type,
+            "rid": runbook_id,
+            "occ": occurrences,
+            "sc": success_count,
+            "fc": failure_count,
+            "avg_time": report.execution_time_ms,
+            "total_time": report.execution_time_ms,
+        })
+        await db.commit()
+
+        success_rate = 100.0 if report.success else 0.0
+        logger.info(f"Pattern created: {pattern_id} (check_type: {report.check_type})")
+        return {
+            "pattern_id": pattern_id,
+            "status": "created",
+            "occurrences": occurrences,
+            "success_rate": success_rate,
+        }
+
+
+@router.post("/api/agent/sync/pattern-stats")
+async def sync_pattern_stats(
+    request: PatternStatsRequest,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Receive pattern statistics from agent for cross-appliance aggregation."""
+    accepted = 0
+    merged = 0
+    failed = 0
+
+    for stat in request.pattern_stats:
+        try:
+            try:
+                last_seen_dt = datetime.fromisoformat(stat.last_seen.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                last_seen_dt = datetime.now(timezone.utc)
+
+            result = await db.execute(
+                text("""
+                    SELECT id, total_occurrences, l1_resolutions, l2_resolutions, l3_resolutions,
+                           success_count, total_resolution_time_ms
+                    FROM aggregated_pattern_stats
+                    WHERE site_id = :site_id AND pattern_signature = :sig
+                """),
+                {"site_id": request.site_id, "sig": stat.pattern_signature}
+            )
+            existing = result.fetchone()
+
+            if existing:
+                merged_occ = max(existing.total_occurrences, stat.total_occurrences)
+                merged_sc = max(existing.success_count, stat.success_count)
+                merged_rate = merged_sc / merged_occ if merged_occ > 0 else 0
+                is_eligible = merged_occ >= 5 and merged_rate >= 0.90
+
+                await db.execute(text("""
+                    UPDATE aggregated_pattern_stats
+                    SET total_occurrences = GREATEST(total_occurrences, :occ),
+                        l1_resolutions = GREATEST(l1_resolutions, :l1),
+                        l2_resolutions = GREATEST(l2_resolutions, :l2),
+                        l3_resolutions = GREATEST(l3_resolutions, :l3),
+                        success_count = GREATEST(success_count, :sc),
+                        total_resolution_time_ms = GREATEST(total_resolution_time_ms, :time),
+                        success_rate = CASE
+                            WHEN GREATEST(total_occurrences, :occ) > 0
+                            THEN CAST(GREATEST(success_count, :sc) AS FLOAT) / GREATEST(total_occurrences, :occ)
+                            ELSE 0
+                        END,
+                        avg_resolution_time_ms = CASE
+                            WHEN GREATEST(total_occurrences, :occ) > 0
+                            THEN GREATEST(total_resolution_time_ms, :time) / GREATEST(total_occurrences, :occ)
+                            ELSE 0
+                        END,
+                        recommended_action = COALESCE(:action, recommended_action),
+                        promotion_eligible = :eligible,
+                        last_seen = GREATEST(last_seen, :last_seen),
+                        last_synced_at = NOW()
+                    WHERE site_id = :site_id AND pattern_signature = :sig
+                """), {
+                    "site_id": request.site_id,
+                    "sig": stat.pattern_signature,
+                    "occ": stat.total_occurrences,
+                    "l1": stat.l1_resolutions,
+                    "l2": stat.l2_resolutions,
+                    "l3": stat.l3_resolutions,
+                    "sc": stat.success_count,
+                    "time": stat.total_resolution_time_ms,
+                    "action": stat.recommended_action,
+                    "eligible": is_eligible,
+                    "last_seen": last_seen_dt,
+                })
+                merged += 1
+            else:
+                success_rate = (stat.success_count / stat.total_occurrences) if stat.total_occurrences > 0 else 0
+                avg_time = stat.total_resolution_time_ms / stat.total_occurrences if stat.total_occurrences > 0 else 0
+                is_eligible = stat.total_occurrences >= 5 and success_rate >= 0.90
+
+                await db.execute(text("""
+                    INSERT INTO aggregated_pattern_stats (
+                        site_id, pattern_signature, total_occurrences, l1_resolutions,
+                        l2_resolutions, l3_resolutions, success_count, total_resolution_time_ms,
+                        success_rate, avg_resolution_time_ms, recommended_action, promotion_eligible,
+                        first_seen, last_seen, last_synced_at
+                    ) VALUES (
+                        :site_id, :sig, :occ, :l1, :l2, :l3, :sc, :time,
+                        :rate, :avg, :action, :eligible,
+                        :first_seen, :last_seen, NOW()
+                    )
+                """), {
+                    "site_id": request.site_id,
+                    "sig": stat.pattern_signature,
+                    "occ": stat.total_occurrences,
+                    "l1": stat.l1_resolutions,
+                    "l2": stat.l2_resolutions,
+                    "l3": stat.l3_resolutions,
+                    "sc": stat.success_count,
+                    "time": stat.total_resolution_time_ms,
+                    "rate": success_rate,
+                    "avg": avg_time,
+                    "action": stat.recommended_action,
+                    "eligible": is_eligible,
+                    "first_seen": last_seen_dt,
+                    "last_seen": last_seen_dt,
+                })
+                accepted += 1
+
+        except Exception as e:
+            logger.warning(f"Failed to sync pattern {stat.pattern_signature}: {e}")
+            await db.rollback()
+            failed += 1
+            continue
+
+    sync_status = 'success' if failed == 0 else ('partial' if accepted + merged > 0 else 'failed')
+    try:
+        await db.execute(text("""
+            INSERT INTO appliance_pattern_sync (appliance_id, site_id, synced_at, patterns_received, patterns_merged, sync_status)
+            VALUES (:appliance_id, :site_id, NOW(), :received, :merged, :status)
+            ON CONFLICT (appliance_id) DO UPDATE SET
+                synced_at = NOW(),
+                patterns_received = :received,
+                patterns_merged = :merged,
+                sync_status = :status
+        """), {
+            "appliance_id": request.appliance_id,
+            "site_id": request.site_id,
+            "received": len(request.pattern_stats),
+            "merged": merged,
+            "status": sync_status,
+        })
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"Failed to record sync event for {request.appliance_id}: {e}")
+        await db.rollback()
+
+    logger.info(f"Pattern sync from {request.appliance_id}: {accepted} new, {merged} merged")
+    return {
+        "accepted": accepted,
+        "merged": merged,
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/api/agent/sync/promoted-rules")
+async def get_promoted_rules(
+    site_id: str,
+    since: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Return server-approved promoted rules for agent deployment."""
+    since_dt = datetime.fromisoformat(since.replace('Z', '+00:00')) if since else datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    result = await db.execute(text("""
+        SELECT
+            pr.rule_id,
+            pr.pattern_signature,
+            pr.rule_yaml,
+            pr.promoted_at,
+            COALESCE(au.email, 'system') as promoted_by,
+            pr.notes
+        FROM promoted_rules pr
+        LEFT JOIN admin_users au ON au.id = pr.promoted_by
+        WHERE pr.site_id = :site_id
+          AND pr.status = 'active'
+          AND pr.promoted_at > :since
+        ORDER BY pr.promoted_at DESC
+    """), {"site_id": site_id, "since": since_dt})
+
+    rows = result.fetchall()
+    rules = []
+
+    for row in rows:
+        rules.append({
+            "rule_id": row.rule_id,
+            "pattern_signature": row.pattern_signature,
+            "rule_yaml": row.rule_yaml,
+            "promoted_at": row.promoted_at.isoformat() if row.promoted_at else datetime.now(timezone.utc).isoformat(),
+            "promoted_by": row.promoted_by or "system",
+            "source": "server_promoted",
+        })
+
+    logger.info(f"Returning {len(rules)} promoted rules for site {site_id}")
+    return {
+        "rules": rules,
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/api/agent/executions")
+async def report_execution_telemetry(
+    request: ExecutionTelemetryInput,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Receive rich execution telemetry from agents for learning engine."""
+    if request.execution:
+        exec_data = request.execution
+    else:
+        exec_data = request.model_dump(exclude={"site_id", "execution", "reported_at"})
+        exec_data["site_id"] = request.site_id
+
+    def parse_iso_timestamp(ts):
+        if ts is None:
+            return None
+        if isinstance(ts, datetime):
+            return ts
+        try:
+            return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            return None
+
+    try:
+        if "level" in exec_data and "resolution_level" not in exec_data:
+            exec_data["resolution_level"] = exec_data["level"]
+        if "duration_ms" in exec_data and "duration_seconds" not in exec_data:
+            exec_data["duration_seconds"] = exec_data["duration_ms"] / 1000.0
+        if "error" in exec_data and "error_message" not in exec_data:
+            exec_data["error_message"] = exec_data["error"]
+        if not exec_data.get("execution_id"):
+            exec_data["execution_id"] = f"l2-{exec_data.get('incident_id', 'unknown')}-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+        if not exec_data.get("status"):
+            exec_data["status"] = "success" if exec_data.get("success") else "failure"
+
+        incident_type = exec_data.get("incident_type")
+        hostname = exec_data.get("hostname", "unknown")
+        runbook_id = exec_data.get("runbook_id", "unknown")
+        pattern_sig = exec_data.get("pattern_signature")
+        if not pattern_sig and incident_type and hostname:
+            pattern_sig = f"{incident_type}:{runbook_id}:{hostname}"
+
+        await db.execute(text("""
+            INSERT INTO execution_telemetry (
+                execution_id, incident_id, site_id, appliance_id, runbook_id, hostname, platform, incident_type,
+                started_at, completed_at, duration_seconds,
+                success, status, verification_passed, confidence, resolution_level,
+                state_before, state_after, state_diff, executed_steps,
+                error_message, error_step, failure_type, retry_count,
+                evidence_bundle_id,
+                cost_usd, input_tokens, output_tokens, pattern_signature, reasoning, chaos_campaign_id,
+                created_at
+            ) VALUES (
+                :exec_id, :incident_id, :site_id, :appliance_id, :runbook_id, :hostname, :platform, :incident_type,
+                :started_at, :completed_at, :duration,
+                :success, :status, :verification, :confidence, :resolution_level,
+                CAST(:state_before AS jsonb), CAST(:state_after AS jsonb), CAST(:state_diff AS jsonb), CAST(:executed_steps AS jsonb),
+                :error_msg, :error_step, :failure_type, :retry_count,
+                :evidence_id,
+                :cost_usd, :input_tokens, :output_tokens, :pattern_signature, :reasoning, :chaos_campaign_id,
+                NOW()
+            )
+            ON CONFLICT (execution_id) DO UPDATE SET
+                success = EXCLUDED.success,
+                state_after = EXCLUDED.state_after,
+                state_diff = EXCLUDED.state_diff,
+                error_message = EXCLUDED.error_message,
+                failure_type = EXCLUDED.failure_type,
+                cost_usd = EXCLUDED.cost_usd,
+                input_tokens = EXCLUDED.input_tokens,
+                output_tokens = EXCLUDED.output_tokens,
+                pattern_signature = EXCLUDED.pattern_signature,
+                reasoning = EXCLUDED.reasoning
+        """), {
+            "exec_id": exec_data.get("execution_id"),
+            "incident_id": exec_data.get("incident_id"),
+            "site_id": request.site_id,
+            "appliance_id": exec_data.get("appliance_id", "unknown"),
+            "runbook_id": exec_data.get("runbook_id"),
+            "hostname": hostname,
+            "platform": exec_data.get("platform"),
+            "incident_type": incident_type,
+            "started_at": parse_iso_timestamp(exec_data.get("started_at")),
+            "completed_at": parse_iso_timestamp(exec_data.get("completed_at")),
+            "duration": exec_data.get("duration_seconds"),
+            "success": exec_data.get("success", False),
+            "status": exec_data.get("status"),
+            "verification": exec_data.get("verification_passed"),
+            "confidence": exec_data.get("confidence", 0.0),
+            "resolution_level": exec_data.get("resolution_level"),
+            "state_before": json.dumps(exec_data.get("state_before", {})),
+            "state_after": json.dumps(exec_data.get("state_after", {})),
+            "state_diff": json.dumps(exec_data.get("state_diff", {})),
+            "executed_steps": json.dumps(exec_data.get("executed_steps", [])),
+            "error_msg": exec_data.get("error_message"),
+            "error_step": exec_data.get("error_step"),
+            "failure_type": exec_data.get("failure_type"),
+            "retry_count": exec_data.get("retry_count", 0),
+            "evidence_id": exec_data.get("evidence_bundle_id"),
+            "cost_usd": exec_data.get("cost_usd", 0),
+            "input_tokens": exec_data.get("input_tokens", 0),
+            "output_tokens": exec_data.get("output_tokens", 0),
+            "pattern_signature": pattern_sig,
+            "reasoning": exec_data.get("reasoning"),
+            "chaos_campaign_id": exec_data.get("chaos_campaign_id"),
+        })
+
+        await db.commit()
+
+        logger.info(f"Execution telemetry recorded: {exec_data.get('execution_id')} (success={exec_data.get('success')})")
+        return {
+            "status": "recorded",
+            "execution_id": exec_data.get("execution_id"),
+        }
+
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to record execution telemetry: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to record telemetry: {e}")
+
+
+@router.post("/api/agent/l2/plan")
+async def agent_l2_plan(
+    request: L2PlanRequest,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """L2 LLM planner endpoint for appliance daemons."""
+    from dashboard_api.l2_planner import analyze_incident as l2_analyze, record_l2_decision, is_l2_available
+
+    if not is_l2_available():
+        raise HTTPException(status_code=503, detail="L2 LLM not configured (no API key)")
+
+    logger.info(f"L2 plan request: site={request.site_id} host={request.host_id} type={request.incident_type}")
+
+    hipaa_controls = None
+    hipaa_ctrl = request.raw_data.get("hipaa_control")
+    if hipaa_ctrl:
+        hipaa_controls = [hipaa_ctrl] if isinstance(hipaa_ctrl, str) else hipaa_ctrl
+
+    decision = await l2_analyze(
+        incident_type=request.incident_type,
+        severity=request.severity,
+        check_type=request.raw_data.get("check_type", request.incident_type),
+        details=request.raw_data,
+        pre_state=request.raw_data.get("pre_state", {}),
+        hipaa_controls=hipaa_controls,
+    )
+
+    try:
+        await record_l2_decision(db, request.incident_id, decision)
+        await db.commit()
+    except Exception as e:
+        logger.error(f"Failed to record L2 decision: {e}")
+
+    action = "escalate"
+    action_params = {}
+    escalate = True
+
+    if decision.runbook_id and decision.confidence >= 0.6:
+        escalation_only_runbooks = {"RB-CERT-001", "RB-DISK-001"}
+        is_escalation = (
+            decision.runbook_id in escalation_only_runbooks
+            or decision.runbook_id.startswith("ESC-")
+        )
+
+        if is_escalation:
+            action = "escalate"
+            escalate = True
+        else:
+            action = "execute_runbook"
+            escalate = False
+        action_params = {"runbook_id": decision.runbook_id}
+
+    return {
+        "incident_id": request.incident_id,
+        "recommended_action": action,
+        "action_params": action_params,
+        "confidence": decision.confidence,
+        "reasoning": decision.reasoning,
+        "runbook_id": decision.runbook_id or "",
+        "requires_approval": decision.requires_human_review,
+        "escalate_to_l3": escalate,
+        "context_used": {
+            "llm_model": decision.llm_model,
+            "llm_latency_ms": decision.llm_latency_ms,
+            "pattern_signature": decision.pattern_signature,
+            "alternative_runbooks": decision.alternative_runbooks,
+        },
+    }
+
+
+@router.post("/evidence/upload")
+async def upload_evidence_worm(
+    bundle: UploadFile = File(..., description="Evidence bundle JSON file"),
+    signature: UploadFile = File(None, description="Detached Ed25519 signature file"),
+    x_client_id: str = Header(..., alias="X-Client-ID"),
+    x_bundle_id: str = Header(..., alias="X-Bundle-ID"),
+    x_bundle_hash: str = Header(..., alias="X-Bundle-Hash"),
+    x_signature_hash: str = Header(None, alias="X-Signature-Hash"),
+    authorization: str = Header(None),
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """WORM Evidence Upload Proxy Endpoint."""
+    allowed, remaining = await check_rate_limit(x_client_id, "evidence_upload")
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limited. Try again in {remaining} seconds."
+        )
+
+    result = await db.execute(
+        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        {"site_id": x_client_id}
+    )
+    appliance = result.fetchone()
+
+    if not appliance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Appliance not registered: {x_client_id}"
+        )
+
+    appliance_id = str(appliance[0])
+    now = datetime.now(timezone.utc)
+
+    bundle_content = await bundle.read()
+
+    expected_hash = x_bundle_hash.replace("sha256:", "")
+    actual_hash = hashlib.sha256(bundle_content).hexdigest()
+    if actual_hash != expected_hash:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle hash mismatch. Expected {expected_hash[:16]}..., got {actual_hash[:16]}..."
+        )
+
+    sig_content = None
+    if signature:
+        sig_content = await signature.read()
+        if x_signature_hash:
+            expected_sig_hash = x_signature_hash.replace("sha256:", "")
+            actual_sig_hash = hashlib.sha256(sig_content).hexdigest()
+            if actual_sig_hash != expected_sig_hash:
+                logger.warning("Signature hash mismatch",
+                             bundle_id=x_bundle_id,
+                             expected=expected_sig_hash[:16],
+                             actual=actual_sig_hash[:16])
+
+    try:
+        bundle_data = json.loads(bundle_content.decode())
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid bundle JSON: {str(e)}"
+        )
+
+    date_prefix = now.strftime('%Y/%m/%d')
+    bundle_key = f"{x_client_id}/{date_prefix}/{x_bundle_id}.json"
+    sig_key = f"{x_client_id}/{date_prefix}/{x_bundle_id}.sig" if sig_content else None
+
+    retention_until = now + timedelta(days=WORM_RETENTION_DAYS)
+
+    bundle_uri = None
+    sig_uri = None
+    minio_client = get_minio_client()
+
+    try:
+        minio_client.put_object(
+            MINIO_BUCKET,
+            bundle_key,
+            BytesIO(bundle_content),
+            length=len(bundle_content),
+            content_type="application/json",
+            metadata={
+                "bundle_id": x_bundle_id,
+                "client_id": x_client_id,
+                "uploaded_at": now.isoformat(),
+                "bundle_hash": actual_hash
+            }
+        )
+        bundle_uri = f"s3://{MINIO_BUCKET}/{bundle_key}"
+
+        try:
+            retention = Retention(COMPLIANCE, retention_until)
+            minio_client.set_object_retention(MINIO_BUCKET, bundle_key, retention)
+            logger.info("Set WORM retention on bundle",
+                       bundle_id=x_bundle_id,
+                       retention_until=retention_until.isoformat())
+        except Exception as e:
+            logger.warning("Could not set Object Lock retention (bucket may not have Object Lock enabled)",
+                          bundle_id=x_bundle_id,
+                          error=str(e))
+
+        if sig_content:
+            minio_client.put_object(
+                MINIO_BUCKET,
+                sig_key,
+                BytesIO(sig_content),
+                length=len(sig_content),
+                content_type="application/octet-stream",
+                metadata={
+                    "bundle_id": x_bundle_id,
+                    "client_id": x_client_id
+                }
+            )
+            sig_uri = f"s3://{MINIO_BUCKET}/{sig_key}"
+
+            try:
+                minio_client.set_object_retention(MINIO_BUCKET, sig_key, retention)
+            except Exception as e:
+                logger.warning("Could not set Object Lock on signature", error=str(e))
+
+        logger.info("Evidence uploaded to WORM storage",
+                   bundle_id=x_bundle_id,
+                   client_id=x_client_id,
+                   bundle_uri=bundle_uri,
+                   sig_uri=sig_uri)
+
+    except Exception as e:
+        logger.error("Failed to upload evidence to MinIO",
+                    bundle_id=x_bundle_id,
+                    error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload to WORM storage: {str(e)}"
+        )
+
+    try:
+        evidence_id = str(uuid.uuid4())
+
+        check_type = bundle_data.get("check_type", "unknown")
+        outcome = bundle_data.get("outcome", "unknown")
+
+        def parse_iso_ts(ts):
+            if ts is None:
+                return now
+            if isinstance(ts, datetime):
+                return ts
+            if isinstance(ts, str):
+                try:
+                    ts = ts.replace('Z', '+00:00')
+                    return datetime.fromisoformat(ts)
+                except Exception:
+                    return now
+            return now
+
+        timestamp_start = parse_iso_ts(bundle_data.get("timestamp_start"))
+        timestamp_end = parse_iso_ts(bundle_data.get("timestamp_end"))
+
+        await db.execute(
+            text("""
+                INSERT INTO evidence_bundles (id, bundle_id, appliance_id,
+                    check_type, outcome, pre_state, post_state, actions_taken,
+                    hipaa_controls, timestamp_start, timestamp_end,
+                    signature, s3_uri, s3_uploaded_at)
+                VALUES (:id, :bundle_id, :appliance_id,
+                    :check_type, :outcome, :pre_state, :post_state, :actions_taken,
+                    :hipaa_controls, :timestamp_start, :timestamp_end,
+                    :signature, :s3_uri, :s3_uploaded_at)
+                ON CONFLICT (bundle_id) DO UPDATE SET
+                    s3_uri = EXCLUDED.s3_uri,
+                    s3_uploaded_at = EXCLUDED.s3_uploaded_at
+            """),
+            {
+                "id": evidence_id,
+                "bundle_id": x_bundle_id,
+                "appliance_id": appliance_id,
+                "check_type": check_type,
+                "outcome": outcome,
+                "pre_state": json.dumps(bundle_data.get("pre_state", {})),
+                "post_state": json.dumps(bundle_data.get("post_state", {})),
+                "actions_taken": json.dumps(bundle_data.get("actions_taken", [])),
+                "hipaa_controls": bundle_data.get("hipaa_controls"),
+                "timestamp_start": timestamp_start,
+                "timestamp_end": timestamp_end,
+                "signature": sig_content.decode() if sig_content else None,
+                "s3_uri": bundle_uri,
+                "s3_uploaded_at": now
+            }
+        )
+        await db.commit()
+
+    except Exception as e:
+        logger.warning("Failed to store evidence reference in database",
+                      bundle_id=x_bundle_id,
+                      error=str(e))
+
+    return {
+        "status": "uploaded",
+        "bundle_id": x_bundle_id,
+        "bundle_uri": bundle_uri,
+        "signature_uri": sig_uri,
+        "retention_until": retention_until.isoformat(),
+        "retention_days": WORM_RETENTION_DAYS,
+        "timestamp": now.isoformat()
+    }
+
+
+@router.get("/agent/sync")
+async def agent_sync_rules(
+    site_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Return L1 rules for agents to sync."""
+    healing_tier = "standard"
+    if site_id:
+        try:
+            result = await db.execute(
+                text("SELECT healing_tier FROM sites WHERE site_id = :site_id"),
+                {"site_id": site_id}
+            )
+            row = result.fetchone()
+            if row and row[0]:
+                healing_tier = row[0]
+        except Exception as e:
+            logger.warning(f"Failed to fetch healing tier for {site_id}: {e}")
+
+    # Standard rules (7 core rules) - always included
+    standard_rules = [
+        {
+            "id": "L1-NTP-001",
+            "name": "NTP Drift Remediation",
+            "description": "Restart chronyd when NTP sync drifts",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "ntp_sync"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["restart_service:chronyd"],
+            "severity": "medium",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-SERVICE-001",
+            "name": "Critical Service Recovery",
+            "description": "Restart failed critical services",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "critical_services"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["restart_service:sshd", "restart_service:chronyd"],
+            "severity": "high",
+            "cooldown_seconds": 600,
+            "max_retries": 3,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-DISK-001",
+            "name": "Disk Space Alert",
+            "description": "Alert when disk usage exceeds threshold",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "disk_space"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["alert:disk_space_critical"],
+            "severity": "high",
+            "cooldown_seconds": 3600,
+            "max_retries": 1,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-FIREWALL-001",
+            "name": "Windows Firewall Recovery",
+            "description": "Re-enable Windows Firewall when disabled",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "firewall"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]},
+                {"field": "platform", "operator": "ne", "value": "nixos"}
+            ],
+            "actions": ["restore_firewall_baseline"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-FIREWALL-002",
+            "name": "Windows Firewall Status Recovery",
+            "description": "Re-enable Windows Firewall when status check fails",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "firewall_status"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]},
+                {"field": "platform", "operator": "ne", "value": "nixos"}
+            ],
+            "actions": ["restore_firewall_baseline"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-DEFENDER-001",
+            "name": "Windows Defender Recovery",
+            "description": "Re-enable Windows Defender when disabled",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "windows_defender"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["restore_defender"],
+            "severity": "critical",
+            "cooldown_seconds": 300,
+            "max_retries": 2,
+            "source": "builtin"
+        },
+        {
+            "id": "L1-GENERATION-001",
+            "name": "NixOS Generation Drift",
+            "description": "Alert when NixOS generation is invalid or unknown",
+            "conditions": [
+                {"field": "check_type", "operator": "eq", "value": "nixos_generation"},
+                {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}
+            ],
+            "actions": ["alert:generation_drift"],
+            "severity": "medium",
+            "cooldown_seconds": 3600,
+            "max_retries": 1,
+            "source": "builtin"
+        }
+    ]
+
+    # Additional rules for full_coverage mode
+    full_coverage_extra_rules = [
+        {"id": "L1-PASSWORD-001", "name": "Password Policy Enforcement", "description": "Enforce minimum password requirements", "conditions": [{"field": "check_type", "operator": "eq", "value": "password_policy"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["set_password_policy"], "severity": "high", "cooldown_seconds": 3600, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-AUDIT-001", "name": "Audit Policy Enforcement", "description": "Enable required audit policies", "conditions": [{"field": "check_type", "operator": "eq", "value": "audit_policy"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["set_audit_policy"], "severity": "high", "cooldown_seconds": 3600, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-BITLOCKER-001", "name": "BitLocker Encryption", "description": "Enable drive encryption", "conditions": [{"field": "check_type", "operator": "eq", "value": "bitlocker_status"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["run_windows_runbook:RB-WIN-SEC-005"], "severity": "critical", "cooldown_seconds": 3600, "max_retries": 1, "source": "builtin"},
+        {"id": "L1-SMB1-001", "name": "SMBv1 Protocol Disabled", "description": "Disable insecure SMBv1 protocol", "conditions": [{"field": "check_type", "operator": "eq", "value": "smb1_protocol"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["run_windows_runbook:RB-WIN-SEC-020"], "severity": "high", "cooldown_seconds": 3600, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-AUTOPLAY-001", "name": "AutoPlay Disabled", "description": "Disable AutoPlay to prevent malware spread", "conditions": [{"field": "check_type", "operator": "eq", "value": "autoplay_disabled"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["disable_autoplay"], "severity": "medium", "cooldown_seconds": 3600, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-LOCKOUT-001", "name": "Account Lockout Policy", "description": "Configure account lockout after failed attempts", "conditions": [{"field": "check_type", "operator": "eq", "value": "lockout_policy"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["set_lockout_policy"], "severity": "medium", "cooldown_seconds": 3600, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-SCREENSAVER-001", "name": "Screensaver Timeout", "description": "Configure screensaver with password protection", "conditions": [{"field": "check_type", "operator": "eq", "value": "screensaver_timeout"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["set_screensaver_policy"], "severity": "medium", "cooldown_seconds": 3600, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-RDP-001", "name": "RDP Security", "description": "Secure RDP with NLA requirement", "conditions": [{"field": "check_type", "operator": "eq", "value": "rdp_security"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["configure_rdp_security"], "severity": "high", "cooldown_seconds": 3600, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-UAC-001", "name": "UAC Enabled", "description": "Ensure User Account Control is enabled", "conditions": [{"field": "check_type", "operator": "eq", "value": "uac_enabled"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["enable_uac"], "severity": "high", "cooldown_seconds": 3600, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-EVENTLOG-001", "name": "Event Log Size", "description": "Configure adequate event log retention", "conditions": [{"field": "check_type", "operator": "eq", "value": "event_log_size"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["set_event_log_size"], "severity": "medium", "cooldown_seconds": 3600, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-DEFENDERUPDATES-001", "name": "Windows Defender Definitions", "description": "Update malware definitions", "conditions": [{"field": "check_type", "operator": "eq", "value": "defender_definitions"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["update_defender_definitions"], "severity": "high", "cooldown_seconds": 14400, "max_retries": 3, "source": "builtin"},
+        {"id": "L1-GUESTACCOUNT-001", "name": "Guest Account Disabled", "description": "Disable built-in Guest account", "conditions": [{"field": "check_type", "operator": "eq", "value": "guest_account_disabled"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["disable_guest_account"], "severity": "medium", "cooldown_seconds": 3600, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-WUPDATES-001", "name": "Windows Updates", "description": "Check and trigger pending security updates", "conditions": [{"field": "check_type", "operator": "eq", "value": "windows_updates"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["trigger_windows_update"], "severity": "high", "cooldown_seconds": 86400, "max_retries": 1, "source": "builtin"},
+        {"id": "L1-BACKUP-001", "name": "Backup Status", "description": "Alert when backup fails or is stale", "conditions": [{"field": "check_type", "operator": "eq", "value": "backup"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["alert:backup_failed"], "severity": "high", "cooldown_seconds": 7200, "max_retries": 1, "source": "builtin"},
+        {"id": "L1-SCREENLOCK-001", "name": "Screen Lock Policy", "description": "Enforce screen lock timeout and password requirement", "conditions": [{"field": "check_type", "operator": "eq", "value": "screen_lock_policy"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["run_windows_runbook:RB-WIN-SEC-016"], "severity": "high", "cooldown_seconds": 300, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-PATCHING-001", "name": "Windows Update Service", "description": "Ensure Windows Update service is running and updates are applied", "conditions": [{"field": "check_type", "operator": "eq", "value": "patching"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["trigger_windows_update"], "severity": "critical", "cooldown_seconds": 86400, "max_retries": 1, "source": "builtin"},
+        {"id": "L1-LIN-SSH-001", "name": "SSH Configuration Drift", "description": "Fix SSH config drift (PermitRootLogin, PasswordAuthentication, etc.)", "conditions": [{"field": "check_type", "operator": "eq", "value": "ssh_config"}, {"field": "drift_detected", "operator": "eq", "value": True}], "actions": ["run_linux_runbook"], "severity": "critical", "cooldown_seconds": 300, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-LIN-KERN-001", "name": "Kernel Parameter Hardening", "description": "Fix unsafe kernel parameters (ip_forward, ASLR, etc.)", "conditions": [{"field": "check_type", "operator": "eq", "value": "kernel"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["run_linux_runbook:LIN-KERN-001"], "severity": "high", "cooldown_seconds": 300, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-LIN-CRON-001", "name": "Cron Permission Hardening", "description": "Fix insecure cron file permissions", "conditions": [{"field": "check_type", "operator": "eq", "value": "cron"}, {"field": "status", "operator": "in", "value": ["warning", "fail", "error"]}], "actions": ["run_linux_runbook:LIN-CRON-001"], "severity": "high", "cooldown_seconds": 300, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-LIN-SUID-001", "name": "SUID Binary Cleanup", "description": "Remove unauthorized SUID binaries from temp directories", "conditions": [{"field": "check_type", "operator": "eq", "value": "permissions"}, {"field": "drift_detected", "operator": "eq", "value": True}, {"field": "distro", "operator": "ne", "value": None}], "actions": ["run_linux_runbook"], "severity": "critical", "cooldown_seconds": 300, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-PERSIST-TASK-001", "name": "Scheduled Task Persistence Detected", "description": "Remove suspicious scheduled tasks from root namespace", "conditions": [{"field": "check_type", "operator": "eq", "value": "scheduled_task_persistence"}, {"field": "drift_detected", "operator": "eq", "value": True}], "actions": ["run_windows_runbook:RB-WIN-SEC-018"], "severity": "critical", "cooldown_seconds": 300, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-PERSIST-REG-001", "name": "Registry Run Key Persistence Detected", "description": "Remove suspicious registry Run key entries", "conditions": [{"field": "check_type", "operator": "eq", "value": "registry_run_persistence"}, {"field": "drift_detected", "operator": "eq", "value": True}], "actions": ["run_windows_runbook:RB-WIN-SEC-019"], "severity": "critical", "cooldown_seconds": 300, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-PERSIST-WMI-001", "name": "WMI Event Subscription Persistence Detected", "description": "Remove suspicious WMI event subscriptions used for persistence", "conditions": [{"field": "check_type", "operator": "eq", "value": "wmi_event_persistence"}, {"field": "drift_detected", "operator": "eq", "value": True}], "actions": ["run_windows_runbook:RB-WIN-SEC-021"], "severity": "critical", "cooldown_seconds": 300, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-SMB-SIGNING-001", "name": "SMB Signing Not Required", "description": "Enforce SMB signing to prevent relay attacks", "conditions": [{"field": "check_type", "operator": "eq", "value": "smb_signing"}, {"field": "drift_detected", "operator": "eq", "value": True}], "actions": ["run_windows_runbook:RB-WIN-SEC-007"], "severity": "high", "cooldown_seconds": 300, "max_retries": 2, "source": "builtin"},
+        {"id": "L1-SVC-NETLOGON-001", "name": "NetLogon Service Down", "description": "Restore NetLogon service for domain authentication", "conditions": [{"field": "check_type", "operator": "eq", "value": "service_netlogon"}, {"field": "drift_detected", "operator": "eq", "value": True}], "actions": ["run_windows_runbook:RB-WIN-SVC-001"], "severity": "critical", "cooldown_seconds": 300, "max_retries": 2, "source": "builtin"},
+    ]
+
+    if healing_tier == "full_coverage":
+        builtin_rules = standard_rules + full_coverage_extra_rules
+    else:
+        builtin_rules = standard_rules
+
+    # Fetch custom/promoted/protection_profile rules from database
+    try:
+        result = await db.execute(
+            text("""
+                SELECT rule_id, incident_pattern, runbook_id, confidence,
+                       COALESCE(source, 'promoted') as source
+                FROM l1_rules
+                WHERE enabled = true AND COALESCE(source, 'promoted') != 'builtin'
+                ORDER BY confidence DESC
+            """)
+        )
+        db_rules = []
+        for row in result.fetchall():
+            rule_source = row[4]
+
+            if rule_source == "protection_profile":
+                try:
+                    ppr = await db.execute(
+                        text("SELECT rule_json FROM app_profile_rules WHERE l1_rule_id = :rid LIMIT 1"),
+                        {"rid": row[0]}
+                    )
+                    ppr_row = ppr.fetchone()
+                    if ppr_row and ppr_row[0]:
+                        rule_json = ppr_row[0] if isinstance(ppr_row[0], dict) else json.loads(ppr_row[0])
+                        db_rules.append(rule_json)
+                        continue
+                except Exception:
+                    pass
+
+            pattern = row[1]
+            if isinstance(pattern, list):
+                conditions = pattern
+            elif isinstance(pattern, dict):
+                conditions = []
+                for k, v in pattern.items():
+                    field = "check_type" if k == "incident_type" else k
+                    conditions.append({"field": field, "operator": "eq", "value": v})
+                conditions.append({"field": "status", "operator": "in", "value": ["warning", "fail", "error"]})
+            else:
+                conditions = []
+
+            db_rules.append({
+                "id": row[0],
+                "name": f"Promoted: {row[0]}",
+                "description": f"Auto-promoted rule with {row[3]:.0%} confidence",
+                "conditions": conditions,
+                "actions": [f"run_runbook:{row[2]}"],
+                "severity": "critical" if rule_source == "protection_profile" else "medium",
+                "cooldown_seconds": 300,
+                "max_retries": 3 if rule_source == "protection_profile" else 2,
+                "source": rule_source
+            })
+    except Exception as e:
+        logger.warning(f"Failed to fetch DB rules: {e}")
+        db_rules = []
+
+    all_rules = builtin_rules + db_rules
+
+    rules_json = json.dumps(all_rules, sort_keys=True)
+    rules_signature = sign_data(rules_json)
+
+    return {
+        "rules": all_rules,
+        "healing_tier": healing_tier,
+        "version": "1.0.0",
+        "count": len(all_rules),
+        "signature": rules_signature,
+        "server_public_key": get_public_key_hex(),
+    }
+
+
+@router.post("/api/appliances/checkin")
+async def appliances_checkin(
+    req: ApplianceCheckinRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Appliance agent checkin endpoint - updates site_appliances table."""
+    try:
+        mac = req.mac_address or "00:00:00:00:00:00"
+        appliance_id = f"{req.site_id}-{mac}"
+        now = datetime.now(timezone.utc)
+
+        await db.execute(text("""
+            INSERT INTO site_appliances (
+                site_id, appliance_id, hostname, mac_address, ip_addresses,
+                agent_version, nixos_version, status, last_checkin,
+                uptime_seconds, queue_depth, first_checkin, created_at
+            ) VALUES (
+                :site_id, :appliance_id, :hostname, :mac_address, :ip_addresses,
+                :agent_version, :nixos_version, 'online', :last_checkin,
+                :uptime_seconds, :queue_depth, :first_checkin, :created_at
+            )
+            ON CONFLICT (appliance_id) DO UPDATE SET
+                hostname = EXCLUDED.hostname,
+                ip_addresses = EXCLUDED.ip_addresses,
+                agent_version = EXCLUDED.agent_version,
+                nixos_version = EXCLUDED.nixos_version,
+                status = 'online',
+                last_checkin = EXCLUDED.last_checkin,
+                uptime_seconds = EXCLUDED.uptime_seconds,
+                queue_depth = EXCLUDED.queue_depth
+        """), {
+            "site_id": req.site_id,
+            "appliance_id": appliance_id,
+            "hostname": req.hostname or "unknown",
+            "mac_address": mac,
+            "ip_addresses": json.dumps(req.ip_addresses or []),
+            "agent_version": req.agent_version,
+            "nixos_version": req.nixos_version,
+            "last_checkin": now,
+            "uptime_seconds": req.uptime_seconds or 0,
+            "queue_depth": req.queue_depth or 0,
+            "first_checkin": now,
+            "created_at": now,
+        })
+        await db.commit()
+
+        # Fetch Windows targets
+        windows_targets = []
+        seen_hosts = set()
+        try:
+            result = await db.execute(text("""
+                SELECT credential_type, credential_name, encrypted_data
+                FROM site_credentials
+                WHERE site_id = :site_id
+                AND credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
+                ORDER BY CASE WHEN credential_type = 'domain_admin' THEN 0 ELSE 1 END, created_at DESC
+            """), {"site_id": req.site_id})
+            creds = result.fetchall()
+
+            org_creds_result = await db.execute(text("""
+                SELECT oc.credential_type, oc.credential_name, oc.encrypted_data
+                FROM org_credentials oc
+                JOIN sites s ON s.client_org_id = oc.client_org_id
+                WHERE s.site_id = :site_id
+                AND oc.credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
+                ORDER BY CASE WHEN oc.credential_type = 'domain_admin' THEN 0 ELSE 1 END, oc.created_at DESC
+            """), {"site_id": req.site_id})
+            org_creds = org_creds_result.fetchall()
+
+            for cred in list(creds) + list(org_creds):
+                try:
+                    raw = cred.encrypted_data
+                    cred_data = json.loads(bytes(raw).decode() if isinstance(raw, (bytes, memoryview)) else raw)
+                    hostname = cred_data.get('host') or cred_data.get('target_host')
+                    username = cred_data.get('username', '')
+                    password = cred_data.get('password', '')
+                    domain = cred_data.get('domain', '')
+                    use_ssl = cred_data.get('use_ssl', False)
+
+                    full_username = f"{domain}\\{username}" if domain else username
+
+                    if hostname and hostname not in seen_hosts:
+                        seen_hosts.add(hostname)
+                        windows_targets.append({
+                            "hostname": hostname,
+                            "username": full_username,
+                            "password": password,
+                            "use_ssl": use_ssl,
+                            "role": cred.credential_type,
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to parse credential: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to fetch Windows targets: {e}")
+
+        return {
+            "status": "ok",
+            "appliance_id": appliance_id,
+            "server_time": now.isoformat(),
+            "windows_targets": windows_targets,
+        }
+    except Exception as e:
+        logger.error(f"Checkin failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
