@@ -66,22 +66,8 @@ async def require_appliance_auth(request: Request) -> str:
             # Table missing or query error — fall through to fallback
             logger.warning(f"API key verification error for site={site_id}: {e}")
 
-        # Fallback: if site exists and has a registered appliance, allow checkin.
-        # This handles appliances provisioned before API key rotation or
-        # when api_keys table is unavailable. Log for audit trail.
-        try:
-            existing = await conn.fetchval(
-                "SELECT 1 FROM site_appliances WHERE site_id = $1 LIMIT 1",
-                site_id
-            )
-            if existing:
-                logger.warning(
-                    f"Appliance auth fallback: site={site_id} key mismatch but "
-                    f"site has registered appliances, allowing checkin"
-                )
-                return site_id
-        except Exception:
-            pass
+        # No fallback — API key must match. Log for debugging.
+        logger.warning(f"Appliance auth REJECTED: site={site_id} invalid API key")
 
     raise HTTPException(status_code=401, detail="Invalid API key for site")
 

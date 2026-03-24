@@ -7,6 +7,7 @@ search/export for the admin dashboard and portals.
 import gzip
 import json
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Request, Query
@@ -369,6 +370,10 @@ async def maintain_log_partitions(pool):
                 name = row["relname"]
                 # Extract YYYY_MM from partition name
                 suffix = name.replace("log_entries_", "")
+                # Validate partition name matches expected pattern to prevent SQL injection
+                if not re.match(r'^log_entries_\d{4}_\d{2}$', name):
+                    logger.warning(f"Skipping suspicious partition name: {name}")
+                    continue
                 if suffix < cutoff:
                     await conn.execute(f"DROP TABLE IF EXISTS {name}")
                     logger.info(f"Dropped expired log partition: {name}")

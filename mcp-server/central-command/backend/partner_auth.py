@@ -137,8 +137,7 @@ def hash_session_token(token: str) -> str:
     import hmac
     secret = os.getenv("SESSION_TOKEN_SECRET", "")
     if not secret:
-        logger.warning("SESSION_TOKEN_SECRET not set — falling back to plain SHA-256 for partner sessions")
-        return hashlib.sha256(token.encode()).hexdigest()
+        raise RuntimeError("SESSION_TOKEN_SECRET must be set for session security")
     return hmac.new(secret.encode(), token.encode(), hashlib.sha256).hexdigest()
 
 
