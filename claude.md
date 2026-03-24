@@ -19,13 +19,25 @@ Key files: `iso/appliance-image.nix`, `iso/configuration.nix`, `flake.nix`
 ## Directory Structure
 
 ```
-packages/compliance-agent/   # Python agent (main work area)
-  src/compliance_agent/      # Core modules
-  tests/                     # pytest tests (1037+ passing)
+packages/compliance-agent/   # Python agent (DEPRECATED — Go daemon is active)
+  tests/                     # pytest tests (1161+ passing)
   venv/                      # Python 3.13 virtualenv
+appliance/                   # Go appliance daemon (ACTIVE agent)
+  internal/daemon/           # Core daemon, StateManager, interfaces, threat_detector
+  internal/phiscrub/         # PHI scrubbing package (14 patterns, 21 tests)
+  internal/orders/           # Fleet order processor (22 handlers)
+  internal/evidence/         # Evidence bundle signing + submission
+  internal/grpcserver/       # Agent registry, TLS enrollment
+  Makefile                   # Build with VERSION injection via ldflags
+agent/                       # Go workstation agent (Windows/macOS/Linux)
 modules/                     # NixOS modules
 mcp-server/central-command/  # Dashboard backend + frontend
-docs/                        # Detailed reference docs
+  backend/                   # FastAPI backend (routes.py, sites.py, main.py)
+    constants/               # Design system (copy.ts, status.ts)
+    components/composed/     # MetricCard, StatusBadge, PageShell, etc.
+    migrations/              # 098 migrations (latest: security_events)
+  frontend/                  # React + TypeScript + Tailwind
+docs/                        # Reference docs + compliance attestations
 .agent/reference/            # Credentials, network, decisions
 ```
 
@@ -148,8 +160,10 @@ All doc paths relative to `.claude/skills/`. Read the full doc when working in t
 |--------|-----|------|
 | iMac Host | 192.168.88.50 | jrelly (SSH key) |
 | Physical Appliance | 192.168.88.241 | root (SSH key) |
-| VM Appliance | 192.168.88.254 | root (SSH key, DHCP) |
+| VM Appliance | DEPRECATED — decommissioned Session 183 |  |
 | VPS | 178.156.162.116 | root (SSH key) |
+| VPS WireGuard | 10.100.0.1 | Hub, UDP 51820 |
+| Appliance WireGuard | 10.100.0.2 | `ssh root@10.100.0.2` from VPS |
 
 Full credentials in `.agent/reference/LAB_CREDENTIALS.md` when needed.
 
@@ -175,3 +189,8 @@ Primary state: `.agent/claude-progress.json`
 - **SQLAlchemy AsyncSession:** Never use `asyncio.gather()` on the same session - causes `InvalidStateError`. Run queries sequentially.
 - **execution_telemetry.runbook_id:** Agent uses internal IDs (L1-SVC-DNS-001) that differ from backend IDs (RB-AUTO-SERVICE_). Match by `incident_type` + `hostname/site_id`, not `runbook_id`.
 - **Synced L1 rules override built-in rules.** Rules at `/var/lib/msp/rules/l1_rules.json` (synced hourly from Central Command) take precedence over built-in rules in `level1_deterministic.py`. Changes to built-in rules must also be applied to server-side rules in `mcp-server/main.py` and the `l1_rules` DB table.
+- **server.py DELETED (Session 185).** Container runs `uvicorn main:app`. server.py was dead code.
+- **All main.py endpoints require auth (Session 185).** `require_appliance_bearer` for daemon endpoints, `require_auth` for admin endpoints. Only `/` and `/health` are public.
+- **PHI scrubbing at appliance egress (Session 185).** `phiscrub` package scrubs all outbound data before it leaves the appliance. Central Command is PHI-free.
+- **Design system: constants/copy.ts is THE source of truth** for all user-facing text. Never hardcode status labels, tooltips, disclaimers, or branding in component files.
+- **Score thresholds: 90/70/50.** Defined in `constants/status.ts` via `getScoreStatus()`. Never create local score-to-color functions.
