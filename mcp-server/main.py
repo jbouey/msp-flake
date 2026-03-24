@@ -1635,7 +1635,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     # for the same check (e.g. windows_update, linux_unattended_upgrades).
     existing_check = await db.execute(
         text("""
-            SELECT id, status, remediation_attempts, remediation_exhausted, context_hash
+            SELECT id, status
             FROM incidents
             WHERE appliance_id = :appliance_id
             AND incident_type = :incident_type
@@ -1656,17 +1656,25 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
         existing_status = existing_incident[1]
 
         # Check if this incident has exhausted its remediation budget
-        if existing_incident[3]:  # remediation_exhausted
-            logger.info(f"Incident {existing_id} exhausted after {existing_incident[2]} attempts, skipping",
-                        site_id=incident.site_id, incident_type=incident.incident_type)
-            return {
-                "status": "exhausted",
-                "incident_id": existing_id,
-                "resolution_tier": None,
-                "order_id": None,
-                "runbook_id": None,
-                "timestamp": now.isoformat()
-            }
+        try:
+            exhaustion_check = await db.execute(
+                text("SELECT remediation_exhausted, remediation_attempts FROM incidents WHERE id = :id"),
+                {"id": existing_id}
+            )
+            exhaustion_row = exhaustion_check.fetchone()
+            if exhaustion_row and exhaustion_row[0]:  # remediation_exhausted
+                logger.info(f"Incident {existing_id} exhausted after {exhaustion_row[1]} attempts, skipping",
+                            site_id=incident.site_id, incident_type=incident.incident_type)
+                return {
+                    "status": "exhausted",
+                    "incident_id": existing_id,
+                    "resolution_tier": None,
+                    "order_id": None,
+                    "runbook_id": None,
+                    "timestamp": now.isoformat()
+                }
+        except Exception:
+            pass  # Column doesn't exist yet (migration 099 not applied)
 
         # If previously resolved but drift recurred, reopen instead of creating new
         if existing_status == 'resolved':
@@ -1881,16 +1889,19 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             "result": "order_created",
             "timestamp": now.isoformat(),
         })
-        await db.execute(
-            text("""
-                UPDATE incidents SET
-                    remediation_attempts = COALESCE(remediation_attempts, 0) + 1,
-                    remediation_history = COALESCE(remediation_history, '[]'::jsonb) || :attempt::jsonb,
-                    context_hash = :hash
-                WHERE id = :id
-            """),
-            {"id": incident_id, "attempt": l1_attempt, "hash": context_hash}
-        )
+        try:
+            await db.execute(
+                text("""
+                    UPDATE incidents SET
+                        remediation_attempts = COALESCE(remediation_attempts, 0) + 1,
+                        remediation_history = COALESCE(remediation_history, '[]'::jsonb) || :attempt::jsonb,
+                        context_hash = :hash
+                    WHERE id = :id
+                """),
+                {"id": incident_id, "attempt": l1_attempt, "hash": context_hash}
+            )
+        except Exception:
+            pass  # Migration 099 not yet applied
     elif resolution_tier == "L3":
         # L1 rule matched an escalation-only runbook (ESC-*) — skip L2, go straight to L3
         await db.execute(
@@ -1909,60 +1920,62 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
         # No L1 match — try L2 LLM planner before escalating to L3
         from dashboard_api.l2_planner import analyze_incident, record_l2_decision, is_l2_available
 
-        # Check previous remediation state for this incident type on this appliance.
-        # This catches the case where a previous incident for the same type was
-        # created recently (within 48h) but fell outside the dedup window.
-        prev_state_check = await db.execute(
-            text("""
-                SELECT remediation_attempts, context_hash, remediation_history
-                FROM incidents
-                WHERE appliance_id = :appliance_id
-                AND incident_type = :incident_type
-                AND id != :current_id
-                AND created_at > NOW() - INTERVAL '7 days'
-                ORDER BY created_at DESC
-                LIMIT 1
-            """),
-            {"appliance_id": appliance_id, "incident_type": incident.incident_type, "current_id": incident_id}
-        )
-        prev_state = prev_state_check.fetchone()
-        prev_attempts = prev_state[0] if prev_state else 0
-        prev_hash = prev_state[1] if prev_state else None
-        prev_history = prev_state[2] if prev_state else []
-
-        # Rule 1: Never call L2 with identical context
-        # If context hash matches a previous attempt and we've already tried, skip L2
+        # Check previous remediation state (requires migration 099)
         skip_l2 = False
-        if prev_hash == context_hash and prev_attempts > 0:
-            logger.info(f"Incident context unchanged (hash={context_hash}), skipping redundant L2 call",
-                        site_id=incident.site_id, incident_type=incident.incident_type,
-                        prev_attempts=prev_attempts)
-            skip_l2 = True
-
-        # Rule 2: Check attempt budget (carried forward from previous incidents)
-        if prev_attempts >= MAX_REMEDIATION_ATTEMPTS:
-            logger.info(f"Remediation budget exhausted ({prev_attempts} prior attempts), marking exhausted",
-                        site_id=incident.site_id, incident_type=incident.incident_type)
-            skip_l2 = True
-            # Mark this new incident as exhausted immediately
-            await db.execute(
+        try:
+            prev_state_check = await db.execute(
                 text("""
-                    UPDATE incidents SET
-                        remediation_attempts = :attempts,
-                        remediation_history = :history::jsonb,
-                        remediation_exhausted = true,
-                        context_hash = :hash,
-                        resolution_tier = 'L3',
-                        status = 'escalated'
-                    WHERE id = :id
+                    SELECT remediation_attempts, context_hash, remediation_history
+                    FROM incidents
+                    WHERE appliance_id = :appliance_id
+                    AND incident_type = :incident_type
+                    AND id != :current_id
+                    AND created_at > NOW() - INTERVAL '7 days'
+                    ORDER BY created_at DESC
+                    LIMIT 1
                 """),
-                {
-                    "id": incident_id,
-                    "attempts": prev_attempts,
-                    "history": json.dumps(prev_history if isinstance(prev_history, list) else []),
-                    "hash": context_hash,
-                }
+                {"appliance_id": appliance_id, "incident_type": incident.incident_type, "current_id": incident_id}
             )
+            prev_state = prev_state_check.fetchone()
+            prev_attempts = prev_state[0] if prev_state else 0
+            prev_hash = prev_state[1] if prev_state else None
+            prev_history = prev_state[2] if prev_state else []
+
+            # Rule 1: Never call L2 with identical context
+            if prev_hash == context_hash and prev_attempts > 0:
+                logger.info(f"Incident context unchanged (hash={context_hash}), skipping redundant L2 call",
+                            site_id=incident.site_id, incident_type=incident.incident_type,
+                            prev_attempts=prev_attempts)
+                skip_l2 = True
+
+            # Rule 2: Check attempt budget
+            if prev_attempts >= MAX_REMEDIATION_ATTEMPTS:
+                logger.info(f"Remediation budget exhausted ({prev_attempts} prior attempts), marking exhausted",
+                            site_id=incident.site_id, incident_type=incident.incident_type)
+                skip_l2 = True
+                try:
+                    await db.execute(
+                        text("""
+                            UPDATE incidents SET
+                                remediation_attempts = :attempts,
+                                remediation_history = :history::jsonb,
+                                remediation_exhausted = true,
+                                context_hash = :hash,
+                                resolution_tier = 'L3',
+                                status = 'escalated'
+                            WHERE id = :id
+                        """),
+                        {
+                            "id": incident_id,
+                            "attempts": prev_attempts,
+                            "history": json.dumps(prev_history if isinstance(prev_history, list) else []),
+                            "hash": context_hash,
+                        }
+                    )
+                except Exception:
+                    pass  # Migration 099 columns not yet available
+        except Exception:
+            pass  # Migration 099 not applied — skip state machine, proceed normally
 
         l2_succeeded = False
         if not skip_l2 and is_l2_available():
@@ -2066,34 +2079,37 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                                 confidence=decision.confidence if decision else None,
                                 requires_review=decision.requires_human_review if decision else None)
 
-                # Record L2 attempt in remediation history
-                new_attempts = prev_attempts + 1
-                l2_attempt = json.dumps({
-                    "tier": "L2",
-                    "runbook_id": l2_runbook,
-                    "result": l2_result,
-                    "confidence": l2_confidence,
-                    "timestamp": now.isoformat(),
-                })
-                is_exhausted = new_attempts >= MAX_REMEDIATION_ATTEMPTS
+                # Record L2 attempt in remediation history (requires migration 099)
+                try:
+                    new_attempts = (prev_attempts if 'prev_attempts' in dir() else 0) + 1
+                    l2_attempt = json.dumps({
+                        "tier": "L2",
+                        "runbook_id": l2_runbook,
+                        "result": l2_result,
+                        "confidence": l2_confidence,
+                        "timestamp": now.isoformat(),
+                    })
+                    is_exhausted = new_attempts >= MAX_REMEDIATION_ATTEMPTS
 
-                await db.execute(
-                    text("""
-                        UPDATE incidents SET
-                            remediation_attempts = :attempts,
-                            remediation_history = COALESCE(remediation_history, '[]'::jsonb) || :attempt::jsonb,
-                            remediation_exhausted = :exhausted,
-                            context_hash = :hash
-                        WHERE id = :id
-                    """),
-                    {
-                        "id": incident_id,
-                        "attempts": new_attempts,
-                        "attempt": l2_attempt,
-                        "exhausted": is_exhausted,
-                        "hash": context_hash,
-                    }
-                )
+                    await db.execute(
+                        text("""
+                            UPDATE incidents SET
+                                remediation_attempts = :attempts,
+                                remediation_history = COALESCE(remediation_history, '[]'::jsonb) || :attempt::jsonb,
+                                remediation_exhausted = :exhausted,
+                                context_hash = :hash
+                            WHERE id = :id
+                        """),
+                        {
+                            "id": incident_id,
+                            "attempts": new_attempts,
+                            "attempt": l2_attempt,
+                            "exhausted": is_exhausted,
+                            "hash": context_hash,
+                        }
+                    )
+                except Exception:
+                    pass  # Migration 099 not yet applied
 
                 # Rule 2: If budget exhausted after this attempt, force L3 escalation
                 if is_exhausted and not l2_succeeded:
