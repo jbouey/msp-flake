@@ -9,6 +9,7 @@ import { PartnerLearning } from './PartnerLearning';
 import { PartnerEscalations } from './PartnerEscalations';
 import { PartnerDriftConfig } from './PartnerDriftConfig';
 import { PartnerOnboarding } from './PartnerOnboarding';
+import { PartnerSSOConfig } from './PartnerSSOConfig';
 import { InfoTip, WelcomeModal } from '../components/shared';
 import { formatTimeAgo } from '../constants';
 
@@ -40,7 +41,8 @@ export const PartnerDashboard: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { partner, apiKey, isAuthenticated, isLoading, logout } = usePartner();
 
-  const [activeTab, setActiveTab] = useState<'sites' | 'onboarding' | 'provisions' | 'billing' | 'compliance' | 'exceptions' | 'escalations' | 'learning'>('sites');
+  const [activeTab, setActiveTab] = useState<'sites' | 'onboarding' | 'provisions' | 'billing' | 'compliance' | 'exceptions' | 'escalations' | 'learning' | 'sso'>('sites');
+  const [ssoConfigSite, setSsoConfigSite] = useState<{ id: string; name: string } | null>(null);
 
   // Handle billing redirect from Stripe
   useEffect(() => {
@@ -382,6 +384,16 @@ export const PartnerDashboard: React.FC = () => {
             Learning
           </button>
           <button
+            onClick={() => setActiveTab('sso')}
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
+              activeTab === 'sso'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
+            }`}
+          >
+            SSO
+          </button>
+          <button
             onClick={() => navigate('/partner/security')}
             className="px-4 py-3 font-medium transition border-b-2 -mb-px border-transparent text-slate-500 hover:text-indigo-600 whitespace-nowrap min-h-[44px]"
           >
@@ -720,6 +732,54 @@ export const PartnerDashboard: React.FC = () => {
 
         {activeTab === 'learning' && (
           <PartnerLearning />
+        )}
+
+        {activeTab === 'sso' && ssoConfigSite && (
+          <PartnerSSOConfig
+            orgId={ssoConfigSite.id}
+            orgName={ssoConfigSite.name}
+            onBack={() => setSsoConfigSite(null)}
+          />
+        )}
+
+        {activeTab === 'sso' && !ssoConfigSite && (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            {sites.length === 0 ? (
+              <div className="p-12 text-center">
+                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-medium text-slate-900 mb-2">No Sites Available</h3>
+                <p className="text-slate-500">Add sites first, then configure SSO for their organizations.</p>
+              </div>
+            ) : (
+              <div>
+                <div className="px-6 py-4 border-b border-slate-100">
+                  <h3 className="font-semibold text-slate-900">Select a Site to Configure SSO</h3>
+                  <p className="text-sm text-slate-500 mt-1">Configure single sign-on for client organizations.</p>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {sites.map((site) => (
+                    <button
+                      key={site.site_id}
+                      onClick={() => setSsoConfigSite({ id: site.site_id, name: site.clinic_name })}
+                      className="w-full px-6 py-4 flex items-center justify-between hover:bg-indigo-50/50 transition-colors text-left"
+                    >
+                      <div>
+                        <p className="font-medium text-slate-900">{site.clinic_name}</p>
+                        <p className="text-xs text-slate-500">{site.site_id}</p>
+                      </div>
+                      <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

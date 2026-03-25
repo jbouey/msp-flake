@@ -134,7 +134,7 @@ func (a *autoDeployer) processPendingDeploys(ctx context.Context, deploys []Pend
 
 		// Deploy batch sequentially (each deploy takes a minute or so)
 		for _, deploy := range batch {
-			result := DeployResult{DeviceID: deploy.DeviceID}
+			result := DeployResult{DeviceID: deploy.DeviceID, Hostname: deploy.Hostname, OSType: deploy.OSType}
 
 			// Pre-flight: verify target is reachable and ready before deploying
 			preflight := runPreFlightChecks(ctx, a.daemon, deploy)
@@ -705,6 +705,14 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 			ad.failures[hostname] = 0
 			ad.mu.Unlock()
 			deployed++
+
+			// Report successful deploy so Central Command updates sensor_deployed
+			ad.daemon.state.AddDeployResult(DeployResult{
+				DeviceID: fmt.Sprintf("autodeploy-%s", hostname),
+				Hostname: hostname,
+				OSType:   "windows",
+				Status:   "success",
+			})
 
 			// Post-deploy: verify gRPC connection within 60 seconds
 			go ad.verifyAgentConnection(ctx, hostname)

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { OsirisCareLeaf } from '../components/shared';
-import { BRANDING } from '../constants';
+import { BRANDING, SSO_LABELS } from '../constants';
 
 export const ClientLogin: React.FC = () => {
   const navigate = useNavigate();
@@ -21,11 +21,76 @@ export const ClientLogin: React.FC = () => {
   const [mfaError, setMfaError] = useState<string | null>(null);
   const [mfaLoading, setMfaLoading] = useState(false);
 
+  // SSO state
+  const [ssoLoading, setSsoLoading] = useState(false);
+  const [ssoEnforced, setSsoEnforced] = useState(false);
+
   useEffect(() => {
     if (isAuthenticated && !isLoading) {
       navigate('/client/dashboard', { replace: true });
     }
   }, [isAuthenticated, isLoading, navigate]);
+
+  const handleSsoLogin = useCallback(async () => {
+    const ssoEmail = email.trim().toLowerCase();
+    if (!ssoEmail) {
+      setError('Enter your email address to sign in with SSO.');
+      return;
+    }
+
+    setSsoLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/client/auth/sso/authorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: ssoEmail }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.auth_url) {
+          window.location.href = data.auth_url;
+          return;
+        }
+      } else if (response.status === 404) {
+        setError(SSO_LABELS.sso_not_configured);
+      } else {
+        const err = await response.json().catch(() => null);
+        setError(err?.detail || 'SSO authorization failed. Please try again.');
+      }
+    } catch {
+      setError('Failed to connect. Please try again.');
+    } finally {
+      setSsoLoading(false);
+    }
+  }, [email]);
+
+  // Check SSO enforcement when email loses focus
+  const handleEmailBlur = useCallback(async () => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed || !trimmed.includes('@')) return;
+
+    try {
+      const response = await fetch('/api/client/auth/sso/authorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.sso_enforced) {
+          setSsoEnforced(true);
+          return;
+        }
+      }
+    } catch {
+      // Check failed silently — non-critical
+    }
+    setSsoEnforced(false);
+  }, [email]);
 
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,7 +120,7 @@ export const ClientLogin: React.FC = () => {
         setError(err.detail || 'Invalid email or password');
         setStatus('error');
       }
-    } catch (e) {
+    } catch {
       setError('Failed to connect. Please try again.');
       setStatus('error');
     }
@@ -82,7 +147,7 @@ export const ClientLogin: React.FC = () => {
         setTotpCode('');
         setMfaLoading(false);
       }
-    } catch (e) {
+    } catch {
       setMfaError('Network error. Please try again.');
       setMfaLoading(false);
     }
@@ -96,19 +161,15 @@ export const ClientLogin: React.FC = () => {
     setError(null);
 
     try {
-      const response = await fetch('/api/client/auth/request-magic-link', {
+      await fetch('/api/client/auth/request-magic-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim().toLowerCase() }),
       });
 
-      if (response.ok) {
-        setStatus('sent');
-      } else {
-        // Always show success to prevent email enumeration
-        setStatus('sent');
-      }
-    } catch (e) {
+      // Always show success to prevent email enumeration
+      setStatus('sent');
+    } catch {
       setError('Failed to connect. Please try again.');
       setStatus('error');
     }
@@ -304,113 +365,193 @@ export const ClientLogin: React.FC = () => {
             </div>
           )}
 
-          {/* Login mode tabs */}
-          <div className="flex rounded-lg bg-slate-100 p-1 mb-4">
-            <button
-              type="button"
-              onClick={() => { setLoginMode('password'); setError(null); }}
-              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
-                loginMode === 'password'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Email &amp; Password
-            </button>
-            <button
-              type="button"
-              onClick={() => { setLoginMode('magic'); setError(null); }}
-              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
-                loginMode === 'magic'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Magic Link
-            </button>
-          </div>
-
-          {loginMode === 'password' ? (
-            <form onSubmit={handlePasswordLogin} className="space-y-4">
+          {ssoEnforced ? (
+            /* SSO-enforced mode: only show email + SSO button */
+            <div className="space-y-4">
+              <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg">
+                <p className="text-teal-800 text-sm">{SSO_LABELS.sso_enforced_message}</p>
+              </div>
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="ssoEmail" className="block text-sm font-medium text-slate-700 mb-1">
                   Email Address
                 </label>
                 <input
                   type="email"
-                  id="email"
+                  id="ssoEmail"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => { setEmail(e.target.value); setError(null); }}
                   placeholder="you@yourpractice.com"
                   required
                   className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
                 />
               </div>
-              <div>
-                <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  id="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  required
-                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
-                />
-              </div>
               <button
-                type="submit"
-                disabled={!email.trim() || !password.trim() || status === 'loading'}
-                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
+                type="button"
+                onClick={handleSsoLogin}
+                disabled={!email.trim() || ssoLoading}
+                className="w-full flex items-center justify-center gap-3 px-4 py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110"
                 style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
               >
-                {status === 'loading' ? (
+                {ssoLoading ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Signing in...
+                    Redirecting...
                   </>
                 ) : (
-                  'Sign In'
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                    </svg>
+                    {SSO_LABELS.sign_in_with_sso}
+                  </>
                 )}
               </button>
-            </form>
+              <button
+                type="button"
+                onClick={() => { setSsoEnforced(false); setError(null); }}
+                className="w-full text-center text-sm text-teal-600 hover:text-teal-800 font-medium"
+              >
+                Use a different email
+              </button>
+            </div>
           ) : (
-            <form onSubmit={handleMagicLink} className="space-y-4">
-              <div>
-                <label htmlFor="magicEmail" className="block text-sm font-medium text-slate-700 mb-1">
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  id="magicEmail"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@yourpractice.com"
-                  required
-                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
-                />
+            /* Normal mode: tabs + SSO button */
+            <>
+              {/* Login mode tabs */}
+              <div className="flex rounded-lg bg-slate-100 p-1 mb-4">
+                <button
+                  type="button"
+                  onClick={() => { setLoginMode('password'); setError(null); }}
+                  className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                    loginMode === 'password'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Email &amp; Password
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setLoginMode('magic'); setError(null); }}
+                  className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                    loginMode === 'magic'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Magic Link
+                </button>
               </div>
+
+              {loginMode === 'password' ? (
+                <form onSubmit={handlePasswordLogin} className="space-y-4">
+                  <div>
+                    <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
+                      Email Address
+                    </label>
+                    <input
+                      type="email"
+                      id="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      onBlur={handleEmailBlur}
+                      placeholder="you@yourpractice.com"
+                      required
+                      className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1">
+                      Password
+                    </label>
+                    <input
+                      type="password"
+                      id="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter your password"
+                      required
+                      className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!email.trim() || !password.trim() || status === 'loading'}
+                    className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
+                    style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
+                  >
+                    {status === 'loading' ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Signing in...
+                      </>
+                    ) : (
+                      'Sign In'
+                    )}
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleMagicLink} className="space-y-4">
+                  <div>
+                    <label htmlFor="magicEmail" className="block text-sm font-medium text-slate-700 mb-1">
+                      Email Address
+                    </label>
+                    <input
+                      type="email"
+                      id="magicEmail"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      onBlur={handleEmailBlur}
+                      placeholder="you@yourpractice.com"
+                      required
+                      className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!email.trim() || status === 'loading'}
+                    className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
+                    style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
+                  >
+                    {status === 'loading' ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Sending...
+                      </>
+                    ) : (
+                      'Send Login Link'
+                    )}
+                  </button>
+                  <p className="text-center text-sm text-slate-500">
+                    No password required. We'll send you a secure link.
+                  </p>
+                </form>
+              )}
+
+              {/* SSO Divider + Button */}
+              <div className="relative my-5">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-slate-200" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-2 bg-white text-slate-500">or</span>
+                </div>
+              </div>
+
               <button
-                type="submit"
-                disabled={!email.trim() || status === 'loading'}
-                className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
-                style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
+                type="button"
+                onClick={handleSsoLogin}
+                disabled={ssoLoading}
+                className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl hover:bg-teal-50/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {status === 'loading' ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Sending...
-                  </>
-                ) : (
-                  'Send Login Link'
-                )}
+                <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+                <span className="font-medium text-slate-900">
+                  {ssoLoading ? 'Redirecting...' : SSO_LABELS.sign_in_with_sso}
+                </span>
               </button>
-              <p className="text-center text-sm text-slate-500">
-                No password required. We'll send you a secure link.
-              </p>
-            </form>
+            </>
           )}
         </div>
 

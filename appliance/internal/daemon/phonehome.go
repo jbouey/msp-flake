@@ -157,6 +157,8 @@ type PendingDeploy struct {
 // DeployResult reports the outcome of a deployment attempt.
 type DeployResult struct {
 	DeviceID string `json:"device_id"`
+	Hostname string `json:"hostname,omitempty"`
+	OSType   string `json:"os_type,omitempty"`
 	Status   string `json:"status"` // "success" or "failed"
 	AgentID  string `json:"agent_id,omitempty"`
 	Error    string `json:"error,omitempty"`

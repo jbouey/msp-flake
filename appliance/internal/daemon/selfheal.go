@@ -198,6 +198,13 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 		} else {
 			log.Printf("[selfheal] Redeploy succeeded for %s", hostname)
 			entry.DeployAttempts = 0
+			// Report successful deploy so Central Command updates sensor_deployed
+			sh.daemon.state.AddDeployResult(DeployResult{
+				DeviceID: fmt.Sprintf("selfheal-%s", hostname),
+				Hostname: hostname,
+				OSType:   entry.OSType,
+				Status:   "success",
+			})
 		}
 	}
 }

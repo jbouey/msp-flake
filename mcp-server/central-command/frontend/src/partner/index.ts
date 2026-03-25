@@ -5,3 +5,4 @@ export { PartnerLearning } from './PartnerLearning';
 export { PartnerSecurity } from './PartnerSecurity';
 export { PartnerOnboarding } from './PartnerOnboarding';
 export { PartnerDriftConfig } from './PartnerDriftConfig';
+export { PartnerSSOConfig } from './PartnerSSOConfig';

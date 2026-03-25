@@ -2249,6 +2249,18 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                                 deploy_attempts = deploy_attempts + 1
                             WHERE site_id = $3 AND local_device_id = $4
                         """, new_status, result.get("error"), checkin.site_id, result.get("device_id"))
+
+                        # Mark sensor_deployed on the credential record for this host
+                        deploy_hostname = result.get("hostname")
+                        if result.get("status") == "success" and deploy_hostname:
+                            await conn.execute("""
+                                UPDATE site_credentials
+                                SET sensor_deployed = true,
+                                    sensor_deployed_at = NOW()
+                                WHERE site_id = $1
+                                  AND credential_name LIKE $2 || ' (%'
+                                  AND (sensor_deployed IS NOT TRUE)
+                            """, checkin.site_id, deploy_hostname)
             except Exception as e:
                 import logging
                 logging.warning(f"Checkin {checkin.site_id}: failed to process deploy results: {e}")

@@ -167,3 +167,24 @@ export const PHYSICAL_SAFEGUARD_LABELS = {
   workstation_security: 'Workstation Security',
   device_controls: 'Device and Media Controls',
 } as const;
+
+// =============================================================================
+// SSO LABELS
+// =============================================================================
+
+export const SSO_LABELS = {
+  sign_in_with_sso: 'Sign in with SSO',
+  sso_not_configured: 'SSO is not configured for this organization.',
+  sso_enforced_message: 'Your organization requires SSO sign-in.',
+  sso_config_title: 'SSO Configuration',
+  sso_config_description: 'Configure SAML/OIDC single sign-on for your client organizations.',
+  sso_issuer_url: 'Issuer URL',
+  sso_client_id: 'Client ID',
+  sso_client_secret: 'Client Secret',
+  sso_allowed_domains: 'Allowed Domains',
+  sso_enforced: 'Enforce SSO',
+  sso_enforced_help: 'When enabled, users in this organization must use SSO. Password and magic link sign-in will be disabled.',
+  sso_saved: 'SSO configuration saved.',
+  sso_deleted: 'SSO configuration removed.',
+  sso_delete_confirm: 'Remove SSO configuration? Users will need to sign in with email/password or magic link.',
+} as const;
